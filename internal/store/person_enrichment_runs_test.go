@@ -60,6 +60,53 @@ func TestPersonEnrichmentClaimLocksRunBeforeBindingWork(t *testing.T) {
 	require.ErrorIs(t, <-completeErr, store.ErrRunNotTerminal)
 }
 
+func TestPersonEnrichmentClaimRetriesSQLiteSnapshotContention(t *testing.T) {
+	require := require.New(t)
+	f := newEnrichmentWorkFixture(t)
+	if f.store.IsPostgreSQL() {
+		t.Skip("SQLite snapshot contention requires the SQLite backend")
+	}
+	run := f.startRun(t, "claim-snapshot-contention")
+	f.enqueue(t)
+
+	claimRead := make(chan struct{})
+	releaseClaim := make(chan struct{})
+	var pauseOnce sync.Once
+	store.SetPersonEnrichmentRunBarrierForTest(f.store, func(phase string) {
+		if phase == "claim_run_locked" {
+			pauseOnce.Do(func() {
+				close(claimRead)
+				<-releaseClaim
+			})
+		}
+	})
+	t.Cleanup(func() { store.SetPersonEnrichmentRunBarrierForTest(f.store, nil) })
+
+	type claimOutcome struct {
+		lease *personenrichment.WorkLease
+		err   error
+	}
+	result := make(chan claimOutcome, 1)
+	go func() {
+		lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+			RunID: run.ID, Owner: "claim-worker", ProviderName: f.profile.Name,
+			Now: f.now, LeaseDuration: time.Minute,
+		})
+		result <- claimOutcome{lease: lease, err: err}
+	}()
+	requireChannelSignal(t, claimRead, "claim did not establish its read snapshot")
+
+	_, err := f.store.DB().ExecContext(t.Context(), `
+		INSERT INTO archive_metadata (key, value)
+		VALUES ('claim_snapshot_contention', 'committed')`)
+	require.NoError(err)
+	close(releaseClaim)
+
+	claimed := <-result
+	require.NoError(claimed.err)
+	require.NotNil(claimed.lease)
+}
+
 func TestPersonEnrichmentScheduledRunLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -124,7 +124,7 @@ func newCardDAVCmd() *cobra.Command {
 	books.AddCommand(setRole)
 	conflicts := &cobra.Command{Use: "conflicts", Short: "Inspect and resolve CardDAV conflicts"}
 	conflicts.AddCommand(&cobra.Command{Use: cmdUseList, Short: "List unresolved CardDAV conflicts", Args: cobra.NoArgs, RunE: runCardDAVConflicts})
-	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show retained local and remote versions of a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
+	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show safe base, local, and remote summaries for a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
 	resolve := &cobra.Command{Use: "resolve <conflict-id> <keep_local|keep_remote>", Short: "Resolve one CardDAV conflict", Args: cobra.ExactArgs(2), RunE: runCardDAVResolve}
 	conflicts.AddCommand(resolve)
 	root.AddCommand(books, conflicts)

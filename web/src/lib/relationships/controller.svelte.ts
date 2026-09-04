@@ -8,11 +8,24 @@ import type {
   PersonSummary
 } from '../explore/models';
 import { canonicalFingerprint, predicateFingerprint } from '../explore/selection';
+import { validatePersonMergeRequired, type ValidatedPersonMergeRequired } from '../directory/person-merge';
 import type { RelationshipCalendar, RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
 
 export type LinkOutcome =
   | { ok: true; identityRevision: number; cacheState: 'ready' | 'stale' }
+  | { ok: false; code: 'merge_required'; message: string; conflict: ValidatedPersonMergeRequired }
   | { ok: false; code: 'already_linked' | 'invalid' | 'error'; message: string };
+
+export interface RelationshipsMergeContext {
+  target: string | null;
+  targetPredicate?: ExplorePredicate;
+  targetPredicateFingerprint: string | null;
+  listPredicate?: ExplorePredicate;
+  listPredicateFingerprint: string | null;
+  facet: RelationshipFacet;
+  query: string;
+  showAll: boolean;
+}
 
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
@@ -125,6 +138,33 @@ export class RelationshipsController {
     this.relationshipCalendarYear = currentYearInTimezone(this.timezone());
     this.relationshipCalendarCurrentYear = this.relationshipCalendarYear;
     this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
+  }
+
+  personMergeContextSnapshot(): RelationshipsMergeContext {
+    return {
+      target: this.target,
+      targetPredicate: this.lastPredicate,
+      targetPredicateFingerprint: this.lastPredicateFingerprint,
+      listPredicate: this.lastListPredicate,
+      listPredicateFingerprint: this.lastListPredicate ? predicateFingerprint(this.lastListPredicate) : null,
+      facet: this.facet,
+      query: this.query,
+      showAll: this.showAll
+    };
+  }
+
+  async reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+    const reloads: Promise<void>[] = [];
+    if (context.target && context.targetPredicate && this.target === context.target &&
+      this.lastPredicateFingerprint === context.targetPredicateFingerprint) {
+      reloads.push(this.openTarget(context.target, context.targetPredicate));
+    }
+    if (context.listPredicate && this.lastListPredicate && this.facet === context.facet &&
+      this.query === context.query && this.showAll === context.showAll &&
+      predicateFingerprint(this.lastListPredicate) === context.listPredicateFingerprint) {
+      reloads.push(this.loadList(context.listPredicate));
+    }
+    await Promise.all(reloads);
   }
 
   async loadList(predicate: ExplorePredicate): Promise<void> {
@@ -674,6 +714,8 @@ export class RelationshipsController {
       return { ok: true, identityRevision: data.identity_revision, cacheState: data.cache_state };
     }
     const message = errorMessage(error, res.status);
+    const conflict = res.status === 409 ? validatePersonMergeRequired(error) : null;
+    if (conflict) return { ok: false, code: 'merge_required', message, conflict };
     if (res.status === 409 && isErrorCode(error, 'already_linked')) return { ok: false, code: 'already_linked', message };
     if (res.status === 400) return { ok: false, code: 'invalid', message };
     return { ok: false, code: 'error', message };

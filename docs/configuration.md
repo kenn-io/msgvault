@@ -867,6 +867,25 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
 
+##### Stored provider credentials
+
+Instead of naming an environment variable in `api_key_env`, you can store a
+provider API key through Settings in the Web UI or the TUI. Stored keys live in
+`tokens/provider-credentials.json` under the data directory with owner-only
+file permissions. They are never written to `config.toml` and are never shown
+again after saving; Settings only reports whether a key is configured and
+whether it comes from the store or from the environment.
+
+A stored key takes precedence over the environment variable named by
+`api_key_env`. Each stored key is bound to the endpoint origin (scheme, host,
+and port) it was saved for. If you later change the endpoint to another origin,
+the stored key is removed automatically and must be entered again, so a key
+is never sent to a host it was not entered for.
+
+Changing a stored key for vector or multimodal (visual) embeddings requires a daemon
+restart, like the other `[vector]` settings. Person enrichment and sweep keys
+apply on the next run.
+
 The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`

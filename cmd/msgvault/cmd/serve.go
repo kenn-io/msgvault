@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/query"
@@ -244,6 +245,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	logger.Info("daemon startup step complete", "step", "init_archive_schema")
+	if err := recoverCardDAVSyncRunsAtStartup(cmd.Context(), s, logger); err != nil {
+		return err
+	}
 	// Legacy [identity] migration is deferred to the first scheduled sync's
 	// runPostSourceCreateMigrations call, which fires AFTER that sync's
 	// confirmDefaultIdentity. Calling the migration here would race
@@ -333,7 +337,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and configure scheduler
 	sched := scheduler.New(syncFunc).WithLogger(logger).
 		WithWorkTracker(combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a scheduled sync")))
-	cardDAVController, err := api.NewCardDAVController(cfg, s)
+	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
@@ -437,7 +441,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
 	if err := registerPersonEnrichmentJob(
-		ctx, sched, s, cfg.People.Enrichment); err != nil {
+		ctx, sched, s, cfg.People.Enrichment, personEnrichmentRuntimeCredentials{
+			Suppression: personEnrichmentEnvironmentLookup(cfg),
+			Provider:    personEnrichmentProviderCredentialLookup(cfg),
+		}); err != nil {
 		return fmt.Errorf("schedule person enrichment: %w", err)
 	}
 
@@ -585,7 +592,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		meetingImporter:        meetingImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
 		personEnrichmentConfig: cfg.People.Enrichment,
-		lookupEnv:              os.LookupEnv,
+		lookupEnv:              personEnrichmentEnvironmentLookup(cfg),
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
@@ -612,6 +619,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AnalyticsInitializationActive: analyticsAsync,
 		IdleTracker:                   idleTracker,
 		OperationGate:                 operationGate,
+		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
@@ -777,11 +785,22 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if err := sched.AddJob(scheduler.Job{
 		Name: api.CardDAVJobName, Schedule: cardDAVConfig.Schedule,
 		Run: func(ctx context.Context) error {
-			_, err := service.Sync(ctx, carddav.SyncOptions{})
+			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 			return err
 		},
 	}); err != nil {
 		return fmt.Errorf("schedule CardDAV sync: %w", err)
+	}
+	return nil
+}
+
+func recoverCardDAVSyncRunsAtStartup(ctx context.Context, st *store.Store, logger *slog.Logger) error {
+	recovered, err := st.RecoverCardDAVSyncRunsContext(ctx)
+	if err != nil {
+		return fmt.Errorf("recover CardDAV sync runs at daemon startup: %w", err)
+	}
+	if recovered > 0 {
+		logger.Info("recovered orphaned CardDAV sync runs", "count", recovered)
 	}
 	return nil
 }
@@ -1198,6 +1217,7 @@ var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
 var _ api.PersonCompletionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
+var _ api.PersonNetworkStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
@@ -1210,6 +1230,7 @@ var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
+var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
 var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
@@ -1285,6 +1306,24 @@ func (a *storeAPIAdapter) ListChangedMessages(
 // reports itself unavailable on every production request.
 func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error) {
 	return a.store.ArchiveUIDContext(ctx)
+}
+
+func (a *storeAPIAdapter) Kinds() []operations.Kind {
+	return a.store.Kinds()
+}
+
+func (a *storeAPIAdapter) ListRuns(ctx context.Context, query operations.Query) ([]operations.Run, error) {
+	return a.store.ListRuns(ctx, query)
+}
+
+func (a *storeAPIAdapter) GetRun(ctx context.Context, id operations.StableID) (operations.Run, error) {
+	return a.store.GetRun(ctx, id)
+}
+
+func (a *storeAPIAdapter) LaneStatus(
+	ctx context.Context, kind operations.Kind,
+) (operations.LaneHistoryStatus, error) {
+	return a.store.LaneStatus(ctx, kind)
 }
 
 func (a *storeAPIAdapter) SearchDocuments(
@@ -2267,6 +2306,18 @@ func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Perso
 	return a.store.ListPersonsContext(ctx)
 }
 
+func (a *storeAPIAdapter) DirectoryPeoplePageContext(
+	ctx context.Context, query store.DirectoryPeopleQuery,
+) (*store.DirectoryPeoplePage, error) {
+	return a.store.DirectoryPeoplePageContext(ctx, query)
+}
+
+func (a *storeAPIAdapter) GetPersonNetworkContext(
+	ctx context.Context, personID int64, opts store.PersonNetworkOptions,
+) (store.PersonNetwork, error) {
+	return a.store.GetPersonNetworkContext(ctx, personID, opts)
+}
+
 func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*store.Person, error) {
@@ -2919,11 +2970,17 @@ func canonicalPersonEnrichmentOccurrence(occurrence time.Time) string {
 	return occurrence.UTC().Truncate(time.Minute).Format(time.RFC3339)
 }
 
+type personEnrichmentRuntimeCredentials struct {
+	Suppression personenrichment.CredentialLookup
+	Provider    personenrichment.ProviderCredentialLookup
+}
+
 func registerPersonEnrichmentJob(
 	ctx context.Context,
 	sched *scheduler.Scheduler,
 	st *store.Store,
 	enrichmentConfig personenrichment.Config,
+	credentials personEnrichmentRuntimeCredentials,
 ) error {
 	if !enrichmentConfig.Enabled {
 		if st == nil {
@@ -2940,7 +2997,10 @@ func registerPersonEnrichmentJob(
 	if err := enrichmentConfig.Validate(); err != nil {
 		return err
 	}
-	suppressionKey, ok := os.LookupEnv(enrichmentConfig.SuppressionKeyEnv)
+	if credentials.Suppression == nil || credentials.Provider == nil {
+		return errors.New("person enrichment schedule requires suppression and provider credential lookups")
+	}
+	suppressionKey, ok := credentials.Suppression(enrichmentConfig.SuppressionKeyEnv)
 	if !ok || suppressionKey == "" {
 		return fmt.Errorf("person enrichment suppression key environment %q is not set",
 			enrichmentConfig.SuppressionKeyEnv)
@@ -2989,7 +3049,7 @@ func registerPersonEnrichmentJob(
 	if err := st.CancelPersonEnrichmentWorkOutsideProfilesContext(ctx, activeFingerprints); err != nil {
 		return fmt.Errorf("cancel unavailable person enrichment work: %w", err)
 	}
-	gate, err := personenrichment.NewEgressGate(st, st, hasher, os.LookupEnv)
+	gate, err := personenrichment.NewProviderBoundEgressGate(st, st, hasher, credentials.Provider)
 	if err != nil {
 		return fmt.Errorf("configure person enrichment egress: %w", err)
 	}

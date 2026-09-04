@@ -50,6 +50,10 @@ type Store struct {
 	readOnly      bool // Opened via OpenReadOnly; skips WAL checkpoint on close
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
+	// directoryProjectionReady becomes true only after InitSchema has created
+	// the projection tables and dirty-marking triggers. Every writable Store
+	// transaction then refreshes its affected Directory rows before commit.
+	directoryProjectionReady bool
 
 	// syncGeneration is immutable metadata on a per-run Store view.
 	// Mutating transactions on that view fence the exact running source
@@ -80,6 +84,7 @@ type Store struct {
 	listIDRepairAfterFingerprintLockHook  func()
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
+	cardDAVPublicationStateReadHook       func()
 	identityMatchAcceptBeforeDecisionHook func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
@@ -89,6 +94,9 @@ type Store struct {
 	personEnrichmentRunBarrier            func(phase string)
 	personEnrichmentTxBarrier             func(phase string)
 	personEnrichmentOwnershipBarrier      func(phase string, tx *loggedTx)
+	personNetworkSourceReadHook           func(limit, count int)
+	operationHistoryAfterAdapterReadHook  func(kind string)
+	operationHistoryStatusAfterActiveHook func(kind string)
 
 	// Zero means "use the production batch size"; see
 	// contentChangedBackfillBatch and rfc822IDBackfillBatch. Per-Store for
@@ -225,6 +233,10 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -280,8 +292,29 @@ func openPostgres(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	return s, nil
+}
+
+// detectDirectoryProjectionReadiness distinguishes an old database without
+// the optional Directory projection from one whose dirty queue must be
+// respected by a read-only Store. It does not create or migrate anything.
+func (s *Store) detectDirectoryProjectionReadiness(ctx context.Context) error {
+	var installed bool
+	query := `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'directory_projection_dirty')`
+	if s.IsPostgreSQL() {
+		query = `SELECT to_regclass('directory_projection_dirty') IS NOT NULL`
+	}
+	if err := s.db.QueryRowContext(ctx, query).Scan(&installed); err != nil {
+		return fmt.Errorf("detect directory projection: %w", err)
+	}
+	s.directoryProjectionReady = installed
+	return nil
 }
 
 // OpenReadOnly opens an existing database in read-only mode. Suitable for
@@ -343,6 +376,10 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -395,6 +432,11 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -720,6 +762,12 @@ func (s *Store) withTxOptionsContext(
 				"duration_ms", time.Since(start).Milliseconds())
 		}
 		return err
+	}
+	if s.directoryProjectionReady && !s.readOnly && (opts == nil || !opts.ReadOnly) {
+		if err := s.refreshDirectoryProjectionsBeforeCommitTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		_ = tx.Rollback()
@@ -1208,6 +1256,21 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		s.migratePersonSweepCallsV2,
 	); err != nil {
 		return fmt.Errorf("migrate person sweep call journal: %w", err)
+	}
+	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
+		return err
+	}
+	// The Directory projection is derived from the person tables, so an
+	// archive that predates it gets every person marked dirty and refreshed
+	// once. Later opens find the ledger entry and skip the backfill; triggers
+	// keep the projection current from then on.
+	if err := s.runOnceMigration(
+		ctx, migrationDirectoryProjectionV1, false,
+		func(ctx context.Context) error {
+			return s.backfillDirectoryProjectionContext(ctx)
+		},
+	); err != nil {
+		return err
 	}
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.

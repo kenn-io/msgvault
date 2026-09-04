@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
 )
@@ -97,6 +99,267 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	linkResponse := postIdentityLink(t, srv, "/api/v1/identity/links",
 		IdentityLinkRequest{ParticipantA: alice, ParticipantB: bob})
 	assert.Equal(http.StatusConflict, linkResponse.Code)
+}
+
+func TestDirectoryPeopleHTTPReturnsNoStorePage(t *testing.T) {
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	participant := st.mustParticipant(t, "alice@example.test", "Alice Example", "example.test")
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	name := "Alice Example"
+	person, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, &name)
+	require.NoError(err)
+	_, err = st.AddPersonCategoryContext(t.Context(), person.ID, store.PersonCategoryInput{
+		OriginalValue: "friend", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+
+	response := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/directory?q=alcie&category=friend&limit=1", nil, "")
+	require.Equal(http.StatusOK, response.Code)
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+}
+
+func TestDirectoryPeopleHTTPMapsEveryQueryParameter(t *testing.T) {
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	alice := createDirectoryHTTPPerson(t, st, "Alice Example", "alice@example.test", "friend", "Acme", true)
+	bob := createDirectoryHTTPPerson(t, st, "Bob Example", "bob@example.test", "colleague", "Other", false)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "query", path: peoplePath + "/directory?q=alcie"},
+		{name: "contact state", path: peoplePath + "/directory?contact_state=active"},
+		{name: "category", path: peoplePath + "/directory?category=friend"},
+		{name: "organization", path: peoplePath + "/directory?organization=Acme"},
+		{name: "primary channel", path: peoplePath + "/directory?primary_channel=email"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := personRequest(t, srv, http.MethodGet, tc.path, nil, "")
+			require.Equal(http.StatusOK, response.Code)
+			assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+			assertDirectoryPeopleResponseIDs(t, response, alice.ID)
+		})
+	}
+
+	first := personRequest(t, srv, http.MethodGet, peoplePath+"/directory?limit=1", nil, "")
+	require.Equal(http.StatusOK, first.Code)
+	var page DirectoryPeopleResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &page))
+	require.NotEmpty(page.NextCursor)
+	second := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/directory?limit=1&cursor="+page.NextCursor, nil, "")
+	require.Equal(http.StatusOK, second.Code)
+	assertDirectoryPeopleResponseIDs(t, second, bob.ID)
+}
+
+func TestDirectoryPeopleHTTPFiltersSortsAndReturnsLastContact(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	recent := createDirectoryHTTPPerson(t, st, "Alpha Recent", "recent@example.test", "friend", "Acme", true)
+	older := createDirectoryHTTPPerson(t, st, "Zulu Older", "older@example.test", "friend", "Acme", true)
+	never := createDirectoryHTTPPerson(t, st, "Bravo Never", "never@example.test", "friend", "Acme", false)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ? WHERE person_id = ?`), "2026-08-20T10:00:00Z", recent.ID)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ? WHERE person_id = ?`), "2026-01-10T09:00:00Z", older.ID)
+	require.NoError(err)
+
+	after := url.QueryEscape("2026-06-01T00:00:00Z")
+	filtered := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/directory?sort=last_contact_desc&last_contact_after="+after, nil, "")
+	require.Equal(http.StatusOK, filtered.Code, filtered.Body.String())
+	var filteredPage struct {
+		People []struct {
+			ID            int64   `json:"id"`
+			LastContactAt *string `json:"last_contact_at"`
+		} `json:"people"`
+	}
+	require.NoError(json.Unmarshal(filtered.Body.Bytes(), &filteredPage))
+	require.Len(filteredPage.People, 1)
+	assert.Equal(recent.ID, filteredPage.People[0].ID)
+	require.NotNil(filteredPage.People[0].LastContactAt)
+	assert.Equal("2026-08-20T10:00:00Z", *filteredPage.People[0].LastContactAt)
+
+	first := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/directory?contact_state=active&sort=last_contact_asc&limit=1", nil, "")
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var firstPage DirectoryPeopleResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstPage))
+	assert.Equal([]int64{older.ID}, directoryHTTPPersonIDs(firstPage.People))
+	require.NotEmpty(firstPage.NextCursor)
+
+	second := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/directory?contact_state=active&sort=last_contact_asc&limit=1&cursor="+url.QueryEscape(firstPage.NextCursor), nil, "")
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+	var secondPage DirectoryPeopleResponse
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &secondPage))
+	assert.Equal([]int64{recent.ID}, directoryHTTPPersonIDs(secondPage.People))
+	assert.Empty(secondPage.NextCursor)
+	assert.NotEqual(never.ID, secondPage.People[0].ID)
+}
+
+func TestDirectoryPeopleHTTPRejectsInvalidLastContactQuery(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	for _, test := range []struct {
+		path string
+		code string
+	}{
+		{path: peoplePath + "/directory?sort=oldestish", code: "invalid_query"},
+		{path: peoplePath + "/directory?last_contact_after=yesterday", code: "invalid_parameter"},
+		{path: peoplePath + "/directory?last_contact_before=tomorrow", code: "invalid_parameter"},
+	} {
+		response := personRequest(t, srv, http.MethodGet, test.path, nil, "")
+		assert.Equal(t, http.StatusBadRequest, response.Code, test.path)
+		assertDirectoryPeopleError(t, response, test.code)
+	}
+}
+
+func TestDirectoryPeopleHTTPRejectsInvalidParametersAndStaleProjection(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	for _, tc := range []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "cursor", path: peoplePath + "/directory?cursor=not-a-cursor", code: "invalid_cursor"},
+		{name: "query", path: peoplePath + "/directory?contact_state=unknown", code: "invalid_query"},
+		{name: "limit", path: peoplePath + "/directory?limit=many", code: "invalid_limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := personRequest(t, srv, http.MethodGet, tc.path, nil, "")
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+			assertDirectoryPeopleError(t, response, tc.code)
+		})
+	}
+
+	staleServer := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		&staleDirectoryPeopleStore{stubIdentityCacheStore: newDirectoryTestStore(t)}, nil, testLogger())
+	stale := personRequest(t, staleServer, http.MethodGet, peoplePath+"/directory", nil, "")
+	require.Equal(t, http.StatusServiceUnavailable, stale.Code)
+	assert.Equal(t, "no-store", stale.Header().Get("Cache-Control"))
+	assertDirectoryPeopleError(t, stale, "directory_projection_stale")
+}
+
+func TestDirectoryPeopleHTTPAcceptsEveryPublishedContactState(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	for _, state := range []string{"", "active", "inactive"} {
+		path := peoplePath + "/directory"
+		if state != "" {
+			path += "?contact_state=" + state
+		}
+		response := personRequest(t, srv, http.MethodGet, path, nil, "")
+		require.Equal(t, http.StatusOK, response.Code, state)
+	}
+}
+
+type staleDirectoryPeopleStore struct {
+	*stubIdentityCacheStore
+}
+
+func (s *staleDirectoryPeopleStore) DirectoryPeoplePageContext(
+	context.Context, store.DirectoryPeopleQuery,
+) (*store.DirectoryPeoplePage, error) {
+	return nil, store.ErrDirectoryProjectionStale
+}
+
+func newDirectoryTestStore(t *testing.T) *stubIdentityCacheStore {
+	t.Helper()
+	return &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
+}
+
+func createDirectoryHTTPPerson(
+	t *testing.T,
+	st *stubIdentityCacheStore,
+	displayName, email, category, organizationName string,
+	active bool,
+) *store.Person {
+	t.Helper()
+	participantID, err := st.EnsureParticipantByIdentifier("email", email, displayName)
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participantID)
+	require.NoError(t, err)
+	person, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, &displayName)
+	require.NoError(t, err)
+	_, err = st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: email,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(t, err)
+	_, err = st.AddPersonCategoryContext(t.Context(), person.ID, store.PersonCategoryInput{
+		OriginalValue: category, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(t, err)
+	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: organizationName, Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(t, err)
+	_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: person.ID, OrganizationID: organization.ID, Source: store.ProvenanceUser,
+	})
+	require.NoError(t, err)
+	if active {
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_contact_state (
+			person_id, last_contact_channel, last_contact_at, interaction_count
+		) VALUES (?, 'email', CURRENT_TIMESTAMP, 1)`), person.ID)
+		require.NoError(t, err)
+	}
+	return person
+}
+
+func assertDirectoryPeopleResponseIDs(t *testing.T, response *httptest.ResponseRecorder, want ...int64) {
+	t.Helper()
+	var page DirectoryPeopleResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	got := make([]int64, len(page.People))
+	for i, person := range page.People {
+		got[i] = person.ID
+	}
+	assert.Equal(t, want, got)
+}
+
+func directoryHTTPPersonIDs(people []store.DirectoryPersonSummary) []int64 {
+	ids := make([]int64, 0, len(people))
+	for _, person := range people {
+		ids = append(ids, person.ID)
+	}
+	return ids
+}
+
+func TestDirectoryPeopleHTTPAlwaysEmitsArrays(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	participantID, err := st.EnsureParticipantByIdentifier("email", "arrays@example.test", "Array Person")
+	require.NoError(err)
+	_, _, err = st.CreatePersonFromParticipantContext(t.Context(), participantID)
+	require.NoError(err)
+	response := personRequest(t, srv, http.MethodGet, peoplePath+"/directory", nil, "")
+	require.Equal(http.StatusOK, response.Code)
+	var body struct {
+		People []struct {
+			Categories    []string `json:"categories"`
+			Organizations []string `json:"organizations"`
+		} `json:"people"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(body.People, 1)
+	assert.NotNil(body.People)
+	assert.NotNil(body.People[0].Categories)
+	assert.NotNil(body.People[0].Organizations)
+	assert.Empty(body.People[0].Categories)
+	assert.Empty(body.People[0].Organizations)
+}
+
+func assertDirectoryPeopleError(t *testing.T, response *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	var body ErrorResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, want, body.Error)
 }
 
 func TestPersonProfileHTTPDelete(t *testing.T) {

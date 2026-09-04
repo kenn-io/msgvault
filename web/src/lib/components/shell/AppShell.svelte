@@ -34,7 +34,12 @@
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
   import { RelationshipsController } from '../../relationships/controller.svelte';
-  import { createCommandRegistry, type CommandHandlers } from '../../commands/registry';
+  import { DirectoryController } from '../../directory/controller.svelte';
+  import { DirectoryReviewController } from '../../directory/review-controller.svelte';
+  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
+  import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
+  import type { CardDAVSettingsRequest } from '../../carddav/navigation';
+  import { createCommandRegistry, type AppCommand, type CommandHandlers } from '../../commands/registry';
   import {
     createAppearancePreferences,
     type AppearanceDefaults,
@@ -49,6 +54,8 @@
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
   import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+  import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
+  import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
@@ -58,7 +65,7 @@
     client: APIClient;
     state?: ExploreState;
     enabled?: boolean;
-    settings?: Snippet;
+    settings?: Snippet<[CardDAVSettingsRequest | undefined, (key: number) => void]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
   }
@@ -132,6 +139,13 @@
     exploreState.replaceCommittedNavigation(patch);
   }
 
+  // Directory text filters are committed drafts like the Everything typed
+  // search: they rewrite the current history entry instead of pushing one.
+  function replaceCommittedDraft(patch: Partial<ExploreURLState>): void {
+    beforeCommit();
+    exploreState.replaceCommittedDraft(patch);
+  }
+
   function commitRestorableNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.commitRestorableNavigation(patch);
@@ -144,7 +158,42 @@
 
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
+    directoryPromotionParticipantID = undefined;
     exploreState.commitWorkspace(workspace);
+  }
+
+  function openDirectoryFromRelationship(participantID: number): void {
+    beforeCommit();
+    directoryController.resetForPromotion();
+    directoryPromotionParticipantID = participantID;
+    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: null });
+  }
+
+  function openDirectoryPerson(personID: number): void {
+    beforeCommit();
+    directoryPromotionParticipantID = undefined;
+    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
+  }
+
+  function announceOperation(message: string): void {
+    operationAnnouncement = { key: ++operationAnnouncementKey, message };
+  }
+
+  function openCardDAVConflict(conflictID: number): void {
+    if (!Number.isSafeInteger(conflictID) || conflictID <= 0) return;
+    cardDAVSettingsRequest = { conflictID, key: ++cardDAVSettingsRequestKey };
+    announceOperation(`Opening CardDAV conflict ${conflictID} in Settings.`);
+    commitWorkspace('settings');
+  }
+
+  function openCardDAVSettings(): void {
+    cardDAVSettingsRequest = { key: ++cardDAVSettingsRequestKey };
+    announceOperation('Opening CardDAV settings.');
+    commitWorkspace('settings');
+  }
+
+  function consumeCardDAVSettingsRequest(key: number): void {
+    if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;
   }
 
   function commitGrouping(dimension: ExploreGroupDimension): void {
@@ -168,10 +217,38 @@
     untrack(() => client),
     () => Intl.DateTimeFormat().resolvedOptions().timeZone
   );
+  // Directory owns ephemeral request/page state while ExploreState remains
+  // the browser-restorable source for its query, filters, and selection.
+  // Keeping the commit callback at the shell boundary gives it the same
+  // history treatment as every other workspace navigation.
+  const directoryController = new DirectoryController(
+    untrack(() => client),
+    (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch))
+  );
+  const directoryReviewController = new DirectoryReviewController(
+    untrack(() => client),
+    (patch) => commitNavigation(patch)
+  );
+  const relationshipReviewController = new RelationshipReviewController(
+    untrack(() => client),
+    (patch) => commitNavigation(patch)
+  );
+  const factLedgerController = new FactLedgerController(untrack(() => client));
+  // Participant IDs only enter here from a successfully loaded
+  // /participants/{id} Relationship detail. It is intentionally ephemeral:
+  // browser restoration and ordinary Directory navigation never invent a
+  // promotion context.
+  let directoryPromotionParticipantID = $state<number>();
+  let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
+  let cardDAVSettingsRequestKey = 0;
+  let operationAnnouncementKey = 0;
+  let operationAnnouncement = $state({ key: 0, message: '' });
   type APIExploreSelection = components['schemas']['ExploreSelection'];
   type ExplorePreflight = components['schemas']['ExplorePreflightResponse'];
   const tabs = [
     { id: 'relationships', label: 'Relationships' },
+    { id: 'directory', label: 'Directory' },
+    { id: 'directory_review', label: 'Reviews' },
     { id: 'everything', label: 'Everything' },
     { id: 'files', label: 'Files' },
     { id: 'saved_views', label: 'Saved Views' },
@@ -184,6 +261,10 @@
     { value: 'compact', label: 'Density: Compact' },
     { value: 'comfortable', label: 'Density: Comfortable' }
   ];
+
+  $effect(() => {
+    if (exploreState.current.workspace !== 'settings') cardDAVSettingsRequest = undefined;
+  });
   // A default landing (no `explore` param at all — the very first visit,
   // not a URL that named a workspace) starts on the Relationships hub. If
   // the analytical engine turns out to be unavailable, that default silently
@@ -234,10 +315,68 @@
   let sortNotice = $state(DEFAULT_SORT_NOTICE);
   let editableScopeCleanup: (() => void) | undefined;
   let previousSortNoticeWorkspace = untrack(() => exploreState.current.workspace);
+  // An epoch is a monotonically increasing restoration event, not a boolean
+  // mode. Capture the initial value so ordinary URL commits do not turn into
+  // repeated page-one reloads merely because the initial epoch is positive.
+  let appliedDirectoryRestorationEpoch = untrack(() => exploreState.restorationEpoch);
+  let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
+  let appliedFactLedgerRestorationEpoch = untrack(() => exploreState.restorationEpoch);
 
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
+  });
+
+  // URL restoration is shell-owned, just like Relationships' target
+  // hydration below. DirectoryWorkspace also supports isolated mounting for
+  // component tests, but normal app navigation reaches the controller here.
+  $effect(() => {
+    const restorationEpoch = exploreState.restorationEpoch;
+    const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
+    appliedDirectoryRestorationEpoch = restorationEpoch;
+    if (exploreState.current.workspace !== 'directory') return;
+    const directoryState = {
+      directoryQuery: exploreState.current.directoryQuery,
+      directoryContactState: exploreState.current.directoryContactState,
+      directoryCategory: exploreState.current.directoryCategory,
+      directoryOrganization: exploreState.current.directoryOrganization,
+      directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
+      directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
+      directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
+      directorySort: exploreState.current.directorySort,
+      directoryPersonID: exploreState.current.directoryPersonID
+    };
+    untrack(() => directoryController.applyURLState(directoryState, historyRestoration));
+  });
+
+  // Review offsets are ephemeral like Directory cursors. A Back/Forward
+  // restoration always starts its restored queue at page zero, while an
+  // ordinary workspace round trip keeps the AppShell-owned request/page.
+  $effect(() => {
+    const restorationEpoch = exploreState.restorationEpoch;
+    const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
+    appliedDirectoryReviewRestorationEpoch = restorationEpoch;
+    const relationshipState = exploreState.current.relationshipReviewState;
+    const factActive = exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
+    const factHistoryRestoration = factActive && restorationEpoch !== appliedFactLedgerRestorationEpoch;
+    if (factActive) appliedFactLedgerRestorationEpoch = restorationEpoch;
+    untrack(() => factLedgerController.applyContext(
+      factActive,
+      exploreState.current.directoryPersonID,
+      factHistoryRestoration
+    ));
+    if (exploreState.current.workspace !== 'directory_review') {
+      untrack(() => relationshipReviewController.applyContext(false, relationshipState, historyRestoration));
+      return;
+    }
+    const reviewState = {
+      reviewKind: exploreState.current.reviewKind,
+      identityState: exploreState.current.identityState
+    };
+    untrack(() => directoryReviewController.applyURLState(reviewState, historyRestoration));
+    untrack(() => relationshipReviewController.applyContext(
+      reviewState.reviewKind === 'relationship', relationshipState, historyRestoration
+    ));
   });
 
   $effect(() => {
@@ -648,7 +787,22 @@
       }
     }));
   }));
-  const commandRegistry = $derived([...createCommandRegistry(commandHandlers), ...groupingCommands]);
+  const reviewWorkspaceCommand: AppCommand = {
+    id: 'workspace:directory-review',
+    label: 'Open Reviews',
+    section: 'Navigate',
+    keywords: 'Navigate Reviews Directory identity matches fact review',
+    keys: [],
+    combos: [],
+    destructive: false,
+    review: false,
+    run: () => commitWorkspace('directory_review')
+  };
+  const commandRegistry = $derived([
+    ...createCommandRegistry(commandHandlers),
+    reviewWorkspaceCommand,
+    ...groupingCommands
+  ]);
   const paletteCommands = $derived(commandRegistry.map((command): PaletteCommand => ({
     id: command.id,
     label: command.label,
@@ -831,11 +985,18 @@
     keyboardHelpScopeCleanup = undefined;
     appearance.destroy();
     relationshipsController.destroy();
+    directoryController.destroy();
+    directoryReviewController.destroy();
+    relationshipReviewController.destroy();
+    factLedgerController.destroy();
     if (ownsState) exploreState.destroy();
   });
 </script>
 
 <div class="app-shell">
+  <span class="kit-sr-only" role="status" aria-label="Operation status" aria-live="polite">
+    {#key operationAnnouncement.key}<span>{operationAnnouncement.message}</span>{/key}
+  </span>
   <TopBar
     {tabs}
     active={exploreState.current.workspace}
@@ -877,7 +1038,7 @@
   </TopBar>
 
   {#if exploreState.current.workspace === 'settings'}
-    {#if settings}{@render settings()}{/if}
+    {#if settings}{@render settings(cardDAVSettingsRequest, consumeCardDAVSettingsRequest)}{/if}
   {:else if exploreState.current.workspace === 'saved_views'}
     <SavedViewsWorkspace
       {client}
@@ -916,8 +1077,41 @@
         personFileDirections, activeRow: null, selectedRow: null, scrollAnchor: null
       })}
       onOpenEverything={() => commitWorkspace('everything')}
+      onOpenDirectory={openDirectoryFromRelationship}
+      onOpenDirectoryPerson={openDirectoryPerson}
+      onAnnounce={announceOperation}
       onOpenFileItem={openFileItem}
       onOpenFileConversation={openFileConversation}
+    />
+  {:else if exploreState.current.workspace === 'directory'}
+    <DirectoryWorkspace
+      {client}
+      controller={directoryController}
+      promotionParticipantID={directoryPromotionParticipantID}
+      state={{
+        directoryQuery: exploreState.current.directoryQuery,
+        directoryContactState: exploreState.current.directoryContactState,
+        directoryCategory: exploreState.current.directoryCategory,
+        directoryOrganization: exploreState.current.directoryOrganization,
+        directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
+        directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
+        directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
+        directorySort: exploreState.current.directorySort,
+        directoryPersonID: exploreState.current.directoryPersonID
+      }}
+      onOpenCardDAVConflict={openCardDAVConflict}
+      onOpenCardDAVSettings={openCardDAVSettings}
+      onAnnounce={announceOperation}
+    />
+  {:else if exploreState.current.workspace === 'directory_review'}
+    <DirectoryReviewWorkspace
+      controller={directoryReviewController}
+      relationshipController={relationshipReviewController}
+      factController={factLedgerController}
+      directoryPersonID={exploreState.current.directoryPersonID}
+      onOpenDirectory={() => commitWorkspace('directory')}
+      onOpenPerson={openDirectoryPerson}
+      onAnnounce={announceOperation}
     />
   {:else if exploreState.current.workspace === 'files'}
     <div class="files-shell">

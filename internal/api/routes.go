@@ -231,6 +231,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonMergeRoutes(apiV1)
 	s.registerOrganizationRoutes(apiV1)
@@ -429,6 +430,21 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaJSONRouteWithErrors[OperationRunsResponse](
+		apiV1, "listOperationRuns", http.MethodGet, "/operations/runs",
+		"List normalized operation history", s.handleOperationRuns,
+		http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable,
+	)
+	registerAPIV1RawHumaJSONRoute[OperationStatusResponse](
+		apiV1, "getOperationStatus", http.MethodGet, "/operations/status",
+		"Get normalized operation lane status", s.handleOperationStatus,
+	)
+	registerAPIV1RawHumaJSONRouteWithErrors[OperationRunDetail](
+		apiV1, "getOperationRun", http.MethodGet, "/operations/runs/{id}",
+		"Get one normalized operation run", s.handleOperationRunDetail,
+		http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaJSONRoute[GmailIDsResponse](apiV1, "getGmailIDsByFilter", http.MethodGet, "/messages/gmail-ids", "List Gmail message IDs matching a filter", s.handleGmailIDsByFilter)
 	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTotalStats", http.MethodGet, "/stats/total", "Get aggregate totals", s.handleTotalStats)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "searchMessagesByDomains", http.MethodGet, "/search/domains", "Search messages by participant domains", s.handleSearchByDomains)
@@ -611,6 +627,25 @@ func rawAPIV1Operation(operationID, method, path, summary string) huma.Operation
 
 func rawRouteParameters(operationID string) []*huma.Param {
 	switch operationID {
+	case "listOperationRuns":
+		kind := queryStringParam("kind", "Exact operation kind", false)
+		kind.Schema.Enum = stringsToAny(operationKindValues())
+		lane := queryStringParam("lane", "Exact semantic operation lane", false)
+		lane.Schema.Enum = stringsToAny(operationLaneValues())
+		state := queryStringParam("state", "Exact operation state", false)
+		state.Schema.Enum = stringsToAny(operationStateValues())
+		limit := queryIntegerParam("limit", "Maximum runs to return (default 25, max 100)")
+		minimum, maximum := float64(1), float64(100)
+		limit.Schema.Minimum, limit.Schema.Maximum = &minimum, &maximum
+		return []*huma.Param{
+			kind,
+			lane,
+			state,
+			limit,
+			queryStringParam("cursor", "Opaque cursor bound to this archive and the exact kind, lane, and state filters", false),
+		}
+	case "getOperationRun":
+		return []*huma.Param{pathStringParam("id", "Opaque archive-bound operation run ID")}
 	case "getCLIStats":
 		return scopeParams()
 	case "searchCLI":
@@ -872,6 +907,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	default:
 		return nil
 	}
+}
+
+func stringsToAny(values []string) []any {
+	result := make([]any, 0, len(values))
+	for _, value := range values {
+		result = append(result, value)
+	}
+	return result
 }
 
 func scopeParams() []*huma.Param {

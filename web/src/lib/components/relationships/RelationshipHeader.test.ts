@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
+import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
 import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipHeader from './RelationshipHeader.svelte';
 
@@ -138,6 +139,17 @@ describe('RelationshipHeader', () => {
     expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
+  it('hands the selected API participant ID to Directory and never offers domains', async () => {
+    const onOpenDirectory = vi.fn();
+    const { rerender } = render(RelationshipHeader, baseProps({ onOpenDirectory }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    expect(onOpenDirectory).toHaveBeenCalledWith(12);
+
+    await rerender(baseProps({ detail: domain(), onOpenDirectory }));
+    expect(screen.queryByRole('button', { name: 'Open in Directory' })).toBeNull();
+  });
+
   it('hides the identities section entirely for a single identity with nothing linked', () => {
     const single = { ...person(), identifiers: [person().identifiers![0]!] };
     render(RelationshipHeader, baseProps({ detail: single }));
@@ -181,6 +193,26 @@ describe('RelationshipHeader', () => {
 
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
+  });
+
+  it('replaces the link dialog with the shared merge modal without replaying the link', async () => {
+    const conflict = {
+      error: 'person_merge_required', message: 'Choose a survivor', profiles: [
+        { etag: '"person-7-r4"', person: { id: 7, revision: 4, display_name: 'Synthetic One' } },
+        { etag: '"person-9-r2"', person: { id: 9, revision: 2, display_name: 'Synthetic Two' } }
+      ]
+    } as unknown as ValidatedPersonMergeRequired;
+    const onLinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({
+      ok: false, code: 'merge_required', message: conflict.message, conflict
+    }));
+    render(RelationshipHeader, baseProps({ onLinkParticipants }));
+
+    await linkToSearchResult();
+
+    expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Resolve person merge' })).toBeDefined();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(onLinkParticipants).toHaveBeenCalledOnce();
   });
 
   it('links against the open cluster member ID; an ok/ready outcome closes the dialog silently', async () => {

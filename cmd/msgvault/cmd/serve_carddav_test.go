@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,12 +14,47 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
-type scheduledCardDAVFixture struct{ syncs int }
+type scheduledCardDAVFixture struct {
+	syncs   int
+	options []carddav.SyncOptions
+}
 
-func (f *scheduledCardDAVFixture) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
+func TestRecoverCardDAVSyncRunsAtStartupTerminalizesOrphansAndLogsOnlyCount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
+		Trigger: store.CardDAVSyncTriggerScheduled,
+	})
+	require.NoError(err)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	require.NoError(recoverCardDAVSyncRunsAtStartup(t.Context(), st, logger))
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(store.CardDAVSyncRunFailed, runs[0].State)
+	assert.Equal("daemon_restarted", runs[0].ErrorCode)
+	assert.Contains(logs.String(), "count=1")
+	assert.NotContains(strings.ToLower(logs.String()), "error_message")
+}
+
+func TestRecoverCardDAVSyncRunsAtStartupReturnsFailure(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, err := st.DB().Exec(`DROP TABLE carddav_sync_runs`)
+	require.NoError(t, err)
+
+	err = recoverCardDAVSyncRunsAtStartup(t.Context(), st, slog.New(slog.DiscardHandler))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "recover CardDAV sync runs")
+}
+
+func (f *scheduledCardDAVFixture) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
 	f.syncs++
+	f.options = append(f.options, options)
 	return carddav.SyncResult{}, nil
 }
 func (f *scheduledCardDAVFixture) ListBooks(context.Context) ([]store.CardDAVAddressBook, error) {
@@ -26,15 +63,15 @@ func (f *scheduledCardDAVFixture) ListBooks(context.Context) ([]store.CardDAVAdd
 func (f *scheduledCardDAVFixture) SetBookRoles(context.Context, int64, carddav.BookRoles) error {
 	return nil
 }
-func (f *scheduledCardDAVFixture) Publication(context.Context, int64) (*store.CardDAVPublication, error) {
-	return &store.CardDAVPublication{}, nil
+func (f *scheduledCardDAVFixture) PublicationView(context.Context, int64) (*carddav.PublicationView, error) {
+	return &carddav.PublicationView{}, nil
 }
 func (f *scheduledCardDAVFixture) PublishPerson(context.Context, int64) error   { return nil }
 func (f *scheduledCardDAVFixture) UnpublishPerson(context.Context, int64) error { return nil }
-func (f *scheduledCardDAVFixture) ListConflicts(context.Context) ([]store.CardDAVConflict, error) {
+func (f *scheduledCardDAVFixture) ListConflictViews(context.Context) ([]carddav.ConflictListItem, error) {
 	return nil, nil
 }
-func (f *scheduledCardDAVFixture) GetConflict(context.Context, int64) (*store.CardDAVConflict, error) {
+func (f *scheduledCardDAVFixture) GetConflictView(context.Context, int64) (*carddav.ConflictDetail, error) {
 	return nil, store.ErrCardDAVConflictNotFound
 }
 func (f *scheduledCardDAVFixture) ResolveConflict(context.Context, int64, carddav.ResolutionChoice) error {
@@ -96,6 +133,8 @@ func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T
 	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}, service, logger))
 	require.NoError(sched.TriggerJob(api.CardDAVJobName))
 	assert.Equal(1, service.syncs)
+	require.Len(service.options, 1)
+	assert.Equal(store.CardDAVSyncTriggerScheduled, service.options[0].Trigger)
 	begin, done := tracker.counts()
 	assert.Equal(1, begin)
 	assert.Equal(1, done)

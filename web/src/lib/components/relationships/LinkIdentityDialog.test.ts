@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
+import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
 import { openTypeahead } from '../../../test/kit-ui';
 import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
@@ -39,6 +40,7 @@ function renderDialog(overrides: Partial<{
   excludeID: number;
   onConfirm: (participantID: number) => Promise<LinkOutcome>;
   onClose: () => void;
+  onMergeRequired: (conflict: ValidatedPersonMergeRequired) => void;
 }> = {}, fetchOverrides: Record<string, (request: Request) => Promise<Response> | Response> = {}) {
   const { fetchFn, requests } = fetchHandler({
     '/api/v1/participants/search': async () => Response.json({ rows: [person(2, 'Bob'), person(3, 'Cara')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {} }),
@@ -46,14 +48,16 @@ function renderDialog(overrides: Partial<{
   });
   const onClose = overrides.onClose ?? vi.fn();
   const onConfirm = overrides.onConfirm ?? vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
+  const onMergeRequired = overrides.onMergeRequired ?? vi.fn();
   const { unmount } = render(LinkIdentityDialog, {
     client: createAPIClient(fetchFn),
     excludeID: overrides.excludeID ?? 1,
     personLabel: 'Alice Example',
     onConfirm,
+    onMergeRequired,
     onClose
   });
-  return { requests, onClose, onConfirm, unmount };
+  return { requests, onClose, onConfirm, onMergeRequired, unmount };
 }
 
 describe('LinkIdentityDialog', () => {
@@ -169,6 +173,28 @@ describe('LinkIdentityDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('hands a merge-required outcome to its parent without closing or retrying', async () => {
+    const conflict = {
+      error: 'person_merge_required', message: 'Choose a survivor', profiles: [
+        { etag: '"person-7-r4"', person: { id: 7, revision: 4 } },
+        { etag: '"person-9-r2"', person: { id: 9, revision: 2 } }
+      ]
+    } as unknown as ValidatedPersonMergeRequired;
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({
+      ok: false, code: 'merge_required', message: conflict.message, conflict
+    }));
+    const onClose = vi.fn();
+    const { onMergeRequired } = renderDialog({ onConfirm, onClose });
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+
+    await waitFor(() => expect(onMergeRequired).toHaveBeenCalledWith(conflict));
+    expect(onConfirm).toHaveBeenCalledOnce();
     expect(onClose).not.toHaveBeenCalled();
   });
 

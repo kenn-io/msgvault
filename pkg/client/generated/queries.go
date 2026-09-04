@@ -3,6 +3,8 @@
 package generated
 
 import (
+	"time"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
@@ -122,6 +124,18 @@ type ListAttributeDefinitionsQuery struct {
 
 	// IncludeHidden Include deactivated definitions
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
+}
+
+type ListCardDAVRunsQuery struct {
+	// Limit Maximum runs to return (default 25, max 100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// BeforeID Return runs with IDs lower than this cursor
+	BeforeID *int64 `json:"before_id,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (l ListCardDAVRunsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type GetCLIAttachmentQuery struct {
@@ -587,6 +601,57 @@ func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type ListOperationRunsQuery struct {
+	// Kind Exact operation kind
+	Kind *ListOperationRunsQueryKind `json:"kind,omitempty"`
+
+	// Lane Exact semantic operation lane
+	Lane *ListOperationRunsQueryLane `json:"lane,omitempty"`
+
+	// State Exact operation state
+	State *ListOperationRunsQueryState `json:"state,omitempty"`
+
+	// Limit Maximum runs to return (default 25, max 100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// Cursor Opaque cursor bound to this archive and the exact kind, lane, and state filters
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+func (l ListOperationRunsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if l.Kind != nil {
+		if v, ok := any(l.Kind).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Kind", err)
+			}
+		}
+	}
+	if l.Lane != nil {
+		if v, ok := any(l.Lane).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Lane", err)
+			}
+		}
+	}
+	if l.State != nil {
+		if v, ok := any(l.State).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("State", err)
+			}
+		}
+	}
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListOrganizationsQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`
@@ -629,6 +694,53 @@ type ListOrganizationEmploymentsQuery struct {
 
 	// Offset Results to skip
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListDirectoryPeopleQuery struct {
+	// Q Lexical query over person names, contact points, and organizations
+	Q *string `json:"q,omitempty"`
+
+	// Cursor Opaque cursor returned by the previous Directory page
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Limit Maximum rows to return (default 50, max 100)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// ContactState Current contact state: active or inactive
+	ContactState *string `json:"contact_state,omitempty"`
+
+	// Category Current person category
+	Category *string `json:"category,omitempty"`
+
+	// Organization Current organization
+	Organization *string `json:"organization,omitempty"`
+
+	// PrimaryChannel Primary communication channel
+	PrimaryChannel *string `json:"primary_channel,omitempty"`
+
+	// LastContactAfter Return people contacted at or after this RFC3339 timestamp
+	LastContactAfter *time.Time `json:"last_contact_after,omitempty"`
+
+	// LastContactBefore Return people contacted at or before this RFC3339 timestamp
+	LastContactBefore *time.Time `json:"last_contact_before,omitempty"`
+
+	// Sort Directory order: name, last_contact_desc, or last_contact_asc
+	Sort *ListDirectoryPeopleQuerySort `json:"sort,omitempty"`
+}
+
+func (l ListDirectoryPeopleQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if l.Sort != nil {
+		if v, ok := any(l.Sort).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Sort", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ListPersonAttributesQuery struct {
@@ -758,6 +870,18 @@ type ListPersonMergesQuery struct {
 
 	// Offset Results to skip
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type GetPersonNetworkQuery struct {
+	// Depth Breadth-first depth (default 1, minimum 1, maximum 3)
+	Depth *int64 `json:"depth,omitempty" validate:"omitempty,gte=1,lte=3"`
+
+	// IncludeEnded Include ended relationships and employment records
+	IncludeEnded *bool `json:"include_ended,omitempty"`
+}
+
+func (g GetPersonNetworkQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type AppendPersonNoteQuery struct {

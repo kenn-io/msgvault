@@ -175,7 +175,7 @@ func (m Model) handlePeopleNewFieldKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	form := &m.peopleState.form
 	if form.fieldFocus == peopleFieldFocusName && !form.submitting {
 		switch msg.String() {
-		case keyNameEsc, "ctrl+c", keyNameTab, "shift+tab", keyNameEnter:
+		case keyNameEsc, keyNameCtrlC, keyNameTab, "shift+tab", keyNameEnter:
 		default:
 			var cmd tea.Cmd
 			form.nameInput, cmd = form.nameInput.Update(msg)
@@ -190,7 +190,7 @@ func (m Model) handlePeopleNewFieldKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		}
 		form.close()
 		return m, nil
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case keyNameTab:
@@ -204,7 +204,7 @@ func (m Model) handlePeopleNewFieldKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case "left", "h":
 		m.changePeopleFieldChoice(-1)
 		return m, nil
-	case "right", "l", "j", "down":
+	case keyNameRight, "l", "j", "down":
 		m.changePeopleFieldChoice(1)
 		return m, nil
 	case "k", "up":
@@ -275,7 +275,7 @@ func (m Model) handlePeopleAttributeValueKey(msg tea.KeyPressMsg) (tea.Model, te
 		}
 		form.close()
 		return m, nil
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	case "ctrl+s":

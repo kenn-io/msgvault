@@ -241,12 +241,22 @@ import (
 // Omission preserves the active-only default. Additive (minor bump): existing
 // clients continue to receive the same result population.
 // 2.13.0 makes deduplicate planning use an explicit, version-gated backfill
-// confirmation protocol.
+// confirmation protocol. It also adds GET /api/v1/people/directory: a paginated,
+// lexical, non-sensitive Directory view of promoted durable people. The legacy
+// unpaginated GET /api/v1/people response remains unchanged.
 // 2.14.0 adds exact case-insensitive List-ID filtering to analytics, deletion,
 // and vector/hybrid search MessageFilter routes, and includes nullable list_id
 // values in the message change feed. Remote clients must require this version
 // before sending list_id because older compatible daemons ignore unknown query
-// parameters and could widen a scoped request.
+// parameters and could widen a scoped request. It also adds the person network,
+// operation history, CardDAV status and run-history reads, the self-describing
+// Settings catalog, stable-name person enrichment provider updates, and
+// write-only provider credential endpoints. It replaces the CardDAV publication
+// and conflict response shapes with bounded projections that omit raw vCards and
+// resource hrefs so those responses cannot expose private contact data or
+// infrastructure identifiers. That shape change lands inside the unreleased 2.x
+// line: nothing after the released 1.36.0 contract has shipped yet, so it does
+// not open a new major version.
 // 2.15.0 adds POST /api/v1/cli/repair-message with a dedicated request and
 // streaming event contract for Gmail snapshot repair and audit operations.
 // Additive (minor bump): existing CLI routes and clients remain unchanged.
@@ -504,7 +514,10 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	if setting := schemas["Setting"]; setting != nil {
-		setting.Properties["group"].Enum = []any{"browser", "server", "archive", "search", "sources", "integrations"}
+		setting.Properties["group"].Enum = []any{
+			"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
+			"activity", "backup", "enrichment", "integrations",
+		}
 		setting.Properties["kind"].Enum = []any{"string", "integer", "number", "boolean", "string_array", "secret"}
 	}
 	if request := schemas["SettingsPatchRequest"]; request != nil {
@@ -512,6 +525,7 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 	}
 	if response := schemas["SettingsResponse"]; response != nil {
 		response.Properties["settings"].Nullable = false
+		response.Properties["groups"].Nullable = false
 	}
 }
 
@@ -742,6 +756,26 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				"CreateCommunicationServiceRequestScopePolicyRequired",
 			},
 		},
+		"CardDAVConflictDetailResponse": {
+			"resolution": {"CardDAVConflictDetailResponseResolutionKeepLocal", "CardDAVConflictDetailResponseResolutionKeepRemote"},
+			"status":     {"CardDAVConflictDetailResponseStatusUnresolved", "CardDAVConflictDetailResponseStatusResolved"},
+		},
+		"CardDAVConflictResolutionResponse": {
+			"resolution": {"CardDAVConflictResolutionResponseResolutionKeepLocal", "CardDAVConflictResolutionResponseResolutionKeepRemote"},
+			"status":     {"CardDAVConflictResolutionResponseStatusResolved"},
+		},
+		"CardDAVConflictResponse": {
+			"local_state":  {"CardDAVConflictResponseLocalStatePresent", "CardDAVConflictResponseLocalStateDeleted", "CardDAVConflictResponseLocalStateUnavailable"},
+			"remote_state": {"CardDAVConflictResponseRemoteStatePresent", "CardDAVConflictResponseRemoteStateDeleted", "CardDAVConflictResponseRemoteStateUnavailable"},
+			"status":       {"CardDAVConflictResponseStatusUnresolved", "CardDAVConflictResponseStatusResolved"},
+		},
+		"CardDAVContactSummaryResponse": {
+			"state": {"CardDAVContactSummaryResponseStatePresent", "CardDAVContactSummaryResponseStateDeleted", "CardDAVContactSummaryResponseStateUnavailable"},
+		},
+		"CardDAVPublicationResponse": {
+			"pending_operation": {"CardDAVPublicationResponsePendingOperationCreate", "CardDAVPublicationResponsePendingOperationUpdate", "CardDAVPublicationResponsePendingOperationDelete"},
+			"state":             {"CardDAVPublicationResponseStateUnpublished", "CardDAVPublicationResponseStatePublished", "CardDAVPublicationResponseStatePending", "CardDAVPublicationResponseStateConflict"},
+		},
 		"ExploreCacheUnavailableResponse": {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
@@ -779,6 +813,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		for propertyName, enumNames := range properties {
 			setEnumNames(schema.Properties[propertyName], enumNames)
 		}
+	}
+	for _, schemaName := range []string{"CardDAVConflictDetailResponse", "CardDAVConflictResponse"} {
+		schema := schemas[schemaName]
+		if schema == nil || schema.Properties["allowed_resolutions"] == nil {
+			continue
+		}
+		setEnumNames(schema.Properties["allowed_resolutions"].Items, []any{
+			schemaName + "AllowedResolutionsKeepLocal",
+			schemaName + "AllowedResolutionsKeepRemote",
+		})
 	}
 	meeting := schemas["Meeting"]
 	if meeting == nil || meeting.Properties == nil {

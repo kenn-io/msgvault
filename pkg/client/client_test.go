@@ -183,6 +183,288 @@ func TestGeneratedPersonMergeRoundTrip(t *testing.T) {
 	assert.Equal(`"person-7-r4"`, response.Headers200.ETag)
 }
 
+func TestGeneratedCardDAVConflictAndPublicationRoundTrips(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			assert.Equal(http.MethodPost, r.Method)
+			assert.Equal("/api/v1/carddav/conflicts/7/resolve", r.URL.Path)
+			var body generated.CardDAVResolveRequest
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			assert.Equal(generated.KeepRemote, body.Choice)
+			_, _ = w.Write([]byte(`{"id":7,"status":"resolved","resolution":"keep_remote"}`))
+		case 2:
+			assert.Equal(http.MethodPost, r.Method)
+			assert.Equal("/api/v1/carddav/publications/11", r.URL.Path)
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":2,"name":"Personal"}}`))
+		case 3:
+			assert.Equal(http.MethodDelete, r.Method)
+			assert.Equal("/api/v1/carddav/publications/11", r.URL.Path)
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"unpublished","desired":false,"address_book":{"id":2,"name":"Personal"}}`))
+		default:
+			assert.Fail("unexpected request", "request %d", requests)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	require.NoError(err)
+
+	resolved, err := client.ResolveCardDAVConflictWithResponse(t.Context(), &generated.ResolveCardDAVConflictRequestOptions{
+		PathParams: &generated.ResolveCardDAVConflictPath{ID: 7},
+		Body: &generated.ResolveCardDAVConflictBody{
+			Choice: generated.KeepRemote,
+		},
+	})
+	require.NoError(err)
+	require.NotNil(resolved.JSON200)
+	assert.Equal(generated.CardDAVConflictResolutionResponseResolutionKeepRemote, resolved.JSON200.Resolution)
+
+	published, err := client.PublishCardDAVPersonWithResponse(t.Context(), &generated.PublishCardDAVPersonRequestOptions{
+		PathParams: &generated.PublishCardDAVPersonPath{PersonID: 11},
+	})
+	require.NoError(err)
+	require.NotNil(published.JSON200)
+	require.NotNil(published.JSON200.AddressBook)
+	assert.Equal(int64(2), published.JSON200.AddressBook.ID)
+
+	unpublished, err := client.UnpublishCardDAVPersonWithResponse(t.Context(), &generated.UnpublishCardDAVPersonRequestOptions{
+		PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: 11},
+	})
+	require.NoError(err)
+	require.NotNil(unpublished.JSON200)
+	assert.False(unpublished.JSON200.Desired)
+	assert.Equal(3, requests)
+}
+
+func TestOperationGeneratedClientDecodesSafeStatusListAndDetail(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	statusRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/operations/status":
+			assert.Equal(http.MethodGet, r.Method)
+			statusRequests++
+			if statusRequests > 1 {
+				_, _ = w.Write([]byte(`{"lanes":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"lanes":[
+				{"kind":"person_enrichment","lane":"person_facts","configured":false,"history_availability":"unavailable","unavailable_code":"person_enrichment_history_unavailable","supported_actions":[]},
+				{"kind":"visual_embedding","lane":"visual_attachments","configured":true,"history_availability":"unavailable","unavailable_code":"visual_embedding_history_unavailable","related_status":"getVisualAttachmentStatus","supported_actions":["visual_resume"]}
+			]}`))
+		case "/api/v1/operations/runs":
+			assert.Equal(http.MethodGet, r.Method)
+			if r.URL.Query().Get("kind") == "" {
+				_, _ = w.Write([]byte(`{"runs":[],"unavailable_kinds":[]}`))
+				return
+			}
+			assert.Equal("source_sync", r.URL.Query().Get("kind"))
+			assert.Equal("messages", r.URL.Query().Get("lane"))
+			assert.Equal("succeeded", r.URL.Query().Get("state"))
+			assert.Equal("25", r.URL.Query().Get("limit"))
+			assert.Equal("opaque-current-page", r.URL.Query().Get("cursor"))
+			_, _ = w.Write([]byte(`{"runs":[
+				{"id":"1.safe-source-run","kind":"source_sync","lane":"messages","state":"succeeded","trigger":"scheduled","started_at":"2026-08-29T10:00:00Z","finished_at":"2026-08-29T10:00:02Z","counters":[{"name":"processed","unit":"messages","value":4}]},
+				{"id":"1.safe-carddav-run","kind":"carddav_sync","lane":"contacts","state":"failed","trigger":"manual","started_at":"2026-08-29T11:00:00Z","finished_at":"2026-08-29T11:00:01Z","counters":[{"name":"books","unit":"books","value":1}],"error":{"code":"authentication_failed","message":"CardDAV authentication failed."}}
+			],"next_cursor":"opaque-next-page","unavailable_kinds":[{"kind":"message_embedding","lane":"messages","unavailable_code":"message_embedding_history_unavailable"}]}`))
+		case "/api/v1/operations/runs/1.safe-source-run":
+			assert.Equal(http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`{"id":"1.safe-source-run","kind":"source_sync","lane":"messages","state":"succeeded","trigger":"scheduled","started_at":"2026-08-29T10:00:00Z","finished_at":"2026-08-29T10:00:02Z","counters":[]}`))
+		default:
+			assert.Fail("unexpected request", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	require.NoError(err)
+
+	status, err := client.GetOperationStatusWithResponse(t.Context())
+	require.NoError(err)
+	require.NotNil(status.JSON200)
+	require.Len(status.JSON200.Lanes, 2)
+	assert.Equal("person_enrichment", string(status.JSON200.Lanes[0].Kind))
+	assert.NotNil(status.JSON200.Lanes[0].SupportedActions)
+	assert.Empty(status.JSON200.Lanes[0].SupportedActions)
+	require.NotNil(status.JSON200.Lanes[1].RelatedStatus)
+	assert.Equal(generated.GetVisualAttachmentStatus, *status.JSON200.Lanes[1].RelatedStatus)
+	assert.Equal(generated.VisualResume, status.JSON200.Lanes[1].SupportedActions[0])
+
+	kind := generated.ListOperationRunsQueryKindSourceSync
+	lane := generated.ListOperationRunsQueryLaneMessages
+	state := generated.ListOperationRunsQueryStateSucceeded
+	limit := int64(25)
+	cursor := "opaque-current-page"
+	list, err := client.ListOperationRunsWithResponse(t.Context(), &generated.ListOperationRunsRequestOptions{Query: &generated.ListOperationRunsQuery{
+		Kind: &kind, Lane: &lane, State: &state, Limit: &limit, Cursor: &cursor,
+	}})
+	require.NoError(err)
+	require.NotNil(list.JSON200)
+	require.Len(list.JSON200.Runs, 2)
+	assert.Equal(time.Date(2026, time.August, 29, 10, 0, 0, 0, time.UTC), list.JSON200.Runs[0].StartedAt)
+	require.NotNil(list.JSON200.Runs[0].Trigger)
+	assert.Equal("scheduled", string(*list.JSON200.Runs[0].Trigger))
+	require.Len(list.JSON200.Runs[0].Counters, 1)
+	assert.Equal(generated.Processed, list.JSON200.Runs[0].Counters[0].Name)
+	require.NotNil(list.JSON200.Runs[1].ErrorData)
+	assert.Equal(generated.OperationPublicErrorCodeAuthenticationFailed, list.JSON200.Runs[1].ErrorData.Code)
+	assert.Equal("CardDAV authentication failed.", list.JSON200.Runs[1].ErrorData.Message)
+	assert.Equal("opaque-next-page", *list.JSON200.NextCursor)
+	require.Len(list.JSON200.UnavailableKinds, 1)
+	assert.Equal("message_embedding", string(list.JSON200.UnavailableKinds[0].Kind))
+
+	detail, err := client.GetOperationRunWithResponse(t.Context(), &generated.GetOperationRunRequestOptions{
+		PathParams: &generated.GetOperationRunPath{ID: "1.safe-source-run"},
+	})
+	require.NoError(err)
+	require.NotNil(detail.JSON200)
+	assert.Equal("source_sync", string(detail.JSON200.Kind))
+	assert.NotNil(detail.JSON200.Counters)
+	assert.Empty(detail.JSON200.Counters)
+
+	emptyStatus, err := client.GetOperationStatusWithResponse(t.Context())
+	require.NoError(err)
+	require.NotNil(emptyStatus.JSON200)
+	assert.NotNil(emptyStatus.JSON200.Lanes)
+	assert.Empty(emptyStatus.JSON200.Lanes)
+	emptyList, err := client.ListOperationRunsWithResponse(t.Context(), &generated.ListOperationRunsRequestOptions{})
+	require.NoError(err)
+	require.NotNil(emptyList.JSON200)
+	assert.NotNil(emptyList.JSON200.Runs)
+	assert.Empty(emptyList.JSON200.Runs)
+	assert.NotNil(emptyList.JSON200.UnavailableKinds)
+	assert.Empty(emptyList.JSON200.UnavailableKinds)
+	assert.Equal(5, requests)
+
+	encoded, err := json.Marshal(struct {
+		Status *generated.OperationStatusResponse `json:"status"`
+		List   *generated.OperationRunsResponse   `json:"list"`
+		Detail *generated.OperationRunDetail      `json:"detail"`
+	}{Status: status.JSON200, List: list.JSON200, Detail: detail.JSON200})
+	require.NoError(err)
+	for _, forbidden := range []string{
+		`"method"`, `"path"`, `"action"`, `"url"`, `"href"`, `"vcard"`, `"credentials"`,
+		`"fingerprint"`, `"provider"`, `"account"`, `"message_id"`, `"person_id"`, `"source_id"`,
+		`"raw_error"`, `"evidence"`, `"usage"`, `"cost"`, `"args"`,
+	} {
+		assert.NotContains(string(encoded), forbidden)
+	}
+}
+
+func TestGeneratedCardDAVConflictListAndDetailDecodeSafeContract(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	createdAt := time.Date(2026, time.August, 28, 9, 10, 11, 0, time.UTC)
+	updatedAt := time.Date(2026, time.August, 28, 10, 11, 12, 0, time.UTC)
+	resolvedAt := time.Date(2026, time.August, 28, 11, 12, 13, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/carddav/conflicts":
+			assert.Equal(http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`{"conflicts":[{"id":7,"address_book":{"id":2,"name":"Personal"},"status":"unresolved","local_state":"deleted","remote_state":"present","allowed_resolutions":["keep_local","keep_remote"],"updated_at":"2026-08-28T10:11:12Z"}]}`))
+		case "/api/v1/carddav/conflicts/8":
+			assert.Equal(http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`{"id":8,"address_book":{"id":3,"name":"Archive"},"status":"resolved","resolution":"keep_local","base":{"state":"unavailable","emails":[],"phones":[]},"local":{"state":"present","display_name":"Alice","emails":["alice@example.test"],"phones":["+12025550123"],"truncated":true},"remote":{"state":"deleted","emails":[],"phones":[]},"allowed_resolutions":[],"created_at":"2026-08-28T09:10:11Z","updated_at":"2026-08-28T10:11:12Z","resolved_at":"2026-08-28T11:12:13Z"}`))
+		default:
+			assert.Fail("unexpected request", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	require.NoError(err)
+
+	list, err := client.ListCardDAVConflictsWithResponse(t.Context())
+	require.NoError(err)
+	require.NotNil(list.JSON200)
+	require.NotNil(list.JSON200.Conflicts)
+	require.Len(list.JSON200.Conflicts, 1)
+	require.NoError(list.JSON200.Validate())
+	item := list.JSON200.Conflicts[0]
+	assert.Equal(int64(7), item.ID)
+	assert.Equal(int64(2), item.AddressBook.ID)
+	assert.Equal("Personal", item.AddressBook.Name)
+	assert.Equal(generated.CardDAVConflictResponseStatusUnresolved, item.Status)
+	assert.Equal(generated.CardDAVConflictResponseLocalStateDeleted, item.LocalState)
+	assert.Equal(generated.CardDAVConflictResponseRemoteStatePresent, item.RemoteState)
+	assert.Equal([]generated.CardDAVConflictResponseAllowedResolutions{
+		generated.CardDAVConflictResponseAllowedResolutionsKeepLocal,
+		generated.CardDAVConflictResponseAllowedResolutionsKeepRemote,
+	}, item.AllowedResolutions)
+	assert.Equal(updatedAt, item.UpdatedAt)
+
+	detail, err := client.GetCardDAVConflictWithResponse(t.Context(), &generated.GetCardDAVConflictRequestOptions{
+		PathParams: &generated.GetCardDAVConflictPath{ID: 8},
+	})
+	require.NoError(err)
+	require.NotNil(detail.JSON200)
+	assert.Equal(int64(8), detail.JSON200.ID)
+	assert.Equal(int64(3), detail.JSON200.AddressBook.ID)
+	assert.Equal("Archive", detail.JSON200.AddressBook.Name)
+	assert.Equal(generated.CardDAVConflictDetailResponseStatusResolved, detail.JSON200.Status)
+	require.NotNil(detail.JSON200.Resolution)
+	assert.Equal(generated.CardDAVConflictDetailResponseResolutionKeepLocal, *detail.JSON200.Resolution)
+	assert.Equal(generated.CardDAVContactSummaryResponseStateUnavailable, detail.JSON200.Base.State)
+	assert.NotNil(detail.JSON200.Base.Emails)
+	assert.NotNil(detail.JSON200.Base.Phones)
+	assert.Equal(generated.CardDAVContactSummaryResponseStatePresent, detail.JSON200.Local.State)
+	require.NotNil(detail.JSON200.Local.DisplayName)
+	assert.Equal("Alice", *detail.JSON200.Local.DisplayName)
+	assert.Equal([]string{"alice@example.test"}, detail.JSON200.Local.Emails)
+	assert.Equal([]string{"+12025550123"}, detail.JSON200.Local.Phones)
+	require.NotNil(detail.JSON200.Local.Truncated)
+	assert.True(*detail.JSON200.Local.Truncated)
+	assert.Equal(generated.CardDAVContactSummaryResponseStateDeleted, detail.JSON200.Remote.State)
+	assert.NotNil(detail.JSON200.Remote.Emails)
+	assert.NotNil(detail.JSON200.Remote.Phones)
+	assert.NotNil(detail.JSON200.AllowedResolutions)
+	assert.Empty(detail.JSON200.AllowedResolutions)
+	assert.Equal(createdAt, detail.JSON200.CreatedAt)
+	assert.Equal(updatedAt, detail.JSON200.UpdatedAt)
+	require.NotNil(detail.JSON200.ResolvedAt)
+	assert.Equal(resolvedAt, *detail.JSON200.ResolvedAt)
+	require.NoError(detail.JSON200.Validate())
+	encoded, err := json.Marshal(detail.JSON200)
+	require.NoError(err)
+	assert.Contains(string(encoded), `"allowed_resolutions":[]`)
+}
+
+func TestGeneratedCardDAVConflictDecodesTyped409(t *testing.T) {
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/carddav/conflicts/7/resolve", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"carddav_conflict_stale","message":"CardDAV conflict changed; refresh before trying again"}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	require.NoError(err)
+
+	response, err := client.ResolveCardDAVConflictWithResponse(t.Context(), &generated.ResolveCardDAVConflictRequestOptions{
+		PathParams: &generated.ResolveCardDAVConflictPath{ID: 7},
+		Body: &generated.ResolveCardDAVConflictBody{
+			Choice: generated.KeepLocal,
+		},
+	})
+	require.Error(err)
+	require.NotNil(response)
+	require.NotNil(response.JSON409)
+	assert.Equal(t, "carddav_conflict_stale", response.JSON409.ErrorData)
+}
+
 func TestGeneratedPersonMergeSnapshotPreservesArbitraryJSON(t *testing.T) {
 	want := `{
 		"version":1,

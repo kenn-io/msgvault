@@ -291,6 +291,15 @@ func (u UnlinkMessageTaskPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type GetOperationRunPath struct {
+	// ID Opaque archive-bound operation run ID
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetOperationRunPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type DeleteOrganizationPath struct {
 	// ID Organization ID
 	ID int64 `json:"id"`
@@ -527,6 +536,11 @@ type ListPersonMergesPath struct {
 	ID int64 `json:"id"`
 }
 
+type GetPersonNetworkPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type AppendPersonNotePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -655,6 +669,30 @@ type GetSavedViewPath struct {
 type PatchSavedViewPath struct {
 	// ID Saved View ID
 	ID int64 `json:"id"`
+}
+
+type PutSettingsPersonEnrichmentProviderPath struct {
+	Name string `json:"name" validate:"required"`
+}
+
+func (p PutSettingsPersonEnrichmentProviderPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type DeleteSettingsProviderCredentialPath struct {
+	CredentialID string `json:"credential_id" validate:"required"`
+}
+
+func (d DeleteSettingsProviderCredentialPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PutSettingsProviderCredentialPath struct {
+	CredentialID string `json:"credential_id" validate:"required"`
+}
+
+func (p PutSettingsProviderCredentialPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type ListSourceIdentitiesPath struct {

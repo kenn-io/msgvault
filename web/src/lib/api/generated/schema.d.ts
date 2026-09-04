@@ -368,6 +368,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/carddav/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List CardDAV synchronization runs */
+        get: operations["listCardDAVRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/carddav/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get CardDAV synchronization status */
+        get: operations["getCardDAVStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/carddav/sync": {
         parameters: {
             query?: never;
@@ -1822,6 +1856,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operations/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List normalized operation history */
+        get: operations["listOperationRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one normalized operation run */
+        get: operations["getOperationRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get normalized operation lane status */
+        get: operations["getOperationStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations": {
         parameters: {
             query?: never;
@@ -2131,6 +2216,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query durable people for the Directory
+         * @description Returns one stable, non-sensitive page of promoted durable people.
+         */
+        get: operations["listDirectoryPeople"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/people/search": {
         parameters: {
             query?: never;
@@ -2421,6 +2526,26 @@ export interface paths {
         };
         /** List merge history for a durable person */
         get: operations["listPersonMerges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/people/{id}/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a bounded curated person network
+         * @description Returns declared person relationships and employments only; archive-derived associations are excluded.
+         */
+        get: operations["getPersonNetwork"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2977,6 +3102,41 @@ export interface paths {
         head?: never;
         /** Update browser-managed settings */
         patch: operations["patchSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/person-enrichment/providers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or update one named person-enrichment provider */
+        put: operations["putSettingsPersonEnrichmentProvider"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/provider-credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a write-only provider credential */
+        put: operations["putSettingsProviderCredential"];
+        post?: never;
+        /** Clear a stored provider credential */
+        delete: operations["deleteSettingsProviderCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/sources/status": {
@@ -3693,6 +3853,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        CardDAVAddressBookIdentityResponse: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
         CardDAVBookResponse: {
             /** Format: int64 */
             id: number;
@@ -3716,55 +3883,141 @@ export interface components {
             [key: string]: unknown;
         };
         CardDAVConflictDetailResponse: {
-            /** Format: int64 */
-            address_book_id: number;
-            href: string;
+            address_book: components["schemas"]["CardDAVAddressBookIdentityResponse"];
+            allowed_resolutions: ("keep_local" | "keep_remote")[];
+            base: components["schemas"]["CardDAVContactSummaryResponse"];
+            /** Format: date-time */
+            created_at: string;
             /** Format: int64 */
             id: number;
-            local_tombstone: boolean;
-            local_vcard?: string;
-            remote_tombstone: boolean;
-            remote_vcard?: string;
-            status: string;
+            local: components["schemas"]["CardDAVContactSummaryResponse"];
+            remote: components["schemas"]["CardDAVContactSummaryResponse"];
+            /** @enum {string} */
+            resolution?: "keep_local" | "keep_remote";
+            /** Format: date-time */
+            resolved_at?: string;
+            /** @enum {string} */
+            status: "unresolved" | "resolved";
+            /** Format: date-time */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
         CardDAVConflictResolutionResponse: {
             /** Format: int64 */
             id: number;
-            status: string;
+            /** @enum {string} */
+            resolution: "keep_local" | "keep_remote";
+            /** @enum {string} */
+            status: "resolved";
         } & {
             [key: string]: unknown;
         };
         CardDAVConflictResponse: {
-            /** Format: int64 */
-            address_book_id: number;
-            href: string;
+            address_book: components["schemas"]["CardDAVAddressBookIdentityResponse"];
+            allowed_resolutions: ("keep_local" | "keep_remote")[];
             /** Format: int64 */
             id: number;
-            local_tombstone: boolean;
-            remote_tombstone: boolean;
-            status: string;
+            /** @enum {string} */
+            local_state: "present" | "deleted" | "unavailable";
+            /** @enum {string} */
+            remote_state: "present" | "deleted" | "unavailable";
+            /** @enum {string} */
+            status: "unresolved" | "resolved";
+            /** Format: date-time */
+            updated_at: string;
         } & {
             [key: string]: unknown;
         };
         CardDAVConflictsResponse: {
-            conflicts: components["schemas"]["CardDAVConflictResponse"][] | null;
+            conflicts: components["schemas"]["CardDAVConflictResponse"][];
+        } & {
+            [key: string]: unknown;
+        };
+        CardDAVContactSummaryResponse: {
+            display_name?: string;
+            emails: string[];
+            phones: string[];
+            /** @enum {string} */
+            state: "present" | "deleted" | "unavailable";
+            truncated?: boolean;
         } & {
             [key: string]: unknown;
         };
         CardDAVPublicationResponse: {
+            address_book?: components["schemas"]["CardDAVAddressBookIdentityResponse"];
+            /** Format: int64 */
+            conflict_id?: number;
             desired: boolean;
-            href?: string;
-            pending_operation?: string;
+            /** @enum {string} */
+            pending_operation?: "create" | "update" | "delete";
             /** Format: int64 */
             person_id: number;
+            /** @enum {string} */
+            state: "unpublished" | "published" | "pending" | "conflict";
         } & {
             [key: string]: unknown;
         };
         CardDAVResolveRequest: {
             /** @enum {string} */
             choice: "keep_local" | "keep_remote";
+        };
+        CardDAVRunResponse: {
+            /** Format: int64 */
+            books: number;
+            /** Format: int64 */
+            created: number;
+            /** @enum {string} */
+            error_code?: "cancelled" | "retry_after" | "authentication_failed" | "upstream_failed" | "safety_limit" | "sync_failed" | "unsafe_error_redacted" | "daemon_restarted";
+            error_message?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            full: boolean;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            removed: number;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "running" | "succeeded" | "failed" | "cancelled" | "partial";
+            /** @enum {string} */
+            trigger: "manual" | "scheduled";
+            /** Format: int64 */
+            updated: number;
+        } & {
+            [key: string]: unknown;
+        };
+        CardDAVRunsResponse: {
+            /** Format: int64 */
+            next_before_id?: number;
+            runs: components["schemas"]["CardDAVRunResponse"][];
+        } & {
+            [key: string]: unknown;
+        };
+        CardDAVStatusAccount: {
+            base_url: string;
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
+        CardDAVStatusResponse: {
+            account?: components["schemas"]["CardDAVStatusAccount"];
+            active?: components["schemas"]["CardDAVRunResponse"];
+            available: boolean;
+            configured: boolean;
+            credential_configured: boolean;
+            enabled: boolean;
+            latest?: components["schemas"]["CardDAVRunResponse"];
+            latest_successful?: components["schemas"]["CardDAVRunResponse"];
+            /** Format: date-time */
+            next_scheduled_at?: string;
+            /** @enum {string} */
+            repair_reason?: "account_missing" | "credential_missing" | "credential_mismatch" | "credential_unavailable" | "runtime_unavailable";
+            schedule: string;
+            scheduled: boolean;
+        } & {
+            [key: string]: unknown;
         };
         CardDAVSyncRequest: {
             full?: boolean;
@@ -4288,6 +4541,27 @@ export interface components {
             source_identifier: string;
             source_message_id: string;
             source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DirectoryPeopleResponse: {
+            next_cursor?: string;
+            people: components["schemas"]["DirectoryPersonSummary"][];
+        } & {
+            [key: string]: unknown;
+        };
+        DirectoryPersonSummary: {
+            categories: string[];
+            contact_state: string;
+            display_name?: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            last_contact_at?: string;
+            organizations: string[];
+            primary_channel?: string;
+            /** Format: int64 */
+            revision: number;
         } & {
             [key: string]: unknown;
         };
@@ -5521,11 +5795,130 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        NetworkEdge: {
+            end_date?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "relationship" | "employment";
+            label: string;
+            relationship_type_slug?: string;
+            source_node_id: string;
+            start_date?: string;
+            target_node_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        NetworkNode: {
+            /** Format: int64 */
+            entity_id: number;
+            /** Format: int64 */
+            hop: number;
+            id: string;
+            /** @enum {string} */
+            kind: "person" | "organization";
+            label: string;
+        } & {
+            [key: string]: unknown;
+        };
         OperationHealth: {
             busy: boolean;
             label?: string;
             /** Format: date-time */
             started_at?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OperationLaneStatus: {
+            active?: components["schemas"]["OperationRunSummary"];
+            configured: boolean;
+            /** @enum {string} */
+            history_availability: "available" | "unavailable";
+            /** @enum {string} */
+            kind: "carddav_sync" | "document_embedding" | "document_extraction" | "message_embedding" | "person_embedding" | "person_enrichment" | "person_sweep" | "source_sync" | "visual_embedding";
+            /** @enum {string} */
+            lane: "contacts" | "documents" | "messages" | "person_facts" | "visual_attachments";
+            latest?: components["schemas"]["OperationRunSummary"];
+            latest_successful?: components["schemas"]["OperationRunSummary"];
+            /** @enum {string} */
+            related_status?: "listSourceStatus" | "getDocumentIndexStatus" | "getDocumentVectorStatus" | "getVisualAttachmentStatus" | "getCardDAVStatus";
+            supported_actions: ("carddav_sync" | "visual_build" | "visual_resume")[];
+            unavailable_code?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OperationPublicCounter: {
+            /** @enum {string} */
+            name: "processed" | "added" | "updated" | "item_errors" | "attempted" | "succeeded" | "failed" | "projected_writes" | "books" | "created" | "removed";
+            /** @enum {string} */
+            unit: "messages" | "people" | "writes" | "books" | "contacts";
+            /** Format: int64 */
+            value: number;
+        } & {
+            [key: string]: unknown;
+        };
+        OperationPublicError: {
+            /** @enum {string} */
+            code: "source_sync_failed" | "person_sweep_failed" | "policy" | "budget" | "lease_lost" | "rate_limited" | "timeout" | "provider_http" | "invalid_output" | "archive_gap" | "internal" | "cancelled" | "retry_after" | "authentication_failed" | "upstream_failed" | "safety_limit" | "sync_failed" | "unsafe_error_redacted" | "daemon_restarted" | "carddav_sync_failed";
+            message: string;
+        } & {
+            [key: string]: unknown;
+        };
+        OperationRunDetail: {
+            counters: components["schemas"]["OperationPublicCounter"][];
+            error?: components["schemas"]["OperationPublicError"];
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "carddav_sync" | "document_embedding" | "document_extraction" | "message_embedding" | "person_embedding" | "person_enrichment" | "person_sweep" | "source_sync" | "visual_embedding";
+            /** @enum {string} */
+            lane: "contacts" | "documents" | "messages" | "person_facts" | "visual_attachments";
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "cancelled" | "failed" | "partial" | "queued" | "running" | "succeeded";
+            /** @enum {string} */
+            trigger?: "manual" | "scheduled";
+        } & {
+            [key: string]: unknown;
+        };
+        OperationRunSummary: {
+            counters: components["schemas"]["OperationPublicCounter"][];
+            error?: components["schemas"]["OperationPublicError"];
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "carddav_sync" | "document_embedding" | "document_extraction" | "message_embedding" | "person_embedding" | "person_enrichment" | "person_sweep" | "source_sync" | "visual_embedding";
+            /** @enum {string} */
+            lane: "contacts" | "documents" | "messages" | "person_facts" | "visual_attachments";
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "cancelled" | "failed" | "partial" | "queued" | "running" | "succeeded";
+            /** @enum {string} */
+            trigger?: "manual" | "scheduled";
+        } & {
+            [key: string]: unknown;
+        };
+        OperationRunsResponse: {
+            next_cursor?: string;
+            runs: components["schemas"]["OperationRunSummary"][];
+            unavailable_kinds: components["schemas"]["OperationUnavailableKind"][];
+        } & {
+            [key: string]: unknown;
+        };
+        OperationStatusResponse: {
+            lanes: components["schemas"]["OperationLaneStatus"][];
+        } & {
+            [key: string]: unknown;
+        };
+        OperationUnavailableKind: {
+            /** @enum {string} */
+            kind: "carddav_sync" | "document_embedding" | "document_extraction" | "message_embedding" | "person_embedding" | "person_enrichment" | "person_sweep" | "source_sync" | "visual_embedding";
+            /** @enum {string} */
+            lane: "contacts" | "documents" | "messages" | "person_facts" | "visual_attachments";
+            unavailable_code: string;
         } & {
             [key: string]: unknown;
         };
@@ -5598,6 +5991,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             street_address?: string | null;
             timezone?: string | null;
             type_label?: string | null;
@@ -5677,6 +6071,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             type_label?: string | null;
             type_tokens?: string[] | null;
             vcard_altid?: string | null;
@@ -5720,6 +6115,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             type_label?: string | null;
             type_tokens?: string[] | null;
             uri?: string | null;
@@ -5761,6 +6157,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             type_label?: string | null;
             type_tokens?: string[] | null;
             vcard_altid?: string | null;
@@ -5802,6 +6199,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             type_label?: string | null;
             type_tokens?: string[] | null;
             uri?: string | null;
@@ -5836,6 +6234,7 @@ export interface components {
             /** @enum {string} */
             source: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
             source_ref?: string | null;
+            source_resource_uid?: string | null;
             type_label?: string | null;
             type_tokens?: string[] | null;
             vcard_altid?: string | null;
@@ -6218,6 +6617,63 @@ export interface components {
             total_count: number;
         } & {
             [key: string]: unknown;
+        };
+        PersonEnrichmentProviderSetting: {
+            allow_sensitive_targets: boolean;
+            allowed_identifiers: string[] | null;
+            credential?: components["schemas"]["SecretSettingState"];
+            credential_id: string;
+            enabled: boolean;
+            endpoint: string;
+            /** @enum {string} */
+            kind: "exa" | "sixtyfour";
+            max_job_age: string;
+            /** Format: int64 */
+            max_requests_per_day: number;
+            /** Format: int64 */
+            max_requests_per_run: number;
+            /** Format: int64 */
+            max_retries: number;
+            mode?: string;
+            name: string;
+            /** Format: int64 */
+            num_results?: number;
+            poll_endpoint?: string;
+            poll_interval: string;
+            refresh_interval: string;
+            request_timeout: string;
+            retention_posture: string;
+            target_keys: string[] | null;
+            tier?: string;
+            training_posture: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonEnrichmentProviderUpdate: {
+            allow_sensitive_targets: boolean;
+            allowed_identifiers: string[] | null;
+            enabled: boolean;
+            endpoint: string;
+            /** @enum {string} */
+            kind: "exa" | "sixtyfour";
+            max_job_age?: string;
+            /** Format: int64 */
+            max_requests_per_day: number;
+            /** Format: int64 */
+            max_requests_per_run: number;
+            /** Format: int64 */
+            max_retries: number;
+            mode?: string;
+            /** Format: int64 */
+            num_results?: number;
+            poll_endpoint?: string;
+            poll_interval?: string;
+            refresh_interval: string;
+            request_timeout: string;
+            retention_posture: string;
+            target_keys: string[] | null;
+            tier?: string;
+            training_posture: string;
         };
         PersonFactClaim: {
             claim_key: string;
@@ -6702,6 +7158,17 @@ export interface components {
             add?: components["schemas"]["PersonNameInputRequest"][] | null;
             supersede?: number[] | null;
         };
+        PersonNetwork: {
+            /** Format: int64 */
+            depth: number;
+            edges: components["schemas"]["NetworkEdge"][] | null;
+            nodes: components["schemas"]["NetworkNode"][] | null;
+            /** Format: int64 */
+            root_person_id: number;
+            truncated: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         PersonProfile: {
             display_name?: string;
             /** Format: int64 */
@@ -6915,6 +7382,16 @@ export interface components {
             roles: ("from" | "to" | "cc" | "bcc" | "conversation_member")[] | null;
         } & {
             [key: string]: unknown;
+        };
+        ProviderCredentialResponse: {
+            credential_id: string;
+            pending_restart: boolean;
+            state: components["schemas"]["SecretSettingState"];
+        } & {
+            [key: string]: unknown;
+        };
+        ProviderCredentialWriteRequest: {
+            value: string;
         };
         ProviderUsage: {
             /** Format: double */
@@ -7274,6 +7751,8 @@ export interface components {
         };
         SecretSettingState: {
             configured: boolean;
+            /** @enum {string} */
+            source?: "stored" | "environment" | "none";
         } & {
             [key: string]: unknown;
         };
@@ -7339,17 +7818,29 @@ export interface components {
             pinned: boolean;
         };
         Setting: {
+            credential_id?: string;
+            description: string;
             /** @enum {string} */
-            group: "browser" | "server" | "archive" | "search" | "sources" | "integrations";
+            group: "browser" | "server" | "archive" | "sync" | "logging" | "search" | "sources" | "attachments" | "activity" | "backup" | "enrichment" | "integrations";
+            inherited?: boolean;
             key: string;
             /** @enum {string} */
             kind: "string" | "integer" | "number" | "boolean" | "string_array" | "secret";
+            label: string;
             options?: string[] | null;
             read_only?: boolean;
             restart_required: boolean;
             secret?: components["schemas"]["SecretSettingState"];
             testable?: boolean;
+            validation?: components["schemas"]["SettingValidation"];
             value?: components["schemas"]["SettingValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        SettingGroup: {
+            description: string;
+            id: string;
+            label: string;
         } & {
             [key: string]: unknown;
         };
@@ -7357,6 +7848,16 @@ export interface components {
             key: string;
             secret?: components["schemas"]["SecretSettingUpdate"];
             value?: components["schemas"]["SettingValue"];
+        };
+        SettingValidation: {
+            hint?: string;
+            /** Format: double */
+            maximum?: number;
+            /** Format: double */
+            minimum?: number;
+            required?: boolean;
+        } & {
+            [key: string]: unknown;
         };
         SettingValue: {
             string: string;
@@ -7372,11 +7873,13 @@ export interface components {
             strings: string[];
         };
         SettingsPatchRequest: {
-            confirm_api_key_restart?: boolean;
             updates: components["schemas"]["SettingUpdate"][];
         };
         SettingsResponse: {
+            credential_etag: string;
+            groups: components["schemas"]["SettingGroup"][];
             pending_restart: boolean;
+            person_enrichment_providers?: components["schemas"]["PersonEnrichmentProviderSetting"][] | null;
             settings: components["schemas"]["Setting"][];
         } & {
             [key: string]: unknown;
@@ -9572,6 +10075,116 @@ export interface operations {
             };
             /** @description Error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    /** @description Seconds until CardDAV retry is safe */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCardDAVRuns: {
+        parameters: {
+            query?: {
+                /** @description Maximum runs to return (default 25, max 100) */
+                limit?: number;
+                /** @description Return runs with IDs lower than this cursor */
+                before_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardDAVRunsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getCardDAVStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardDAVStatusResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14637,6 +15250,170 @@ export interface operations {
             };
         };
     };
+    listOperationRuns: {
+        parameters: {
+            query?: {
+                /** @description Exact operation kind */
+                kind?: "carddav_sync" | "document_embedding" | "document_extraction" | "message_embedding" | "person_embedding" | "person_enrichment" | "person_sweep" | "source_sync" | "visual_embedding";
+                /** @description Exact semantic operation lane */
+                lane?: "contacts" | "documents" | "messages" | "person_facts" | "visual_attachments";
+                /** @description Exact operation state */
+                state?: "cancelled" | "failed" | "partial" | "queued" | "running" | "succeeded";
+                /** @description Maximum runs to return (default 25, max 100) */
+                limit?: number;
+                /** @description Opaque cursor bound to this archive and the exact kind, lane, and state filters */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRunsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOperationRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque archive-bound operation run ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRunDetail"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOperationStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationStatusResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listOrganizations: {
         parameters: {
             query?: {
@@ -16066,6 +16843,74 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDirectoryPeople: {
+        parameters: {
+            query?: {
+                /** @description Lexical query over person names, contact points, and organizations */
+                q?: string;
+                /** @description Opaque cursor returned by the previous Directory page */
+                cursor?: string;
+                /** @description Maximum rows to return (default 50, max 100) */
+                limit?: number;
+                /** @description Current contact state: active or inactive */
+                contact_state?: string;
+                /** @description Current person category */
+                category?: string;
+                /** @description Current organization */
+                organization?: string;
+                /** @description Primary communication channel */
+                primary_channel?: string;
+                /** @description Return people contacted at or after this RFC3339 timestamp */
+                last_contact_after?: string;
+                /** @description Return people contacted at or before this RFC3339 timestamp */
+                last_contact_before?: string;
+                /** @description Directory order: name, last_contact_desc, or last_contact_asc */
+                sort?: "name" | "last_contact_desc" | "last_contact_asc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryPeopleResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17531,6 +18376,70 @@ export interface operations {
             };
             /** @description Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonNetwork: {
+        parameters: {
+            query?: {
+                /** @description Breadth-first depth (default 1, minimum 1, maximum 3) */
+                depth?: number;
+                /** @description Include ended relationships and employment records */
+                include_ended?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonNetwork"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20169,6 +21078,8 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    /** @description Strong content hash for the independent provider credential store */
+                    "Credential-ETag"?: string;
                     /** @description Strong content hash for optimistic concurrency */
                     ETag?: string;
                     [name: string]: unknown;
@@ -20207,6 +21118,8 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    /** @description Strong content hash for the independent provider credential store */
+                    "Credential-ETag"?: string;
                     /** @description Strong content hash for optimistic concurrency */
                     ETag?: string;
                     [name: string]: unknown;
@@ -20226,6 +21139,266 @@ export interface operations {
             };
             /** @description Error */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    putSettingsPersonEnrichmentProvider: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong config ETag returned by the latest settings read */
+                "If-Match": string;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonEnrichmentProviderUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong content hash for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    putSettingsProviderCredential: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag for the provider credential store */
+                "If-Match": string;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCredentialWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong content hash for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteSettingsProviderCredential: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag for the provider credential store */
+                "If-Match": string;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong content hash for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

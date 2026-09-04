@@ -143,6 +143,7 @@ make lint                     # Run linter
 - `j/k` or `↑/↓` - Navigate rows
 - `Enter` - Drill down into selection
 - `Esc` or `Backspace` - Go back
+- `m` - Cycle through Email, Texts, and Meetings modes
 - `Tab` - Cycle views (Senders → Sender Names → Recipients → Recipient Names → Domains → Labels → Lists → Time)
 - `s` - Cycle sort field (Name → Count → Size)
 - `r` - Reverse sort direction
@@ -156,6 +157,7 @@ make lint                     # Run linter
 - `d` - Stage selected for deletion
 - `D` - Stage all messages matching current filter
 - `/` - Search
+- `,` - Open Settings (keyboard-only)
 - `?` - Help
 - `q` - Quit
 

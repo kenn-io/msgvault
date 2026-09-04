@@ -7,6 +7,7 @@ export type SecretSettingState = components['schemas']['SecretSettingState'];
 
 export type SettingValue = components['schemas']['SettingValue'];
 export type SettingsDocument = components['schemas']['SettingsResponse'];
+export type SettingGroupState = components['schemas']['SettingGroup'];
 
 export interface CatalogEntry {
   group: SettingGroupID;
@@ -67,9 +68,7 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
     'Select the OpenAI-compatible or Voyage contextual API.',
     { options: ['openai', 'voyage-contextual'] }
   ),
-  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible or Voyage API base URL.', {
-    testable: true
-  }),
+  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible or Voyage API base URL.'),
   'vector.embeddings.api_key_env': entry('search', 'Embedding key environment variable', 'Environment variable containing the endpoint key.'),
   'vector.embeddings.model': entry('search', 'Embedding model', 'Model identifier used to build an index generation.'),
   'vector.embeddings.document_prefix': entry('search', 'Document task prefix', 'Text prepended to every document chunk.'),
@@ -106,9 +105,7 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   'vector.multimodal.provider': entry('search', 'Visual embedding provider', 'Provider used for visual attachment embeddings.', {
     options: ['voyage']
   }),
-  'vector.multimodal.endpoint': entry('search', 'Visual embedding endpoint', 'HTTPS API root used for multimodal embedding requests.', {
-    testable: true
-  }),
+  'vector.multimodal.endpoint': entry('search', 'Visual embedding endpoint', 'HTTPS API root used for multimodal embedding requests.'),
   'vector.multimodal.api_key_env': entry('search', 'Visual embedding key environment variable', 'Local environment variable containing the provider key.'),
   'vector.multimodal.capabilities_file': entry('search', 'Visual capability manifest', 'Path to the operator-probed Voyage capability manifest.'),
   'vector.multimodal.model': entry('search', 'Visual embedding model', 'Model identifier used for visual generations.', {
@@ -129,9 +126,7 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   'beeper.enabled': entry('sources', 'Desktop chat schedule enabled', 'Enable scheduled imports from the supported desktop chat source.'),
   'beeper.schedule': entry('sources', 'Desktop chat schedule', 'Cron schedule for the supported desktop chat source.'),
   'integrations.tasks.enabled': entry('integrations', 'Task integration', 'Enable the provider-neutral task integration.'),
-  'integrations.tasks.endpoint': entry('integrations', 'Task endpoint', 'HTTPS, loopback, Unix socket, or local discovery endpoint.', {
-    testable: true
-  }),
+  'integrations.tasks.endpoint': entry('integrations', 'Task endpoint', 'HTTPS, loopback, Unix socket, or local discovery endpoint.'),
   'integrations.tasks.api_key': entry('integrations', 'Task integration API key', 'Bearer key used only by the daemon.', {
     secret: true
   }),
@@ -139,8 +134,9 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
 };
 
 export interface SettingsGroup {
-  id: SettingGroupID;
+  id: string;
   label: string;
+  description: string;
   settings: SettingState[];
 }
 
@@ -148,10 +144,24 @@ export function isManagedSetting(key: string): boolean {
   return Object.hasOwn(settingsCatalog, key);
 }
 
-export function groupSettings(settings: SettingState[]): SettingsGroup[] {
+export function groupSettings(
+  settings: SettingState[],
+  daemonGroups: ReadonlyArray<SettingGroupState> = []
+): SettingsGroup[] {
+  if (daemonGroups.length > 0) {
+    return daemonGroups
+      .map((group) => ({
+        id: group.id,
+        label: group.label,
+        description: group.description,
+        settings: settings.filter((setting) => setting.group === group.id)
+      }))
+      .filter((group) => group.settings.length > 0);
+  }
   return settingGroups
     .map((group) => ({
       ...group,
+      description: 'Changes are written to config.toml and use optimistic concurrency.',
       settings: settings.filter(
         (setting) => isManagedSetting(setting.key) && settingsCatalog[setting.key]?.group === group.id
       )

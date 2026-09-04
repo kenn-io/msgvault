@@ -31,6 +31,56 @@ func (e *ConflictError) Error() string {
 
 func (e *ConflictError) Unwrap() error { return ErrCardDAVConflictPending }
 
+func (s *Service) ListConflictViews(ctx context.Context) ([]ConflictListItem, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("CardDAV service is not configured")
+	}
+	headers, err := s.store.ListCardDAVConflictHeadersContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ConflictListItem, 0, len(headers))
+	for _, header := range headers {
+		localState, remoteState := ConflictSidePresent, ConflictSidePresent
+		if header.LocalTombstone {
+			localState = ConflictSideDeleted
+		}
+		if header.RemoteTombstone {
+			remoteState = ConflictSideDeleted
+		}
+		items = append(items, ConflictListItem{
+			ID: header.ID, AddressBook: publicAddressBookIdentity(header.AddressBookID, header.AddressBookName),
+			Status: header.Status, LocalState: localState, RemoteState: remoteState,
+			AllowedResolutions: allowedConflictResolutions(header.Status), UpdatedAt: header.UpdatedAt,
+		})
+	}
+	return items, nil
+}
+
+func (s *Service) GetConflictView(ctx context.Context, id int64) (*ConflictDetail, error) {
+	if s == nil || s.store == nil || id <= 0 {
+		return nil, errors.New("CardDAV service is not configured")
+	}
+	source, err := s.store.GetCardDAVConflictDetailSourceContext(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	base := emptyContactSummary(ConflictSideUnavailable)
+	if source.BaseAvailable {
+		base = projectConflictContact(source.BaseBody, false)
+	}
+	return &ConflictDetail{
+		ID: source.ID, AddressBook: publicAddressBookIdentity(source.AddressBookID, source.AddressBookName),
+		Status: source.Status, Resolution: source.Resolution, Base: base,
+		Local:              projectConflictContact(source.LocalBody, source.LocalTombstone),
+		Remote:             projectConflictContact(source.RemoteBody, source.RemoteTombstone),
+		AllowedResolutions: allowedConflictResolutions(source.Status),
+		CreatedAt:          source.CreatedAt, UpdatedAt: source.UpdatedAt, ResolvedAt: source.ResolvedAt,
+	}, nil
+}
+
+// ListConflicts retains the internal mutation-evidence read used by CardDAV's
+// own reconciliation tests and workflows. Browser APIs use ListConflictViews.
 func (s *Service) ListConflicts(ctx context.Context) ([]store.CardDAVConflict, error) {
 	if s == nil || s.store == nil {
 		return nil, errors.New("CardDAV service is not configured")
@@ -43,6 +93,13 @@ func (s *Service) GetConflict(ctx context.Context, id int64) (*store.CardDAVConf
 		return nil, errors.New("CardDAV service is not configured")
 	}
 	return s.store.GetCardDAVConflictContext(ctx, id)
+}
+
+func allowedConflictResolutions(status store.CardDAVConflictStatus) []ResolutionChoice {
+	if status == store.CardDAVConflictUnresolved {
+		return []ResolutionChoice{ResolutionKeepLocal, ResolutionKeepRemote}
+	}
+	return []ResolutionChoice{}
 }
 
 func (s *Service) ResolveConflict(ctx context.Context, id int64, choice ResolutionChoice) error {

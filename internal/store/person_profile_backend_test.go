@@ -2,8 +2,10 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -189,6 +191,240 @@ func TestProfileReadsSucceedOnTheConfiguredBackend(t *testing.T) {
 	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
 	require.NoError(err, "identity match candidates and evidence")
 	assert.Empty(candidates)
+}
+
+func TestDirectoryPeoplePageSucceedsOnTheConfiguredBackend(t *testing.T) {
+	st := storetest.New(t).Store
+	alice := createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
+	createDirectoryPerson(t, st, "Alice Other", "other@example.test", "colleague", "active", "Other Co")
+
+	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{
+		Query: "alcie", Category: "friend", Organization: "acme", Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.People, 1)
+	assert.Equal(t, alice.ID, page.People[0].ID)
+}
+
+// This uses storetest's selected backend (SQLite by default, PostgreSQL when
+// MSGVAULT_TEST_DB is configured) to keep keyset ordering identical across
+// the exact, prefix, and one-edit tiers.
+func TestDirectoryPeoplePageSequenceOnTheConfiguredBackend(t *testing.T) {
+	st := storetest.New(t).Store
+	exact := createDirectoryPerson(t, st, "Alice Exact", "alice-exact@example.test", "friend", "active", "Acme")
+	prefix := createDirectoryPerson(t, st, "Alicef Prefix", "alicef-prefix@example.test", "friend", "active", "Acme")
+	fuzzy := createDirectoryPerson(t, st, "Alicf Fuzzy", "alicf-fuzzy@example.test", "friend", "active", "Acme")
+
+	var got []int64
+	cursor := ""
+	for pageNumber := 0; ; pageNumber++ {
+		page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{
+			Query: "alice", Limit: 1, Cursor: cursor,
+		})
+		require.NoError(t, err)
+		got = append(got, directoryPersonIDs(page.People)...)
+		if page.NextCursor == "" {
+			break
+		}
+		require.Less(t, pageNumber, 3, "directory cursor must make bounded progress")
+		cursor = page.NextCursor
+	}
+
+	assert.Equal(t, []int64{exact.ID, prefix.ID, fuzzy.ID}, got)
+}
+
+// This runs on the configured backend and protects the persisted canonical
+// order key from whitespace or Unicode collation drift between page requests.
+func TestDirectoryPeopleUnicodeCursorSequenceOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	st := storetest.New(t).Store
+	first := createDirectoryPerson(t, st, "Ålice  a", "unicode-first@sample.test", "friend", "active", "Acme")
+	second := createDirectoryPerson(t, st, "Ålice z", "unicode-second@sample.test", "friend", "active", "Acme")
+
+	pageOne, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1})
+	require.NoError(err)
+	require.NotEmpty(pageOne.NextCursor)
+	pageTwo, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1, Cursor: pageOne.NextCursor})
+	require.NoError(err)
+	assert.Equal(t, []int64{first.ID, second.ID}, append(directoryPersonIDs(pageOne.People), directoryPersonIDs(pageTwo.People)...))
+}
+
+func TestDirectoryPeopleLastContactRangeAndCursorOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	oldest := createDirectoryPerson(t, st, "Alice Oldest", "last-contact-oldest@sample.test", "friend", "inactive", "Acme")
+	middle := createDirectoryPerson(t, st, "Bob Middle", "last-contact-middle@sample.test", "friend", "inactive", "Acme")
+	newest := createDirectoryPerson(t, st, "Carol Newest", "last-contact-newest@sample.test", "friend", "inactive", "Acme")
+
+	oldestAt := time.Date(2026, time.January, 1, 9, 0, 0, 0, time.UTC)
+	middleAt := oldestAt.Add(24 * time.Hour)
+	newestAt := middleAt.Add(500 * time.Millisecond)
+	for _, contact := range []struct {
+		personID int64
+		at       time.Time
+	}{{oldest.ID, oldestAt}, {middle.ID, middleAt}, {newest.ID, newestAt}} {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_contact_state (
+			person_id, last_contact_at, interaction_count
+		) VALUES (?, ?, 1)`), contact.personID, contact.at)
+		require.NoError(err)
+	}
+
+	query := store.DirectoryPeopleQuery{
+		LastContactAfter:  &middleAt,
+		LastContactBefore: &newestAt,
+		Sort:              store.DirectoryPeopleSortLastContactDesc,
+		Limit:             1,
+	}
+	first, err := st.DirectoryPeoplePageContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(first.People, 1)
+	assert.Equal(newest.ID, first.People[0].ID)
+	require.NotNil(first.People[0].LastContactAt)
+	assert.Equal(newestAt, *first.People[0].LastContactAt)
+	require.NotEmpty(first.NextCursor)
+
+	query.Cursor = first.NextCursor
+	second, err := st.DirectoryPeoplePageContext(t.Context(), query)
+	require.NoError(err)
+	assert.Equal([]int64{middle.ID}, directoryPersonIDs(second.People))
+	assert.Empty(second.NextCursor)
+
+	query.Sort = store.DirectoryPeopleSortLastContactAsc
+	_, err = st.DirectoryPeoplePageContext(t.Context(), query)
+	require.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+
+	exact, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{
+		LastContactAfter: &middleAt, LastContactBefore: &middleAt,
+	})
+	require.NoError(err)
+	assert.Equal([]int64{middle.ID}, directoryPersonIDs(exact.People))
+}
+
+// Delete keys are only an indexed prefilter: this configured-backend fixture
+// proves the actual canonical token distance before Directory returns a row.
+func TestDirectoryPeopleFuzzyTokenDistanceOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	insert := createDirectoryPerson(t, st, "abc", "insert@sample.test", "friend", "active", "Acme")
+	deleted := createDirectoryPerson(t, st, "abcde", "delete@sample.test", "friend", "active", "Acme")
+	substitute := createDirectoryPerson(t, st, "abxd", "substitute@sample.test", "friend", "active", "Acme")
+	transpose := createDirectoryPerson(t, st, "acbd", "transpose@sample.test", "friend", "active", "Acme")
+	invalid := createDirectoryPerson(t, st, "abcx", "invalid@sample.test", "friend", "active", "Acme")
+	invalidTranspose := createDirectoryPerson(t, st, "abac", "invalid-transpose@sample.test", "friend", "active", "Acme")
+
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{{"abcd", insert.ID}, {"abcd", deleted.ID}, {"abcd", substitute.ID}, {"abcd", transpose.ID}} {
+		page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: tc.query})
+		require.NoError(err)
+		assert.Contains(directoryPersonIDs(page.People), tc.want)
+	}
+	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "axbc"})
+	require.NoError(err)
+	assert.NotContains(directoryPersonIDs(page.People), invalid.ID)
+	page, err = st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "baca"})
+	require.NoError(err)
+	assert.NotContains(directoryPersonIDs(page.People), invalidTranspose.ID)
+}
+
+// False delete-key collisions must not consume a complete public page before
+// a later verified one-edit match. The resumed page starts after the exact
+// prior row and must still scan past those false raw candidates.
+func TestDirectoryPeopleFuzzyCollisionPagingOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	exact := createDirectoryPerson(t, st, "axbc", "collision-exact@sample.test", "friend", "active", "Acme")
+	for index := range 65 {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`), fmt.Sprintf("collision-false-%03d", index), "abcx")
+		require.NoError(err)
+	}
+	verified := createDirectoryPerson(t, st, "axbd", "collision-verified@sample.test", "friend", "active", "Acme")
+
+	first, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "axbc", Limit: 1})
+	require.NoError(err)
+	assert.Equal([]int64{exact.ID}, directoryPersonIDs(first.People))
+	require.NotEmpty(first.NextCursor)
+
+	second, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "axbc", Limit: 1, Cursor: first.NextCursor})
+	require.NoError(err)
+	assert.Equal([]int64{verified.ID}, directoryPersonIDs(second.People))
+	assert.Empty(second.NextCursor)
+}
+
+// Moving a current employment through a raw update must queue both the old
+// and new people, so refresh never leaves the old Directory projection stale.
+func TestDirectoryProjectionEmploymentMoveOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	st := storetest.New(t).Store
+	first := createDirectoryPerson(t, st, "First Person", "move-first@sample.test", "friend", "active", "Shared Org")
+	second := createDirectoryPerson(t, st, "Second Person", "move-second@sample.test", "friend", "active", "Other Org")
+	employments, err := st.ListEmploymentsContext(t.Context(), store.EmploymentFilter{PersonID: first.ID, CurrentOnly: true})
+	require.NoError(err)
+	require.Len(employments, 1)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE employments SET is_primary = FALSE WHERE person_id = ?`), second.ID)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE employments SET person_id = ? WHERE id = ?`), second.ID, employments[0].ID)
+	require.NoError(err)
+	require.NoError(st.RefreshDirectoryProjectionContext(t.Context()))
+
+	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Organization: "shared org"})
+	require.NoError(err)
+	assert.Equal(t, []int64{second.ID}, directoryPersonIDs(page.People))
+}
+
+// Two writers that refresh the same dirty person at the same time must both
+// succeed. PostgreSQL READ COMMITTED lets both transactions read the same
+// dirty row, so the second refresh must tolerate the first one committing
+// its projection rows in between.
+func TestDirectoryProjectionConcurrentRefreshOnTheConfiguredBackend(t *testing.T) {
+	require := require.New(t)
+	st := storetest.New(t).Store
+	person := createDirectoryPerson(t, st, "Shared Person", "shared@sample.test", "friend", "active", "Shared Org")
+	ctx := t.Context()
+
+	const workers, rounds = 2, 40
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	for worker := range workers {
+		go func() {
+			<-start
+			for round := range rounds {
+				name := fmt.Sprintf("Shared Person %d-%d", worker, round)
+				if _, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE persons SET display_name = ? WHERE id = ?`), name, person.ID); err != nil {
+					results <- fmt.Errorf("dirty person: %w", err)
+					return
+				}
+				if err := st.RefreshDirectoryProjectionContext(ctx); err != nil {
+					results <- fmt.Errorf("refresh round %d: %w", round, err)
+					return
+				}
+			}
+			results <- nil
+		}()
+	}
+	close(start)
+	for range workers {
+		select {
+		case err := <-results:
+			require.NoError(err)
+		case <-time.After(60 * time.Second):
+			require.FailNow("concurrent Directory refresh did not finish")
+		}
+	}
+
+	require.NoError(st.RefreshDirectoryProjectionContext(ctx))
+	var projected, dirty int
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM directory_people WHERE person_id = ?`), person.ID).Scan(&projected))
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM directory_projection_dirty`).Scan(&dirty))
+	assert.Equal(t, 1, projected)
+	assert.Zero(t, dirty)
+	page, err := st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{Query: "shared"})
+	require.NoError(err)
+	assert.Equal(t, []int64{person.ID}, directoryPersonIDs(page.People))
 }
 
 func TestFullProfileLifecycleOnConfiguredBackend(t *testing.T) {

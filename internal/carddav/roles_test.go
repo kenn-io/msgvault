@@ -29,6 +29,101 @@ func TestListBooksAndSetBookRolesUseServiceContract(t *testing.T) {
 	}))
 }
 
+func TestPublicationViewProjectsProspectivePublishedAndConflictState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeDAVXML(t, w, syncResponse(cardResponse(
+			"/books/personal/alice.vcf", `&quot;one&quot;`, "alice",
+		), ""))
+	}))
+	t.Cleanup(server.Close)
+	service, st, book := newPullService(t, server, false)
+	_, err := service.Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"alice.vcf")
+	require.NoError(err)
+	require.NotNil(mapping.PersonID)
+
+	view, err := service.PublicationView(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.Equal(PublicationUnpublished, view.State)
+	assert.False(view.Desired)
+	require.NotNil(view.AddressBook)
+	assert.Equal(book.ID, view.AddressBook.ID)
+	assert.Equal("Personal", view.AddressBook.Name)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+		SET is_write_target = FALSE, is_subscribed = FALSE WHERE id = ?`), book.ID)
+	require.NoError(err)
+	view, err = service.PublicationView(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.Nil(view.AddressBook, "an unpublished person has no prospective book when no target is eligible")
+	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+		SET is_write_target = TRUE, is_subscribed = TRUE WHERE id = ?`), book.ID)
+	require.NoError(err)
+	_, err = service.PublicationView(t.Context(), *mapping.PersonID+10_000)
+	require.ErrorIs(err, store.ErrPersonNotFound)
+
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	_, err = st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: *mapping.PersonID, Desired: true, AddressBookID: book.ID, Href: mapping.Href,
+		OutgoingBody: mapping.RemoteBody, OutgoingSemanticHash: mapping.RemoteSemanticHash,
+		LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+	view, err = service.PublicationView(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.Equal(PublicationPublished, view.State)
+
+	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+		SET is_write_target = FALSE, is_subscribed = FALSE WHERE id = ?`), book.ID)
+	require.NoError(err)
+	view, err = service.PublicationView(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	require.NotNil(view.AddressBook, "the publication row remains authoritative after role changes")
+	assert.Equal(book.ID, view.AddressBook.ID)
+
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
+		AddressBookID: book.ID, Href: mapping.Href,
+		ExpectedMappingRevision: mapping.MappingRevision,
+		BaseLocalHash:           mapping.LocalHash, LocalHash: mapping.LocalHash,
+		BaseRemoteHash: mapping.RemoteSemanticHash, BaseRemoteETag: mapping.RemoteETag,
+		RemoteETag: `"two"`, LocalBody: mapping.RemoteBody, RemoteBody: conflictCard("alice", "Remote"),
+	})
+	require.NoError(err)
+	view, err = service.PublicationView(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.Equal(PublicationConflict, view.State)
+	require.NotNil(view.ConflictID)
+	assert.Equal(conflict.ID, *view.ConflictID)
+}
+
+func TestPublicationViewStatePrecedence(t *testing.T) {
+	for _, operation := range []store.CardDAVMutationOperation{
+		store.CardDAVMutationCreate, store.CardDAVMutationUpdate, store.CardDAVMutationDelete,
+	} {
+		t.Run(string(operation), func(t *testing.T) {
+			view := publicationViewFromSource(&store.CardDAVPublicationStateSource{
+				PersonID: 7, HasPublication: true,
+				Desired: operation != store.CardDAVMutationDelete, PendingOperation: operation,
+				AddressBookID: 2, AddressBookName: "Personal", ConflictID: 9,
+			})
+			assert.Equal(t, PublicationPending, view.State, "pending wins over a matching conflict")
+			assert.Equal(t, operation, view.PendingOperation)
+			assert.Nil(t, view.ConflictID)
+		})
+	}
+
+	conflict := publicationViewFromSource(&store.CardDAVPublicationStateSource{
+		PersonID: 7, HasPublication: true, Desired: true,
+		AddressBookID: 2, AddressBookName: "Personal", ConflictID: 9,
+	})
+	assert.Equal(t, PublicationConflict, conflict.State)
+	require.NotNil(t, conflict.ConflictID)
+	assert.Equal(t, int64(9), *conflict.ConflictID)
+}
+
 func TestNonWriteTargetPendingMutationNeverReachesServer(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

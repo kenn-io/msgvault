@@ -101,6 +101,22 @@ func TestPullConflictBlocksOnlyMappingAndAdvancesBookFence(t *testing.T) {
 	assert.Equal(alice.Href, conflicts[0].Href)
 	assert.Contains(string(conflicts[0].LocalBody), "EMAIL:alice-local@example.test")
 	assert.Equal(cards["alice"].body, conflicts[0].RemoteBody)
+
+	views, err := service.ListConflictViews(t.Context())
+	require.NoError(err)
+	require.Len(views, 1)
+	assert.Equal(book.ID, views[0].AddressBook.ID)
+	assert.NotContains(views[0].AddressBook.Name, "http")
+	assert.Equal(ConflictSidePresent, views[0].LocalState)
+	assert.Equal(ConflictSidePresent, views[0].RemoteState)
+	assert.Equal([]ResolutionChoice{ResolutionKeepLocal, ResolutionKeepRemote}, views[0].AllowedResolutions)
+
+	detail, err := service.GetConflictView(t.Context(), conflicts[0].ID)
+	require.NoError(err)
+	assert.Equal(ConflictSidePresent, detail.Base.State)
+	assert.Equal("Alice Base", detail.Base.DisplayName)
+	assert.Equal("Alice Remote", detail.Remote.DisplayName)
+	assert.Contains(detail.Local.Emails, "alice-local@example.test")
 }
 
 func TestPullConflictCapturesLocalEditAgainstRemoteDelete(t *testing.T) {

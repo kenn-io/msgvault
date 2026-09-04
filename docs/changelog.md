@@ -12,7 +12,9 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.14.0. The
+  current unreleased API schema is 2.15.0. Version 2.14.0 also replaces the CardDAV
+  publication and conflict response shapes with bounded projections that
+  omit raw vCards and resource hrefs. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -31,6 +33,27 @@ All notable changes to msgvault, grouped by release.
   should pass `account` or stage each source separately.
 
 **Features**
+
+- Web Directory workspace: browse and search promoted durable people, filter
+  by contact state, category, organization, and last contact, and maintain a
+  person's profile, custom fields, employment, typed relationships, tracking,
+  CardDAV publication, and merge history in place. Identity-match and
+  imported-relationship review queues, explicit merge and split, and a
+  bounded person network (`GET /api/v1/people/{id}/network`) built only
+  from curated relationships and employments live in the same shell.
+
+- Settings workspace in the Web UI and a keyboard-only Settings screen in
+  the TUI (`,`), driven by a daemon-described catalog with restart-pending
+  state. Provider API keys are stored write-only in
+  `tokens/provider-credentials.json` and can be added, replaced, or removed
+  without revealing their values; named Exa and SixtyFour person-enrichment
+  policies, text and visual embedding configuration, and future-only
+  attachment download rules are editable from the browser.
+
+- Operation history: `GET /api/v1/operations/runs` and `/operations/status`
+  expose normalized sync, person-sweep, and CardDAV run history with stable
+  cursors, and CardDAV sync runs are recorded and recoverable after a
+  daemon restart.
 
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with

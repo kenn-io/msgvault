@@ -58,6 +58,21 @@ type CardDAVPublication struct {
 	ResolutionConflictID    int64
 }
 
+// CardDAVPublicationStateSource contains only the safe fields needed to derive
+// the public publication state. Mutation evidence remains in the publication
+// table and never gets copied into this read model.
+type CardDAVPublicationStateSource struct {
+	PersonID          int64
+	HasPublication    bool
+	Desired           bool
+	PendingOperation  CardDAVMutationOperation
+	AddressBookID     int64
+	AddressBookName   string
+	ConflictID        int64
+	ProspectiveBookID int64
+	ProspectiveName   string
+}
+
 type CardDAVCanonicalMutation struct {
 	Publication CardDAVPublication
 	Remote      CardDAVRemoteResource
@@ -257,6 +272,64 @@ func (s *Store) PrepareCardDAVPublicationContext(
 
 func (s *Store) GetCardDAVPublicationContext(ctx context.Context, personID int64) (*CardDAVPublication, error) {
 	return getCardDAVPublicationFrom(ctx, s.db, personID, "")
+}
+
+func (s *Store) GetCardDAVPublicationStateSourceContext(
+	ctx context.Context, personID int64,
+) (*CardDAVPublicationStateSource, error) {
+	if personID <= 0 {
+		return nil, ErrPersonNotFound
+	}
+	var source *CardDAVPublicationStateSource
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		if _, err := s.getPersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
+		if s.cardDAVPublicationStateReadHook != nil {
+			s.cardDAVPublicationStateReadHook()
+		}
+		current := &CardDAVPublicationStateSource{PersonID: personID}
+		var publicationHref string
+		var pendingOperation sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT desired, address_book_id, href, pending_operation
+			FROM carddav_publications WHERE person_id = ?`, personID).Scan(
+			&current.Desired, &current.AddressBookID, &publicationHref, &pendingOperation)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get CardDAV publication state: %w", err)
+		}
+		if err == nil {
+			current.HasPublication = true
+			current.PendingOperation = CardDAVMutationOperation(pendingOperation.String)
+			err = tx.QueryRowContext(ctx, `SELECT id, display_name
+				FROM carddav_address_books WHERE id = ?`, current.AddressBookID).Scan(
+				&current.AddressBookID, &current.AddressBookName)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrCardDAVAddressBookNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("get CardDAV publication address book: %w", err)
+			}
+			err = tx.QueryRowContext(ctx, `SELECT id FROM carddav_conflicts
+				WHERE address_book_id = ? AND href = ? AND status = 'unresolved'`,
+				current.AddressBookID, publicationHref).Scan(&current.ConflictID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("get CardDAV publication conflict: %w", err)
+			}
+			source = current
+			return nil
+		}
+		err = tx.QueryRowContext(ctx, `SELECT id, display_name
+			FROM carddav_address_books
+			WHERE is_write_target = TRUE AND is_subscribed = TRUE
+			ORDER BY discovery_index, id LIMIT 1`).Scan(
+			&current.ProspectiveBookID, &current.ProspectiveName)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get prospective CardDAV publication book: %w", err)
+		}
+		source = current
+		return nil
+	})
+	return source, err
 }
 
 func (s *Store) RefreshCardDAVPublicationFenceContext(

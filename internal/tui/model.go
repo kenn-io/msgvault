@@ -79,6 +79,10 @@ type Options struct {
 	// the daemon falling back to live SQL because no analytics cache is
 	// built for the archive).
 	AnalyticsNotice string
+
+	// SettingsBackend reads and writes the same daemon-owned settings catalog
+	// used by the Web UI. When nil, the Settings surface reports unavailable.
+	SettingsBackend SettingsBackend
 }
 
 // modalType represents the type of modal dialog.
@@ -156,6 +160,12 @@ type Model struct {
 	// People mode dependencies and state remain separate from every other mode.
 	peopleBackend peoplebrowser.Backend
 	peopleState   peopleState
+
+	// Settings is a global shell surface, deliberately separate from the
+	// content-mode cycle so opening it cannot disturb content navigation.
+	settingsBackend   SettingsBackend
+	settings          settingsState
+	settingsRequestID uint64
 
 	// Version info for title bar
 	version string
@@ -311,9 +321,11 @@ func New(engine query.Engine, opts Options) Model {
 	}
 
 	return Model{
-		engine:        engine,
-		textEngine:    textEngine,
-		peopleBackend: opts.PeopleBackend,
+		engine:          engine,
+		textEngine:      textEngine,
+		peopleBackend:   opts.PeopleBackend,
+		settingsBackend: opts.SettingsBackend,
+		settings:        newSettingsState(),
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
 			DataDir:          opts.DataDir,
 			ManifestSaver:    opts.ManifestSaver,
@@ -1093,6 +1105,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnalyticsNoticeMsg:
 		m.analyticsNotice = msg.Notice
 		return m, nil
+	case settingsLoadedMsg:
+		return m.handleSettingsLoaded(msg)
+	case settingsSavedMsg:
+		return m.handleSettingsSaved(msg)
 	// People messages are delegated before the shared Email handlers.
 	case peopleSearchDebounceMsg:
 		return m.handlePeopleSearchDebounce(msg)
@@ -1679,6 +1695,12 @@ func (m Model) handleSpinnerTick() (tea.Model, tea.Cmd) {
 
 // handleKeyPress processes keyboard input.
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.settings.active {
+		return m.handleSettingsKeyPress(msg)
+	}
+	if msg.String() == "," && m.settingsShortcutAvailable() {
+		return m.openSettings()
+	}
 	if m.mode == modePeople {
 		return m.handlePeopleKeyPress(msg)
 	}
@@ -1917,6 +1939,10 @@ func (m Model) View() tea.View {
 		content = ""
 	} else if m.width == 0 {
 		content = "Loading..."
+	} else if m.settings.active {
+		// Settings is a shell layer above content transitions. Keep the frozen
+		// content frame intact underneath so Esc restores it exactly.
+		content = m.renderSettingsView()
 	} else if m.transitionBuffer != "" {
 		// If view is frozen (during level transitions), return the cached view
 		// to prevent flashing while async data loads complete.
@@ -1934,6 +1960,9 @@ func (m Model) View() tea.View {
 // Separated from View() so transitions can capture the current output
 // before changing state (for the transitionBuffer pattern).
 func (m Model) renderView() string {
+	if m.settings.active {
+		return m.renderSettingsView()
+	}
 	if m.mode == modePeople {
 		return m.renderPeopleView()
 	}

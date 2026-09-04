@@ -81,6 +81,215 @@ func (c CandidateClassification) Validate() error {
 	}
 }
 
+type CardDAVConflictDetailResponseResolution string
+
+const (
+	CardDAVConflictDetailResponseResolutionKeepLocal  CardDAVConflictDetailResponseResolution = "keep_local"
+	CardDAVConflictDetailResponseResolutionKeepRemote CardDAVConflictDetailResponseResolution = "keep_remote"
+)
+
+// Validate checks if the CardDAVConflictDetailResponseResolution value is valid
+func (c CardDAVConflictDetailResponseResolution) Validate() error {
+	switch c {
+	case CardDAVConflictDetailResponseResolutionKeepLocal, CardDAVConflictDetailResponseResolutionKeepRemote:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictDetailResponseResolution value, got: %v", c))
+	}
+}
+
+type CardDAVConflictDetailResponseStatus string
+
+const (
+	CardDAVConflictDetailResponseStatusResolved   CardDAVConflictDetailResponseStatus = "resolved"
+	CardDAVConflictDetailResponseStatusUnresolved CardDAVConflictDetailResponseStatus = "unresolved"
+)
+
+// Validate checks if the CardDAVConflictDetailResponseStatus value is valid
+func (c CardDAVConflictDetailResponseStatus) Validate() error {
+	switch c {
+	case CardDAVConflictDetailResponseStatusResolved, CardDAVConflictDetailResponseStatusUnresolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictDetailResponseStatus value, got: %v", c))
+	}
+}
+
+type CardDAVConflictDetailResponseAllowedResolutions string
+
+const (
+	CardDAVConflictDetailResponseAllowedResolutionsKeepLocal  CardDAVConflictDetailResponseAllowedResolutions = "keep_local"
+	CardDAVConflictDetailResponseAllowedResolutionsKeepRemote CardDAVConflictDetailResponseAllowedResolutions = "keep_remote"
+)
+
+// Validate checks if the CardDAVConflictDetailResponseAllowedResolutions value is valid
+func (c CardDAVConflictDetailResponseAllowedResolutions) Validate() error {
+	switch c {
+	case CardDAVConflictDetailResponseAllowedResolutionsKeepLocal, CardDAVConflictDetailResponseAllowedResolutionsKeepRemote:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictDetailResponseAllowedResolutions value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResolutionResponseResolution string
+
+const (
+	CardDAVConflictResolutionResponseResolutionKeepLocal  CardDAVConflictResolutionResponseResolution = "keep_local"
+	CardDAVConflictResolutionResponseResolutionKeepRemote CardDAVConflictResolutionResponseResolution = "keep_remote"
+)
+
+// Validate checks if the CardDAVConflictResolutionResponseResolution value is valid
+func (c CardDAVConflictResolutionResponseResolution) Validate() error {
+	switch c {
+	case CardDAVConflictResolutionResponseResolutionKeepLocal, CardDAVConflictResolutionResponseResolutionKeepRemote:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResolutionResponseResolution value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResolutionResponseStatus string
+
+const (
+	CardDAVConflictResolutionResponseStatusResolved CardDAVConflictResolutionResponseStatus = "resolved"
+)
+
+// Validate checks if the CardDAVConflictResolutionResponseStatus value is valid
+func (c CardDAVConflictResolutionResponseStatus) Validate() error {
+	switch c {
+	case CardDAVConflictResolutionResponseStatusResolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResolutionResponseStatus value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResponseLocalState string
+
+const (
+	CardDAVConflictResponseLocalStateDeleted     CardDAVConflictResponseLocalState = "deleted"
+	CardDAVConflictResponseLocalStatePresent     CardDAVConflictResponseLocalState = "present"
+	CardDAVConflictResponseLocalStateUnavailable CardDAVConflictResponseLocalState = "unavailable"
+)
+
+// Validate checks if the CardDAVConflictResponseLocalState value is valid
+func (c CardDAVConflictResponseLocalState) Validate() error {
+	switch c {
+	case CardDAVConflictResponseLocalStateDeleted, CardDAVConflictResponseLocalStatePresent, CardDAVConflictResponseLocalStateUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResponseLocalState value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResponseRemoteState string
+
+const (
+	CardDAVConflictResponseRemoteStateDeleted     CardDAVConflictResponseRemoteState = "deleted"
+	CardDAVConflictResponseRemoteStatePresent     CardDAVConflictResponseRemoteState = "present"
+	CardDAVConflictResponseRemoteStateUnavailable CardDAVConflictResponseRemoteState = "unavailable"
+)
+
+// Validate checks if the CardDAVConflictResponseRemoteState value is valid
+func (c CardDAVConflictResponseRemoteState) Validate() error {
+	switch c {
+	case CardDAVConflictResponseRemoteStateDeleted, CardDAVConflictResponseRemoteStatePresent, CardDAVConflictResponseRemoteStateUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResponseRemoteState value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResponseStatus string
+
+const (
+	CardDAVConflictResponseStatusResolved   CardDAVConflictResponseStatus = "resolved"
+	CardDAVConflictResponseStatusUnresolved CardDAVConflictResponseStatus = "unresolved"
+)
+
+// Validate checks if the CardDAVConflictResponseStatus value is valid
+func (c CardDAVConflictResponseStatus) Validate() error {
+	switch c {
+	case CardDAVConflictResponseStatusResolved, CardDAVConflictResponseStatusUnresolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResponseStatus value, got: %v", c))
+	}
+}
+
+type CardDAVConflictResponseAllowedResolutions string
+
+const (
+	CardDAVConflictResponseAllowedResolutionsKeepLocal  CardDAVConflictResponseAllowedResolutions = "keep_local"
+	CardDAVConflictResponseAllowedResolutionsKeepRemote CardDAVConflictResponseAllowedResolutions = "keep_remote"
+)
+
+// Validate checks if the CardDAVConflictResponseAllowedResolutions value is valid
+func (c CardDAVConflictResponseAllowedResolutions) Validate() error {
+	switch c {
+	case CardDAVConflictResponseAllowedResolutionsKeepLocal, CardDAVConflictResponseAllowedResolutionsKeepRemote:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVConflictResponseAllowedResolutions value, got: %v", c))
+	}
+}
+
+type CardDAVContactSummaryResponseState string
+
+const (
+	CardDAVContactSummaryResponseStateDeleted     CardDAVContactSummaryResponseState = "deleted"
+	CardDAVContactSummaryResponseStatePresent     CardDAVContactSummaryResponseState = "present"
+	CardDAVContactSummaryResponseStateUnavailable CardDAVContactSummaryResponseState = "unavailable"
+)
+
+// Validate checks if the CardDAVContactSummaryResponseState value is valid
+func (c CardDAVContactSummaryResponseState) Validate() error {
+	switch c {
+	case CardDAVContactSummaryResponseStateDeleted, CardDAVContactSummaryResponseStatePresent, CardDAVContactSummaryResponseStateUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVContactSummaryResponseState value, got: %v", c))
+	}
+}
+
+type CardDAVPublicationResponsePendingOperation string
+
+const (
+	CardDAVPublicationResponsePendingOperationCreate CardDAVPublicationResponsePendingOperation = "create"
+	CardDAVPublicationResponsePendingOperationDelete CardDAVPublicationResponsePendingOperation = "delete"
+	CardDAVPublicationResponsePendingOperationUpdate CardDAVPublicationResponsePendingOperation = "update"
+)
+
+// Validate checks if the CardDAVPublicationResponsePendingOperation value is valid
+func (c CardDAVPublicationResponsePendingOperation) Validate() error {
+	switch c {
+	case CardDAVPublicationResponsePendingOperationCreate, CardDAVPublicationResponsePendingOperationDelete, CardDAVPublicationResponsePendingOperationUpdate:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVPublicationResponsePendingOperation value, got: %v", c))
+	}
+}
+
+type CardDAVPublicationResponseState string
+
+const (
+	CardDAVPublicationResponseStateConflict    CardDAVPublicationResponseState = "conflict"
+	CardDAVPublicationResponseStatePending     CardDAVPublicationResponseState = "pending"
+	CardDAVPublicationResponseStatePublished   CardDAVPublicationResponseState = "published"
+	CardDAVPublicationResponseStateUnpublished CardDAVPublicationResponseState = "unpublished"
+)
+
+// Validate checks if the CardDAVPublicationResponseState value is valid
+func (c CardDAVPublicationResponseState) Validate() error {
+	switch c {
+	case CardDAVPublicationResponseStateConflict, CardDAVPublicationResponseStatePending, CardDAVPublicationResponseStatePublished, CardDAVPublicationResponseStateUnpublished:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVPublicationResponseState value, got: %v", c))
+	}
+}
+
 type CardDAVResolveRequestChoice string
 
 const (
@@ -95,6 +304,86 @@ func (c CardDAVResolveRequestChoice) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVResolveRequestChoice value, got: %v", c))
+	}
+}
+
+type CardDAVRunResponseErrorCode string
+
+const (
+	AuthenticationFailed CardDAVRunResponseErrorCode = "authentication_failed"
+	Cancelled            CardDAVRunResponseErrorCode = "cancelled"
+	DaemonRestarted      CardDAVRunResponseErrorCode = "daemon_restarted"
+	RetryAfter           CardDAVRunResponseErrorCode = "retry_after"
+	SafetyLimit          CardDAVRunResponseErrorCode = "safety_limit"
+	SyncFailed           CardDAVRunResponseErrorCode = "sync_failed"
+	UnsafeErrorRedacted  CardDAVRunResponseErrorCode = "unsafe_error_redacted"
+	UpstreamFailed       CardDAVRunResponseErrorCode = "upstream_failed"
+)
+
+// Validate checks if the CardDAVRunResponseErrorCode value is valid
+func (c CardDAVRunResponseErrorCode) Validate() error {
+	switch c {
+	case AuthenticationFailed, Cancelled, DaemonRestarted, RetryAfter, SafetyLimit, SyncFailed, UnsafeErrorRedacted, UpstreamFailed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVRunResponseErrorCode value, got: %v", c))
+	}
+}
+
+type CardDAVRunResponseState string
+
+const (
+	CardDAVRunResponseStateCancelled CardDAVRunResponseState = "cancelled"
+	Failed                           CardDAVRunResponseState = "failed"
+	Partial                          CardDAVRunResponseState = "partial"
+	Running                          CardDAVRunResponseState = "running"
+	Succeeded                        CardDAVRunResponseState = "succeeded"
+)
+
+// Validate checks if the CardDAVRunResponseState value is valid
+func (c CardDAVRunResponseState) Validate() error {
+	switch c {
+	case CardDAVRunResponseStateCancelled, Failed, Partial, Running, Succeeded:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVRunResponseState value, got: %v", c))
+	}
+}
+
+type CardDAVRunResponseTrigger string
+
+const (
+	Manual    CardDAVRunResponseTrigger = "manual"
+	Scheduled CardDAVRunResponseTrigger = "scheduled"
+)
+
+// Validate checks if the CardDAVRunResponseTrigger value is valid
+func (c CardDAVRunResponseTrigger) Validate() error {
+	switch c {
+	case Manual, Scheduled:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVRunResponseTrigger value, got: %v", c))
+	}
+}
+
+type CardDAVStatusResponseRepairReason string
+
+const (
+	AccountMissing        CardDAVStatusResponseRepairReason = "account_missing"
+	CredentialMismatch    CardDAVStatusResponseRepairReason = "credential_mismatch"
+	CredentialMissing     CardDAVStatusResponseRepairReason = "credential_missing"
+	CredentialUnavailable CardDAVStatusResponseRepairReason = "credential_unavailable"
+	RuntimeUnavailable    CardDAVStatusResponseRepairReason = "runtime_unavailable"
+)
+
+// Validate checks if the CardDAVStatusResponseRepairReason value is valid
+func (c CardDAVStatusResponseRepairReason) Validate() error {
+	switch c {
+	case AccountMissing, CredentialMismatch, CredentialMissing, CredentialUnavailable, RuntimeUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVStatusResponseRepairReason value, got: %v", c))
 	}
 }
 
@@ -591,6 +880,428 @@ func (m MeetingImportResponseStatus) Validate() error {
 	}
 }
 
+type NetworkEdgeKind string
+
+const (
+	NetworkEdgeKindEmployment NetworkEdgeKind = "employment"
+	Relationship              NetworkEdgeKind = "relationship"
+)
+
+// Validate checks if the NetworkEdgeKind value is valid
+func (n NetworkEdgeKind) Validate() error {
+	switch n {
+	case NetworkEdgeKindEmployment, Relationship:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid NetworkEdgeKind value, got: %v", n))
+	}
+}
+
+type NetworkNodeKind string
+
+const (
+	NetworkNodeKindOrganization NetworkNodeKind = "organization"
+	NetworkNodeKindPerson       NetworkNodeKind = "person"
+)
+
+// Validate checks if the NetworkNodeKind value is valid
+func (n NetworkNodeKind) Validate() error {
+	switch n {
+	case NetworkNodeKindOrganization, NetworkNodeKindPerson:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid NetworkNodeKind value, got: %v", n))
+	}
+}
+
+type OperationLaneStatusHistoryAvailability string
+
+const (
+	Available   OperationLaneStatusHistoryAvailability = "available"
+	Unavailable OperationLaneStatusHistoryAvailability = "unavailable"
+)
+
+// Validate checks if the OperationLaneStatusHistoryAvailability value is valid
+func (o OperationLaneStatusHistoryAvailability) Validate() error {
+	switch o {
+	case Available, Unavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusHistoryAvailability value, got: %v", o))
+	}
+}
+
+type OperationLaneStatusKind string
+
+const (
+	CarddavSync        OperationLaneStatusKind = "carddav_sync"
+	DocumentEmbedding  OperationLaneStatusKind = "document_embedding"
+	DocumentExtraction OperationLaneStatusKind = "document_extraction"
+	MessageEmbedding   OperationLaneStatusKind = "message_embedding"
+	PersonEmbedding    OperationLaneStatusKind = "person_embedding"
+	PersonEnrichment   OperationLaneStatusKind = "person_enrichment"
+	PersonSweep        OperationLaneStatusKind = "person_sweep"
+	SourceSync         OperationLaneStatusKind = "source_sync"
+	VisualEmbedding    OperationLaneStatusKind = "visual_embedding"
+)
+
+// Validate checks if the OperationLaneStatusKind value is valid
+func (o OperationLaneStatusKind) Validate() error {
+	switch o {
+	case CarddavSync, DocumentEmbedding, DocumentExtraction, MessageEmbedding, PersonEmbedding, PersonEnrichment, PersonSweep, SourceSync, VisualEmbedding:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusKind value, got: %v", o))
+	}
+}
+
+type OperationLaneStatusLane string
+
+const (
+	Contacts          OperationLaneStatusLane = "contacts"
+	Documents         OperationLaneStatusLane = "documents"
+	Messages          OperationLaneStatusLane = "messages"
+	PersonFacts       OperationLaneStatusLane = "person_facts"
+	VisualAttachments OperationLaneStatusLane = "visual_attachments"
+)
+
+// Validate checks if the OperationLaneStatusLane value is valid
+func (o OperationLaneStatusLane) Validate() error {
+	switch o {
+	case Contacts, Documents, Messages, PersonFacts, VisualAttachments:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusLane value, got: %v", o))
+	}
+}
+
+type OperationLaneStatusRelatedStatus string
+
+const (
+	GetCardDAVStatus          OperationLaneStatusRelatedStatus = "getCardDAVStatus"
+	GetDocumentIndexStatus    OperationLaneStatusRelatedStatus = "getDocumentIndexStatus"
+	GetDocumentVectorStatus   OperationLaneStatusRelatedStatus = "getDocumentVectorStatus"
+	GetVisualAttachmentStatus OperationLaneStatusRelatedStatus = "getVisualAttachmentStatus"
+	ListSourceStatus          OperationLaneStatusRelatedStatus = "listSourceStatus"
+)
+
+// Validate checks if the OperationLaneStatusRelatedStatus value is valid
+func (o OperationLaneStatusRelatedStatus) Validate() error {
+	switch o {
+	case GetCardDAVStatus, GetDocumentIndexStatus, GetDocumentVectorStatus, GetVisualAttachmentStatus, ListSourceStatus:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusRelatedStatus value, got: %v", o))
+	}
+}
+
+type OperationLaneStatusSupportedActions string
+
+const (
+	OperationLaneStatusSupportedActionsCarddavSync OperationLaneStatusSupportedActions = "carddav_sync"
+	VisualBuild                                    OperationLaneStatusSupportedActions = "visual_build"
+	VisualResume                                   OperationLaneStatusSupportedActions = "visual_resume"
+)
+
+// Validate checks if the OperationLaneStatusSupportedActions value is valid
+func (o OperationLaneStatusSupportedActions) Validate() error {
+	switch o {
+	case OperationLaneStatusSupportedActionsCarddavSync, VisualBuild, VisualResume:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusSupportedActions value, got: %v", o))
+	}
+}
+
+type OperationPublicCounterName string
+
+const (
+	Added                               OperationPublicCounterName = "added"
+	Attempted                           OperationPublicCounterName = "attempted"
+	Books                               OperationPublicCounterName = "books"
+	Created                             OperationPublicCounterName = "created"
+	ItemErrors                          OperationPublicCounterName = "item_errors"
+	OperationPublicCounterNameFailed    OperationPublicCounterName = "failed"
+	OperationPublicCounterNameSucceeded OperationPublicCounterName = "succeeded"
+	Processed                           OperationPublicCounterName = "processed"
+	ProjectedWrites                     OperationPublicCounterName = "projected_writes"
+	Removed                             OperationPublicCounterName = "removed"
+	Updated                             OperationPublicCounterName = "updated"
+)
+
+// Validate checks if the OperationPublicCounterName value is valid
+func (o OperationPublicCounterName) Validate() error {
+	switch o {
+	case Added, Attempted, Books, Created, ItemErrors, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, Processed, ProjectedWrites, Removed, Updated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterName value, got: %v", o))
+	}
+}
+
+type OperationPublicCounterUnit string
+
+const (
+	OperationPublicCounterUnitBooks    OperationPublicCounterUnit = "books"
+	OperationPublicCounterUnitContacts OperationPublicCounterUnit = "contacts"
+	OperationPublicCounterUnitMessages OperationPublicCounterUnit = "messages"
+	People                             OperationPublicCounterUnit = "people"
+	Writes                             OperationPublicCounterUnit = "writes"
+)
+
+// Validate checks if the OperationPublicCounterUnit value is valid
+func (o OperationPublicCounterUnit) Validate() error {
+	switch o {
+	case OperationPublicCounterUnitBooks, OperationPublicCounterUnitContacts, OperationPublicCounterUnitMessages, People, Writes:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterUnit value, got: %v", o))
+	}
+}
+
+type OperationPublicErrorCode string
+
+const (
+	ArchiveGap                                   OperationPublicErrorCode = "archive_gap"
+	Budget                                       OperationPublicErrorCode = "budget"
+	CarddavSyncFailed                            OperationPublicErrorCode = "carddav_sync_failed"
+	Internal                                     OperationPublicErrorCode = "internal"
+	InvalidOutput                                OperationPublicErrorCode = "invalid_output"
+	LeaseLost                                    OperationPublicErrorCode = "lease_lost"
+	OperationPublicErrorCodeAuthenticationFailed OperationPublicErrorCode = "authentication_failed"
+	OperationPublicErrorCodeCancelled            OperationPublicErrorCode = "cancelled"
+	OperationPublicErrorCodeDaemonRestarted      OperationPublicErrorCode = "daemon_restarted"
+	OperationPublicErrorCodeRetryAfter           OperationPublicErrorCode = "retry_after"
+	OperationPublicErrorCodeSafetyLimit          OperationPublicErrorCode = "safety_limit"
+	OperationPublicErrorCodeSyncFailed           OperationPublicErrorCode = "sync_failed"
+	OperationPublicErrorCodeUnsafeErrorRedacted  OperationPublicErrorCode = "unsafe_error_redacted"
+	OperationPublicErrorCodeUpstreamFailed       OperationPublicErrorCode = "upstream_failed"
+	PersonSweepFailed                            OperationPublicErrorCode = "person_sweep_failed"
+	Policy                                       OperationPublicErrorCode = "policy"
+	ProviderHTTP                                 OperationPublicErrorCode = "provider_http"
+	RateLimited                                  OperationPublicErrorCode = "rate_limited"
+	SourceSyncFailed                             OperationPublicErrorCode = "source_sync_failed"
+	Timeout                                      OperationPublicErrorCode = "timeout"
+)
+
+// Validate checks if the OperationPublicErrorCode value is valid
+func (o OperationPublicErrorCode) Validate() error {
+	switch o {
+	case ArchiveGap, Budget, CarddavSyncFailed, Internal, InvalidOutput, LeaseLost, OperationPublicErrorCodeAuthenticationFailed, OperationPublicErrorCodeCancelled, OperationPublicErrorCodeDaemonRestarted, OperationPublicErrorCodeRetryAfter, OperationPublicErrorCodeSafetyLimit, OperationPublicErrorCodeSyncFailed, OperationPublicErrorCodeUnsafeErrorRedacted, OperationPublicErrorCodeUpstreamFailed, PersonSweepFailed, Policy, ProviderHTTP, RateLimited, SourceSyncFailed, Timeout:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicErrorCode value, got: %v", o))
+	}
+}
+
+type OperationRunDetailKind string
+
+const (
+	OperationRunDetailKindCarddavSync        OperationRunDetailKind = "carddav_sync"
+	OperationRunDetailKindDocumentEmbedding  OperationRunDetailKind = "document_embedding"
+	OperationRunDetailKindDocumentExtraction OperationRunDetailKind = "document_extraction"
+	OperationRunDetailKindMessageEmbedding   OperationRunDetailKind = "message_embedding"
+	OperationRunDetailKindPersonEmbedding    OperationRunDetailKind = "person_embedding"
+	OperationRunDetailKindPersonEnrichment   OperationRunDetailKind = "person_enrichment"
+	OperationRunDetailKindPersonSweep        OperationRunDetailKind = "person_sweep"
+	OperationRunDetailKindSourceSync         OperationRunDetailKind = "source_sync"
+	OperationRunDetailKindVisualEmbedding    OperationRunDetailKind = "visual_embedding"
+)
+
+// Validate checks if the OperationRunDetailKind value is valid
+func (o OperationRunDetailKind) Validate() error {
+	switch o {
+	case OperationRunDetailKindCarddavSync, OperationRunDetailKindDocumentEmbedding, OperationRunDetailKindDocumentExtraction, OperationRunDetailKindMessageEmbedding, OperationRunDetailKindPersonEmbedding, OperationRunDetailKindPersonEnrichment, OperationRunDetailKindPersonSweep, OperationRunDetailKindSourceSync, OperationRunDetailKindVisualEmbedding:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailKind value, got: %v", o))
+	}
+}
+
+type OperationRunDetailLane string
+
+const (
+	OperationRunDetailLaneContacts          OperationRunDetailLane = "contacts"
+	OperationRunDetailLaneDocuments         OperationRunDetailLane = "documents"
+	OperationRunDetailLaneMessages          OperationRunDetailLane = "messages"
+	OperationRunDetailLanePersonFacts       OperationRunDetailLane = "person_facts"
+	OperationRunDetailLaneVisualAttachments OperationRunDetailLane = "visual_attachments"
+)
+
+// Validate checks if the OperationRunDetailLane value is valid
+func (o OperationRunDetailLane) Validate() error {
+	switch o {
+	case OperationRunDetailLaneContacts, OperationRunDetailLaneDocuments, OperationRunDetailLaneMessages, OperationRunDetailLanePersonFacts, OperationRunDetailLaneVisualAttachments:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailLane value, got: %v", o))
+	}
+}
+
+type OperationRunDetailState string
+
+const (
+	OperationRunDetailStateCancelled OperationRunDetailState = "cancelled"
+	OperationRunDetailStateFailed    OperationRunDetailState = "failed"
+	OperationRunDetailStatePartial   OperationRunDetailState = "partial"
+	OperationRunDetailStateRunning   OperationRunDetailState = "running"
+	OperationRunDetailStateSucceeded OperationRunDetailState = "succeeded"
+	Queued                           OperationRunDetailState = "queued"
+)
+
+// Validate checks if the OperationRunDetailState value is valid
+func (o OperationRunDetailState) Validate() error {
+	switch o {
+	case OperationRunDetailStateCancelled, OperationRunDetailStateFailed, OperationRunDetailStatePartial, OperationRunDetailStateRunning, OperationRunDetailStateSucceeded, Queued:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailState value, got: %v", o))
+	}
+}
+
+type OperationRunDetailTrigger string
+
+const (
+	OperationRunDetailTriggerManual    OperationRunDetailTrigger = "manual"
+	OperationRunDetailTriggerScheduled OperationRunDetailTrigger = "scheduled"
+)
+
+// Validate checks if the OperationRunDetailTrigger value is valid
+func (o OperationRunDetailTrigger) Validate() error {
+	switch o {
+	case OperationRunDetailTriggerManual, OperationRunDetailTriggerScheduled:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailTrigger value, got: %v", o))
+	}
+}
+
+type OperationRunSummaryKind string
+
+const (
+	OperationRunSummaryKindCarddavSync        OperationRunSummaryKind = "carddav_sync"
+	OperationRunSummaryKindDocumentEmbedding  OperationRunSummaryKind = "document_embedding"
+	OperationRunSummaryKindDocumentExtraction OperationRunSummaryKind = "document_extraction"
+	OperationRunSummaryKindMessageEmbedding   OperationRunSummaryKind = "message_embedding"
+	OperationRunSummaryKindPersonEmbedding    OperationRunSummaryKind = "person_embedding"
+	OperationRunSummaryKindPersonEnrichment   OperationRunSummaryKind = "person_enrichment"
+	OperationRunSummaryKindPersonSweep        OperationRunSummaryKind = "person_sweep"
+	OperationRunSummaryKindSourceSync         OperationRunSummaryKind = "source_sync"
+	OperationRunSummaryKindVisualEmbedding    OperationRunSummaryKind = "visual_embedding"
+)
+
+// Validate checks if the OperationRunSummaryKind value is valid
+func (o OperationRunSummaryKind) Validate() error {
+	switch o {
+	case OperationRunSummaryKindCarddavSync, OperationRunSummaryKindDocumentEmbedding, OperationRunSummaryKindDocumentExtraction, OperationRunSummaryKindMessageEmbedding, OperationRunSummaryKindPersonEmbedding, OperationRunSummaryKindPersonEnrichment, OperationRunSummaryKindPersonSweep, OperationRunSummaryKindSourceSync, OperationRunSummaryKindVisualEmbedding:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryKind value, got: %v", o))
+	}
+}
+
+type OperationRunSummaryLane string
+
+const (
+	OperationRunSummaryLaneContacts          OperationRunSummaryLane = "contacts"
+	OperationRunSummaryLaneDocuments         OperationRunSummaryLane = "documents"
+	OperationRunSummaryLaneMessages          OperationRunSummaryLane = "messages"
+	OperationRunSummaryLanePersonFacts       OperationRunSummaryLane = "person_facts"
+	OperationRunSummaryLaneVisualAttachments OperationRunSummaryLane = "visual_attachments"
+)
+
+// Validate checks if the OperationRunSummaryLane value is valid
+func (o OperationRunSummaryLane) Validate() error {
+	switch o {
+	case OperationRunSummaryLaneContacts, OperationRunSummaryLaneDocuments, OperationRunSummaryLaneMessages, OperationRunSummaryLanePersonFacts, OperationRunSummaryLaneVisualAttachments:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryLane value, got: %v", o))
+	}
+}
+
+type OperationRunSummaryState string
+
+const (
+	OperationRunSummaryStateCancelled OperationRunSummaryState = "cancelled"
+	OperationRunSummaryStateFailed    OperationRunSummaryState = "failed"
+	OperationRunSummaryStatePartial   OperationRunSummaryState = "partial"
+	OperationRunSummaryStateQueued    OperationRunSummaryState = "queued"
+	OperationRunSummaryStateRunning   OperationRunSummaryState = "running"
+	OperationRunSummaryStateSucceeded OperationRunSummaryState = "succeeded"
+)
+
+// Validate checks if the OperationRunSummaryState value is valid
+func (o OperationRunSummaryState) Validate() error {
+	switch o {
+	case OperationRunSummaryStateCancelled, OperationRunSummaryStateFailed, OperationRunSummaryStatePartial, OperationRunSummaryStateQueued, OperationRunSummaryStateRunning, OperationRunSummaryStateSucceeded:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryState value, got: %v", o))
+	}
+}
+
+type OperationRunSummaryTrigger string
+
+const (
+	OperationRunSummaryTriggerManual    OperationRunSummaryTrigger = "manual"
+	OperationRunSummaryTriggerScheduled OperationRunSummaryTrigger = "scheduled"
+)
+
+// Validate checks if the OperationRunSummaryTrigger value is valid
+func (o OperationRunSummaryTrigger) Validate() error {
+	switch o {
+	case OperationRunSummaryTriggerManual, OperationRunSummaryTriggerScheduled:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryTrigger value, got: %v", o))
+	}
+}
+
+type OperationUnavailableKindKind string
+
+const (
+	OperationUnavailableKindKindCarddavSync        OperationUnavailableKindKind = "carddav_sync"
+	OperationUnavailableKindKindDocumentEmbedding  OperationUnavailableKindKind = "document_embedding"
+	OperationUnavailableKindKindDocumentExtraction OperationUnavailableKindKind = "document_extraction"
+	OperationUnavailableKindKindMessageEmbedding   OperationUnavailableKindKind = "message_embedding"
+	OperationUnavailableKindKindPersonEmbedding    OperationUnavailableKindKind = "person_embedding"
+	OperationUnavailableKindKindPersonEnrichment   OperationUnavailableKindKind = "person_enrichment"
+	OperationUnavailableKindKindPersonSweep        OperationUnavailableKindKind = "person_sweep"
+	OperationUnavailableKindKindSourceSync         OperationUnavailableKindKind = "source_sync"
+	OperationUnavailableKindKindVisualEmbedding    OperationUnavailableKindKind = "visual_embedding"
+)
+
+// Validate checks if the OperationUnavailableKindKind value is valid
+func (o OperationUnavailableKindKind) Validate() error {
+	switch o {
+	case OperationUnavailableKindKindCarddavSync, OperationUnavailableKindKindDocumentEmbedding, OperationUnavailableKindKindDocumentExtraction, OperationUnavailableKindKindMessageEmbedding, OperationUnavailableKindKindPersonEmbedding, OperationUnavailableKindKindPersonEnrichment, OperationUnavailableKindKindPersonSweep, OperationUnavailableKindKindSourceSync, OperationUnavailableKindKindVisualEmbedding:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationUnavailableKindKind value, got: %v", o))
+	}
+}
+
+type OperationUnavailableKindLane string
+
+const (
+	OperationUnavailableKindLaneContacts          OperationUnavailableKindLane = "contacts"
+	OperationUnavailableKindLaneDocuments         OperationUnavailableKindLane = "documents"
+	OperationUnavailableKindLaneMessages          OperationUnavailableKindLane = "messages"
+	OperationUnavailableKindLanePersonFacts       OperationUnavailableKindLane = "person_facts"
+	OperationUnavailableKindLaneVisualAttachments OperationUnavailableKindLane = "visual_attachments"
+)
+
+// Validate checks if the OperationUnavailableKindLane value is valid
+func (o OperationUnavailableKindLane) Validate() error {
+	switch o {
+	case OperationUnavailableKindLaneContacts, OperationUnavailableKindLaneDocuments, OperationUnavailableKindLaneMessages, OperationUnavailableKindLanePersonFacts, OperationUnavailableKindLaneVisualAttachments:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationUnavailableKindLane value, got: %v", o))
+	}
+}
+
 type OrganizationAddressBodySource string
 
 const (
@@ -873,6 +1584,40 @@ func (p ParticipantCompletionHTTPRowKind) Validate() error {
 	}
 }
 
+type PersonEnrichmentProviderSettingKind string
+
+const (
+	Exa       PersonEnrichmentProviderSettingKind = "exa"
+	Sixtyfour PersonEnrichmentProviderSettingKind = "sixtyfour"
+)
+
+// Validate checks if the PersonEnrichmentProviderSettingKind value is valid
+func (p PersonEnrichmentProviderSettingKind) Validate() error {
+	switch p {
+	case Exa, Sixtyfour:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderSettingKind value, got: %v", p))
+	}
+}
+
+type PersonEnrichmentProviderUpdateKind string
+
+const (
+	PersonEnrichmentProviderUpdateKindExa       PersonEnrichmentProviderUpdateKind = "exa"
+	PersonEnrichmentProviderUpdateKindSixtyfour PersonEnrichmentProviderUpdateKind = "sixtyfour"
+)
+
+// Validate checks if the PersonEnrichmentProviderUpdateKind value is valid
+func (p PersonEnrichmentProviderUpdateKind) Validate() error {
+	switch p {
+	case PersonEnrichmentProviderUpdateKindExa, PersonEnrichmentProviderUpdateKindSixtyfour:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))
+	}
+}
+
 type PersonFileProvenanceDirections string
 
 const (
@@ -1095,18 +1840,18 @@ func (s SavedViewStateEnvelopePresentation) Validate() error {
 type SearchCoverageResponseStatus string
 
 const (
-	Disabled                          SearchCoverageResponseStatus = "disabled"
-	Incomplete                        SearchCoverageResponseStatus = "incomplete"
-	Initializing                      SearchCoverageResponseStatus = "initializing"
-	SearchCoverageResponseStatusReady SearchCoverageResponseStatus = "ready"
-	SearchCoverageResponseStatusStale SearchCoverageResponseStatus = "stale"
-	Unavailable                       SearchCoverageResponseStatus = "unavailable"
+	Disabled                                SearchCoverageResponseStatus = "disabled"
+	Incomplete                              SearchCoverageResponseStatus = "incomplete"
+	Initializing                            SearchCoverageResponseStatus = "initializing"
+	SearchCoverageResponseStatusReady       SearchCoverageResponseStatus = "ready"
+	SearchCoverageResponseStatusStale       SearchCoverageResponseStatus = "stale"
+	SearchCoverageResponseStatusUnavailable SearchCoverageResponseStatus = "unavailable"
 )
 
 // Validate checks if the SearchCoverageResponseStatus value is valid
 func (s SearchCoverageResponseStatus) Validate() error {
 	switch s {
-	case Disabled, Incomplete, Initializing, SearchCoverageResponseStatusReady, SearchCoverageResponseStatusStale, Unavailable:
+	case Disabled, Incomplete, Initializing, SearchCoverageResponseStatusReady, SearchCoverageResponseStatusStale, SearchCoverageResponseStatusUnavailable:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchCoverageResponseStatus value, got: %v", s))
@@ -1127,6 +1872,24 @@ func (s SearchCoverageResponseActions) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchCoverageResponseActions value, got: %v", s))
+	}
+}
+
+type SecretSettingStateSource string
+
+const (
+	Environment SecretSettingStateSource = "environment"
+	None        SecretSettingStateSource = "none"
+	Stored      SecretSettingStateSource = "stored"
+)
+
+// Validate checks if the SecretSettingStateSource value is valid
+func (s SecretSettingStateSource) Validate() error {
+	switch s {
+	case Environment, None, Stored:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SecretSettingStateSource value, got: %v", s))
 	}
 }
 
@@ -1210,24 +1973,30 @@ func (s SetPersonAttributeRequestSource) Validate() error {
 	}
 }
 
-type SettingGroup string
+type SettingGroup0 string
 
 const (
-	Archive      SettingGroup = "archive"
-	Browser      SettingGroup = "browser"
-	Integrations SettingGroup = "integrations"
-	Search       SettingGroup = "search"
-	Server       SettingGroup = "server"
-	Sources      SettingGroup = "sources"
+	Activity                SettingGroup0 = "activity"
+	Archive                 SettingGroup0 = "archive"
+	Attachments             SettingGroup0 = "attachments"
+	Backup                  SettingGroup0 = "backup"
+	Browser                 SettingGroup0 = "browser"
+	Integrations            SettingGroup0 = "integrations"
+	Logging                 SettingGroup0 = "logging"
+	Search                  SettingGroup0 = "search"
+	Server                  SettingGroup0 = "server"
+	SettingGroup0Enrichment SettingGroup0 = "enrichment"
+	Sources                 SettingGroup0 = "sources"
+	Sync                    SettingGroup0 = "sync"
 )
 
-// Validate checks if the SettingGroup value is valid
-func (s SettingGroup) Validate() error {
+// Validate checks if the SettingGroup0 value is valid
+func (s SettingGroup0) Validate() error {
 	switch s {
-	case Archive, Browser, Integrations, Search, Server, Sources:
+	case Activity, Archive, Attachments, Backup, Browser, Integrations, Logging, Search, Server, SettingGroup0Enrichment, Sources, Sync:
 		return nil
 	default:
-		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingGroup value, got: %v", s))
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingGroup0 value, got: %v", s))
 	}
 }
 
@@ -1272,6 +2041,89 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TaskIntegrationStatusResponseState value, got: %v", t))
+	}
+}
+
+type ListOperationRunsQueryKind string
+
+const (
+	ListOperationRunsQueryKindCarddavSync        ListOperationRunsQueryKind = "carddav_sync"
+	ListOperationRunsQueryKindDocumentEmbedding  ListOperationRunsQueryKind = "document_embedding"
+	ListOperationRunsQueryKindDocumentExtraction ListOperationRunsQueryKind = "document_extraction"
+	ListOperationRunsQueryKindMessageEmbedding   ListOperationRunsQueryKind = "message_embedding"
+	ListOperationRunsQueryKindPersonEmbedding    ListOperationRunsQueryKind = "person_embedding"
+	ListOperationRunsQueryKindPersonEnrichment   ListOperationRunsQueryKind = "person_enrichment"
+	ListOperationRunsQueryKindPersonSweep        ListOperationRunsQueryKind = "person_sweep"
+	ListOperationRunsQueryKindSourceSync         ListOperationRunsQueryKind = "source_sync"
+	ListOperationRunsQueryKindVisualEmbedding    ListOperationRunsQueryKind = "visual_embedding"
+)
+
+// Validate checks if the ListOperationRunsQueryKind value is valid
+func (l ListOperationRunsQueryKind) Validate() error {
+	switch l {
+	case ListOperationRunsQueryKindCarddavSync, ListOperationRunsQueryKindDocumentEmbedding, ListOperationRunsQueryKindDocumentExtraction, ListOperationRunsQueryKindMessageEmbedding, ListOperationRunsQueryKindPersonEmbedding, ListOperationRunsQueryKindPersonEnrichment, ListOperationRunsQueryKindPersonSweep, ListOperationRunsQueryKindSourceSync, ListOperationRunsQueryKindVisualEmbedding:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryKind value, got: %v", l))
+	}
+}
+
+type ListOperationRunsQueryLane string
+
+const (
+	ListOperationRunsQueryLaneContacts          ListOperationRunsQueryLane = "contacts"
+	ListOperationRunsQueryLaneDocuments         ListOperationRunsQueryLane = "documents"
+	ListOperationRunsQueryLaneMessages          ListOperationRunsQueryLane = "messages"
+	ListOperationRunsQueryLanePersonFacts       ListOperationRunsQueryLane = "person_facts"
+	ListOperationRunsQueryLaneVisualAttachments ListOperationRunsQueryLane = "visual_attachments"
+)
+
+// Validate checks if the ListOperationRunsQueryLane value is valid
+func (l ListOperationRunsQueryLane) Validate() error {
+	switch l {
+	case ListOperationRunsQueryLaneContacts, ListOperationRunsQueryLaneDocuments, ListOperationRunsQueryLaneMessages, ListOperationRunsQueryLanePersonFacts, ListOperationRunsQueryLaneVisualAttachments:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryLane value, got: %v", l))
+	}
+}
+
+type ListOperationRunsQueryState string
+
+const (
+	ListOperationRunsQueryStateCancelled ListOperationRunsQueryState = "cancelled"
+	ListOperationRunsQueryStateFailed    ListOperationRunsQueryState = "failed"
+	ListOperationRunsQueryStatePartial   ListOperationRunsQueryState = "partial"
+	ListOperationRunsQueryStateQueued    ListOperationRunsQueryState = "queued"
+	ListOperationRunsQueryStateRunning   ListOperationRunsQueryState = "running"
+	ListOperationRunsQueryStateSucceeded ListOperationRunsQueryState = "succeeded"
+)
+
+// Validate checks if the ListOperationRunsQueryState value is valid
+func (l ListOperationRunsQueryState) Validate() error {
+	switch l {
+	case ListOperationRunsQueryStateCancelled, ListOperationRunsQueryStateFailed, ListOperationRunsQueryStatePartial, ListOperationRunsQueryStateQueued, ListOperationRunsQueryStateRunning, ListOperationRunsQueryStateSucceeded:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryState value, got: %v", l))
+	}
+}
+
+type ListDirectoryPeopleQuerySort string
+
+const (
+	LastContactAsc                   ListDirectoryPeopleQuerySort = "last_contact_asc"
+	LastContactDesc                  ListDirectoryPeopleQuerySort = "last_contact_desc"
+	ListDirectoryPeopleQuerySortName ListDirectoryPeopleQuerySort = "name"
+)
+
+// Validate checks if the ListDirectoryPeopleQuerySort value is valid
+func (l ListDirectoryPeopleQuerySort) Validate() error {
+	switch l {
+	case LastContactAsc, LastContactDesc, ListDirectoryPeopleQuerySortName:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListDirectoryPeopleQuerySort value, got: %v", l))
 	}
 }
 
