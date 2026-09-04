@@ -273,6 +273,11 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	importContext             context.Context
+	cancelImports             context.CancelFunc
+	importMu                  sync.Mutex
+	importsClosed             bool
+	importWG                  sync.WaitGroup
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -531,6 +536,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	if fastmailInventoryFactory == nil {
 		fastmailInventoryFactory = provideridentity.NewFastmailInventory
 	}
+	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                      opts.Config,
 		store:                    opts.Store,
@@ -554,6 +560,8 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		idleTracker:              opts.IdleTracker,
 		operationGate:            opts.OperationGate,
 		operationHistoryReader:   opts.OperationHistoryReader,
+		importContext:            importContext,
+		cancelImports:            cancelImports,
 		blobStore:                opts.BlobStore,
 		remoteImages:             newRemoteImageFetcher(),
 		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
@@ -791,6 +799,23 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.importMu.Lock()
+	s.importsClosed = true
+	if s.cancelImports != nil {
+		s.cancelImports()
+	}
+	s.importMu.Unlock()
+	importsDone := make(chan struct{})
+	go func() {
+		s.importWG.Wait()
+		close(importsDone)
+	}()
+	var importJobsErr error
+	select {
+	case <-importsDone:
+	case <-ctx.Done():
+		importJobsErr = ctx.Err()
+	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -810,10 +835,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	server := s.server
 	s.serverMu.RUnlock()
 	if server == nil {
-		return nil
+		return importJobsErr
 	}
 	s.logger.Info("shutting down API server")
-	return server.Shutdown(ctx)
+	return errors.Join(importJobsErr, server.Shutdown(ctx))
 }
 
 // Router returns the HTTP router for testing.
@@ -1102,6 +1127,7 @@ func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
 func isLongDaemonRequest(path string) bool {
 	switch path {
 	case "/api/v1/cli/build-cache",
+		importJobsEndpointPath,
 		"/api/v1/carddav/sync",
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,

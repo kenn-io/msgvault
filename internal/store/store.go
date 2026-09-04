@@ -44,12 +44,13 @@ const HNSWEfSearch = 1000
 // methods, existing store code that does s.db.Query(...) compiles
 // unchanged and automatically routes through the logger.
 type Store struct {
-	db            *loggedDB
-	dbPath        string
-	dialect       Dialect
-	readOnly      bool // Opened via OpenReadOnly; skips WAL checkpoint on close
-	fts5Available bool // Whether FTS5 is available for full-text search
-	closeCleanup  func()
+	db                   *loggedDB
+	dbPath               string
+	sqliteFilesystemPath string
+	dialect              Dialect
+	readOnly             bool // Opened via OpenReadOnly; skips WAL checkpoint on close
+	fts5Available        bool // Whether FTS5 is available for full-text search
+	closeCleanup         func()
 	// directoryProjectionReady becomes true only after InitSchema has created
 	// the projection tables and dirty-marking triggers. Every writable Store
 	// transaction then refreshes its affected Directory rows before commit.
@@ -62,6 +63,9 @@ type Store struct {
 	// share mutable run state.
 	syncGeneration *syncGeneration
 	syncBase       *Store
+	// syncExecutionLocks is shared with sync-scoped views. Each held lock is
+	// owned by the worker process, not by a durable sync_runs row.
+	syncExecutionLocks *syncExecutionLockState
 
 	sqliteOptimizeMu          sync.Mutex
 	documentVectorOperationMu sync.Mutex
@@ -214,9 +218,11 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:      newLoggedDB(db, dialect.Rebind),
-		dbPath:  dbPath,
-		dialect: dialect,
+		db:                   newLoggedDB(db, dialect.Rebind),
+		dbPath:               dbPath,
+		sqliteFilesystemPath: filesystemPath,
+		dialect:              dialect,
+		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
 	// Probe like the read-only opens do: a Store must know whether full-text
@@ -277,10 +283,11 @@ func openPostgres(dbURL string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:           newLoggedDB(db, dialect.Rebind),
-		dbPath:       dbURL,
-		dialect:      dialect,
-		closeCleanup: cleanup,
+		db:                 newLoggedDB(db, dialect.Rebind),
+		dbPath:             dbURL,
+		dialect:            dialect,
+		closeCleanup:       cleanup,
+		syncExecutionLocks: newSyncExecutionLockState(),
 	}
 
 	// See openSQLite: availability is a property of the database, not of
@@ -361,10 +368,12 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:       newLoggedDB(db, dialect.Rebind),
-		dbPath:   dbPath,
-		dialect:  dialect,
-		readOnly: true,
+		db:                   newLoggedDB(db, dialect.Rebind),
+		dbPath:               dbPath,
+		sqliteFilesystemPath: filesystemPath,
+		dialect:              dialect,
+		readOnly:             true,
+		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
 	// OpenReadOnly takes no context, so the probe cannot be cancelled and its
@@ -416,11 +425,12 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:           newLoggedDB(db, dialect.Rebind),
-		dbPath:       dbURL,
-		dialect:      dialect,
-		readOnly:     true,
-		closeCleanup: cleanup,
+		db:                 newLoggedDB(db, dialect.Rebind),
+		dbPath:             dbURL,
+		dialect:            dialect,
+		readOnly:           true,
+		closeCleanup:       cleanup,
+		syncExecutionLocks: newSyncExecutionLockState(),
 	}
 
 	// As in OpenReadOnly: no context to honour here, but the error is checked
@@ -517,12 +527,13 @@ func (s *Store) Close() error {
 		// reduces the risk of corruption from stale WAL entries.
 		_ = s.CheckpointWAL()
 	}
+	lockErr := s.releaseAllSyncExecutionLocks()
 	err := s.db.Close()
 	if s.closeCleanup != nil {
 		s.closeCleanup()
 		s.closeCleanup = nil
 	}
-	return err
+	return errors.Join(lockErr, err)
 }
 
 // CheckpointWAL forces a WAL checkpoint, folding the WAL back into the main
@@ -1370,6 +1381,26 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	// Older runs predate typed checkpoints. Restore types only when the source
+	// or pinned Gmail handoff cursor identifies them unambiguously, then tag
+	// unfinished Gmail recovery runs for the strict resume matcher.
+	if err := s.runOnceMigration(
+		ctx, migrationSyncRunResumeMetadata, false,
+		func(ctx context.Context) error {
+			return s.withTxContext(ctx, func(tx *loggedTx) error {
+				return s.backfillSyncRunResumeMetadata(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("backfill sync run resume metadata: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_sync_runs_operation
+		ON sync_runs(operation_id, id)
+		WHERE operation_id IS NOT NULL
+	`); err != nil {
+		return fmt.Errorf("create sync operation index: %w", err)
 	}
 	if err := s.ensureCardDAVConflictPendingInvariant(ctx); err != nil {
 		return fmt.Errorf("migrate CardDAV conflict pending state: %w", err)

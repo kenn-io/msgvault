@@ -108,7 +108,7 @@ func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
 		       google_user_id, last_sync_at, sync_cursor, sync_config,
 		       oauth_app, created_at, updated_at
 		FROM sources
-		WHERE identifier = ? OR display_name = ?
+		WHERE LOWER(identifier) = LOWER(?) OR LOWER(display_name) = LOWER(?)
 		ORDER BY source_type
 	`, query, query)
 	if err != nil {

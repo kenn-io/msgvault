@@ -1596,6 +1596,17 @@ CREATE TABLE IF NOT EXISTS visual_work_claims (
 -- SYNC STATE
 -- ============================================================================
 
+-- Durable lifecycle for higher-level sync invocations. One operation can own
+-- multiple sync runs, such as full enumeration followed by history catch-up.
+CREATE TABLE IF NOT EXISTS sync_operations (
+    id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    finished_at DATETIME
+);
+
 -- Sync runs (for debugging and resumability)
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY,
@@ -1613,7 +1624,9 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
     error_message TEXT,
     cursor_before TEXT,
-    cursor_after TEXT
+    cursor_after TEXT,
+    request_fingerprint TEXT,
+    operation_id TEXT
 );
 
 -- Exact journal cut owned by one source sync publication. The lower bound is

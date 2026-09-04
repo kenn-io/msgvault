@@ -1341,6 +1341,32 @@ type ImportMeetingResponseJSON = MeetingImportResponse
 
 type ImportMeetingErrorResponse = ErrorResponse
 
+type CreateImportJobResponse = ImportJobResponse
+
+type CreateImportJobErrorResponse = ErrorResponse
+
+type CreateImportJobErrorResponseJSON = ErrorResponse
+
+type CreateImportJobErrorResponseJSON404 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON409 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON413 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON415 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON422 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON500 = ErrorResponse
+
+type CreateImportJobErrorResponseJSON503 = ErrorResponse
+
+type GetImportJobResponse = ImportJobResponse
+
+type GetImportJobErrorResponse = ErrorResponse
+
+type GetImportJobErrorResponseJSON = ErrorResponse
+
 type SearchIntegrationTasksResponse = TaskSearchResponse
 
 type SearchIntegrationTasksErrorResponse = ErrorResponse
@@ -3806,6 +3832,31 @@ type ImportMeetingResp struct {
 	StatusCode   int
 	JSON200      *ImportMeetingResponse
 	JSON201      *ImportMeetingResponseJSON
+}
+
+type CreateImportJobResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *CreateImportJobResponse
+	JSON400      *CreateImportJobErrorResponse
+	JSON401      *CreateImportJobErrorResponseJSON
+	JSON404      *CreateImportJobErrorResponseJSON404
+	JSON409      *CreateImportJobErrorResponseJSON409
+	JSON413      *CreateImportJobErrorResponseJSON413
+	JSON415      *CreateImportJobErrorResponseJSON415
+	JSON422      *CreateImportJobErrorResponseJSON422
+	JSON500      *CreateImportJobErrorResponseJSON500
+	JSON503      *CreateImportJobErrorResponseJSON503
+}
+
+type GetImportJobResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetImportJobResponse
+	JSON401      *GetImportJobErrorResponse
+	JSON404      *GetImportJobErrorResponseJSON
 }
 
 type SearchIntegrationTasksResp struct {

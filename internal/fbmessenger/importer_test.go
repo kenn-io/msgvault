@@ -1100,7 +1100,7 @@ func writeMultiThreadFixture(t *testing.T, n int) string {
 	return tmp
 }
 
-// TestImportDYI_ResumeFromCheckpoint seeds an active sync with a prior
+// TestImportDYI_ResumeFromCheckpoint seeds a failed sync with a prior
 // fbmessengerCheckpoint pointing past the first thread, then runs
 // ImportDYI and verifies that (a) WasResumed is true and (b) the
 // already-processed thread is skipped on the second run (while still
@@ -1120,9 +1120,8 @@ func TestImportDYI_ResumeFromCheckpoint(t *testing.T) {
 	require.Equal(int64(3), first.MessagesAdded, "first run MessagesAdded")
 	require.Equal(3, first.ThreadsProcessed, "first run ThreadsProcessed")
 
-	// Simulate an in-progress run: create a new running sync_run for
-	// the facebook_messenger source and write a fbmessengerCheckpoint
-	// whose ThreadIndex == 2 (two threads already done).
+	// Simulate an interrupted run with a checkpoint whose ThreadIndex == 2
+	// (two threads already done).
 	src, err := st.GetOrCreateSource("facebook_messenger", "test.user@facebook.messenger")
 	require.NoError(err)
 	syncID, err := st.StartSync(src.ID, "import-messenger")
@@ -1140,6 +1139,7 @@ func TestImportDYI_ResumeFromCheckpoint(t *testing.T) {
 		MessagesProcessed: 2,
 		MessagesAdded:     2,
 	}))
+	require.NoError(st.FailSync(syncID, "worker stopped"))
 
 	// Second run: should detect the active checkpoint and resume,
 	// processing only the 3rd thread.

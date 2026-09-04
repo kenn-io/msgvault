@@ -68,6 +68,12 @@ func (c *canceledStartSyncConn) QueryContext(
 		c.cancel()
 		return nil, context.Canceled
 	}
+	if strings.Contains(query, "FROM sync_runs") {
+		return &singleInt64Rows{read: true}, nil
+	}
+	if strings.Contains(query, "FROM sync_operations") {
+		return &singleInt64Rows{read: true}, nil
+	}
 	return &singleInt64Rows{value: 1}, nil
 }
 

@@ -66,6 +66,7 @@ const (
 	migrationVCardSourceResourceIdentity = "vcard_source_resource_identity_v1"
 	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
 	migrationGmailChatClassification     = "gmail_chat_classification_v1"
+	migrationSyncRunResumeMetadata       = "sync_run_resume_metadata_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.
@@ -76,6 +77,53 @@ const (
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 )
+
+func (s *Store) backfillSyncRunResumeMetadata(
+	ctx context.Context, tx *loggedTx,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_runs
+		SET sync_type = CASE (
+			SELECT source_type FROM sources WHERE sources.id = sync_runs.source_id
+		)
+			WHEN 'mbox' THEN 'import-mbox'
+			WHEN 'apple-mail' THEN 'import-emlx'
+			WHEN 'pst' THEN 'import-pst'
+			ELSE 'full'
+		END
+		WHERE sync_type = ''
+		  AND (
+			source_id IN (
+				SELECT id FROM sources WHERE source_type IN ('mbox', 'apple-mail', 'pst')
+			)
+			OR (
+				status IN ('running', 'failed')
+				AND cursor_before IS NOT NULL AND cursor_before != ''
+				AND cursor_after IS NOT NULL AND cursor_after != ''
+				AND source_id IN (
+					SELECT id FROM sources WHERE source_type IN ('', 'gmail')
+				)
+			)
+		  )
+	`); err != nil {
+		return fmt.Errorf("backfill sync run types: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_runs
+		SET request_fingerprint = ?
+		WHERE request_fingerprint IS NULL
+		  AND sync_type = 'full'
+		  AND status IN ('running', 'failed')
+		  AND cursor_after IS NOT NULL
+		  AND cursor_after != ''
+		  AND source_id IN (
+			SELECT id FROM sources WHERE source_type IN ('', 'gmail')
+		  )
+	`, GmailHistoryRecoveryRequestFingerprint); err != nil {
+		return fmt.Errorf("backfill Gmail history recovery request fingerprints: %w", err)
+	}
+	return nil
+}
 
 func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) error {
 	if _, err := tx.ExecContext(ctx, `

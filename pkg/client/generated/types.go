@@ -4514,6 +4514,82 @@ func (i ImportEntry) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
 }
 
+type ImportJobRequest struct {
+	Account  string  `json:"account" validate:"required,min=1"`
+	After    *string `json:"after,omitempty"`
+	Before   *string `json:"before,omitempty"`
+	Limit    *int64  `json:"limit,omitempty" validate:"omitempty,gte=0"`
+	Noresume *bool   `json:"noresume,omitempty"`
+
+	// Query Gmail search query; not supported for IMAP sources
+	Query *string `json:"query,omitempty"`
+}
+
+func (i ImportJobRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type ImportJobResponse struct {
+	Account    string                  `json:"account" validate:"required"`
+	Added      int64                   `json:"added"`
+	CreatedAt  time.Time               `json:"created_at" validate:"required"`
+	ErrorData  *string                 `json:"error,omitempty"`
+	FinishedAt *time.Time              `json:"finished_at,omitempty" validate:"required"`
+	JobID      string                  `json:"job_id" validate:"required"`
+	Processed  int64                   `json:"processed"`
+	Skipped    int64                   `json:"skipped"`
+	StartedAt  *time.Time              `json:"started_at,omitempty" validate:"required"`
+	Status     ImportJobResponseStatus `json:"status" validate:"required"`
+	Summary    *ImportJobSummary       `json:"summary,omitempty"`
+}
+
+func (i ImportJobResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if i.FinishedAt != nil {
+		if err := typesValidator.Var(i.FinishedAt, "required"); err != nil {
+			errors = errors.Append("FinishedAt", err)
+		}
+	}
+	if err := typesValidator.Var(i.JobID, "required"); err != nil {
+		errors = errors.Append("JobID", err)
+	}
+	if i.StartedAt != nil {
+		if err := typesValidator.Var(i.StartedAt, "required"); err != nil {
+			errors = errors.Append("StartedAt", err)
+		}
+	}
+	if v, ok := any(i.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if i.Summary != nil {
+		if v, ok := any(i.Summary).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Summary", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ImportJobSummary struct {
+	Added     int64 `json:"added"`
+	Errors    int64 `json:"errors"`
+	Processed int64 `json:"processed"`
+	Skipped   int64 `json:"skipped"`
+	Updated   int64 `json:"updated"`
+}
+
 type ImportRequest struct {
 	Account  *string       `json:"account,omitempty"`
 	Apply    *bool         `json:"apply,omitempty"`

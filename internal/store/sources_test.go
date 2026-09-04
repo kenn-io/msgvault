@@ -47,6 +47,30 @@ func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
 	assert.Empty(t, sources)
 }
 
+func TestStore_GetSourcesByIdentifierOrDisplayNameIgnoresCase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "Archive@Example.com")
+	require.NoError(err)
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`),
+		"Primary Archive", source.ID,
+	)
+	require.NoError(err)
+
+	byIdentifier, err := st.GetSourcesByIdentifierOrDisplayName("archive@example.com")
+	require.NoError(err)
+	require.Len(byIdentifier, 1)
+	assert.Equal(source.ID, byIdentifier[0].ID)
+
+	byDisplayName, err := st.GetSourcesByIdentifierOrDisplayName("primary archive")
+	require.NoError(err)
+	require.Len(byDisplayName, 1)
+	assert.Equal(source.ID, byDisplayName[0].ID)
+}
+
 func TestStore_RemoveSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -4,6 +4,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ const (
 	labelTypeSystem               = "system"
 	labelIDChat                   = "CHAT"
 	conversationTypeChat          = "chat"
+	sourceTypeGmail               = "gmail"
 	sourceTypeIMAP                = "imap"
 	invalidatedIMAPSourceIDPrefix = "msgvault-invalidated:"
 )
@@ -56,13 +58,24 @@ type Options struct {
 	// The API listing call (which returns lightweight IDs, not bodies) may
 	// return more IDs than the limit; only the truncated set is fetched.
 	Limit int
+
+	// OperationID attributes every sync phase to one daemon invocation.
+	OperationID string
+}
+
+func (s *Syncer) startSync(
+	ctx context.Context, execution *store.SyncExecution, syncType, requestFingerprint string,
+) (int64, error) {
+	return execution.StartSyncWithRequestContext(
+		ctx, syncType, s.opts.OperationID, requestFingerprint,
+	)
 }
 
 // DefaultOptions returns sensible defaults.
 func DefaultOptions() *Options {
 	return &Options{
 		BatchSize:  10,
-		SourceType: "gmail",
+		SourceType: sourceTypeGmail,
 	}
 }
 
@@ -215,13 +228,25 @@ func (s *Syncer) runSuccessfulSyncHook(ctx context.Context, source *store.Source
 // completeSyncWithoutHook atomically publishes the source cursor and marks the
 // still-current run complete.
 func (s *Syncer) completeSyncWithoutHook(
-	ctx context.Context, syncID int64, sourceID int64, historyID string,
+	ctx context.Context,
+	syncID int64,
+	sourceID int64,
+	historyID string,
+	publishSourceCursor bool,
 ) error {
-	if err := s.store.CompleteSyncAndUpdateSourceCursorContext(
-		ctx, syncID, sourceID, historyID,
-	); err != nil {
+	var err error
+	if publishSourceCursor {
+		err = s.store.CompleteSyncAndUpdateSourceCursorContext(
+			ctx, syncID, sourceID, historyID,
+		)
+	} else {
+		err = s.store.CompleteSyncAndPreserveSourceCursorContext(
+			ctx, syncID, sourceID, historyID,
+		)
+	}
+	if err != nil {
 		if !errors.Is(err, store.ErrSyncRunSuperseded) {
-			s.failSyncUnlessCanceled(syncID, err)
+			s.failStoppedSync(syncID, err)
 		}
 		return fmt.Errorf("publish completed sync: %w", err)
 	}
@@ -234,7 +259,11 @@ func (s *Syncer) completeSyncAndRunHook(
 	historyID string,
 	source *store.Source,
 ) error {
-	if err := s.completeSyncWithoutHook(ctx, syncID, source.ID, historyID); err != nil {
+	publishSourceCursor := source.SourceType != sourceTypeGmail ||
+		(s.opts.Query == "" && s.opts.Limit == 0)
+	if err := s.completeSyncWithoutHook(
+		ctx, syncID, source.ID, historyID, publishSourceCursor,
+	); err != nil {
 		return err
 	}
 	s.runSuccessfulSyncHook(ctx, source, true)
@@ -357,53 +386,85 @@ type syncState struct {
 	wasResumed    bool
 }
 
-func isPinnedHistoryRecovery(run *store.SyncRun) bool {
-	return run != nil && run.CursorAfter.Valid && run.CursorAfter.String != ""
+func checkpointMatchesRequest(run *store.SyncRun, requestFingerprint string) bool {
+	return run != nil &&
+		run.RequestFingerprint.Valid &&
+		run.RequestFingerprint.String == requestFingerprint
 }
 
-// failSyncUnlessCanceled marks the run failed for real errors. A cancelled
-// sync (Ctrl-C, daemon shutdown, a scheduled sync yielding to a waiting
-// operation) keeps status='running' with its saved checkpoint, matching the
-// killed-process semantics GetActiveSync resumes from; marking it failed
-// would discard the checkpoint and restart the sync from scratch.
-func (s *Syncer) failSyncUnlessCanceled(syncID int64, err error) {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return
+func (s *Syncer) fullCheckpointMatchesRequest(
+	run *store.SyncRun, requestFingerprint string,
+) bool {
+	if checkpointMatchesRequest(run, requestFingerprint) {
+		return true
 	}
+	if run == nil || run.RequestFingerprint.Valid ||
+		(run.CursorAfter.Valid && run.CursorAfter.String != "") {
+		return false
+	}
+	// v0.19.x and earlier did not record full-sync request fingerprints.
+	// Only a new default Gmail traversal opts in to those checkpoints; filtered
+	// and limited requests still require an exact fingerprint. Remove this
+	// fallback when the minimum supported archive version is newer than v0.19.3.
+	return (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) &&
+		s.opts.Query == "" && s.opts.Limit == 0
+}
+
+func isPinnedHistoryRecovery(run *store.SyncRun) bool {
+	return checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint) &&
+		run.CursorAfter.Valid && run.CursorAfter.String != ""
+}
+
+func (s *Syncer) fullSyncRequestFingerprint() string {
+	request := fmt.Sprintf(
+		"full:v1\x00%s\x00%s\x00%d\x00%t",
+		s.opts.SourceType, s.opts.Query, s.opts.Limit, s.opts.NoResume,
+	)
+	return fmt.Sprintf("full:v1:%x", sha256.Sum256([]byte(request)))
+}
+
+// failStoppedSync marks the stopped worker's run failed. Checkpoints on
+// failed runs remain resumable, while running status stays reserved for a live
+// worker.
+func (s *Syncer) failStoppedSync(syncID int64, err error) {
 	_ = s.store.FailSync(syncID, err.Error())
 }
 
 // initSyncState initializes sync state, resuming from checkpoint if possible.
-func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
+func (s *Syncer) initSyncState(
+	ctx context.Context, sourceID int64, execution *store.SyncExecution,
+) (*syncState, error) {
+	requestFingerprint := s.fullSyncRequestFingerprint()
 	state := &syncState{
 		checkpoint: &store.Checkpoint{},
 	}
 
 	if !s.opts.NoResume {
-		activeSync, err := s.store.GetActiveSync(sourceID)
+		priorSync, err := s.store.GetLatestCheckpointedSyncByType(sourceID, "full")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active sync: %w", err)
+			return nil, fmt.Errorf("check checkpointed sync: %w", err)
 		}
-		if activeSync != nil {
-			state.syncID = activeSync.ID
-			if activeSync.CursorBefore.Valid {
-				state.pageToken = activeSync.CursorBefore.String
+		if s.fullCheckpointMatchesRequest(priorSync, requestFingerprint) {
+			if priorSync.Status == store.SyncStatusRunning {
+				return nil, fmt.Errorf("source %d sync %d: %w", sourceID, priorSync.ID, store.ErrSyncAlreadyActive)
+			}
+			if priorSync.CursorBefore.Valid {
+				state.pageToken = priorSync.CursorBefore.String
 			}
 			state.checkpoint = &store.Checkpoint{
 				PageToken:         state.pageToken,
-				MessagesProcessed: activeSync.MessagesProcessed,
-				MessagesAdded:     activeSync.MessagesAdded,
-				MessagesUpdated:   activeSync.MessagesUpdated,
-				ErrorsCount:       activeSync.ErrorsCount,
+				MessagesProcessed: priorSync.MessagesProcessed,
+				MessagesAdded:     priorSync.MessagesAdded,
+				MessagesUpdated:   priorSync.MessagesUpdated,
+				ErrorsCount:       priorSync.ErrorsCount,
 			}
 			state.wasResumed = true
 			s.logger.Info("resuming sync", "messages_processed", state.checkpoint.MessagesProcessed)
-			return state, nil
 		}
 	}
 
 	// Start new sync
-	syncID, err := s.store.StartSync(sourceID, "full")
+	syncID, err := s.startSync(ctx, execution, "full", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
@@ -414,28 +475,38 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 // initHistoryRecoveryState only resumes a full run that already pinned its
 // history handoff cursor. An ordinary full-sync checkpoint cannot be reused:
 // its processed prefix may have changed before recovery captured a cursor.
-func (s *Syncer) initHistoryRecoveryState(sourceID int64) (*syncState, error) {
+func (s *Syncer) initHistoryRecoveryState(
+	ctx context.Context, sourceID int64, execution *store.SyncExecution,
+) (*syncState, error) {
 	if !s.opts.NoResume {
-		activeSync, err := s.store.GetActiveSync(sourceID)
+		priorSync, err := s.store.GetLatestCheckpointedSync(sourceID)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active history recovery: %w", err)
+			return nil, fmt.Errorf("check checkpointed history recovery: %w", err)
 		}
-		if isPinnedHistoryRecovery(activeSync) {
+		if priorSync != nil && priorSync.Status == store.SyncStatusRunning {
+			return nil, fmt.Errorf("source %d sync %d: %w", sourceID, priorSync.ID, store.ErrSyncAlreadyActive)
+		}
+		if isPinnedHistoryRecovery(priorSync) {
 			state := &syncState{
-				syncID:        activeSync.ID,
 				checkpoint:    &store.Checkpoint{},
-				handoffCursor: activeSync.CursorAfter.String,
+				handoffCursor: priorSync.CursorAfter.String,
 				wasResumed:    true,
 			}
-			if activeSync.CursorBefore.Valid {
-				state.pageToken = activeSync.CursorBefore.String
+			if priorSync.CursorBefore.Valid {
+				state.pageToken = priorSync.CursorBefore.String
 			}
 			state.checkpoint = &store.Checkpoint{
 				PageToken:         state.pageToken,
-				MessagesProcessed: activeSync.MessagesProcessed,
-				MessagesAdded:     activeSync.MessagesAdded,
-				MessagesUpdated:   activeSync.MessagesUpdated,
-				ErrorsCount:       activeSync.ErrorsCount,
+				MessagesProcessed: priorSync.MessagesProcessed,
+				MessagesAdded:     priorSync.MessagesAdded,
+				MessagesUpdated:   priorSync.MessagesUpdated,
+				ErrorsCount:       priorSync.ErrorsCount,
+			}
+			state.syncID, err = s.startSync(
+				ctx, execution, "full", store.GmailHistoryRecoveryRequestFingerprint,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("start history recovery: %w", err)
 			}
 			s.logger.Info("resuming Gmail history recovery",
 				"messages_processed", state.checkpoint.MessagesProcessed,
@@ -444,7 +515,7 @@ func (s *Syncer) initHistoryRecoveryState(sourceID int64) (*syncState, error) {
 		}
 	}
 
-	syncID, err := s.store.StartSync(sourceID, "full")
+	syncID, err := s.startSync(ctx, execution, "full", store.GmailHistoryRecoveryRequestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start history recovery: %w", err)
 	}
@@ -885,22 +956,74 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSummary, err error) {
 	sourceType := s.opts.SourceType
 	if sourceType == "" {
-		sourceType = "gmail"
+		sourceType = sourceTypeGmail
 	}
-	if sourceType == "gmail" && !s.opts.NoResume {
-		source, sourceErr := s.store.GetOrCreateSource(sourceType, email)
-		if sourceErr != nil {
-			return nil, fmt.Errorf("get/create source: %w", sourceErr)
-		}
-		active, activeErr := s.store.GetActiveSync(source.ID)
-		if activeErr != nil && !errors.Is(activeErr, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active history recovery: %w", activeErr)
-		}
-		if isPinnedHistoryRecovery(active) {
-			return s.RecoverExpiredHistory(ctx, source)
-		}
+	source, err := s.store.GetOrCreateSource(sourceType, email)
+	if err != nil {
+		return nil, fmt.Errorf("get/create source: %w", err)
 	}
-	return s.full(ctx, email, false)
+	return s.FullWithFinalizer(ctx, source, nil)
+}
+
+// FullWithFinalizer performs a full synchronization and runs finalizer before
+// releasing source ownership. The source must be the persisted row selected by
+// the caller so execution locks and operation attribution use that exact row.
+func (s *Syncer) FullWithFinalizer(
+	ctx context.Context,
+	source *store.Source,
+	finalizer func(*gmail.SyncSummary) error,
+) (summary *gmail.SyncSummary, err error) {
+	if source == nil || source.ID == 0 {
+		return nil, errors.New("full sync: persisted source is required")
+	}
+	resolvedSource := *source
+	sourceType := resolvedSource.SourceType
+	if sourceType == "" {
+		sourceType = sourceTypeGmail
+		resolvedSource.SourceType = sourceType
+	}
+	return s.runWithSyncExecution(ctx, resolvedSource.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
+		if sourceType == sourceTypeGmail && !s.opts.NoResume && s.opts.Query == "" && s.opts.Limit == 0 {
+			prior, priorErr := s.store.GetLatestCheckpointedSync(resolvedSource.ID)
+			if priorErr != nil && !errors.Is(priorErr, store.ErrSyncRunNotFound) {
+				return nil, fmt.Errorf("check checkpointed history recovery: %w", priorErr)
+			}
+			if isPinnedHistoryRecovery(prior) {
+				return s.recoverExpiredHistory(ctx, &resolvedSource, execution)
+			}
+		}
+		summary, err := s.full(ctx, &resolvedSource, false, execution)
+		if err != nil {
+			return nil, err
+		}
+		if finalizer != nil {
+			if err := finalizer(summary); err != nil {
+				return nil, fmt.Errorf("finalize full sync: %w", err)
+			}
+		}
+		return summary, nil
+	})
+}
+
+func (s *Syncer) runWithSyncExecution(
+	ctx context.Context,
+	sourceID int64,
+	run func(*store.SyncExecution) (*gmail.SyncSummary, error),
+) (summary *gmail.SyncSummary, err error) {
+	execution, err := s.store.AcquireSyncExecutionContext(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire source %d sync ownership: %w", sourceID, err)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_ = execution.Release()
+			panic(recovered)
+		}
+		if releaseErr := execution.Release(); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
+	}()
+	return run(execution)
 }
 
 // RecoverExpiredHistory rebuilds the archive from a complete Gmail listing,
@@ -912,14 +1035,31 @@ func (s *Syncer) RecoverExpiredHistory(
 	if source == nil {
 		return nil, errors.New("recover expired history: no source provided")
 	}
-	if source.SourceType != "gmail" {
+	if source.SourceType != sourceTypeGmail {
 		return nil, fmt.Errorf("recover expired history: source %d is %s, not gmail", source.ID, source.SourceType)
 	}
-	if s.opts.Query != "" || s.opts.Limit > 0 {
-		return nil, errors.New("recover expired history requires an unfiltered, unlimited full sync")
+	if err := s.validateHistoryRecoveryOptions(); err != nil {
+		return nil, err
 	}
+	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
+		return s.recoverExpiredHistory(ctx, source, execution)
+	})
+}
 
-	fullSummary, err := s.full(ctx, source.Identifier, true)
+func (s *Syncer) validateHistoryRecoveryOptions() error {
+	if s.opts.Query != "" || s.opts.Limit > 0 {
+		return errors.New("recover expired history requires an unfiltered, unlimited full sync")
+	}
+	return nil
+}
+
+func (s *Syncer) recoverExpiredHistory(
+	ctx context.Context, source *store.Source, execution *store.SyncExecution,
+) (*gmail.SyncSummary, error) {
+	if err := s.validateHistoryRecoveryOptions(); err != nil {
+		return nil, err
+	}
+	fullSummary, err := s.full(ctx, source, true, execution)
 	if err != nil {
 		return nil, fmt.Errorf("recover expired history: full sync: %w", err)
 	}
@@ -927,7 +1067,7 @@ func (s *Syncer) RecoverExpiredHistory(
 	if err != nil {
 		return nil, fmt.Errorf("recover expired history: reload source: %w", err)
 	}
-	catchup, err := s.Incremental(ctx, refreshed)
+	catchup, err := s.incremental(ctx, refreshed, execution)
 	if err != nil {
 		return nil, fmt.Errorf("recover expired history: catch up from full-sync cursor: %w", err)
 	}
@@ -953,48 +1093,57 @@ func (s *Syncer) IncrementalWithHistoryRecovery(
 	if source == nil {
 		return nil, errors.New("no source provided - run full sync first")
 	}
-	active, err := s.store.GetActiveSync(source.ID)
+	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
+		return s.incrementalWithHistoryRecovery(ctx, source, onRecovery, execution)
+	})
+}
+
+func (s *Syncer) incrementalWithHistoryRecovery(
+	ctx context.Context,
+	source *store.Source,
+	onRecovery func(resumed bool),
+	execution *store.SyncExecution,
+) (*gmail.SyncSummary, error) {
+	prior, err := s.store.GetLatestCheckpointedSync(source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return nil, fmt.Errorf("check active history recovery: %w", err)
+		return nil, fmt.Errorf("check checkpointed history recovery: %w", err)
 	}
-	if !s.opts.NoResume && isPinnedHistoryRecovery(active) {
+	if prior != nil && prior.Status == store.SyncStatusRunning {
+		return nil, fmt.Errorf("source %d sync %d: %w", source.ID, prior.ID, store.ErrSyncAlreadyActive)
+	}
+	if !s.opts.NoResume && isPinnedHistoryRecovery(prior) {
 		if onRecovery != nil {
 			onRecovery(true)
 		}
-		return s.RecoverExpiredHistory(ctx, source)
+		return s.recoverExpiredHistory(ctx, source, execution)
 	}
 
-	summary, err := s.Incremental(ctx, source)
+	summary, err := s.incremental(ctx, source, execution)
 	if !errors.Is(err, ErrHistoryExpired) {
 		return summary, err
 	}
 	if onRecovery != nil {
 		onRecovery(false)
 	}
-	return s.RecoverExpiredHistory(ctx, source)
+	return s.recoverExpiredHistory(ctx, source, execution)
 }
 
-func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool) (summary *gmail.SyncSummary, err error) {
+func (s *Syncer) full(
+	ctx context.Context,
+	source *store.Source,
+	reconcilePresence bool,
+	execution *store.SyncExecution,
+) (summary *gmail.SyncSummary, err error) {
 	startTime := time.Now()
 	summary = &gmail.SyncSummary{StartTime: startTime}
-
-	// Get or create source
-	sourceType := s.opts.SourceType
-	if sourceType == "" {
-		sourceType = "gmail"
-	}
-	source, err := s.store.GetOrCreateSource(sourceType, email)
-	if err != nil {
-		return nil, fmt.Errorf("get/create source: %w", err)
-	}
 
 	// Recovery may only resume a run that pinned its history handoff cursor.
 	// Ordinary full-sync checkpoints predate that cursor and are unsafe to reuse.
 	var state *syncState
 	if reconcilePresence {
-		state, err = s.initHistoryRecoveryState(source.ID)
+		state, err = s.initHistoryRecoveryState(ctx, source.ID, execution)
 	} else {
-		state, err = s.initSyncState(source.ID)
+		state, err = s.initSyncState(ctx, source.ID, execution)
 	}
 	if err != nil {
 		return nil, err
@@ -1022,7 +1171,7 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 	// Get profile to verify connection and get historyId
 	profile, err := s.client.GetProfile(ctx)
 	if err != nil {
-		s.failSyncUnlessCanceled(state.syncID, err)
+		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 	handoffHistoryID := profile.HistoryID
@@ -1030,13 +1179,13 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 		if state.handoffCursor == "" {
 			state.handoffCursor = strconv.FormatUint(profile.HistoryID, 10)
 			if err := s.store.PinSyncHandoffCursorContext(ctx, state.syncID, state.handoffCursor); err != nil {
-				s.failSyncUnlessCanceled(state.syncID, err)
+				s.failStoppedSync(state.syncID, err)
 				return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
 			}
 		} else {
 			handoffHistoryID, err = strconv.ParseUint(state.handoffCursor, 10, 64)
 			if err != nil {
-				s.failSyncUnlessCanceled(state.syncID, err)
+				s.failStoppedSync(state.syncID, err)
 				return nil, fmt.Errorf("parse Gmail history recovery cursor %q: %w", state.handoffCursor, err)
 			}
 		}
@@ -1047,7 +1196,7 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 	// Sync labels
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		s.failSyncUnlessCanceled(state.syncID, err)
+		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -1064,7 +1213,7 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
 		if err != nil {
-			s.failSyncUnlessCanceled(state.syncID, err)
+			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
 		}
 
@@ -1095,14 +1244,14 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 			if checkpointErr := s.store.UpdateSyncCheckpoint(state.syncID, state.checkpoint); checkpointErr != nil {
 				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
 			}
-			s.failSyncUnlessCanceled(state.syncID, err)
+			s.failStoppedSync(state.syncID, err)
 			return nil, err
 		}
 
 		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, result.sourceMessageIDs))
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
-			s.failSyncUnlessCanceled(state.syncID, err)
+			s.failStoppedSync(state.syncID, err)
 			return nil, err
 		}
 		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
@@ -1144,12 +1293,12 @@ func (s *Syncer) full(ctx context.Context, email string, reconcilePresence bool)
 	if reconcilePresence {
 		present, err := s.listCompleteMessageSnapshot(ctx)
 		if err != nil {
-			s.failSyncUnlessCanceled(state.syncID, err)
+			s.failStoppedSync(state.syncID, err)
 			return nil, err
 		}
 		reconciled, err := s.store.ReconcileSourceMessageSnapshot(ctx, source.ID, present)
 		if err != nil {
-			s.failSyncUnlessCanceled(state.syncID, err)
+			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("reconcile Gmail message snapshot: %w", err)
 		}
 		if reconciled > 0 {
@@ -1460,7 +1609,7 @@ func (s *Syncer) prepareMessage(
 }
 
 func (s *Syncer) isGmailChat(labelIDs []string) bool {
-	if s.opts.SourceType != "" && s.opts.SourceType != "gmail" {
+	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
 		return false
 	}
 	return slices.Contains(labelIDs, labelIDChat)

@@ -1798,10 +1798,12 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 	assertMessageDeletedFromSource(t, st, source.ID, "missing", true)
 	assertMessageDeletedFromSource(t, st, source.ID, "present", false)
 	assertMessageDeletedFromSource(t, st, otherSource.ID, "missing", false)
+	require.NoError(st.CompleteSync(syncID, "initial"))
 
 	staleSyncID, err := st.StartSync(source.ID, "full")
 	require.NoError(err)
 	stale := st.ScopedToSync(source.ID, staleSyncID)
+	require.NoError(st.FailSync(staleSyncID, "worker stopped"))
 	_, err = st.StartSync(source.ID, "full")
 	require.NoError(err)
 	_, err = stale.ReconcileSourceMessageSnapshot(t.Context(), source.ID, map[string]struct{}{})

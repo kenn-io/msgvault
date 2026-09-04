@@ -244,6 +244,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchemaContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("recover unfinished historical imports: %w", err)
+	}
+	if failedUnfinishedImports > 0 {
+		logger.Warn("marked historical imports abandoned by the previous daemon as failed",
+			"count", failedUnfinishedImports)
+	}
 	logger.Info("daemon startup step complete", "step", "init_archive_schema")
 	if err := recoverCardDAVSyncRunsAtStartup(cmd.Context(), s, logger); err != nil {
 		return err
@@ -1524,7 +1532,30 @@ func (a *storeAPIAdapter) RunCLISync(
 	req api.CLISyncRequest,
 	emit func(api.CLISyncEvent) error,
 ) error {
-	return a.runCLISyncWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+}
+
+func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
+	ctx context.Context,
+	req api.CLISyncRequest,
+	emit func(api.CLISyncEvent) error,
+	run cliSyncSubprocessRunner,
+) error {
+	err := a.runCLISyncWithRunner(ctx, req, emit, run)
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if req.OperationID == "" {
+		return err
+	}
+	status := "done"
+	if err != nil {
+		status = "failed"
+	}
+	if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
+		return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
+	}
+	return err
 }
 
 type cliSyncSubprocessRunner func(
@@ -1571,6 +1602,9 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		args := []string{"sync-full"}
 		if req.SourceIDSet {
 			args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
+		}
+		if req.OperationID != "" {
+			args = append(args, "--sync-operation-id", req.OperationID)
 		}
 		if req.Query != "" {
 			args = append(args, "--query", req.Query)
@@ -2865,6 +2899,14 @@ func (a *storeAPIAdapter) GetLatestSync(sourceID int64) (*store.SyncRun, error) 
 	return a.store.GetLatestSync(sourceID)
 }
 
+func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {
+	return a.store.GetSyncOperation(operationID)
+}
+
+func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string) (*store.SyncOperation, error) {
+	return a.store.CreateSyncOperation(sourceID, operationID)
+}
+
 func (a *storeAPIAdapter) GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error) {
 	return a.store.GetLastSuccessfulSync(sourceID)
 }
@@ -3406,12 +3448,18 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	summary, err := syncer.Full(ctx, src.Identifier)
+	summary, err := syncer.FullWithFinalizer(
+		ctx,
+		src,
+		func(summary *gmail.SyncSummary) error {
+			if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
+				return fmt.Errorf("save IMAP incremental state: %w", err)
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
-	}
-	if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
-		return nil, fmt.Errorf("save IMAP incremental state: %w", err)
 	}
 	return summary, nil
 }

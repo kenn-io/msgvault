@@ -1441,6 +1441,15 @@ CREATE TABLE IF NOT EXISTS visual_work_claims (
 -- SYNC STATE
 -- ============================================================================
 
+CREATE TABLE IF NOT EXISTS sync_operations (
+    id TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1457,7 +1466,9 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
     error_message TEXT,
     cursor_before TEXT,
-    cursor_after TEXT
+    cursor_after TEXT,
+    request_fingerprint TEXT,
+    operation_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS person_sweep_sync_publications (

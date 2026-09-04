@@ -85,7 +85,9 @@ const sourceTypeMbox = "mbox"
 // This is intended for services like HEY.com that provide an export in MBOX
 // format but do not expose IMAP/POP. The importer stores the raw MIME,
 // parsed bodies, participants, recipients, and (optionally) attachments.
-func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts MboxImportOptions) (*MboxImportSummary, error) {
+func ImportMbox(
+	ctx context.Context, st *store.Store, mboxPath string, opts MboxImportOptions,
+) (retSummary *MboxImportSummary, retErr error) {
 	if opts.SourceType == "" {
 		opts.SourceType = sourceTypeMbox
 	}
@@ -124,8 +126,17 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
 	summary.SourceID = src.ID
+	ownershipCtx := context.WithoutCancel(ctx)
+	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire sync execution: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, execution.Release())
+	}()
 
-	// Create or resume the sync run for this source.
+	// Resume from a recovered checkpoint, then create a new run under the
+	// source ownership held for this import.
 	var (
 		syncID int64
 		cp     store.Checkpoint
@@ -134,12 +145,11 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 	)
 
 	if !opts.NoResume {
-		active, err := st.GetActiveSync(src.ID)
+		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-mbox")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active sync: %w", err)
+			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
 		if active != nil {
-			syncID = active.ID
 			cp.MessagesProcessed = active.MessagesProcessed
 			cp.MessagesAdded = active.MessagesAdded
 			cp.MessagesUpdated = active.MessagesUpdated
@@ -172,11 +182,9 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 		}
 	}
 
-	if syncID == 0 {
-		syncID, err = st.StartSync(src.ID, "import-mbox")
-		if err != nil {
-			return nil, fmt.Errorf("start sync: %w", err)
-		}
+	syncID, err = execution.StartSyncContext(ownershipCtx, "import-mbox", "")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
 
