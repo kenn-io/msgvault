@@ -381,12 +381,10 @@ func imapFolderStateOptions(
 	} else if len(states) > 0 {
 		opts = append(opts, imaplib.WithFolderStates(states))
 	}
-	aliases, err := s.GetIMAPSourceMessageAliases(src.ID)
-	if err != nil {
-		logger.Warn("failed to load IMAP source message aliases", "source", src.Identifier, "error", err)
-	} else if len(aliases) > 0 {
-		opts = append(opts, imaplib.WithSourceMessageAliases(aliases))
-	}
+	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
+		func(mailbox string, uids []uint32) (map[string]string, error) {
+			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
+		}))
 	if forceRescan {
 		opts = append(opts, imaplib.WithForceFullEnumeration())
 	}

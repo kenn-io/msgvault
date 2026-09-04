@@ -98,6 +98,11 @@ type Client struct {
 	since                 time.Time            // IMAP SINCE date filter (zero = no filter)
 	before                time.Time            // IMAP BEFORE date filter (zero = no filter)
 
+	// aliasLoader resolves durable aliases for the mailbox UIDs a listing
+	// actually touches. Nil when the caller keeps no durable state.
+	aliasLoader     func(mailbox string, uids []uint32) (map[string]string, error)
+	aliasLoadWarned bool // one failing load must not warn once per request
+
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
@@ -1083,6 +1088,10 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			trackState.KnownUIDs = knownUIDs
 			trackState.UIDNext = baselineUIDNext(trackState.UIDNext, knownUIDs)
 			c.trackFolderMessages(mailbox, trackState, uids)
+		}
+		if prior, ok := c.priorFolderStates[mailbox]; ok &&
+			prior.UIDValidity == trackState.UIDValidity {
+			c.loadSourceMessageAliases(mailbox, uids)
 		}
 		for _, uid := range uids {
 			sourceMessageID := compositeID(mailbox, uid)
