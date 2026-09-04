@@ -199,13 +199,25 @@ func runStageDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// stageDeleteDaemonErr turns the daemon's structured cache-unavailable
-// response into an actionable message instead of a bare API error.
+// stageDeleteDaemonErr turns the daemon's structured rejections into
+// actionable messages instead of bare API errors.
 func stageDeleteDaemonErr(op string, err error) error {
 	var apiErr *daemonclient.APIError
-	if errors.As(err, &apiErr) && apiErr.APIErrorCode() == analyticalCacheUnavailableCode {
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	switch apiErr.APIErrorCode() {
+	case analyticalCacheUnavailableCode:
 		return fmt.Errorf("%s: %s; retry shortly if the analytical cache is still building, "+
 			"or run 'msgvault build-cache' and rerun stage-delete", op, apiErr.Message)
+	case "selection_not_deletable":
+		return fmt.Errorf("%s: %s; the search matches items that cannot be deleted from "+
+			"their source, such as chats, meetings, or non-Gmail mail. Narrow the search, "+
+			"for example with message_type:email or --source-id <gmail-source-id>",
+			op, apiErr.Message)
+	case "multi_account_selection":
+		return fmt.Errorf("%s: %s; rerun stage-delete once per source with --source-id",
+			op, apiErr.Message)
 	}
 	return fmt.Errorf("%s: %w", op, err)
 }

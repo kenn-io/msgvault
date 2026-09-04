@@ -192,6 +192,61 @@ func TestStageDeleteCommand(t *testing.T) {
 		require.ErrorContains(t, err, "msgvault build-cache")
 	})
 
+	t.Run("staging_rejections_guide_narrowing", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			code string
+			want string
+		}{
+			{name: "non_deletable", code: "selection_not_deletable", want: "message_type:email"},
+			{name: "multi_source", code: "multi_account_selection", want: "once per source with --source-id"},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/v1/cli/search":
+						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"results": []any{}})
+					case "/api/v1/explore":
+						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
+							"cache_revision":        "cache-191",
+							"rows":                  []any{},
+							"search_provenance":     map[string]any{"lexical_index_revision": "lex-191"},
+							"candidate_snapshot_id": "snapshot-191",
+						})
+					case "/api/v1/explore/preflight":
+						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
+							"cache_revision":      "cache-191",
+							"count":               3,
+							"operation_token":     "operation-191",
+							"expires_at":          "2099-01-01T00:00:00Z",
+							"search_provenance":   map[string]any{"lexical_index_revision": "lex-191"},
+							"action_targets":      []any{},
+							"unavailable_actions": []any{},
+						})
+					case "/api/v1/deletions":
+						writeStageDeleteJSON(t, w, http.StatusConflict, map[string]any{
+							"error":   tt.code,
+							"message": "the daemon rejected the reviewed selection",
+						})
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				defer server.Close()
+				withStoreResolverConfig(t, &config.Config{
+					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+				})
+
+				root := newRegisteredStageDeleteTestRoot(t)
+				root.SetArgs([]string{"stage-delete", "from:alice@example.com"})
+				err := root.Execute()
+
+				require.ErrorContains(t, err, "the daemon rejected the reviewed selection")
+				require.ErrorContains(t, err, tt.want)
+			})
+		}
+	})
+
 	t.Run("incomplete_search_index_blocks_staging", func(t *testing.T) {
 		exploreRequests := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

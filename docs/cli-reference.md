@@ -1945,6 +1945,13 @@ msgvault stage-delete <query>
 | `--dry-run` | Show the match count without creating a deletion batch |
 | `--source-id ID` | Restrict staging to one exact source ID |
 
+Deletion staging covers Gmail-source email only. The daemon rejects a selection
+that includes anything else — chats, meetings, calendar entries, or mail from
+non-Gmail sources such as Apple Mail imports — rather than staging a subset of
+what matched. Narrow the search until it matches only deletable mail, for
+example with `message_type:email` in the query and `--source-id` for the Gmail
+source.
+
 For a query that resolves to one source, the source selector is optional. For a
 multi-source query, provide `--source-id` for each source:
 
