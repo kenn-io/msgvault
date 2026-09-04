@@ -198,11 +198,17 @@ type retryPhaseGateConn struct {
 	writeStarted chan struct{}
 	allowWrite   chan struct{}
 	readReady    chan struct{}
+	readData     []byte
 	writeOnce    sync.Once
 }
 
 func (c *retryPhaseGateConn) Read(p []byte) (int, error) {
 	<-c.readReady
+	if len(c.readData) > 0 {
+		n := copy(p, c.readData)
+		c.readData = c.readData[n:]
+		return n, nil
+	}
 	p[0] = 0
 	return 1, nil
 }
@@ -369,6 +375,7 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 		writeStarted: make(chan struct{}),
 		allowWrite:   make(chan struct{}),
 		readReady:    make(chan struct{}),
+		readData:     []byte("T1 OK Begin TLS negotiation now\r\n"),
 	}
 	phaseConn := &startTLSPhaseConn{Conn: gate}
 
@@ -385,7 +392,7 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 
 	readDone := make(chan struct{})
 	go func() {
-		_, _ = phaseConn.Read(make([]byte, 1))
+		_, _ = phaseConn.Read(make([]byte, 64))
 		close(readDone)
 	}()
 	close(gate.readReady)
@@ -403,6 +410,35 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 
 	_, err := phaseConn.Write([]byte("client hello"))
 	require.NoError(err)
+	assert.True(t, phaseConn.handshakeStarted())
+}
+
+func TestConnectRetry_STARTTLSPhaseMarksOverlappingHandshakeWrite(t *testing.T) {
+	require := require.New(t)
+	peer, rawConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = peer.Close()
+		_ = rawConn.Close()
+	})
+	// Model the handshake write racing with STARTTLS command completion bookkeeping.
+	phaseConn := &startTLSPhaseConn{
+		Conn:                  rawConn,
+		commandWriteInProcess: true,
+	}
+	handshake := []byte{0x16, 0x03, 0x03}
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = peer.Read(make([]byte, len(handshake)))
+		close(readDone)
+	}()
+
+	_, err := phaseConn.Write(handshake)
+	require.NoError(err)
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		require.FailNow("overlapping handshake write did not complete")
+	}
 	assert.True(t, phaseConn.handshakeStarted())
 }
 

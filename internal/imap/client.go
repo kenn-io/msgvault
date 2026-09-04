@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -261,37 +262,73 @@ type startTLSPhaseConn struct {
 	phase                 startTLSPhase
 	commandWriteInProcess bool
 	responseObserved      bool
+	responseData          []byte
 }
 
 func (c *startTLSPhaseConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
 		c.mu.Lock()
-		if c.commandWriteInProcess {
-			c.responseObserved = true
-		} else if c.phase == startTLSCommandWritten {
-			c.responseObserved = true
-			c.phase = startTLSResponseObserved
+		if c.observeResponse(p[:n]) {
+			if c.commandWriteInProcess {
+				c.responseObserved = true
+			} else if c.phase == startTLSCommandWritten {
+				c.responseObserved = true
+				c.phase = startTLSResponseObserved
+			}
 		}
 		c.mu.Unlock()
 	}
 	return n, err //nolint:wrapcheck // the phase wrapper preserves the socket's typed transport cause
 }
 
+func (c *startTLSPhaseConn) observeResponse(p []byte) bool {
+	if c.responseObserved {
+		return true
+	}
+	c.responseData = append(c.responseData, p...)
+	for {
+		lineEnd := bytes.IndexByte(c.responseData, '\n')
+		if lineEnd < 0 {
+			return false
+		}
+		line := bytes.TrimSuffix(c.responseData[:lineEnd], []byte{'\r'})
+		c.responseData = c.responseData[lineEnd+1:]
+		fields := bytes.Fields(line)
+		if len(fields) < 2 || fields[0][0] == '*' || fields[0][0] == '+' {
+			continue
+		}
+		return bytes.EqualFold(fields[1], []byte("OK")) ||
+			bytes.EqualFold(fields[1], []byte("NO")) ||
+			bytes.EqualFold(fields[1], []byte("BAD"))
+	}
+}
+
+// A ClientHello begins with a TLS handshake record, unlike an IMAP command.
+func isTLSHandshakeRecord(p []byte) bool {
+	return len(p) >= 3 && p[0] == 0x16 && p[1] == 0x03
+}
+
 func (c *startTLSPhaseConn) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	phase := c.phase
+	commandWrite := false
 	switch phase {
 	case startTLSResponseObserved:
 		c.phase = startTLSHandshakeStarted
 	case startTLSCommandNotWritten:
-		c.commandWriteInProcess = true
+		if c.commandWriteInProcess && isTLSHandshakeRecord(p) {
+			c.phase = startTLSHandshakeStarted
+		} else if !c.commandWriteInProcess {
+			c.commandWriteInProcess = true
+			commandWrite = true
+		}
 	case startTLSCommandWritten, startTLSHandshakeStarted:
 	}
 	c.mu.Unlock()
 
 	n, err := c.Conn.Write(p)
-	if phase == startTLSCommandNotWritten {
+	if commandWrite {
 		c.mu.Lock()
 		c.commandWriteInProcess = false
 		if n == len(p) && c.phase == startTLSCommandNotWritten {
