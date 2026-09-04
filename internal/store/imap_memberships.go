@@ -261,13 +261,13 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
-			mailboxes, err := imapMembershipMailboxes(tx, sourceID, messageID)
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
 			for _, mailbox := range mailboxes {
-				labelID, err := ensureIMAPMailboxLabel(tx, sourceID, mailbox)
+				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
 				if err != nil {
 					return err
 				}
@@ -649,9 +649,9 @@ func imapRFC822MessageIDCandidates(messageID string) []string {
 }
 
 func imapMembershipMailboxes(
-	tx *loggedTx, sourceID, messageID int64,
+	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
 ) ([]string, error) {
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT mailbox FROM imap_message_memberships
 		WHERE source_id = ? AND message_id = ?
 		GROUP BY mailbox
@@ -675,9 +675,9 @@ func imapMembershipMailboxes(
 	return mailboxes, nil
 }
 
-func ensureIMAPMailboxLabel(tx *loggedTx, sourceID int64, mailbox string) (int64, error) {
+func ensureIMAPMailboxLabel(ctx context.Context, tx *loggedTx, sourceID int64, mailbox string) (int64, error) {
 	var labelID int64
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 		SELECT id FROM labels WHERE source_id = ? AND source_label_id = ?
 	`, sourceID, mailbox).Scan(&labelID)
 	if err == nil {
@@ -686,6 +686,11 @@ func ensureIMAPMailboxLabel(tx *loggedTx, sourceID int64, mailbox string) (int64
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("find label for IMAP mailbox %q: %w", mailbox, err)
 	}
+	// ensureLabelWith is shared with EnsureLabel/EnsureLabelsBatch, neither
+	// of which is context-aware; left on context.Background() rather than
+	// threading ctx into that broader shared surface. It only runs here on
+	// the rare first sight of a new mailbox — the fast path above, hit on
+	// every other call, is what benefits from ctx.
 	labelID, err = ensureLabelWith(tx, sourceID, mailbox, mailbox, "user", nil)
 	if err != nil {
 		return 0, fmt.Errorf("ensure label for IMAP mailbox %q: %w", mailbox, err)
@@ -734,7 +739,7 @@ func (s *Store) RepairIMAPSourceLabels(
 ) (IMAPLabelRepairSummary, error) {
 	var summary IMAPLabelRepairSummary
 	txErr := s.withTxContext(ctx, func(tx *loggedTx) error {
-		messageIDs, err := distinctIMAPMembershipMessageIDs(tx, sourceID)
+		messageIDs, err := distinctIMAPMembershipMessageIDs(ctx, tx, sourceID)
 		if err != nil {
 			return err
 		}
@@ -745,13 +750,13 @@ func (s *Store) RepairIMAPSourceLabels(
 			if s.imapLabelRepairPerMessageHook != nil {
 				s.imapLabelRepairPerMessageHook(messageID)
 			}
-			mailboxes, err := imapMembershipMailboxes(tx, sourceID, messageID)
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
 			for _, mailbox := range mailboxes {
-				labelID, err := ensureIMAPMailboxLabel(tx, sourceID, mailbox)
+				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
 				if err != nil {
 					return err
 				}
@@ -804,8 +809,8 @@ func (s *Store) RepairIMAPSourceLabels(
 	return summary, nil
 }
 
-func distinctIMAPMembershipMessageIDs(tx *loggedTx, sourceID int64) ([]int64, error) {
-	rows, err := tx.Query(`
+func distinctIMAPMembershipMessageIDs(ctx context.Context, tx *loggedTx, sourceID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT message_id FROM imap_message_memberships
 		WHERE source_id = ?
 		ORDER BY message_id
