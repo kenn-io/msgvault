@@ -90,14 +90,26 @@ func personInferenceProfileInsertValues(jsonBindExpr string) string {
 
 func personInferenceProfileColumnsFor(render func(name string, isJSON bool) string) string {
 	typeOfProjection := reflect.TypeOf(personInferenceProfileProjection{})
-	columns := make([]string, typeOfProjection.NumField())
-	for index := range columns {
-		field := typeOfProjection.Field(index)
+	indexes := personInferenceProfileDBFieldIndexes(typeOfProjection)
+	columns := make([]string, len(indexes))
+	for columnIndex, fieldIndex := range indexes {
+		field := typeOfProjection.Field(fieldIndex)
 		tag := field.Tag.Get("db")
 		name, options, _ := strings.Cut(tag, ",")
-		columns[index] = render(name, options == "json")
+		columns[columnIndex] = render(name, options == "json")
 	}
 	return strings.Join(columns, ", ")
+}
+
+func personInferenceProfileDBFieldIndexes(typeOfProjection reflect.Type) []int {
+	indexes := make([]int, 0, typeOfProjection.NumField())
+	for index := 0; index < typeOfProjection.NumField(); index++ {
+		name, _, _ := strings.Cut(typeOfProjection.Field(index).Tag.Get("db"), ",")
+		if name != "" && name != "-" {
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
 }
 
 func newPersonInferenceProfileProjection(
@@ -131,44 +143,52 @@ func newPersonInferenceProfileProjection(
 
 func (p *personInferenceProfileProjection) scanDestinations() []any {
 	value := reflect.ValueOf(p).Elem()
-	destinations := make([]any, value.NumField())
-	for index := range destinations {
-		destinations[index] = value.Field(index).Addr().Interface()
+	indexes := personInferenceProfileDBFieldIndexes(value.Type())
+	destinations := make([]any, len(indexes))
+	for destinationIndex, fieldIndex := range indexes {
+		destinations[destinationIndex] = value.Field(fieldIndex).Addr().Interface()
 	}
 	return destinations
 }
 
 func (p personInferenceProfileProjection) insertValues() []any {
 	value := reflect.ValueOf(p)
-	values := make([]any, value.NumField())
-	for index := range values {
-		field := value.Field(index)
+	indexes := personInferenceProfileDBFieldIndexes(value.Type())
+	values := make([]any, len(indexes))
+	for valueIndex, fieldIndex := range indexes {
+		field := value.Field(fieldIndex)
 		if field.Type() == reflect.TypeOf(sql.NullString{}) {
 			sourceUntil := field.Interface().(sql.NullString)
 			if !sourceUntil.Valid {
-				values[index] = nil
+				values[valueIndex] = nil
 				continue
 			}
-			values[index] = sourceUntil.String
+			values[valueIndex] = sourceUntil.String
 			continue
 		}
-		values[index] = field.Interface()
+		values[valueIndex] = field.Interface()
 	}
 	return values
 }
 
 func (p personInferenceProfileProjection) equal(expected personInferenceProfileProjection) bool {
-	actualAllowedSources, expectedAllowedSources := p.AllowedSources, expected.AllowedSources
-	actualDisclosedFields, expectedDisclosedFields := p.DisclosedPacketFields, expected.DisclosedPacketFields
-	actualPolicyJSON, expectedPolicyJSON := p.PolicyJSON, expected.PolicyJSON
-	actual := p
-	actual.AllowedSources, expected.AllowedSources = "", ""
-	actual.DisclosedPacketFields, expected.DisclosedPacketFields = "", ""
-	actual.PolicyJSON, expected.PolicyJSON = "", ""
-	return reflect.DeepEqual(actual, expected) &&
-		equalJSON([]byte(actualAllowedSources), []byte(expectedAllowedSources)) &&
-		equalJSON([]byte(actualDisclosedFields), []byte(expectedDisclosedFields)) &&
-		equalJSON([]byte(actualPolicyJSON), []byte(expectedPolicyJSON))
+	value, expectedValue := reflect.ValueOf(p), reflect.ValueOf(expected)
+	indexes := personInferenceProfileDBFieldIndexes(value.Type())
+	for _, fieldIndex := range indexes {
+		field := value.Type().Field(fieldIndex)
+		actual, want := value.Field(fieldIndex).Interface(), expectedValue.Field(fieldIndex).Interface()
+		_, options, _ := strings.Cut(field.Tag.Get("db"), ",")
+		if options == "json" {
+			if !equalJSON([]byte(actual.(string)), []byte(want.(string))) {
+				return false
+			}
+			continue
+		}
+		if !reflect.DeepEqual(actual, want) {
+			return false
+		}
+	}
+	return true
 }
 
 func (p personInferenceProfileProjection) profile() (peoplesweep.ProviderProfile, error) {

@@ -398,6 +398,7 @@ func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 }
 
 func TestProviderProfileProjectionRoundTrip(t *testing.T) {
+	t.Setenv("TEST_KEY", "credential-value-must-not-persist")
 	profile, err := validConfig().Profile()
 	require.NoError(t, err)
 
