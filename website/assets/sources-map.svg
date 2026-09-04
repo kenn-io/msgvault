@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 600" role="img" aria-labelledby="title desc">
+  <title id="title">msgvault sources map</title>
+  <desc id="desc">Mail, chat, meetings, calendar, contacts, and offline imports all land in one msgvault archive.</desc>
+  <defs>
+    <pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.2" fill="#1c1c1c"/>
+    </pattern>
+  </defs>
+  <rect width="760" height="600" fill="#0a0a0a"/>
+  <rect width="760" height="600" fill="url(#grid)"/>
+  <g fill="none" stroke="#3a3a3a" stroke-width="2">
+    <path d="M130 132v34q0 12 12 12h476q12 0 12-12v-34"/>
+    <path d="M380 132v46"/>
+    <path d="M130 468v-34q0-12 12-12h476q12 0 12 12v34"/>
+    <path d="M380 468v-46"/>
+  </g>
+  <g fill="none" stroke="#e8e8e8" stroke-width="2">
+    <path d="M380 178v52"/>
+    <path d="M380 422v-52"/>
+  </g>
+  <g fill="#131313" stroke="#282828" stroke-width="1.5">
+    <rect x="55" y="52" width="150" height="80" rx="6"/>
+    <rect x="295" y="52" width="170" height="80" rx="6"/>
+    <rect x="545" y="52" width="170" height="80" rx="6"/>
+    <rect x="55" y="468" width="150" height="80" rx="6"/>
+    <rect x="295" y="468" width="170" height="80" rx="6"/>
+    <rect x="545" y="468" width="170" height="80" rx="6"/>
+  </g>
+  <rect x="240" y="230" width="280" height="140" rx="8" fill="#1b1b1b" stroke="#3a3a3a" stroke-width="1.5"/>
+  <g fill="none" stroke="#e8e8e8" stroke-width="2.5" stroke-linecap="round">
+    <path d="M240 250v-12q0-8 8-8h12"/>
+    <path d="M500 230h12q8 0 8 8v12"/>
+    <path d="M240 350v12q0 8 8 8h12"/>
+    <path d="M500 370h12q8 0 8-8v-12"/>
+  </g>
+  <g fill="#e8e8e8" stroke="#0a0a0a" stroke-width="2">
+    <circle cx="380" cy="178" r="4.5"/>
+    <circle cx="380" cy="422" r="4.5"/>
+  </g>
+  <g font-family="JetBrains Mono, ui-monospace, monospace" text-anchor="middle">
+    <text x="380" y="272" fill="#e8e8e8" font-size="14" letter-spacing="3">MSGVAULT ARCHIVE</text>
+    <text x="380" y="308" fill="#f2f2f2" font-size="24">one record</text>
+    <text x="380" y="338" fill="#a3a3a3" font-size="13">SQLite · attachments · Parquet</text>
+    <g fill="#f2f2f2" font-size="17" letter-spacing="2">
+      <text x="130" y="84">MAIL</text>
+      <text x="380" y="84">CHAT</text>
+      <text x="630" y="84">MEETINGS</text>
+      <text x="130" y="500">CALENDAR</text>
+      <text x="380" y="500">CONTACTS</text>
+      <text x="630" y="500">IMPORTS</text>
+    </g>
+    <g fill="#a3a3a3" font-size="11">
+      <text x="130" y="106">Gmail · IMAP</text>
+      <text x="380" y="106">Slack · Teams · Discord</text>
+      <text x="380" y="122">Beeper Desktop</text>
+      <text x="630" y="106">Granola · Circleback</text>
+      <text x="130" y="522">Google Calendar</text>
+      <text x="380" y="522">CardDAV</text>
+      <text x="630" y="522">MBOX · EMLX · PST · SMS</text>
+      <text x="630" y="538">WhatsApp · Messenger</text>
+    </g>
+  </g>
+</svg>

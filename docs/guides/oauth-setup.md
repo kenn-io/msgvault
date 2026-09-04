@@ -183,7 +183,7 @@ msgvault add-account personal@gmail.com              # uses default
 The binding is stored per account, so `sync`, `verify`, and `serve` automatically use the correct credentials. You only need `--oauth-app` when first adding or rebinding an account.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/oauth-multi-account-concept.png" alt="Two OAuth apps and the token files they create. A default app (config block [oauth]) authorizes personal Gmail accounts personal@gmail.com and other@gmail.com; a named app ([oauth.apps.acme]) authorizes the Workspace account you@acme.com. Each add-account run writes its own token file under ~/.msgvault/tokens/, color-matched to its account." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/oauth-multi-account-concept.png" alt="Two OAuth apps and the token files they create. A default app (config block [oauth]) authorizes personal Gmail accounts personal@gmail.com and other@gmail.com; a named app ([oauth.apps.acme]) authorizes the Workspace account you@acme.com. Each add-account run writes its own token file under ~/.msgvault/tokens/, color-matched to its account." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 To switch an existing account to a different OAuth app:
@@ -400,7 +400,7 @@ msgvault sync-teams you@example.com
 ```
 
 Some organizations require administrator consent before delegated channel
-message permissions can be used. See [Microsoft Teams](/usage/teams/) for the
+message permissions can be used. See [Microsoft Teams](/docs/usage/teams/) for the
 full Teams workflow.
 
 ### Sync Your Email

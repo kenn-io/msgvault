@@ -14,7 +14,7 @@ msgvault stats
 
 Displays total message count, account breakdown, date range, storage size, and attachment count.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/stats.svg" alt="msgvault stats command output" loading="lazy">
+  <img src="/docs/assets/generated/stats.svg" alt="msgvault stats command output" loading="lazy">
 </figure>
 ## List Senders
 
@@ -37,9 +37,9 @@ msgvault list-domains --limit 20
 msgvault list-labels
 ```
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
+  <img src="/docs/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
 </figure>
 These commands query the configured daemon or remote server. For interactive
-exploration, use the [Web UI](/web-ui/) to combine search, filters, grouping,
+exploration, use the [Web UI](/docs/web-ui/) to combine search, filters, grouping,
 and modality-aware drill-down in a shareable URL-backed context. The
-[TUI](/usage/tui/) provides a terminal-native analytical workflow.
+[TUI](/docs/usage/tui/) provides a terminal-native analytical workflow.

@@ -20,7 +20,7 @@ separate Graph token under `tokens/teams_<email>.json`. An Outlook IMAP token
 created by `add-o365` does not authorize Teams sync.
 
 Register a Microsoft Entra app as described in
-[OAuth Setup](/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
+[OAuth Setup](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
 
 - Redirect URI: `http://localhost:8089/callback/microsoft`
 - Public client flows enabled
@@ -131,7 +131,7 @@ max_media_mb = 250
 max_media_mb = 500
 ```
 
-See [Media policy](/configuration/#media-policy) for the full vocabulary and
+See [Media policy](/docs/configuration/#media-policy) for the full vocabulary and
 `msgvault purge-excluded-media` for removing media a changed policy would no
 longer collect.
 
@@ -171,7 +171,7 @@ search is enabled and you want newly synced Teams messages in semantic/hybrid
 results, run `msgvault embeddings build` after the sync, or configure
 `[vector.embed.schedule].run_after_sync = true` for scheduled daemon syncs.
 
-In the [Web UI](/web-ui/), Teams direct chats, group chats, and channel
+In the [Web UI](/docs/web-ui/), Teams direct chats, group chats, and channel
 conversations appear as conversation rows in Everything and can be combined
 with the same search, filters, and grouping as other archive modalities. In
-the [TUI](/usage/tui/), press `m` to switch from Email mode to Texts mode.
+the [TUI](/docs/usage/tui/), press `m` to switch from Email mode to Texts mode.

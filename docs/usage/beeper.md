@@ -182,7 +182,7 @@ max_media_mb = 250                 # per-attachment size cap
 # max_media_mb = 500
 ```
 
-See [Media policy](/configuration/#media-policy) for how the scope, participant
+See [Media policy](/docs/configuration/#media-policy) for how the scope, participant
 cap, size cap, and per-account overrides combine, and
 `msgvault purge-excluded-media` for removing media a changed policy would no
 longer collect.
