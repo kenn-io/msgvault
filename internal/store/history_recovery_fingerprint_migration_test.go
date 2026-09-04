@@ -24,6 +24,8 @@ func TestInitSchemaBackfillsLegacySyncResumeMetadata(t *testing.T) {
 	requirements.NoError(err)
 	pstSource, err := st.GetOrCreateSource("pst", "legacy-pst@example.test")
 	requirements.NoError(err)
+	gcalSource, err := st.GetOrCreateSource("gcal", "legacy-calendar@example.test")
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(ctx, `ALTER TABLE sync_runs DROP COLUMN request_fingerprint`)
 	requirements.NoError(err)
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`
@@ -37,6 +39,7 @@ func TestInitSchemaBackfillsLegacySyncResumeMetadata(t *testing.T) {
 		sourceID        int64
 		syncType        string
 		status          string
+		cursorBefore    string
 		cursorAfter     sql.NullString
 		wantFingerprint sql.NullString
 		wantSyncType    string
@@ -97,18 +100,37 @@ func TestInitSchemaBackfillsLegacySyncResumeMetadata(t *testing.T) {
 			wantSyncType:  "import-pst",
 			wantResumable: true,
 		},
+		{
+			name:          "legacy Calendar full checkpoint",
+			sourceID:      gcalSource.ID,
+			status:        store.SyncStatusFailed,
+			cursorBefore:  `{"kind":"gcal_full_v1","page_token":"calendar-page"}`,
+			wantSyncType:  "full",
+			wantResumable: true,
+		},
+		{
+			name:         "legacy Calendar incremental checkpoint",
+			sourceID:     gcalSource.ID,
+			status:       store.SyncStatusFailed,
+			cursorBefore: "incremental-page",
+			wantSyncType: "",
+		},
 	}
 
 	ids := make([]int64, len(runs))
 	for index := range runs {
+		cursorBefore := runs[index].cursorBefore
+		if cursorBefore == "" {
+			cursorBefore = "page-token"
+		}
 		err := st.DB().QueryRowContext(ctx, st.Rebind(`
 			INSERT INTO sync_runs (
 				source_id, sync_type, started_at, completed_at, status,
 				cursor_before, cursor_after
-			) VALUES (?, ?, CURRENT_TIMESTAMP, NULL, ?, 'page-token', ?)
+			) VALUES (?, ?, CURRENT_TIMESTAMP, NULL, ?, ?, ?)
 			RETURNING id
 		`), runs[index].sourceID, runs[index].syncType, runs[index].status,
-			runs[index].cursorAfter).Scan(&ids[index])
+			cursorBefore, runs[index].cursorAfter).Scan(&ids[index])
 		requirements.NoError(err)
 	}
 

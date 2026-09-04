@@ -89,12 +89,19 @@ func (s *Store) backfillSyncRunResumeMetadata(
 			WHEN 'mbox' THEN 'import-mbox'
 			WHEN 'apple-mail' THEN 'import-emlx'
 			WHEN 'pst' THEN 'import-pst'
+			WHEN 'gcal' THEN 'full'
 			ELSE 'full'
 		END
 		WHERE sync_type = ''
 		  AND (
 			source_id IN (
 				SELECT id FROM sources WHERE source_type IN ('mbox', 'apple-mail', 'pst')
+			)
+			OR (
+				cursor_before LIKE '{"kind":"gcal_full_v1","page_token":%'
+				AND source_id IN (
+					SELECT id FROM sources WHERE source_type = 'gcal'
+				)
 			)
 			OR (
 				status IN ('running', 'failed')
