@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,6 +67,30 @@ func TestRetryDoesNotBackoffPermanentDialFailure(t *testing.T) {
 	_, err = client.ListMessages(t.Context(), "", "")
 	assert.Error(t, err)
 	assert.False(t, sleepCalled)
+}
+
+func TestIsTransientSocketError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "broken pipe", err: fmt.Errorf("write: %w", syscall.EPIPE), want: true},
+		{name: "connection reset", err: fmt.Errorf("read: %w", syscall.ECONNRESET), want: true},
+		{name: "connection aborted", err: fmt.Errorf("read: %w", syscall.ECONNABORTED), want: true},
+		{name: "windows broken pipe", err: fmt.Errorf("write: %w", syscall.Errno(109)), want: true},
+		{name: "windows connection abort", err: fmt.Errorf("write: %w", syscall.Errno(10053)), want: true},
+		{name: "windows connection reset", err: fmt.Errorf("write: %w", syscall.Errno(10054)), want: true},
+		{name: "windows network name deleted", err: fmt.Errorf("write: %w", syscall.Errno(64)), want: true},
+		{name: "connection refused", err: fmt.Errorf("dial: %w", syscall.ECONNREFUSED), want: false},
+		{name: "canceled", err: context.Canceled, want: false},
+		{name: "non-transport", err: errors.New("broken pipe"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isTransientSocketError(tt.err))
+		})
+	}
 }
 
 func TestRetryDoesNotRepeatRejectedLogin(t *testing.T) {

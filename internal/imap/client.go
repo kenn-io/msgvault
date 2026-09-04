@@ -324,7 +324,8 @@ func isTransientGreetingError(err error, observed *observedConn) bool {
 }
 
 func isTransientSocketError(err error) bool {
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+	if errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
 		return true
 	}
 	var errno syscall.Errno
@@ -332,7 +333,8 @@ func isTransientSocketError(err error) bool {
 		return false
 	}
 	// Windows exposes WSA connection-reset codes through syscall.Errno.
-	return errno == syscall.Errno(10053) || errno == syscall.Errno(10054) || errno == syscall.Errno(64)
+	return errno == syscall.Errno(109) ||
+		errno == syscall.Errno(10053) || errno == syscall.Errno(10054) || errno == syscall.Errno(64)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
