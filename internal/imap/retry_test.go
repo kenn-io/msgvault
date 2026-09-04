@@ -111,6 +111,13 @@ func (c *retryShortWriteConn) Write(p []byte) (int, error) {
 	return n, io.ErrShortWrite
 }
 
+func (c *retryShortWriteConn) Close() error {
+	if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
+		return tcpConn.CloseWrite()
+	}
+	return nil
+}
+
 type retryCloseAfterReadConn struct {
 	net.Conn
 
@@ -424,6 +431,7 @@ func TestConnectRetry_STARTTLSPhaseMarksOverlappingHandshakeWrite(t *testing.T) 
 	phaseConn := &startTLSPhaseConn{
 		Conn:                  rawConn,
 		commandWriteInProcess: true,
+		responseObserved:      true,
 	}
 	handshake := []byte{0x16, 0x03, 0x03}
 	readDone := make(chan struct{})

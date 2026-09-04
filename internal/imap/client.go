@@ -317,7 +317,7 @@ func (c *startTLSPhaseConn) Write(p []byte) (int, error) {
 	case startTLSResponseObserved:
 		c.phase = startTLSHandshakeStarted
 	case startTLSCommandNotWritten:
-		if c.commandWriteInProcess && isTLSHandshakeRecord(p) {
+		if c.commandWriteInProcess && c.responseObserved && isTLSHandshakeRecord(p) {
 			c.phase = startTLSHandshakeStarted
 		} else if !c.commandWriteInProcess {
 			c.commandWriteInProcess = true
