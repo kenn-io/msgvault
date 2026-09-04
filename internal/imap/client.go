@@ -370,9 +370,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 			Vanished: c.captureQresyncVanished,
 		},
 	}
-	conn, err, rawDial, observed := c.dialIMAP(ctx, addr, imapOpts)
+	conn, err, retryable, observed := c.dialIMAP(ctx, addr, imapOpts)
 	if err != nil {
-		if !rawDial || !isTransientConnectError(err) {
+		if !retryable {
 			return fmt.Errorf("dial IMAP %s: %w", addr, err)
 		}
 		return &retryableConnectError{
@@ -468,7 +468,7 @@ func newStartTLS(ctx context.Context, conn net.Conn, options *imapclient.Options
 func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.Options) (*imapclient.Client, error, bool, *observedConn) {
 	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, err, true, nil
+		return nil, err, isTransientConnectError(err), nil
 	}
 	observed := &observedConn{Conn: rawConn}
 	if c.config.TLS {
@@ -478,7 +478,7 @@ func (c *Client) dialIMAP(ctx context.Context, addr string, options *imapclient.
 		})
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = rawConn.Close()
-			return nil, err, true, observed
+			return nil, err, isTransientConnectError(err), observed
 		}
 		observed.resetReadObservation()
 		return imapclient.New(tlsConn, options), nil, false, observed

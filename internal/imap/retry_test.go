@@ -409,9 +409,6 @@ func startDroppedSTARTTLSGreetingServer(t *testing.T) (string, func() int64) {
 				return
 			}
 			if counted.accepted.Load() == 1 {
-				if tcpConn, ok := conn.(*net.TCPConn); ok {
-					_ = tcpConn.SetLinger(0)
-				}
 				_ = conn.Close()
 				continue
 			}
