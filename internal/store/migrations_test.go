@@ -43,10 +43,12 @@ func TestMarkMigrationApplied_Idempotent(t *testing.T) {
 }
 
 func TestMigrationLedgerVersionLifecycle(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 
 	const name = "versioned_migration"
-	require.NoError(t, f.Store.MarkMigrationApplied(name, 3))
+	requirements.NoError(f.Store.MarkMigrationApplied(name, 3))
 
 	for _, tc := range []struct {
 		minimum int
@@ -57,27 +59,29 @@ func TestMigrationLedgerVersionLifecycle(t *testing.T) {
 		{minimum: 4, want: false},
 	} {
 		applied, err := f.Store.IsMigrationApplied(name, tc.minimum)
-		require.NoError(t, err, "check minimum version %d", tc.minimum)
-		assert.Equal(t, tc.want, applied, "minimum version %d", tc.minimum)
+		requirements.NoError(err, "check minimum version %d", tc.minimum)
+		assertions.Equal(tc.want, applied, "minimum version %d", tc.minimum)
 	}
 
 	var before string
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&before))
-	require.NoError(t, f.Store.MarkMigrationApplied(name, 3), "same-version mark")
+	requirements.NoError(f.Store.MarkMigrationApplied(name, 3), "same-version mark")
 	var after string
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&after))
-	assert.Equal(t, before, after, "same-version mark must not rewrite applied_at")
+	assertions.Equal(before, after, "same-version mark must not rewrite applied_at")
 
-	require.NoError(t, f.Store.MarkMigrationApplied(name, 2), "lower-version mark")
+	requirements.NoError(f.Store.MarkMigrationApplied(name, 2), "lower-version mark")
 	var version int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
-	assert.Equal(t, 3, version, "lower-version mark must not downgrade the ledger")
+	assertions.Equal(3, version, "lower-version mark must not downgrade the ledger")
 }
 
 func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 
 	for _, tc := range []struct {
@@ -96,59 +100,64 @@ func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Error(t, tc.call())
+			assertions := assert.New(t)
+			assertions.Error(tc.call())
 		})
 	}
 
 	before, err := f.Store.DerivedDataRevision()
-	require.NoError(t, err)
+	requirements.NoError(err)
 	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("invalid_revision", 0)
-	require.Error(t, err)
+	requirements.Error(err)
 	after, err := f.Store.DerivedDataRevision()
-	require.NoError(t, err)
-	assert.Equal(t, before, after, "invalid version must not bump derived-data revision")
+	requirements.NoError(err)
+	assertions.Equal(before, after, "invalid version must not bump derived-data revision")
 }
 
 func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	const name = "derived_versioned_migration"
 
 	before, err := f.Store.DerivedDataRevision()
-	require.NoError(t, err)
-	require.NoError(t, f.Store.MarkMigrationAppliedWithDerivedDataRevision(name, 4))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.MarkMigrationAppliedWithDerivedDataRevision(name, 4))
 	after, err := f.Store.DerivedDataRevision()
-	require.NoError(t, err)
-	assert.Equal(t, before+1, after, "successful derived-data mark must bump revision")
+	requirements.NoError(err)
+	assertions.Equal(before+1, after, "successful derived-data mark must bump revision")
 
 	var version int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
-	assert.Equal(t, 4, version)
+	assertions.Equal(4, version)
 
 	// Force the ledger write to fail after the revision bump has run. The
 	// transaction must roll back both changes together.
 	_, err = f.Store.DB().Exec(`DROP TABLE applied_migrations`)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("atomic_failure", 2)
-	require.Error(t, err)
+	requirements.Error(err)
 	rolledBack, err := f.Store.DerivedDataRevision()
-	require.NoError(t, err)
-	assert.Equal(t, after, rolledBack, "failed ledger mark must roll back the revision bump")
+	requirements.NoError(err)
+	assertions.Equal(after, rolledBack, "failed ledger mark must roll back the revision bump")
 }
 
 func TestNameOnlyLedgerWriterDoesNotRegressVersion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	const name = "direct_writer_migration"
 
-	require.NoError(t, f.Store.MarkMigrationApplied(name, 7))
+	requirements.NoError(f.Store.MarkMigrationApplied(name, 7))
 	_, err := f.Store.DB().Exec(f.Store.Rebind(
 		`INSERT INTO applied_migrations (name) VALUES (?) ON CONFLICT DO NOTHING`), name)
-	require.NoError(t, err, "direct version-1 writer")
+	requirements.NoError(err, "direct version-1 writer")
 
 	var version int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
-	assert.Equal(t, 7, version, "a name-only writer must not regress a higher version")
+	assertions.Equal(7, version, "a name-only writer must not regress a higher version")
 }
 
 func TestArchiveIdentityMigrationIsRecorded(t *testing.T) {

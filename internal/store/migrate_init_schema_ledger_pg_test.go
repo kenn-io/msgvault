@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,10 +26,11 @@ func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
 
 	require.NoError(st.InitSchema(), "upgrade the legacy ledger")
 	var version int
-	var gotAppliedAt string
+	var gotAppliedAt time.Time
 	require.NoError(st.DB().QueryRow(
 		`SELECT version, applied_at FROM applied_migrations WHERE name = $1`, name).
 		Scan(&version, &gotAppliedAt))
 	assert.Equal(1, version, "legacy PostgreSQL rows must default to version 1")
-	assert.Equal(appliedAt, gotAppliedAt, "legacy PostgreSQL timestamp must survive")
+	assert.Equal(time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), gotAppliedAt,
+		"legacy PostgreSQL timestamp must survive")
 }
