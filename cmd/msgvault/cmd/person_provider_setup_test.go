@@ -881,7 +881,7 @@ func TestPersonProviderSetRechecksAndRevokesOldConsent(t *testing.T) {
 func TestPersonProviderSetPreservesUnselectedProfileAndConfig(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	path, loaded := providerSetupConfigFile(t)
+	path, _ := providerSetupConfigFile(t)
 	snapshot, err := config.ReadConfigFile(path)
 	require.NoError(err)
 	sibling := peoplesweep.ProviderConfig{
@@ -898,7 +898,7 @@ func TestPersonProviderSetPreservesUnselectedProfileAndConfig(t *testing.T) {
 		{Path: []string{"people", "sweep", "providers", "sibling"}, Values: personProviderTableValues(sibling)},
 	})
 	require.NoError(err)
-	loaded, err = config.Load(path, "")
+	loaded, err := config.Load(path, "")
 	require.NoError(err)
 	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
 	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
