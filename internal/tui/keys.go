@@ -1286,6 +1286,9 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 					m.invalidateSourceScope()
 				}
 			} else {
+				if m.mode == modeTexts && selected.kind == scopeOptionAll {
+					m.sourceScopeExplicit = true
+				}
 				m.accountFilter = selected.accountID
 			}
 		}

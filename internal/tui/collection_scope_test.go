@@ -167,6 +167,23 @@ func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
+func TestAllAccountsTextSelectionClearsInheritedEmailSource(t *testing.T) {
+	accountID := int64(7)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.mode = modeTexts
+	model.accountFilter = &accountID
+	model.modal = modalAccountSelector
+	model.drillFilter = query.MessageFilter{Sender: "sender@example.test", SourceID: &accountID}
+
+	model, _ = sendKey(t, model, keyEnter())
+	assert.Nil(t, model.accountFilter)
+	assert.True(t, model.sourceScopeExplicit)
+
+	model.mode = modeEmail
+	filter := model.buildMessageFilter()
+	assert.Nil(t, filter.SourceID)
+}
+
 func TestCollectionRowsStayEmailOnly(t *testing.T) {
 	model := New(newMockEngine(MockConfig{}), Options{
 		DataDir: "/tmp/test",
