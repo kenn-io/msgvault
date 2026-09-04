@@ -1,6 +1,4 @@
-import createClient from 'openapi-fetch';
-
-import type { paths } from './generated/schema';
+import type { GeneratedRequestOptions } from './runtime';
 
 class SameOriginRequest extends Request {
   constructor(input: RequestInfo | URL, init?: RequestInit) {
@@ -43,15 +41,14 @@ async function isSessionUnauthorized(response: Response): Promise<boolean> {
 export function createSessionAwareAPIClient(
   fetchFn: typeof fetch = fetch,
   csrfToken: CSRFTokenProvider = () => undefined,
-  onUnauthorized: UnauthorizedHandler = () => undefined
+  onUnauthorized: UnauthorizedHandler = () => undefined,
 ) {
   const sessionFetch: typeof fetch = async (input, init) => {
     const original = input instanceof Request ? input : new SameOriginRequest(input, init);
     let request = original;
     const method = request.method.toUpperCase();
     const unsafe = !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
-    const sameOrigin =
-      typeof window === 'undefined' || new URL(request.url).origin === window.location.origin;
+    const sameOrigin = typeof window === 'undefined' || new URL(request.url).origin === window.location.origin;
     const token = csrfToken();
     if (unsafe && sameOrigin && token) {
       const headers = new Headers(request.headers);
@@ -64,11 +61,7 @@ export function createSessionAwareAPIClient(
     return response;
   };
 
-  return createClient<paths>({
-    baseUrl: '',
-    fetch: sessionFetch,
-    Request: SameOriginRequest
-  });
+  return { fetch: sessionFetch } satisfies GeneratedRequestOptions;
 }
 
 export type APIClient = ReturnType<typeof createSessionAwareAPIClient>;

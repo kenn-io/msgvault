@@ -642,7 +642,7 @@ type cliDeleteDedupedExecuteRequest struct {
 	NoBackup           bool                            `json:"no_backup,omitempty"`
 	ExpectedTotal      *int64                          `json:"expected_total" nullable:"false"`
 	ExpectedBatchCount *int64                          `json:"expected_batch_count" nullable:"false"`
-	ExpectedBatches    []cliDeleteDedupedBatchResponse `json:"expected_batches" nullable:"false"`
+	ExpectedBatches    []cliDeleteDedupedBatchResponse `json:"expected_batches"`
 }
 
 func (r cliDeleteDedupedExecuteRequest) scope() cliDeleteDedupedScopeRequest {

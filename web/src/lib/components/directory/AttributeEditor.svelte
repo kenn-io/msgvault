@@ -2,14 +2,18 @@
   import { Button, Calendar, Checkbox, TextInput, todayStr } from '@kenn-io/kit-ui';
   import { onMount, tick, untrack } from 'svelte';
 
-  import type { components } from '../../api/generated/schema';
+  import type {
+    AttributeDefinition as GeneratedAttributeDefinition,
+    AttributeValue as GeneratedAttributeValue,
+    PersonAttributeValue as GeneratedPersonAttributeValue,
+  } from '../../api/generated/models';
   import { attributeTextLength, trimAttributeText } from '../../directory/attribute-text';
   import type { SetPersonAttributeRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
-  type AttributeDefinition = components['schemas']['AttributeDefinition'];
-  type AttributeValue = components['schemas']['AttributeValue'];
-  type PersonAttributeValue = components['schemas']['PersonAttributeValue'];
+  type AttributeDefinition = GeneratedAttributeDefinition;
+  type AttributeValue = GeneratedAttributeValue;
+  type PersonAttributeValue = GeneratedPersonAttributeValue;
   type EditorKind = 'boolean' | 'number' | 'date' | 'timestamp' | 'json' | 'choice' | 'person' | 'text' | 'unsupported';
 
   interface Props {
@@ -27,7 +31,7 @@
     current = undefined,
     sensitiveRevealed = false,
     onDone = () => undefined,
-    onCancel = () => undefined
+    onCancel = () => undefined,
   }: Props = $props();
 
   // One editor owns one explicit draft. AttributeSection keys instances by
@@ -42,7 +46,8 @@
   const editing = initialCurrent !== undefined;
   const targetOrdinal = initialCurrent?.ordinal ?? 0;
 
-  const initialDraft = mayReadInitialValue && initialCurrent ? canonicalValue(initialCurrent.value) : defaultDraft(initialDefinition);
+  const initialDraft =
+    mayReadInitialValue && initialCurrent ? canonicalValue(initialCurrent.value) : defaultDraft(initialDefinition);
   let draft = $state(initialDraft);
   let booleanDraft = $state(mayReadInitialValue && initialCurrent?.value.boolean === true);
   let expectedValueID = $state<number | undefined>(initialCurrent?.id);
@@ -54,24 +59,37 @@
   let calendarMonth = $state(/^\d{4}-\d{2}-\d{2}$/.test(initialDraft) ? initialDraft : todayStr());
 
   onMount(() => {
-    void tick().then(() => formElement?.querySelector<HTMLElement>('input, select, textarea, [aria-pressed="true"], .kit-calendar__day')?.focus());
+    void tick().then(() =>
+      formElement
+        ?.querySelector<HTMLElement>('input, select, textarea, [aria-pressed="true"], .kit-calendar__day')
+        ?.focus(),
+    );
   });
 
   const relevantConflict = $derived(
     (controller.draft?.kind === 'setAttribute' || controller.draft?.kind === 'clearAttribute') &&
-    controller.draft.slug === initialDefinition.slug
+      controller.draft.slug === initialDefinition.slug
       ? controller.conflict
-      : null
+      : null,
   );
   const needsReload = $derived(
-    relevantConflict?.code === 'attribute_conflict' || relevantConflict?.code === 'precondition_required'
+    relevantConflict?.code === 'attribute_conflict' || relevantConflict?.code === 'precondition_required',
   );
-  const definitionAllowsSet = $derived(initialDefinition.is_active && initialDefinition.api_mutable &&
-    (editing && !convertToNew ? initialDefinition.ui_editable : initialDefinition.ui_creatable) && kind !== 'unsupported');
+  const definitionAllowsSet = $derived(
+    initialDefinition.is_active &&
+      initialDefinition.api_mutable &&
+      (editing && !convertToNew ? initialDefinition.ui_editable : initialDefinition.ui_creatable) &&
+      kind !== 'unsupported',
+  );
   const replacing = $derived(editing && !convertToNew);
   const canSave = $derived(
-    definitionAllowsSet && !lineageMissing && !submitting && !controller.mutationPending && !controller.reloadPending &&
-    !controller.hasUnresolvedConflict && !needsReload
+    definitionAllowsSet &&
+      !lineageMissing &&
+      !submitting &&
+      !controller.mutationPending &&
+      !controller.reloadPending &&
+      !controller.hasUnresolvedConflict &&
+      !needsReload,
   );
   const normalizedTextDraft = $derived(trimAttributeText(draft));
   const trimmedCharacterCount = $derived(attributeTextLength(normalizedTextDraft));
@@ -95,14 +113,22 @@
 
   function canonicalValue(value: AttributeValue): string {
     switch (value.type) {
-      case 'text': return value.text ?? '';
-      case 'integer': return value.integer?.toString() ?? '';
-      case 'real': return value.real?.toString() ?? '';
-      case 'boolean': return value.boolean?.toString() ?? '';
-      case 'date': return value.date ?? '';
-      case 'timestamp': return value.timestamp ?? '';
-      case 'record_reference': return value.record_id?.toString() ?? '';
-      default: return value.json === undefined ? '' : JSON.stringify(value.json);
+      case 'text':
+        return value.text ?? '';
+      case 'integer':
+        return value.integer?.toString() ?? '';
+      case 'real':
+        return value.real?.toString() ?? '';
+      case 'boolean':
+        return value.boolean?.toString() ?? '';
+      case 'date':
+        return value.date ?? '';
+      case 'timestamp':
+        return value.timestamp ?? '';
+      case 'record_reference':
+        return value.record_id?.toString() ?? '';
+      default:
+        return value.json === undefined ? '' : JSON.stringify(value.json);
     }
   }
 
@@ -110,7 +136,8 @@
     const value = draft.trim();
     if (kind === 'choice') return choiceValue(initialDefinition, draft);
     switch (kind) {
-      case 'boolean': return { type: 'boolean', boolean: booleanDraft };
+      case 'boolean':
+        return { type: 'boolean', boolean: booleanDraft };
       case 'number': {
         if (value === '') return invalid('Enter a number.');
         const parsed = Number(value);
@@ -124,8 +151,10 @@
       case 'date':
         if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return invalid('Enter an exact YYYY-MM-DD date.');
         return { type: 'date', date: value };
-      case 'timestamp': return timestampValue(value);
-      case 'json': return jsonValue(value);
+      case 'timestamp':
+        return timestampValue(value);
+      case 'json':
+        return jsonValue(value);
       case 'person': {
         const recordID = Number(value);
         if (!Number.isSafeInteger(recordID) || recordID < 1) return invalid('Enter a positive person ID.');
@@ -133,10 +162,12 @@
       }
       case 'text': {
         if (!normalizedTextDraft) return invalid('Enter a value.');
-        if (exceedsMaxLength(normalizedTextDraft)) return invalid(`Use ${initialDefinition.options?.max_length} characters or fewer.`);
+        if (exceedsMaxLength(normalizedTextDraft))
+          return invalid(`Use ${initialDefinition.options?.max_length} characters or fewer.`);
         return { type: 'text', text: normalizedTextDraft };
       }
-      case 'unsupported': return undefined;
+      case 'unsupported':
+        return undefined;
     }
   }
 
@@ -147,22 +178,30 @@
     }
     switch (value.value_type) {
       case 'text':
-        if (exceedsMaxLength(normalizedSelected)) return invalid(`Use ${initialDefinition.options?.max_length} characters or fewer.`);
+        if (exceedsMaxLength(normalizedSelected))
+          return invalid(`Use ${initialDefinition.options?.max_length} characters or fewer.`);
         return { type: 'text', text: normalizedSelected };
       case 'integer': {
         const parsed = Number(selected);
-        return Number.isSafeInteger(parsed) ? { type: 'integer', integer: parsed } : invalid('The selected value is not a valid integer.');
+        return Number.isSafeInteger(parsed)
+          ? { type: 'integer', integer: parsed }
+          : invalid('The selected value is not a valid integer.');
       }
       case 'real': {
         const parsed = Number(selected);
-        return Number.isFinite(parsed) ? { type: 'real', real: parsed } : invalid('The selected value is not a valid number.');
+        return Number.isFinite(parsed)
+          ? { type: 'real', real: parsed }
+          : invalid('The selected value is not a valid number.');
       }
       case 'boolean':
         if (selected === 'true' || selected === 'false') return { type: 'boolean', boolean: selected === 'true' };
         return invalid('The selected value is not a valid boolean.');
-      case 'date': return { type: 'date', date: selected };
-      case 'timestamp': return timestampValue(selected);
-      default: return invalid('This choice type is not editable here.');
+      case 'date':
+        return { type: 'date', date: selected };
+      case 'timestamp':
+        return timestampValue(selected);
+      default:
+        return invalid('This choice type is not editable here.');
     }
   }
 
@@ -217,7 +256,7 @@
     return {
       value,
       ...(!convertToNew && expectedValueID !== undefined ? { expected_value_id: expectedValueID } : {}),
-      ...(!convertToNew && editing && initialDefinition.cardinality === 'multi' ? { ordinal: targetOrdinal } : {})
+      ...(!convertToNew && editing && initialDefinition.cardinality === 'multi' ? { ordinal: targetOrdinal } : {}),
     };
   }
 
@@ -241,7 +280,7 @@
     const result = await controller.reload();
     if (!result.ok || controller.conflict) return;
     const group = controller.attributes?.attributes?.find(
-      (candidate) => candidate.definition.universal_id === initialDefinition.universal_id
+      (candidate) => candidate.definition.universal_id === initialDefinition.universal_id,
     );
     const currentAtOrdinal = group?.current?.find((value) => value.ordinal === targetOrdinal);
     expectedValueID = currentAtOrdinal?.id;
@@ -266,12 +305,29 @@
 {:else if kind === 'unsupported'}
   <p class="editor-error" role="status">This {initialDefinition.value_type} value is read-only in the web editor.</p>
 {:else}
-  <form bind:this={formElement} class="attribute-editor" onsubmit={save} aria-label={`${replacing ? 'Edit' : 'Add'} ${initialDefinition.label} value`}>
+  <form
+    bind:this={formElement}
+    class="attribute-editor"
+    onsubmit={save}
+    aria-label={`${replacing ? 'Edit' : 'Add'} ${initialDefinition.label} value`}
+  >
     {#if kind === 'boolean'}
-      <Checkbox id={inputID} label={initialDefinition.label} bind:checked={booleanDraft} disabled={!definitionAllowsSet} />
+      <Checkbox
+        id={inputID}
+        label={initialDefinition.label}
+        bind:checked={booleanDraft}
+        disabled={!definitionAllowsSet}
+      />
     {:else if kind === 'choice'}
       <label for={inputID}>{initialDefinition.label}</label>
-      <select id={inputID} bind:value={draft} aria-describedby={initialDefinition.value_type === 'text' && initialDefinition.options?.max_length ? constraintID : undefined} disabled={!definitionAllowsSet}>
+      <select
+        id={inputID}
+        bind:value={draft}
+        aria-describedby={initialDefinition.value_type === 'text' && initialDefinition.options?.max_length
+          ? constraintID
+          : undefined}
+        disabled={!definitionAllowsSet}
+      >
         <option value="" disabled>Select a value</option>
         {#each initialDefinition.options?.choices ?? [] as choice (choice.value)}
           <option value={choice.value}>{choice.label}</option>
@@ -283,30 +339,78 @@
         <Calendar
           bind:month={calendarMonth}
           selected={/^\d{4}-\d{2}-\d{2}$/.test(draft) ? { from: draft, to: draft } : null}
-          onpick={(date) => { draft = date; calendarMonth = date; }}
+          onpick={(date) => {
+            draft = date;
+            calendarMonth = date;
+          }}
         />
       </fieldset>
     {:else if kind === 'timestamp'}
       <label for={inputID}>{initialDefinition.label}</label>
-      <TextInput id={inputID} bind:value={draft} placeholder="2026-08-28T14:30:45Z" block size="lg" disabled={!definitionAllowsSet} />
+      <TextInput
+        id={inputID}
+        bind:value={draft}
+        placeholder="2026-08-28T14:30:45Z"
+        block
+        size="lg"
+        disabled={!definitionAllowsSet}
+      />
     {:else if kind === 'json'}
       <label for={inputID}>{initialDefinition.label}</label>
       <textarea id={inputID} bind:value={draft} spellcheck="false" disabled={!definitionAllowsSet}></textarea>
     {:else if kind === 'number'}
       <label for={inputID}>{initialDefinition.label}</label>
       <div class="number-control">
-        <input id={inputID} type="number" step={initialDefinition.value_type === 'integer' ? '1' : 'any'} value={draft} oninput={(event) => { draft = event.currentTarget.value; }} disabled={!definitionAllowsSet} />
+        <input
+          id={inputID}
+          type="number"
+          step={initialDefinition.value_type === 'integer' ? '1' : 'any'}
+          value={draft}
+          oninput={(event) => {
+            draft = event.currentTarget.value;
+          }}
+          disabled={!definitionAllowsSet}
+        />
         {#if initialDefinition.options?.unit}<span>{initialDefinition.options.unit}</span>{/if}
       </div>
     {:else if kind === 'person'}
       <label for={inputID}>{initialDefinition.label}</label>
-      <input id={inputID} type="number" min="1" step="1" value={draft} oninput={(event) => { draft = event.currentTarget.value; }} disabled={!definitionAllowsSet} />
+      <input
+        id={inputID}
+        type="number"
+        min="1"
+        step="1"
+        value={draft}
+        oninput={(event) => {
+          draft = event.currentTarget.value;
+        }}
+        disabled={!definitionAllowsSet}
+      />
     {:else if initialDefinition.field_type === 'textarea'}
       <label for={inputID}>{initialDefinition.label}</label>
-      <textarea id={inputID} bind:value={draft} aria-describedby={initialDefinition.options?.max_length ? constraintID : undefined} disabled={!definitionAllowsSet}></textarea>
+      <textarea
+        id={inputID}
+        bind:value={draft}
+        aria-describedby={initialDefinition.options?.max_length ? constraintID : undefined}
+        disabled={!definitionAllowsSet}
+      ></textarea>
     {:else}
       <label for={inputID}>{initialDefinition.label}</label>
-      <TextInput id={inputID} bind:value={draft} type={initialDefinition.field_type === 'email' ? 'email' : initialDefinition.field_type === 'url' ? 'url' : initialDefinition.field_type === 'phone' ? 'tel' : 'text'} ariaDescribedby={initialDefinition.options?.max_length ? constraintID : undefined} block size="lg" disabled={!definitionAllowsSet} />
+      <TextInput
+        id={inputID}
+        bind:value={draft}
+        type={initialDefinition.field_type === 'email'
+          ? 'email'
+          : initialDefinition.field_type === 'url'
+            ? 'url'
+            : initialDefinition.field_type === 'phone'
+              ? 'tel'
+              : 'text'}
+        ariaDescribedby={initialDefinition.options?.max_length ? constraintID : undefined}
+        block
+        size="lg"
+        disabled={!definitionAllowsSet}
+      />
     {/if}
 
     {#if initialDefinition.value_type === 'text' && initialDefinition.options?.max_length}
@@ -316,7 +420,9 @@
     {#if validationError}
       <p class="editor-error" role="alert">{validationError}</p>
     {:else if lineageMissing}
-      <p class="editor-error" role="status">The selected value is no longer current. Cancel or add this draft as a new value.</p>
+      <p class="editor-error" role="status">
+        The selected value is no longer current. Cancel or add this draft as a new value.
+      </p>
     {:else if convertToNew}
       <p role="status">This draft will be added as a new value.</p>
     {:else if conflictMessage()}
@@ -326,10 +432,20 @@
     <div class="editor-actions">
       <Button label="Cancel" type="button" disabled={submitting} onclick={onCancel} />
       {#if needsReload}
-        <Button label="Reload attributes" type="button" disabled={!controller.canReload} onclick={() => void reload()} />
+        <Button
+          label="Reload attributes"
+          type="button"
+          disabled={!controller.canReload}
+          onclick={() => void reload()}
+        />
       {/if}
       {#if lineageMissing}
-        <Button label="Add draft as new value" type="button" disabled={!initialDefinition.ui_creatable} onclick={convertDraftToNew} />
+        <Button
+          label="Add draft as new value"
+          type="button"
+          disabled={!initialDefinition.ui_creatable}
+          onclick={convertDraftToNew}
+        />
       {/if}
       <Button label="Save attribute" type="submit" tone="info" surface="solid" disabled={!canSave} />
     </div>
@@ -337,14 +453,67 @@
 {/if}
 
 <style>
-  .attribute-editor { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  label { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  select, input, textarea { box-sizing: border-box; width: 100%; min-height: 36px; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font: inherit; }
-  textarea { min-height: 96px; resize: vertical; }
-  select:focus-visible, input:focus-visible, textarea:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
-  fieldset { margin: 0; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
-  legend { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .number-control { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
-  .editor-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
-  .editor-error { margin: 0; color: var(--text-danger); font-size: var(--font-size-sm); }
+  .attribute-editor {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+  }
+  label {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  select,
+  input,
+  textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 36px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+  }
+  textarea {
+    min-height: 96px;
+    resize: vertical;
+  }
+  select:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  fieldset {
+    margin: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+  }
+  legend {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .number-control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .editor-error {
+    margin: 0;
+    color: var(--text-danger);
+    font-size: var(--font-size-sm);
+  }
 </style>

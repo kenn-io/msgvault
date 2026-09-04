@@ -1,16 +1,21 @@
-import type { components } from '../api/generated/schema';
+import type {
+  Person as GeneratedPerson,
+  PersonMergeProfile as GeneratedPersonMergeProfile,
+  PersonMergeRequiredError as GeneratedPersonMergeRequiredError,
+  PersonMergeResult as GeneratedPersonMergeResult,
+} from '../api/generated/models';
 
-type PersonMergeProfile = components['schemas']['PersonMergeProfile'];
+type PersonMergeProfile = GeneratedPersonMergeProfile;
 
-export type ValidatedPersonMergeRequired = Omit<components['schemas']['PersonMergeRequiredError'], 'error' | 'message' | 'profiles'> & {
+export type ValidatedPersonMergeRequired = Omit<GeneratedPersonMergeRequiredError, 'error' | 'message' | 'profiles'> & {
   error: 'person_merge_required';
   message: string;
   profiles: [PersonMergeProfile, PersonMergeProfile];
 };
 
 export type PersonMergeSuccess = {
-  result: components['schemas']['PersonMergeResult'];
-  survivor: components['schemas']['Person'];
+  result: GeneratedPersonMergeResult;
+  survivor: GeneratedPerson;
   responseETag: string | null;
 };
 
@@ -20,15 +25,20 @@ export function isMatchingPersonETag(value: unknown, personID: number): value is
 
 export function isMatchingPersonRevisionETag(
   value: unknown,
-  person: Pick<components['schemas']['Person'], 'id' | 'revision'>
+  person: Pick<GeneratedPerson, 'id' | 'revision'>,
 ): value is string {
   const parsed = parsePersonETag(value);
   return parsed?.personID === person.id && parsed.revision === person.revision;
 }
 
 export function validatePersonMergeRequired(value: unknown): ValidatedPersonMergeRequired | null {
-  if (!isRecord(value) || value.error !== 'person_merge_required' || typeof value.message !== 'string' ||
-    !Array.isArray(value.profiles) || value.profiles.length !== 2) {
+  if (
+    !isRecord(value) ||
+    value.error !== 'person_merge_required' ||
+    typeof value.message !== 'string' ||
+    !Array.isArray(value.profiles) ||
+    value.profiles.length !== 2
+  ) {
     return null;
   }
   const profiles = value.profiles;
@@ -55,9 +65,7 @@ function parsePersonETag(value: unknown): { personID: number; revision: number }
   if (!match) return null;
   const personID = Number(match[1]);
   const revision = Number(match[2]);
-  return isPositiveSafeInteger(personID) && isPositiveSafeInteger(revision)
-    ? { personID, revision }
-    : null;
+  return isPositiveSafeInteger(personID) && isPositiveSafeInteger(revision) ? { personID, revision } : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

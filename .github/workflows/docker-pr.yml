@@ -15,7 +15,6 @@ on:
       - 'Makefile'
       - 'api/openapi.yaml'
       - 'pkg/client/openapi.yaml'
-      - 'scripts/generate-web-client.mjs'
       - 'web/**'
       - 'internal/web/**'
       - '**/*.go'

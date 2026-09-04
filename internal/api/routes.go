@@ -1,7 +1,10 @@
 package api
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	jsonv2 "encoding/json/v2"
+	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -27,7 +30,21 @@ const (
 	cliRouteTag          = "CLI"
 )
 
-var configureHumaErrorsOnce sync.Once
+var configureHumaOnce sync.Once
+
+// marshalAPIJSON preserves the API's established JSON v1 behavior except for
+// nil slices, which JSON v2 writes as empty arrays to match the OpenAPI schema.
+func marshalAPIJSON(w io.Writer, value any) error {
+	err := jsonv2.MarshalWrite(
+		w, value,
+		jsonv1.DefaultOptionsV1(),
+		jsonv2.FormatNilSliceAsNull(false),
+	)
+	if err != nil {
+		return fmt.Errorf("marshal API JSON: %w", err)
+	}
+	return nil
+}
 
 type apiHTTPError struct {
 	ErrorResponse
@@ -62,8 +79,11 @@ func newAPIHTTPError(status int, code string, message string) *apiHTTPError {
 	}
 }
 
-func setupHumaErrors() {
-	configureHumaErrorsOnce.Do(func() {
+func configureHuma() {
+	configureHumaOnce.Do(func() {
+		// The API uses encoding/json/v2, which encodes nil slices as empty
+		// arrays. Keep Huma's schemas aligned with that wire contract.
+		huma.DefaultArrayNullable = false
 		huma.NewError = func(status int, message string, _ ...error) huma.StatusError {
 			if message == "" {
 				message = http.StatusText(status)
@@ -108,9 +128,19 @@ func errorCodeForStatus(status int) string {
 }
 
 func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
-	setupHumaErrors()
+	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	jsonFormat := huma.Format{
+		Marshal: marshalAPIJSON,
+		Unmarshal: func(data []byte, value any) error {
+			return jsonv2.Unmarshal(data, value, jsonv1.DefaultOptionsV1())
+		},
+	}
+	config.Formats = map[string]huma.Format{
+		"application/json": jsonFormat,
+		"json":             jsonFormat,
+	}
 	// Disable huma's built-in /docs page: it loads Stoplight Elements from
 	// unpkg.com on the same origin as the browser session cookie, so a
 	// compromised CDN response could use the session to read archive data or
@@ -171,7 +201,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 func writeHumaError(ctx huma.Context, status int, code string, message string) {
 	ctx.SetHeader("Content-Type", applicationJSONMediaType)
 	ctx.SetStatus(status)
-	_ = json.NewEncoder(ctx.BodyWriter()).Encode(ErrorResponse{ //nolint:errchkjson // best-effort error response write
+	_ = marshalAPIJSON(ctx.BodyWriter(), ErrorResponse{
 		Error:   code,
 		Message: message,
 	})

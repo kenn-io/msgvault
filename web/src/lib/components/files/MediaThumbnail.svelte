@@ -3,13 +3,10 @@
 </script>
 
 <script lang="ts">
+  import { getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { PersonFileSearchRow } from '../../explore/models';
-  import {
-    isSupportedThumbnailMIME,
-    readBoundedStream,
-    validatedThumbnailBlob
-  } from './preview-bytes';
+  import { isSupportedThumbnailMIME, readBoundedStream, validatedThumbnailBlob } from './preview-bytes';
   import { withThumbnailSlot } from './thumbnail-queue';
 
   interface Props {
@@ -30,9 +27,12 @@
       visible = true;
       return;
     }
-    const observer = new IntersectionObserver((entries) => {
-      visible = entries.some((entry) => entry.target === element && entry.isIntersecting);
-    }, { rootMargin: '240px' });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        visible = entries.some((entry) => entry.target === element && entry.isIntersecting);
+      },
+      { rootMargin: '240px' },
+    );
     observer.observe(element);
     return () => observer.disconnect();
   });
@@ -61,17 +61,19 @@
     thumbnailState = 'loading';
     const controller = new AbortController();
     let current = true;
-    void withThumbnailSlot(controller.signal, () => loadImage(id, mimeType, controller.signal)).then((url) => {
-      if (!current || controller.signal.aborted) {
-        URL.revokeObjectURL(url);
-        return;
-      }
-      activeObjectURL = url;
-      imageURL = url;
-      thumbnailState = 'image';
-    }).catch(() => {
-      if (current && !controller.signal.aborted) thumbnailState = 'unavailable';
-    });
+    void withThumbnailSlot(controller.signal, () => loadImage(id, mimeType, controller.signal))
+      .then((url) => {
+        if (!current || controller.signal.aborted) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        activeObjectURL = url;
+        imageURL = url;
+        thumbnailState = 'image';
+      })
+      .catch(() => {
+        if (current && !controller.signal.aborted) thumbnailState = 'unavailable';
+      });
 
     return () => {
       current = false;
@@ -81,11 +83,7 @@
   });
 
   async function loadImage(id: number, mimeType: string, signal: AbortSignal): Promise<string> {
-    const { data, response } = await client.GET('/api/v1/files/{id}/content', {
-      params: { path: { id } },
-      parseAs: 'stream',
-      signal
-    });
+    const { data, response } = await generatedGetFileContent({ id }, { ...client, signal, parseAs: 'stream' });
     if (!response.ok || !(data instanceof ReadableStream)) {
       throw new Error('Archived thumbnail content could not be loaded.');
     }
@@ -119,9 +117,35 @@
 </div>
 
 <style>
-  .thumbnail { display: grid; width: 100%; aspect-ratio: 4 / 3; place-items: center; overflow: hidden; background: var(--bg-inset); }
-  img { width: 100%; height: 100%; object-fit: cover; }
-  .placeholder { display: flex; align-items: center; justify-content: center; gap: var(--space-1); flex-direction: column; padding: var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
-  .placeholder strong { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .placeholder small { font-size: var(--font-size-2xs); }
+  .thumbnail {
+    display: grid;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    place-items: center;
+    overflow: hidden;
+    background: var(--bg-inset);
+  }
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    flex-direction: column;
+    padding: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    text-align: center;
+  }
+  .placeholder strong {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .placeholder small {
+    font-size: var(--font-size-2xs);
+  }
 </style>

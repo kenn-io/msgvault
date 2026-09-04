@@ -29,9 +29,7 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/AccountInfo"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - accounts
       type: object
@@ -181,9 +179,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
-          type:
-            - array
-            - "null"
+          type: array
         view_type:
           type: string
       required:
@@ -461,9 +457,7 @@ components:
         definitions:
           items:
             $ref: "#/components/schemas/AttributeDefinition"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - definitions
       type: object
@@ -473,9 +467,7 @@ components:
         choices:
           items:
             $ref: "#/components/schemas/AttributeChoice"
-          type:
-            - array
-            - "null"
+          type: array
         max_length:
           format: int64
           type: integer
@@ -536,9 +528,7 @@ components:
         context_snippets:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         context_snippets_truncated:
           type: boolean
         message_id:
@@ -588,9 +578,7 @@ components:
         body_lines:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         cancel_hint:
           type: string
         headline:
@@ -671,9 +659,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/CLIDeduplicatePlanItem"
-          type:
-            - array
-            - "null"
+          type: array
         prefix_stdout:
           type: string
       required:
@@ -718,9 +704,7 @@ components:
         planned_batch_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         remote_delete_env_var:
           type: string
         resolved_source_id:
@@ -731,9 +715,7 @@ components:
         scope_escalation_body_lines:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         scope_escalation_cancel_hint:
           type: string
         scope_escalation_headline:
@@ -791,17 +773,13 @@ components:
         bcc:
           items:
             $ref: "#/components/schemas/Address"
-          type:
-            - array
-            - "null"
+          type: array
         body_text:
           type: string
         cc:
           items:
             $ref: "#/components/schemas/Address"
-          type:
-            - array
-            - "null"
+          type: array
         conversation_id:
           format: int64
           type: integer
@@ -824,9 +802,7 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         message_type:
           type: string
         sent_at:
@@ -849,9 +825,7 @@ components:
         to:
           items:
             $ref: "#/components/schemas/Address"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - source_message_id
@@ -922,9 +896,7 @@ components:
         args:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         cwd:
           type: string
         env:
@@ -996,9 +968,7 @@ components:
         warnings:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - status
       type: object
@@ -1047,9 +1017,7 @@ components:
         signals:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - identifier
         - normalized_identifier
@@ -1161,9 +1129,7 @@ components:
         books:
           items:
             $ref: "#/components/schemas/CardDAVBookResponse"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - books
       type: object
@@ -1508,9 +1474,7 @@ components:
         targets:
           items:
             $ref: "#/components/schemas/TargetDescriptor"
-          type:
-            - array
-            - "null"
+          type: array
         version:
           type: string
       required:
@@ -1658,9 +1622,7 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - accounts
       type: object
@@ -1695,15 +1657,11 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         sources:
           items:
             $ref: "#/components/schemas/CliCollectionSourceResponse"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - name
@@ -1732,9 +1690,7 @@ components:
         collections:
           items:
             $ref: "#/components/schemas/CliCollectionResponse"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - collections
       type: object
@@ -1758,9 +1714,7 @@ components:
         batch_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         expected_batch_count:
           format: int64
           type: integer
@@ -1801,9 +1755,7 @@ components:
         batch_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     CliDeleteDedupedPlanResponse:
       additionalProperties: true
@@ -1814,9 +1766,7 @@ components:
         batches:
           items:
             $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
-          type:
-            - array
-            - "null"
+          type: array
         total:
           format: int64
           type: integer
@@ -1830,9 +1780,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/CliIdentityRowResponse"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - rows
       type: object
@@ -1851,9 +1799,7 @@ components:
         signals:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         source_id:
           format: int64
           type: integer
@@ -1916,15 +1862,11 @@ components:
         attachments:
           items:
             $ref: "#/components/schemas/CliMessageAttachment"
-          type:
-            - array
-            - "null"
+          type: array
         bcc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          type:
-            - array
-            - "null"
+          type: array
         body_html:
           type: string
         body_text:
@@ -1932,9 +1874,7 @@ components:
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          type:
-            - array
-            - "null"
+          type: array
         conversation_id:
           format: int64
           type: integer
@@ -1946,9 +1886,7 @@ components:
         from:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          type:
-            - array
-            - "null"
+          type: array
         has_attachments:
           type: boolean
         id:
@@ -1957,9 +1895,7 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         message_type:
           type: string
         received_at:
@@ -1984,9 +1920,7 @@ components:
         to:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - source_message_id
@@ -2040,9 +1974,7 @@ components:
         results:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         scope_label:
           type: string
         scope_source_count:
@@ -2070,9 +2002,7 @@ components:
         aliases:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -2122,9 +2052,7 @@ components:
         services:
           items:
             $ref: "#/components/schemas/CommunicationService"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - services
       type: object
@@ -2208,9 +2136,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageDetail"
-          type:
-            - array
-            - "null"
+          type: array
         total:
           format: int64
           type: integer
@@ -2274,9 +2200,7 @@ components:
         aliases:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         default_scope_kind:
           type: string
         display_label:
@@ -2323,9 +2247,7 @@ components:
             format: int64
             minimum: 1
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - body
       type: object
@@ -2400,9 +2322,7 @@ components:
         accounts:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         name:
           type: string
       required:
@@ -2458,9 +2378,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         source:
           type: string
         source_ref:
@@ -2566,9 +2484,7 @@ components:
         body_contexts:
           items:
             $ref: "#/components/schemas/BodySearchContext"
-          type:
-            - array
-            - "null"
+          type: array
         count:
           format: int64
           type: integer
@@ -2580,9 +2496,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         offset:
           format: int64
           type: integer
@@ -2779,9 +2693,7 @@ components:
         confirm:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         page_size:
           format: int64
           type: integer
@@ -2799,21 +2711,15 @@ components:
         applied:
           items:
             $ref: "#/components/schemas/IdentityConfirmationOutcome"
-          type:
-            - array
-            - "null"
+          type: array
         candidates:
           items:
             $ref: "#/components/schemas/Candidate"
-          type:
-            - array
-            - "null"
+          type: array
         rejected:
           items:
             $ref: "#/components/schemas/RejectedCandidate"
-          type:
-            - array
-            - "null"
+          type: array
         scanned_messages:
           format: int64
           type: integer
@@ -2966,9 +2872,7 @@ components:
         results:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
-          type:
-            - array
-            - "null"
+          type: array
         revision:
           format: int64
           type: integer
@@ -3016,9 +2920,7 @@ components:
         heading_path:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         highlight_end:
           format: int64
           type: integer
@@ -3034,9 +2936,7 @@ components:
         matched_signals:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         message_id:
           format: int64
           type: integer
@@ -3253,9 +3153,7 @@ components:
         failures:
           items:
             $ref: "#/components/schemas/DocumentVectorFailureDiagnostic"
-          type:
-            - array
-            - "null"
+          type: array
         failures_exhausted:
           type: boolean
         generation_id:
@@ -3390,9 +3288,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/DomainSummary"
-          type:
-            - array
-            - "null"
+          type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
         total_count:
@@ -3429,9 +3325,7 @@ components:
         source_counts:
           items:
             $ref: "#/components/schemas/SourceCount"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - domain
         - activity_count
@@ -3621,9 +3515,7 @@ components:
         org:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         role:
           type: string
         title:
@@ -3635,9 +3527,7 @@ components:
         employments:
           items:
             $ref: "#/components/schemas/Employment"
-          type:
-            - array
-            - "null"
+          type: array
         projection:
           $ref: "#/components/schemas/EmploymentProjectionResponse"
       required:
@@ -3701,15 +3591,11 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         participant_labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         preview:
           type: string
         source_id:
@@ -3763,9 +3649,7 @@ components:
         failed_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         last_processed_index:
           format: int64
           type: integer
@@ -3780,9 +3664,7 @@ components:
         tombstone_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - started_at
         - method
@@ -3999,9 +3881,7 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          type:
-            - array
-            - "null"
+          type: array
         group_key:
           type: string
         grouping:
@@ -4031,9 +3911,7 @@ components:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - grouping
       type: object
@@ -4073,15 +3951,11 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          type:
-            - array
-            - "null"
+          type: array
         grouping:
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -4104,9 +3978,7 @@ components:
         sort:
           items:
             $ref: "#/components/schemas/ExploreSort"
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     ExploreHTTPResponse:
       additionalProperties: true
@@ -4237,9 +4109,7 @@ components:
         exclusions:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         mode:
           enum:
             - explicit
@@ -4250,9 +4120,7 @@ components:
         row_keys:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
       required:
@@ -4325,18 +4193,14 @@ components:
         mime_families:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
         sort:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - predicate
         - grouping
@@ -4440,9 +4304,7 @@ components:
         mime_families:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
         sort:
@@ -4465,9 +4327,7 @@ components:
         files:
           items:
             $ref: "#/components/schemas/FileSearchRow"
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           type: string
         search_provenance:
@@ -4520,22 +4380,16 @@ components:
         participant_domains:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         participant_labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         search_explain:
           $ref: "#/components/schemas/FileSearchExplain"
         size_bytes:
@@ -4591,9 +4445,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         offset:
           format: int64
           type: integer
@@ -4616,33 +4468,23 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         list_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         recipients:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         sender_domains:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         senders:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     FormatCoverage:
       additionalProperties: true
@@ -4710,15 +4552,11 @@ components:
         gmail_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         targets:
           items:
             $ref: "#/components/schemas/DeletionTarget"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - gmail_ids
       type: object
@@ -4766,15 +4604,11 @@ components:
         bcc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         cc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         conversation_id:
           format: int64
           type: integer
@@ -4796,15 +4630,11 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         matches:
           items:
             $ref: "#/components/schemas/HybridSearchMatch"
-          type:
-            - array
-            - "null"
+          type: array
         matches_truncated:
           type: boolean
         message_type:
@@ -4828,9 +4658,7 @@ components:
         to:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - subject
@@ -4876,9 +4704,7 @@ components:
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"
-          type:
-            - array
-            - "null"
+          type: array
         returned:
           format: int64
           type: integer
@@ -4910,9 +4736,7 @@ components:
         signals:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - identifier
         - added
@@ -4983,9 +4807,7 @@ components:
         evidence:
           items:
             $ref: "#/components/schemas/IdentityMatchEvidence"
-          type:
-            - array
-            - "null"
+          type: array
         id:
           format: int64
           type: integer
@@ -5037,9 +4859,7 @@ components:
         candidates:
           items:
             $ref: "#/components/schemas/IdentityMatchCandidate"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -5294,9 +5114,7 @@ components:
         manifests:
           items:
             $ref: "#/components/schemas/DeletionManifestSummary"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - manifests
       type: object
@@ -5317,9 +5135,7 @@ components:
         gmail_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         id:
           type: string
         raw_filter: {}
@@ -5402,9 +5218,7 @@ components:
         attendees:
           items:
             $ref: "#/components/schemas/MeetingPerson"
-          type:
-            - array
-            - "null"
+          type: array
         ended_at:
           format: date-time
           type: string
@@ -5431,9 +5245,7 @@ components:
         transcript_segments:
           items:
             $ref: "#/components/schemas/TranscriptSegment"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - external_id
         - started_at
@@ -5510,15 +5322,11 @@ components:
         attachments:
           items:
             $ref: "#/components/schemas/AttachmentInfo"
-          type:
-            - array
-            - "null"
+          type: array
         bcc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         body:
           type: string
         body_html:
@@ -5528,9 +5336,7 @@ components:
         cc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         conversation_id:
           format: int64
           type: integer
@@ -5554,9 +5360,7 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         message_type:
           type: string
         sent_at:
@@ -5576,9 +5380,7 @@ components:
         to:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - body
         - attachments
@@ -5598,9 +5400,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         page:
           format: int64
           type: integer
@@ -5622,15 +5422,11 @@ components:
         bcc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         cc:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         conversation_id:
           format: int64
           type: integer
@@ -5652,9 +5448,7 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         message_type:
           type: string
         sent_at:
@@ -5674,9 +5468,7 @@ components:
         to:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - subject
@@ -6257,9 +6049,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_altid:
           type:
             - string
@@ -6271,9 +6061,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -6355,9 +6143,7 @@ components:
         values:
           items:
             $ref: "#/components/schemas/OrganizationAttributeValue"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - values
       type: object
@@ -6457,9 +6243,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_altid:
           type:
             - string
@@ -6471,9 +6255,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -6596,9 +6378,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         uri:
           type:
             - string
@@ -6614,9 +6394,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -6734,9 +6512,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_altid:
           type:
             - string
@@ -6748,9 +6524,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -6861,9 +6635,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         uri:
           type:
             - string
@@ -6879,9 +6651,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -6972,9 +6742,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_altid:
           type:
             - string
@@ -6986,9 +6754,7 @@ components:
         vcard_pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard_prop_id:
           type:
             - string
@@ -7008,39 +6774,27 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/OrganizationAddress"
-          type:
-            - array
-            - "null"
+          type: array
         categories:
           items:
             $ref: "#/components/schemas/OrganizationCategory"
-          type:
-            - array
-            - "null"
+          type: array
         contact_points:
           items:
             $ref: "#/components/schemas/OrganizationContactPoint"
-          type:
-            - array
-            - "null"
+          type: array
         identifiers:
           items:
             $ref: "#/components/schemas/OrganizationIdentifier"
-          type:
-            - array
-            - "null"
+          type: array
         media:
           items:
             $ref: "#/components/schemas/OrganizationMedia"
-          type:
-            - array
-            - "null"
+          type: array
         names:
           items:
             $ref: "#/components/schemas/OrganizationName"
-          type:
-            - array
-            - "null"
+          type: array
         organization:
           $ref: "#/components/schemas/Organization"
       required:
@@ -7058,39 +6812,27 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/OrganizationAddressBody"
-          type:
-            - array
-            - "null"
+          type: array
         categories:
           items:
             $ref: "#/components/schemas/OrganizationCategoryBody"
-          type:
-            - array
-            - "null"
+          type: array
         contact_points:
           items:
             $ref: "#/components/schemas/OrganizationContactPointBody"
-          type:
-            - array
-            - "null"
+          type: array
         identifiers:
           items:
             $ref: "#/components/schemas/OrganizationIdentifierBody"
-          type:
-            - array
-            - "null"
+          type: array
         media:
           items:
             $ref: "#/components/schemas/OrganizationMediaBody"
-          type:
-            - array
-            - "null"
+          type: array
         names:
           items:
             $ref: "#/components/schemas/OrganizationNameBody"
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     OrganizationsResponse:
       additionalProperties: true
@@ -7104,9 +6846,7 @@ components:
         organizations:
           items:
             $ref: "#/components/schemas/Organization"
-          type:
-            - array
-            - "null"
+          type: array
         total:
           format: int64
           type: integer
@@ -7150,9 +6890,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/ParticipantCompletionHTTPRow"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - rows
         - cache_revision
@@ -7257,9 +6995,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/PersonSummary"
-          type:
-            - array
-            - "null"
+          type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
         total_count:
@@ -7345,9 +7081,7 @@ components:
         people:
           items:
             $ref: "#/components/schemas/Person"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - people
       type: object
@@ -7366,9 +7100,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         revision:
           format: int64
           type: integer
@@ -7478,16 +7210,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonAddressInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonAttributeConflictResponse:
       additionalProperties: true
@@ -7510,17 +7238,13 @@ components:
         current:
           items:
             $ref: "#/components/schemas/PersonAttributeValue"
-          type:
-            - array
-            - "null"
+          type: array
         definition:
           $ref: "#/components/schemas/AttributeDefinition"
         history:
           items:
             $ref: "#/components/schemas/PersonAttributeValue"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - definition
         - current
@@ -7594,9 +7318,7 @@ components:
         attributes:
           items:
             $ref: "#/components/schemas/PersonAttributeGroup"
-          type:
-            - array
-            - "null"
+          type: array
         person_id:
           format: int64
           type: integer
@@ -7639,16 +7361,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonCategoryInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonCluster:
       additionalProperties: true
@@ -7659,16 +7377,12 @@ components:
         edges:
           items:
             $ref: "#/components/schemas/PersonClusterEdge"
-          type:
-            - array
-            - "null"
+          type: array
         member_ids:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - canonical_id
         - member_ids
@@ -7751,16 +7465,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonContactPointInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonDate:
       additionalProperties: true
@@ -7816,16 +7526,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonDateInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonDay:
       additionalProperties: true
@@ -7903,9 +7609,7 @@ components:
         allowed_identifiers:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         credential:
           $ref: "#/components/schemas/SecretSettingState"
         credential_id:
@@ -7950,9 +7654,7 @@ components:
         target_keys:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         tier:
           type: string
         training_posture:
@@ -7984,9 +7686,7 @@ components:
         allowed_identifiers:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         enabled:
           type: boolean
         endpoint:
@@ -8025,9 +7725,7 @@ components:
         target_keys:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         tier:
           type: string
         training_posture:
@@ -8061,9 +7759,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         generation_id:
           format: int64
           type: integer
@@ -8317,15 +8013,11 @@ components:
         projections:
           items:
             $ref: "#/components/schemas/ProjectionRef"
-          type:
-            - array
-            - "null"
+          type: array
         resolutions:
           items:
             $ref: "#/components/schemas/PersonFactResolutionResult"
-          type:
-            - array
-            - "null"
+          type: array
         state:
           $ref: "#/components/schemas/PinState"
       required:
@@ -8339,9 +8031,7 @@ components:
         pins:
           items:
             $ref: "#/components/schemas/PinState"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - pins
       type: object
@@ -8351,9 +8041,7 @@ components:
         decisions:
           items:
             $ref: "#/components/schemas/PersonFactDecision"
-          type:
-            - array
-            - "null"
+          type: array
         id:
           format: int64
           type: integer
@@ -8362,9 +8050,7 @@ components:
         projections:
           items:
             $ref: "#/components/schemas/ProjectionRef"
-          type:
-            - array
-            - "null"
+          type: array
         resolved_at:
           format: date-time
           type: string
@@ -8424,16 +8110,12 @@ components:
               - to_person
               - group
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         roles:
           items:
             enum:
@@ -8443,9 +8125,7 @@ components:
               - bcc
               - conversation_member
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - participant_ids
         - roles
@@ -8463,9 +8143,7 @@ components:
               - to_person
               - group
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         filename_query:
           type: string
         limit:
@@ -8476,9 +8154,7 @@ components:
         mime_families:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
         sort:
@@ -8501,9 +8177,7 @@ components:
         files:
           items:
             $ref: "#/components/schemas/PersonFileSearchRow"
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           type: string
         search_provenance:
@@ -8556,22 +8230,16 @@ components:
         participant_domains:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         participant_labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         person_provenance:
           $ref: "#/components/schemas/PersonFileProvenance"
         search_explain:
@@ -8639,9 +8307,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/PersonInboxRow"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - rows
         - cache_revision
@@ -8740,16 +8406,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonMediaInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonMerge:
       additionalProperties: true
@@ -8811,27 +8473,19 @@ components:
         participants:
           items:
             $ref: "#/components/schemas/PersonMergeParticipant"
-          type:
-            - array
-            - "null"
+          type: array
         review_candidates:
           items:
             $ref: "#/components/schemas/PersonMergeReviewCandidate"
-          type:
-            - array
-            - "null"
+          type: array
         rows:
           items:
             $ref: "#/components/schemas/PersonMergeRow"
-          type:
-            - array
-            - "null"
+          type: array
         splits:
           items:
             $ref: "#/components/schemas/PersonSplit"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - merge
         - participants
@@ -8879,9 +8533,7 @@ components:
         profiles:
           items:
             $ref: "#/components/schemas/PersonMergeProfile"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - error
         - message
@@ -8905,9 +8557,7 @@ components:
         review_candidates:
           items:
             $ref: "#/components/schemas/PersonMergeReviewCandidate"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - person
         - merge
@@ -9070,9 +8720,7 @@ components:
         merges:
           items:
             $ref: "#/components/schemas/PersonMergeSummary"
-          type:
-            - array
-            - "null"
+          type: array
         offset:
           format: int64
           type: integer
@@ -9175,16 +8823,12 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonNameInputRequest"
-          type:
-            - array
-            - "null"
+          type: array
         supersede:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     PersonNetwork:
       additionalProperties: true
@@ -9195,15 +8839,11 @@ components:
         edges:
           items:
             $ref: "#/components/schemas/NetworkEdge"
-          type:
-            - array
-            - "null"
+          type: array
         nodes:
           items:
             $ref: "#/components/schemas/NetworkNode"
-          type:
-            - array
-            - "null"
+          type: array
         root_person_id:
           format: int64
           type: integer
@@ -9237,45 +8877,31 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/PersonAddress"
-          type:
-            - array
-            - "null"
+          type: array
         categories:
           items:
             $ref: "#/components/schemas/PersonCategory"
-          type:
-            - array
-            - "null"
+          type: array
         contact_points:
           items:
             $ref: "#/components/schemas/PersonContactPoint"
-          type:
-            - array
-            - "null"
+          type: array
         dates:
           items:
             $ref: "#/components/schemas/PersonDate"
-          type:
-            - array
-            - "null"
+          type: array
         media:
           items:
             $ref: "#/components/schemas/PersonMedia"
-          type:
-            - array
-            - "null"
+          type: array
         names:
           items:
             $ref: "#/components/schemas/PersonName"
-          type:
-            - array
-            - "null"
+          type: array
         observations:
           items:
             $ref: "#/components/schemas/ParticipantContactObservation"
-          type:
-            - array
-            - "null"
+          type: array
         person:
           $ref: "#/components/schemas/Person"
       required:
@@ -9406,9 +9032,7 @@ components:
         relationships:
           items:
             $ref: "#/components/schemas/PersonRelationshipView"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - relationships
       type: object
@@ -9497,9 +9121,7 @@ components:
         ambiguous_rows:
           items:
             $ref: "#/components/schemas/PersonMergeRowRef"
-          type:
-            - array
-            - "null"
+          type: array
         cache_state:
           enum:
             - ready
@@ -9521,9 +9143,7 @@ components:
         unrestored_rows:
           items:
             $ref: "#/components/schemas/PersonMergeRowRef"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - split
         - source_person
@@ -9564,9 +9184,7 @@ components:
         identifiers:
           items:
             $ref: "#/components/schemas/PersonIdentifier"
-          type:
-            - array
-            - "null"
+          type: array
         last_at:
           format: date-time
           type: string
@@ -9586,9 +9204,7 @@ components:
         source_counts:
           items:
             $ref: "#/components/schemas/SourceCount"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - id
         - display_label
@@ -9689,16 +9305,12 @@ components:
               - to_person
               - group
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         roles:
           items:
             enum:
@@ -9708,9 +9320,7 @@ components:
               - bcc
               - conversation_member
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - participant_ids
         - roles
@@ -9781,21 +9391,15 @@ components:
         columns:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         row_count:
           format: int64
           type: integer
         rows:
           items:
             items: {}
-            type:
-              - array
-              - "null"
-          type:
-            - array
-            - "null"
+            type: array
+          type: array
       required:
         - columns
         - rows
@@ -9876,9 +9480,7 @@ components:
         annual:
           items:
             $ref: "#/components/schemas/AnnualTemperatureSummary"
-          type:
-            - array
-            - "null"
+          type: array
         cache_revision:
           type: string
         canonical_id:
@@ -9889,9 +9491,7 @@ components:
         days:
           items:
             $ref: "#/components/schemas/RelationshipCalendarDay"
-          type:
-            - array
-            - "null"
+          type: array
         effective_date:
           type: string
         identity_revision:
@@ -9995,9 +9595,7 @@ components:
         reviews:
           items:
             $ref: "#/components/schemas/RelationshipReview"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - reviews
       type: object
@@ -10016,9 +9614,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         score:
           format: double
           type: number
@@ -10073,9 +9669,7 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -10100,9 +9694,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/TimelineRow"
-          type:
-            - array
-            - "null"
+          type: array
         total_count:
           format: int64
           type: integer
@@ -10175,9 +9767,7 @@ components:
         relationship_types:
           items:
             $ref: "#/components/schemas/RelationshipType"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - relationship_types
       type: object
@@ -10189,9 +9779,7 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -10213,9 +9801,7 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/RelationshipRow"
-          type:
-            - array
-            - "null"
+          type: array
         total_count:
           format: int64
           type: integer
@@ -10371,9 +9957,7 @@ components:
         saved_views:
           items:
             $ref: "#/components/schemas/SavedView"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - saved_views
       type: object
@@ -10383,9 +9967,7 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/AccountStatus"
-          type:
-            - array
-            - "null"
+          type: array
         running:
           type: boolean
       required:
@@ -10413,9 +9995,7 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     SearchCoverageResponse:
       additionalProperties: true
@@ -10469,15 +10049,11 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         query:
           type: string
         stats:
@@ -10514,9 +10090,7 @@ components:
         results:
           items:
             $ref: "#/components/schemas/AttachmentSearchResult"
-          type:
-            - array
-            - "null"
+          type: array
         usage:
           $ref: "#/components/schemas/Usage"
       required:
@@ -10532,9 +10106,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         page:
           format: int64
           type: integer
@@ -10763,9 +10335,7 @@ components:
         options:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         read_only:
           type: boolean
         restart_required:
@@ -10892,9 +10462,7 @@ components:
         person_enrichment_providers:
           items:
             $ref: "#/components/schemas/PersonEnrichmentProviderSetting"
-          type:
-            - array
-            - "null"
+          type: array
         settings:
           items:
             $ref: "#/components/schemas/Setting"
@@ -10913,9 +10481,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         returned:
           format: int64
           type: integer
@@ -11071,9 +10637,7 @@ components:
         sources:
           items:
             $ref: "#/components/schemas/SourceStatus"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - sources
       type: object
@@ -11083,9 +10647,7 @@ components:
         accounts:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - accounts
       type: object
@@ -11099,9 +10661,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - merge_id
         - participant_ids
@@ -11144,9 +10704,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         operation_token:
           type: string
         selection:
@@ -11167,9 +10725,7 @@ components:
         sample_gmail_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         source:
           $ref: "#/components/schemas/SourceReference"
         status:
@@ -11212,9 +10768,7 @@ components:
         vector_text_message_types:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vector_text_status:
           type: string
         vector_visual_status:
@@ -11276,9 +10830,7 @@ components:
         formats:
           items:
             $ref: "#/components/schemas/FormatCoverage"
-          type:
-            - array
-            - "null"
+          type: array
         generation:
           $ref: "#/components/schemas/VisualGeneration"
         journal_cursor:
@@ -11351,39 +10903,27 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/PersonAddress"
-          type:
-            - array
-            - "null"
+          type: array
         categories:
           items:
             $ref: "#/components/schemas/PersonCategory"
-          type:
-            - array
-            - "null"
+          type: array
         contact_points:
           items:
             $ref: "#/components/schemas/PersonContactPoint"
-          type:
-            - array
-            - "null"
+          type: array
         dates:
           items:
             $ref: "#/components/schemas/PersonDate"
-          type:
-            - array
-            - "null"
+          type: array
         media:
           items:
             $ref: "#/components/schemas/PersonMedia"
-          type:
-            - array
-            - "null"
+          type: array
         names:
           items:
             $ref: "#/components/schemas/PersonName"
-          type:
-            - array
-            - "null"
+          type: array
         person:
           $ref: "#/components/schemas/Person"
       required:
@@ -11401,26 +10941,20 @@ components:
         accounts:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         date_range:
           items:
             type: string
           maxItems: 2
           minItems: 2
-          type:
-            - array
-            - "null"
+          type: array
         message_count:
           format: int64
           type: integer
         top_senders:
           items:
             $ref: "#/components/schemas/SenderCount"
-          type:
-            - array
-            - "null"
+          type: array
         total_size_bytes:
           format: int64
           type: integer
@@ -11500,9 +11034,7 @@ components:
         item_errors:
           items:
             $ref: "#/components/schemas/SyncRunItemStatus"
-          type:
-            - array
-            - "null"
+          type: array
         messages_added:
           format: int64
           type: integer
@@ -11544,17 +11076,13 @@ components:
         choices:
           items:
             $ref: "#/components/schemas/ChoiceDescriptor"
-          type:
-            - array
-            - "null"
+          type: array
         description:
           type: string
         fields:
           items:
             $ref: "#/components/schemas/FieldDescriptor"
-          type:
-            - array
-            - "null"
+          type: array
         key:
           type: string
         kind:
@@ -11666,9 +11194,7 @@ components:
         labels:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         priority:
           type: string
         task_id:
@@ -11743,9 +11269,7 @@ components:
         tasks:
           items:
             $ref: "#/components/schemas/TaskSummary"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - tasks
       type: object
@@ -11843,9 +11367,7 @@ components:
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
-          type:
-            - array
-            - "null"
+          type: array
         count:
           format: int64
           type: integer
@@ -11881,9 +11403,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         offset:
           format: int64
           type: integer
@@ -11909,9 +11429,7 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          type:
-            - array
-            - "null"
+          type: array
         offset:
           format: int64
           type: integer
@@ -11978,9 +11496,7 @@ components:
         scopes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         tenant_id:
           type: string
         token_type:
@@ -12003,9 +11519,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         attachment_count:
           format: int64
           type: integer
@@ -12097,9 +11611,7 @@ components:
         pid:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         prop_id:
           type: string
         property:
@@ -12143,9 +11655,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         updated_at:
           format: date-time
           type: string
@@ -12189,9 +11699,7 @@ components:
         type_tokens:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         vcard:
           $ref: "#/components/schemas/VCardIdentity"
       required:
@@ -12279,9 +11787,7 @@ components:
         directions:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         filename:
           type: string
         limit:

@@ -1,21 +1,40 @@
+import {
+  getPersonTracking as generatedGetPersonTracking,
+  listPersonFactTargets as generatedListPersonFactTargets,
+  setPersonTracking as generatedSetPersonTracking,
+} from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
-import type { components } from '../api/generated/schema';
-
-type GeneratedTracking = components['schemas']['PersonTracking'];
-type GeneratedTarget = components['schemas']['TargetDescriptor'];
-
+import type {
+  PersonTracking as GeneratedPersonTracking,
+  TargetDescriptor as GeneratedTargetDescriptor,
+} from '../api/generated/models';
+type GeneratedTracking = GeneratedPersonTracking;
+type GeneratedTarget = GeneratedTargetDescriptor;
 export type PersonTrackingState = Pick<GeneratedTracking, 'person_id' | 'tracked' | 'tracked_at'>;
 export type PersonTrackingTarget = Pick<
   GeneratedTarget,
   'kind' | 'description' | 'value_type' | 'cardinality' | 'sensitive'
 >;
 export type PersonTrackingOutcome =
-  | { kind: 'confirmed'; desired: boolean }
-  | { kind: 'reconciled'; desired: boolean }
-  | { kind: 'unknown'; desired: boolean }
-  | { kind: 'error'; desired: boolean }
-  | { kind: 'ignored' };
-
+  | {
+      kind: 'confirmed';
+      desired: boolean;
+    }
+  | {
+      kind: 'reconciled';
+      desired: boolean;
+    }
+  | {
+      kind: 'unknown';
+      desired: boolean;
+    }
+  | {
+      kind: 'error';
+      desired: boolean;
+    }
+  | {
+      kind: 'ignored';
+    };
 export class PersonTrackingController {
   personID = $state<number>();
   tracking = $state<PersonTrackingState>();
@@ -28,7 +47,6 @@ export class PersonTrackingController {
   stateUnknown = $state(false);
   catalogIncludesSensitive = $state(false);
   announcement = $state<string | null>(null);
-
   private readonly client: APIClient;
   private disposed = false;
   private contextGeneration = 0;
@@ -38,19 +56,15 @@ export class PersonTrackingController {
   private trackingAbort?: AbortController;
   private catalogAbort?: AbortController;
   private mutationAbort?: AbortController;
-
   constructor(client: APIClient) {
     this.client = client;
   }
-
   get contextToken(): number {
     return this.contextGeneration;
   }
-
   isContextCurrent(contextToken: number): boolean {
     return !this.disposed && this.contextGeneration === contextToken;
   }
-
   async setPerson(personID: number): Promise<void> {
     if (this.disposed || !Number.isSafeInteger(personID) || personID <= 0) return;
     this.contextGeneration += 1;
@@ -71,12 +85,19 @@ export class PersonTrackingController {
     this.announcement = null;
     await Promise.all([this.loadTracking(personID), this.loadCatalog(false)]);
   }
-
   async setTracked(desired: boolean): Promise<PersonTrackingOutcome> {
     const personID = this.personID;
-    if (personID === undefined || this.disposed || this.pending || this.trackingLoading ||
-      this.stateUnknown || !this.tracking || this.tracking.person_id !== personID ||
-      this.tracking.tracked === desired) return { kind: 'ignored' };
+    if (
+      personID === undefined ||
+      this.disposed ||
+      this.pending ||
+      this.trackingLoading ||
+      this.stateUnknown ||
+      !this.tracking ||
+      this.tracking.person_id !== personID ||
+      this.tracking.tracked === desired
+    )
+      return { kind: 'ignored' };
     const context = this.contextGeneration;
     const mutation = ++this.mutationGeneration;
     this.mutationAbort?.abort();
@@ -86,11 +107,14 @@ export class PersonTrackingController {
     this.trackingError = null;
     this.announcement = null;
     try {
-      const result = await this.client.PUT('/api/v1/people/{id}/tracking', {
-        params: { path: { id: personID } },
-        body: { tracked: desired },
-        signal: abort.signal
-      });
+      const result = await generatedSetPersonTracking(
+        { id: personID },
+        { tracked: desired },
+        {
+          ...this.client,
+          signal: abort.signal,
+        },
+      );
       if (!this.currentMutation(context, mutation, personID, abort.signal)) return { kind: 'ignored' };
       const confirmed = result.data ? safeTracking(result.data) : undefined;
       if (confirmed?.person_id === personID && confirmed.tracked === desired) {
@@ -112,17 +136,14 @@ export class PersonTrackingController {
       }
     }
   }
-
   async retryTracking(): Promise<void> {
     if (this.personID === undefined || this.disposed || this.trackingLoading || this.pending) return;
     await this.loadTracking(this.personID);
   }
-
   async retryCatalog(includeSensitive: boolean): Promise<void> {
     if (this.personID === undefined || this.disposed || this.catalogLoading) return;
     await this.loadCatalog(includeSensitive);
   }
-
   destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -134,12 +155,11 @@ export class PersonTrackingController {
     this.catalogAbort?.abort();
     this.mutationAbort?.abort();
   }
-
   private async reconcileMutation(
     personID: number,
     desired: boolean,
     context: number,
-    mutation: number
+    mutation: number,
   ): Promise<PersonTrackingOutcome> {
     const reconciled = await this.loadTracking(personID);
     if (!this.currentMutation(context, mutation, personID)) return { kind: 'ignored' };
@@ -153,7 +173,6 @@ export class PersonTrackingController {
     this.trackingError = 'Current profile maintenance state is unknown. Retry state before changing tracking.';
     return { kind: 'unknown', desired };
   }
-
   private applyConfirmed(tracking: PersonTrackingState): void {
     this.tracking = tracking;
     this.trackingError = null;
@@ -162,7 +181,6 @@ export class PersonTrackingController {
       ? 'Profile maintenance tracking enabled.'
       : 'Profile maintenance tracking disabled.';
   }
-
   private async loadTracking(personID: number): Promise<boolean> {
     const context = this.contextGeneration;
     const request = ++this.trackingGeneration;
@@ -172,10 +190,13 @@ export class PersonTrackingController {
     this.trackingLoading = true;
     this.trackingError = null;
     try {
-      const { data } = await this.client.GET('/api/v1/people/{id}/tracking', {
-        params: { path: { id: personID } },
-        signal: abort.signal
-      });
+      const { data } = await generatedGetPersonTracking(
+        { id: personID },
+        {
+          ...this.client,
+          signal: abort.signal,
+        },
+      );
       if (!this.currentTracking(context, request, personID, abort.signal)) return false;
       const tracking = data ? safeTracking(data) : undefined;
       if (!tracking || tracking.person_id !== personID) {
@@ -200,7 +221,6 @@ export class PersonTrackingController {
       }
     }
   }
-
   private async loadCatalog(includeSensitive: boolean): Promise<boolean> {
     const personID = this.personID;
     if (personID === undefined) return false;
@@ -212,10 +232,13 @@ export class PersonTrackingController {
     this.catalogLoading = true;
     this.catalogError = null;
     try {
-      const { data } = await this.client.GET('/api/v1/person-fact-targets', {
-        params: { query: { include_sensitive: includeSensitive } },
-        signal: abort.signal
-      });
+      const { data } = await generatedListPersonFactTargets(
+        { include_sensitive: includeSensitive },
+        {
+          ...this.client,
+          signal: abort.signal,
+        },
+      );
       if (!this.currentCatalog(context, request, personID, abort.signal)) return false;
       const targets = data ? safeTargets(data.targets) : undefined;
       if (!targets) {
@@ -236,43 +259,43 @@ export class PersonTrackingController {
       }
     }
   }
-
   private current(context: number, personID: number, signal?: AbortSignal): boolean {
     return this.isContextCurrent(context) && this.personID === personID && !signal?.aborted;
   }
-
   private currentTracking(context: number, request: number, personID: number, signal?: AbortSignal): boolean {
     return this.current(context, personID, signal) && this.trackingGeneration === request;
   }
-
   private currentCatalog(context: number, request: number, personID: number, signal?: AbortSignal): boolean {
     return this.current(context, personID, signal) && this.catalogGeneration === request;
   }
-
   private currentMutation(context: number, request: number, personID: number, signal?: AbortSignal): boolean {
     return this.current(context, personID, signal) && this.mutationGeneration === request;
   }
 }
-
 function safeTracking(value: GeneratedTracking): PersonTrackingState | undefined {
-  if (!Number.isSafeInteger(value.person_id) || value.person_id <= 0 || typeof value.tracked !== 'boolean') return undefined;
+  if (!Number.isSafeInteger(value.person_id) || value.person_id <= 0 || typeof value.tracked !== 'boolean')
+    return undefined;
   if (value.tracked_at !== null && typeof value.tracked_at !== 'string') return undefined;
   return { person_id: value.person_id, tracked: value.tracked, tracked_at: value.tracked_at };
 }
-
 function safeTargets(values: GeneratedTarget[] | null): PersonTrackingTarget[] | undefined {
   if (values === null) return [];
   const targets: PersonTrackingTarget[] = [];
   for (const value of values) {
-    if (typeof value.kind !== 'string' || typeof value.description !== 'string' ||
-      typeof value.value_type !== 'string' || typeof value.cardinality !== 'string' ||
-      typeof value.sensitive !== 'boolean') return undefined;
+    if (
+      typeof value.kind !== 'string' ||
+      typeof value.description !== 'string' ||
+      typeof value.value_type !== 'string' ||
+      typeof value.cardinality !== 'string' ||
+      typeof value.sensitive !== 'boolean'
+    )
+      return undefined;
     targets.push({
       kind: value.kind,
       description: value.description,
       value_type: value.value_type,
       cardinality: value.cardinality,
-      sensitive: value.sensitive
+      sensitive: value.sensitive,
     });
   }
   return targets;

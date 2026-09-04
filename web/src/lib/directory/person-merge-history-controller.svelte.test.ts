@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import type { components } from '../api/generated/schema';
-import {
-  PERSON_MERGE_HISTORY_LIMIT,
-  PersonMergeHistoryController
-} from './person-merge-history-controller.svelte';
+import type {
+  Person as GeneratedPerson,
+  PersonMergeDetail as GeneratedPersonMergeDetail,
+  PersonSplitResult as GeneratedPersonSplitResult,
+} from '../api/generated/models';
+import { PERSON_MERGE_HISTORY_LIMIT, PersonMergeHistoryController } from './person-merge-history-controller.svelte';
 
-type Person = components['schemas']['Person'];
-type PersonMergeDetail = components['schemas']['PersonMergeDetail'];
+type Person = GeneratedPerson;
+type PersonMergeDetail = GeneratedPersonMergeDetail;
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -24,14 +25,17 @@ function person(id: number, revision = 4, name = `Synthetic Person ${id}`): Pers
     participant_ids: [701, 702],
     created_at: '2026-08-01T00:00:00Z',
     updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`
+    vcard_uid: `synthetic-${id}`,
   };
 }
 
-function detail(overrides: Partial<PersonMergeDetail['merge']> = {}, participants: PersonMergeDetail['participants'] = [
-  { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
-  { merge_id: 41, participant_id: 702, origin_side: 'survivor' }
-]): PersonMergeDetail {
+function detail(
+  overrides: Partial<PersonMergeDetail['merge']> = {},
+  participants: PersonMergeDetail['participants'] = [
+    { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
+    { merge_id: 41, participant_id: 702, origin_side: 'survivor' },
+  ],
+): PersonMergeDetail {
   return {
     merge: {
       id: 41,
@@ -47,12 +51,12 @@ function detail(overrides: Partial<PersonMergeDetail['merge']> = {}, participant
       snapshot_version: 1,
       snapshot_sha256: 'synthetic-digest',
       created_at: '2026-08-03T00:00:00Z',
-      ...overrides
+      ...overrides,
     },
     participants,
     rows: [],
     splits: [],
-    review_candidates: []
+    review_candidates: [],
   };
 }
 
@@ -64,11 +68,11 @@ function summary(id: number) {
     pending_candidate_count: 0,
     row_action_counts: { restored: 2 },
     row_count: 2,
-    split_count: 0
+    split_count: 0,
   };
 }
 
-function splitResult(exact = true): components['schemas']['PersonSplitResult'] {
+function splitResult(exact = true): GeneratedPersonSplitResult {
   return {
     exact_reversal: exact,
     cache_state: 'ready',
@@ -85,17 +89,19 @@ function splitResult(exact = true): components['schemas']['PersonSplitResult'] {
       source_revision_after: 5,
       exact_reversal: exact,
       actor: 'web',
-      created_at: '2026-08-04T00:00:00Z'
+      created_at: '2026-08-04T00:00:00Z',
     },
     ambiguous_rows: exact ? [] : [{ table_name: 'person_names', original_row_key: 'concealed', action: 'ambiguous' }],
     unrestored_rows: [],
-    uid_alias_disposition: 'restored'
+    uid_alias_disposition: 'restored',
   };
 }
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((next) => { resolve = next; });
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
   return { promise, resolve };
 }
 
@@ -106,7 +112,8 @@ describe('PersonMergeHistoryController', () => {
       const request = requestOf(input);
       requests.push(request);
       const offset = Number(new URL(request.url).searchParams.get('offset'));
-      const merges = offset === 0 ? Array.from({ length: PERSON_MERGE_HISTORY_LIMIT }, (_, index) => summary(index + 1)) : [];
+      const merges =
+        offset === 0 ? Array.from({ length: PERSON_MERGE_HISTORY_LIMIT }, (_, index) => summary(index + 1)) : [];
       return Response.json({ merges, limit: PERSON_MERGE_HISTORY_LIMIT, offset });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -127,7 +134,8 @@ describe('PersonMergeHistoryController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
-      if (request.url.endsWith('/snapshot')) return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { private: 'explicit' } });
+      if (request.url.endsWith('/snapshot'))
+        return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { private: 'explicit' } });
       return Response.json(detail());
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -139,7 +147,8 @@ describe('PersonMergeHistoryController', () => {
     await controller.revealSnapshot();
     await controller.revealSnapshot();
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      '/api/v1/person-merges/41', '/api/v1/person-merges/41/snapshot'
+      '/api/v1/person-merges/41',
+      '/api/v1/person-merges/41/snapshot',
     ]);
   });
 
@@ -153,7 +162,9 @@ describe('PersonMergeHistoryController', () => {
       if (path === '/api/v1/people/12' && request.method === 'GET') {
         return Response.json(person(12, 4, 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       }
-      return Response.json(splitResult(), { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
+      return Response.json(splitResult(), {
+        headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' },
+      });
     });
     vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -220,7 +231,8 @@ describe('PersonMergeHistoryController', () => {
 
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111111'
+      '11111111-1111-4111-8111-111111111111',
+      '11111111-1111-4111-8111-111111111111',
     ]);
   });
 
@@ -251,8 +263,9 @@ describe('PersonMergeHistoryController', () => {
     controller.confirmSplit();
     await controller.submitSplit();
 
-    expect(requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')))
-      .toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    expect(
+      requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
+    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
   });
 
   it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
@@ -302,16 +315,18 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') {
         detailReads += 1;
-        if (detailReads === 3) return Response.json({ error: 'unavailable', message: 'Detail still unavailable' }, { status: 503 });
+        if (detailReads === 3)
+          return Response.json({ error: 'unavailable', message: 'Detail still unavailable' }, { status: 503 });
         return Response.json(detail({ survivor_revision_after: detailReads === 1 ? 4 : 6 }));
       }
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
         if (sourceReads === 2) return Response.json(person(12, 5, 'Unpublishable Source'));
-        if (sourceReads === 3) return Response.json({ error: 'unavailable', message: 'Source still unavailable' }, { status: 503 });
+        if (sourceReads === 3)
+          return Response.json({ error: 'unavailable', message: 'Source still unavailable' }, { status: 503 });
         const revision = sourceReads === 1 ? 4 : 6;
         return Response.json(person(12, revision, revision === 4 ? 'Synthetic Source' : 'Fresh Synthetic Source'), {
-          headers: { ETag: `"person-12-r${revision}"` }
+          headers: { ETag: `"person-12-r${revision}"` },
         });
       }
       postAttempts += 1;
@@ -368,7 +383,7 @@ describe('PersonMergeHistoryController', () => {
 
   it.each([
     [409, 'person_split_idempotency_conflict'],
-    [412, 'person_merge_revision_conflict']
+    [412, 'person_merge_revision_conflict'],
   ])('does not stale-reload for %s/%s and rotates after the application failure', async (status, error) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -392,12 +407,15 @@ describe('PersonMergeHistoryController', () => {
     await controller.submitSplit();
 
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(2);
-    expect(requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')))
-      .toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    expect(
+      requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
+    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
   });
 
   it('commits once, keeps malformed receipt tags out of state, and reports reconciliation separately', async () => {
-    const reconcile = vi.fn(async () => { throw new Error('refresh failed'); });
+    const reconcile = vi.fn(async () => {
+      throw new Error('refresh failed');
+    });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
@@ -424,7 +442,9 @@ describe('PersonMergeHistoryController', () => {
 
   it('discards a late reconciliation rejection after person context changes', async () => {
     let rejectReconciliation!: (cause: unknown) => void;
-    const reconciliation = new Promise<void>((_resolve, reject) => { rejectReconciliation = reject; });
+    const reconciliation = new Promise<void>((_resolve, reject) => {
+      rejectReconciliation = reject;
+    });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;

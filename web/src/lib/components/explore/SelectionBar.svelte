@@ -1,11 +1,11 @@
 <script lang="ts">
   import { Button, Card, KbdBadge } from '@kenn-io/kit-ui';
 
-  import type { components } from '../../api/generated/schema';
+  import type { ExplorePreflightResponse as GeneratedExplorePreflightResponse } from '../../api/generated/models';
   import type { AllMatchingExploreSelection } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
 
-  type Preflight = components['schemas']['ExplorePreflightResponse'];
+  type Preflight = GeneratedExplorePreflightResponse;
 
   let {
     selection,
@@ -13,7 +13,7 @@
     allMatching = undefined,
     preflight = undefined,
     onExport = undefined,
-    onOpenInSource = undefined
+    onOpenInSource = undefined,
   }: {
     selection: ExploreSelectionState;
     totalCount?: number;
@@ -39,37 +39,40 @@
 </script>
 
 <Card padding="none" selected={selection.mode === 'all_matching' || selection.count > 0}>
-<div class="selection-bar">
-  <span role="status" aria-live="polite">{message}</span>
-  <span class="shortcut"><KbdBadge keys={['Space']} /> toggle</span>
-  <span class="shortcut"><KbdBadge keys={['A']} /> visible</span>
-  {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
+  <div class="selection-bar">
+    <span role="status" aria-live="polite">{message}</span>
+    <span class="shortcut"><KbdBadge keys={['Space']} /> toggle</span>
+    <span class="shortcut"><KbdBadge keys={['A']} /> visible</span>
+    {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
+      <Button
+        size="sm"
+        tone="info"
+        surface="soft"
+        label={`Select all ${totalCount?.toLocaleString() ?? ''} matching items`.replace(
+          'all  matching',
+          'all matching',
+        )}
+        onclick={() => selection.selectAllMatching(allMatching)}
+      />
+    {/if}
+    {#if preflight && !exportReason && exportTarget && onExport}
+      <Button size="sm" tone="info" surface="soft" label="Export selection" onclick={onExport} />
+    {:else if exportReason}
+      <span class="action-reason">Export: {exportReason}</span>
+    {/if}
+    {#if preflight && !openReason && onOpenInSource}
+      <Button size="sm" tone="info" surface="soft" label="Open selection in source" onclick={onOpenInSource} />
+    {:else if openReason}
+      <span class="action-reason">Open in source: {openReason}</span>
+    {/if}
     <Button
       size="sm"
-      tone="info"
       surface="soft"
-      label={`Select all ${totalCount?.toLocaleString() ?? ''} matching items`.replace('all  matching', 'all matching')}
-      onclick={() => selection.selectAllMatching(allMatching)}
+      label="Clear selection"
+      disabled={selection.mode === 'explicit' && selection.count === 0}
+      onclick={() => selection.clear()}
     />
-  {/if}
-  {#if preflight && !exportReason && exportTarget && onExport}
-    <Button size="sm" tone="info" surface="soft" label="Export selection" onclick={onExport} />
-  {:else if exportReason}
-    <span class="action-reason">Export: {exportReason}</span>
-  {/if}
-  {#if preflight && !openReason && onOpenInSource}
-    <Button size="sm" tone="info" surface="soft" label="Open selection in source" onclick={onOpenInSource} />
-  {:else if openReason}
-    <span class="action-reason">Open in source: {openReason}</span>
-  {/if}
-  <Button
-    size="sm"
-    surface="soft"
-    label="Clear selection"
-    disabled={selection.mode === 'explicit' && selection.count === 0}
-    onclick={() => selection.clear()}
-  />
-</div>
+  </div>
 </Card>
 
 <style>

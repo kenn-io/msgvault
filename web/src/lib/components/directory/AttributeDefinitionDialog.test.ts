@@ -2,14 +2,18 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { components } from '../../api/generated/schema';
+import type {
+  AttributeDefinition as GeneratedAttributeDefinition,
+  PersonAttributeValue as GeneratedPersonAttributeValue,
+  SetPersonAttributeRequest as GeneratedSetPersonAttributeRequest,
+} from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
 import AttributeSection from './AttributeSection.svelte';
 
-type AttributeDefinition = components['schemas']['AttributeDefinition'];
+type AttributeDefinition = GeneratedAttributeDefinition;
 
 const when = '2026-08-01T00:00:00Z';
 
@@ -37,12 +41,17 @@ function definition(overrides: Partial<AttributeDefinition> = {}): AttributeDefi
     is_audited: false,
     is_deletable: true,
     history_exempt: false,
-    options: { choices: [{ value: 'email', label: 'email' }, { value: 'phone', label: 'phone' }] },
+    options: {
+      choices: [
+        { value: 'email', label: 'email' },
+        { value: 'phone', label: 'phone' },
+      ],
+    },
     is_active: true,
     revision: 1,
     created_at: when,
     updated_at: when,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -50,7 +59,7 @@ function controller(fetchFn: typeof fetch, definitions: AttributeDefinition[] = 
   const bundle = {
     definitions: { definitions },
     etags: {},
-    errors: {}
+    errors: {},
   } satisfies DirectoryReadBundle;
   return new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle);
 }
@@ -69,7 +78,9 @@ describe('AttributeDefinitionDialog', () => {
 
     render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: ' Preferred channel ' } });
-    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: ' How this person prefers to be contacted ' } });
+    await fireEvent.input(screen.getByLabelText('Description'), {
+      target: { value: ' How this person prefers to be contacted ' },
+    });
     await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: ' email\nphone ' } });
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Sensitive' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
@@ -78,9 +89,9 @@ describe('AttributeDefinitionDialog', () => {
     expect(requests).toHaveLength(2);
     expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
       ['POST', '/api/v1/attribute-definitions'],
-      ['GET', '/api/v1/attribute-definitions']
+      ['GET', '/api/v1/attribute-definitions'],
     ]);
-    const body = await requests[0]!.clone().json() as Record<string, unknown>;
+    const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
     expect(body).toEqual({
       object_type: 'person',
       label: 'Preferred channel',
@@ -89,7 +100,12 @@ describe('AttributeDefinitionDialog', () => {
       field_type: 'select',
       cardinality: 'single',
       is_sensitive: true,
-      options: { choices: [{ value: 'email', label: 'email' }, { value: 'phone', label: 'phone' }] }
+      options: {
+        choices: [
+          { value: 'email', label: 'email' },
+          { value: 'phone', label: 'phone' },
+        ],
+      },
     });
     expect(body).not.toHaveProperty('ownership');
     expect(profile.createdDefinition).toEqual(created);
@@ -109,16 +125,20 @@ describe('AttributeDefinitionDialog', () => {
     ['Date', 'date', 'date', undefined],
     ['Timestamp', 'timestamp', 'timestamp', undefined],
     ['JSON', 'json', 'json', undefined],
-    ['Person reference', 'record_reference', 'person', 'person']
+    ['Person reference', 'record_reference', 'person', 'person'],
   ])('sends a server-compatible %s definition', async (optionLabel, valueType, fieldType, recordTarget) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const created = definition({
-        label: 'Synthetic field', slug: 'synthetic_field', value_type: valueType,
-        field_type: fieldType, ...(recordTarget ? { record_target: recordTarget } : {}), is_sensitive: false,
-        options: undefined
+        label: 'Synthetic field',
+        slug: 'synthetic_field',
+        value_type: valueType,
+        field_type: fieldType,
+        ...(recordTarget ? { record_target: recordTarget } : {}),
+        is_sensitive: false,
+        options: undefined,
       });
       if (request.method === 'POST') return Response.json(created, { status: 201 });
       return Response.json({ definitions: [created] });
@@ -130,7 +150,7 @@ describe('AttributeDefinitionDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
 
-    const body = await requests[0]!.clone().json() as Record<string, unknown>;
+    const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
     expect(body).toMatchObject({ value_type: valueType, field_type: fieldType });
     if (recordTarget) expect(body).toHaveProperty('record_target', recordTarget);
     else expect(body).not.toHaveProperty('record_target');
@@ -156,11 +176,15 @@ describe('AttributeDefinitionDialog', () => {
     await waitFor(() => expect(requests).toHaveLength(2));
 
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      cardinality: 'multi', field_type: 'multiselect',
+      cardinality: 'multi',
+      field_type: 'multiselect',
       options: {
-        choices: [{ value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }],
-        max_length: 32
-      }
+        choices: [
+          { value: 'email', label: 'Email' },
+          { value: 'phone', label: 'Phone' },
+        ],
+        max_length: 32,
+      },
     });
   });
 
@@ -168,7 +192,7 @@ describe('AttributeDefinitionDialog', () => {
     ['a blank label', '', '', 'Enter a label.'],
     ['a choice missing its value', 'Field', ' | Visible label', 'Each choice needs a value.'],
     ['a choice missing its label', 'Field', 'value | ', 'Each choice needs a label.'],
-    ['trim-equivalent choices', 'Field', ' email | Email\nemail | Other', 'Choice values must be unique.']
+    ['trim-equivalent choices', 'Field', ' email | Email\nemail | Other', 'Choice values must be unique.'],
   ])('reports %s before issuing a request', async (_case, label, choices, message) => {
     const fetchFn = vi.fn<typeof fetch>();
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
@@ -200,7 +224,9 @@ describe('AttributeDefinitionDialog', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [created] });
+      return request.method === 'POST'
+        ? Response.json(created, { status: 201 })
+        : Response.json({ definitions: [created] });
     });
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'JSON field' } });
@@ -210,13 +236,13 @@ describe('AttributeDefinitionDialog', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
-    const body = await requests[0]!.clone().json() as Record<string, unknown>;
+    const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty('options');
   });
 
   it.each([
     ['-1', 'Maximum length must be a positive whole number'],
-    ['1.5', 'Maximum length must be a positive whole number']
+    ['1.5', 'Maximum length must be a positive whole number'],
   ])('rejects invalid text maximum length %s before issuing a request', async (limit, message) => {
     const fetchFn = vi.fn<typeof fetch>();
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
@@ -233,14 +259,16 @@ describe('AttributeDefinitionDialog', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [created] });
+      return request.method === 'POST'
+        ? Response.json(created, { status: 201 })
+        : Response.json({ definitions: [created] });
     });
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unlimited text' } });
     await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '0' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
-    const body = await requests[0]!.clone().json() as Record<string, unknown>;
+    const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty('options');
   });
 
@@ -249,12 +277,14 @@ describe('AttributeDefinitionDialog', () => {
     ['surrounding Go space', '  email  ', '4'],
     ['astral code points', '😀😀', '1'],
     ['NEL boundaries', '\u0085ab\u0085', '1'],
-    ['BOM content boundaries', '\uFEFFa\uFEFF', '2']
+    ['BOM content boundaries', '\uFEFFa\uFEFF', '2'],
   ])('blocks a text choice over max_length after canonical normalization: %s', async (_case, choice, limit) => {
     const created = definition({ field_type: 'select', is_sensitive: false });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [created] });
+      return request.method === 'POST'
+        ? Response.json(created, { status: 201 })
+        : Response.json({ definitions: [created] });
     });
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Limited choice' } });
@@ -290,9 +320,13 @@ describe('AttributeDefinitionDialog', () => {
   it('creates, refetches, and saves a canonical text choice exactly at max_length through AttributeEditor', async () => {
     const canonicalChoice = '😀\uFEFF';
     const created = definition({
-      id: 74, universal_id: 'created-limited-choice', slug: 'limited_choice', label: 'Limited choice',
-      field_type: 'select', is_sensitive: false,
-      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] }
+      id: 74,
+      universal_id: 'created-limited-choice',
+      slug: 'limited_choice',
+      label: 'Limited choice',
+      field_type: 'select',
+      is_sensitive: false,
+      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
     });
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -300,37 +334,55 @@ describe('AttributeDefinitionDialog', () => {
       requests.push(request);
       if (request.method === 'POST') return Response.json(created, { status: 201 });
       if (request.method === 'GET') return Response.json({ definitions: [created] });
-      const body = await request.clone().json() as components['schemas']['SetPersonAttributeRequest'];
+      const body = (await request.clone().json()) as GeneratedSetPersonAttributeRequest;
       return Response.json({
         dry_run: false,
         value: {
-          id: 104, person_id: 7, definition_id: created.id, definition_slug: created.slug,
-          ordinal: 0, value: body.value, active_from: when, created_at: when,
-          source: 'user', actor: 'synthetic-user'
-        }
+          id: 104,
+          person_id: 7,
+          definition_id: created.id,
+          definition_slug: created.slug,
+          ordinal: 0,
+          value: body.value,
+          active_from: when,
+          created_at: when,
+          source: 'user',
+          actor: 'synthetic-user',
+        },
       });
     });
     render(AttributeSection, { controller: controller(fetchFn) });
     await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Limited choice' } });
     await fireEvent.input(screen.getByLabelText('Choices'), {
-      target: { value: `\u0085${canonicalChoice}\u0085 | Astral plus BOM` }
+      target: { value: `\u0085${canonicalChoice}\u0085 | Astral plus BOM` },
     });
     await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '2' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await screen.findByRole('status');
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Limited choice value' }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Limited choice' }), { target: { value: canonicalChoice } });
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Limited choice' }), {
+      target: { value: canonicalChoice },
+    });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'PUT')).toHaveLength(1));
 
-    const definitionBody = await requests.find((request) => request.method === 'POST')!.clone().json();
+    const definitionBody = await requests
+      .find((request) => request.method === 'POST')!
+      .clone()
+      .json();
     expect(definitionBody).toMatchObject({
-      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] }
+      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
     });
-    await expect(requests.find((request) => request.method === 'PUT')!.clone().json()).resolves.toEqual({
-      value: { type: 'text', text: canonicalChoice }, source: 'user'
+    await expect(
+      requests
+        .find((request) => request.method === 'PUT')!
+        .clone()
+        .json(),
+    ).resolves.toEqual({
+      value: { type: 'text', text: canonicalChoice },
+      source: 'user',
     });
   });
 
@@ -345,26 +397,34 @@ describe('AttributeDefinitionDialog', () => {
         field_type: 'text',
         cardinality,
         is_sensitive: false,
-        options: undefined
+        options: undefined,
       });
       const requests: Request[] = [];
-      let current: components['schemas']['PersonAttributeValue'] | undefined;
+      let current: GeneratedPersonAttributeValue | undefined;
       let nextValueID = 100;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         requests.push(request);
         if (request.method === 'POST') return Response.json(created, { status: 201 });
         if (request.method === 'GET') return Response.json({ definitions: [created] });
-        const body = await request.clone().json() as components['schemas']['SetPersonAttributeRequest'];
+        const body = (await request.clone().json()) as GeneratedSetPersonAttributeRequest;
         const prior = current;
         current = {
-          id: nextValueID++, person_id: 7, definition_id: created.id, definition_slug: created.slug,
-          ordinal: 0, value: body.value, active_from: when, created_at: when, source: 'user', actor: 'synthetic-user'
+          id: nextValueID++,
+          person_id: 7,
+          definition_id: created.id,
+          definition_slug: created.slug,
+          ordinal: 0,
+          value: body.value,
+          active_from: when,
+          created_at: when,
+          source: 'user',
+          actor: 'synthetic-user',
         };
         return Response.json({
           dry_run: false,
           value: current,
-          ...(prior ? { superseded: { ...prior, active_until: when, superseded_at: when } } : {})
+          ...(prior ? { superseded: { ...prior, active_until: when, superseded_at: when } } : {}),
         });
       });
       const profile = controller(fetchFn);
@@ -378,7 +438,9 @@ describe('AttributeDefinitionDialog', () => {
       await screen.findByRole('status');
       await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
       await fireEvent.click(screen.getByRole('button', { name: `Add First ${cardinality} value` }));
-      await fireEvent.input(screen.getByRole('textbox', { name: `First ${cardinality}` }), { target: { value: 'Initial value' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: `First ${cardinality}` }), {
+        target: { value: 'Initial value' },
+      });
       await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
 
       expect(await screen.findByText('Initial value')).toBeDefined();
@@ -386,8 +448,9 @@ describe('AttributeDefinitionDialog', () => {
       expect(screen.queryByText('No current value.')).toBeNull();
       expect(screen.getByRole('button', { name: `Edit First ${cardinality} value 1` })).toBeDefined();
       await profile.setAttribute(created.slug, {
-        value: { type: 'text', text: 'Replacement value' }, expected_value_id: 100,
-        ...(cardinality === 'multi' ? { ordinal: 0 } : {})
+        value: { type: 'text', text: 'Replacement value' },
+        expected_value_id: 100,
+        ...(cardinality === 'multi' ? { ordinal: 0 } : {}),
       });
 
       expect(await screen.findByText('Replacement value')).toBeDefined();
@@ -398,13 +461,16 @@ describe('AttributeDefinitionDialog', () => {
       const writes = requests.filter((request) => request.method === 'PUT');
       expect(writes).toHaveLength(2);
       await expect(writes[0]!.clone().json()).resolves.toEqual({
-        value: { type: 'text', text: 'Initial value' }, source: 'user'
+        value: { type: 'text', text: 'Initial value' },
+        source: 'user',
       });
       await expect(writes[1]!.clone().json()).resolves.toEqual({
-        value: { type: 'text', text: 'Replacement value' }, source: 'user', expected_value_id: 100,
-        ...(cardinality === 'multi' ? { ordinal: 0 } : {})
+        value: { type: 'text', text: 'Replacement value' },
+        source: 'user',
+        expected_value_id: 100,
+        ...(cardinality === 'multi' ? { ordinal: 0 } : {}),
       });
-    }
+    },
   );
 
   it.each([
@@ -419,7 +485,7 @@ describe('AttributeDefinitionDialog', () => {
     ['Timestamp', '2026-01-01T00:00:00.120Z', 'omit trailing zero'],
     ['Timestamp', '2026-01-01T00:00:00+01:00', 'canonical UTC'],
     ['Timestamp', '0000-01-01T00:00:00+01:00', 'canonical UTC'],
-    ['Timestamp', '9999-12-31T23:59:59-01:00', 'canonical UTC']
+    ['Timestamp', '9999-12-31T23:59:59-01:00', 'canonical UTC'],
   ])('rejects a %s choice that cannot round-trip exactly through generated JSON: %s', async (type, choice, message) => {
     const fetchFn = vi.fn<typeof fetch>();
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
@@ -436,13 +502,19 @@ describe('AttributeDefinitionDialog', () => {
   it('clears stale type-specific options and omits a unit for numeric choices', async () => {
     const requests: Request[] = [];
     const created = definition({
-      label: 'Boundary count', slug: 'boundary_count', value_type: 'integer', field_type: 'select',
-      is_sensitive: false, options: { choices: [{ value: '1', label: 'One' }] }
+      label: 'Boundary count',
+      slug: 'boundary_count',
+      value_type: 'integer',
+      field_type: 'select',
+      is_sensitive: false,
+      options: { choices: [{ value: '1', label: 'One' }] },
     });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [created] });
+      return request.method === 'POST'
+        ? Response.json(created, { status: 201 })
+        : Response.json({ definitions: [created] });
     });
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary count' } });
@@ -457,9 +529,11 @@ describe('AttributeDefinitionDialog', () => {
     await waitFor(() => expect(requests).toHaveLength(2));
 
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      value_type: 'integer', field_type: 'select', options: { choices: [{ value: '1', label: 'One' }] }
+      value_type: 'integer',
+      field_type: 'select',
+      options: { choices: [{ value: '1', label: 'One' }] },
     });
-    const body = await requests[0]!.clone().json() as { options: Record<string, unknown> };
+    const body = (await requests[0]!.clone().json()) as { options: Record<string, unknown> };
     expect(body.options).not.toHaveProperty('unit');
     expect(body.options).not.toHaveProperty('max_length');
   });
@@ -484,7 +558,11 @@ describe('AttributeDefinitionDialog', () => {
 
   it.each([
     ['the returned definition belongs to an organization', definition({ object_type: 'organization' }), []],
-    ['the refreshed person registry omits the returned identity', definition(), [definition({ universal_id: 'different-id', slug: 'different_field' })]]
+    [
+      'the refreshed person registry omits the returned identity',
+      definition(),
+      [definition({ universal_id: 'different-id', slug: 'different_field' })],
+    ],
   ])('retains the draft and reports failure when %s', async (_case, returned, refreshed) => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -513,8 +591,12 @@ describe('AttributeDefinitionDialog', () => {
       requests.push(request);
       if (request.method === 'POST') return Response.json(created, { status: 201 });
       getAttempt += 1;
-      if (getAttempt === 1) return Response.json({ error: 'upstream', message: 'Registry temporarily unavailable' }, { status: 503 });
-      if (getAttempt === 2) return new Promise<Response>((resolve) => { resolveSecondGet = resolve; });
+      if (getAttempt === 1)
+        return Response.json({ error: 'upstream', message: 'Registry temporarily unavailable' }, { status: 503 });
+      if (getAttempt === 2)
+        return new Promise<Response>((resolve) => {
+          resolveSecondGet = resolve;
+        });
       return Response.json({ definitions: [created] });
     });
     const onClose = vi.fn();
@@ -526,7 +608,9 @@ describe('AttributeDefinitionDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Registry temporarily unavailable');
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
     expect(profile.definitionCreationCommit).toEqual({
-      kind: 'target', universalID: created.universal_id, slug: created.slug
+      kind: 'target',
+      universalID: created.universal_id,
+      slug: created.slug,
     });
 
     const retry = screen.getByRole('button', { name: 'Retry registry refresh' });
@@ -539,7 +623,9 @@ describe('AttributeDefinitionDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
 
     resolveSecondGet?.(Response.json({ definitions: [] }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry registry refresh' })).toHaveProperty('disabled', false));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry registry refresh' })).toHaveProperty('disabled', false),
+    );
     await fireEvent.click(screen.getByRole('button', { name: 'Retry registry refresh' }));
     const result = await screen.findByRole('status');
 
@@ -557,9 +643,7 @@ describe('AttributeDefinitionDialog', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      return request.method === 'POST'
-        ? Response.json(created, { status: 201 })
-        : Response.json({ definitions: [] });
+      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [] });
     });
     const profile = controller(fetchFn);
     const onClose = vi.fn();
@@ -574,10 +658,16 @@ describe('AttributeDefinitionDialog', () => {
     render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
     expect(screen.getByRole('button', { name: 'Retry registry refresh' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    await expect(profile.createDefinition({
-      object_type: 'person', label: 'Preferred channel', value_type: 'text', field_type: 'text',
-      cardinality: 'single', is_sensitive: false
-    })).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
+    await expect(
+      profile.createDefinition({
+        object_type: 'person',
+        label: 'Preferred channel',
+        value_type: 'text',
+        field_type: 'text',
+        cardinality: 'single',
+        is_sensitive: false,
+      }),
+    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
@@ -612,9 +702,7 @@ describe('AttributeDefinitionDialog', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      return request.method === 'POST'
-        ? new Response(null, { status: 204 })
-        : Response.json({ definitions: [] });
+      return request.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ definitions: [] });
     });
     const profile = controller(fetchFn);
     render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
@@ -625,10 +713,16 @@ describe('AttributeDefinitionDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('usable identity');
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    await expect(profile.createDefinition({
-      object_type: 'person', label: 'Unidentified field', value_type: 'text', field_type: 'text',
-      cardinality: 'single', is_sensitive: false
-    })).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
+    await expect(
+      profile.createDefinition({
+        object_type: 'person',
+        label: 'Unidentified field',
+        value_type: 'text',
+        field_type: 'text',
+        cardinality: 'single',
+        is_sensitive: false,
+      }),
+    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
@@ -650,10 +744,16 @@ describe('AttributeDefinitionDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('usable identity');
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    await expect(profile.createDefinition({
-      object_type: 'person', label: 'Malformed response field', value_type: 'text', field_type: 'text',
-      cardinality: 'single', is_sensitive: false
-    })).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
+    await expect(
+      profile.createDefinition({
+        object_type: 'person',
+        label: 'Malformed response field',
+        value_type: 'text',
+        field_type: 'text',
+        cardinality: 'single',
+        is_sensitive: false,
+      }),
+    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
@@ -664,7 +764,10 @@ describe('AttributeDefinitionDialog', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      if (request.method === 'POST') return new Promise<Response>((resolve) => { resolvePost = resolve; });
+      if (request.method === 'POST')
+        return new Promise<Response>((resolve) => {
+          resolvePost = resolve;
+        });
       return Response.json({ definitions: [decoy] });
     });
     const client = createAPIClient(fetchFn);
@@ -683,7 +786,7 @@ describe('AttributeDefinitionDialog', () => {
       start(stream) {
         stream.enqueue(new TextEncoder().encode('{"ownership":"user"'));
         stream.error(new Error('body interrupted after 201 headers'));
-      }
+      },
     });
     resolvePost?.(new Response(interruptedBody, { status: 201, headers: { 'Content-Type': 'application/json' } }));
 
@@ -695,8 +798,12 @@ describe('AttributeDefinitionDialog', () => {
     expect(screen.getByRole('button', { name: 'Reload Directory' })).toBeDefined();
 
     const retryBody = {
-      object_type: 'person', label: 'Stream field', value_type: 'text', field_type: 'text',
-      cardinality: 'single', is_sensitive: false
+      object_type: 'person',
+      label: 'Stream field',
+      value_type: 'text',
+      field_type: 'text',
+      cardinality: 'single',
+      is_sensitive: false,
     } as const;
     await expect(profile.createDefinition(retryBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
     await expect(profile.createDefinition(retryBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
@@ -710,7 +817,12 @@ describe('AttributeDefinitionDialog', () => {
 
   it('keeps one request pending, blocks every dismissal path, and renders the server error inline', async () => {
     let respond: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    const fetchFn = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          respond = resolve;
+        }),
+    );
     const onClose = vi.fn();
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Pending field' } });
@@ -726,112 +838,175 @@ describe('AttributeDefinitionDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
     expect(onClose).not.toHaveBeenCalled();
 
-    respond?.(Response.json({ error: 'attribute_invalid', message: 'Synthetic server validation failure' }, { status: 400 }));
+    respond?.(
+      Response.json({ error: 'attribute_invalid', message: 'Synthetic server validation failure' }, { status: 400 }),
+    );
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic server validation failure');
     expect(screen.getByRole('button', { name: 'Create field' })).toHaveProperty('disabled', false);
   });
 
   it.each([
     {
-      name: 'integer', option: 'Integer', slug: 'safe_integer_choice',
+      name: 'integer',
+      option: 'Integer',
+      slug: 'safe_integer_choice',
       choices: ['-9007199254740991', '9007199254740991'],
-      values: [{ type: 'integer', integer: -9007199254740991 }, { type: 'integer', integer: 9007199254740991 }]
+      values: [
+        { type: 'integer', integer: -9007199254740991 },
+        { type: 'integer', integer: 9007199254740991 },
+      ],
     },
     {
-      name: 'real', option: 'Number', slug: 'safe_real_choice',
+      name: 'real',
+      option: 'Number',
+      slug: 'safe_real_choice',
       choices: ['-999999.5', '0', '0.0001', '999999.5'],
       values: [
-        { type: 'real', real: -999999.5 }, { type: 'real', real: 0 },
-        { type: 'real', real: 0.0001 }, { type: 'real', real: 999999.5 }
-      ]
+        { type: 'real', real: -999999.5 },
+        { type: 'real', real: 0 },
+        { type: 'real', real: 0.0001 },
+        { type: 'real', real: 999999.5 },
+      ],
     },
     {
-      name: 'timestamp', option: 'Timestamp', slug: 'safe_timestamp_choice',
+      name: 'timestamp',
+      option: 'Timestamp',
+      slug: 'safe_timestamp_choice',
       choices: ['0000-01-01T00:00:00Z', '2026-01-01T00:00:00.123456789Z', '9999-12-31T23:59:59Z'],
       values: [
         { type: 'timestamp', timestamp: '0000-01-01T00:00:00Z' },
         { type: 'timestamp', timestamp: '2026-01-01T00:00:00.123456789Z' },
-        { type: 'timestamp', timestamp: '9999-12-31T23:59:59Z' }
-      ]
-    }
-  ])('creates, refetches, selects, and saves every accepted $name boundary choice through AttributeEditor', async ({ option, slug, choices, values }) => {
-    const created = definition({
-      id: 73, universal_id: `created-${slug}`, slug, label: 'Boundary choice',
-      value_type: values[0]!.type, field_type: 'multiselect', cardinality: 'multi', is_sensitive: false,
-      options: { choices: choices.map((value) => ({ value, label: value })) }
-    });
-    const requests: Request[] = [];
-    let valueID = 100;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json(created, { status: 201 });
-      if (request.method === 'GET') return Response.json({ definitions: [created] });
-      const body = await request.clone().json() as components['schemas']['SetPersonAttributeRequest'];
-      return Response.json({
-        dry_run: false,
-        value: {
-          id: valueID++, person_id: 7, definition_id: created.id, definition_slug: slug,
-          ordinal: body.ordinal ?? 0, value: body.value, active_from: when, created_at: when,
-          source: 'user', actor: 'synthetic-user'
-        }
+        { type: 'timestamp', timestamp: '9999-12-31T23:59:59Z' },
+      ],
+    },
+  ])(
+    'creates, refetches, selects, and saves every accepted $name boundary choice through AttributeEditor',
+    async ({ option, slug, choices, values }) => {
+      const created = definition({
+        id: 73,
+        universal_id: `created-${slug}`,
+        slug,
+        label: 'Boundary choice',
+        value_type: values[0]!.type,
+        field_type: 'multiselect',
+        cardinality: 'multi',
+        is_sensitive: false,
+        options: { choices: choices.map((value) => ({ value, label: value })) },
       });
-    });
-    const profile = controller(fetchFn);
-    render(AttributeSection, { controller: profile });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary choice' } });
-    await chooseSelectOption(screen.getByLabelText('Value type'), option);
-    await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choices.join('\n') } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await screen.findByRole('status');
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      const requests: Request[] = [];
+      let valueID = 100;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (request.method === 'POST') return Response.json(created, { status: 201 });
+        if (request.method === 'GET') return Response.json({ definitions: [created] });
+        const body = (await request.clone().json()) as GeneratedSetPersonAttributeRequest;
+        return Response.json({
+          dry_run: false,
+          value: {
+            id: valueID++,
+            person_id: 7,
+            definition_id: created.id,
+            definition_slug: slug,
+            ordinal: body.ordinal ?? 0,
+            value: body.value,
+            active_from: when,
+            created_at: when,
+            source: 'user',
+            actor: 'synthetic-user',
+          },
+        });
+      });
+      const profile = controller(fetchFn);
+      render(AttributeSection, { controller: profile });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
+      await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary choice' } });
+      await chooseSelectOption(screen.getByLabelText('Value type'), option);
+      await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
+      await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choices.join('\n') } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+      await screen.findByRole('status');
+      await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
-    for (const [index, choice] of choices.entries()) {
-      await fireEvent.click(screen.getByRole('button', { name: 'Add Boundary choice value' }));
-      await fireEvent.change(screen.getByRole('combobox', { name: 'Boundary choice' }), { target: { value: choice } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-      await waitFor(() => expect(requests.filter((request) => request.method === 'PUT')).toHaveLength(index + 1));
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Save attribute' })).toBeNull());
-    }
+      for (const [index, choice] of choices.entries()) {
+        await fireEvent.click(screen.getByRole('button', { name: 'Add Boundary choice value' }));
+        await fireEvent.change(screen.getByRole('combobox', { name: 'Boundary choice' }), {
+          target: { value: choice },
+        });
+        await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+        await waitFor(() => expect(requests.filter((request) => request.method === 'PUT')).toHaveLength(index + 1));
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Save attribute' })).toBeNull());
+      }
 
-    const definitionBody = await requests.find((request) => request.method === 'POST')!.clone().json() as Record<string, unknown>;
-    expect(definitionBody).toMatchObject({ options: { choices: created.options!.choices } });
-    const writes = await Promise.all(requests.filter((request) => request.method === 'PUT').map((request) => request.clone().json()));
-    expect(writes).toEqual(values.map((value) => ({ value, source: 'user' })));
-  });
+      const definitionBody = (await requests
+        .find((request) => request.method === 'POST')!
+        .clone()
+        .json()) as Record<string, unknown>;
+      expect(definitionBody).toMatchObject({ options: { choices: created.options!.choices } });
+      const writes = await Promise.all(
+        requests.filter((request) => request.method === 'PUT').map((request) => request.clone().json()),
+      );
+      expect(writes).toEqual(values.map((value) => ({ value, source: 'user' })));
+    },
+  );
 
   it.each([
-    { option: 'Text', slug: 'short_note', options: { max_length: 5 }, fill: async () => fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '5' } }), visible: '0 / 5 characters.' },
-    { option: 'Integer', slug: 'duration_days', options: { unit: 'days' }, fill: async () => fireEvent.input(screen.getByLabelText('Unit'), { target: { value: 'days' } }), visible: 'days' }
-  ])('makes a created $option option visible in the production editor', async ({ option, slug, options, fill, visible }) => {
-    const created = definition({
-      universal_id: `created-${slug}`, slug, label: 'Option field', value_type: option === 'Text' ? 'text' : 'integer',
-      field_type: option === 'Text' ? 'text' : 'duration', is_sensitive: false, options
-    });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [created] });
-    });
-    render(AttributeSection, { controller: controller(fetchFn) });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Option field' } });
-    await chooseSelectOption(screen.getByLabelText('Value type'), option);
-    await fill();
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await screen.findByRole('status');
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add Option field value' }));
+    {
+      option: 'Text',
+      slug: 'short_note',
+      options: { max_length: 5 },
+      fill: async () => fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '5' } }),
+      visible: '0 / 5 characters.',
+    },
+    {
+      option: 'Integer',
+      slug: 'duration_days',
+      options: { unit: 'days' },
+      fill: async () => fireEvent.input(screen.getByLabelText('Unit'), { target: { value: 'days' } }),
+      visible: 'days',
+    },
+  ])(
+    'makes a created $option option visible in the production editor',
+    async ({ option, slug, options, fill, visible }) => {
+      const created = definition({
+        universal_id: `created-${slug}`,
+        slug,
+        label: 'Option field',
+        value_type: option === 'Text' ? 'text' : 'integer',
+        field_type: option === 'Text' ? 'text' : 'duration',
+        is_sensitive: false,
+        options,
+      });
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        return request.method === 'POST'
+          ? Response.json(created, { status: 201 })
+          : Response.json({ definitions: [created] });
+      });
+      render(AttributeSection, { controller: controller(fetchFn) });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
+      await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Option field' } });
+      await chooseSelectOption(screen.getByLabelText('Value type'), option);
+      await fill();
+      await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+      await screen.findByRole('status');
+      await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Add Option field value' }));
 
-    expect(screen.getByRole('form', { name: 'Add Option field value' }).textContent).toContain(visible);
-  });
+      expect(screen.getByRole('form', { name: 'Add Option field value' }).textContent).toContain(visible);
+    },
+  );
 
   it('refreshes definitions without replacing the selected attribute draft and makes the new field immediately usable', async () => {
     const existing = definition({
-      id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'existing_field',
-      label: 'Existing field', field_type: 'text', is_sensitive: false, options: undefined
+      id: 8,
+      universal_id: '00000000-0000-4000-8000-000000000008',
+      slug: 'existing_field',
+      label: 'Existing field',
+      field_type: 'text',
+      is_sensitive: false,
+      options: undefined,
     });
     const created = definition({ is_sensitive: false });
     const requests: Request[] = [];
@@ -844,7 +1019,9 @@ describe('AttributeDefinitionDialog', () => {
     const profile = controller(fetchFn, [existing]);
     render(AttributeSection, { controller: profile });
     await fireEvent.click(screen.getByRole('button', { name: 'Add Existing field value' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Existing field' }), { target: { value: 'retained local draft' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Existing field' }), {
+      target: { value: 'retained local draft' },
+    });
     const createTrigger = screen.getByRole('button', { name: 'Create attribute field' });
     createTrigger.focus();
     await fireEvent.click(createTrigger);

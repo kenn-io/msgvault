@@ -27,7 +27,6 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/AccountInfo"
-          nullable: true
           type: array
       required:
         - accounts
@@ -173,7 +172,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
-          nullable: true
           type: array
         view_type:
           type: string
@@ -453,7 +451,6 @@ components:
         definitions:
           items:
             $ref: "#/components/schemas/AttributeDefinition"
-          nullable: true
           type: array
       required:
         - definitions
@@ -464,7 +461,6 @@ components:
         choices:
           items:
             $ref: "#/components/schemas/AttributeChoice"
-          nullable: true
           type: array
         max_length:
           format: int64
@@ -523,7 +519,6 @@ components:
         context_snippets:
           items:
             type: string
-          nullable: true
           type: array
         context_snippets_truncated:
           type: boolean
@@ -572,7 +567,6 @@ components:
         body_lines:
           items:
             type: string
-          nullable: true
           type: array
         cancel_hint:
           type: string
@@ -651,7 +645,6 @@ components:
         items:
           items:
             $ref: "#/components/schemas/CLIDeduplicatePlanItem"
-          nullable: true
           type: array
         prefix_stdout:
           type: string
@@ -696,7 +689,6 @@ components:
         planned_batch_ids:
           items:
             type: string
-          nullable: true
           type: array
         remote_delete_env_var:
           type: string
@@ -708,7 +700,6 @@ components:
         scope_escalation_body_lines:
           items:
             type: string
-          nullable: true
           type: array
         scope_escalation_cancel_hint:
           type: string
@@ -764,14 +755,12 @@ components:
         bcc:
           items:
             $ref: "#/components/schemas/Address"
-          nullable: true
           type: array
         body_text:
           type: string
         cc:
           items:
             $ref: "#/components/schemas/Address"
-          nullable: true
           type: array
         conversation_id:
           format: int64
@@ -795,7 +784,6 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         message_type:
           type: string
@@ -819,7 +807,6 @@ components:
         to:
           items:
             $ref: "#/components/schemas/Address"
-          nullable: true
           type: array
       required:
         - id
@@ -888,7 +875,6 @@ components:
         args:
           items:
             type: string
-          nullable: true
           type: array
         cwd:
           type: string
@@ -958,7 +944,6 @@ components:
         warnings:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - status
@@ -1006,7 +991,6 @@ components:
         signals:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - identifier
@@ -1115,7 +1099,6 @@ components:
         books:
           items:
             $ref: "#/components/schemas/CardDAVBookResponse"
-          nullable: true
           type: array
       required:
         - books
@@ -1491,7 +1474,6 @@ components:
         targets:
           items:
             $ref: "#/components/schemas/TargetDescriptor"
-          nullable: true
           type: array
         version:
           type: string
@@ -1633,7 +1615,6 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
-          nullable: true
           type: array
       required:
         - accounts
@@ -1667,12 +1648,10 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         sources:
           items:
             $ref: "#/components/schemas/CliCollectionSourceResponse"
-          nullable: true
           type: array
       required:
         - id
@@ -1700,7 +1679,6 @@ components:
         collections:
           items:
             $ref: "#/components/schemas/CliCollectionResponse"
-          nullable: true
           type: array
       required:
         - collections
@@ -1725,7 +1703,6 @@ components:
         batch_ids:
           items:
             type: string
-          nullable: true
           type: array
         expected_batch_count:
           format: int64
@@ -1766,7 +1743,6 @@ components:
         batch_ids:
           items:
             type: string
-          nullable: true
           type: array
       type: object
     CliDeleteDedupedPlanResponse:
@@ -1777,7 +1753,6 @@ components:
         batches:
           items:
             $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
-          nullable: true
           type: array
         total:
           format: int64
@@ -1791,7 +1766,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/CliIdentityRowResponse"
-          nullable: true
           type: array
       required:
         - rows
@@ -1810,7 +1784,6 @@ components:
         signals:
           items:
             type: string
-          nullable: true
           type: array
         source_id:
           format: int64
@@ -1870,12 +1843,10 @@ components:
         attachments:
           items:
             $ref: "#/components/schemas/CliMessageAttachment"
-          nullable: true
           type: array
         bcc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          nullable: true
           type: array
         body_html:
           type: string
@@ -1884,7 +1855,6 @@ components:
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          nullable: true
           type: array
         conversation_id:
           format: int64
@@ -1896,7 +1866,6 @@ components:
         from:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          nullable: true
           type: array
         has_attachments:
           type: boolean
@@ -1906,7 +1875,6 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         message_type:
           type: string
@@ -1931,7 +1899,6 @@ components:
         to:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
-          nullable: true
           type: array
       required:
         - id
@@ -1984,7 +1951,6 @@ components:
         results:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          nullable: true
           type: array
         scope_label:
           type: string
@@ -2011,7 +1977,6 @@ components:
         aliases:
           items:
             type: string
-          nullable: true
           type: array
         created_at:
           format: date-time
@@ -2061,7 +2026,6 @@ components:
         services:
           items:
             $ref: "#/components/schemas/CommunicationService"
-          nullable: true
           type: array
       required:
         - services
@@ -2143,7 +2107,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageDetail"
-          nullable: true
           type: array
         total:
           format: int64
@@ -2208,7 +2171,6 @@ components:
         aliases:
           items:
             type: string
-          nullable: true
           type: array
         default_scope_kind:
           type: string
@@ -2267,7 +2229,6 @@ components:
             format: int64
             minimum: 1
             type: integer
-          nullable: true
           type: array
       required:
         - body
@@ -2338,7 +2299,6 @@ components:
         accounts:
           items:
             type: string
-          nullable: true
           type: array
         name:
           type: string
@@ -2393,7 +2353,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         source:
           type: string
@@ -2497,7 +2456,6 @@ components:
         body_contexts:
           items:
             $ref: "#/components/schemas/BodySearchContext"
-          nullable: true
           type: array
         count:
           format: int64
@@ -2510,7 +2468,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         offset:
           format: int64
@@ -2700,7 +2657,6 @@ components:
         confirm:
           items:
             type: string
-          nullable: true
           type: array
         page_size:
           format: int64
@@ -2718,17 +2674,14 @@ components:
         applied:
           items:
             $ref: "#/components/schemas/IdentityConfirmationOutcome"
-          nullable: true
           type: array
         candidates:
           items:
             $ref: "#/components/schemas/Candidate"
-          nullable: true
           type: array
         rejected:
           items:
             $ref: "#/components/schemas/RejectedCandidate"
-          nullable: true
           type: array
         scanned_messages:
           format: int64
@@ -2878,7 +2831,6 @@ components:
         results:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
-          nullable: true
           type: array
         revision:
           format: int64
@@ -2926,7 +2878,6 @@ components:
         heading_path:
           items:
             type: string
-          nullable: true
           type: array
         highlight_end:
           format: int64
@@ -2943,7 +2894,6 @@ components:
         matched_signals:
           items:
             type: string
-          nullable: true
           type: array
         message_id:
           format: int64
@@ -3155,7 +3105,6 @@ components:
         failures:
           items:
             $ref: "#/components/schemas/DocumentVectorFailureDiagnostic"
-          nullable: true
           type: array
         failures_exhausted:
           type: boolean
@@ -3286,7 +3235,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/DomainSummary"
-          nullable: true
           type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
@@ -3323,7 +3271,6 @@ components:
         source_counts:
           items:
             $ref: "#/components/schemas/SourceCount"
-          nullable: true
           type: array
       required:
         - domain
@@ -3498,7 +3445,6 @@ components:
         org:
           items:
             type: string
-          nullable: true
           type: array
         role:
           type: string
@@ -3510,7 +3456,6 @@ components:
         employments:
           items:
             $ref: "#/components/schemas/Employment"
-          nullable: true
           type: array
         projection:
           $ref: "#/components/schemas/EmploymentProjectionResponse"
@@ -3574,12 +3519,10 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         participant_labels:
           items:
             type: string
-          nullable: true
           type: array
         preview:
           type: string
@@ -3633,7 +3576,6 @@ components:
         failed_ids:
           items:
             type: string
-          nullable: true
           type: array
         last_processed_index:
           format: int64
@@ -3649,7 +3591,6 @@ components:
         tombstone_ids:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - started_at
@@ -3897,7 +3838,6 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          nullable: true
           type: array
         group_key:
           type: string
@@ -3936,7 +3876,6 @@ components:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
-          nullable: true
           type: array
       required:
         - grouping
@@ -3976,12 +3915,10 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          nullable: true
           type: array
         grouping:
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
-          nullable: true
           type: array
         limit:
           format: int64
@@ -4013,7 +3950,6 @@ components:
         sort:
           items:
             $ref: "#/components/schemas/ExploreSort"
-          nullable: true
           type: array
       type: object
     ExploreHTTPResponse:
@@ -4141,7 +4077,6 @@ components:
         exclusions:
           items:
             type: string
-          nullable: true
           type: array
         mode:
           enum:
@@ -4156,7 +4091,6 @@ components:
         row_keys:
           items:
             type: string
-          nullable: true
           type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
@@ -4234,7 +4168,6 @@ components:
         mime_families:
           items:
             type: string
-          nullable: true
           type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
@@ -4242,7 +4175,6 @@ components:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
-          nullable: true
           type: array
       required:
         - predicate
@@ -4346,7 +4278,6 @@ components:
         mime_families:
           items:
             type: string
-          nullable: true
           type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
@@ -4369,7 +4300,6 @@ components:
         files:
           items:
             $ref: "#/components/schemas/FileSearchRow"
-          nullable: true
           type: array
         next_cursor:
           type: string
@@ -4424,18 +4354,15 @@ components:
         participant_domains:
           items:
             type: string
-          nullable: true
           type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         participant_labels:
           items:
             type: string
-          nullable: true
           type: array
         search_explain:
           $ref: "#/components/schemas/FileSearchExplain"
@@ -4491,7 +4418,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         offset:
           format: int64
@@ -4515,27 +4441,22 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         list_ids:
           items:
             type: string
-          nullable: true
           type: array
         recipients:
           items:
             type: string
-          nullable: true
           type: array
         sender_domains:
           items:
             type: string
-          nullable: true
           type: array
         senders:
           items:
             type: string
-          nullable: true
           type: array
       type: object
     FormatCoverage:
@@ -4601,12 +4522,10 @@ components:
         gmail_ids:
           items:
             type: string
-          nullable: true
           type: array
         targets:
           items:
             $ref: "#/components/schemas/DeletionTarget"
-          nullable: true
           type: array
       required:
         - gmail_ids
@@ -4652,12 +4571,10 @@ components:
         bcc:
           items:
             type: string
-          nullable: true
           type: array
         cc:
           items:
             type: string
-          nullable: true
           type: array
         conversation_id:
           format: int64
@@ -4680,12 +4597,10 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         matches:
           items:
             $ref: "#/components/schemas/HybridSearchMatch"
-          nullable: true
           type: array
         matches_truncated:
           type: boolean
@@ -4710,7 +4625,6 @@ components:
         to:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - id
@@ -4755,7 +4669,6 @@ components:
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"
-          nullable: true
           type: array
         returned:
           format: int64
@@ -4787,7 +4700,6 @@ components:
         signals:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - identifier
@@ -4856,7 +4768,6 @@ components:
         evidence:
           items:
             $ref: "#/components/schemas/IdentityMatchEvidence"
-          nullable: true
           type: array
         id:
           format: int64
@@ -4908,7 +4819,6 @@ components:
         candidates:
           items:
             $ref: "#/components/schemas/IdentityMatchCandidate"
-          nullable: true
           type: array
         limit:
           format: int64
@@ -5168,7 +5078,6 @@ components:
         manifests:
           items:
             $ref: "#/components/schemas/DeletionManifestSummary"
-          nullable: true
           type: array
       required:
         - manifests
@@ -5190,7 +5099,6 @@ components:
         gmail_ids:
           items:
             type: string
-          nullable: true
           type: array
         id:
           type: string
@@ -5231,7 +5139,6 @@ components:
         attendees:
           items:
             $ref: "#/components/schemas/MeetingPerson"
-          nullable: true
           type: array
         ended_at:
           format: date-time
@@ -5262,7 +5169,6 @@ components:
         transcript_segments:
           items:
             $ref: "#/components/schemas/TranscriptSegment"
-          nullable: true
           type: array
       required:
         - external_id
@@ -5342,12 +5248,10 @@ components:
         attachments:
           items:
             $ref: "#/components/schemas/AttachmentInfo"
-          nullable: true
           type: array
         bcc:
           items:
             type: string
-          nullable: true
           type: array
         body:
           type: string
@@ -5358,7 +5262,6 @@ components:
         cc:
           items:
             type: string
-          nullable: true
           type: array
         conversation_id:
           format: int64
@@ -5383,7 +5286,6 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         message_type:
           type: string
@@ -5404,7 +5306,6 @@ components:
         to:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - body
@@ -5424,7 +5325,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         page:
           format: int64
@@ -5446,12 +5346,10 @@ components:
         bcc:
           items:
             type: string
-          nullable: true
           type: array
         cc:
           items:
             type: string
-          nullable: true
           type: array
         conversation_id:
           format: int64
@@ -5474,7 +5372,6 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         message_type:
           type: string
@@ -5495,7 +5392,6 @@ components:
         to:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - id
@@ -6043,7 +5939,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         vcard_altid:
           nullable: true
@@ -6054,7 +5949,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6132,7 +6026,6 @@ components:
         values:
           items:
             $ref: "#/components/schemas/OrganizationAttributeValue"
-          nullable: true
           type: array
       required:
         - values
@@ -6223,7 +6116,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         vcard_altid:
           nullable: true
@@ -6234,7 +6126,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6346,7 +6237,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         uri:
           nullable: true
@@ -6360,7 +6250,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6468,7 +6357,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         vcard_altid:
           nullable: true
@@ -6479,7 +6367,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6580,7 +6467,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         uri:
           nullable: true
@@ -6594,7 +6480,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6677,7 +6562,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         vcard_altid:
           nullable: true
@@ -6688,7 +6572,6 @@ components:
         vcard_pid:
           items:
             type: string
-          nullable: true
           type: array
         vcard_prop_id:
           nullable: true
@@ -6706,32 +6589,26 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/OrganizationAddress"
-          nullable: true
           type: array
         categories:
           items:
             $ref: "#/components/schemas/OrganizationCategory"
-          nullable: true
           type: array
         contact_points:
           items:
             $ref: "#/components/schemas/OrganizationContactPoint"
-          nullable: true
           type: array
         identifiers:
           items:
             $ref: "#/components/schemas/OrganizationIdentifier"
-          nullable: true
           type: array
         media:
           items:
             $ref: "#/components/schemas/OrganizationMedia"
-          nullable: true
           type: array
         names:
           items:
             $ref: "#/components/schemas/OrganizationName"
-          nullable: true
           type: array
         organization:
           $ref: "#/components/schemas/Organization"
@@ -6750,32 +6627,26 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/OrganizationAddressBody"
-          nullable: true
           type: array
         categories:
           items:
             $ref: "#/components/schemas/OrganizationCategoryBody"
-          nullable: true
           type: array
         contact_points:
           items:
             $ref: "#/components/schemas/OrganizationContactPointBody"
-          nullable: true
           type: array
         identifiers:
           items:
             $ref: "#/components/schemas/OrganizationIdentifierBody"
-          nullable: true
           type: array
         media:
           items:
             $ref: "#/components/schemas/OrganizationMediaBody"
-          nullable: true
           type: array
         names:
           items:
             $ref: "#/components/schemas/OrganizationNameBody"
-          nullable: true
           type: array
       type: object
     OrganizationsResponse:
@@ -6789,7 +6660,6 @@ components:
         organizations:
           items:
             $ref: "#/components/schemas/Organization"
-          nullable: true
           type: array
         total:
           format: int64
@@ -6833,7 +6703,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/ParticipantCompletionHTTPRow"
-          nullable: true
           type: array
       required:
         - rows
@@ -6935,7 +6804,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/PersonSummary"
-          nullable: true
           type: array
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
@@ -7021,7 +6889,6 @@ components:
         people:
           items:
             $ref: "#/components/schemas/Person"
-          nullable: true
           type: array
       required:
         - people
@@ -7040,7 +6907,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         revision:
           format: int64
@@ -7150,13 +7016,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonAddressInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonAttributeConflictResponse:
@@ -7178,14 +7042,12 @@ components:
         current:
           items:
             $ref: "#/components/schemas/PersonAttributeValue"
-          nullable: true
           type: array
         definition:
           $ref: "#/components/schemas/AttributeDefinition"
         history:
           items:
             $ref: "#/components/schemas/PersonAttributeValue"
-          nullable: true
           type: array
       required:
         - definition
@@ -7257,7 +7119,6 @@ components:
         attributes:
           items:
             $ref: "#/components/schemas/PersonAttributeGroup"
-          nullable: true
           type: array
         person_id:
           format: int64
@@ -7300,13 +7161,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonCategoryInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonCluster:
@@ -7317,13 +7176,11 @@ components:
         edges:
           items:
             $ref: "#/components/schemas/PersonClusterEdge"
-          nullable: true
           type: array
         member_ids:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       required:
         - canonical_id
@@ -7405,13 +7262,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonContactPointInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonDate:
@@ -7467,13 +7322,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonDateInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonDay:
@@ -7548,7 +7401,6 @@ components:
         allowed_identifiers:
           items:
             type: string
-          nullable: true
           type: array
         credential:
           $ref: "#/components/schemas/SecretSettingState"
@@ -7594,7 +7446,6 @@ components:
         target_keys:
           items:
             type: string
-          nullable: true
           type: array
         tier:
           type: string
@@ -7627,7 +7478,6 @@ components:
         allowed_identifiers:
           items:
             type: string
-          nullable: true
           type: array
         enabled:
           type: boolean
@@ -7667,7 +7517,6 @@ components:
         target_keys:
           items:
             type: string
-          nullable: true
           type: array
         tier:
           type: string
@@ -7701,7 +7550,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         generation_id:
           format: int64
@@ -7934,12 +7782,10 @@ components:
         projections:
           items:
             $ref: "#/components/schemas/ProjectionRef"
-          nullable: true
           type: array
         resolutions:
           items:
             $ref: "#/components/schemas/PersonFactResolutionResult"
-          nullable: true
           type: array
         state:
           $ref: "#/components/schemas/PinState"
@@ -7953,7 +7799,6 @@ components:
         pins:
           items:
             $ref: "#/components/schemas/PinState"
-          nullable: true
           type: array
       required:
         - pins
@@ -7963,7 +7808,6 @@ components:
         decisions:
           items:
             $ref: "#/components/schemas/PersonFactDecision"
-          nullable: true
           type: array
         id:
           format: int64
@@ -7973,7 +7817,6 @@ components:
         projections:
           items:
             $ref: "#/components/schemas/ProjectionRef"
-          nullable: true
           type: array
         resolved_at:
           format: date-time
@@ -8032,13 +7875,11 @@ components:
               - to_person
               - group
             type: string
-          nullable: true
           type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         roles:
           items:
@@ -8049,7 +7890,6 @@ components:
               - bcc
               - conversation_member
             type: string
-          nullable: true
           type: array
       required:
         - participant_ids
@@ -8068,7 +7908,6 @@ components:
               - to_person
               - group
             type: string
-          nullable: true
           type: array
         filename_query:
           type: string
@@ -8080,7 +7919,6 @@ components:
         mime_families:
           items:
             type: string
-          nullable: true
           type: array
         predicate:
           $ref: "#/components/schemas/ExploreHTTPRequest"
@@ -8103,7 +7941,6 @@ components:
         files:
           items:
             $ref: "#/components/schemas/PersonFileSearchRow"
-          nullable: true
           type: array
         next_cursor:
           type: string
@@ -8158,18 +7995,15 @@ components:
         participant_domains:
           items:
             type: string
-          nullable: true
           type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         participant_labels:
           items:
             type: string
-          nullable: true
           type: array
         person_provenance:
           $ref: "#/components/schemas/PersonFileProvenance"
@@ -8236,7 +8070,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/PersonInboxRow"
-          nullable: true
           type: array
       required:
         - rows
@@ -8334,13 +8167,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonMediaInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonMerge:
@@ -8401,25 +8232,21 @@ components:
         participants:
           items:
             $ref: "#/components/schemas/PersonMergeParticipant"
-          nullable: true
           type: array
           x-omitempty: false
         review_candidates:
           items:
             $ref: "#/components/schemas/PersonMergeReviewCandidate"
-          nullable: true
           type: array
           x-omitempty: false
         rows:
           items:
             $ref: "#/components/schemas/PersonMergeRow"
-          nullable: true
           type: array
           x-omitempty: false
         splits:
           items:
             $ref: "#/components/schemas/PersonSplit"
-          nullable: true
           type: array
           x-omitempty: false
       required:
@@ -8466,7 +8293,6 @@ components:
         profiles:
           items:
             $ref: "#/components/schemas/PersonMergeProfile"
-          nullable: true
           type: array
       required:
         - error
@@ -8490,7 +8316,6 @@ components:
         review_candidates:
           items:
             $ref: "#/components/schemas/PersonMergeReviewCandidate"
-          nullable: true
           type: array
           x-omitempty: false
       required:
@@ -8652,7 +8477,6 @@ components:
         merges:
           items:
             $ref: "#/components/schemas/PersonMergeSummary"
-          nullable: true
           type: array
         offset:
           format: int64
@@ -8755,13 +8579,11 @@ components:
         add:
           items:
             $ref: "#/components/schemas/PersonNameInputRequest"
-          nullable: true
           type: array
         supersede:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       type: object
     PersonNetwork:
@@ -8772,12 +8594,10 @@ components:
         edges:
           items:
             $ref: "#/components/schemas/NetworkEdge"
-          nullable: true
           type: array
         nodes:
           items:
             $ref: "#/components/schemas/NetworkNode"
-          nullable: true
           type: array
         root_person_id:
           format: int64
@@ -8810,37 +8630,30 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/PersonAddress"
-          nullable: true
           type: array
         categories:
           items:
             $ref: "#/components/schemas/PersonCategory"
-          nullable: true
           type: array
         contact_points:
           items:
             $ref: "#/components/schemas/PersonContactPoint"
-          nullable: true
           type: array
         dates:
           items:
             $ref: "#/components/schemas/PersonDate"
-          nullable: true
           type: array
         media:
           items:
             $ref: "#/components/schemas/PersonMedia"
-          nullable: true
           type: array
         names:
           items:
             $ref: "#/components/schemas/PersonName"
-          nullable: true
           type: array
         observations:
           items:
             $ref: "#/components/schemas/ParticipantContactObservation"
-          nullable: true
           type: array
         person:
           $ref: "#/components/schemas/Person"
@@ -8969,7 +8782,6 @@ components:
         relationships:
           items:
             $ref: "#/components/schemas/PersonRelationshipView"
-          nullable: true
           type: array
       required:
         - relationships
@@ -9055,7 +8867,6 @@ components:
         ambiguous_rows:
           items:
             $ref: "#/components/schemas/PersonMergeRowRef"
-          nullable: true
           type: array
           x-omitempty: false
         cache_state:
@@ -9079,7 +8890,6 @@ components:
         unrestored_rows:
           items:
             $ref: "#/components/schemas/PersonMergeRowRef"
-          nullable: true
           type: array
       required:
         - split
@@ -9120,7 +8930,6 @@ components:
         identifiers:
           items:
             $ref: "#/components/schemas/PersonIdentifier"
-          nullable: true
           type: array
         last_at:
           format: date-time
@@ -9141,7 +8950,6 @@ components:
         source_counts:
           items:
             $ref: "#/components/schemas/SourceCount"
-          nullable: true
           type: array
       required:
         - id
@@ -9239,13 +9047,11 @@ components:
               - to_person
               - group
             type: string
-          nullable: true
           type: array
         participant_ids:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         roles:
           items:
@@ -9256,7 +9062,6 @@ components:
               - bcc
               - conversation_member
             type: string
-          nullable: true
           type: array
       required:
         - participant_ids
@@ -9325,7 +9130,6 @@ components:
         columns:
           items:
             type: string
-          nullable: true
           type: array
         row_count:
           format: int64
@@ -9334,9 +9138,7 @@ components:
           items:
             items:
               x-go-type: any
-            nullable: true
             type: array
-          nullable: true
           type: array
       required:
         - columns
@@ -9415,7 +9217,6 @@ components:
         annual:
           items:
             $ref: "#/components/schemas/AnnualTemperatureSummary"
-          nullable: true
           type: array
         cache_revision:
           type: string
@@ -9427,7 +9228,6 @@ components:
         days:
           items:
             $ref: "#/components/schemas/RelationshipCalendarDay"
-          nullable: true
           type: array
         effective_date:
           type: string
@@ -9530,7 +9330,6 @@ components:
         reviews:
           items:
             $ref: "#/components/schemas/RelationshipReview"
-          nullable: true
           type: array
       required:
         - reviews
@@ -9549,7 +9348,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         score:
           format: double
@@ -9604,7 +9402,6 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          nullable: true
           type: array
         limit:
           format: int64
@@ -9629,7 +9426,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/TimelineRow"
-          nullable: true
           type: array
         total_count:
           format: int64
@@ -9701,7 +9497,6 @@ components:
         relationship_types:
           items:
             $ref: "#/components/schemas/RelationshipType"
-          nullable: true
           type: array
       required:
         - relationship_types
@@ -9714,7 +9509,6 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          nullable: true
           type: array
         limit:
           format: int64
@@ -9736,7 +9530,6 @@ components:
         rows:
           items:
             $ref: "#/components/schemas/RelationshipRow"
-          nullable: true
           type: array
         total_count:
           format: int64
@@ -9890,7 +9683,6 @@ components:
         saved_views:
           items:
             $ref: "#/components/schemas/SavedView"
-          nullable: true
           type: array
       required:
         - saved_views
@@ -9900,7 +9692,6 @@ components:
         accounts:
           items:
             $ref: "#/components/schemas/AccountStatus"
-          nullable: true
           type: array
         running:
           type: boolean
@@ -9928,7 +9719,6 @@ components:
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
-          nullable: true
           type: array
       type: object
     SearchCoverageResponse:
@@ -9981,12 +9771,10 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         query:
           type: string
@@ -10023,7 +9811,6 @@ components:
         results:
           items:
             $ref: "#/components/schemas/AttachmentSearchResult"
-          nullable: true
           type: array
         usage:
           $ref: "#/components/schemas/Usage"
@@ -10039,7 +9826,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         page:
           format: int64
@@ -10259,7 +10045,6 @@ components:
         options:
           items:
             type: string
-          nullable: true
           type: array
         read_only:
           type: boolean
@@ -10384,7 +10169,6 @@ components:
         person_enrichment_providers:
           items:
             $ref: "#/components/schemas/PersonEnrichmentProviderSetting"
-          nullable: true
           type: array
         settings:
           items:
@@ -10403,7 +10187,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
-          nullable: true
           type: array
         returned:
           format: int64
@@ -10550,7 +10333,6 @@ components:
         sources:
           items:
             $ref: "#/components/schemas/SourceStatus"
-          nullable: true
           type: array
       required:
         - sources
@@ -10561,7 +10343,6 @@ components:
         accounts:
           items:
             type: string
-          nullable: true
           type: array
       required:
         - accounts
@@ -10576,7 +10357,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
       required:
         - merge_id
@@ -10620,7 +10400,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         operation_token:
           type: string
@@ -10641,7 +10420,6 @@ components:
         sample_gmail_ids:
           items:
             type: string
-          nullable: true
           type: array
         source:
           $ref: "#/components/schemas/SourceReference"
@@ -10684,7 +10462,6 @@ components:
         vector_text_message_types:
           items:
             type: string
-          nullable: true
           type: array
         vector_text_status:
           type: string
@@ -10745,7 +10522,6 @@ components:
         formats:
           items:
             $ref: "#/components/schemas/FormatCoverage"
-          nullable: true
           type: array
         generation:
           $ref: "#/components/schemas/VisualGeneration"
@@ -10817,32 +10593,26 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/PersonAddress"
-          nullable: true
           type: array
         categories:
           items:
             $ref: "#/components/schemas/PersonCategory"
-          nullable: true
           type: array
         contact_points:
           items:
             $ref: "#/components/schemas/PersonContactPoint"
-          nullable: true
           type: array
         dates:
           items:
             $ref: "#/components/schemas/PersonDate"
-          nullable: true
           type: array
         media:
           items:
             $ref: "#/components/schemas/PersonMedia"
-          nullable: true
           type: array
         names:
           items:
             $ref: "#/components/schemas/PersonName"
-          nullable: true
           type: array
         person:
           $ref: "#/components/schemas/Person"
@@ -10861,14 +10631,12 @@ components:
         accounts:
           items:
             type: string
-          nullable: true
           type: array
         date_range:
           items:
             type: string
           maxItems: 2
           minItems: 2
-          nullable: true
           type: array
         message_count:
           format: int64
@@ -10876,7 +10644,6 @@ components:
         top_senders:
           items:
             $ref: "#/components/schemas/SenderCount"
-          nullable: true
           type: array
         total_size_bytes:
           format: int64
@@ -10950,7 +10717,6 @@ components:
         item_errors:
           items:
             $ref: "#/components/schemas/SyncRunItemStatus"
-          nullable: true
           type: array
         messages_added:
           format: int64
@@ -10992,14 +10758,12 @@ components:
         choices:
           items:
             $ref: "#/components/schemas/ChoiceDescriptor"
-          nullable: true
           type: array
         description:
           type: string
         fields:
           items:
             $ref: "#/components/schemas/FieldDescriptor"
-          nullable: true
           type: array
         key:
           type: string
@@ -11109,7 +10873,6 @@ components:
         labels:
           items:
             type: string
-          nullable: true
           type: array
         priority:
           type: string
@@ -11181,7 +10944,6 @@ components:
         tasks:
           items:
             $ref: "#/components/schemas/TaskSummary"
-          nullable: true
           type: array
       required:
         - tasks
@@ -11275,7 +11037,6 @@ components:
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
-          nullable: true
           type: array
         count:
           format: int64
@@ -11311,7 +11072,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          nullable: true
           type: array
         offset:
           format: int64
@@ -11337,7 +11097,6 @@ components:
         messages:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
-          nullable: true
           type: array
         offset:
           format: int64
@@ -11404,7 +11163,6 @@ components:
         scopes:
           items:
             type: string
-          nullable: true
           type: array
         tenant_id:
           type: string
@@ -11427,7 +11185,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         attachment_count:
           format: int64
@@ -11518,7 +11275,6 @@ components:
         pid:
           items:
             type: string
-          nullable: true
           type: array
         prop_id:
           type: string
@@ -11562,7 +11318,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         updated_at:
           format: date-time
@@ -11607,7 +11362,6 @@ components:
         type_tokens:
           items:
             type: string
-          nullable: true
           type: array
         vcard:
           $ref: "#/components/schemas/VCardIdentity"
@@ -11694,7 +11448,6 @@ components:
         directions:
           items:
             type: string
-          nullable: true
           type: array
         filename:
           type: string

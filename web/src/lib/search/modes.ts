@@ -1,30 +1,43 @@
 import type { ExploreSearchMode } from '../explore/models';
-import type { components } from '../api/generated/schema';
+import type { SearchCoverageResponse as GeneratedSearchCoverageResponse } from '../api/generated/models';
 
-export type SearchCoverageValue = components['schemas']['SearchCoverageResponse'];
+export type SearchCoverageValue = GeneratedSearchCoverageResponse;
 export type SearchCoverageStatus = SearchCoverageValue['status'];
 export type SearchCoverageAction = SearchCoverageValue['actions'][number];
 
 const SEARCH_COVERAGE_STATUSES = new Set<SearchCoverageStatus>([
-  'disabled', 'initializing', 'stale', 'incomplete', 'unavailable', 'ready'
+  'disabled',
+  'initializing',
+  'stale',
+  'incomplete',
+  'unavailable',
+  'ready',
 ]);
 const SEARCH_COVERAGE_ACTIONS = new Set<SearchCoverageAction>(['retry', 'build_index']);
 
 export function parseSearchCoverage(value: unknown): SearchCoverageValue | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const candidate = value as Partial<SearchCoverageValue>;
-  if (typeof candidate.status !== 'string' ||
+  if (
+    typeof candidate.status !== 'string' ||
     !SEARCH_COVERAGE_STATUSES.has(candidate.status as SearchCoverageStatus) ||
-    typeof candidate.eligible_count !== 'number' || !Number.isInteger(candidate.eligible_count) ||
-    typeof candidate.embedded_count !== 'number' || !Number.isInteger(candidate.embedded_count) ||
-    typeof candidate.percentage !== 'number' || !Number.isFinite(candidate.percentage) ||
-    typeof candidate.cache_revision !== 'string' || !Array.isArray(candidate.actions) ||
-    !candidate.actions.every((action) => typeof action === 'string' &&
-      SEARCH_COVERAGE_ACTIONS.has(action as SearchCoverageAction)) ||
+    typeof candidate.eligible_count !== 'number' ||
+    !Number.isInteger(candidate.eligible_count) ||
+    typeof candidate.embedded_count !== 'number' ||
+    !Number.isInteger(candidate.embedded_count) ||
+    typeof candidate.percentage !== 'number' ||
+    !Number.isFinite(candidate.percentage) ||
+    typeof candidate.cache_revision !== 'string' ||
+    !Array.isArray(candidate.actions) ||
+    !candidate.actions.every(
+      (action) => typeof action === 'string' && SEARCH_COVERAGE_ACTIONS.has(action as SearchCoverageAction),
+    ) ||
     (candidate.vector_generation !== undefined &&
       (typeof candidate.vector_generation !== 'number' || !Number.isInteger(candidate.vector_generation))) ||
     (candidate.vector_fingerprint !== undefined && typeof candidate.vector_fingerprint !== 'string') ||
-    (candidate.detail !== undefined && typeof candidate.detail !== 'string')) return undefined;
+    (candidate.detail !== undefined && typeof candidate.detail !== 'string')
+  )
+    return undefined;
   return candidate as SearchCoverageValue;
 }
 
@@ -42,9 +55,7 @@ export function availableSearchModeStorage(): SearchModeStorage | null {
 }
 
 export function parseSearchMode(value: unknown): ExploreSearchMode | undefined {
-  return SEARCH_MODES.includes(value as ExploreSearchMode)
-    ? value as ExploreSearchMode
-    : undefined;
+  return SEARCH_MODES.includes(value as ExploreSearchMode) ? (value as ExploreSearchMode) : undefined;
 }
 
 export function loadRememberedSearchMode(storage: SearchModeStorage | null): ExploreSearchMode | undefined {
@@ -66,7 +77,7 @@ export function rememberSearchMode(mode: ExploreSearchMode, storage: SearchModeS
 export function resolveInitialSearchMode(
   explicitURLMode: ExploreSearchMode | undefined,
   storage: SearchModeStorage | null,
-  configuredDefault?: ExploreSearchMode
+  configuredDefault?: ExploreSearchMode,
 ): ExploreSearchMode {
   return explicitURLMode ?? loadRememberedSearchMode(storage) ?? configuredDefault ?? 'full_text';
 }
@@ -98,7 +109,10 @@ interface LexicalCountEntry {
 
 function canonicalQuery(query: string): string {
   const tokens = query.trim().match(/"(?:\\.|[^"\\])*"|\S+/g) ?? [];
-  return tokens.map((token) => token.replace(/\s+/g, ' ')).sort().join(' ');
+  return tokens
+    .map((token) => token.replace(/\s+/g, ' '))
+    .sort()
+    .join(' ');
 }
 
 export class VisibleLexicalCountCache {
@@ -107,7 +121,9 @@ export class VisibleLexicalCountCache {
 
   constructor(private readonly maximum = 128) {}
 
-  get size(): number { return this.entries.size; }
+  get size(): number {
+    return this.entries.size;
+  }
 
   key(input: LexicalCountKeyInput): string {
     return JSON.stringify([
@@ -115,7 +131,7 @@ export class VisibleLexicalCountCache {
       input.cacheRevision,
       input.lexicalRevision,
       input.predicateFingerprint ?? '',
-      [...new Set(input.rowKeys)].sort()
+      [...new Set(input.rowKeys)].sort(),
     ]);
   }
 

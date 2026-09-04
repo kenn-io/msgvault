@@ -3,17 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appShortcuts, initShortcuts } from '@kenn-io/kit-ui';
 
 import { createAPIClient } from '../../api/client';
-import type { components } from '../../api/generated/schema';
+import type { ExploreSelection as GeneratedExploreSelection } from '../../api/generated/models';
 import DeletionsWorkspace from './DeletionsWorkspace.svelte';
 
-type ExploreSelection = components['schemas']['ExploreSelection'];
+type ExploreSelection = GeneratedExploreSelection;
 
 const explicit: ExploreSelection = {
   mode: 'explicit',
   predicate: { presentation: 'table' },
   row_keys: ['source:1:message:m1'],
   cache_revision: 'cache-1',
-  search_provenance: {}
+  search_provenance: {},
 };
 
 const matching: ExploreSelection = {
@@ -21,22 +21,35 @@ const matching: ExploreSelection = {
   predicate: { filters: [{ dimension: 'source', values: ['1'] }], presentation: 'table' },
   exclusions: ['source:1:message:m2'],
   cache_revision: 'cache-1',
-  search_provenance: {}
+  search_provenance: {},
 };
 
 function preflight(overrides: Record<string, unknown> = {}) {
   return {
-    count: 1, estimated_bytes: 120, cache_revision: 'cache-1', search_provenance: {},
-    unavailable_actions: [], operation_token: 'operation-1', expires_at: '2026-07-19T10:05:00Z',
-    ...overrides
+    count: 1,
+    estimated_bytes: 120,
+    cache_revision: 'cache-1',
+    search_provenance: {},
+    unavailable_actions: [],
+    operation_token: 'operation-1',
+    expires_at: '2026-07-19T10:05:00Z',
+    ...overrides,
   };
 }
 
 function listResponse() {
-  return { manifests: [{
-    id: 'batch-1', status: 'pending', created_at: '2026-07-19T10:00:00Z',
-    created_by: 'api', description: 'reviewed selection', message_count: 1
-  }] };
+  return {
+    manifests: [
+      {
+        id: 'batch-1',
+        status: 'pending',
+        created_at: '2026-07-19T10:00:00Z',
+        created_by: 'api',
+        description: 'reviewed selection',
+        message_count: 1,
+      },
+    ],
+  };
 }
 
 afterEach(() => document.body.replaceChildren());
@@ -54,7 +67,10 @@ describe('DeletionsWorkspace', () => {
         deletionPosts += 1;
         return deletionPosts === 1
           ? Response.json({ dry_run: true, message_count: 1, account: 'archive@example.com', sample_gmail_ids: ['m1'] })
-          : Response.json({ dry_run: false, message_count: 1, account: 'archive@example.com', id: 'batch-2', status: 'pending' }, { status: 201 });
+          : Response.json(
+              { dry_run: false, message_count: 1, account: 'archive@example.com', id: 'batch-2', status: 'pending' },
+              { status: 201 },
+            );
       }
       return Response.json(listResponse());
     });
@@ -72,9 +88,16 @@ describe('DeletionsWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
     await waitFor(() => expect(deletionPosts).toBe(2));
 
-    const preflightBody = await requests.find((request) => new URL(request.url).pathname.endsWith('/explore/preflight'))!.clone().json();
+    const preflightBody = await requests
+      .find((request) => new URL(request.url).pathname.endsWith('/explore/preflight'))!
+      .clone()
+      .json();
     expect(preflightBody).toEqual({ selection: explicit });
-    const stageBody = await requests.filter((request) => request.method === 'POST').at(-1)!.clone().json();
+    const stageBody = await requests
+      .filter((request) => request.method === 'POST')
+      .at(-1)!
+      .clone()
+      .json();
     expect(stageBody).toMatchObject({ selection: explicit, operation_token: 'operation-1', dry_run: false });
   });
 
@@ -134,11 +157,18 @@ describe('DeletionsWorkspace', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (request.method === 'DELETE') return Response.json({ id: 'batch-1', status: 'cancelled' });
-      if (new URL(request.url).pathname.endsWith('/batch-1')) return Response.json({
-        id: 'batch-1', status: 'pending', created_at: '2026-07-19T10:00:00Z', created_by: 'api',
-        description: 'reviewed selection', account: 'archive@example.com', message_count: 1,
-        execution: null, summary: null
-      });
+      if (new URL(request.url).pathname.endsWith('/batch-1'))
+        return Response.json({
+          id: 'batch-1',
+          status: 'pending',
+          created_at: '2026-07-19T10:00:00Z',
+          created_by: 'api',
+          description: 'reviewed selection',
+          account: 'archive@example.com',
+          message_count: 1,
+          execution: null,
+          summary: null,
+        });
       return Response.json(listResponse());
     });
     render(DeletionsWorkspace, { client: createAPIClient(fetchFn) });
@@ -176,9 +206,14 @@ describe('DeletionsWorkspace', () => {
   it('shows server-supplied action reasons and disables staging', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/explore/preflight')) return Response.json(preflight({
-        unavailable_actions: [{ action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' }]
-      }));
+      if (new URL(request.url).pathname.endsWith('/explore/preflight'))
+        return Response.json(
+          preflight({
+            unavailable_actions: [
+              { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+            ],
+          }),
+        );
       return Response.json({ manifests: [] });
     });
     render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });

@@ -1,5 +1,20 @@
 import { expect, type Page, type Request, type Route } from '@playwright/test';
-import type { components } from '../../../src/lib/api/generated/schema';
+import type {
+  CardDAVAccountRequest,
+  CardDAVAccountResponse,
+  CardDAVBookResponse,
+  CardDAVBookRolesRequest,
+  CardDAVConflictDetailResponse,
+  CardDAVConflictResponse,
+  CardDAVPublicationResponse,
+  CardDAVResolveRequest,
+  CardDAVRunResponse,
+  CardDAVStatusResponse,
+  CardDAVSyncRequest,
+  Setting,
+  SettingsResponse,
+  SettingValue,
+} from '../../../src/lib/api/generated/models';
 
 const FIXTURE_TIME = '2026-08-28T12:00:00Z';
 const SYNTHETIC_PASSWORD = 'synthetic-carddav-password';
@@ -11,27 +26,30 @@ export const CARD_DAV_FORBIDDEN_MARKERS = [
   'forbidden-etag-marker',
   'forbidden-uid-marker',
   'forbidden-header-marker',
-  'forbidden-credential-marker'
+  'forbidden-credential-marker',
 ] as const;
 
 export async function assertCardDAVForbiddenMarkersAbsent(page: Page): Promise<void> {
   const surface = [
     await page.locator('body').innerText(),
     await page.locator('body').ariaSnapshot(),
-    await page.locator('[title]').evaluateAll((elements) =>
-      elements.map((element) => element.getAttribute('title') ?? '').join('\n')),
-    await page.locator('[role="alert"], [role="status"]').allTextContents()
-  ].flat().join('\n');
+    await page
+      .locator('[title]')
+      .evaluateAll((elements) => elements.map((element) => element.getAttribute('title') ?? '').join('\n')),
+    await page.locator('[role="alert"], [role="status"]').allTextContents(),
+  ]
+    .flat()
+    .join('\n');
   for (const marker of CARD_DAV_FORBIDDEN_MARKERS) expect(surface).not.toContain(marker);
 }
 
-type AccountRequest = components['schemas']['CardDAVAccountRequest'];
-type Book = components['schemas']['CardDAVBookResponse'];
-type BookRoles = components['schemas']['CardDAVBookRolesRequest'];
-type Conflict = components['schemas']['CardDAVConflictResponse'];
-type ConflictDetail = components['schemas']['CardDAVConflictDetailResponse'];
-type Publication = components['schemas']['CardDAVPublicationResponse'];
-type Run = components['schemas']['CardDAVRunResponse'];
+type AccountRequest = CardDAVAccountRequest;
+type Book = CardDAVBookResponse;
+type BookRoles = CardDAVBookRolesRequest;
+type Conflict = CardDAVConflictResponse;
+type ConflictDetail = CardDAVConflictDetailResponse;
+type Publication = CardDAVPublicationResponse;
+type Run = CardDAVRunResponse;
 
 export type CardDAVCapturedRequest = {
   method: string;
@@ -53,10 +71,7 @@ export type CardDAVFixture = {
   holdNextConflictResolution(): () => void;
 };
 
-export async function installCardDAV(
-  page: Page,
-  options: CardDAVFixtureOptions = {}
-): Promise<CardDAVFixture> {
+export async function installCardDAV(page: Page, options: CardDAVFixtureOptions = {}): Promise<CardDAVFixture> {
   const requests: CardDAVCapturedRequest[] = [];
   let accountPhase: 'unconfigured' | 'tested' | 'configured' = options.configured ? 'configured' : 'unconfigured';
   let rolePhase: 'original' | 'refreshed' | 'committed' = 'original';
@@ -70,13 +85,17 @@ export async function installCardDAV(
   let heldResolution: Promise<void> | undefined;
   let releaseHeldResolution: (() => void) | undefined;
 
-  await page.route('**/api/session', (route) => route.fulfill({
-    json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
-  }));
-  await page.route('**/api/v1/settings', (route) => route.fulfill({
-    headers: { ETag: '"settings-carddav-1"' },
-    json: settingsDocument(accountPhase === 'configured')
-  }));
+  await page.route('**/api/session', (route) =>
+    route.fulfill({
+      json: { auth_mode: 'loopback', https: false, plain_http_warning: false },
+    }),
+  );
+  await page.route('**/api/v1/settings', (route) =>
+    route.fulfill({
+      headers: { ETag: '"settings-carddav-1"' },
+      json: settingsDocument(accountPhase === 'configured'),
+    }),
+  );
   await page.route('**/api/v1/carddav/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -115,9 +134,13 @@ export async function installCardDAV(
       }
       if (url.pathname === '/api/v1/carddav/runs') {
         const before = url.searchParams.get('before_id');
-        return route.fulfill({ json: before
-          ? { runs: [historyRun(80)], next_before_id: undefined }
-          : { runs: syncPhase === 'terminal' ? [historyRun(102), historyRun(91)] : [historyRun(91)], next_before_id: 90 }
+        return route.fulfill({
+          json: before
+            ? { runs: [historyRun(80)], next_before_id: undefined }
+            : {
+                runs: syncPhase === 'terminal' ? [historyRun(102), historyRun(91)] : [historyRun(91)],
+                next_before_id: 90,
+              },
         });
       }
       if (url.pathname === '/api/v1/carddav/conflicts') {
@@ -136,7 +159,10 @@ export async function installCardDAV(
         if (accountPhase !== 'configured') return unavailable(route);
         if (failPublicationRead) {
           failPublicationRead = false;
-          return route.fulfill({ status: 503, json: { error: 'carddav_read_failed', message: 'Synthetic publication read failed.' } });
+          return route.fulfill({
+            status: 503,
+            json: { error: 'carddav_read_failed', message: 'Synthetic publication read failed.' },
+          });
         }
         return route.fulfill({ json: publication(publicationPhase) });
       }
@@ -148,14 +174,17 @@ export async function installCardDAV(
       if (staleRoleOnce) {
         staleRoleOnce = false;
         rolePhase = 'refreshed';
-        return route.fulfill({ status: 409, json: { error: 'carddav_book_stale', message: 'Synthetic roles changed.' } });
+        return route.fulfill({
+          status: 409,
+          json: { error: 'carddav_book_stale', message: 'Synthetic roles changed.' },
+        });
       }
       rolePhase = 'committed';
       return route.fulfill({ json: booksFor(rolePhase)[1] });
     }
 
     if (url.pathname === '/api/v1/carddav/sync' && method === 'POST') {
-      const body = request.postDataJSON() as components['schemas']['CardDAVSyncRequest'];
+      const body = request.postDataJSON() as CardDAVSyncRequest;
       requests.push(capture(method, url, body));
       syncPhase = 'running';
       runningStatusReads = 0;
@@ -163,12 +192,15 @@ export async function installCardDAV(
     }
 
     if (url.pathname === '/api/v1/carddav/conflicts/41/resolve' && method === 'POST') {
-      const body = request.postDataJSON() as components['schemas']['CardDAVResolveRequest'];
+      const body = request.postDataJSON() as CardDAVResolveRequest;
       requests.push(capture(method, url, body));
       if (staleConflictOnce) {
         staleConflictOnce = false;
         conflictPhase = 'refreshed';
-        return route.fulfill({ status: 409, json: { error: 'carddav_conflict_stale', message: 'Synthetic conflict changed.' } });
+        return route.fulfill({
+          status: 409,
+          json: { error: 'carddav_conflict_stale', message: 'Synthetic conflict changed.' },
+        });
       }
       if (heldResolution) await heldResolution;
       heldResolution = undefined;
@@ -186,11 +218,17 @@ export async function installCardDAV(
     if (url.pathname === '/api/v1/carddav/publications/42' && method === 'DELETE') {
       requests.push(capture(method, url));
       publicationPhase = 'conflict';
-      return route.fulfill({ status: 503, json: { error: 'carddav_write_failed', message: 'Synthetic ambiguous publication result.' } });
+      return route.fulfill({
+        status: 503,
+        json: { error: 'carddav_write_failed', message: 'Synthetic ambiguous publication result.' },
+      });
     }
 
     requests.push(capture(method, url, safeBody(request)));
-    return route.fulfill({ status: 404, json: { error: 'fixture_route_missing', message: 'Synthetic route is not modeled.' } });
+    return route.fulfill({
+      status: 404,
+      json: { error: 'fixture_route_missing', message: 'Synthetic route is not modeled.' },
+    });
   });
 
   return {
@@ -201,9 +239,11 @@ export async function installCardDAV(
     },
     holdNextConflictResolution() {
       if (heldResolution) throw new Error('A synthetic conflict resolution is already held.');
-      heldResolution = new Promise<void>((resolve) => { releaseHeldResolution = resolve; });
+      heldResolution = new Promise<void>((resolve) => {
+        releaseHeldResolution = resolve;
+      });
       return () => releaseHeldResolution?.();
-    }
+    },
   };
 }
 
@@ -211,13 +251,13 @@ function accountBody(request: Request): AccountRequest {
   return request.postDataJSON() as AccountRequest;
 }
 
-function accountResponse(body: AccountRequest): components['schemas']['CardDAVAccountResponse'] {
+function accountResponse(body: AccountRequest): CardDAVAccountResponse {
   return {
     base_url: body.base_url,
     username: body.username,
     enabled: body.enabled,
     schedule: body.schedule,
-    books: 2
+    books: 2,
   };
 }
 
@@ -247,38 +287,38 @@ function capture(method: string, url: URL, body?: unknown): CardDAVCapturedReque
     method,
     path: url.pathname,
     query: Object.fromEntries(url.searchParams),
-    ...(body === undefined ? {} : { body })
+    ...(body === undefined ? {} : { body }),
   };
 }
 
-function settingsDocument(configured: boolean): components['schemas']['SettingsResponse'] {
+function settingsDocument(configured: boolean): SettingsResponse {
   return {
     settings: [
       setting('web.theme', 'browser', 'string', { string: 'light' }),
       setting('web.density', 'browser', 'string', { string: 'compact' }),
-      setting('carddav.base_url', 'integrations', 'string', { string: configured ? 'https://carddav.example.test/' : '' }),
+      setting('carddav.base_url', 'integrations', 'string', {
+        string: configured ? 'https://carddav.example.test/' : '',
+      }),
       setting('carddav.username', 'integrations', 'string', { string: configured ? 'synthetic-user' : '' }),
       {
-        key: 'carddav.password', group: 'integrations', kind: 'secret', restart_required: false,
-        secret: { configured }
+        key: 'carddav.password',
+        group: 'integrations',
+        kind: 'secret',
+        restart_required: false,
+        secret: { configured },
       },
       setting('carddav.enabled', 'integrations', 'boolean', { boolean: configured }),
-      setting('carddav.schedule', 'integrations', 'string', { string: configured ? '0 2 * * *' : '' })
+      setting('carddav.schedule', 'integrations', 'string', { string: configured ? '0 2 * * *' : '' }),
     ],
-    pending_restart: false
+    pending_restart: false,
   };
 }
 
-function setting(
-  key: string,
-  group: components['schemas']['Setting']['group'],
-  kind: components['schemas']['Setting']['kind'],
-  value: components['schemas']['SettingValue']
-): components['schemas']['Setting'] {
+function setting(key: string, group: Setting['group'], kind: Setting['kind'], value: SettingValue): Setting {
   return { key, group, kind, value, restart_required: false };
 }
 
-function unavailableStatus(): components['schemas']['CardDAVStatusResponse'] {
+function unavailableStatus(): CardDAVStatusResponse {
   return {
     configured: false,
     available: false,
@@ -286,14 +326,11 @@ function unavailableStatus(): components['schemas']['CardDAVStatusResponse'] {
     enabled: false,
     scheduled: false,
     schedule: '',
-    repair_reason: 'account_missing'
+    repair_reason: 'account_missing',
   };
 }
 
-function currentStatus(
-  phase: 'idle' | 'running' | 'terminal',
-  runningStatusReads: number
-): components['schemas']['CardDAVStatusResponse'] {
+function currentStatus(phase: 'idle' | 'running' | 'terminal', runningStatusReads: number): CardDAVStatusResponse {
   const latest = phase === 'terminal' ? historyRun(102) : historyRun(91);
   return {
     configured: true,
@@ -306,12 +343,16 @@ function currentStatus(
     account: {
       base_url: CARD_DAV_FORBIDDEN_MARKERS[0],
       username: 'synthetic-user',
-      private_header: CARD_DAV_FORBIDDEN_MARKERS[5]
+      private_header: CARD_DAV_FORBIDDEN_MARKERS[5],
     },
     ...(phase === 'running'
-      ? { active: activeRun(102, Math.max(1, runningStatusReads)), latest: historyRun(91), latest_successful: historyRun(91) }
+      ? {
+          active: activeRun(102, Math.max(1, runningStatusReads)),
+          latest: historyRun(91),
+          latest_successful: historyRun(91),
+        }
       : {}),
-    ...(phase !== 'running' ? { latest, latest_successful: latest } : {})
+    ...(phase !== 'running' ? { latest, latest_successful: latest } : {}),
   };
 }
 
@@ -326,7 +367,7 @@ function activeRun(id: number, updated: number): Run {
     created: 1,
     updated,
     removed: 0,
-    private_credential: CARD_DAV_FORBIDDEN_MARKERS[6]
+    private_credential: CARD_DAV_FORBIDDEN_MARKERS[6],
   };
 }
 
@@ -343,7 +384,7 @@ function historyRun(id: number): Run {
     created: id === 102 ? 1 : 0,
     updated: id === 102 ? 2 : 1,
     removed: 0,
-    private_uid: CARD_DAV_FORBIDDEN_MARKERS[4]
+    private_uid: CARD_DAV_FORBIDDEN_MARKERS[4],
   };
 }
 
@@ -357,7 +398,7 @@ function booksFor(phase: 'original' | 'refreshed' | 'committed'): Book[] {
       subscribed: true,
       lookup_source: true,
       write_target: !secondIsTarget,
-      needs_full_reconcile: phase === 'refreshed'
+      needs_full_reconcile: phase === 'refreshed',
     },
     {
       id: 6,
@@ -366,8 +407,8 @@ function booksFor(phase: 'original' | 'refreshed' | 'committed'): Book[] {
       subscribed: secondIsTarget,
       lookup_source: false,
       write_target: secondIsTarget,
-      needs_full_reconcile: false
-    }
+      needs_full_reconcile: false,
+    },
   ];
 }
 
@@ -381,7 +422,7 @@ function conflictListItem(): Conflict {
     allowed_resolutions: ['keep_local', 'keep_remote'],
     updated_at: FIXTURE_TIME,
     href: CARD_DAV_FORBIDDEN_MARKERS[1],
-    etag: CARD_DAV_FORBIDDEN_MARKERS[3]
+    etag: CARD_DAV_FORBIDDEN_MARKERS[3],
   };
 }
 
@@ -397,7 +438,7 @@ function conflictDetail(id: number, status: 'unresolved' | 'resolved'): Conflict
       emails: ['local@example.com'],
       phones: ['+1 555 0100'],
       truncated: true,
-      local_vcard: CARD_DAV_FORBIDDEN_MARKERS[2]
+      local_vcard: CARD_DAV_FORBIDDEN_MARKERS[2],
     },
     remote: { state: 'deleted', emails: [], phones: [], href: CARD_DAV_FORBIDDEN_MARKERS[1] },
     allowed_resolutions: status === 'resolved' ? [] : ['keep_local', 'keep_remote'],
@@ -405,7 +446,7 @@ function conflictDetail(id: number, status: 'unresolved' | 'resolved'): Conflict
     updated_at: FIXTURE_TIME,
     ...(status === 'resolved' ? { resolution: 'keep_local' as const, resolved_at: FIXTURE_TIME } : {}),
     uid: CARD_DAV_FORBIDDEN_MARKERS[4],
-    request_headers: { authorization: CARD_DAV_FORBIDDEN_MARKERS[5] }
+    request_headers: { authorization: CARD_DAV_FORBIDDEN_MARKERS[5] },
   };
 }
 
@@ -419,13 +460,13 @@ function publication(phase: 'unpublished' | 'published' | 'conflict'): Publicati
     href: CARD_DAV_FORBIDDEN_MARKERS[1],
     raw_vcard: CARD_DAV_FORBIDDEN_MARKERS[2],
     etag: CARD_DAV_FORBIDDEN_MARKERS[3],
-    credential: CARD_DAV_FORBIDDEN_MARKERS[6]
+    credential: CARD_DAV_FORBIDDEN_MARKERS[6],
   };
 }
 
 function unavailable(route: Route) {
   return route.fulfill({
     status: 503,
-    json: { error: 'carddav_unavailable', message: 'Synthetic optional service is not configured.' }
+    json: { error: 'carddav_unavailable', message: 'Synthetic optional service is not configured.' },
   });
 }

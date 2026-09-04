@@ -399,7 +399,7 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	// Headers already sent; if Encode fails mid-stream (broken pipe,
 	// non-serializable value) there's no meaningful recovery beyond
 	// truncating the response body.
-	_ = json.NewEncoder(w).Encode(data) //nolint:errchkjson // any is the public API; mid-response error is unrecoverable
+	_ = marshalAPIJSON(w, data)
 }
 
 // writeError writes an error response.
@@ -2919,15 +2919,15 @@ type ChangedMessageJSON struct {
 // caught-up consumer can poll forever without replaying the archive — the
 // exception being a cursor above the database clock (see handleMessageChanges).
 // It is never empty, so it needs no `omitempty` to satisfy the generated
-// client's validator; Messages is `nullable:"false"` because the handler always
-// allocates the slice. CompleteThrough is a bound, never a cursor: while
+// client's validator. JSON v2 always encodes Messages as an array, including
+// when the handler leaves the slice nil. CompleteThrough is a bound, never a cursor: while
 // HasMore is true it stands above rows this page did not carry, so a consumer
 // that resumes from it instead of NextCursor skips them.
 //
 // CompleteThrough is nullable because "no commit bound has been established"
 // is a state, not a timestamp.
 type ChangesResponse struct {
-	Messages        []ChangedMessageJSON `json:"messages" nullable:"false"`
+	Messages        []ChangedMessageJSON `json:"messages"`
 	Count           int                  `json:"count"`
 	HasMore         bool                 `json:"has_more"`
 	NextCursor      string               `json:"next_cursor" doc:"Opaque cursor for the next request. Always present and never empty. Store it and send it back as the cursor parameter; do not parse, construct, compare, or order it — its contents may change without notice"`

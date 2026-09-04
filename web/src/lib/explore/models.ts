@@ -1,18 +1,51 @@
-import type { components } from '../api/generated/schema';
+import type {
+  DomainContextSummaryHTTPResponse as GeneratedDomainContextSummaryHTTPResponse,
+  DomainSummary as GeneratedDomainSummary,
+  EntryRow as GeneratedEntryRow,
+  ExploreCacheUnavailableResponse as GeneratedExploreCacheUnavailableResponse,
+  ExploreFileFact as GeneratedExploreFileFact,
+  ExploreFilesHTTPResponse as GeneratedExploreFilesHTTPResponse,
+  ExploreFilter as GeneratedExploreFilter,
+  ExploreGroupDimension as GeneratedExploreGroupDimension,
+  ExploreGroupRow as GeneratedExploreGroupRow,
+  ExploreGroupsHTTPRequest as GeneratedExploreGroupsHTTPRequest,
+  ExploreGroupsHTTPResponse as GeneratedExploreGroupsHTTPResponse,
+  ExploreHTTPRequest as GeneratedExploreHTTPRequest,
+  ExploreHTTPResponse as GeneratedExploreHTTPResponse,
+  ExploreSort as GeneratedExploreSort,
+  FileGroupsHTTPResponse as GeneratedFileGroupsHTTPResponse,
+  FileMetadataResponse as GeneratedFileMetadataResponse,
+  FileSearchHTTPRequest as GeneratedFileSearchHTTPRequest,
+  FileSearchHTTPResponse as GeneratedFileSearchHTTPResponse,
+  FileSearchRow as GeneratedFileSearchRow,
+  IdentitySearchSort as GeneratedIdentitySearchSort,
+  ParticipantContextSummaryHTTPResponse as GeneratedParticipantContextSummaryHTTPResponse,
+  PersonCluster as GeneratedPersonCluster,
+  PersonClusterEdge as GeneratedPersonClusterEdge,
+  PersonFileProvenance as GeneratedPersonFileProvenance,
+  PersonFileSearchHTTPRequest as GeneratedPersonFileSearchHTTPRequest,
+  PersonFileSearchHTTPResponse as GeneratedPersonFileSearchHTTPResponse,
+  PersonFileSearchRow as GeneratedPersonFileSearchRow,
+  PersonIdentifier as GeneratedPersonIdentifier,
+  PersonSummary as GeneratedPersonSummary,
+  SearchProvenance as GeneratedSearchProvenance,
+  SourceIdentitiesResponse as GeneratedSourceIdentitiesResponse,
+  SourceIdentityResponse as GeneratedSourceIdentityResponse,
+} from '../api/generated/models';
 
-export type EntryRow = components['schemas']['EntryRow'];
-export type ExploreCacheUnavailable = components['schemas']['ExploreCacheUnavailableResponse'];
-export type ExploreFilter = components['schemas']['ExploreFilter'];
-export type ExploreFileFact = components['schemas']['ExploreFileFact'];
-export type ExploreFilesResponse = components['schemas']['ExploreFilesHTTPResponse'];
-export type FileMetadata = components['schemas']['FileMetadataResponse'];
-export type FileSearchRequest = components['schemas']['FileSearchHTTPRequest'];
-export type FileSearchResponse = components['schemas']['FileSearchHTTPResponse'];
-export type FileSearchRow = components['schemas']['FileSearchRow'];
-export type PersonFileSearchRequest = components['schemas']['PersonFileSearchHTTPRequest'];
-export type PersonFileSearchResponse = components['schemas']['PersonFileSearchHTTPResponse'];
-export type PersonFileSearchRow = components['schemas']['PersonFileSearchRow'];
-export type PersonFileProvenance = components['schemas']['PersonFileProvenance'];
+export type EntryRow = GeneratedEntryRow;
+export type ExploreCacheUnavailable = GeneratedExploreCacheUnavailableResponse;
+export type ExploreFilter = GeneratedExploreFilter;
+export type ExploreFileFact = GeneratedExploreFileFact;
+export type ExploreFilesResponse = GeneratedExploreFilesHTTPResponse;
+export type FileMetadata = GeneratedFileMetadataResponse;
+export type FileSearchRequest = GeneratedFileSearchHTTPRequest;
+export type FileSearchResponse = GeneratedFileSearchHTTPResponse;
+export type FileSearchRow = GeneratedFileSearchRow;
+export type PersonFileSearchRequest = GeneratedPersonFileSearchHTTPRequest;
+export type PersonFileSearchResponse = GeneratedPersonFileSearchHTTPResponse;
+export type PersonFileSearchRow = GeneratedPersonFileSearchRow;
+export type PersonFileProvenance = GeneratedPersonFileProvenance;
 export type PersonFileDirection = NonNullable<PersonFileSearchRequest['directions']>[number];
 export interface FileViewerTarget {
   id: FileSearchRow['id'];
@@ -24,37 +57,36 @@ export interface FileViewerTarget {
   mime_type?: FileSearchRow['mime_type'];
   size_bytes?: FileSearchRow['size_bytes'];
 }
-export type FileGroupsResponse = components['schemas']['FileGroupsHTTPResponse'];
+export type FileGroupsResponse = GeneratedFileGroupsHTTPResponse;
 export type FileSearchSort = {
   field: 'occurred_at' | 'filename' | 'size';
   direction: 'asc' | 'desc';
 };
 export type FileMIMEFamily = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'document' | 'archive' | 'other';
-export type ExploreGroupDimension = components['schemas']['ExploreGroupDimension'];
-export type ExploreGroupRow = components['schemas']['ExploreGroupRow'];
-export type ExploreGroupsResponse = components['schemas']['ExploreGroupsHTTPResponse'];
-export type ExplorePredicate = components['schemas']['ExploreHTTPRequest'];
+export type ExploreGroupDimension = GeneratedExploreGroupDimension;
+export type ExploreGroupRow = GeneratedExploreGroupRow;
+export type ExploreGroupsResponse = GeneratedExploreGroupsHTTPResponse;
+export type ExplorePredicate = GeneratedExploreHTTPRequest;
 /**
  * Predicate for the groups listing: the shared explore predicate plus the
  * groups-only exact-key filter (see ExploreGroupsHTTPRequest.group_key).
  */
-export type ExploreGroupsPredicate = ExplorePredicate &
-  Pick<components['schemas']['ExploreGroupsHTTPRequest'], 'group_key'>;
-export type ExploreResponse = components['schemas']['ExploreHTTPResponse'];
+export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key'>;
+export type ExploreResponse = GeneratedExploreHTTPResponse;
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
-export type ExploreSort = components['schemas']['ExploreSort'];
-export type SearchProvenance = components['schemas']['SearchProvenance'];
-export type SourceIdentitiesResponse = components['schemas']['SourceIdentitiesResponse'];
-export type SourceIdentityResponse = components['schemas']['SourceIdentityResponse'];
+export type ExploreSort = GeneratedExploreSort;
+export type SearchProvenance = GeneratedSearchProvenance;
+export type SourceIdentitiesResponse = GeneratedSourceIdentitiesResponse;
+export type SourceIdentityResponse = GeneratedSourceIdentityResponse;
 export type IdentityDirection = 'any' | 'sender' | 'recipient';
-export type PersonSummary = components['schemas']['PersonSummary'];
-export type PersonIdentifier = components['schemas']['PersonIdentifier'];
-export type PersonCluster = components['schemas']['PersonCluster'];
-export type PersonClusterEdge = components['schemas']['PersonClusterEdge'];
-export type DomainSummary = components['schemas']['DomainSummary'];
-export type PersonContextSummaryResponse = components['schemas']['ParticipantContextSummaryHTTPResponse'];
-export type DomainContextSummaryResponse = components['schemas']['DomainContextSummaryHTTPResponse'];
-export type IdentitySearchSort = components['schemas']['IdentitySearchSort'];
+export type PersonSummary = GeneratedPersonSummary;
+export type PersonIdentifier = GeneratedPersonIdentifier;
+export type PersonCluster = GeneratedPersonCluster;
+export type PersonClusterEdge = GeneratedPersonClusterEdge;
+export type DomainSummary = GeneratedDomainSummary;
+export type PersonContextSummaryResponse = GeneratedParticipantContextSummaryHTTPResponse;
+export type DomainContextSummaryResponse = GeneratedDomainContextSummaryHTTPResponse;
+export type IdentitySearchSort = GeneratedIdentitySearchSort;
 
 export type ExploreWorkspace =
   | 'everything'
@@ -70,23 +102,9 @@ export type DirectoryReviewKind = 'identity' | 'fact' | 'relationship';
 export type IdentityReviewState = 'candidate' | 'conflict' | 'accepted' | 'rejected';
 export type RelationshipReviewState = 'pending' | 'accepted' | 'rejected';
 export type RelationshipFacet = 'people' | 'domains';
-export type ExploreColumn =
-  | 'kind'
-  | 'people'
-  | 'title'
-  | 'excerpt'
-  | 'time'
-  | 'attachments'
-  | 'size';
+export type ExploreColumn = 'kind' | 'people' | 'title' | 'excerpt' | 'time' | 'attachments' | 'size';
 
-export const DEFAULT_EXPLORE_COLUMNS: ExploreColumn[] = [
-  'kind',
-  'people',
-  'title',
-  'excerpt',
-  'time',
-  'attachments'
-];
+export const DEFAULT_EXPLORE_COLUMNS: ExploreColumn[] = ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'];
 
 export interface ExploreScrollAnchor {
   key: string;
@@ -205,13 +223,10 @@ export interface ExploreFilesResult {
 }
 
 export type ExploreLoadResult =
-  | { status: 'ready'; result: ExploreResult }
-  | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
+  { status: 'ready'; result: ExploreResult } | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
 
 export type ExploreGroupLoadResult =
-  | { status: 'ready'; result: ExploreGroupResult }
-  | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
+  { status: 'ready'; result: ExploreGroupResult } | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
 
 export type ExploreFilesLoadResult =
-  | { status: 'ready'; result: ExploreFilesResult }
-  | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
+  { status: 'ready'; result: ExploreFilesResult } | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };

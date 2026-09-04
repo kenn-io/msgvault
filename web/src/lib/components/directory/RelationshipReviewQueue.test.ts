@@ -2,11 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { components } from '../../api/generated/schema';
+import type { RelationshipReview as GeneratedRelationshipReview } from '../../api/generated/models';
 import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
 import RelationshipReviewQueue from './RelationshipReviewQueue.svelte';
 
-type GeneratedReview = components['schemas']['RelationshipReview'];
+type GeneratedReview = GeneratedRelationshipReview;
 
 function review(id = 41, status = 'pending'): GeneratedReview {
   return {
@@ -21,13 +21,15 @@ function review(id = 41, status = 'pending'): GeneratedReview {
     vcard_identity: {},
     created_by: 'synthetic_import',
     created_at: '2026-08-01T10:00:00Z',
-    updated_at: '2026-08-02T11:00:00Z'
+    updated_at: '2026-08-02T11:00:00Z',
   };
 }
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((settle) => { resolve = settle; });
+  const promise = new Promise<Response>((settle) => {
+    resolve = settle;
+  });
   return { promise, resolve };
 }
 
@@ -43,7 +45,11 @@ describe('RelationshipReviewQueue', () => {
     render(RelationshipReviewQueue, { controller });
 
     expect(screen.getByText('Loading imported relationship reviews…')).toBeDefined();
-    expect(screen.getByText('Imported relationship reviews are read-only in the browser until generated decision operations are available.')).toBeDefined();
+    expect(
+      screen.getByText(
+        'Imported relationship reviews are read-only in the browser until generated decision operations are available.',
+      ),
+    ).toBeDefined();
     pending.resolve(Response.json({ reviews: [review()] }));
     expect(await screen.findByRole('article', { name: 'Imported relationship review 41' })).toBeDefined();
     expect(screen.queryByRole('button', { name: /accept|reject|unsure|next|previous/i })).toBeNull();
@@ -53,12 +59,16 @@ describe('RelationshipReviewQueue', () => {
 
   it('distinguishes fixed errors from an empty queue and retries only explicitly', async () => {
     let attempts = 0;
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async () => {
-      attempts += 1;
-      return attempts === 1
-        ? Response.json({ error: 'unavailable', message: 'forbidden-private-error' }, { status: 503 })
-        : Response.json({ reviews: null });
-    })));
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async () => {
+          attempts += 1;
+          return attempts === 1
+            ? Response.json({ error: 'unavailable', message: 'forbidden-private-error' }, { status: 503 })
+            : Response.json({ reviews: null });
+        }),
+      ),
+    );
     controller.applyContext(true, 'pending', false);
     render(RelationshipReviewQueue, { controller });
 
@@ -78,11 +88,16 @@ describe('RelationshipReviewQueue', () => {
   it('changes status by keyboard, commits once, replaces rows, and focuses the queue heading', async () => {
     const commit = vi.fn();
     const states: string[] = [];
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const state = new URL(requestOf(input).url).searchParams.get('status') ?? 'pending';
-      states.push(state);
-      return Response.json({ reviews: [review(state === 'accepted' ? 51 : 41, state)] });
-    })), commit);
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async (input) => {
+          const state = new URL(requestOf(input).url).searchParams.get('status') ?? 'pending';
+          states.push(state);
+          return Response.json({ reviews: [review(state === 'accepted' ? 51 : 41, state)] });
+        }),
+      ),
+      commit,
+    );
     controller.applyContext(true, 'pending', false);
     render(RelationshipReviewQueue, { controller });
     await screen.findByRole('article', { name: 'Imported relationship review 41' });
@@ -95,18 +110,24 @@ describe('RelationshipReviewQueue', () => {
     expect(states).toEqual(['pending', 'accepted']);
     expect(commit).toHaveBeenCalledOnce();
     expect(commit).toHaveBeenCalledWith({ relationshipReviewState: 'accepted' });
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Imported relationships' })));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Imported relationships' })),
+    );
     controller.destroy();
   });
 
   it('restores connected heading focus when the focused row disappears under a failed context', async () => {
     let attempts = 0;
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async () => {
-      attempts += 1;
-      return attempts === 1
-        ? Response.json({ reviews: [review()] })
-        : Response.json({ error: 'unavailable', message: 'forbidden-restoration-error' }, { status: 503 });
-    })));
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async () => {
+          attempts += 1;
+          return attempts === 1
+            ? Response.json({ reviews: [review()] })
+            : Response.json({ error: 'unavailable', message: 'forbidden-restoration-error' }, { status: 503 });
+        }),
+      ),
+    );
     controller.applyContext(true, 'pending', false);
     render(RelationshipReviewQueue, { controller });
     const card = await screen.findByRole('article', { name: 'Imported relationship review 41' });

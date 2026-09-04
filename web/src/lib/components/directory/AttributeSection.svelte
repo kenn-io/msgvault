@@ -2,15 +2,20 @@
   import { Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
-  import type { components } from '../../api/generated/schema';
+  import type {
+    AttributeDefinition as GeneratedAttributeDefinition,
+    AttributeValue as GeneratedAttributeValue,
+    PersonAttributeGroup as GeneratedPersonAttributeGroup,
+    PersonAttributeValue as GeneratedPersonAttributeValue,
+  } from '../../api/generated/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
   import AttributeEditor from './AttributeEditor.svelte';
 
-  type AttributeDefinition = components['schemas']['AttributeDefinition'];
-  type AttributeGroup = components['schemas']['PersonAttributeGroup'];
-  type AttributeValue = components['schemas']['AttributeValue'];
-  type PersonAttributeValue = components['schemas']['PersonAttributeValue'];
+  type AttributeDefinition = GeneratedAttributeDefinition;
+  type AttributeGroup = GeneratedPersonAttributeGroup;
+  type AttributeValue = GeneratedAttributeValue;
+  type PersonAttributeValue = GeneratedPersonAttributeValue;
 
   interface Props {
     controller: DirectoryProfileController;
@@ -48,7 +53,7 @@
       joined.set(definition.universal_id, {
         definition,
         current: [...(group?.current ?? [])],
-        history: historical(group?.history ?? [])
+        history: historical(group?.history ?? []),
       });
     }
     for (const group of groups) {
@@ -56,11 +61,13 @@
       joined.set(group.definition.universal_id, {
         definition: group.definition,
         current: [...(group.current ?? [])],
-        history: historical(group.history ?? [])
+        history: historical(group.history ?? []),
       });
     }
-    return [...joined.values()].sort((left, right) =>
-      left.definition.display_order - right.definition.display_order || left.definition.slug.localeCompare(right.definition.slug)
+    return [...joined.values()].sort(
+      (left, right) =>
+        left.definition.display_order - right.definition.display_order ||
+        left.definition.slug.localeCompare(right.definition.slug),
     );
   }
 
@@ -92,14 +99,22 @@
 
   function rawValue(value: AttributeValue): string {
     switch (value.type) {
-      case 'text': return value.text ?? '—';
-      case 'integer': return value.integer?.toString() ?? '—';
-      case 'real': return value.real?.toString() ?? '—';
-      case 'boolean': return value.boolean === undefined ? '—' : value.boolean ? 'Yes' : 'No';
-      case 'date': return value.date ?? '—';
-      case 'timestamp': return value.timestamp ?? '—';
-      case 'record_reference': return value.record_type === 'person' && value.record_id ? `Person ${value.record_id}` : '—';
-      default: return value.json === undefined ? '—' : JSON.stringify(value.json);
+      case 'text':
+        return value.text ?? '—';
+      case 'integer':
+        return value.integer?.toString() ?? '—';
+      case 'real':
+        return value.real?.toString() ?? '—';
+      case 'boolean':
+        return value.boolean === undefined ? '—' : value.boolean ? 'Yes' : 'No';
+      case 'date':
+        return value.date ?? '—';
+      case 'timestamp':
+        return value.timestamp ?? '—';
+      case 'record_reference':
+        return value.record_type === 'person' && value.record_id ? `Person ${value.record_id}` : '—';
+      default:
+        return value.json === undefined ? '—' : JSON.stringify(value.json);
     }
   }
 
@@ -112,8 +127,10 @@
       `Valid from: ${value.active_from}`,
       value.active_until ? `Valid until: ${value.active_until}` : undefined,
       value.superseded_at ? `Superseded: ${value.superseded_at}` : undefined,
-      `Created: ${value.created_at}`
-    ].filter(Boolean).join(' · ');
+      `Created: ${value.created_at}`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   }
 
   function metadata(definition: AttributeDefinition): string {
@@ -121,7 +138,7 @@
       `Type: ${definition.value_type}`,
       `Field: ${definition.field_type}`,
       `Cardinality: ${definition.cardinality}`,
-      `Ownership: ${definition.ownership}`
+      `Ownership: ${definition.ownership}`,
     ].join(' · ');
   }
 
@@ -140,30 +157,59 @@
     if (definition.options?.choices?.length) {
       return ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(definition.value_type);
     }
-    return definition.value_type === 'boolean' || definition.value_type === 'integer' || definition.value_type === 'real' ||
-      definition.value_type === 'date' || definition.value_type === 'timestamp' || definition.value_type === 'json' || definition.value_type === 'text' ||
-      (definition.value_type === 'record_reference' && definition.record_target === 'person');
+    return (
+      definition.value_type === 'boolean' ||
+      definition.value_type === 'integer' ||
+      definition.value_type === 'real' ||
+      definition.value_type === 'date' ||
+      definition.value_type === 'timestamp' ||
+      definition.value_type === 'json' ||
+      definition.value_type === 'text' ||
+      (definition.value_type === 'record_reference' && definition.record_target === 'person')
+    );
   }
 
   function canAdd(field: JoinedAttribute): boolean {
     const definition = field.definition;
-    return definition.is_active && definition.api_mutable && definition.ui_creatable && supported(definition) &&
+    return (
+      definition.is_active &&
+      definition.api_mutable &&
+      definition.ui_creatable &&
+      supported(definition) &&
       (!definition.is_sensitive || isRevealed(definition)) &&
-      (definition.cardinality === 'multi' || field.current.length === 0) && !controller.mutationPending &&
-      !controller.reloadPending && !controller.hasUnresolvedConflict && !operationNeedsReload(definition);
+      (definition.cardinality === 'multi' || field.current.length === 0) &&
+      !controller.mutationPending &&
+      !controller.reloadPending &&
+      !controller.hasUnresolvedConflict &&
+      !operationNeedsReload(definition)
+    );
   }
 
   function canEdit(definition: AttributeDefinition): boolean {
-    return definition.is_active && definition.api_mutable && definition.ui_editable && supported(definition) &&
-      !controller.mutationPending && !controller.reloadPending && !controller.hasUnresolvedConflict && !operationNeedsReload(definition);
+    return (
+      definition.is_active &&
+      definition.api_mutable &&
+      definition.ui_editable &&
+      supported(definition) &&
+      !controller.mutationPending &&
+      !controller.reloadPending &&
+      !controller.hasUnresolvedConflict &&
+      !operationNeedsReload(definition)
+    );
   }
 
   function canClose(definition: AttributeDefinition): boolean {
     // The store deliberately permits retiring a current value from an
     // inactive definition, but derived/non-API-mutable definitions remain
     // non-retractable.
-    return definition.api_mutable && definition.ui_editable && !controller.mutationPending &&
-      !controller.reloadPending && !controller.hasUnresolvedConflict && !operationNeedsReload(definition);
+    return (
+      definition.api_mutable &&
+      definition.ui_editable &&
+      !controller.mutationPending &&
+      !controller.reloadPending &&
+      !controller.hasUnresolvedConflict &&
+      !operationNeedsReload(definition)
+    );
   }
 
   function openEditor(field: JoinedAttribute, current: PersonAttributeValue | undefined = undefined): void {
@@ -180,7 +226,7 @@
     const result = await controller.clearAttribute(
       field.definition.slug,
       pending.current.id,
-      field.definition.cardinality === 'multi' ? pending.current.ordinal : undefined
+      field.definition.cardinality === 'multi' ? pending.current.ordinal : undefined,
     );
     if (result === undefined && controller.draft === null && controller.conflict === null) confirming = undefined;
   }
@@ -198,11 +244,23 @@
 <section class="attribute-section" aria-label="Attributes">
   <header class="section-header">
     <h3>Attributes</h3>
-    <Button label="Create attribute field" size="sm" disabled={!canCreateDefinition()} onclick={() => { creatingDefinition = true; }} />
+    <Button
+      label="Create attribute field"
+      size="sm"
+      disabled={!canCreateDefinition()}
+      onclick={() => {
+        creatingDefinition = true;
+      }}
+    />
   </header>
 
   {#if creatingDefinition}
-    <AttributeDefinitionDialog {controller} onClose={() => { creatingDefinition = false; }} />
+    <AttributeDefinitionDialog
+      {controller}
+      onClose={() => {
+        creatingDefinition = false;
+      }}
+    />
   {/if}
 
   {#each fields as field (field.definition.universal_id)}
@@ -263,15 +321,35 @@
                   size="sm"
                   tone="danger"
                   disabled={!canClose(field.definition)}
-                  onclick={() => { confirming = { universalID: field.definition.universal_id, current: value, position: index + 1 }; editing = undefined; }}
+                  onclick={() => {
+                    confirming = { universalID: field.definition.universal_id, current: value, position: index + 1 };
+                    editing = undefined;
+                  }}
                 />
               {/if}
             </div>
             {#if confirming?.universalID === field.definition.universal_id && confirming.current.id === value.id}
-              <div class="close-confirm" role="group" aria-label={`Confirm closing ${field.definition.label} value ${confirming.position}`}>
+              <div
+                class="close-confirm"
+                role="group"
+                aria-label={`Confirm closing ${field.definition.label} value ${confirming.position}`}
+              >
                 <span>Close this current value while keeping it in history?</span>
-                <Button label="Cancel" size="sm" onclick={() => { confirming = undefined; }} />
-                <Button label="Confirm close attribute" size="sm" tone="danger" surface="solid" disabled={!canClose(field.definition)} onclick={() => void closeCurrent()} />
+                <Button
+                  label="Cancel"
+                  size="sm"
+                  onclick={() => {
+                    confirming = undefined;
+                  }}
+                />
+                <Button
+                  label="Confirm close attribute"
+                  size="sm"
+                  tone="danger"
+                  surface="solid"
+                  disabled={!canClose(field.definition)}
+                  onclick={() => void closeCurrent()}
+                />
               </div>
             {/if}
           </li>
@@ -287,7 +365,9 @@
             definition={field.definition}
             current={editing.current}
             sensitiveRevealed={isRevealed(field.definition)}
-            onDone={() => { editing = undefined; }}
+            onDone={() => {
+              editing = undefined;
+            }}
             onCancel={() => discardEditor(field.definition)}
           />
         {/key}
@@ -313,9 +393,18 @@
 
       {#if attributeConflict(field.definition) && editing?.universalID !== field.definition.universal_id}
         <div class="attribute-error" role="alert">
-          <span>{controller.conflict?.code === 'attribute_conflict' ? 'This person changed elsewhere. Reload and retry.' : controller.conflict?.message}</span>
+          <span
+            >{controller.conflict?.code === 'attribute_conflict'
+              ? 'This person changed elsewhere. Reload and retry.'
+              : controller.conflict?.message}</span
+          >
           {#if operationNeedsReload(field.definition)}
-            <Button label="Reload attributes" size="sm" disabled={!controller.canReload} onclick={() => void reload()} />
+            <Button
+              label="Reload attributes"
+              size="sm"
+              disabled={!controller.canReload}
+              onclick={() => void reload()}
+            />
           {/if}
         </div>
       {/if}
@@ -326,20 +415,94 @@
 </section>
 
 <style>
-  .attribute-section, .attribute-field, .definition-copy, .value-copy, li { display: grid; gap: var(--space-2); }
-  .section-header, .field-header, .field-actions, .title-row, .value-actions, .close-confirm, .attribute-error { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .section-header { justify-content: space-between; }
-  .field-header { align-items: flex-start; justify-content: space-between; }
-  .field-actions, .value-actions { justify-content: flex-end; }
-  h3, h4, p, ul { margin: 0; }
-  h4 { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  small, .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .attribute-field { padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
-  .current-values, .history-values { display: grid; gap: var(--space-2); padding: 0; list-style: none; }
-  .current-values > li, .history-values > li { padding: var(--space-2); background: var(--bg-inset); border-radius: var(--radius-sm); }
-  .sensitive { display: inline-block; padding: 1px 5px; border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); font-size: var(--font-size-sm); }
-  summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .history-values { margin-top: var(--space-2); }
-  .close-confirm, .attribute-error { padding: var(--space-2); background: var(--bg-inset); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .attribute-error { justify-content: space-between; }
+  .attribute-section,
+  .attribute-field,
+  .definition-copy,
+  .value-copy,
+  li {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .section-header,
+  .field-header,
+  .field-actions,
+  .title-row,
+  .value-actions,
+  .close-confirm,
+  .attribute-error {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .section-header {
+    justify-content: space-between;
+  }
+  .field-header {
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .field-actions,
+  .value-actions {
+    justify-content: flex-end;
+  }
+  h3,
+  h4,
+  p,
+  ul {
+    margin: 0;
+  }
+  h4 {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  small,
+  .empty {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .attribute-field {
+    padding: var(--space-3);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+  }
+  .current-values,
+  .history-values {
+    display: grid;
+    gap: var(--space-2);
+    padding: 0;
+    list-style: none;
+  }
+  .current-values > li,
+  .history-values > li {
+    padding: var(--space-2);
+    background: var(--bg-inset);
+    border-radius: var(--radius-sm);
+  }
+  .sensitive {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-warning);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+  }
+  summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .history-values {
+    margin-top: var(--space-2);
+  }
+  .close-confirm,
+  .attribute-error {
+    padding: var(--space-2);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .attribute-error {
+    justify-content: space-between;
+  }
 </style>

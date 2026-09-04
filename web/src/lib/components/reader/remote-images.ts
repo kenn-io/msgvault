@@ -1,3 +1,4 @@
+import { getRemoteImage as generatedGetRemoteImage } from '../../api/generated/api/api';
 import type { APIClient } from '../../api/client';
 import { imagePlaceholderBlock, inertTemplate } from '../../content/sanitize';
 import {
@@ -7,9 +8,8 @@ import {
   hardBoundedLimit,
   readBoundedStream,
   throwIfAborted,
-  type DecodedByteBudget
+  type DecodedByteBudget,
 } from './inline-images';
-
 // Consented remote images are fetched by the authenticated shell through the
 // daemon's SSRF-hardened proxy (POST /api/v1/content/remote-image) and
 // injected into the archived document as data: URIs. The srcdoc frame's CSP
@@ -23,33 +23,32 @@ export const MAX_ARCHIVED_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES = 30 * 1024 * 1024;
 export const MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES = 128;
 export const MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES = 36 * 1024 * 1024;
-
 interface RemoteImagePublicationLimits {
   occurrences?: number;
   dataURLBytes?: number;
 }
-
 interface RemoteGroup {
   url: string;
   dataURL?: string;
 }
-
 function unavailableRemoteImage(alt: string): HTMLElement {
   return imagePlaceholderBlock(document, `Remote image unavailable${alt ? `: ${alt}` : ''}`);
 }
-
 async function fetchRemoteImage(
   client: APIClient,
   url: string,
   budget: DecodedByteBudget,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<string> {
   throwIfAborted(signal);
-  const { data, response } = await client.POST('/api/v1/content/remote-image', {
-    body: { url },
-    parseAs: 'stream',
-    signal
-  });
+  const { data, response } = await generatedGetRemoteImage(
+    { url },
+    {
+      ...client,
+      signal,
+      parseAs: 'stream',
+    },
+  );
   if (signal.aborted) {
     if (data instanceof ReadableStream) await data.cancel();
     throw abortError();
@@ -62,12 +61,11 @@ async function fetchRemoteImage(
   }
   const bytes = await readBoundedStream(data, budget, signal, {
     imageBytes: MAX_ARCHIVED_REMOTE_IMAGE_BYTES,
-    totalBytes: MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES
+    totalBytes: MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES,
   });
   throwIfAborted(signal);
   return bytesToDataURL(bytes, mimeType);
 }
-
 /**
  * Replaces the sanitizer's indexed remote-image placeholders after explicit
  * consent: each approved URL is fetched once through the daemon proxy and
@@ -85,13 +83,15 @@ export async function resolveArchivedRemoteImages(options: {
   // The placeholders are URL-free, but the reassembled document may carry
   // data: images from earlier passes — keep the parse inert regardless.
   const template = inertTemplate(options.html);
-  const occurrences: Array<{ placeholder: HTMLElement; url: string | undefined; alt: string }> = [];
+  const occurrences: Array<{
+    placeholder: HTMLElement;
+    url: string | undefined;
+    alt: string;
+  }> = [];
   const groups = new Map<string, RemoteGroup>();
   for (const element of template.content.querySelectorAll<HTMLElement>('[data-archived-remote-image]')) {
     const index = Number(element.getAttribute('data-archived-remote-image'));
-    const url = Number.isSafeInteger(index) && index >= 0
-      ? options.remoteImages[index]
-      : undefined;
+    const url = Number.isSafeInteger(index) && index >= 0 ? options.remoteImages[index] : undefined;
     let admittedURL: string | undefined;
     if (url !== undefined && (groups.has(url) || groups.size < MAX_ARCHIVED_REMOTE_IMAGE_URLS)) {
       if (!groups.has(url)) groups.set(url, { url });
@@ -100,10 +100,9 @@ export async function resolveArchivedRemoteImages(options: {
     occurrences.push({
       placeholder: element,
       url: admittedURL,
-      alt: element.getAttribute('data-archived-remote-alt') ?? ''
+      alt: element.getAttribute('data-archived-remote-alt') ?? '',
     });
   }
-
   const budget: DecodedByteBudget = { used: 0 };
   for (const group of groups.values()) {
     throwIfAborted(options.signal);
@@ -116,14 +115,13 @@ export async function resolveArchivedRemoteImages(options: {
       }
     }
   }
-
   const maxPublishedOccurrences = hardBoundedLimit(
     options.publicationLimits?.occurrences,
-    MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES
+    MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES,
   );
   const maxSerializedBytes = hardBoundedLimit(
     options.publicationLimits?.dataURLBytes,
-    MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES
+    MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES,
   );
   let publishedOccurrences = 0;
   let serializedBytes = 0;
@@ -133,7 +131,8 @@ export async function resolveArchivedRemoteImages(options: {
     // charge. Occurrence and cumulative caps mirror the inline-image path so
     // a crafted message cannot repeat one fetched image into an unbounded
     // srcdoc; excess occurrences degrade to the unavailable placeholder.
-    const publishable = dataURL !== undefined &&
+    const publishable =
+      dataURL !== undefined &&
       publishedOccurrences < maxPublishedOccurrences &&
       serializedBytes + dataURL.length <= maxSerializedBytes;
     if (!publishable) {

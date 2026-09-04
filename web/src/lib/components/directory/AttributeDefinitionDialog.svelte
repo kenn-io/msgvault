@@ -1,12 +1,16 @@
 <script lang="ts">
   import { Button, Checkbox, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
 
-  import type { components } from '../../api/generated/schema';
+  import type {
+    AttributeChoice as GeneratedAttributeChoice,
+    AttributeDefinition as GeneratedAttributeDefinition,
+    CreateAttributeDefinitionRequest as GeneratedCreateAttributeDefinitionRequest,
+  } from '../../api/generated/models';
   import { attributeTextLength, trimAttributeText } from '../../directory/attribute-text';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
-  type AttributeDefinition = components['schemas']['AttributeDefinition'];
-  type CreateAttributeDefinitionRequest = components['schemas']['CreateAttributeDefinitionRequest'];
+  type AttributeDefinition = GeneratedAttributeDefinition;
+  type CreateAttributeDefinitionRequest = GeneratedCreateAttributeDefinitionRequest;
 
   interface Props {
     controller: DirectoryProfileController;
@@ -38,11 +42,11 @@
     { value: 'date', label: 'Date' },
     { value: 'timestamp', label: 'Timestamp' },
     { value: 'json', label: 'JSON' },
-    { value: 'record_reference', label: 'Person reference' }
+    { value: 'record_reference', label: 'Person reference' },
   ];
   const cardinalityOptions = [
     { value: 'single', label: 'Single value' },
-    { value: 'multi', label: 'Multiple values' }
+    { value: 'multi', label: 'Multiple values' },
   ];
 
   async function create(): Promise<void> {
@@ -77,10 +81,18 @@
     let completed: AttributeDefinition | undefined;
     try {
       await controller.retryDefinitionRefresh();
-      if (controller.createdDefinition && controller.definitionCreationCommit === null && controller.conflict === null && controller.draft === null) {
+      if (
+        controller.createdDefinition &&
+        controller.definitionCreationCommit === null &&
+        controller.conflict === null &&
+        controller.draft === null
+      ) {
         completed = controller.createdDefinition;
       } else {
-        error = controller.conflict?.message ?? controller.definitionsError ?? 'Unable to refresh the person attribute registry.';
+        error =
+          controller.conflict?.message ??
+          controller.definitionsError ??
+          'Unable to refresh the person attribute registry.';
       }
     } finally {
       pending = false;
@@ -94,7 +106,9 @@
     error = undefined;
     try {
       await controller.reload();
-      error = controller.conflict?.message ?? controller.definitionsError ??
+      error =
+        controller.conflict?.message ??
+        controller.definitionsError ??
         'Definition creation may have succeeded. Reload the page before creating another field.';
     } finally {
       pending = false;
@@ -121,13 +135,14 @@
     const parsedChoices = choiceOptions(parsedMaxLength);
     if (!parsedChoices) return undefined;
     const normalizedUnit = supportsUnit(valueType) && !parsedChoices.length ? trimAttributeText(unit) : '';
-    const options = parsedChoices.length || normalizedUnit || parsedMaxLength !== null
-      ? {
-          ...(parsedChoices.length ? { choices: parsedChoices } : {}),
-          ...(normalizedUnit ? { unit: normalizedUnit } : {}),
-          ...(parsedMaxLength !== null ? { max_length: parsedMaxLength } : {})
-        }
-      : undefined;
+    const options =
+      parsedChoices.length || normalizedUnit || parsedMaxLength !== null
+        ? {
+            ...(parsedChoices.length ? { choices: parsedChoices } : {}),
+            ...(normalizedUnit ? { unit: normalizedUnit } : {}),
+            ...(parsedMaxLength !== null ? { max_length: parsedMaxLength } : {}),
+          }
+        : undefined;
     const hasChoices = parsedChoices.length > 0;
     return {
       object_type: 'person',
@@ -138,18 +153,18 @@
       ...(valueType === 'record_reference' ? { record_target: 'person' } : {}),
       cardinality,
       is_sensitive: sensitive,
-      ...(options ? { options } : {})
+      ...(options ? { options } : {}),
     };
   }
 
-  function choiceOptions(textMaxLength: number | null): components['schemas']['AttributeChoice'][] | undefined {
+  function choiceOptions(textMaxLength: number | null): GeneratedAttributeChoice[] | undefined {
     const lines = choices.split(/\r?\n/).filter((line) => trimAttributeText(line) !== '');
     if (!lines.length) return [];
     if (valueType === 'json' || valueType === 'record_reference') {
       error = `Choices are not supported for ${valueType === 'json' ? 'JSON' : 'person reference'} values.`;
       return undefined;
     }
-    const parsed: components['schemas']['AttributeChoice'][] = [];
+    const parsed: GeneratedAttributeChoice[] = [];
     const seen = new Set<string>();
     for (const line of lines) {
       const separator = line.indexOf('|');
@@ -181,14 +196,18 @@
 
   function canonicalChoiceValue(type: string, value: string): string | undefined {
     switch (type) {
-      case 'text': return value;
+      case 'text':
+        return value;
       case 'integer': {
         if (!/^[+-]?\d+$/.test(value)) return choiceError('Each integer choice must be a whole number.');
         try {
           const parsed = BigInt(value);
-          if (parsed === 0n && value.startsWith('-')) return choiceError('Integer choices cannot use negative zero because generated JSON collapses it to zero.');
+          if (parsed === 0n && value.startsWith('-'))
+            return choiceError('Integer choices cannot use negative zero because generated JSON collapses it to zero.');
           if (parsed < BigInt(Number.MIN_SAFE_INTEGER) || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
-            return choiceError('Each integer choice must be a JavaScript-safe whole number so the generated editor can save it exactly.');
+            return choiceError(
+              'Each integer choice must be a JavaScript-safe whole number so the generated editor can save it exactly.',
+            );
           }
           return parsed.toString();
         } catch {
@@ -196,7 +215,8 @@
         }
       }
       case 'real': {
-        if (value === '-0') return choiceError('Number choices cannot use negative zero because generated JSON collapses it to zero.');
+        if (value === '-0')
+          return choiceError('Number choices cannot use negative zero because generated JSON collapses it to zero.');
         if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
           return choiceError('Each number choice must use an ordinary decimal without exponent notation.');
         }
@@ -204,7 +224,9 @@
         if (!Number.isFinite(parsed)) return choiceError('Each number choice must be finite.');
         const magnitude = Math.abs(parsed);
         if ((magnitude !== 0 && magnitude < 0.0001) || magnitude >= 1_000_000 || JSON.stringify(parsed) !== value) {
-          return choiceError('Each number choice must be an exact ordinary decimal from 0.0001 up to (but not including) 1000000.');
+          return choiceError(
+            'Each number choice must be an exact ordinary decimal from 0.0001 up to (but not including) 1000000.',
+          );
         }
         return value;
       }
@@ -213,9 +235,12 @@
         if (['0', 'f', 'F', 'FALSE', 'false', 'False'].includes(value)) return 'false';
         return choiceError('Each boolean choice must be true or false.');
       }
-      case 'date': return validDate(value) ? value : choiceError('Each date choice must be an exact YYYY-MM-DD calendar date.');
-      case 'timestamp': return validCanonicalTimestamp(value) ? value : timestampChoiceError(value);
-      default: return choiceError('Choices are not supported for this value type.');
+      case 'date':
+        return validDate(value) ? value : choiceError('Each date choice must be an exact YYYY-MM-DD calendar date.');
+      case 'timestamp':
+        return validCanonicalTimestamp(value) ? value : timestampChoiceError(value);
+      default:
+        return choiceError('Choices are not supported for this value type.');
     }
   }
 
@@ -240,15 +265,27 @@
     const minute = Number(match[5]);
     const second = Number(match[6]);
     const fraction = match[7];
-    return validCalendarParts(year, month, day) && hour <= 23 && minute <= 59 && second <= 59 &&
-      (!fraction || !fraction.endsWith('0'));
+    return (
+      validCalendarParts(year, month, day) &&
+      hour <= 23 &&
+      minute <= 59 &&
+      second <= 59 &&
+      (!fraction || !fraction.endsWith('0'))
+    );
   }
 
   function timestampChoiceError(value: string): undefined {
-    if (!value.endsWith('Z')) return choiceError('Each timestamp choice must already use canonical UTC with a Z suffix; offsets are not normalized in the web dialog.');
+    if (!value.endsWith('Z'))
+      return choiceError(
+        'Each timestamp choice must already use canonical UTC with a Z suffix; offsets are not normalized in the web dialog.',
+      );
     const fraction = /\.(\d+)Z$/.exec(value)?.[1];
-    if (fraction && fraction.length > 9) return choiceError('Each timestamp choice may use at most nine fractional digits.');
-    if (fraction?.endsWith('0')) return choiceError('Each timestamp choice must omit trailing zero fractional digits to match the server registry.');
+    if (fraction && fraction.length > 9)
+      return choiceError('Each timestamp choice may use at most nine fractional digits.');
+    if (fraction?.endsWith('0'))
+      return choiceError(
+        'Each timestamp choice must omit trailing zero fractional digits to match the server registry.',
+      );
     return choiceError('Each timestamp choice must be a canonical RFC3339 UTC timestamp.');
   }
 
@@ -276,13 +313,20 @@
 
   function fieldType(type: string): string {
     switch (type) {
-      case 'integer': return 'duration';
-      case 'boolean': return 'checkbox';
-      case 'date': return 'date';
-      case 'timestamp': return 'timestamp';
-      case 'json': return 'json';
-      case 'record_reference': return 'person';
-      default: return 'text';
+      case 'integer':
+        return 'duration';
+      case 'boolean':
+        return 'checkbox';
+      case 'date':
+        return 'date';
+      case 'timestamp':
+        return 'timestamp';
+      case 'json':
+        return 'json';
+      case 'record_reference':
+        return 'person';
+      default:
+        return 'text';
     }
   }
 
@@ -326,7 +370,12 @@
   }
 </script>
 
-<Modal title="Create attribute field" ariaLabel="Create attribute field" closeLabel="Close create attribute field" onclose={requestClose}>
+<Modal
+  title="Create attribute field"
+  ariaLabel="Create attribute field"
+  closeLabel="Close create attribute field"
+  onclose={requestClose}
+>
   {#if created}
     <div class="created" role="status" tabindex="-1" use:focusResult>
       <strong>Created {created.label}</strong>
@@ -342,33 +391,97 @@
         <p class="error" role="alert">{error ?? controller.conflict?.message ?? controller.definitionsError}</p>
       {/if}
       {#if controller.definitionCreationCommit.kind === 'target'}
-        <p>The field was created, but the person attribute registry has not returned its exact identity yet. Retry the registry refresh; do not create the field again.</p>
+        <p>
+          The field was created, but the person attribute registry has not returned its exact identity yet. Retry the
+          registry refresh; do not create the field again.
+        </p>
         {#if !creating}
           <div class="actions">
-            <Button label="Retry registry refresh" tone="info" surface="solid" disabled={pending} onclick={() => { void retryRegistryRefresh(); }} />
+            <Button
+              label="Retry registry refresh"
+              tone="info"
+              surface="solid"
+              disabled={pending}
+              onclick={() => {
+                void retryRegistryRefresh();
+              }}
+            />
           </div>
         {/if}
       {:else}
-        <p>The server accepted the create request without a usable identity. Do not create the field again. Reload Directory before making another attempt.</p>
+        <p>
+          The server accepted the create request without a usable identity. Do not create the field again. Reload
+          Directory before making another attempt.
+        </p>
         {#if !creating}
           <div class="actions">
-            <Button label="Reload Directory" tone="info" surface="solid" disabled={pending} onclick={() => { void reloadDirectory(); }} />
+            <Button
+              label="Reload Directory"
+              tone="info"
+              surface="solid"
+              disabled={pending}
+              onclick={() => {
+                void reloadDirectory();
+              }}
+            />
           </div>
         {/if}
       {/if}
     </div>
   {:else}
-    <form aria-busy={pending} onsubmit={(event) => { event.preventDefault(); void create(); }}>
+    <form
+      aria-busy={pending}
+      onsubmit={(event) => {
+        event.preventDefault();
+        void create();
+      }}
+    >
       <label>Label<TextInput ariaLabel="Label" bind:value={label} autocomplete="off" block /></label>
       <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
-      <label>Value type<SelectDropdown title="Value type" value={valueType} options={valueTypeOptions} onchange={selectValueType} /></label>
-      <label>Cardinality<SelectDropdown title="Cardinality" value={cardinality} options={cardinalityOptions} onchange={(value) => { cardinality = value as 'single' | 'multi'; }} /></label>
+      <label
+        >Value type<SelectDropdown
+          title="Value type"
+          value={valueType}
+          options={valueTypeOptions}
+          onchange={selectValueType}
+        /></label
+      >
+      <label
+        >Cardinality<SelectDropdown
+          title="Cardinality"
+          value={cardinality}
+          options={cardinalityOptions}
+          onchange={(value) => {
+            cardinality = value as 'single' | 'multi';
+          }}
+        /></label
+      >
       {#if supportsChoices(valueType)}
-        <label>Choices<textarea aria-label="Choices" value={choices} oninput={(event) => updateChoices(event.currentTarget.value)} placeholder="One value or value | label per line" aria-describedby="definition-choices-help"></textarea></label>
-        <small id="definition-choices-help">Optional. Choices support text, integer, number, boolean, date, and timestamp values.</small>
+        <label
+          >Choices<textarea
+            aria-label="Choices"
+            value={choices}
+            oninput={(event) => updateChoices(event.currentTarget.value)}
+            placeholder="One value or value | label per line"
+            aria-describedby="definition-choices-help"
+          ></textarea></label
+        >
+        <small id="definition-choices-help"
+          >Optional. Choices support text, integer, number, boolean, date, and timestamp values.</small
+        >
       {/if}
-      {#if supportsUnit(valueType) && !hasChoices}<label>Unit<TextInput ariaLabel="Unit" bind:value={unit} autocomplete="off" block /></label>{/if}
-      {#if valueType === 'text'}<label>Maximum length<TextInput ariaLabel="Maximum length" bind:value={maxLength} oninput={updateMaxLength} autocomplete="off" block /></label>{/if}
+      {#if supportsUnit(valueType) && !hasChoices}<label
+          >Unit<TextInput ariaLabel="Unit" bind:value={unit} autocomplete="off" block /></label
+        >{/if}
+      {#if valueType === 'text'}<label
+          >Maximum length<TextInput
+            ariaLabel="Maximum length"
+            bind:value={maxLength}
+            oninput={updateMaxLength}
+            autocomplete="off"
+            block
+          /></label
+        >{/if}
       <Checkbox label="Sensitive" bind:checked={sensitive} disabled={pending} />
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="actions">
@@ -380,11 +493,42 @@
 </Modal>
 
 <style>
-  form, .created, .recovery { display: grid; gap: var(--space-3); min-width: min(28rem, calc(100vw - 64px)); }
-  label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
-  .created span { overflow-wrap: anywhere; }
-  small { color: var(--text-muted); }
-  .actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
-  .error { margin: 0; color: var(--text-danger); }
+  form,
+  .created,
+  .recovery {
+    display: grid;
+    gap: var(--space-3);
+    min-width: min(28rem, calc(100vw - 64px));
+  }
+  label {
+    display: grid;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  textarea {
+    min-height: 5rem;
+    resize: vertical;
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+  }
+  .created span {
+    overflow-wrap: anywhere;
+  }
+  small {
+    color: var(--text-muted);
+  }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+  .error {
+    margin: 0;
+    color: var(--text-danger);
+  }
 </style>

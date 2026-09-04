@@ -1,27 +1,50 @@
+import {
+  getCardDAVPublication as generatedGetCardDAVPublication,
+  publishCardDAVPerson as generatedPublishCardDAVPerson,
+  unpublishCardDAVPerson as generatedUnpublishCardDAVPerson,
+} from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
-import type { components } from '../api/generated/schema';
-
-type GeneratedPublication = components['schemas']['CardDAVPublicationResponse'];
-type GeneratedBook = components['schemas']['CardDAVAddressBookIdentityResponse'];
-
+import type {
+  CardDAVAddressBookIdentityResponse as GeneratedCardDAVAddressBookIdentityResponse,
+  CardDAVPublicationResponse as GeneratedCardDAVPublicationResponse,
+} from '../api/generated/models';
+type GeneratedPublication = GeneratedCardDAVPublicationResponse;
+type GeneratedBook = GeneratedCardDAVAddressBookIdentityResponse;
 export type CardDAVPublicationAction = 'publish' | 'unpublish';
 export type CardDAVPublicationBook = Pick<GeneratedBook, 'id' | 'name'>;
 export type CardDAVPublication = Pick<GeneratedPublication, 'person_id' | 'state' | 'desired'> &
   Partial<Pick<GeneratedPublication, 'pending_operation' | 'conflict_id'>> & {
     address_book?: CardDAVPublicationBook;
   };
-
 export type CardDAVPublicationOutcome =
-  | { kind: 'confirmed'; action: CardDAVPublicationAction }
-  | { kind: 'reconciled'; action: CardDAVPublicationAction }
-  | { kind: 'unknown'; action: CardDAVPublicationAction }
-  | { kind: 'error'; action: CardDAVPublicationAction }
-  | { kind: 'ignored' };
-
+  | {
+      kind: 'confirmed';
+      action: CardDAVPublicationAction;
+    }
+  | {
+      kind: 'reconciled';
+      action: CardDAVPublicationAction;
+    }
+  | {
+      kind: 'unknown';
+      action: CardDAVPublicationAction;
+    }
+  | {
+      kind: 'error';
+      action: CardDAVPublicationAction;
+    }
+  | {
+      kind: 'ignored';
+    };
 type Snapshot =
-  | { ok: true; value: CardDAVPublication }
-  | { ok: false; unavailable: boolean };
-
+  | {
+      ok: true;
+      value: CardDAVPublication;
+    }
+  | {
+      ok: false;
+      unavailable: boolean;
+    };
 export class CardDAVPublicationController {
   personID = $state<number>();
   publication = $state<CardDAVPublication>();
@@ -31,7 +54,6 @@ export class CardDAVPublicationController {
   unavailable = $state(false);
   stateUnknown = $state(false);
   announcement = $state<string | null>(null);
-
   private readonly client: APIClient;
   private disposed = false;
   private generation = 0;
@@ -39,11 +61,9 @@ export class CardDAVPublicationController {
   private mutationGeneration = 0;
   private readAbort?: AbortController;
   private mutationAbort?: AbortController;
-
   constructor(client: APIClient) {
     this.client = client;
   }
-
   async setPerson(personID: number): Promise<void> {
     if (this.disposed || !Number.isSafeInteger(personID) || personID <= 0) return;
     this.generation += 1;
@@ -63,33 +83,26 @@ export class CardDAVPublicationController {
     this.announcement = null;
     await this.load();
   }
-
   async load(): Promise<void> {
     if (this.personID === undefined || this.disposed) return;
     await this.readState(this.personID);
   }
-
   async retryState(): Promise<void> {
     if (this.personID === undefined || this.disposed || this.loading) return;
     await this.readState(this.personID);
   }
-
   async publish(): Promise<CardDAVPublicationOutcome> {
     return await this.mutate('publish');
   }
-
   async unpublish(): Promise<CardDAVPublicationOutcome> {
     return await this.mutate('unpublish');
   }
-
   canPublish(): boolean {
     return this.isActionAllowed('publish');
   }
-
   canUnpublish(): boolean {
     return this.isActionAllowed('unpublish');
   }
-
   destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -101,7 +114,6 @@ export class CardDAVPublicationController {
     this.readAbort = undefined;
     this.mutationAbort = undefined;
   }
-
   private async mutate(action: CardDAVPublicationAction): Promise<CardDAVPublicationOutcome> {
     const personID = this.personID;
     if (personID === undefined || !this.isActionAllowed(action)) return { kind: 'ignored' };
@@ -114,13 +126,22 @@ export class CardDAVPublicationController {
     this.error = null;
     this.announcement = null;
     try {
-      const result = action === 'publish'
-        ? await this.client.POST('/api/v1/carddav/publications/{person_id}', {
-            params: { path: { person_id: personID } }, signal: controller.signal
-          })
-        : await this.client.DELETE('/api/v1/carddav/publications/{person_id}', {
-            params: { path: { person_id: personID } }, signal: controller.signal
-          });
+      const result =
+        action === 'publish'
+          ? await generatedPublishCardDAVPerson(
+              { personId: personID },
+              {
+                ...this.client,
+                signal: controller.signal,
+              },
+            )
+          : await generatedUnpublishCardDAVPerson(
+              { personId: personID },
+              {
+                ...this.client,
+                signal: controller.signal,
+              },
+            );
       if (!this.currentMutation(context, mutation, personID, controller.signal)) return { kind: 'ignored' };
       const confirmed = result.data ? safePublication(result.data) : undefined;
       if (confirmed?.person_id === personID) {
@@ -128,9 +149,10 @@ export class CardDAVPublicationController {
         return { kind: 'confirmed', action };
       }
       if (result.response.status === 400 || result.response.status === 404) {
-        this.error = action === 'publish'
-          ? 'Unable to publish this person to CardDAV.'
-          : 'Unable to remove this person from CardDAV.';
+        this.error =
+          action === 'publish'
+            ? 'Unable to publish this person to CardDAV.'
+            : 'Unable to remove this person from CardDAV.';
         return { kind: 'error', action };
       }
       return await this.reconcileMutation(personID, action, context, mutation);
@@ -144,12 +166,11 @@ export class CardDAVPublicationController {
       }
     }
   }
-
   private async reconcileMutation(
     personID: number,
     action: CardDAVPublicationAction,
     context: number,
-    mutation: number
+    mutation: number,
   ): Promise<CardDAVPublicationOutcome> {
     const reconciled = await this.readState(personID);
     if (!this.currentMutation(context, mutation, personID)) return { kind: 'ignored' };
@@ -162,7 +183,6 @@ export class CardDAVPublicationController {
     this.error = 'Current CardDAV publication state is unknown. Retry state before changing publication.';
     return { kind: 'unknown', action };
   }
-
   private async readState(personID: number): Promise<boolean> {
     if (this.disposed || this.personID !== personID) return false;
     const context = this.generation;
@@ -192,12 +212,15 @@ export class CardDAVPublicationController {
     this.loading = false;
     return snapshot.ok && snapshot.value.person_id === personID;
   }
-
   private async fetchState(personID: number, signal: AbortSignal): Promise<Snapshot> {
     try {
-      const { data, error } = await this.client.GET('/api/v1/carddav/publications/{person_id}', {
-        params: { path: { person_id: personID } }, signal
-      });
+      const { data, error } = await generatedGetCardDAVPublication(
+        { personId: personID },
+        {
+          ...this.client,
+          signal,
+        },
+      );
       const value = data ? safePublication(data) : undefined;
       if (value) return { ok: true, value };
       return { ok: false, unavailable: error?.error === 'carddav_unavailable' };
@@ -205,7 +228,6 @@ export class CardDAVPublicationController {
       return { ok: false, unavailable: false };
     }
   }
-
   private isActionAllowed(action: CardDAVPublicationAction): boolean {
     if (this.disposed || this.loading || this.pendingAction !== undefined || this.stateUnknown) return false;
     const publication = this.publication;
@@ -213,7 +235,6 @@ export class CardDAVPublicationController {
     if (action === 'publish') return publication.state === 'unpublished' && publication.address_book !== undefined;
     return publication.state === 'published';
   }
-
   private applyConfirmed(publication: CardDAVPublication, action: CardDAVPublicationAction): void {
     this.publication = publication;
     this.unavailable = false;
@@ -230,34 +251,32 @@ export class CardDAVPublicationController {
       this.announcement = `Removed this person from CardDAV${book ? ` in ${book}` : ''}.`;
     }
   }
-
   private current(generation: number, personID: number, signal?: AbortSignal): boolean {
     return !this.disposed && this.generation === generation && this.personID === personID && !signal?.aborted;
   }
-
   private currentRead(generation: number, request: number, personID: number, signal?: AbortSignal): boolean {
     return this.current(generation, personID, signal) && this.readGeneration === request;
   }
-
   private currentMutation(generation: number, mutation: number, personID: number, signal?: AbortSignal): boolean {
     return this.current(generation, personID, signal) && this.mutationGeneration === mutation;
   }
 }
-
 function safePublication(value: GeneratedPublication): CardDAVPublication | undefined {
   if (!Number.isSafeInteger(value.person_id) || value.person_id <= 0) return undefined;
-  const addressBook = value.address_book && Number.isSafeInteger(value.address_book.id) && value.address_book.id > 0
-    ? { id: value.address_book.id, name: value.address_book.name }
-    : undefined;
-  const conflictID = value.conflict_id !== undefined && Number.isSafeInteger(value.conflict_id) && value.conflict_id > 0
-    ? value.conflict_id
-    : undefined;
+  const addressBook =
+    value.address_book && Number.isSafeInteger(value.address_book.id) && value.address_book.id > 0
+      ? { id: value.address_book.id, name: value.address_book.name }
+      : undefined;
+  const conflictID =
+    value.conflict_id !== undefined && Number.isSafeInteger(value.conflict_id) && value.conflict_id > 0
+      ? value.conflict_id
+      : undefined;
   return {
     person_id: value.person_id,
     state: value.state,
     desired: value.desired,
     ...(addressBook ? { address_book: addressBook } : {}),
     ...(value.pending_operation !== undefined ? { pending_operation: value.pending_operation } : {}),
-    ...(conflictID !== undefined ? { conflict_id: conflictID } : {})
+    ...(conflictID !== undefined ? { conflict_id: conflictID } : {}),
   };
 }

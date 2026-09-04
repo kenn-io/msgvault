@@ -1,45 +1,53 @@
+import {
+  acceptIdentityMatchCandidate as generatedAcceptIdentityMatchCandidate,
+  listIdentityMatchCandidates as generatedListIdentityMatchCandidates,
+  rejectIdentityMatchCandidate as generatedRejectIdentityMatchCandidate,
+} from '../api/generated/api/api';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-
 import type { APIClient } from '../api/client';
-import type { components } from '../api/generated/schema';
-import type {
-  DirectoryReviewKind,
-  IdentityReviewState,
-  RelationshipReviewState
-} from '../explore/models';
+import type { IdentityMatchCandidate as GeneratedIdentityMatchCandidate } from '../api/generated/models';
+import type { DirectoryReviewKind, IdentityReviewState, RelationshipReviewState } from '../explore/models';
 import {
   validatePersonMergeRequired,
   type PersonMergeSuccess,
-  type ValidatedPersonMergeRequired
+  type ValidatedPersonMergeRequired,
 } from './person-merge';
-
 export const IDENTITY_REVIEW_PAGE_LIMIT = 100;
-
-export type IdentityMatchCandidate = components['schemas']['IdentityMatchCandidate'];
+export type IdentityMatchCandidate = GeneratedIdentityMatchCandidate;
 export type PersonMergeRequiredError = ValidatedPersonMergeRequired;
 type ReviewCommit = (patch: {
   reviewKind?: DirectoryReviewKind;
   identityState?: IdentityReviewState;
   relationshipReviewState?: RelationshipReviewState;
 }) => void;
-
 export type IdentityDecisionResult =
-  | { ok: true; candidate: IdentityMatchCandidate; cacheState: 'ready' | 'stale' }
-  | { ok: false; kind: 'merge_required'; conflict: PersonMergeRequiredError }
-  | { ok: false; kind: 'error'; status: number; message: string };
-
+  | {
+      ok: true;
+      candidate: IdentityMatchCandidate;
+      cacheState: 'ready' | 'stale';
+    }
+  | {
+      ok: false;
+      kind: 'merge_required';
+      conflict: PersonMergeRequiredError;
+    }
+  | {
+      ok: false;
+      kind: 'error';
+      status: number;
+      message: string;
+    };
 interface ReviewURLState {
   reviewKind: DirectoryReviewKind;
   identityState: IdentityReviewState;
 }
-
 export interface DirectoryReviewContextSnapshot extends ReviewURLState {
   generation: number;
   offset: number;
 }
-
-export type DirectoryReviewMergeCompletion = PersonMergeSuccess & { candidateID: number };
-
+export type DirectoryReviewMergeCompletion = PersonMergeSuccess & {
+  candidateID: number;
+};
 /**
  * Browser-independent owner for the Directory review queue. URL filters stay
  * with ExploreState; request generations, offsets, pending decisions and
@@ -55,10 +63,12 @@ export class DirectoryReviewController {
   pageError = $state<string | null>(null);
   decisionError = $state<string | null>(null);
   status = $state<string | null>(null);
-  mergeRequired = $state<{ candidateID: number; conflict: PersonMergeRequiredError } | null>(null);
+  mergeRequired = $state<{
+    candidateID: number;
+    conflict: PersonMergeRequiredError;
+  } | null>(null);
   lastMerge = $state<DirectoryReviewMergeCompletion | null>(null);
   readonly pendingDecisions = new SvelteSet<number>();
-
   private readonly client: APIClient;
   private readonly commit: ReviewCommit;
   private pageAbort: AbortController | undefined;
@@ -69,50 +79,51 @@ export class DirectoryReviewController {
   private disposed = false;
   private readonly decisionRequests = new Map<number, AbortController>();
   private readonly decisionDrafts = new SvelteMap<number, string>();
-
   constructor(client: APIClient, commit: ReviewCommit = () => undefined) {
     this.client = client;
     this.commit = commit;
   }
-
-  get hasPreviousPage(): boolean { return this.offset > 0; }
-  get hasNextPage(): boolean { return this.rows.length === IDENTITY_REVIEW_PAGE_LIMIT; }
-  get apiClient(): APIClient { return this.client; }
-
+  get hasPreviousPage(): boolean {
+    return this.offset > 0;
+  }
+  get hasNextPage(): boolean {
+    return this.rows.length === IDENTITY_REVIEW_PAGE_LIMIT;
+  }
+  get apiClient(): APIClient {
+    return this.client;
+  }
   isDecisionPending(candidateID: number): boolean {
     return this.pendingDecisions.has(candidateID);
   }
-
   getDecisionDraft(candidateID: number): string {
     return this.decisionDrafts.get(candidateID) ?? '';
   }
-
   setDecisionDraft(candidateID: number, draft: string): void {
     if (this.disposed || this.pendingDecisions.has(candidateID)) return;
     if (draft === '') this.decisionDrafts.delete(candidateID);
     else this.decisionDrafts.set(candidateID, draft);
   }
-
   clearDecisionDraft(candidateID: number): void {
     if (this.disposed || this.pendingDecisions.has(candidateID)) return;
     this.decisionDrafts.delete(candidateID);
   }
-
   reviewContextSnapshot(): DirectoryReviewContextSnapshot {
     return {
       generation: this.reviewContextGeneration,
       reviewKind: this.reviewKind,
       identityState: this.identityState,
-      offset: this.offset
+      offset: this.offset,
     };
   }
-
   isReviewContextCurrent(context: DirectoryReviewContextSnapshot): boolean {
-    return !this.disposed && context.generation === this.reviewContextGeneration &&
-      context.reviewKind === this.reviewKind && context.identityState === this.identityState &&
-      context.offset === this.offset;
+    return (
+      !this.disposed &&
+      context.generation === this.reviewContextGeneration &&
+      context.reviewKind === this.reviewKind &&
+      context.identityState === this.identityState &&
+      context.offset === this.offset
+    );
   }
-
   applyURLState(state: ReviewURLState, historyRestoration = false): void {
     if (this.disposed) return;
     const changed = this.reviewKind !== state.reviewKind || this.identityState !== state.identityState;
@@ -129,7 +140,6 @@ export class DirectoryReviewController {
       void this.loadIdentityPage(0, state.identityState);
     }
   }
-
   setReviewKind(reviewKind: DirectoryReviewKind): void {
     if (this.reviewKind === reviewKind) return;
     this.reviewKind = reviewKind;
@@ -138,7 +148,6 @@ export class DirectoryReviewController {
     this.resetIdentityContext(this.identityState);
     if (reviewKind === 'identity') void this.loadIdentityPage(0, this.identityState);
   }
-
   setIdentityState(identityState: IdentityReviewState): void {
     if (this.reviewKind === 'identity' && this.identityState === identityState && this.initialized) return;
     this.identityState = identityState;
@@ -148,10 +157,9 @@ export class DirectoryReviewController {
     this.resetIdentityContext(identityState);
     void this.loadIdentityPage(0, identityState);
   }
-
   async loadIdentityPage(
     targetOffset = this.offset,
-    state: IdentityReviewState = this.identityState
+    state: IdentityReviewState = this.identityState,
   ): Promise<boolean> {
     if (this.disposed) return false;
     const contextChanged = this.reviewKind !== 'identity' || this.identityState !== state;
@@ -172,10 +180,13 @@ export class DirectoryReviewController {
     this.pageError = null;
     this.retryOffset = undefined;
     try {
-      const response = await this.client.GET('/api/v1/identity/match-candidates', {
-        params: { query: { state, limit: IDENTITY_REVIEW_PAGE_LIMIT, offset: targetOffset } },
-        signal: abort.signal
-      });
+      const response = await generatedListIdentityMatchCandidates(
+        { state, limit: IDENTITY_REVIEW_PAGE_LIMIT, offset: targetOffset },
+        {
+          ...this.client,
+          signal: abort.signal,
+        },
+      );
       if (!this.ownsPage(abort, generation)) return false;
       if (response.data) {
         this.rows = response.data.candidates ?? [];
@@ -192,41 +203,35 @@ export class DirectoryReviewController {
       if (generation === this.pageGeneration) this.loading = false;
     }
   }
-
   async loadNextPage(): Promise<void> {
     if (this.loading || !this.hasNextPage) return;
     await this.loadIdentityPage(this.offset + IDENTITY_REVIEW_PAGE_LIMIT);
   }
-
   async loadPreviousPage(): Promise<void> {
     if (this.loading || !this.hasPreviousPage) return;
     await this.loadIdentityPage(Math.max(0, this.offset - IDENTITY_REVIEW_PAGE_LIMIT));
   }
-
   async retryPage(): Promise<void> {
     await this.loadIdentityPage(this.retryOffset ?? this.offset);
   }
-
   async acceptIdentity(
     candidateID: number,
     notes?: string,
-    context = this.reviewContextSnapshot()
+    context = this.reviewContextSnapshot(),
   ): Promise<IdentityDecisionResult> {
     return this.decideIdentity(candidateID, 'accept', notes, context);
   }
-
   async rejectIdentity(
     candidateID: number,
     notes?: string,
-    context = this.reviewContextSnapshot()
+    context = this.reviewContextSnapshot(),
   ): Promise<IdentityDecisionResult> {
     return this.decideIdentity(candidateID, 'reject', notes, context);
   }
-
   async completePersonMerge(
     candidateID: number,
     context: DirectoryReviewContextSnapshot,
-    success: PersonMergeSuccess
+    success: PersonMergeSuccess,
   ): Promise<void> {
     if (this.disposed) return;
     this.lastMerge = { candidateID, ...success };
@@ -237,7 +242,6 @@ export class DirectoryReviewController {
     this.status = `People merged into ${name}. Identity cache ${success.result.cache_state}.`;
     await this.loadIdentityPage(context.offset, context.identityState);
   }
-
   destroy(): void {
     this.disposed = true;
     this.pageAbort?.abort();
@@ -249,12 +253,11 @@ export class DirectoryReviewController {
     this.decisionDrafts.clear();
     this.loading = false;
   }
-
   private async decideIdentity(
     candidateID: number,
     decision: 'accept' | 'reject',
     notes: string | undefined,
-    context: DirectoryReviewContextSnapshot
+    context: DirectoryReviewContextSnapshot,
   ): Promise<IdentityDecisionResult> {
     if (!this.isReviewContextCurrent(context)) {
       return { ok: false, kind: 'error', status: 0, message: 'The review context changed.' };
@@ -272,13 +275,16 @@ export class DirectoryReviewController {
     const trimmedNotes = this.getDecisionDraft(candidateID).trim();
     const body = trimmedNotes ? { notes: trimmedNotes } : {};
     try {
-      const response = decision === 'accept'
-        ? await this.client.POST('/api/v1/identity/match-candidates/{id}/accept', {
-            params: { path: { id: candidateID } }, body, signal: abort.signal
-          })
-        : await this.client.POST('/api/v1/identity/match-candidates/{id}/reject', {
-            params: { path: { id: candidateID } }, body, signal: abort.signal
-          });
+      const response =
+        decision === 'accept'
+          ? await generatedAcceptIdentityMatchCandidate({ id: candidateID }, body, {
+              ...this.client,
+              signal: abort.signal,
+            })
+          : await generatedRejectIdentityMatchCandidate({ id: candidateID }, body, {
+              ...this.client,
+              signal: abort.signal,
+            });
       if (!this.ownsDecision(candidateID, abort)) {
         return { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
@@ -293,9 +299,8 @@ export class DirectoryReviewController {
         await this.loadIdentityPage(this.offset, this.identityState);
         return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
       }
-      const mergeConflict = decision === 'accept' && response.response.status === 409
-        ? validatePersonMergeRequired(response.error)
-        : null;
+      const mergeConflict =
+        decision === 'accept' && response.response.status === 409 ? validatePersonMergeRequired(response.error) : null;
       if (mergeConflict) {
         if (this.ownsDecisionContext(context)) this.mergeRequired = { candidateID, conflict: mergeConflict };
         return { ok: false, kind: 'merge_required', conflict: mergeConflict };
@@ -317,25 +322,20 @@ export class DirectoryReviewController {
       }
     }
   }
-
   private ownsPage(abort: AbortController, generation: number): boolean {
     return !this.disposed && !abort.signal.aborted && this.pageAbort === abort && this.pageGeneration === generation;
   }
-
   private ownsDecision(candidateID: number, abort: AbortController): boolean {
     return !this.disposed && !abort.signal.aborted && this.decisionRequests.get(candidateID) === abort;
   }
-
   private ownsDecisionContext(context: DirectoryReviewContextSnapshot): boolean {
     return this.isReviewContextCurrent(context);
   }
-
   private retainPageFailure(targetOffset: number, message: string): void {
     this.retryOffset = targetOffset;
     if (this.rows.length > 0) this.pageError = message;
     else this.error = message;
   }
-
   private resetIdentityContext(identityState: IdentityReviewState): void {
     ++this.reviewContextGeneration;
     this.pageAbort?.abort();
@@ -353,13 +353,11 @@ export class DirectoryReviewController {
     this.retryOffset = undefined;
   }
 }
-
 function replaceByID(rows: IdentityMatchCandidate[], replacement: IdentityMatchCandidate): IdentityMatchCandidate[] {
   return rows.some((row) => row.id === replacement.id)
-    ? rows.map((row) => row.id === replacement.id ? replacement : row)
+    ? rows.map((row) => (row.id === replacement.id ? replacement : row))
     : [...rows, replacement];
 }
-
 function failureMessage(error: unknown, status: number): string {
   if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
     return error.message;

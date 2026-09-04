@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
+  import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
     Button,
     CommandPalette,
@@ -9,12 +11,14 @@
     TopBar,
     appShortcuts,
     initShortcuts,
-    type PaletteCommand
+    type PaletteCommand,
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, type Snippet, untrack } from 'svelte';
-
   import type { APIClient } from '../../api/client';
-  import type { components } from '../../api/generated/schema';
+  import type {
+    ExplorePreflightResponse as GeneratedExplorePreflightResponse,
+    ExploreSelection as GeneratedExploreSelection,
+  } from '../../api/generated/models';
   import type {
     EntryRow,
     ExploreColumn,
@@ -25,7 +29,7 @@
     ExploreURLState,
     ExploreWorkspace,
     FileViewerTarget,
-    FileSearchSort
+    FileSearchSort,
   } from '../../explore/models';
   import { attachmentSelection, parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup, parseGroupSelection } from '../../explore/group-context';
@@ -44,7 +48,7 @@
     createAppearancePreferences,
     type AppearanceDefaults,
     type DensityPreference,
-    type ThemePreference
+    type ThemePreference,
   } from '../../theme/preferences.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
@@ -60,7 +64,6 @@
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
-
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -69,38 +72,31 @@
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
   }
-
   let {
     client,
     state: providedState = undefined,
     enabled = true,
     settings = undefined,
     appearanceDefaults = { theme: 'system', density: 'compact' },
-    searchModeDefault = undefined
+    searchModeDefault = undefined,
   }: Props = $props();
-
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
   const ATTACHMENT_HISTORY_MARKER = 'msgvaultAttachmentViewer';
   const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Everything order.';
-
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
-  const debouncedSearchPatch = bufferedCallback(
-    (patch: Partial<ExploreURLState>) => {
-      // Typing a search query is itself a user-initiated interaction, even
-      // though it only ever writes committed *draft* state (never a
-      // commit* wrapper) — see the disarming note below. Firing on its own
-      // 250ms after the last keystroke, with no navigation ever committing,
-      // must disarm the one-shot landing fallback exactly like beforeCommit
-      // does; only beforeCommit's own explicit flush of THIS callback (a
-      // navigation committing while the patch is still pending) reached it
-      // before.
-      arrivedWithoutExploreParam = false;
-      exploreState.replaceCommittedDraft(patch);
-    },
-    SEARCH_TYPING_DEBOUNCE_MS
-  );
-
+  const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
+    // Typing a search query is itself a user-initiated interaction, even
+    // though it only ever writes committed *draft* state (never a
+    // commit* wrapper) — see the disarming note below. Firing on its own
+    // 250ms after the last keystroke, with no navigation ever committing,
+    // must disarm the one-shot landing fallback exactly like beforeCommit
+    // does; only beforeCommit's own explicit flush of THIS callback (a
+    // navigation committing while the patch is still pending) reached it
+    // before.
+    arrivedWithoutExploreParam = false;
+    exploreState.replaceCommittedDraft(patch);
+  }, SEARCH_TYPING_DEBOUNCE_MS);
   // A pending debounced search patch (People/Domains identity search, Files
   // filename search) applies to whatever state is current when it eventually
   // fires. If a navigation commits while the patch is still pending, flushing
@@ -116,7 +112,6 @@
     debouncedSearchPatch.flush();
     arrivedWithoutExploreParam = false;
   }
-
   // Transient replaces (active row, scroll anchor) are user navigation too:
   // apply any pending typed search patch first so it cannot fire later and
   // clobber the newer transient state with the null active row / scroll
@@ -128,94 +123,78 @@
     debouncedSearchPatch.flush();
     exploreState.replaceTransient(patch);
   }
-
   function commitNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.commitNavigation(patch);
   }
-
   function replaceCommittedNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.replaceCommittedNavigation(patch);
   }
-
   // Directory text filters are committed drafts like the Everything typed
   // search: they rewrite the current history entry instead of pushing one.
   function replaceCommittedDraft(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.replaceCommittedDraft(patch);
   }
-
   function commitRestorableNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.commitRestorableNavigation(patch);
   }
-
   function replaceCommittedRestorableNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.replaceCommittedRestorableNavigation(patch);
   }
-
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
     directoryPromotionParticipantID = undefined;
     exploreState.commitWorkspace(workspace);
   }
-
   function openDirectoryFromRelationship(participantID: number): void {
     beforeCommit();
     directoryController.resetForPromotion();
     directoryPromotionParticipantID = participantID;
     exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: null });
   }
-
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
     directoryPromotionParticipantID = undefined;
     exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
   }
-
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
   }
-
   function openCardDAVConflict(conflictID: number): void {
     if (!Number.isSafeInteger(conflictID) || conflictID <= 0) return;
     cardDAVSettingsRequest = { conflictID, key: ++cardDAVSettingsRequestKey };
     announceOperation(`Opening CardDAV conflict ${conflictID} in Settings.`);
     commitWorkspace('settings');
   }
-
   function openCardDAVSettings(): void {
     cardDAVSettingsRequest = { key: ++cardDAVSettingsRequestKey };
     announceOperation('Opening CardDAV settings.');
     commitWorkspace('settings');
   }
-
   function consumeCardDAVSettingsRequest(key: number): void {
     if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;
   }
-
   function commitGrouping(dimension: ExploreGroupDimension): void {
     beforeCommit();
     exploreState.commitGrouping(dimension);
   }
-
   function commitUngroup(): void {
     beforeCommit();
     exploreState.commitUngroup();
   }
-
   function commitSearch(query: string, mode: ExploreSearchMode): void {
     beforeCommit();
     exploreState.commitSearch(query, mode);
   }
-
   const selection = new ExploreSelectionState();
   const appearance = createAppearancePreferences(untrack(() => appearanceDefaults));
   const relationshipsController = new RelationshipsController(
     untrack(() => client),
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
   // Directory owns ephemeral request/page state while ExploreState remains
   // the browser-restorable source for its query, filters, and selection.
@@ -223,15 +202,15 @@
   // history treatment as every other workspace navigation.
   const directoryController = new DirectoryController(
     untrack(() => client),
-    (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch))
+    (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
-    (patch) => commitNavigation(patch)
+    (patch) => commitNavigation(patch),
   );
   const relationshipReviewController = new RelationshipReviewController(
     untrack(() => client),
-    (patch) => commitNavigation(patch)
+    (patch) => commitNavigation(patch),
   );
   const factLedgerController = new FactLedgerController(untrack(() => client));
   // Participant IDs only enter here from a successfully loaded
@@ -243,8 +222,8 @@
   let cardDAVSettingsRequestKey = 0;
   let operationAnnouncementKey = 0;
   let operationAnnouncement = $state({ key: 0, message: '' });
-  type APIExploreSelection = components['schemas']['ExploreSelection'];
-  type ExplorePreflight = components['schemas']['ExplorePreflightResponse'];
+  type APIExploreSelection = GeneratedExploreSelection;
+  type ExplorePreflight = GeneratedExplorePreflightResponse;
   const tabs = [
     { id: 'relationships', label: 'Relationships' },
     { id: 'directory', label: 'Directory' },
@@ -254,14 +233,13 @@
     { id: 'saved_views', label: 'Saved Views' },
     { id: 'sources', label: 'Sources' },
     { id: 'deletions', label: 'Deletions' },
-    { id: 'settings', label: 'Settings' }
+    { id: 'settings', label: 'Settings' },
   ];
   const densityOptions = [
     { value: 'daemon', label: 'Density: Auto' },
     { value: 'compact', label: 'Density: Compact' },
-    { value: 'comfortable', label: 'Density: Comfortable' }
+    { value: 'comfortable', label: 'Density: Comfortable' },
   ];
-
   $effect(() => {
     if (exploreState.current.workspace !== 'settings') cardDAVSettingsRequest = undefined;
   });
@@ -279,9 +257,7 @@
   // popstate (see `handleHistoryFocus` below) — so a user who lands by
   // default, navigates elsewhere, then explicitly clicks back into
   // Relationships later is never silently bounced away again.
-  let arrivedWithoutExploreParam = untrack(
-    () => new URLSearchParams(window.location.search).get('explore') === null
-  );
+  let arrivedWithoutExploreParam = untrack(() => new URLSearchParams(window.location.search).get('explore') === null);
   let landingFallbackApplied = false;
   let contextualViewerFile = $state<FileViewerTarget>();
   let contextualViewerReturnFocus = $state<HTMLElement>();
@@ -297,12 +273,18 @@
   // grid focus restoration are shared shell-wide state the loader cannot own
   // itself; it reaches them only through these callbacks, called at the
   // exact points the original inline effect wrote to that shared state.
-  const loader = new ExploreLoader(untrack(() => client), exploreState, {
-    isEnabled: () => enabled,
-    onPredicateChange: () => selection.clear(),
-    onPagingNotice: (message) => { sortNotice = message ?? DEFAULT_SORT_NOTICE; },
-    onRestorationFocus: () => focusGrid()
-  });
+  const loader = new ExploreLoader(
+    untrack(() => client),
+    exploreState,
+    {
+      isEnabled: () => enabled,
+      onPredicateChange: () => selection.clear(),
+      onPagingNotice: (message) => {
+        sortNotice = message ?? DEFAULT_SORT_NOTICE;
+      },
+      onRestorationFocus: () => focusGrid(),
+    },
+  );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the
   // exact lexical match-count cache, and loaded reading-pane group detail
   // survive a workspace round-trip: AppShell renders EverythingWorkspace
@@ -321,12 +303,10 @@
   let appliedDirectoryRestorationEpoch = untrack(() => exploreState.restorationEpoch);
   let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
   let appliedFactLedgerRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
   });
-
   // URL restoration is shell-owned, just like Relationships' target
   // hydration below. DirectoryWorkspace also supports isolated mounting for
   // component tests, but normal app navigation reaches the controller here.
@@ -344,11 +324,10 @@
       directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
       directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
       directorySort: exploreState.current.directorySort,
-      directoryPersonID: exploreState.current.directoryPersonID
+      directoryPersonID: exploreState.current.directoryPersonID,
     };
     untrack(() => directoryController.applyURLState(directoryState, historyRestoration));
   });
-
   // Review offsets are ephemeral like Directory cursors. A Back/Forward
   // restoration always starts its restored queue at page zero, while an
   // ordinary workspace round trip keeps the AppShell-owned request/page.
@@ -357,39 +336,39 @@
     const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
     appliedDirectoryReviewRestorationEpoch = restorationEpoch;
     const relationshipState = exploreState.current.relationshipReviewState;
-    const factActive = exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
+    const factActive =
+      exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
     const factHistoryRestoration = factActive && restorationEpoch !== appliedFactLedgerRestorationEpoch;
     if (factActive) appliedFactLedgerRestorationEpoch = restorationEpoch;
-    untrack(() => factLedgerController.applyContext(
-      factActive,
-      exploreState.current.directoryPersonID,
-      factHistoryRestoration
-    ));
+    untrack(() =>
+      factLedgerController.applyContext(factActive, exploreState.current.directoryPersonID, factHistoryRestoration),
+    );
     if (exploreState.current.workspace !== 'directory_review') {
       untrack(() => relationshipReviewController.applyContext(false, relationshipState, historyRestoration));
       return;
     }
     const reviewState = {
       reviewKind: exploreState.current.reviewKind,
-      identityState: exploreState.current.identityState
+      identityState: exploreState.current.identityState,
     };
     untrack(() => directoryReviewController.applyURLState(reviewState, historyRestoration));
-    untrack(() => relationshipReviewController.applyContext(
-      reviewState.reviewKind === 'relationship', relationshipState, historyRestoration
-    ));
+    untrack(() =>
+      relationshipReviewController.applyContext(
+        reviewState.reviewKind === 'relationship',
+        relationshipState,
+        historyRestoration,
+      ),
+    );
   });
-
   $effect(() => {
     const mode = getThemeMode();
     if (mode === appearance.current.theme) return;
     untrack(() => appearance.setTemporary({ theme: mode as ThemePreference }));
   });
-
   $effect(() => {
     const mode = searchModeDefault;
     untrack(() => exploreState.setConfiguredDefaultSearchMode(mode));
   });
-
   // sortNotice is shared across workspaces (Everything, Files, etc.). A
   // workspace-specific notice (e.g. the Files grouped End-cap pause message)
   // must not leak into another workspace after switching — for example via
@@ -407,12 +386,8 @@
       }
     });
   });
-
   const selectedAttachmentID = $derived(parseAttachmentSelection(exploreState.current.selectedRow));
-  const readingTargetKey = $derived(
-    selectedAttachmentID === undefined ? exploreState.current.selectedRow : null
-  );
-
+  const readingTargetKey = $derived(selectedAttachmentID === undefined ? exploreState.current.selectedRow : null);
   const apiSelection = $derived.by((): APIExploreSelection | undefined => {
     const snapshot = selection.snapshot();
     const authority = loader.result;
@@ -424,9 +399,7 @@
         row_keys: snapshot.rowKeys,
         cache_revision: authority.cacheRevision,
         search_provenance: authority.searchProvenance,
-        ...(authority.candidateSnapshotId
-          ? { candidate_snapshot_id: authority.candidateSnapshotId }
-          : {})
+        ...(authority.candidateSnapshotId ? { candidate_snapshot_id: authority.candidateSnapshotId } : {}),
       };
     }
     return {
@@ -435,14 +408,10 @@
       exclusions: snapshot.exclusions,
       cache_revision: snapshot.cacheRevision,
       search_provenance: snapshot.searchProvenance,
-      ...(snapshot.candidateSnapshotId
-        ? { candidate_snapshot_id: snapshot.candidateSnapshotId }
-        : {})
+      ...(snapshot.candidateSnapshotId ? { candidate_snapshot_id: snapshot.candidateSnapshotId } : {}),
     };
   });
-
   const apiSelectionFingerprint = $derived(canonicalFingerprint(apiSelection));
-
   $effect(() => {
     const workspace = exploreState.current.workspace;
     void apiSelectionFingerprint;
@@ -453,23 +422,28 @@
     if (!candidate || workspace !== 'everything') return;
     const controller = new AbortController();
     selectionPreflightController = controller;
-    void client.POST('/api/v1/explore/preflight', {
-      body: { selection: candidate },
-      signal: controller.signal
-    }).then(({ data }) => {
-      if (!controller.signal.aborted) selectionPreflight = data;
-    }).catch(() => undefined);
+    void generatedPreflightExploreSelection(
+      { selection: candidate },
+      {
+        ...client,
+        signal: controller.signal,
+      },
+    )
+      .then(({ data }) => {
+        if (!controller.signal.aborted) selectionPreflight = data;
+      })
+      .catch(() => undefined);
   });
-
   async function exportSelection(): Promise<void> {
     const target = selectionPreflight?.action_targets.find((item) => item.action === 'export');
     if (!target || !apiSelection || selectionPreflight?.count !== 1) return;
     try {
-      const { data, response } = await client.GET('/api/v1/cli/message/raw', {
-        params: { query: { id: String(target.message_id) } },
-        parseAs: 'blob'
-      });
-      if (!response.ok || !(data instanceof Blob)) throw new Error('The authorized raw message export is no longer available.');
+      const { data, response } = await generatedGetCLIMessageRaw(
+        { id: String(target.message_id) },
+        { ...client, parseAs: 'blob' },
+      );
+      if (!response.ok || !(data instanceof Blob))
+        throw new Error('The authorized raw message export is no longer available.');
       const objectURL = URL.createObjectURL(data);
       const anchor = document.createElement('a');
       anchor.href = objectURL;
@@ -480,14 +454,12 @@
       loader.error = cause instanceof Error ? cause.message : 'Unable to export the selected message.';
     }
   }
-
   function openDeletionReview(mode: 'explicit' | 'all_matching'): void {
     const candidate = apiSelection;
     if (exploreState.current.workspace !== 'everything' || !candidate || candidate.mode !== mode) return;
     pendingDeletionReview = mode;
     commitWorkspace('deletions');
   }
-
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
     selection.clear();
     replaceCommittedNavigation(state);
@@ -496,7 +468,6 @@
     if (grid) grid.focus();
     else searchInput?.focus();
   }
-
   function viewerTargetFromFact(file: ExploreFileFact): FileViewerTarget {
     return {
       id: file.id,
@@ -506,10 +477,9 @@
       conversation_id: file.conversation_id,
       filename: file.filename,
       mime_type: file.mime_type,
-      size_bytes: file.size
+      size_bytes: file.size,
     };
   }
-
   $effect(() => {
     const attachmentID = selectedAttachmentID;
     const facts = loader.fileFacts;
@@ -531,49 +501,43 @@
       if (existing?.key !== local.key) contextualViewerFile = viewerTargetFromFact(local);
     } else if (existing?.id !== attachmentID) contextualViewerFile = { id: attachmentID };
   });
-
   const conversationAnchorId = $derived.by(() => {
     const anchor = exploreState.current.conversationAnchor;
     if (anchor === null) return undefined;
     const parsed = Number(anchor);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
   });
-
   function editableTarget(target: EventTarget | null): boolean {
     if (!(target instanceof Element)) return false;
     const element = target as HTMLElement;
     return Boolean(
-      element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), iframe')
+      element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), iframe'),
     );
   }
-
   function preserveNativeControlKey(event: KeyboardEvent): void {
     if (!(event.target instanceof Element)) return;
     const target = event.target;
     const activationControl = target.closest('button, a[href], summary, [role="button"], [role="option"]');
     const directionalControl = target.closest('[role="radio"], [role="option"], select');
-    if ((activationControl && (event.key === 'Enter' || event.key === ' ')) ||
-      (directionalControl && event.key.startsWith('Arrow'))) {
+    if (
+      (activationControl && (event.key === 'Enter' || event.key === ' ')) ||
+      (directionalControl && event.key.startsWith('Arrow'))
+    ) {
       // Local control handlers and browser defaults run before this document
       // listener; stop only the app-wide shortcut listener on window.
       event.stopPropagation();
     }
   }
-
   function syncEditableShortcutScope(target: EventTarget | null): void {
     const focused = editableTarget(target);
     if (focused && appShortcuts.activeScope() === 'everything-editable') return;
     if (!focused && !editableScopeCleanup) return;
     editableScopeCleanup?.();
-    editableScopeCleanup = focused
-      ? appShortcuts.pushScope('everything-editable')
-      : undefined;
+    editableScopeCleanup = focused ? appShortcuts.pushScope('everything-editable') : undefined;
   }
-
   function focusGrid(): void {
     currentGrid()?.focus();
   }
-
   async function restoreHistoryFocus(): Promise<void> {
     await tick();
     if (exploreState.current.workspace === 'everything') {
@@ -582,18 +546,15 @@
     }
     document.querySelector<HTMLButtonElement>('button[aria-current="page"]')?.focus();
   }
-
   async function focusGridAfterUpdate(): Promise<void> {
     await tick();
     focusGrid();
   }
-
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>(
-      '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"], [role="grid"][aria-label="Files in current context"]'
+      '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"], [role="grid"][aria-label="Files in current context"]',
     );
   }
-
   function relayGridKey(event: KeyboardEvent, key: string): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
@@ -601,56 +562,69 @@
     grid.focus();
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: false, cancelable: true }));
   }
-
   async function closeReadingPane(): Promise<void> {
     commitNavigation({ selectedRow: null });
     await tick();
     focusGrid();
   }
-
   function openFileItem(entryKey: string): void {
     if (selectedAttachmentID !== undefined) {
       replaceCommittedRestorableNavigation({
-        workspace: 'everything', presentation: 'table', selectedRow: entryKey, conversationAnchor: null,
-        activeRow: null, scrollAnchor: null
+        workspace: 'everything',
+        presentation: 'table',
+        selectedRow: entryKey,
+        conversationAnchor: null,
+        activeRow: null,
+        scrollAnchor: null,
       });
       return;
     }
     commitRestorableNavigation({
-      workspace: 'everything', presentation: 'table', selectedRow: entryKey, conversationAnchor: null,
-      activeRow: null, scrollAnchor: null
+      workspace: 'everything',
+      presentation: 'table',
+      selectedRow: entryKey,
+      conversationAnchor: null,
+      activeRow: null,
+      scrollAnchor: null,
     });
   }
-
   function openFileConversation(entryKey: string, messageID: number, _conversationID: number): void {
     if (selectedAttachmentID !== undefined) {
       replaceCommittedRestorableNavigation({
-        workspace: 'everything', presentation: 'table', selectedRow: entryKey,
+        workspace: 'everything',
+        presentation: 'table',
+        selectedRow: entryKey,
         conversationAnchor: String(messageID),
-        activeRow: null, scrollAnchor: null
+        activeRow: null,
+        scrollAnchor: null,
       });
       return;
     }
     commitRestorableNavigation({
-      workspace: 'everything', presentation: 'table', selectedRow: entryKey, conversationAnchor: String(messageID),
-      activeRow: null, scrollAnchor: null
+      workspace: 'everything',
+      presentation: 'table',
+      selectedRow: entryKey,
+      conversationAnchor: String(messageID),
+      activeRow: null,
+      scrollAnchor: null,
     });
   }
-
   function openContextualFile(file: ExploreFileFact): void {
     contextualViewerReturnFocus = currentGrid() ?? undefined;
     contextualViewerFile = viewerTargetFromFact(file);
     commitNavigation({
       selectedRow: attachmentSelection(file.id),
-      conversationAnchor: null
+      conversationAnchor: null,
     });
     window.history.replaceState(
-      { ...(window.history.state && typeof window.history.state === 'object' ? window.history.state : {}),
-        [ATTACHMENT_HISTORY_MARKER]: file.id },
-      '', window.location.href
+      {
+        ...(window.history.state && typeof window.history.state === 'object' ? window.history.state : {}),
+        [ATTACHMENT_HISTORY_MARKER]: file.id,
+      },
+      '',
+      window.location.href,
     );
   }
-
   async function closeContextualViewer(): Promise<void> {
     if (window.history.state?.[ATTACHMENT_HISTORY_MARKER] === selectedAttachmentID) {
       window.history.back();
@@ -661,11 +635,9 @@
     await tick();
     (contextualViewerReturnFocus ?? currentGrid())?.focus();
   }
-
   function changeConversationAnchor(anchorId: number): void {
     replaceCommittedNavigation({ conversationAnchor: String(anchorId) });
   }
-
   // The Relationships hub owns its own Esc layering (reading pane → timeline
   // → list) and only lets an Esc it didn't consume bubble here once it has
   // nothing left to close. This function's branches read/write state that
@@ -688,23 +660,21 @@
     }
     focusGrid();
   }
-
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
-    const selector = kind === 'filters'
-      ? 'button[aria-label="Filters"]'
-      : kind === 'grouping'
-        ? '[data-group-picker] button'
-        : 'button[aria-label="Sort: newest first"]';
+    const selector =
+      kind === 'filters'
+        ? 'button[aria-label="Filters"]'
+        : kind === 'grouping'
+          ? '[data-group-picker] button'
+          : 'button[aria-label="Sort: newest first"]';
     const control = document.querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
   }
-
   function fixedSortNotice(): void {
     sortNotice = 'Everything remains newest first; reverse order is not supported by the canonical entry API.';
     document.querySelector<HTMLButtonElement>('button[aria-label="Sort: newest first"]')?.focus();
   }
-
   function navigateReader(delta: number): void {
     if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
     const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
@@ -712,7 +682,6 @@
     const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
     if (next && next.key !== exploreState.current.selectedRow) openRow(next);
   }
-
   function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined): void {
     const resolvedKey = key ?? event?.key;
     if (!resolvedKey) return;
@@ -727,7 +696,6 @@
       grid.dispatchEvent(new KeyboardEvent('keydown', { key: resolvedKey, bubbles: false, cancelable: true }));
     });
   }
-
   const commandHandlers: CommandHandlers = {
     'move-next': (event) => relay(event, 'j'),
     'move-previous': (event) => relay(event, 'k'),
@@ -739,7 +707,9 @@
     'last-row': (event) => relay(event, 'End'),
     'open-row': (event) => relay(event, 'Enter'),
     'close-layer': (event) => handleEscape(event ?? new KeyboardEvent('keydown', { key: 'Escape' })),
-    'focus-search': (event) => { if (!editableTarget(event?.target ?? null)) searchInput?.focus(); },
+    'focus-search': (event) => {
+      if (!editableTarget(event?.target ?? null)) searchInput?.focus();
+    },
     'toggle-selection': (event) => relay(event, ' '),
     'select-visible': (event) => relay(event, 'A'),
     'clear-selection': (event) => {
@@ -755,38 +725,47 @@
     'open-grouping': () => openContextControl('grouping'),
     'change-sort': () => openContextControl('sort'),
     'reverse-sort': fixedSortNotice,
-    'open-keyboard-help': () => { keyboardHelpOpen = true; },
-    'open-command-palette': (event) => { if (!editableTarget(event?.target ?? null)) paletteOpen = true; }
+    'open-keyboard-help': () => {
+      keyboardHelpOpen = true;
+    },
+    'open-command-palette': (event) => {
+      if (!editableTarget(event?.target ?? null)) paletteOpen = true;
+    },
   };
-  const groupingCommands = $derived(GROUPING_CATALOG.flatMap((entry) => {
-    if (!entry.requestable) return [{
-      id: `unavailable:${entry.concept}`,
-      label: `${entry.label} — unavailable: ${entry.unavailableReason}`,
-      section: 'Group by',
-      keywords: `${entry.keywords} ${entry.unavailableReason ?? ''}`,
-      keys: [],
-      combos: [],
-      destructive: false,
-      review: false,
-      disabled: true,
-      run: () => undefined
-    }];
-    return entry.requestDimensions.map((dimension) => ({
-      id: `group:${dimension}`,
-      label: `Group by ${dimension === 'year' ? 'Year' : dimension === 'month' ? 'Month' : entry.label}`,
-      section: 'Group by',
-      keywords: entry.keywords,
-      keys: [],
-      combos: [],
-      destructive: false,
-      review: false,
-      disabled: exploreState.current.groupingChain.includes(dimension),
-      run: () => {
-        commitGrouping(dimension);
-        void focusGridAfterUpdate();
-      }
-    }));
-  }));
+  const groupingCommands = $derived(
+    GROUPING_CATALOG.flatMap((entry) => {
+      if (!entry.requestable)
+        return [
+          {
+            id: `unavailable:${entry.concept}`,
+            label: `${entry.label} — unavailable: ${entry.unavailableReason}`,
+            section: 'Group by',
+            keywords: `${entry.keywords} ${entry.unavailableReason ?? ''}`,
+            keys: [],
+            combos: [],
+            destructive: false,
+            review: false,
+            disabled: true,
+            run: () => undefined,
+          },
+        ];
+      return entry.requestDimensions.map((dimension) => ({
+        id: `group:${dimension}`,
+        label: `Group by ${dimension === 'year' ? 'Year' : dimension === 'month' ? 'Month' : entry.label}`,
+        section: 'Group by',
+        keywords: entry.keywords,
+        keys: [],
+        combos: [],
+        destructive: false,
+        review: false,
+        disabled: exploreState.current.groupingChain.includes(dimension),
+        run: () => {
+          commitGrouping(dimension);
+          void focusGridAfterUpdate();
+        },
+      }));
+    }),
+  );
   const reviewWorkspaceCommand: AppCommand = {
     id: 'workspace:directory-review',
     label: 'Open Reviews',
@@ -796,38 +775,38 @@
     combos: [],
     destructive: false,
     review: false,
-    run: () => commitWorkspace('directory_review')
+    run: () => commitWorkspace('directory_review'),
   };
   const commandRegistry = $derived([
     ...createCommandRegistry(commandHandlers),
     reviewWorkspaceCommand,
-    ...groupingCommands
+    ...groupingCommands,
   ]);
-  const paletteCommands = $derived(commandRegistry.map((command): PaletteCommand => ({
-    id: command.id,
-    label: command.label,
-    section: command.section,
-    keywords: command.keywords,
-    combo: command.combos[0],
-    disabled: command.disabled
-  })));
-
+  const paletteCommands = $derived(
+    commandRegistry.map(
+      (command): PaletteCommand => ({
+        id: command.id,
+        label: command.label,
+        section: command.section,
+        keywords: command.keywords,
+        combo: command.combos[0],
+        disabled: command.disabled,
+      }),
+    ),
+  );
   function runPalette(command: PaletteCommand): void {
     commandRegistry.find(({ id }) => id === command.id)?.run();
   }
-
   function applyTemporaryDensity(value: string): void {
     if (value === 'daemon') appearance.clearTemporary('density');
     else appearance.setTemporary({ density: value as DensityPreference });
   }
-
   function openRow(row: EntryRow): void {
     // Single-click selects AND opens; re-opening the already-open row must
     // not push a duplicate history entry.
     if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
-
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
     if (!dimension) return;
@@ -839,21 +818,15 @@
     commitNavigation({
       filters,
       groupingChain: remaining,
-      selectedRow: exploreState.current.workspace === 'files'
-        ? null
-        : `group:${dimension}:${row.key}`,
+      selectedRow: exploreState.current.workspace === 'files' ? null : `group:${dimension}:${row.key}`,
       activeRow: null,
-      scrollAnchor: null
+      scrollAnchor: null,
     });
   }
-
   $effect(() => {
     keyboardHelpScopeCleanup?.();
-    keyboardHelpScopeCleanup = keyboardHelpOpen
-      ? appShortcuts.pushScope('everything-keyboard-help')
-      : undefined;
+    keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
   });
-
   // Hydrates the Relationships hub's detail pane from a URL-carried target
   // (initial load, or Back/Forward restoring a different one). The hub
   // itself never opens a target on its own — RelationshipsWorkspace's own
@@ -882,13 +855,14 @@
       return;
     }
     const predicate = exploreState.predicate();
-    if (relationshipsController.target === target &&
-      relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)) {
+    if (
+      relationshipsController.target === target &&
+      relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)
+    ) {
       return;
     }
     void relationshipsController.openTarget(target, predicate);
   });
-
   $effect(() => {
     if (landingFallbackApplied || !arrivedWithoutExploreParam) return;
     if (exploreState.current.workspace !== 'relationships') return;
@@ -903,7 +877,6 @@
     // they actually came from.
     exploreState.replaceCommittedNavigation({ workspace: 'everything' });
   });
-
   function openRelationship(participantID: number): void {
     commitNavigation({
       workspace: 'relationships',
@@ -920,10 +893,9 @@
       selectedRow: null,
       activeRow: null,
       conversationAnchor: null,
-      scrollAnchor: null
+      scrollAnchor: null,
     });
   }
-
   onMount(() => {
     const detachShortcuts = initShortcuts();
     let disposed = false;
@@ -953,12 +925,12 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['contenteditable']
+      attributeFilter: ['contenteditable'],
     });
     resyncEditableScope();
-    const unregister = commandRegistry.flatMap((command) => command.combos.map((combo) =>
-      appShortcuts.register(combo, command.run, { description: command.label })
-    ));
+    const unregister = commandRegistry.flatMap((command) =>
+      command.combos.map((combo) => appShortcuts.register(combo, command.run, { description: command.label })),
+    );
     return () => {
       disposed = true;
       document.removeEventListener('focusin', handleFocusIn, true);
@@ -974,7 +946,6 @@
       detachShortcuts();
     };
   });
-
   onDestroy(() => {
     debouncedSearchPatch.cancel();
     loader.destroy();
@@ -1029,7 +1000,11 @@
         <span aria-hidden="true">
           <StatusDot
             status={loader.loading ? 'working' : loader.error || loader.unavailable ? 'unclean' : 'idle'}
-            label={loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Archive needs attention' : 'Local archive ready'}
+            label={loader.loading
+              ? 'Searching'
+              : loader.error || loader.unavailable
+                ? 'Archive needs attention'
+                : 'Local archive ready'}
           />
         </span>
         {loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}
@@ -1044,7 +1019,9 @@
       {client}
       currentState={exploreState.current}
       selection={selection.snapshot()}
-      onOpen={(state) => { void openSavedView(state); }}
+      onOpen={(state) => {
+        void openSavedView(state);
+      }}
     />
   {:else if exploreState.current.workspace === 'sources'}
     <SourcesWorkspace {client} />
@@ -1053,7 +1030,9 @@
       {client}
       selection={apiSelection}
       reviewOnMount={pendingDeletionReview === apiSelection?.mode}
-      onReviewStarted={() => { pendingDeletionReview = undefined; }}
+      onReviewStarted={() => {
+        pendingDeletionReview = undefined;
+      }}
     />
   {:else if exploreState.current.workspace === 'relationships'}
     <RelationshipsWorkspace
@@ -1070,12 +1049,20 @@
       onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget })}
       onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
       onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
-      onPersonFilePresentationChange={(personFilePresentation) => commitNavigation({
-        personFilePresentation, activeRow: null, selectedRow: null, scrollAnchor: null
-      })}
-      onPersonFileDirectionsChange={(personFileDirections) => commitNavigation({
-        personFileDirections, activeRow: null, selectedRow: null, scrollAnchor: null
-      })}
+      onPersonFilePresentationChange={(personFilePresentation) =>
+        commitNavigation({
+          personFilePresentation,
+          activeRow: null,
+          selectedRow: null,
+          scrollAnchor: null,
+        })}
+      onPersonFileDirectionsChange={(personFileDirections) =>
+        commitNavigation({
+          personFileDirections,
+          activeRow: null,
+          selectedRow: null,
+          scrollAnchor: null,
+        })}
       onOpenEverything={() => commitWorkspace('everything')}
       onOpenDirectory={openDirectoryFromRelationship}
       onOpenDirectoryPerson={openDirectoryPerson}
@@ -1097,7 +1084,7 @@
         directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
         directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
         directorySort: exploreState.current.directorySort,
-        directoryPersonID: exploreState.current.directoryPersonID
+        directoryPersonID: exploreState.current.directoryPersonID,
       }}
       onOpenCardDAVConflict={openCardDAVConflict}
       onOpenCardDAVSettings={openCardDAVSettings}
@@ -1126,20 +1113,31 @@
         onPresentationChange={(presentation) => {
           if (presentation === 'files') return;
           commitNavigation({
-            workspace: 'everything', presentation, analysisTarget: null, selectedIdentifier: null,
-            activeRow: null, selectedRow: null, conversationAnchor: null, scrollAnchor: null
+            workspace: 'everything',
+            presentation,
+            analysisTarget: null,
+            selectedIdentifier: null,
+            activeRow: null,
+            selectedRow: null,
+            conversationAnchor: null,
+            scrollAnchor: null,
           });
         }}
         onAddGroup={(dimension) => commitGrouping(dimension)}
-        onRemoveGroup={(index) => commitNavigation({
-          groupingChain: exploreState.current.groupingChain.filter((_, position) => position !== index),
-          activeRow: null,
-          scrollAnchor: null
-        })}
+        onRemoveGroup={(index) =>
+          commitNavigation({
+            groupingChain: exploreState.current.groupingChain.filter((_, position) => position !== index),
+            activeRow: null,
+            scrollAnchor: null,
+          })}
         onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
-        onFiltersChange={(filters) => commitNavigation({
-          filters, activeRow: null, selectedRow: null, scrollAnchor: null
-        })}
+        onFiltersChange={(filters) =>
+          commitNavigation({
+            filters,
+            activeRow: null,
+            selectedRow: null,
+            scrollAnchor: null,
+          })}
       />
       <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
       {#if exploreState.current.groupingChain.length > 0}
@@ -1181,19 +1179,29 @@
           onRestorationComplete={(epoch) => {
             exploreState.acknowledgeRestoration(epoch);
           }}
-          onSortChange={(fileSort: FileSearchSort) => commitNavigation({
-            fileSort, activeRow: null, scrollAnchor: null
-          })}
-          onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({
-            fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null
-          })}
-          onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({
-            fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null
-          })}
+          onSortChange={(fileSort: FileSearchSort) =>
+            commitNavigation({
+              fileSort,
+              activeRow: null,
+              scrollAnchor: null,
+            })}
+          onFilenameQueryChange={(fileFilenameQuery) =>
+            debouncedSearchPatch({
+              fileFilenameQuery,
+              activeRow: null,
+              selectedRow: null,
+              scrollAnchor: null,
+            })}
+          onMIMEFamiliesChange={(fileMIMEFamilies) =>
+            commitNavigation({
+              fileMIMEFamilies,
+              activeRow: null,
+              selectedRow: null,
+              scrollAnchor: null,
+            })}
           onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-          onSelectedKey={(selectedRow) => selectedRow
-            ? commitNavigation({ selectedRow })
-            : replaceCommittedNavigation({ selectedRow: null })}
+          onSelectedKey={(selectedRow) =>
+            selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
           onOpenItem={openFileItem}
           onOpenConversation={openFileConversation}
         />
@@ -1230,15 +1238,15 @@
   {/if}
 </div>
 
-<CommandPalette
-  bind:open={paletteOpen}
-  commands={paletteCommands}
-  ariaLabel="Everything commands"
-  onrun={runPalette}
-/>
+<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Everything commands" onrun={runPalette} />
 
 {#if keyboardHelpOpen}
-  <KeyboardHelp commands={commandRegistry} onclose={() => { keyboardHelpOpen = false; }} />
+  <KeyboardHelp
+    commands={commandRegistry}
+    onclose={() => {
+      keyboardHelpOpen = false;
+    }}
+  />
 {/if}
 
 {#if contextualViewerFile}
@@ -1246,8 +1254,13 @@
     {client}
     file={contextualViewerFile}
     returnFocus={contextualViewerReturnFocus}
-    onClose={() => { void closeContextualViewer(); }}
-    onOpenItem={(entryKey) => { contextualViewerFile = undefined; openFileItem(entryKey); }}
+    onClose={() => {
+      void closeContextualViewer();
+    }}
+    onOpenItem={(entryKey) => {
+      contextualViewerFile = undefined;
+      openFileItem(entryKey);
+    }}
     onOpenConversation={(entryKey, messageID, conversationID) => {
       contextualViewerFile = undefined;
       openFileConversation(entryKey, messageID, conversationID);

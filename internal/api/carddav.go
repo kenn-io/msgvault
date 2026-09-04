@@ -501,8 +501,8 @@ type CardDAVAddressBookIdentityResponse struct {
 type CardDAVContactSummaryResponse struct {
 	State       carddav.ConflictSideState `json:"state" enum:"present,deleted,unavailable"`
 	DisplayName string                    `json:"display_name,omitempty"`
-	Emails      []string                  `json:"emails" nullable:"false"`
-	Phones      []string                  `json:"phones" nullable:"false"`
+	Emails      []string                  `json:"emails"`
+	Phones      []string                  `json:"phones"`
 	Truncated   bool                      `json:"truncated,omitempty"`
 }
 type CardDAVConflictResponse struct {
@@ -511,7 +511,7 @@ type CardDAVConflictResponse struct {
 	Status             store.CardDAVConflictStatus        `json:"status" enum:"unresolved,resolved"`
 	LocalState         carddav.ConflictSideState          `json:"local_state" enum:"present,deleted,unavailable"`
 	RemoteState        carddav.ConflictSideState          `json:"remote_state" enum:"present,deleted,unavailable"`
-	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote" nullable:"false"`
+	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote"`
 	UpdatedAt          time.Time                          `json:"updated_at"`
 }
 type CardDAVConflictDetailResponse struct {
@@ -522,7 +522,7 @@ type CardDAVConflictDetailResponse struct {
 	Base               CardDAVContactSummaryResponse      `json:"base"`
 	Local              CardDAVContactSummaryResponse      `json:"local"`
 	Remote             CardDAVContactSummaryResponse      `json:"remote"`
-	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote" nullable:"false"`
+	AllowedResolutions []carddav.ResolutionChoice         `json:"allowed_resolutions" enum:"keep_local,keep_remote"`
 	CreatedAt          time.Time                          `json:"created_at"`
 	UpdatedAt          time.Time                          `json:"updated_at"`
 	ResolvedAt         *time.Time                         `json:"resolved_at,omitempty"`
@@ -533,7 +533,7 @@ type CardDAVConflictResolutionResponse struct {
 	Resolution carddav.ResolutionChoice    `json:"resolution" enum:"keep_local,keep_remote"`
 }
 type CardDAVConflictsResponse struct {
-	Conflicts []CardDAVConflictResponse `json:"conflicts" nullable:"false"`
+	Conflicts []CardDAVConflictResponse `json:"conflicts"`
 }
 type CardDAVResolveRequest struct {
 	Choice carddav.ResolutionChoice `json:"choice" enum:"keep_local,keep_remote"`
@@ -578,7 +578,7 @@ type CardDAVStatusResponse struct {
 }
 
 type CardDAVRunsResponse struct {
-	Runs         []CardDAVRunResponse `json:"runs" nullable:"false"`
+	Runs         []CardDAVRunResponse `json:"runs"`
 	NextBeforeID *int64               `json:"next_before_id,omitempty"`
 }
 
