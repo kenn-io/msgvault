@@ -1311,12 +1311,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureCardDAVConflictPendingInvariant(ctx); err != nil {
 		return fmt.Errorf("migrate CardDAV conflict pending state: %w", err)
 	}
-	// Runs after the legacy-column loop so upgraded archives have
-	// account_identities.address_key before it is read, backfilled, and
-	// uniquely indexed.
-	if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
-		return fmt.Errorf("ensure account identity address keys: %w", err)
-	}
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
@@ -1539,6 +1533,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return err
+	}
+
+	// Runs after the legacy-column loop (upgraded archives need the
+	// address_key column before it is read, backfilled, and uniquely
+	// indexed) and after the attribution-provenance migration above: a
+	// duplicate collapse refreshes message attribution, and that refresh
+	// folds identity matches into is_from_me. On a pre-provenance archive
+	// the backfill would then read those identity-derived values as
+	// source-native, permanently mislabeling ownership provenance.
+	if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
+		return fmt.Errorf("ensure account identity address keys: %w", err)
 	}
 
 	// Identity discovery scans one source in message-ID order. On SQLite the
