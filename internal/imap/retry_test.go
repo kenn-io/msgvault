@@ -147,6 +147,26 @@ type retryCloseAfterWriteConn struct {
 }
 
 func (c *retryCloseAfterWriteConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	closeAfterTLSWrite := c.response
+	c.mu.Unlock()
+	if closeAfterTLSWrite && !c.reset && len(p) > 0 {
+		n, err := c.Conn.Write(p[:1])
+		if n > 0 {
+			c.closeOnce.Do(func() {
+				if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
+					_ = tcpConn.CloseWrite()
+					return
+				}
+				_ = c.Close()
+			})
+		}
+		if err == nil && n == 1 {
+			err = io.ErrShortWrite
+		}
+		return n, err
+	}
+
 	n, err := c.Conn.Write(p)
 	if n > 0 {
 		c.mu.Lock()
@@ -155,29 +175,20 @@ func (c *retryCloseAfterWriteConn) Write(p []byte) (int, error) {
 			c.response = true
 		}
 		c.mu.Unlock()
+		if closeAfterTLSWrite {
+			c.closeOnce.Do(func() {
+				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && c.reset {
+					_ = tcpConn.SetLinger(0)
+				}
+				_ = c.Close()
+			})
+		}
 	}
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
 
 func (c *retryCloseAfterWriteConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	if n > 0 {
-		c.mu.Lock()
-		closeAfterHandshake := c.response
-		c.mu.Unlock()
-		if closeAfterHandshake {
-			c.closeOnce.Do(func() {
-				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && c.reset {
-					_ = tcpConn.SetLinger(0)
-				}
-				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && !c.reset {
-					_ = tcpConn.CloseWrite()
-					return
-				}
-				_ = c.Close()
-			})
-		}
-	}
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
 
