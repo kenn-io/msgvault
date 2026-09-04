@@ -31,6 +31,6 @@ func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
 		`SELECT version, applied_at FROM applied_migrations WHERE name = $1`, name).
 		Scan(&version, &gotAppliedAt))
 	assert.Equal(1, version, "legacy PostgreSQL rows must default to version 1")
-	assert.Equal(time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), gotAppliedAt,
+	assert.Equal(time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), gotAppliedAt.UTC(),
 		"legacy PostgreSQL timestamp must survive")
 }
