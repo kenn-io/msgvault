@@ -14,7 +14,7 @@ anything on your Google Calendar.
 
 ## Prerequisites
 
-- An OAuth client already configured for Gmail (see [OAuth Setup](/guides/oauth-setup/)).
+- An OAuth client already configured for Gmail (see [OAuth Setup](/docs/guides/oauth-setup/)).
   Calendar reuses the same `client_secret.json`.
 - The **Google Calendar API** enabled on that OAuth project. In the
   [Google Cloud Console](https://console.cloud.google.com/), go to
@@ -110,7 +110,7 @@ msgvault search "standup" --message-type calendar_event
 msgvault search "after:2024-01-01 before:2024-04-01" --message-type calendar_event
 ```
 
-When [vector search](/usage/vector-search/) is enabled, events become eligible
+When [vector search](/docs/usage/vector-search/) is enabled, events become eligible
 for embedding after sync and can be found semantically with `--mode vector` or
 `--mode hybrid` once the embedding worker has processed them. For manual
 `sync-calendar` runs, follow up with `msgvault embeddings build`. In the
@@ -132,7 +132,7 @@ enabled = true
 ```
 
 The first scheduled run full-syncs and registers calendars; later runs are
-incremental. See [Configuration](/configuration/#google-calendar-sources) for
+incremental. See [Configuration](/docs/configuration/#google-calendar-sources) for
 every field.
 
 !!! note
@@ -183,7 +183,7 @@ Workspace admins using domain-wide delegation do not need per-user browser
 tokens for Calendar. Enable the Google Calendar API, authorize the service
 account client ID for `https://www.googleapis.com/auth/calendar.readonly`, and
 configure `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key`
-as described in [OAuth Setup](/guides/oauth-setup/#google-workspace-service-accounts).
+as described in [OAuth Setup](/docs/guides/oauth-setup/#google-workspace-service-accounts).
 
 Then sync the account directly or add a scheduled `[[gcal]]` entry:
 

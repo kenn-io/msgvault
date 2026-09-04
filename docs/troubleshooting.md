@@ -21,7 +21,7 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 ```
 
-See [Configuration: Windows paths](/configuration/#windows-paths) for more detail.
+See [Configuration: Windows paths](/docs/configuration/#windows-paths) for more detail.
 
 ## OAuth Errors
 
@@ -35,7 +35,7 @@ The Gmail scope isn't configured. Verify you added `gmail.modify` on the **Data 
 
 ### "Access blocked" or "app not approved" for Workspace accounts
 
-The Workspace organization restricts OAuth to apps created within their org. Create a separate Google Cloud project inside the org and configure it as a named OAuth app. See [OAuth Setup: Google Workspace Accounts](/guides/oauth-setup/#google-workspace-accounts).
+The Workspace organization restricts OAuth to apps created within their org. Create a separate Google Cloud project inside the org and configure it as a named OAuth app. See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts).
 
 ### "redirect_uri_mismatch"
 
@@ -165,7 +165,7 @@ docker logs msgvault
 Common causes:
 - Missing `config.toml` with `[oauth] client_secrets` and `[server] bind_addr = "0.0.0.0"` + `api_key`
 - Port 8080 already in use — change `api_port` in config or the port mapping in docker-compose.yml
-- Volume mount permissions — on Synology, add `user: root` to docker-compose.yml (see [Platform Notes](/guides/remote-deployment/#platform-notes))
+- Volume mount permissions — on Synology, add `user: root` to docker-compose.yml (see [Platform Notes](/docs/guides/remote-deployment/#platform-notes))
 
 ### `permission denied` on Synology
 
@@ -281,21 +281,21 @@ If the TUI launches but shows no data:
 
 ### "api_key is required for non-loopback bind address"
 
-You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configuring an API key. Either add an `api_key` to your `[server]` config, or set `allow_insecure = true` if you understand the security implications. See [Web UI & API Server: Security Model](/api-server/#security-model).
+You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configuring an API key. Either add an `api_key` to your `[server]` config, or set `allow_insecure = true` if you understand the security implications. See [Web UI & API Server: Security Model](/docs/api-server/#security-model).
 
 ### The UI reports a missing, stale, or unavailable analytical cache
 
 Run `msgvault build-cache`, then restart a daemon that was already running. The
 Web UI preserves the reported cache state instead of silently switching some
-modalities to a different query engine. See [Web UI: Cache states](/web-ui/#cache-states)
-and [Configuration: analytics](/configuration/#analytics).
+modalities to a different query engine. See [Web UI: Cache states](/docs/web-ui/#cache-states)
+and [Configuration: analytics](/docs/configuration/#analytics).
 
 ### The UI warns that the session cookie is not secure
 
 The browser reached a remote daemon over plain HTTP. Prefer HTTPS at a reverse
 proxy and configure that proxy in `server.trusted_proxies`. Do not trust a whole
 client network merely to suppress the warning. See [Web UI: Remote access and
-HTTPS](/web-ui/#remote-access-and-https).
+HTTPS](/docs/web-ui/#remote-access-and-https).
 
 ### Port already in use
 
@@ -353,7 +353,7 @@ msgvault tui --log-sql-slow-ms 50
 msgvault tui --log-sql
 ```
 
-Log files are stored in `<data_dir>/logs/` by default. Run `msgvault logs --path` to print the selected daemon's directory. See [Configuration: Log](/configuration/#log) for all options.
+Log files are stored in `<data_dir>/logs/` by default. Run `msgvault logs --path` to print the selected daemon's directory. See [Configuration: Log](/docs/configuration/#log) for all options.
 
 ## Still Stuck?
 

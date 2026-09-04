@@ -218,4 +218,4 @@ msgvault query "
 
 ## See Also
 
-For pre-built analytics commands (top senders, domains, labels, overall stats), see [Analytics & Stats](/usage/analytics/). The `query` command is for when you need more flexibility than those commands provide.
+For pre-built analytics commands (top senders, domains, labels, overall stats), see [Analytics & Stats](/docs/usage/analytics/). The `query` command is for when you need more flexibility than those commands provide.

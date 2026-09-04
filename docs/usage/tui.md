@@ -37,7 +37,7 @@ repairs it on demand. Set `auto_build_cache = false` to skip automatic startup
 maintenance; use `msgvault build-cache` for an explicit build. Deprecated in
 0.17.0: the old `msgvault tui --force-sql`, `--no-cache-build`, and
 `--no-sqlite-scanner` flags are hidden because these choices are now daemon
-configuration. See [Configuration: analytics](/configuration/#analytics).
+configuration. See [Configuration: analytics](/docs/configuration/#analytics).
 
 ### Local And Remote
 
@@ -53,17 +53,17 @@ msgvault tui --local
 
 Deletion staging and attachment export use the selected daemon. When connected to a configured remote server, staged deletion manifests are saved on that remote host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view with message counts and sizes" loading="lazy">
+  <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view with message counts and sizes" loading="lazy">
 </figure>
 Press `a` from any aggregate view to show all individual messages in that view. Press `Enter` on a message to view its full detail, including headers and body.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-all-messages.svg" alt="msgvault TUI showing all messages list" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-all-messages.svg" alt="msgvault TUI showing all messages list" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">All messages</figcaption>
   </figure>
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-message-detail.svg" alt="msgvault TUI showing a single message detail view" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-message-detail.svg" alt="msgvault TUI showing a single message detail view" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">Message detail</figcaption>
   </figure>
 </div>
@@ -82,7 +82,7 @@ The TUI provides seven aggregate view modes. Press `g` to cycle through them:
 | Labels | Aggregate by Gmail label |
 | Time | Aggregate by time period (year/month/day) |
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-labels.svg" alt="msgvault TUI Labels view showing Gmail label breakdown" loading="lazy">
+  <img src="/docs/assets/generated/tui-labels.svg" alt="msgvault TUI Labels view showing Gmail label breakdown" loading="lazy">
 </figure>
 ### Time View
 
@@ -90,15 +90,15 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-time-monthly.svg" alt="Time view: monthly granularity" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-time-monthly.svg" alt="Time view: monthly granularity" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">Monthly</figcaption>
   </figure>
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-time-daily.svg" alt="Time view: daily granularity" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-time-daily.svg" alt="Time view: daily granularity" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">Daily</figcaption>
   </figure>
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-time-yearly.svg" alt="Time view: yearly granularity" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-time-yearly.svg" alt="Time view: yearly granularity" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">Yearly</figcaption>
   </figure>
 </div>
@@ -107,9 +107,9 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
 
 Press `m` to cycle through Email, Texts, and Meetings. Texts is skipped when no
 text/chat engine is available, but Meetings remains in the cycle even before a
-meeting source has been configured. See [Text Messages](/usage/text-messages/)
-for local chat imports, [Microsoft Teams](/usage/teams/) for Teams sync, and
-[Discord](/usage/discord/) for guild channel and thread sync.
+meeting source has been configured. See [Text Messages](/docs/usage/text-messages/)
+for local chat imports, [Microsoft Teams](/docs/usage/teams/) for Teams sync, and
+[Discord](/docs/usage/discord/) for guild channel and thread sync.
 
 Text mode provides the following view types. Press `g` to cycle through them:
 
@@ -127,7 +127,7 @@ Navigation and interaction in Text mode work the same as Email mode. Press `Ente
 ## Meetings
 
 Meetings mode is a read-only browser for transcripts and notes imported from
-[Granola or Circleback](/usage/meetings/). It shows a flat, newest-first list
+[Granola or Circleback](/docs/usage/meetings/). It shows a flat, newest-first list
 with each meeting's date, title, organizer, and source. Press `Enter` to open
 the transcript and notes, `Esc` or `Backspace` to return to the list, and the
 left/right arrow keys to move between meeting details.
@@ -150,17 +150,17 @@ read-only, and browsing a transcript never changes the source service.
 
 Press `Enter` to drill into any row. For example, selecting a sender shows their individual messages. Press `Esc` or `Backspace` to go back.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-drilldown.svg" alt="msgvault TUI drill-down showing messages from a specific sender" loading="lazy">
+  <img src="/docs/assets/generated/tui-drilldown.svg" alt="msgvault TUI drill-down showing messages from a specific sender" loading="lazy">
 </figure>
 From a drill-down view, press `g` to re-aggregate the filtered messages by a different dimension. You can think of this like an interactive pivot table. The cycle skips the dimension you drilled into — and when drilling from an email address view (Senders or Recipients), it also skips the corresponding name view since it would be redundant. For example, drilling into a sender and pressing `g` cycles through Recipients, Recipient Names, Domains, Labels, and Time.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-subgroup-recipients.svg" alt="Sub-grouped by Recipients after drilling into a sender" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-subgroup-recipients.svg" alt="Sub-grouped by Recipients after drilling into a sender" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">A sender's email grouped by recipient</figcaption>
   </figure>
   <figure style="margin: 0; text-align: center;" data-lightbox>
-    <img src="/assets/generated/tui-subgroup-time.svg" alt="Sub-grouped by Time after drilling into a sender" style="width: 100%; border-radius: 4px;" />
+    <img src="/docs/assets/generated/tui-subgroup-time.svg" alt="Sub-grouped by Time after drilling into a sender" style="width: 100%; border-radius: 4px;" />
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">A sender's mail grouped by month</figcaption>
   </figure>
 </div>
@@ -169,16 +169,16 @@ From a drill-down view, press `g` to re-aggregate the filtered messages by a dif
 
 Press `/` to open a search bar that filters the current view in real time. Matching text is highlighted in the results. At the aggregate level (Senders, Domains, etc.), search uses the daemon's configured analytics engine, so the default local-daemon setup uses DuckDB over Parquet when the cache is usable.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-search-sender.svg" alt="msgvault TUI search filtering senders by name with highlighted matches" loading="lazy">
+  <img src="/docs/assets/generated/tui-search-sender.svg" alt="msgvault TUI search filtering senders by name with highlighted matches" loading="lazy">
 </figure>
 Search also works after drill-down. Drill into a result, then press `/` again to search within that context. This second-level search uses deep FTS5 full-text search over message subjects and bodies. You can progressively narrow results: find a sender, drill in, then search for a specific subject or keyword.
 
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-search-drilldown.svg" alt="Drilled into search result showing messages from a specific sender" loading="lazy">
+  <img src="/docs/assets/generated/tui-search-drilldown.svg" alt="Drilled into search result showing messages from a specific sender" loading="lazy">
 </figure>
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-search-subject.svg" alt="Searching within a sender's messages by subject keyword with highlighted matches" loading="lazy">
+  <img src="/docs/assets/generated/tui-search-subject.svg" alt="Searching within a sender's messages by subject keyword with highlighted matches" loading="lazy">
 </figure>
 </div>
 
@@ -191,7 +191,7 @@ Press `f` to open the filter modal. The modal presents two independent toggles t
 | Only with attachments | Show only messages that have attachments |
 | Hide deleted from source | Exclude messages that have been deleted from Gmail |
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-filter-modal.svg" alt="msgvault TUI filter modal with checkbox toggles for attachments and hide deleted" loading="lazy">
+  <img src="/docs/assets/generated/tui-filter-modal.svg" alt="msgvault TUI filter modal with checkbox toggles for attachments and hide deleted" loading="lazy">
 </figure>
 Use `↑`/`↓` to navigate, `Space` or `x` to toggle a filter, and `Enter` or `Esc` to apply and close. Active filters are shown in the title bar (e.g. `[Attachments]`, `[Hide Deleted]`). Filters apply to all views: aggregates, drill-downs, sub-aggregates, search results, and stats.
 
@@ -199,7 +199,7 @@ Use `↑`/`↓` to navigate, `Space` or `x` to toggle a filter, and `Enter` or `
 
 From any message list (after drilling into a sender, label, domain, etc.), press `T` to open the full email thread for the highlighted message. This renders the complete conversation inline in the terminal, including sender, date, and body text for each message in the thread.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-thread.svg" alt="msgvault TUI showing a full email thread conversation" loading="lazy">
+  <img src="/docs/assets/generated/tui-thread.svg" alt="msgvault TUI showing a full email thread conversation" loading="lazy">
 </figure>
 Press `Esc` to return to the message list.
 
@@ -231,16 +231,16 @@ Press `Esc` to return to the message list.
 
 You can stage individual messages or bulk-delete entire aggregate groups (e.g. all emails from a sender, all messages with a given label) at once. Use `Space` to select one or more rows, then press `d` to stage them. From any aggregate view, press `D` to stage every message in the current group without selecting individual rows.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
+  <img src="/docs/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
 </figure>
 A confirmation dialog shows exactly how many messages will be staged before anything happens. Messages are not deleted immediately; they are placed in a deletion batch that you review and execute separately with `msgvault delete-staged`.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging" loading="lazy">
+  <img src="/docs/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging" loading="lazy">
 </figure>
-See [Deleting Email](/usage/deletion/) for the full deletion workflow.
+See [Deleting Email](/docs/usage/deletion/) for the full deletion workflow.
 
 ## Performance
 
 The default SQLite archive path uses DuckDB querying Parquet metadata exports for aggregate views. This architecture delivers aggregate queries (top senders, domains, labels, time series) **hundreds of times faster** than equivalent SQLite JOINs. The Parquet analytics layer has a small footprint, so drill-down and re-aggregation feel instant even on very large archives. Configure `[analytics].engine` if you need to force live SQL or require DuckDB.
 
-See [Data Storage](/architecture/storage/) for details on how this works.
+See [Data Storage](/docs/architecture/storage/) for details on how this works.

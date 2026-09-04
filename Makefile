@@ -388,10 +388,9 @@ docs-install:
 docs-build:
 	cd docs && bash ./vercel-build.sh
 
-# Serve docs site locally
-docs-serve:
-	bash docs/assets/hydrate-assets.sh
-	cd docs && uv run bash ./zensical-docs.sh serve
+# Serve the complete site locally with the same layout used by deployment.
+docs-serve: docs-build
+	cd docs && uv run --frozen python -m http.server 8000 --bind 127.0.0.1 --directory site
 
 # Check docs sources and build output
 docs-check:
@@ -485,7 +484,7 @@ help:
 	@echo ""
 	@echo "  docs-install   - Install docs dependencies"
 	@echo "  docs-build     - Build docs site"
-	@echo "  docs-serve     - Hydrate and serve docs locally"
+	@echo "  docs-serve     - Build and serve the complete site locally"
 	@echo "  docs-check     - Run docs validation"
 	@echo "  docs-screenshots - Regenerate docs screenshots"
 	@echo "  docs-assets-branch - Publish static docs assets branch"

@@ -105,7 +105,7 @@ exclude = ["567890123456789012"]
 Most guild channels have more than 20 members, so the default participant cap
 keeps guild media out of the archive unless you raise the cap or set it to `0`.
 Skipped attachments carry a typed `participant_threshold` marker rather than a
-retry marker; see [Media policy](/configuration/#media-policy).
+retry marker; see [Media policy](/docs/configuration/#media-policy).
 
 `include` and `exclude` contain Discord channel, thread, or forum-post IDs. An
 empty `include` means every accessible message container. Top-level channels
@@ -288,10 +288,10 @@ msgvault query --format table "
 "
 ```
 
-In the [TUI](/usage/tui/), press `m` to switch to Texts mode. Discord channels
+In the [TUI](/docs/usage/tui/), press `m` to switch to Texts mode. Discord channels
 and threads appear alongside other chat conversations. The HTTP search and
 message endpoints use the same `message_type = discord` filter; see the
-[Web Server](/api-server/). If vector search is enabled, run
+[Web Server](/docs/api-server/). If vector search is enabled, run
 `msgvault embeddings build` after a manual sync or enable
 `[vector.embed.schedule].run_after_sync` for scheduled syncs.
 

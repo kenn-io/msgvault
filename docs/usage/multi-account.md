@@ -18,21 +18,21 @@ msgvault introduces three concepts, always in the same order: account, then iden
 **A collection is a named group of accounts.** The `All` collection exists by default and contains every account. You create others (`work`, `personal`, or any grouping you like) to search, report, and deduplicate a logical group without changing the underlying sources. A collection is the boundary for every cross-account operation. A collection's identity is the union of its member accounts' identities, computed at read time, so you never manage it directly. Collections contain accounts only, never other collections.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/account-collection-concept.png" alt="Accounts on the left are individual ingest sources, each carrying the identifiers that mean you inside that source. Collections on the right are named groups of accounts: All contains every account, with Personal and Work as deliberate subsets." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/account-collection-concept.png" alt="Accounts on the left are individual ingest sources, each carrying the identifiers that mean you inside that source. Collections on the right are named groups of accounts: All contains every account, with Personal and Work as deliberate subsets." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
-Deduplication operates over all three concepts and has its own [Deduplication](/usage/deduplication/) page.
+Deduplication operates over all three concepts and has its own [Deduplication](/docs/usage/deduplication/) page.
 
 ## OAuth Apps and Tokens
 
 For personal Gmail accounts, a single `client_secret.json` supports all of them. Each `add-account` call authorizes one account and stores a separate token file.
 
-Google Workspace organizations often restrict OAuth to apps created within their own org. If a Workspace account fails to authorize with your default app, create a separate OAuth app inside that org and add it as a named app in `config.toml`. See the [OAuth Setup Guide](/guides/oauth-setup/#google-workspace-accounts) for the full walkthrough.
+Google Workspace organizations often restrict OAuth to apps created within their own org. If a Workspace account fails to authorize with your default app, create a separate OAuth app inside that org and add it as a named app in `config.toml`. See the [OAuth Setup Guide](/docs/guides/oauth-setup/#google-workspace-accounts) for the full walkthrough.
 
 Workspace admins can also use a Google service account with domain-wide delegation. Configure `service_account_key` under `[oauth]` or `[oauth.apps.<name>]`, authorize the service account client in the Google Admin Console, then run `msgvault add-account user@domain.com`. Service-account accounts do not store per-user refresh tokens; msgvault mints delegated tokens on demand.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/oauth-multi-account-concept.png" alt="Two OAuth apps and the token files they create. A default app (config block [oauth]) authorizes personal Gmail accounts personal@gmail.com and other@gmail.com; a named app ([oauth.apps.acme]) authorizes the Workspace account you@acme.com. Each add-account run writes its own token file under ~/.msgvault/tokens/, color-matched to its account." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/oauth-multi-account-concept.png" alt="Two OAuth apps and the token files they create. A default app (config block [oauth]) authorizes personal Gmail accounts personal@gmail.com and other@gmail.com; a named app ([oauth.apps.acme]) authorizes the Workspace account you@acme.com. Each add-account run writes its own token file under ~/.msgvault/tokens/, color-matched to its account." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## Adding Accounts
@@ -87,7 +87,7 @@ Each account has a confirmed "me" identity: the email addresses, phone numbers, 
 
 Source identities are different from the observed people and durable profiles
 used by relationship exploration. See [People, Profiles, and Source
-Identities](/usage/people/) for evidence discovery, bulk import, optional
+Identities](/docs/usage/people/) for evidence discovery, bulk import, optional
 Fastmail alias inventory, person promotion, and typed attributes.
 
 New Gmail, IMAP, Microsoft 365, MBOX, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
@@ -156,7 +156,7 @@ msgvault stats --collection Work
 
 ## Deduplication
 
-Once several accounts hold overlapping copies of the same message, [deduplication](/usage/deduplication/) collapses each set to one visible survivor while keeping every source's provenance intact. It hides redundant copies rather than deleting them, and every step beyond hiding is a separate, opt-in action. See the [Deduplication](/usage/deduplication/) page for the detection rules, survivor selection, and the reversible safety ladder.
+Once several accounts hold overlapping copies of the same message, [deduplication](/docs/usage/deduplication/) collapses each set to one visible survivor while keeping every source's provenance intact. It hides redundant copies rather than deleting them, and every step beyond hiding is a separate, opt-in action. See the [Deduplication](/docs/usage/deduplication/) page for the detection rules, survivor selection, and the reversible safety ladder.
 
 ## TUI Filtering
 
@@ -168,4 +168,4 @@ Email account filter.
 
 ## Command Reference
 
-See the [CLI Reference](/cli-reference/#add-account) for the complete flag list on `add-account`, `add-imap`, `add-o365`, `identity`, and `collection`.
+See the [CLI Reference](/docs/cli-reference/#add-account) for the complete flag list on `add-account`, `add-imap`, `add-o365`, `identity`, and `collection`.

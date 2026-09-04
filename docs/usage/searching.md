@@ -113,7 +113,7 @@ msgvault search --collection Work
 
 The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
 
-SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/architecture/search-ranking/).
+SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
 ## Source-Deleted Messages
 
@@ -186,5 +186,5 @@ The same `msgvault search` command supports semantic search when the
 selected local daemon or remote server has `[vector]` configured with
 an embedding endpoint. Pass
 `--mode vector` for pure semantic search, or `--mode hybrid` to fuse
-BM25 and vector ranking. See [Vector Search](/usage/vector-search/)
+BM25 and vector ranking. See [Vector Search](/docs/usage/vector-search/)
 for setup, initial embedding, and incremental update workflows.

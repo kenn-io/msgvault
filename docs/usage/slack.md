@@ -155,7 +155,7 @@ than 20 members are skipped with a typed `participant_threshold` marker; DMs,
 group DMs, and small channels keep theirs. Set `media_max_participants = 0`
 under `[slack]` to collect from every channel, or `media_scope = "direct"` to
 collect only from DMs and group DMs (see
-[Media policy](/configuration/#media-policy)). Files hosted outside
+[Media policy](/docs/configuration/#media-policy)). Files hosted outside
 `files.slack.com` (external links, connected drives) are recorded as metadata +
 permalink only. Failed downloads leave pending markers:
 
@@ -181,7 +181,7 @@ media_max_participants = 20   # default; 0 = collect files from every channel
 ```
 
 The daemon then syncs every registered workspace on the schedule. See
-[Configuration](/configuration/#slack) for the full option list
+[Configuration](/docs/configuration/#slack) for the full option list
 (channel include/exclude filters, media scope, participant and size caps,
 per-workspace `accounts_config` overrides).
 

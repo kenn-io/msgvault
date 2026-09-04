@@ -10,13 +10,13 @@ Archive a lifetime of email and chat. Fast keyword search, opt-in semantic
 search, and local AI workflows.
 
 <p class="hero-actions">
-  <a class="md-button md-button--primary" href="/setup/">Quick Start</a>
+  <a class="md-button md-button--primary" href="/docs/setup/">Quick Start</a>
   <a class="md-button" href="https://github.com/kenn-io/msgvault">GitHub</a>
   <a class="md-button" href="https://discord.gg/fDnmxB8Wkq">Discord</a>
 </p>
 
 <figure class="hero-shot" data-lightbox>
-  <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
+  <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
 Supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, Granola, Circleback, Notion AI Meeting Notes, Beeper
@@ -24,7 +24,7 @@ Desktop, IMAP, and Microsoft 365 mail sync; verifiable backup snapshots; PST,
 MBOX, and Apple Mail import; and chat/text import from WhatsApp, iMessage,
 Google Voice, Facebook Messenger, and SMS Backup & Restore.
 
-Read the [Introduction](/introduction/) to learn more about why this project
+Read the [Introduction](/docs/introduction/) to learn more about why this project
 was created.
 
 ## Install
@@ -39,14 +39,14 @@ curl -fsSL https://msgvault.io/install.sh | bash
 powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex"
 ```
 
-Then [set up OAuth credentials](/guides/oauth-setup/) and [start
-syncing](/setup/). You can also [build from source](/setup/#build-from-source).
+Then [set up OAuth credentials](/docs/guides/oauth-setup/) and [start
+syncing](/docs/setup/). You can also [build from source](/docs/setup/#build-from-source).
 
 !!! note "New in 0.19.0"
     Explore relationships in the new Web UI; archive Slack workspaces and
     Discord guilds; ingest meetings through the API; export bounded message
     windows; discover source identities; and manage durable person profiles.
-    See the [Changelog](/changelog/) for the full release notes.
+    See the [Changelog](/docs/changelog/) for the full release notes.
 
 ## Why msgvault?
 
@@ -139,4 +139,4 @@ it lives in an archive on disk that you own and control.
 
 ## How It Works
 
-<img class="diagram-center" src="/assets/static/how-it-works.svg" alt="msgvault architecture: Gmail API syncs to SQLite, then offline Parquet analytics, FTS5 search, TUI, and MCP Server">
+<img class="diagram-center" src="/docs/assets/static/how-it-works.svg" alt="msgvault architecture: Gmail API syncs to SQLite, then offline Parquet analytics, FTS5 search, TUI, and MCP Server">

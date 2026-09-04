@@ -10,7 +10,7 @@ description: Daemon-served analytical Web UI and REST API for your msgvault arch
 `msgvault serve` starts an HTTP server that exposes your archive through the
 first-party Web UI at `/` and a REST API under `/api`. It optionally runs a
 background sync scheduler to keep accounts up to date on a cron-based schedule.
-The complete UI is embedded in the release binary; see [Web UI](/web-ui/) for
+The complete UI is embedded in the release binary; see [Web UI](/docs/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
 The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.15.0. Within the unreleased 2.x line, 2.14.0 replaces the CardDAV publication and conflict response shapes with bounded projections that omit raw vCards and resource hrefs. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
@@ -195,7 +195,7 @@ the building generation while a rebuild is in flight, otherwise the active
 generation. During a rebuild the old active generation keeps serving vector
 and hybrid search, but active-generation top-ups are frozen until the
 building generation activates. See
-[Vector Search](/usage/vector-search/) for the end-to-end workflow.
+[Vector Search](/docs/usage/vector-search/) for the end-to-end workflow.
 
 ---
 
@@ -1081,8 +1081,8 @@ that signal (BM25 missed it or the ANN pool did not include it).
 nothing to fuse). `subject_boosted` is true when the subject-line
 boost was applied.
 
-See [Searching](/usage/searching/) for the full query syntax
-reference and [Vector Search](/usage/vector-search/) for vector /
+See [Searching](/docs/usage/searching/) for the full query syntax
+reference and [Vector Search](/docs/usage/vector-search/) for vector /
 hybrid setup.
 
 ---
@@ -1669,7 +1669,7 @@ The same HTTP server backs configured remote CLI access and the local background
     messages. Teams and Discord importers detect and checkpoint their own
     first-run history backfills.
 
-`msgvault serve` also runs scheduled SyncTech SMS Backup & Restore Drive sources configured under `[[synctech_sms.sources]]`; see [Configuration](/configuration/#synctech-sms-sources).
+`msgvault serve` also runs scheduled SyncTech SMS Backup & Restore Drive sources configured under `[[synctech_sms.sources]]`; see [Configuration](/docs/configuration/#synctech-sms-sources).
 
 ## Security Model
 
@@ -1717,7 +1717,7 @@ requires a usable Parquet cache and keeps analytics unavailable until it is
 ready; a build or open failure is fatal rather than a silent SQL fallback.
 `auto_build_cache = false` leaves cache rebuilds to explicit
 `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags
-deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).
+deprecated in 0.17.0; see [Configuration: analytics](/docs/configuration/#analytics).
 
 `min_rebuild_interval` limits only automatic post-sync rebuilds. Explicit
 builds, startup maintenance, query-required builds, and unusable-cache recovery
@@ -1735,4 +1735,4 @@ repeated archive-scale work on frequently synced archives. Changes under
 | `schedule` | — | Cron expression for sync schedule |
 | `enabled` | `true` | Whether scheduled sync is active |
 
-See the [Configuration](/configuration/) page for the full config file reference.
+See the [Configuration](/docs/configuration/) page for the full config file reference.

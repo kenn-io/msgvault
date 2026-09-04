@@ -35,7 +35,7 @@ staging an all-matching selection that could span more than one account.
 
 The fastest way to clean up your inbox is through the TUI's aggregate views. Navigate to the Senders, Domains, or Labels view, find the group you want to remove (e.g., a prolific spam sender or an unwanted mailing list), and press `D` to stage every message in that group for deletion at once.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging of all messages from a sender" loading="lazy">
+  <img src="/docs/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging of all messages from a sender" loading="lazy">
 </figure>
 A confirmation dialog shows exactly how many messages will be staged. Nothing is deleted until you explicitly run `msgvault delete-staged`.
 
@@ -43,21 +43,21 @@ A confirmation dialog shows exactly how many messages will be staged. Nothing is
 
 For finer control, drill into any group and use `Space` to select individual rows, then press `d` to stage only the selected messages.
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
+  <img src="/docs/assets/generated/tui-selection.svg" alt="msgvault TUI with rows selected for deletion staging" loading="lazy">
 </figure>
 ## Staging via MCP (AI-Assisted)
 
-You can also stage deletions through the [MCP server](/usage/chat/) by asking an AI assistant like Claude to find and stage messages for you. For example:
+You can also stage deletions through the [MCP server](/docs/usage/chat/) by asking an AI assistant like Claude to find and stage messages for you. For example:
 
 - *"Stage all messages from noreply@linkedin.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
-The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/usage/chat/#staged-deletion-via-mcp) for details.
+The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/docs/usage/chat/#staged-deletion-via-mcp) for details.
 
 ## Staging via HTTP API
 
 Web dashboards and automation scripts can stage deletion manifests through the
-[web API](/api-server/#post-apiv1deletions) without constructing a manifest
+[web API](/docs/api-server/#post-apiv1deletions) without constructing a manifest
 themselves. `POST /api/v1/deletions` accepts structured filters and/or
 internal message IDs, resolves the Gmail IDs on the server, and supports
 `"dry_run": true` to preview the count and a sample before writing anything.
@@ -65,7 +65,7 @@ internal message IDs, resolves the Gmail IDs on the server, and supports
 Actually staging depends on the request shape. An explicit `message_ids` list
 stages directly. Filter-based staging requires a preflighted selection: run
 the reviewed predicate through
-[`POST /api/v1/explore/preflight`](/api-server/#post-apiv1explorepreflight)
+[`POST /api/v1/explore/preflight`](/docs/api-server/#post-apiv1explorepreflight)
 to get a single-use `operation_token` (valid for five minutes), then stage
 with the same selection and token. A non-dry-run filter request without a
 preflighted selection is rejected with `428 preflight_required`.
