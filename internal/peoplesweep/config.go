@@ -656,13 +656,14 @@ func validateProtocolHTTPCapabilities(provider ProviderConfig) error {
 	if !ok {
 		return nil
 	}
-	if slices.Contains([]AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone}, provider.Auth) &&
+	if capability.RequiredAuth != "" && !slices.Contains(capability.AuthSchemes, provider.Auth) {
+		return fmt.Errorf(
+			"[people.sweep.provider] %s requires auth %q",
+			capability.Protocol, capability.RequiredAuth)
+	}
+	if capability.RequiredAuth == "" &&
+		slices.Contains([]AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone}, provider.Auth) &&
 		!slices.Contains(capability.AuthSchemes, provider.Auth) {
-		if capability.RequiredAuth != "" {
-			return fmt.Errorf(
-				"[people.sweep.provider] %s requires auth %q",
-				capability.Protocol, capability.RequiredAuth)
-		}
 		return fmt.Errorf(
 			"[people.sweep.provider] auth %q is not supported by %s",
 			provider.Auth, capability.Protocol)
