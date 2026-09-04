@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -80,40 +81,51 @@ func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
 		sources = []*store.Source{source}
 	}
 
+	// Each source repairs (and, with --apply, commits) independently. If a
+	// later source fails, or an output write fails, sources already
+	// repaired above this point must still be reflected in the analytics
+	// cache — so accumulate totals before anything that can still fail, and
+	// rebuild the cache below unconditionally on --apply rather than only
+	// after a fully successful loop.
 	var totalScanned, totalChanged int
-	for _, src := range sources {
-		summary, err := st.RepairIMAPSourceLabels(cmd.Context(), src.ID, apply)
-		if err != nil {
-			return fmt.Errorf("repair labels for %s: %w", src.Identifier, err)
+	runErr := func() error {
+		for _, src := range sources {
+			summary, err := st.RepairIMAPSourceLabels(cmd.Context(), src.ID, apply)
+			if err != nil {
+				return fmt.Errorf("repair labels for %s: %w", src.Identifier, err)
+			}
+			totalScanned += summary.Scanned
+			totalChanged += summary.Changed
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s: scanned=%d changed=%d\n",
+				src.Identifier, summary.Scanned, summary.Changed); err != nil {
+				return fmt.Errorf("write label repair line: %w", err)
+			}
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s: scanned=%d changed=%d\n",
-			src.Identifier, summary.Scanned, summary.Changed); err != nil {
-			return fmt.Errorf("write label repair line: %w", err)
-		}
-		totalScanned += summary.Scanned
-		totalChanged += summary.Changed
-	}
 
-	mode := "dry run"
-	if apply {
-		mode = "applied"
-	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(),
-		"Label repair %s: scanned=%d changed=%d\n", mode, totalScanned, totalChanged); err != nil {
-		return fmt.Errorf("write label repair summary: %w", err)
-	}
-	if !apply && totalChanged > 0 {
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(),
-			"Dry run: no rows were modified. Re-run with --apply to write repairs."); err != nil {
-			return fmt.Errorf("write label repair dry-run guidance: %w", err)
+		mode := "dry run"
+		if apply {
+			mode = "applied"
 		}
-	}
-	if apply && totalChanged > 0 {
-		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN()); err != nil {
-			return err
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(),
+			"Label repair %s: scanned=%d changed=%d\n", mode, totalScanned, totalChanged); err != nil {
+			return fmt.Errorf("write label repair summary: %w", err)
 		}
+		if !apply && totalChanged > 0 {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(),
+				"Dry run: no rows were modified. Re-run with --apply to write repairs."); err != nil {
+				return fmt.Errorf("write label repair dry-run guidance: %w", err)
+			}
+		}
+		return nil
+	}()
+
+	if !apply {
+		return runErr
 	}
-	return nil
+	if cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN()); cacheErr != nil {
+		return errors.Join(runErr, cacheErr)
+	}
+	return runErr
 }
 
 func init() {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -126,6 +127,67 @@ func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
 		"  imaps://scoped@example.test:993: scanned=0 changed=0\n"+
 			"Label repair applied: scanned=0 changed=0\n",
 		out.String())
+}
+
+// errAfterNWriter succeeds for the first n Write calls and fails every call
+// after, without touching whatever already happened before those writes.
+type errAfterNWriter struct {
+	n   int
+	buf bytes.Buffer
+}
+
+func (w *errAfterNWriter) Write(p []byte) (int, error) {
+	if w.n <= 0 {
+		return 0, errors.New("simulated output failure")
+	}
+	w.n--
+	// bytes.Buffer.Write never returns a non-nil error.
+	n, _ := w.buf.Write(p)
+	return n, nil
+}
+
+// TestRunRepairLabelsLocalRebuildsCacheDespitePartialFailure catches the
+// failure mode roborev flagged on PR #754: each source's repair commits
+// independently, but the analytics cache rebuild used to run only after the
+// whole multi-source loop returned successfully. A later source's own
+// commit still succeeds even when something after it fails (another
+// source's repair, an output write, or a cancelled context) — so that
+// commit must still reach the cache, not wait on the loop finishing clean.
+// This test fails the second source's *output write*, the simplest of those
+// three triggers to force deterministically; the important thing it proves
+// is that a real, already-committed change is not lost from the cache just
+// because the command as a whole reports an error.
+func TestRunRepairLabelsLocalRebuildsCacheDespitePartialFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	savedCfg := cfg
+	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	t.Cleanup(func() { cfg = savedCfg })
+
+	newLabelRepairArchive(t, "one@example.test")
+	newLabelRepairArchive(t, "two@example.test")
+	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	require.NoError(err)
+	beforeRevision := labelRepairArchiveRevision(t)
+
+	// The first source's per-source line is the only Write call allowed to
+	// succeed; the second source's own repair still runs and commits before
+	// its line fails to print.
+	out := &errAfterNWriter{n: 1}
+	repairCmd := &cobra.Command{}
+	repairCmd.SetContext(context.Background())
+	repairCmd.SetOut(out)
+	err = runRepairLabelsLocal(repairCmd, "", true)
+	require.ErrorContains(err, "write label repair line")
+
+	// Both sources actually committed (the stray label from each is gone),
+	// bumping the revision twice, and the cache rebuild ran anyway and
+	// caught up to it — despite the command itself returning an error.
+	assert.Equal(beforeRevision+2, labelRepairArchiveRevision(t))
+	cacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
+	require.NoError(err)
+	assert.Equal(beforeRevision+2, cacheState.DerivedDataRevision)
 }
 
 // TestRepairLabelsCommandRoutesThroughDaemonCLIRunner catches bypassing the
