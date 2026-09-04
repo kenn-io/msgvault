@@ -143,59 +143,38 @@ func (c *retryCloseAfterReadConn) Read(p []byte) (int, error) {
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
 
-type retryCloseAfterWriteConn struct {
+type retryCloseAfterHandshakeConn struct {
 	net.Conn
 
 	mu        sync.Mutex
-	written   []byte
-	response  bool
+	readData  []byte
 	closeOnce sync.Once
 	reset     bool
 }
 
-func (c *retryCloseAfterWriteConn) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	closeAfterTLSWrite := c.response
-	c.mu.Unlock()
-	if closeAfterTLSWrite && !c.reset && len(p) > 0 {
-		n, err := c.Conn.Write(p[:1])
-		if n > 0 {
+func (c *retryCloseAfterHandshakeConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.readData = append(c.readData, p[:n]...)
+		// ClientHello only follows a completed STARTTLS response in this server path.
+		closeAfterTLSRead := bytes.Contains(c.readData, []byte{0x16, 0x03})
+		c.mu.Unlock()
+		if closeAfterTLSRead {
 			c.closeOnce.Do(func() {
 				if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
+					if c.reset {
+						_ = tcpConn.SetLinger(0)
+						_ = tcpConn.Close()
+						return
+					}
 					_ = tcpConn.CloseWrite()
 					return
 				}
 				_ = c.Close()
 			})
 		}
-		if err == nil && n == 1 {
-			err = io.ErrShortWrite
-		}
-		return n, err
 	}
-
-	n, err := c.Conn.Write(p)
-	if n > 0 {
-		c.mu.Lock()
-		c.written = append(c.written, p[:n]...)
-		if bytes.Contains(c.written, []byte("Begin TLS negotiation now")) {
-			c.response = true
-		}
-		c.mu.Unlock()
-		if closeAfterTLSWrite {
-			c.closeOnce.Do(func() {
-				if tcpConn, ok := c.Conn.(*net.TCPConn); ok && c.reset {
-					_ = tcpConn.SetLinger(0)
-				}
-				_ = c.Close()
-			})
-		}
-	}
-	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
-}
-
-func (c *retryCloseAfterWriteConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
 
@@ -646,7 +625,7 @@ func TestConnectRetry_STARTTLSHandshakeTransportFailureRetries(t *testing.T) {
 		t.Run(map[bool]string{false: "eof", true: "reset"}[reset], func(t *testing.T) {
 			addr, accepted := startRetryMemServer(t, "starttls", func(conn net.Conn, count int64) net.Conn {
 				if count == 1 {
-					return &retryCloseAfterWriteConn{Conn: conn, reset: reset}
+					return &retryCloseAfterHandshakeConn{Conn: conn, reset: reset}
 				}
 				return conn
 			}, newIMAPServerTLSConfig(t))
