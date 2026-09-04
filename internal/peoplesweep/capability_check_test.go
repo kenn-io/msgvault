@@ -825,36 +825,40 @@ func TestCapabilityNegotiationReportsDistinctProviderFailures(t *testing.T) {
 	var statuses []int
 	for _, response := range responses {
 		t.Run(response.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("X-Request-ID", "capability-repro-request")
 				w.WriteHeader(response.status)
 				_, err := w.Write([]byte(response.body))
-				require.NoError(t, err)
+				require.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 				NewCredential(AuthBearer, capabilityCredentialValue))
-			require.Error(t, negotiationErr)
+			require.Error(negotiationErr)
 			messages = append(messages, negotiationErr.Error())
 			var typedErr *NegotiationError
-			require.ErrorAs(t, negotiationErr, &typedErr)
+			require.ErrorAs(negotiationErr, &typedErr)
 			diagnostics = append(diagnostics, typedErr.Diagnostics)
 			statuses = append(statuses, typedErr.StatusCode)
-			assert.Equal(t, "capability-repro-request", typedErr.RequestID)
-			assert.NotContains(t, typedErr.Error(), "unsupported_parameter")
-			assert.NotContains(t, typedErr.Error(), "model_not_found")
+			assert.Equal("capability-repro-request", typedErr.RequestID)
+			assert.NotContains(typedErr.Error(), "unsupported_parameter")
+			assert.NotContains(typedErr.Error(), "model_not_found")
 		})
 	}
-	require.Len(t, messages, len(responses))
-	assert.Equal(t, []int{http.StatusNotFound, http.StatusBadRequest}, statuses)
-	assert.Equal(t, []ProviderDiagnosticCode{
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Len(messages, len(responses))
+	assert.Equal([]int{http.StatusNotFound, http.StatusBadRequest}, statuses)
+	assert.Equal([]ProviderDiagnosticCode{
 		ProviderDiagnosticCodeUnclassified, ProviderDiagnosticCodeRejectedField,
 	}, []ProviderDiagnosticCode{diagnostics[0].Code, diagnostics[1].Code})
-	assert.Equal(t, ProviderDiagnosticFieldForeign, diagnostics[1].Field)
-	assert.NotEqual(t, messages[0], messages[1])
+	assert.Equal(ProviderDiagnosticFieldForeign, diagnostics[1].Field)
+	assert.NotEqual(messages[0], messages[1])
 	t.Logf("boundary rejected_field=%q provider_code_absent=%t", ProviderDiagnosticCodeRejectedField,
 		!strings.Contains(messages[1], "unsupported_parameter"))
 }
