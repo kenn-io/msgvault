@@ -45,10 +45,19 @@ conda install -c conda-forge msgvault
 
 ## Build From Source
 
-Requires Go 1.27+, Bun 1.3.14+, and a C/C++ compiler (GCC or Clang). Bun builds
-the browser application embedded in the binary. CGO is required because
-msgvault uses `mattn/go-sqlite3` (SQLite with FTS5) and `duckdb-go/v2` (Parquet
-analytics), both of which compile native extensions.
+Requires Go 1.27+, Bun 1.3.14+, Node.js (20.19+ on 20.x, 22.13+ on 22.x, or
+24+), and a C/C++ compiler (GCC or Clang). Bun builds the browser application
+embedded in the binary, and Node runs the embed validator that `make install`
+invokes. CGO is required because msgvault uses `mattn/go-sqlite3` (SQLite with
+FTS5) and `duckdb-go/v2` (Parquet analytics), both of which compile native
+extensions.
+
+On Debian/Ubuntu also install `libsqlite3-dev`, which provides the `sqlite3.h`
+header needed to compile the default `sqlite_vec` extension:
+
+```bash
+sudo apt install -y libsqlite3-dev
+```
 
 ```bash
 git clone https://github.com/kenn-io/msgvault.git

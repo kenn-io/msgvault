@@ -269,6 +269,13 @@ If you get errors about missing C compiler:
 
 CGO is required for `mattn/go-sqlite3` (FTS5 support).
 
+If the build reaches the cgo step and fails with `fatal error: sqlite3.h: No
+such file or directory` (from `asg017/sqlite-vec-go-bindings`), you are missing
+the SQLite development headers that the default `sqlite_vec` build needs:
+
+- **Debian/Ubuntu**: `sudo apt install -y libsqlite3-dev`
+- **Fedora/RHEL**: `sudo dnf install -y sqlite-devel`
+
 ## TUI Not Showing Data
 
 If the TUI launches but shows no data:

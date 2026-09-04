@@ -5,9 +5,12 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
-Source builds require Go 1.27+, Bun 1.3.14+, and a C/C++ compiler. The Make
-targets install the pinned browser dependencies when `web/package.json` or
-`web/bun.lock` changes, then embed the production UI in the Go binary.
+Source builds require Go 1.27+, Bun 1.3.14+, Node.js (20.19+ on 20.x, 22.13+ on
+22.x, or 24+), and a C/C++ compiler. The Make targets install the pinned browser
+dependencies when `web/package.json` or `web/bun.lock` changes, then embed the
+production UI in the Go binary; Node runs the embed validator in that path. On
+Debian/Ubuntu also install `libsqlite3-dev`, which provides the `sqlite3.h`
+header needed to compile the default `sqlite_vec` extension.
 
 ### macOS and Linux
 
