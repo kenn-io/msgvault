@@ -439,6 +439,37 @@ func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrS
 	assert.Contains(string(content), `[people.sweep.providers.catalog-provider]`)
 }
 
+func TestPersonProviderCatalogAuthUsesProtocolCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol peoplesweep.Protocol
+		explicit peoplesweep.AuthScheme
+		want     peoplesweep.AuthScheme
+		wantErr  string
+	}{
+		{name: "openai chat default", protocol: peoplesweep.ProtocolOpenAIChat, want: peoplesweep.AuthBearer},
+		{name: "openai chat x api key", protocol: peoplesweep.ProtocolOpenAIChat, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "openai responses default", protocol: peoplesweep.ProtocolOpenAIResponses, want: peoplesweep.AuthBearer},
+		{name: "openai responses x api key", protocol: peoplesweep.ProtocolOpenAIResponses, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "anthropic default", protocol: peoplesweep.ProtocolAnthropicMessages, want: peoplesweep.AuthXAPIKey},
+		{name: "google default", protocol: peoplesweep.ProtocolGoogleGenerateContent, want: peoplesweep.AuthGoogleAPIKey},
+		{name: "anthropic bearer rejected", protocol: peoplesweep.ProtocolAnthropicMessages, explicit: peoplesweep.AuthBearer, wantErr: "does not support auth"},
+		{name: "google x api key rejected", protocol: peoplesweep.ProtocolGoogleGenerateContent, explicit: peoplesweep.AuthXAPIKey, wantErr: "does not support auth"},
+		{name: "codex rejected", protocol: peoplesweep.ProtocolCodexAppServer, wantErr: "unsupported protocol"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := personProviderCatalogAuth(test.protocol, test.explicit)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				assert.Empty(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
 // TestPersonProviderAddNeverSendsCredentialToCatalogEndpoint catches
 // onboarding reading a credential or negotiating capabilities against an
 // endpoint chosen by the models.dev catalog: a compromised catalog must not

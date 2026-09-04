@@ -260,20 +260,13 @@ func applyProviderDefaults(provider *ProviderConfig) {
 }
 
 func defaultDriverVersion(protocol Protocol) string {
-	switch protocol {
-	case ProtocolOpenAIChat:
-		return OpenAIChatProviderVersion
-	case ProtocolOpenAIResponses:
-		return "openai-responses-v1"
-	case ProtocolAnthropicMessages:
-		return "anthropic-messages-v1"
-	case ProtocolGoogleGenerateContent:
-		return "google-generate-content-v1"
-	case ProtocolCodexAppServer:
-		return CodexAppServerProviderVersion
-	default:
-		return ""
+	if capability, ok := ProtocolCapabilityFor(protocol); ok {
+		return capability.DriverVersion
 	}
+	if protocol == ProtocolCodexAppServer {
+		return CodexAppServerProviderVersion
+	}
+	return ""
 }
 
 // ActiveProviderConfig resolves the active profile by value so callers cannot
@@ -374,21 +367,24 @@ func (c Config) validateOperationalConfig() error {
 }
 
 func (c Config) validateProvider(provider ProviderConfig) error {
-	switch provider.Protocol {
-	case ProtocolOpenAIChat:
-		if err := requireOneOf(provider.TokenLimitParameter, "max_completion_tokens", "max_tokens"); err != nil {
-			return err
-		}
-	case ProtocolOpenAIResponses, ProtocolAnthropicMessages, ProtocolGoogleGenerateContent:
-		if err := requireEmpty(provider.TokenLimitParameter); err != nil {
-			return err
-		}
-	case ProtocolCodexAppServer:
+	if provider.Protocol == ProtocolCodexAppServer {
 		if err := requireCodexIsolationFields(provider); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("unsupported people inference protocol %q", provider.Protocol)
+	} else {
+		capability, ok := ProtocolCapabilityFor(provider.Protocol)
+		if !ok {
+			return fmt.Errorf("unsupported people inference protocol %q", provider.Protocol)
+		}
+		var err error
+		if len(capability.TokenParameters) == 1 && capability.TokenParameters[0] == "" {
+			err = requireEmpty(provider.TokenLimitParameter)
+		} else {
+			err = requireOneOf(provider.TokenLimitParameter, capability.TokenParameters...)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	if err := validateReasoning(provider); err != nil {
 		return err
@@ -656,41 +652,31 @@ func setDefaultDuration(target *time.Duration, value time.Duration) {
 // profile (for example bearer auth for anthropic_messages) passes startup
 // validation and then fails every scheduled sweep during preparation.
 func validateProtocolHTTPCapabilities(provider ProviderConfig) error {
-	switch provider.Protocol {
-	case ProtocolOpenAIChat:
-		// Every configured auth scheme, output mode, and reasoning setting is
-		// representable on the OpenAI Chat wire format.
-		return nil
-	case ProtocolOpenAIResponses:
-		if provider.ReasoningMode != "" && provider.ReasoningMode != reasoningModeProviderDefault {
-			return fmt.Errorf(
-				"[people.sweep.provider] reasoning_mode %q is not supported by openai_responses",
-				provider.ReasoningMode)
-		}
-		return nil
-	case ProtocolAnthropicMessages:
-		if provider.Auth != AuthXAPIKey {
-			return fmt.Errorf("[people.sweep.provider] anthropic_messages requires auth %q", AuthXAPIKey)
-		}
-		if provider.OutputMode == OutputModeJSONObject {
-			return fmt.Errorf(
-				"[people.sweep.provider] output_mode %q is not supported by anthropic_messages",
-				OutputModeJSONObject)
-		}
-		return validateProviderDefaultReasoning(provider, "anthropic_messages")
-	case ProtocolGoogleGenerateContent:
-		if provider.Auth != AuthGoogleAPIKey {
-			return fmt.Errorf("[people.sweep.provider] google_generate_content requires auth %q", AuthGoogleAPIKey)
-		}
-		if provider.OutputMode == OutputModeJSONObject {
-			return fmt.Errorf(
-				"[people.sweep.provider] output_mode %q is not supported by google_generate_content",
-				OutputModeJSONObject)
-		}
-		return validateProviderDefaultReasoning(provider, "google_generate_content")
-	default:
+	capability, ok := ProtocolCapabilityFor(provider.Protocol)
+	if !ok {
 		return nil
 	}
+	if capability.RequiredAuth != "" && !slices.Contains(capability.AuthSchemes, provider.Auth) {
+		return fmt.Errorf(
+			"[people.sweep.provider] %s requires auth %q",
+			capability.Protocol, capability.RequiredAuth)
+	}
+	if provider.OutputMode == OutputModeJSONObject && !slices.Contains(capability.OutputModes, provider.OutputMode) {
+		return fmt.Errorf(
+			"[people.sweep.provider] output_mode %q is not supported by %s",
+			provider.OutputMode, capability.Protocol)
+	}
+	customReasoningMode := provider.ReasoningMode != "" && provider.ReasoningMode != reasoningModeProviderDefault
+	if !capability.SupportsReasoningEffort && !capability.SupportsCustomReasoningMode &&
+		(provider.ReasoningEffort != "" || customReasoningMode) {
+		return validateProviderDefaultReasoning(provider, string(capability.Protocol))
+	}
+	if customReasoningMode && !capability.SupportsCustomReasoningMode {
+		return fmt.Errorf(
+			"[people.sweep.provider] reasoning_mode %q is not supported by %s",
+			provider.ReasoningMode, capability.Protocol)
+	}
+	return nil
 }
 
 // validateProviderDefaultReasoning rejects reasoning settings the protocol's

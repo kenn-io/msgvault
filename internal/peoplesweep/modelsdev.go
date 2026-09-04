@@ -331,21 +331,6 @@ func modelsDevEnvironment(raw json.RawMessage) ([]string, error) {
 	return slices.Compact(values), nil
 }
 
-func protocolsForModelsDevShape(shape string) []Protocol {
-	switch shape {
-	case "@ai-sdk/openai-compatible":
-		return []Protocol{ProtocolOpenAIChat}
-	case "@ai-sdk/openai":
-		return []Protocol{ProtocolOpenAIChat, ProtocolOpenAIResponses}
-	case "@ai-sdk/anthropic":
-		return []Protocol{ProtocolAnthropicMessages}
-	case "@ai-sdk/google":
-		return []Protocol{ProtocolGoogleGenerateContent}
-	default:
-		return nil
-	}
-}
-
 func decodeModelsDevObject(ctx context.Context, raw []byte) (map[string]json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
