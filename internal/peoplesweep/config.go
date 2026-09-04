@@ -656,12 +656,19 @@ func validateProtocolHTTPCapabilities(provider ProviderConfig) error {
 	if !ok {
 		return nil
 	}
-	if capability.RequiredAuth != "" && !slices.Contains(capability.AuthSchemes, provider.Auth) {
+	if slices.Contains([]AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone}, provider.Auth) &&
+		!slices.Contains(capability.AuthSchemes, provider.Auth) {
+		if capability.RequiredAuth != "" {
+			return fmt.Errorf(
+				"[people.sweep.provider] %s requires auth %q",
+				capability.Protocol, capability.RequiredAuth)
+		}
 		return fmt.Errorf(
-			"[people.sweep.provider] %s requires auth %q",
-			capability.Protocol, capability.RequiredAuth)
+			"[people.sweep.provider] auth %q is not supported by %s",
+			provider.Auth, capability.Protocol)
 	}
-	if provider.OutputMode == OutputModeJSONObject && !slices.Contains(capability.OutputModes, provider.OutputMode) {
+	if slices.Contains([]OutputMode{OutputModeNativeJSONSchema, OutputModeJSONObject, OutputModePromptJSON}, provider.OutputMode) &&
+		!slices.Contains(capability.OutputModes, provider.OutputMode) {
 		return fmt.Errorf(
 			"[people.sweep.provider] output_mode %q is not supported by %s",
 			provider.OutputMode, capability.Protocol)
