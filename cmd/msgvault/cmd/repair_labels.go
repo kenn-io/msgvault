@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -58,16 +59,29 @@ func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
 	}
 	defer cleanup()
 
-	sources, err := st.ListSourcesContext(cmd.Context(), sourceTypeIMAP)
-	if err != nil {
-		return fmt.Errorf("list IMAP sources: %w", err)
+	var sources []*store.Source
+	if only == "" {
+		sources, err = st.ListSourcesContext(cmd.Context(), sourceTypeIMAP)
+		if err != nil {
+			return fmt.Errorf("list IMAP sources: %w", err)
+		}
+	} else {
+		// A source's Identifier is its full connection string
+		// (imaps://user@host:993), not the email a person would type, so
+		// resolve against identifier or display name the same way
+		// remove-account and repair-identity do — and fail loudly on no
+		// match instead of silently repairing nothing.
+		source, err := sourceops.ResolveExactOne(st, sourceops.Selector{
+			Account: only, SourceType: sourceTypeIMAP,
+		})
+		if err != nil {
+			return err
+		}
+		sources = []*store.Source{source}
 	}
 
 	var totalScanned, totalChanged int
 	for _, src := range sources {
-		if only != "" && !store.EqualIdentifier(src.Identifier, only) {
-			continue
-		}
 		summary, err := st.RepairIMAPSourceLabels(cmd.Context(), src.ID, apply)
 		if err != nil {
 			return fmt.Errorf("repair labels for %s: %w", src.Identifier, err)

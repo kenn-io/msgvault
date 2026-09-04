@@ -74,10 +74,10 @@ func TestRunRepairLabelsLocalDryRunApplyAndNoop(t *testing.T) {
 	assert.Equal(beforeRevision+1, labelRepairArchiveRevision(t))
 }
 
-// TestRunRepairLabelsLocalIdentifierScopesToOneSource catches a repair
-// command that ignores the optional identifier and touches every source.
-func TestRunRepairLabelsLocalIdentifierScopesToOneSource(t *testing.T) {
-	assert := assert.New(t)
+// TestRunRepairLabelsLocalUnknownIdentifierErrors catches a repair command
+// that silently matches no source instead of failing loudly when the given
+// identifier does not resolve to one.
+func TestRunRepairLabelsLocalUnknownIdentifierErrors(t *testing.T) {
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
@@ -86,12 +86,46 @@ func TestRunRepairLabelsLocalIdentifierScopesToOneSource(t *testing.T) {
 
 	newLabelRepairArchive(t, "one@example.test")
 
+	repairCmd := &cobra.Command{}
+	repairCmd.SetContext(context.Background())
+	repairCmd.SetOut(&bytes.Buffer{})
+	err := runRepairLabelsLocal(repairCmd, "someone-else@example.test", true)
+	require.Error(err)
+	require.ErrorContains(err, `no account found for "someone-else@example.test"`)
+}
+
+// TestRunRepairLabelsLocalIdentifierScopesByDisplayName catches matching only
+// the raw connection-string identifier. A real IMAP source's Identifier is
+// its imaps://user@host:port connection string, not the email a person types
+// on the command line — the display name carries that email.
+func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	savedCfg := cfg
+	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	t.Cleanup(func() { cfg = savedCfg })
+
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	scoped, err := st.GetOrCreateSource("imap", "imaps://scoped@example.test:993")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceDisplayName(scoped.ID, "scoped@example.test"))
+	other, err := st.GetOrCreateSource("imap", "imaps://other@example.test:993")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceDisplayName(other.ID, "other@example.test"))
+	require.NoError(st.Close())
+
 	var out bytes.Buffer
 	repairCmd := &cobra.Command{}
 	repairCmd.SetContext(context.Background())
 	repairCmd.SetOut(&out)
-	require.NoError(runRepairLabelsLocal(repairCmd, "someone-else@example.test", true))
-	assert.Equal("Label repair applied: scanned=0 changed=0\n", out.String())
+	require.NoError(runRepairLabelsLocal(repairCmd, "scoped@example.test", true))
+	assert.Equal(
+		"  imaps://scoped@example.test:993: scanned=0 changed=0\n"+
+			"Label repair applied: scanned=0 changed=0\n",
+		out.String())
 }
 
 // TestRepairLabelsCommandRoutesThroughDaemonCLIRunner catches bypassing the
