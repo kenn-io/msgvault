@@ -212,20 +212,20 @@ type preGreetingConn struct {
 
 func (c *preGreetingConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	c.record(n, err)
+	c.record(n, err, true)
 	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
 }
 
 func (c *preGreetingConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	c.record(n, err)
+	c.record(n, err, false)
 	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
 }
 
-func (c *preGreetingConn) record(n int, err error) {
+func (c *preGreetingConn) record(n int, err error, inbound bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if n > 0 {
+	if inbound && n > 0 {
 		c.progressed = true
 	}
 	if n == 0 && err != nil && c.zeroErr == nil {
@@ -459,7 +459,7 @@ func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, 
 		conn, err := newStartTLSContext(ctx, phaseProbe, &startTLSOpts)
 		if err != nil {
 			_ = probe.Close()
-			return nil, ctx.Err() == nil && retryableSTARTTLS(phaseProbe, err), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
+			return nil, ctx.Err() == nil && retryableSTARTTLS(probe, phaseProbe, err), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
 		}
 		return conn, false, nil
 	}
@@ -495,8 +495,11 @@ func retryableGreeting(probe *preGreetingConn) bool {
 	return isRetryableTransportError(probe.transportError())
 }
 
-func retryableSTARTTLS(probe *startTLSPhaseConn, err error) bool {
-	return probe != nil && probe.handshakeStarted() && isRetryableTransportError(err)
+func retryableSTARTTLS(preGreetingProbe *preGreetingConn, phaseProbe *startTLSPhaseConn, err error) bool {
+	if phaseProbe != nil && phaseProbe.handshakeStarted() {
+		return isRetryableTransportError(err)
+	}
+	return retryableGreeting(preGreetingProbe)
 }
 
 func waitGreetingContext(ctx context.Context, conn *imapclient.Client) error {

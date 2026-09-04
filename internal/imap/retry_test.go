@@ -54,6 +54,41 @@ func (c *retryDropConn) Write([]byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
+type retryNoGreetingConn struct {
+	net.Conn
+
+	commandRead chan struct{}
+	closeOnce   sync.Once
+	reset       bool
+}
+
+func newRetryNoGreetingConn(conn net.Conn, reset bool) *retryNoGreetingConn {
+	c := &retryNoGreetingConn{
+		Conn:        conn,
+		commandRead: make(chan struct{}),
+		reset:       reset,
+	}
+	go func() {
+		buffer := make([]byte, 128)
+		_, _ = conn.Read(buffer)
+		close(c.commandRead)
+	}()
+	return c
+}
+
+func (c *retryNoGreetingConn) Write([]byte) (int, error) {
+	<-c.commandRead
+	c.closeOnce.Do(func() {
+		if c.reset {
+			if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetLinger(0)
+			}
+		}
+		_ = c.Close()
+	})
+	return 0, io.ErrClosedPipe
+}
+
 type retryShortWriteConn struct {
 	net.Conn
 
@@ -91,8 +126,12 @@ func (c *retryCloseAfterReadConn) Read(p []byte) (int, error) {
 			if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
 				_ = tcpConn.SetLinger(0)
 			}
+			_ = c.Close()
+		} else if tcpConn, ok := c.Conn.(*net.TCPConn); ok {
+			_ = tcpConn.CloseWrite()
+		} else {
+			_ = c.Close()
 		}
-		_ = c.Close()
 	}
 	return n, err //nolint:wrapcheck // the fixture preserves the socket's typed transport cause
 }
@@ -127,6 +166,26 @@ func newIMAPServerTLSConfig(t *testing.T) *tls.Config {
 		Certificates: []tls.Certificate{certificate},
 		NextProtos:   []string{"imap"},
 	}
+}
+
+func startRetrySTARTTLSResponseServer(t *testing.T, response string) (string, *retryCountingListener) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	counted := &retryCountingListener{Listener: listener}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		conn, err := counted.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = conn.Write([]byte("* OK ready for STARTTLS\r\n"))
+		buffer := make([]byte, 128)
+		_, _ = conn.Read(buffer)
+		_, _ = conn.Write([]byte(response))
+	}()
+	return listener.Addr().String(), counted
 }
 
 func startRetryMemServer(
@@ -189,17 +248,21 @@ func TestConnectRetry_ImplicitTLSDisconnectBeforeGreeting(t *testing.T) {
 
 func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 	tests := []struct {
-		name string
-		mode string
+		name  string
+		mode  string
+		reset bool
 	}{
 		{name: "plaintext", mode: "plaintext"},
 		{name: "implicit TLS", mode: "implicit-tls"},
+		{name: "STARTTLS EOF", mode: "starttls"},
+		{name: "STARTTLS reset", mode: "starttls", reset: true},
 	}
-	// The pinned fork sends STARTTLS eagerly from NewStartTLS, so that
-	// protocol-write case is covered by TestConnectRetry_STARTTLSResponseTransportFailureIsTerminal.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transform := func(conn net.Conn, count int64) net.Conn {
+				if count == 1 && tt.mode == "starttls" {
+					return newRetryNoGreetingConn(conn, tt.reset)
+				}
 				if count == 1 && tt.mode == "implicit-tls" {
 					tlsConn, ok := conn.(*tls.Conn)
 					if ok {
@@ -221,11 +284,16 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 			}
 			addr, accepted := startRetryMemServer(t, tt.mode, transform, startTLSConfig)
 			client := newRetryClient(t, addr, tt.mode)
-			client.sleep = func(context.Context, time.Duration) error { return nil }
+			var delays []time.Duration
+			client.sleep = func(_ context.Context, delay time.Duration) error {
+				delays = append(delays, delay)
+				return nil
+			}
 
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(t, err)
 			require.Len(t, response.Messages, 1)
+			assert.Equal(t, connectRetryDelays[:1], delays)
 			assert.Equal(t, int64(2), accepted.accepted.Load())
 		})
 	}
@@ -280,20 +348,31 @@ func TestConnectRetry_STARTTLSPhaseRetainsOverlappingResponse(t *testing.T) {
 }
 
 func TestConnectRetry_PartialGreetingIsTerminal(t *testing.T) {
-	addr, accepted := startRetryMemServer(t, "plaintext", func(conn net.Conn, _ int64) net.Conn {
-		return &retryShortWriteConn{Conn: conn, limit: 6}
-	}, nil)
-	client := newRetryClient(t, addr, "plaintext")
-	sleepCalled := false
-	client.sleep = func(context.Context, time.Duration) error {
-		sleepCalled = true
-		return nil
-	}
+	for _, tt := range []struct {
+		name           string
+		mode           string
+		startTLSConfig *tls.Config
+	}{
+		{name: "plaintext", mode: "plaintext"},
+		{name: "STARTTLS", mode: "starttls", startTLSConfig: newIMAPServerTLSConfig(t)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, accepted := startRetryMemServer(t, tt.mode, func(conn net.Conn, _ int64) net.Conn {
+				return &retryShortWriteConn{Conn: conn, limit: 6}
+			}, tt.startTLSConfig)
+			client := newRetryClient(t, addr, tt.mode)
+			sleepCalled := false
+			client.sleep = func(context.Context, time.Duration) error {
+				sleepCalled = true
+				return nil
+			}
 
-	_, err := client.ListMessages(t.Context(), "", "")
-	require.Error(t, err)
-	assert.False(t, sleepCalled)
-	assert.Equal(t, int64(1), accepted.accepted.Load())
+			_, err := client.ListMessages(t.Context(), "", "")
+			require.Error(t, err)
+			assert.False(t, sleepCalled)
+			assert.Equal(t, int64(1), accepted.accepted.Load())
+		})
+	}
 }
 
 func TestConnectRetry_ImplicitTLSHandshakeFailureRetries(t *testing.T) {
@@ -495,6 +574,31 @@ func TestConnectRetry_STARTTLSResponseTransportFailureIsTerminal(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, sleepCalled)
 	assert.Equal(t, int64(1), accepted.accepted.Load())
+}
+
+func TestConnectRetry_STARTTLSIncompleteOrAmbiguousResponseIsTerminal(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		response string
+	}{
+		{name: "incomplete", response: "A001 OK"},
+		{name: "ambiguous", response: "* OK continue\r\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, accepted := startRetrySTARTTLSResponseServer(t, tt.response)
+			client := newRetryClient(t, addr, "starttls")
+			sleepCalled := false
+			client.sleep = func(context.Context, time.Duration) error {
+				sleepCalled = true
+				return nil
+			}
+
+			_, err := client.ListMessages(t.Context(), "", "")
+			require.Error(t, err)
+			assert.False(t, sleepCalled)
+			assert.Equal(t, int64(1), accepted.accepted.Load())
+		})
+	}
 }
 
 func TestConnectRetry_STARTTLSProtocolFailureIsTerminal(t *testing.T) {
