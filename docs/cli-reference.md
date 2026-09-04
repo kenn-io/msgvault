@@ -1918,6 +1918,39 @@ analytics cache is rebuilt automatically.
 
 ---
 
+## stage-delete
+
+Stage all active messages matching Gmail-like search criteria as a pending deletion
+batch. The command uses the daemon's search and preflight checks before staging,
+and it does not delete messages from a provider. If the search matches more than
+one source, run the command once for each source with its exact numeric ID.
+
+Staging is refused while the daemon is still verifying or rebuilding its
+full-text search index, or while its analytical cache is unavailable, because an
+incomplete index could silently omit matching messages. Both states resolve in
+the background; retry when they finish.
+
+```bash
+msgvault stage-delete <query>
+```
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Show the match count without creating a deletion batch |
+| `--source-id ID` | Restrict staging to one exact source ID |
+
+For a query that resolves to one source, the source selector is optional. For a
+multi-source query, provide `--source-id` for each source:
+
+```bash
+msgvault stage-delete --source-id 42 "from:newsletter@example.com older_than:1y"
+```
+
+Review a created batch with `msgvault show-deletion <batch-id>`, then execute it
+with `msgvault delete-staged <batch-id>`.
+
+---
+
 ## list-deletions
 
 List pending and recent deletion batches.
