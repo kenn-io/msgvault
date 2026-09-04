@@ -34,7 +34,7 @@ func TestImportContactsPhoneCountryCodePolicy(t *testing.T) {
 		},
 		{
 			name:             "explicit zero zero",
-			tel:              "TEL:0012025550102",
+			tel:              "TEL:00 1 202-555-0102",
 			participantPhone: "+12025550102",
 			wantMatched:      1,
 			wantDisplayName:  "Test User",
