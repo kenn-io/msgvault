@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-03
 title: Microsoft Teams
 description: Archive Microsoft Teams chats and channels through delegated Microsoft Graph sync.
 ---
@@ -111,6 +112,28 @@ msgvault backfill-teams-media user@example.com --only-incomplete
 The backfill scans stored Teams HTML bodies for `hostedContents` URLs and
 downloads those images into the attachment store. It is idempotent because
 attachment storage is content-addressed.
+
+## Media Policy
+
+Attachment downloads follow the shared chat media policy. By default media
+from chats and channels with more than 20 members is skipped with a typed
+`participant_threshold` marker, while one-to-one and small group chats keep
+theirs. Adjust it under `[teams]`:
+
+```toml
+[teams]
+media = true
+media_scope = "all"            # all, direct (chats only), or none
+media_max_participants = 20    # 0 = no cap
+max_media_mb = 250
+
+[teams.accounts_config."user@example.com"]
+max_media_mb = 500
+```
+
+See [Media policy](/configuration/#media-policy) for the full vocabulary and
+`msgvault purge-excluded-media` for removing media a changed policy would no
+longer collect.
 
 ## Scheduled Sync
 

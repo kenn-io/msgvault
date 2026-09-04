@@ -55,6 +55,20 @@ All notable changes to msgvault, grouped by release.
   cursors, and CardDAV sync runs are recorded and recoverable after a
   daemon restart.
 
+- Chat media collection now skips attachments from conversations with more
+  than 20 participants by default on Beeper, Slack, Discord, and Teams. Direct
+  chats and small groups keep their media; skipped occurrences carry a typed
+  `participant_threshold` marker instead of a retry marker. Set
+  `media_max_participants = 0` in the provider table to remove the cap, or
+  raise it to taste. With large-room volume gone, the per-attachment size
+  default for Beeper, Slack, and Teams moves from 100 MiB to 250 MiB so long
+  voice notes, screen recordings, and phone video from direct chats are kept;
+  Discord stays at 50 MiB, and an explicit `max_media_mb` is unchanged.
+  Previously over-cap files under 250 MiB are retried by the next
+  `backfill-*-media` run because the cap changed. The `media_scope`,
+  `media_max_participants`, `max_media_mb`, and `accounts_config` keys are now
+  documented for every chat provider.
+
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with
   `[deletion] remote_enabled = true`; `MSGVAULT_ENABLE_REMOTE_DELETE=1`

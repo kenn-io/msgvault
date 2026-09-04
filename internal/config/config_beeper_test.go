@@ -55,7 +55,7 @@ func TestBeeperConfigDefaults(t *testing.T) {
 	assert.False(cfg.Beeper.Enabled)
 	assert.Empty(cfg.Beeper.Schedule)
 	assert.True(cfg.Beeper.MediaEnabled(), "media defaults on")
-	assert.Equal(int64(100<<20), cfg.Beeper.MaxMediaBytes(), "default 100 MiB cap")
+	assert.Equal(DefaultChatMaxMediaBytes, cfg.Beeper.MaxMediaBytes(), "default 250 MiB cap")
 }
 
 func TestBeeperMediaConfig(t *testing.T) {

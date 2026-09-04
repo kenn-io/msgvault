@@ -15,9 +15,9 @@ import (
 )
 
 // defaultMaxMediaBytes caps individual attachment downloads (config
-// max_media_mb overrides).
+// max_media_mb overrides). It mirrors the config-layer default exactly.
 const (
-	defaultMaxMediaBytes      = int64(100 << 20)
+	defaultMaxMediaBytes      = attachmentpolicy.DefaultChatMaxBytes
 	beeperAttachmentTypeImage = "img"
 )
 

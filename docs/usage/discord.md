@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-03
 title: Discord
 description: Archive Discord guild channels, threads, and attachments through a read-only bot.
 ---
@@ -84,18 +85,27 @@ ambiguous fails instead of guessing.
 ## Configure media, repairs, and channel filters
 
 Discord settings are optional. The defaults download attachments up to 50 MiB
-and re-scan the trailing seven days for edits, deletions, and changed reaction
-counts:
+from channels with at most 20 members, and re-scan the trailing seven days for
+edits, deletions, and changed reaction counts:
 
 ```toml
 [discord]
 max_media_bytes = 52428800
+media_scope = "all"            # all, direct, or none
+media_max_participants = 20    # skip media from larger channels; 0 = no cap
 edit_rescan_window = "168h"
 
 [discord.guilds."123456789012345678"]
 include = ["456789012345678901"]
 exclude = ["567890123456789012"]
+# media = false                # per-guild media override
+# max_media_mb = 25
 ```
+
+Most guild channels have more than 20 members, so the default participant cap
+keeps guild media out of the archive unless you raise the cap or set it to `0`.
+Skipped attachments carry a typed `participant_threshold` marker rather than a
+retry marker; see [Media policy](/configuration/#media-policy).
 
 `include` and `exclude` contain Discord channel, thread, or forum-post IDs. An
 empty `include` means every accessible message container. Top-level channels
@@ -239,7 +249,7 @@ credentials or call the Discord API.
 ## Attachment backfill and limits
 
 Retry attachment downloads after a transient failure or after raising
-`max_media_bytes`:
+`max_media_bytes` or `media_max_participants`:
 
 ```bash
 # Scan all archived Discord messages that have attachments.

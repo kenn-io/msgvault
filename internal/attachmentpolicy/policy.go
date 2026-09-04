@@ -3,6 +3,13 @@ package attachmentpolicy
 
 import "fmt"
 
+// DefaultChatMaxBytes is the per-attachment size cap chat providers (Beeper,
+// Slack, Teams) apply when max_media_mb is unset. It is sized for the media
+// worth keeping from direct chats and small groups: long voice notes, screen
+// recordings, and phone video routinely clear 100 MiB, and the participant
+// cap already keeps large-room volume out. Discord keeps its own lower cap.
+const DefaultChatMaxBytes int64 = 250 << 20
+
 // Scope limits media downloads by conversation kind.
 type Scope string
 

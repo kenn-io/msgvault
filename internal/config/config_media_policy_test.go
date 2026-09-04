@@ -10,13 +10,95 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
-func TestMediaPolicyDefaultsRemainAllowAll(t *testing.T) {
+func TestMediaPolicyDefaultsCapGroupRoomMedia(t *testing.T) {
 	assert := assert.New(t)
 	cfg := NewDefaultConfig()
-	assert.Equal(attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 100 << 20}, cfg.Beeper.MediaPolicy("signal"))
-	assert.Equal(attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 100 << 20}, cfg.Slack.MediaPolicy("T01"))
-	assert.Equal(attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 50 << 20}, cfg.Discord.MediaPolicy("G01"))
-	assert.Equal(attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 100 << 20}, cfg.Teams.MediaPolicy("user@example.com"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.Beeper.MediaPolicy("signal"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.Slack.MediaPolicy("T01"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultDiscordMaxMediaBytes,
+	}, cfg.Discord.MediaPolicy("G01"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.Teams.MediaPolicy("user@example.com"))
+}
+
+func TestLoadMediaPolicyOmittedParticipantCapUsesDefault(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	// [beeper] and [discord] set other media keys but omit the participant
+	// cap; [slack] and [teams] have no table at all.
+	require.NoError(os.WriteFile(configPath, []byte(`
+[beeper]
+media_scope = "direct"
+max_media_mb = 80
+
+[discord]
+edit_rescan_window = "24h"
+[discord.guilds.G01]
+include = ["C01"]
+`), 0o644))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeDirect, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: 80 << 20,
+	}, cfg.Beeper.MediaPolicy("signal"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.Slack.MediaPolicy("T01"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultDiscordMaxMediaBytes,
+	}, cfg.Discord.MediaPolicy("G01"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.Teams.MediaPolicy("user@example.com"))
+	assert.Equal([]string{"C01"}, cfg.Discord.Guilds["G01"].Include, "guild filters survive the default")
+}
+
+func TestLoadMediaPolicyExplicitZeroDisablesParticipantCap(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte(`
+[beeper]
+media_max_participants = 0
+
+[slack]
+media_max_participants = 0
+
+[discord]
+media_max_participants = 0
+
+[teams]
+media_max_participants = 0
+`), 0o644))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+
+	for name, policy := range map[string]attachmentpolicy.Policy{
+		"beeper":  cfg.Beeper.MediaPolicy("signal"),
+		"slack":   cfg.Slack.MediaPolicy("T01"),
+		"discord": cfg.Discord.MediaPolicy("G01"),
+		"teams":   cfg.Teams.MediaPolicy("user@example.com"),
+	} {
+		assert.Zero(policy.MaxParticipants, "%s: explicit zero means no cap", name)
+		assert.Equal(attachmentpolicy.ScopeAll, policy.Scope, name)
+		assert.Empty(policy.DisabledReason, name)
+	}
+	// A 300-person room is admitted once the cap is disabled.
+	room := attachmentpolicy.Conversation{Type: "group_chat", ParticipantCount: 300}
+	assert.True(cfg.Beeper.MediaPolicy("signal").Allows(room, 1<<20))
+	assert.Equal(attachmentpolicy.SkipParticipantThreshold,
+		NewDefaultConfig().Beeper.MediaPolicy("signal").Evaluate(room, 1<<20),
+		"the default policy skips the same room")
 }
 
 func TestLoadMediaPolicyAccountOverrides(t *testing.T) {
@@ -67,8 +149,10 @@ max_media_mb = 40
 		Scope: attachmentpolicy.ScopeDirect, MaxParticipants: 5, MaxBytes: 80 << 20,
 		DisabledReason: attachmentpolicy.SkipPolicyScope,
 	}, cfg.Beeper.MediaPolicy("telegram"))
+	// [slack] and [teams] omit media_max_participants, so the account
+	// overrides layer on top of the default cap.
 	assert.Equal(attachmentpolicy.Policy{
-		Scope: attachmentpolicy.ScopeNone, MaxBytes: 90 << 20,
+		Scope: attachmentpolicy.ScopeNone, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: 90 << 20,
 		DisabledReason: attachmentpolicy.SkipAccountPolicy,
 	}, cfg.Slack.MediaPolicy("T01"))
 	assert.Equal(attachmentpolicy.Policy{
@@ -76,7 +160,7 @@ max_media_mb = 40
 		DisabledReason: attachmentpolicy.SkipAccountPolicy,
 	}, cfg.Discord.MediaPolicy("G01"))
 	assert.Equal(attachmentpolicy.Policy{
-		Scope: attachmentpolicy.ScopeDirect, MaxBytes: 40 << 20,
+		Scope: attachmentpolicy.ScopeDirect, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: 40 << 20,
 	}, cfg.Teams.MediaPolicy("user@example.com"))
 }
 

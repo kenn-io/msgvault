@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-03
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -90,9 +91,14 @@ are only picked up by `--full` runs.
 - Voice-note transcriptions (when Beeper has them) are appended to the message
   body so they are searchable.
 - Attachments (photos, videos, voice notes, files) are downloaded during sync
-  into msgvault's content-addressed attachment store. Downloads that fail (or
-  exceed `max_media_mb`) leave a pending marker and the message is archived
-  anyway; retry them later with `msgvault backfill-beeper-media`. Use
+  into msgvault's content-addressed attachment store. By default media from
+  conversations with more than 20 participants is skipped with a typed
+  `participant_threshold` marker, so direct chats and small groups keep their
+  media while large rooms do not fill the disk; set
+  `media_max_participants = 0` to collect from every room. Downloads that fail
+  leave a pending marker and the message is archived anyway; retry them later
+  with `msgvault backfill-beeper-media`. Over-cap files (`max_media_mb`) are
+  recorded as a `size_cap` skip and retried only after the cap changes. Use
   `--no-media` or `media = false` to skip downloads — note that skipped-by-flag
   downloads leave no pending markers, so `backfill-beeper-media` will not fetch
   them later; re-enable media and run `sync-beeper --full` instead.
@@ -167,8 +173,19 @@ accounts = []                      # accountID include filter (empty = all)
 exclude_accounts = []              # e.g. ["whatsapp"] — see below
 rate_limit_qps = 20                # request rate against the local API
 media = true                       # download attachment bytes
-max_media_mb = 100                 # per-attachment size cap
+media_scope = "all"                # all, direct, or none
+media_max_participants = 20        # skip media from larger rooms; 0 = no cap
+max_media_mb = 250                 # per-attachment size cap
+
+# [beeper.accounts_config.signal]   # per-account override, keyed by accountID
+# media = true
+# max_media_mb = 500
 ```
+
+See [Media policy](/configuration/#media-policy) for how the scope, participant
+cap, size cap, and per-account overrides combine, and
+`msgvault purge-excluded-media` for removing media a changed policy would no
+longer collect.
 
 ### Overlap with native importers
 
