@@ -1287,8 +1287,12 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 				}
 			} else {
 				if m.mode == modeTexts && m.sourceScope.kind != sourceScopeCollection {
+					previous := m.currentSourceScope()
 					m.sourceScope = accountSourceScope(selected.accountID)
 					m.sourceScopeExplicit = true
+					if !previous.matches(selected) {
+						m.invalidateSourceScope()
+					}
 				}
 				m.accountFilter = selected.accountID
 			}
@@ -1674,7 +1678,9 @@ func (m *Model) invalidateSourceScope() {
 	m.messages = nil
 	m.rows = nil
 	m.stats = nil
-	m.messageReaderState = messageReaderState{}
+	if m.mode == modeEmail {
+		m.messageReaderState = messageReaderState{}
+	}
 	m.parkedMessageReaders[modeEmail] = messageReaderState{}
 	m.threadConversationID = 0
 	m.threadMessages = nil

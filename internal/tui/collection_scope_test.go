@@ -232,6 +232,32 @@ func TestStageForDeletionUsesEmailScopeAuthority(t *testing.T) {
 	assert.Equal(t, modalDeleteConfirm, got.modal)
 }
 
+func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
+	firstID := int64(1)
+	secondID := int64(2)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeEmail
+	model.messageReaderState.messageDetail = &query.MessageDetail{ID: 1}
+	model.switchMessageReaderState(modeTexts)
+	model.mode = modeTexts
+	model.messageReaderState.messageDetail = &query.MessageDetail{ID: 2}
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	model, _ = sendKey(t, model, keyEnter())
+
+	assert.Nil(t, model.parkedMessageReaders[modeEmail].messageDetail)
+	assert.Equal(t, int64(2), model.messageDetail.ID)
+	assert.Equal(t, secondID, *model.currentSourceScope().accountID)
+}
+
 func TestCollectionRowsStayEmailOnly(t *testing.T) {
 	model := New(newMockEngine(MockConfig{}), Options{
 		DataDir: "/tmp/test",
