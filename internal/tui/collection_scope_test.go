@@ -167,21 +167,69 @@ func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
-func TestAllAccountsTextSelectionClearsInheritedEmailSource(t *testing.T) {
+func TestTextAccountSelectionKeepsEmailScopeInSync(t *testing.T) {
 	accountID := int64(7)
-	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
-	model.mode = modeTexts
-	model.accountFilter = &accountID
-	model.modal = modalAccountSelector
-	model.drillFilter = query.MessageFilter{Sender: "sender@example.test", SourceID: &accountID}
+	t.Run("clears inherited email source", func(t *testing.T) {
+		model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+		model.mode = modeTexts
+		model.accountFilter = &accountID
+		model.modal = modalAccountSelector
+		model.drillFilter = query.MessageFilter{Sender: "sender@example.test", SourceID: &accountID}
 
-	model, _ = sendKey(t, model, keyEnter())
-	assert.Nil(t, model.accountFilter)
-	assert.True(t, model.sourceScopeExplicit)
+		model, _ = sendKey(t, model, keyEnter())
+		assert.Nil(t, model.accountFilter)
+		assert.Equal(t, sourceScopeAll, model.sourceScope.kind)
+		assert.True(t, model.sourceScopeExplicit)
 
-	model.mode = modeEmail
-	filter := model.buildMessageFilter()
-	assert.Nil(t, filter.SourceID)
+		model.mode = modeEmail
+		filter := model.buildMessageFilter()
+		assert.Nil(t, filter.SourceID)
+	})
+
+	t.Run("clears explicit email account", func(t *testing.T) {
+		model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+		model.mode = modeTexts
+		model.accountFilter = &accountID
+		model.sourceScope = accountSourceScope(&accountID)
+		model.sourceScopeExplicit = true
+		model.modal = modalAccountSelector
+		model.drillFilter = query.MessageFilter{Sender: "sender@example.test", SourceID: &accountID}
+
+		model, _ = sendKey(t, model, keyEnter())
+		assert.Nil(t, model.accountFilter)
+		assert.Equal(t, sourceScopeAll, model.sourceScope.kind)
+
+		model.mode = modeEmail
+		filter := model.buildMessageFilter()
+		assert.Nil(t, filter.SourceID)
+	})
+}
+
+func TestStageForDeletionUsesEmailScopeAuthority(t *testing.T) {
+	accountID := int64(7)
+	var captured query.MessageFilter
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
+			captured = filter
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: accountID, SourceType: "gmail",
+				SourceIdentifier: "account@example.invalid", SourceMessageID: "gm-1",
+			}}, nil
+		},
+	}
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{{ID: accountID, SourceType: "gmail", Identifier: "account@example.invalid"}}
+	model.sourceScope = accountSourceScope(&accountID)
+	model.accountFilter = nil
+	model.selection.aggregateKeys["sender@example.invalid"] = true
+	model.selection.aggregateViewType = query.ViewSenders
+
+	updated, _ := model.stageForDeletion()
+	got := asModel(t, updated)
+
+	assert.Equal(t, &accountID, captured.SourceID)
+	assert.Nil(t, captured.SourceIDs)
+	assert.Equal(t, modalDeleteConfirm, got.modal)
 }
 
 func TestCollectionRowsStayEmailOnly(t *testing.T) {

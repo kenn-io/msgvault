@@ -2083,7 +2083,8 @@ func (m *Model) updateDetailLineCount() {
 
 // stageForDeletion prepares messages for deletion via the ActionController.
 func (m Model) stageForDeletion() (tea.Model, tea.Cmd) {
-	if m.currentSourceScope().isEmpty() {
+	scope := m.currentSourceScope()
+	if scope.isEmpty() {
 		m.modal = modalDeleteResult
 		m.modalResult = "no messages selected"
 		return m, nil
@@ -2135,8 +2136,8 @@ func (m Model) deletionContext(allMatches bool) DeletionContext {
 		AggregateSelection: m.selection.aggregateKeys,
 		MessageSelection:   m.selection.messageIDs,
 		AggregateViewType:  m.selection.aggregateViewType,
-		AccountFilter:      m.accountFilter,
-		SourceIDs:          copySourceIDs(m.currentSourceScope().sourceIDs),
+		AccountFilter:      scope.accountID,
+		SourceIDs:          copySourceIDs(scope.sourceIDs),
 		Accounts:           m.accounts,
 		TimeGranularity:    m.timeGranularity,
 		Messages:           m.messages,
