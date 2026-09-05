@@ -57,9 +57,11 @@ func TestImportContactsPhoneCountryCodePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			participantID, err := st.EnsureParticipantByPhone(tt.participantPhone, "", "whatsapp")
-			require.NoError(t, err)
+			require.NoError(err)
 
 			path := filepath.Join(t.TempDir(), "contacts.vcf")
 			vcf := "BEGIN:VCARD\r\n" +
@@ -67,19 +69,19 @@ func TestImportContactsPhoneCountryCodePolicy(t *testing.T) {
 				"FN:Test User\r\n" +
 				tt.tel + "\r\n" +
 				"END:VCARD\r\n"
-			require.NoError(t, os.WriteFile(path, []byte(vcf), 0o600))
+			require.NoError(os.WriteFile(path, []byte(vcf), 0o600))
 
 			matched, total, err := ImportContacts(st, path)
-			require.NoError(t, err)
-			assert.Equal(t, 1, total)
-			assert.Equal(t, tt.wantMatched, matched)
+			require.NoError(err)
+			assert.Equal(1, total)
+			assert.Equal(tt.wantMatched, matched)
 
 			displayNames, err := st.ParticipantDisplayNamesContext(t.Context(), []int64{participantID})
-			require.NoError(t, err)
+			require.NoError(err)
 			if tt.wantDisplayName == "" {
-				assert.Equal(t, map[int64]string{}, displayNames)
+				assert.Equal(map[int64]string{}, displayNames)
 			} else {
-				assert.Equal(t, map[int64]string{participantID: tt.wantDisplayName}, displayNames)
+				assert.Equal(map[int64]string{participantID: tt.wantDisplayName}, displayNames)
 			}
 		})
 	}
