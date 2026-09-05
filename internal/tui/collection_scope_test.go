@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -124,7 +125,7 @@ func TestEmptyCollectionReadsDoNotCallEngine(t *testing.T) {
 func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
 	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
 	model.stats = &query.TotalStats{MessageCount: 1}
-	model.aggregateRequestID = 10
+	model.statsRequestID = 10
 	model.presentationGeneration = 20
 	model.invalidateSourceScope()
 
@@ -139,11 +140,170 @@ func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
 
 	current := statsLoadedMsg{
 		stats:                  &query.TotalStats{MessageCount: 2},
-		requestID:              got.aggregateRequestID,
+		requestID:              got.statsRequestID,
 		presentationGeneration: got.presentationGeneration,
 	}
 	updated, _ = got.handleStatsLoaded(current)
 	assert.Equal(t, int64(2), updated.(Model).stats.MessageCount)
+}
+
+func TestStatsResponseSurvivesAggregateOnlyRefresh(t *testing.T) {
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.statsRequestID = 7
+	model.aggregateRequestID = 10
+	model.presentationGeneration = 20
+	model.aggregateRequestID++
+
+	updated, _ := model.handleStatsLoaded(statsLoadedMsg{
+		stats:                  &query.TotalStats{MessageCount: 3},
+		requestID:              7,
+		presentationGeneration: 20,
+	})
+	got := asModel(t, updated)
+	require.NotNil(t, got.stats)
+	assert.Equal(t, int64(3), got.stats.MessageCount)
+}
+
+func TestStatsRequestIDAdvancesAtEveryStatsScheduler(t *testing.T) {
+	tests := []struct {
+		name  string
+		model func(t *testing.T) Model
+		key   tea.KeyPressMsg
+		call  func(Model, tea.KeyPressMsg) (tea.Model, tea.Cmd)
+	}{
+		{
+			name: "mode switch",
+			model: func(t *testing.T) Model {
+				t.Helper()
+				model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+				model.mode = modePeople
+				return model
+			},
+			key: key('m'),
+			call: func(model Model, key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+				updated, cmd, _ := model.handleGlobalKeys(key)
+				return updated, cmd
+			},
+		},
+		{
+			name: "account selector",
+			model: func(t *testing.T) Model {
+				t.Helper()
+				model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+				model.accounts = []query.AccountInfo{{ID: 1, Identifier: "alice@example.invalid"}}
+				model.openAccountSelector()
+				model.modalCursor = 1
+				return model
+			},
+			key: keyEnter(),
+			call: func(model Model, key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+				return model.handleAccountSelectorKeys(key)
+			},
+		},
+		{
+			name: "aggregate filter",
+			model: func(t *testing.T) Model {
+				t.Helper()
+				model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+				model.modal = modalFilterToggle
+				return model
+			},
+			key: keyEnter(),
+			call: func(model Model, key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+				return model.handleFilterToggleKeys(key)
+			},
+		},
+		{
+			name: "message list filter",
+			model: func(t *testing.T) Model {
+				t.Helper()
+				model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+				model.level = levelMessageList
+				model.modal = modalFilterToggle
+				return model
+			},
+			key: keyEnter(),
+			call: func(model Model, key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+				return model.handleFilterToggleKeys(key)
+			},
+		},
+		{
+			name: "message list search filter",
+			model: func(t *testing.T) Model {
+				t.Helper()
+				model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+				model.level = levelMessageList
+				model.modal = modalFilterToggle
+				model.searchQuery = "needle"
+				return model
+			},
+			key: keyEnter(),
+			call: func(model Model, key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+				return model.handleFilterToggleKeys(key)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := tt.model(t)
+			before := model.statsRequestID
+			updated, cmd := tt.call(model, tt.key)
+			got := asModel(t, updated)
+			assert.Greater(t, got.statsRequestID, before)
+			assert.NotNil(t, cmd)
+		})
+	}
+}
+
+func TestAggregateRefreshDoesNotAdvanceStatsRequestID(t *testing.T) {
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.statsRequestID = 7
+	model.aggregateRequestID = 10
+
+	updated, cmd := model.handleAggregateKeys(key('s'))
+	got := asModel(t, updated)
+	assert.Equal(t, uint64(7), got.statsRequestID)
+	assert.Greater(t, got.aggregateRequestID, uint64(10))
+	assert.NotNil(t, cmd)
+}
+
+func TestFilterToggleSupersedesInFlightStatsResponse(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.level = levelMessageList
+	model.modal = modalFilterToggle
+	model.statsRequestID = 7
+	model.presentationGeneration = 20
+	model.stats = &query.TotalStats{MessageCount: 1}
+
+	updated, cmd := model.handleFilterToggleKeys(keyEnter())
+	got := asModel(t, updated)
+	assertions.NotNil(cmd)
+	assertions.Equal(uint64(8), got.statsRequestID)
+
+	updated, _ = got.handleStatsLoaded(statsLoadedMsg{
+		stats:                  &query.TotalStats{MessageCount: 99},
+		requestID:              7,
+		presentationGeneration: got.presentationGeneration,
+	})
+	got = asModel(t, updated)
+	requirements.NotNil(got.stats)
+	assertions.Equal(int64(1), got.stats.MessageCount)
+}
+
+func TestLoadDataCarriesAggregateRequestID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.statsRequestID = 7
+	model.aggregateRequestID = 11
+
+	loaded, ok := model.loadData()().(dataLoadedMsg)
+	requirements.True(ok)
+	requirements.NoError(loaded.err)
+	assertions.Equal(uint64(11), loaded.requestID)
 }
 
 func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {

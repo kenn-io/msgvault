@@ -401,6 +401,7 @@ type Model struct {
 
 	// Request tracking to ignore stale async results
 	aggregateRequestID     uint64 // Current request ID for aggregate data
+	statsRequestID         uint64 // Current request ID for total statistics
 	loadRequestID          uint64 // Current request ID for message list
 	detailRequestID        uint64 // Current request ID for message detail
 	searchRequestID        uint64 // Current request ID for search results
@@ -726,7 +727,7 @@ func (m Model) loadData() tea.Cmd {
 
 // loadStats fetches total statistics.
 func (m Model) loadStats() tea.Cmd {
-	requestID := m.aggregateRequestID
+	requestID := m.statsRequestID
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
@@ -1605,7 +1606,7 @@ func (m Model) sumRowStats(rows []query.AggregateRow) *query.TotalStats {
 
 // handleStatsLoaded processes stats load completion.
 func (m Model) handleStatsLoaded(msg statsLoadedMsg) (tea.Model, tea.Cmd) {
-	if msg.requestID != m.aggregateRequestID || msg.presentationGeneration != m.presentationGeneration {
+	if msg.requestID != m.statsRequestID || msg.presentationGeneration != m.presentationGeneration {
 		return m, nil
 	}
 	if msg.err == nil {

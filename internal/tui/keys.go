@@ -360,6 +360,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		default:
 			m.loading = true
 			m.aggregateRequestID++
+			m.statsRequestID++
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 		}
@@ -1333,6 +1334,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			return m, cmd
 		}
 		m.aggregateRequestID++
+		m.statsRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
 	case keyNameEsc:
 		m.modal = modalNone
@@ -1384,12 +1386,15 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				m.loadRequestID++ // Invalidate normal list loads before replacing ranked results.
 				m.searchRequestID++
 				m.prepareSearchReplacement()
+				m.statsRequestID++
 				return m, tea.Batch(m.loadSearch(m.searchQuery), m.loadStats())
 			}
 			m.loadRequestID++
+			m.statsRequestID++
 			return m, tea.Batch(m.loadMessages(), m.loadStats())
 		}
 		m.aggregateRequestID++
+		m.statsRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
 	}
 	return m, nil
@@ -1659,6 +1664,7 @@ func (m *Model) openAccountSelector() {
 
 func (m *Model) invalidateSourceScope() {
 	m.aggregateRequestID++
+	m.statsRequestID++
 	m.loadRequestID++
 	m.detailRequestID++
 	m.searchRequestID++
