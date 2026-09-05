@@ -52,6 +52,10 @@ export type GetGmailIDsByFilterParams = {
    */
   source_id?: number;
   /**
+   * Source IDs; repeat or comma-separate values
+   */
+  source_ids?: number[];
+  /**
    * Only include messages with attachments
    */
   attachments_only?: boolean;

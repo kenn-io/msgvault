@@ -4,6 +4,7 @@
 import type { DeletionTarget } from "./deletionTarget";
 
 export interface GmailIDsResponse {
+  applied_source_ids?: number[];
   gmail_ids: string[];
   search_mode?: string;
   search_query?: string;

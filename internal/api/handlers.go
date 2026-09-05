@@ -3747,6 +3747,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 			"Body-scoped search requires at least one free-text term")
 		return
 	}
+	if filter.SourceIDs != nil {
+		writeError(w, http.StatusBadRequest, "unsupported_filter",
+			"Deep search does not support source_ids filters")
+		return
+	}
 
 	// Exact body-only search rejects view filters whose exact MessageFilter
 	// semantics cannot be preserved through search.Query. Generic Deep search
@@ -3755,11 +3760,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		filter.Recipient != "" || filter.RecipientName != "" ||
 		filter.Domain != "" || filter.Label != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
-		filter.MessageType != "" || filter.ListID != "" || filter.SourceIDs != nil) {
+		filter.MessageType != "" || filter.ListID != "") {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Body search does not support sender, sender_name, recipient, "+
 				"recipient_name, domain, label, time_period, empty_targets, "+
-				"message_type, list_id, or source_ids filters")
+				"message_type, or list_id filters")
 		return
 	}
 

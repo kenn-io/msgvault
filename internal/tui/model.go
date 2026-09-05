@@ -2127,6 +2127,7 @@ func (m Model) stageForDeletionContext(allMatches bool) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) deletionContext(allMatches bool) DeletionContext {
+	scope := m.currentSourceScope()
 	var drillFilter *query.MessageFilter
 	if m.hasDrillFilter() {
 		f := m.drillFilter

@@ -173,7 +173,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         rows:
           items:
@@ -4423,7 +4422,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         count:
           format: int64
@@ -4541,7 +4539,6 @@ components:
           items:
             format: int64
             type: integer
-          nullable: true
           type: array
         gmail_ids:
           items:

@@ -887,9 +887,11 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		filterParams := messageFilterParams()
 		for _, parameter := range filterParams {
 			switch parameter.Name {
+			case "source_ids":
+				parameter.Description += "; not supported by deep search"
 			case "sender", "sender_name", recipientParam, "recipient_name", "domain", "label",
 				"time_period", "conversation_id",
-				"empty_targets", "message_type", "list_id", "source_ids":
+				"empty_targets", "message_type", "list_id":
 				parameter.Description += "; not supported when scope=body"
 			}
 		}

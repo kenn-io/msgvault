@@ -180,9 +180,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
@@ -4451,9 +4449,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         count:
           format: int64
           type: integer
@@ -4573,9 +4569,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         gmail_ids:
           items:
             type: string

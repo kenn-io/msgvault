@@ -179,7 +179,7 @@ func (m Model) semanticSearchAvailable() bool {
 
 func (m Model) deepSearchAvailable() bool {
 	filter := m.currentSearchFilter()
-	return filter.ListID == "" && (filter.SourceIDs == nil || len(filter.SourceIDs) == 1)
+	return filter.SourceIDs == nil || len(filter.SourceIDs) == 1
 }
 
 func (m *Model) syncSearchScope() {

@@ -60,6 +60,10 @@ export type FastSearchParams = {
    */
   source_id?: number;
   /**
+   * Source IDs; repeat or comma-separate values
+   */
+  source_ids?: number[];
+  /**
    * Only include messages with attachments
    */
   attachments_only?: boolean;
@@ -95,8 +99,4 @@ export type FastSearchParams = {
    * Sort direction: asc or desc
    */
   direction?: string;
-  /**
-   * Source IDs; repeat the parameter for multiple sources
-   */
-  source_ids?: number[];
 };
