@@ -73,29 +73,31 @@ func TestWindowsConfigReplacementSupportsVerifiedRollback(t *testing.T) {
 }
 
 func TestWindowsRollbackPreservesLaterWriter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "config.toml")
 	candidate := filepath.Join(dir, "candidate.toml")
 	writeSecureWindowsTestConfig(t, target, []byte("old"))
 	writeSecureWindowsTestConfig(t, candidate, []byte("new"))
 	candidateBefore, err := readPhysicalConfigSnapshot(candidate)
-	require.NoError(t, err)
+	require.NoError(err)
 	targetBefore, err := readPhysicalConfigSnapshot(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	replacement, err := beginConfigReplacement(candidate, target, candidateBefore, targetBefore)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, replacement.release()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(replacement.release()) })
 	published, err := readPhysicalConfigSnapshot(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	replacement.published = published
 
-	require.NoError(t, os.Remove(target))
+	require.NoError(os.Remove(target))
 	writeSecureWindowsTestConfig(t, target, []byte("later writer"))
 	err = replacement.rollbackInstalledVersion()
-	require.ErrorIs(t, err, ErrConfigChanged)
-	require.ErrorIs(t, err, ErrConfigConflict)
-	assert.Equal(t, []byte("later writer"), mustReadFile(t, target))
-	assert.FileExists(t, replacement.displacedPath)
+	require.ErrorIs(err, ErrConfigChanged)
+	require.ErrorIs(err, ErrConfigConflict)
+	assert.Equal([]byte("later writer"), mustReadFile(t, target))
+	assert.FileExists(replacement.displacedPath)
 }
 
 func TestWindowsRejectsReparseConfigPath(t *testing.T) {
@@ -111,89 +113,95 @@ func TestWindowsRejectsReparseConfigPath(t *testing.T) {
 }
 
 func TestWindowsRetainedAuthorityBlocksIntermediateRenameAndAllowsReplace(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	intermediate := filepath.Join(root, "intermediate")
 	parent := filepath.Join(intermediate, "config")
-	require.NoError(t, os.MkdirAll(parent, 0o700))
+	require.NoError(os.MkdirAll(parent, 0o700))
 	target := filepath.Join(parent, "config.toml")
 	candidate := filepath.Join(parent, "candidate.toml")
 	writeSecureWindowsTestConfig(t, target, []byte("old"))
 	writeSecureWindowsTestConfig(t, candidate, []byte("new"))
 	targetBefore, err := readPhysicalConfigSnapshot(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	candidateBefore, err := readPhysicalConfigSnapshot(candidate)
-	require.NoError(t, err)
+	require.NoError(err)
 	authority, err := pinWindowsConfigParent(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	// Release is idempotent; this cleanup only matters when an assertion
 	// aborts the test before the explicit release below.
-	t.Cleanup(func() { require.NoError(t, authority.Release()) })
+	t.Cleanup(func() { require.NoError(authority.Release()) })
 	encodedParent, err := windows.UTF16PtrFromString(parent)
-	require.NoError(t, err)
+	require.NoError(err)
 	deleter, err := windows.CreateFile(encodedParent, windows.DELETE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	require.Error(t, err, "retained parent handle must deny delete-capable opens")
-	assert.Equal(t, windows.InvalidHandle, deleter)
-	assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
+	require.Error(err, "retained parent handle must deny delete-capable opens")
+	assert.Equal(windows.InvalidHandle, deleter)
+	assert.ErrorIs(err, windows.ERROR_SHARING_VIOLATION)
 
 	err = os.Rename(intermediate, filepath.Join(root, "redirected"))
-	require.Error(t, err, "retained intermediate handle must deny rename")
+	require.Error(err, "retained intermediate handle must deny rename")
 	replacement, err := beginConfigReplacement(candidate, target, candidateBefore, targetBefore)
-	require.NoError(t, err, "ReplaceFileW on a child must work while parent handles are retained")
+	require.NoError(err, "ReplaceFileW on a child must work while parent handles are retained")
 	t.Cleanup(func() { _ = replacement.release() })
-	assert.Equal(t, []byte("new"), mustReadFile(t, target))
-	require.NotNil(t, replacement.cleanupDisplaced)
-	require.NoError(t, replacement.cleanupDisplaced())
+	assert.Equal([]byte("new"), mustReadFile(t, target))
+	require.NotNil(replacement.cleanupDisplaced)
+	require.NoError(replacement.cleanupDisplaced())
 	tombstones, err := filepath.Glob(filepath.Join(parent, configRetiredPrefix+"*"))
-	require.NoError(t, err)
-	require.Len(t, tombstones, 1)
-	assert.Equal(t, []byte("old"), mustReadFile(t, tombstones[0]))
-	require.NoError(t, replacement.release())
-	require.NoError(t, authority.Release())
-	require.NoError(t, os.Rename(intermediate, filepath.Join(root, "redirected")),
+	require.NoError(err)
+	require.Len(tombstones, 1)
+	assert.Equal([]byte("old"), mustReadFile(t, tombstones[0]))
+	require.NoError(replacement.release())
+	require.NoError(authority.Release())
+	require.NoError(os.Rename(intermediate, filepath.Join(root, "redirected")),
 		"rename must work after every retained handle is released")
 }
 
 func TestWindowsRetainedAuthorityAllowsMissingPublication(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	parent := filepath.Join(t.TempDir(), "config")
-	require.NoError(t, os.Mkdir(parent, 0o700))
+	require.NoError(os.Mkdir(parent, 0o700))
 	target := filepath.Join(parent, "config.toml")
 	candidate := filepath.Join(parent, "candidate.toml")
 	writeSecureWindowsTestConfig(t, candidate, []byte("new"))
 	before, err := ReadConfigFile(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	authority, err := pinWindowsConfigParent(target)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, authority.Release()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(authority.Release()) })
 
 	retained, err := retainWindowsConfigArtifact(candidate, mustConfigIdentity(t, candidate))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, retained.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(retained.Close()) })
 	publication, err := publishNewConfig(candidate, retained, before)
-	require.NoError(t, err, "MoveFileExW on a child must work while parent handles are retained")
+	require.NoError(err, "MoveFileExW on a child must work while parent handles are retained")
 	t.Cleanup(func() { _ = publication.release() })
-	assert.Equal(t, []byte("new"), mustReadFile(t, target))
-	require.NoError(t, publication.release())
-	require.NoError(t, authority.Release())
+	assert.Equal([]byte("new"), mustReadFile(t, target))
+	require.NoError(publication.release())
+	require.NoError(authority.Release())
 }
 
 func TestWindowsAuthorityRejectsPreexistingDirectoryWriter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	parent := filepath.Join(t.TempDir(), "config")
-	require.NoError(t, os.Mkdir(parent, 0o700))
+	require.NoError(os.Mkdir(parent, 0o700))
 	encoded, err := windows.UTF16PtrFromString(parent)
-	require.NoError(t, err)
+	require.NoError(err)
 	writer, err := windows.CreateFile(encoded, windows.GENERIC_WRITE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer windows.CloseHandle(writer)
 
 	_, err = pinWindowsConfigParent(filepath.Join(parent, "config.toml"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
+	require.Error(err)
+	assert.ErrorIs(err, windows.ERROR_SHARING_VIOLATION)
 }
 
 func TestWindowsEditConfigFileFullTransactions(t *testing.T) {
@@ -203,60 +211,66 @@ func TestWindowsEditConfigFileFullTransactions(t *testing.T) {
 			name = "existing"
 		}
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			path := filepath.Join(t.TempDir(), "config.toml")
 			if existing {
 				writeSecureWindowsTestConfig(t, path, []byte("[web]\ntheme = \"system\"\n"))
 			}
 			snapshot, err := ReadConfigFile(path)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			after, err := EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
-			require.NoError(t, err)
-			assert.Equal(t, "[web]\ntheme = \"dark\"\n", string(after.Content))
+			require.NoError(err)
+			assert.Equal("[web]\ntheme = \"dark\"\n", string(after.Content))
 			if !existing {
-				require.NoError(t, verifyConfigOwnerOnly(after.Path))
+				require.NoError(verifyConfigOwnerOnly(after.Path))
 			}
 		})
 	}
 }
 
 func TestWindowsReadAndEditConfigWithMissingFinalParent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	parent := filepath.Join(root, "missing", "nested")
 	path := filepath.Join(parent, "config.toml")
 
 	snapshot, err := ReadConfigFile(path)
-	require.NoError(t, err)
-	assert.False(t, snapshot.Exists)
-	assert.Empty(t, snapshot.Content)
-	assert.Equal(t, configETag(nil), snapshot.ETag)
-	assert.Equal(t, path, snapshot.Path)
-	assert.NoDirExists(t, parent, "reading must not create missing config directories")
+	require.NoError(err)
+	assert.False(snapshot.Exists)
+	assert.Empty(snapshot.Content)
+	assert.Equal(configETag(nil), snapshot.ETag)
+	assert.Equal(path, snapshot.Path)
+	assert.NoDirExists(parent, "reading must not create missing config directories")
 
 	after, err := EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
-	require.NoError(t, err)
-	assert.Equal(t, "[web]\ntheme = \"dark\"\n", string(after.Content))
-	assert.FileExists(t, path)
-	require.NoError(t, verifyConfigOwnerOnly(path))
+	require.NoError(err)
+	assert.Equal("[web]\ntheme = \"dark\"\n", string(after.Content))
+	assert.FileExists(path)
+	require.NoError(verifyConfigOwnerOnly(path))
 }
 
 func TestWindowsMissingParentCreationRejectsAncestorReplacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	ancestor := filepath.Join(root, "authority")
-	require.NoError(t, os.Mkdir(ancestor, 0o700))
+	require.NoError(os.Mkdir(ancestor, 0o700))
 	path := filepath.Join(ancestor, "missing", "config.toml")
 
 	snapshot, err := readConfigFileSnapshot(path)
-	require.NoError(t, err)
-	require.NotEmpty(t, snapshot.parentIdentity)
+	require.NoError(err)
+	require.NotEmpty(snapshot.parentIdentity)
 
 	displaced := filepath.Join(root, "displaced")
-	require.NoError(t, os.Rename(ancestor, displaced))
-	require.NoError(t, os.Mkdir(ancestor, 0o700))
+	require.NoError(os.Rename(ancestor, displaced))
+	require.NoError(os.Mkdir(ancestor, 0o700))
 
 	err = ensureConfigParentDirectories(path, snapshot.parentIdentity)
-	require.ErrorIs(t, err, ErrConfigConflict)
-	assert.NoDirExists(t, filepath.Dir(path))
+	require.ErrorIs(err, ErrConfigConflict)
+	assert.NoDirExists(filepath.Dir(path))
 }
 
 func TestWindowsConfigSaveProducesEditableOwnerOnlyFile(t *testing.T) {
@@ -266,32 +280,34 @@ func TestWindowsConfigSaveProducesEditableOwnerOnlyFile(t *testing.T) {
 			name = "existing legacy inherited DACL"
 		}
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			home := t.TempDir()
 			path := filepath.Join(home, "config.toml")
 			if existing {
-				require.NoError(t, os.WriteFile(path, []byte("[web]\ntheme = \"light\"\n"), 0o600))
+				require.NoError(os.WriteFile(path, []byte("[web]\ntheme = \"light\"\n"), 0o600))
 			}
 			cfg := NewDefaultConfig()
 			cfg.HomeDir = home
 			cfg.configPath = path
 			cfg.Web.Theme = "system"
-			require.NoError(t, cfg.Save())
-			require.NoError(t, verifyConfigOwnerOnly(path))
+			require.NoError(cfg.Save())
+			require.NoError(verifyConfigOwnerOnly(path))
 			tombstones, globErr := filepath.Glob(filepath.Join(home, configRetiredPrefix+"*"))
-			require.NoError(t, globErr)
+			require.NoError(globErr)
 			if existing {
-				require.Len(t, tombstones, 1)
-				assert.Equal(t, []byte("[web]\ntheme = \"light\"\n"), mustReadFile(t, tombstones[0]))
+				require.Len(tombstones, 1)
+				assert.Equal([]byte("[web]\ntheme = \"light\"\n"), mustReadFile(t, tombstones[0]))
 			} else {
-				assert.Empty(t, tombstones)
+				assert.Empty(tombstones)
 			}
 
 			snapshot, err := ReadConfigFile(path)
-			require.NoError(t, err)
+			require.NoError(err)
 			after, err := EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
-			require.NoError(t, err)
-			assert.Contains(t, string(after.Content), "theme = \"dark\"")
-			require.NoError(t, verifyConfigOwnerOnly(path))
+			require.NoError(err)
+			assert.Contains(string(after.Content), "theme = \"dark\"")
+			require.NoError(verifyConfigOwnerOnly(path))
 		})
 	}
 }
@@ -331,10 +347,12 @@ func TestWindowsConfigSavePreservesPublishedCandidateWhenRetirementFails(t *test
 }
 
 func TestWindowsEditMigratesCurrentUserInheritedDACL(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[web]\ntheme = \"system\"\n"), 0o600))
+	require.NoError(os.WriteFile(path, []byte("[web]\ntheme = \"system\"\n"), 0o600))
 	world, err := windows.StringToSid("S-1-1-0")
-	require.NoError(t, err)
+	require.NoError(err)
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
 		AccessPermissions: windows.GENERIC_READ,
 		AccessMode:        windows.SET_ACCESS,
@@ -345,47 +363,51 @@ func TestWindowsEditMigratesCurrentUserInheritedDACL(t *testing.T) {
 			TrusteeValue: windows.TrusteeValueFromSID(world),
 		},
 	}}, nil)
-	require.NoError(t, err)
-	require.NoError(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+	require.NoError(err)
+	require.NoError(windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 	after, err := EditConfigFile(path, configETag([]byte("[web]\ntheme = \"system\"\n")), []Edit{{Key: "web.theme", Value: "dark"}})
-	require.NoError(t, err)
-	assert.Equal(t, "[web]\ntheme = \"dark\"\n", string(after.Content))
-	require.NoError(t, verifyConfigOwnerOnly(path))
+	require.NoError(err)
+	assert.Equal("[web]\ntheme = \"dark\"\n", string(after.Content))
+	require.NoError(verifyConfigOwnerOnly(path))
 	content, readErr := os.ReadFile(path)
-	require.NoError(t, readErr)
-	assert.Equal(t, "[web]\ntheme = \"dark\"\n", string(content))
+	require.NoError(readErr)
+	assert.Equal("[web]\ntheme = \"dark\"\n", string(content))
 }
 
 func TestWindowsSnapshotIdentityDetectsRecreatedFile(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	content := []byte("[web]\ntheme = \"system\"\n")
 	writeSecureWindowsTestConfig(t, path, content)
 	first, err := ReadConfigFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	second, err := ReadConfigFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, first.identity, second.identity)
+	require.NoError(err)
+	assert.Equal(first.identity, second.identity)
 
-	require.NoError(t, os.Remove(path))
+	require.NoError(os.Remove(path))
 	writeSecureWindowsTestConfig(t, path, content)
 	recreated, err := ReadConfigFile(path)
-	require.NoError(t, err)
-	assert.NotEqual(t, first.identity, recreated.identity)
+	require.NoError(err)
+	assert.NotEqual(first.identity, recreated.identity)
 }
 
 func TestWindowsReplaceFilePartialFailureRestoresOriginal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "config.toml")
 	candidate := filepath.Join(dir, "candidate.toml")
 	writeSecureWindowsTestConfig(t, target, []byte("old"))
 	writeSecureWindowsTestConfig(t, candidate, []byte("new"))
 	targetBefore, err := readPhysicalConfigSnapshot(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	candidateBefore, err := readPhysicalConfigSnapshot(candidate)
-	require.NoError(t, err)
+	require.NoError(err)
 	backup := candidate + ".displaced"
-	require.NoError(t, os.Rename(target, backup))
+	require.NoError(os.Rename(target, backup))
 	replacement := configReplacement{
 		displacedPath:     backup,
 		preserveCandidate: true,
@@ -394,29 +416,31 @@ func TestWindowsReplaceFilePartialFailureRestoresOriginal(t *testing.T) {
 
 	_, err = reconcileReplaceFileFailure(replacement, targetBefore, candidateBefore,
 		windows.ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
-	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrConfigChanged)
+	require.Error(err)
+	require.NotErrorIs(err, ErrConfigChanged)
 	old, readErr := os.ReadFile(target)
-	require.NoError(t, readErr)
-	assert.Equal(t, []byte("old"), old)
+	require.NoError(readErr)
+	assert.Equal([]byte("old"), old)
 	newCandidate, readErr := os.ReadFile(candidate)
-	require.NoError(t, readErr)
-	assert.Equal(t, []byte("new"), newCandidate)
+	require.NoError(readErr)
+	assert.Equal([]byte("new"), newCandidate)
 }
 
 func TestWindowsReplaceFilePartialFailurePreservesRecoveryArtifacts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "config.toml")
 	candidate := filepath.Join(dir, "candidate.toml")
 	writeSecureWindowsTestConfig(t, target, []byte("old"))
 	writeSecureWindowsTestConfig(t, candidate, []byte("new"))
 	targetBefore, err := readPhysicalConfigSnapshot(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	candidateBefore, err := readPhysicalConfigSnapshot(candidate)
-	require.NoError(t, err)
+	require.NoError(err)
 	backup := candidate + ".displaced"
-	require.NoError(t, os.Rename(target, backup))
-	require.NoError(t, os.Mkdir(target, 0o700))
+	require.NoError(os.Rename(target, backup))
+	require.NoError(os.Mkdir(target, 0o700))
 	replacement := configReplacement{
 		displacedPath:     backup,
 		preserveCandidate: true,
@@ -425,8 +449,8 @@ func TestWindowsReplaceFilePartialFailurePreservesRecoveryArtifacts(t *testing.T
 
 	replacement, err = reconcileReplaceFileFailure(replacement, targetBefore, candidateBefore,
 		windows.ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
-	require.ErrorIs(t, err, ErrConfigChanged)
-	assert.True(t, replacement.preserveCandidate)
-	assert.FileExists(t, candidate)
-	assert.FileExists(t, backup)
+	require.ErrorIs(err, ErrConfigChanged)
+	assert.True(replacement.preserveCandidate)
+	assert.FileExists(candidate)
+	assert.FileExists(backup)
 }

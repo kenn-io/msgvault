@@ -122,14 +122,55 @@ type ProviderCapabilityError string
 
 const ProviderCapabilityUnsupportedRepresentation ProviderCapabilityError = "unsupported_representation"
 
+// ProviderEnvelope is a closed classification of the provider error envelope.
+// It never contains provider-authored text.
+type ProviderEnvelope string
+
+const (
+	ProviderEnvelopeRecognized ProviderEnvelope = "recognized"
+	ProviderEnvelopeOtherClass ProviderEnvelope = "other_class"
+	ProviderEnvelopeUnreadable ProviderEnvelope = "unreadable"
+)
+
+// ProviderDiagnosticCode is a bounded classification of a provider error code.
+type ProviderDiagnosticCode string
+
+const (
+	ProviderDiagnosticCodeRejectedField          ProviderDiagnosticCode = "rejected_field"
+	ProviderDiagnosticCodeRejectedRepresentation ProviderDiagnosticCode = "rejected_representation"
+	ProviderDiagnosticCodeUnclassified           ProviderDiagnosticCode = "unclassified"
+)
+
+// ProviderDiagnosticField is a bounded classification of a provider-reported
+// request field relative to the exact capability attempt.
+type ProviderDiagnosticField string
+
+const (
+	ProviderDiagnosticFieldTokenLimit     ProviderDiagnosticField = "token_limit"
+	ProviderDiagnosticFieldReasoning      ProviderDiagnosticField = "reasoning"
+	ProviderDiagnosticFieldRepresentation ProviderDiagnosticField = "representation"
+	ProviderDiagnosticFieldForeign        ProviderDiagnosticField = "foreign"
+	ProviderDiagnosticFieldMalformed      ProviderDiagnosticField = "malformed"
+	ProviderDiagnosticFieldAbsent         ProviderDiagnosticField = "absent"
+)
+
+// ProviderDiagnostics contains only repository-owned classifications derived
+// from a bounded provider error envelope.
+type ProviderDiagnostics struct {
+	Envelope ProviderEnvelope
+	Code     ProviderDiagnosticCode
+	Field    ProviderDiagnosticField
+}
+
 // ProviderError exposes only response status, safe request metadata, and an
-// optional bounded capability classification. Provider response bodies are
-// intentionally discarded.
+// optional bounded capability classification and diagnostics. Provider
+// response bodies are intentionally discarded.
 type ProviderError struct {
-	StatusCode int
-	RequestID  string
-	RetryAfter time.Duration
-	Capability ProviderCapabilityError
+	StatusCode  int
+	RequestID   string
+	RetryAfter  time.Duration
+	Capability  ProviderCapabilityError
+	Diagnostics ProviderDiagnostics
 }
 
 func (e *ProviderError) Error() string {

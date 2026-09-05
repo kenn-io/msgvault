@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -382,6 +383,9 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			require.Error(negotiationErr)
 			assert.Empty(got)
 			assert.LessOrEqual(calls.Load(), int32(1))
+			if test.wait {
+				assert.ErrorIs(negotiationErr, context.DeadlineExceeded)
+			}
 			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 			assert.NotContains(negotiationErr.Error(), capabilityCredentialValue)
 			assert.NotContains(negotiationErr.Error(), capabilityArchiveCanary)
@@ -803,6 +807,305 @@ func TestCapabilityNegotiationStopsAfterUnclassified400404And422(t *testing.T) {
 			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 		})
 	}
+}
+
+func TestCapabilityNegotiationReportsDistinctProviderFailures(t *testing.T) {
+	responses := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "wrong model", status: http.StatusNotFound,
+			body: `{"error":{"type":"invalid_request_error","code":"model_not_found"}}`},
+		{name: "foreign rejected field", status: http.StatusBadRequest,
+			body: `{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"model"}}`},
+	}
+	var messages []string
+	var diagnostics []ProviderDiagnostics
+	var statuses []int
+	for _, response := range responses {
+		t.Run(response.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Request-ID", "capability-repro-request")
+				w.WriteHeader(response.status)
+				_, err := w.Write([]byte(response.body))
+				require.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			registry, err := NewDriverRegistry(server.Client(), nil, nil)
+			require.NoError(err)
+			_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+				NewCredential(AuthBearer, capabilityCredentialValue))
+			require.Error(negotiationErr)
+			messages = append(messages, negotiationErr.Error())
+			var typedErr *NegotiationError
+			require.ErrorAs(negotiationErr, &typedErr)
+			diagnostics = append(diagnostics, typedErr.Diagnostics)
+			statuses = append(statuses, typedErr.StatusCode)
+			assert.Equal("capability-repro-request", typedErr.RequestID)
+			assert.NotContains(typedErr.Error(), "unsupported_parameter")
+			assert.NotContains(typedErr.Error(), "model_not_found")
+		})
+	}
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Len(messages, len(responses))
+	assert.Equal([]int{http.StatusNotFound, http.StatusBadRequest}, statuses)
+	assert.Equal([]ProviderDiagnosticCode{
+		ProviderDiagnosticCodeUnclassified, ProviderDiagnosticCodeRejectedField,
+	}, []ProviderDiagnosticCode{diagnostics[0].Code, diagnostics[1].Code})
+	assert.Equal(ProviderDiagnosticFieldForeign, diagnostics[1].Field)
+	assert.NotEqual(messages[0], messages[1])
+	t.Logf("boundary rejected_field=%q provider_code_absent=%t", ProviderDiagnosticCodeRejectedField,
+		!strings.Contains(messages[1], "unsupported_parameter"))
+}
+
+func TestCapabilityNegotiationPreservesGoogleForeignFieldDiagnostic(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"UNSUPPORTED_PARAMETER","domain":"generativelanguage.googleapis.com","metadata":{"parameter":"model"}}]}}`))
+		require.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	registry, err := NewDriverRegistry(server.Client(), nil, nil)
+	require.NoError(err)
+	_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+		capabilityTestCandidate(ProtocolGoogleGenerateContent, server.URL),
+		NewCredential(AuthGoogleAPIKey, capabilityCredentialValue))
+	require.Error(negotiationErr)
+	var typedErr *NegotiationError
+	require.ErrorAs(negotiationErr, &typedErr)
+	assert.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
+	assert.Equal(ProviderDiagnosticFieldForeign, typedErr.Diagnostics.Field)
+}
+
+func TestAnthropicForeignRepresentationCodeIsUnclassified(t *testing.T) {
+	profile := ProviderProfile{Protocol: ProtocolAnthropicMessages, OutputMode: OutputModeNativeJSONSchema}
+	capability, diagnostics := classifyProviderError(profile,
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_response_format"}}`))
+	assert.Empty(t, capability)
+	assert.Equal(t, recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent), diagnostics)
+}
+
+func TestCapabilityNegotiationKeepsClassifiedFallback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var attempts []capabilityAttempt
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(json.NewDecoder(r.Body).Decode(&body))
+		attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
+		if len(attempts) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"response_format"}}`))
+			require.NoError(err)
+			return
+		}
+		_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
+		require.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	registry, err := NewDriverRegistry(server.Client(), nil, nil)
+	require.NoError(err)
+	got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+		NewCredential(AuthBearer, capabilityCredentialValue))
+	require.NoError(negotiationErr)
+	assert.Equal(OutputModeNativeJSONSchema, got.OutputMode)
+	assert.Equal("max_tokens", got.TokenLimitParameter)
+	require.Len(attempts, 2)
+	assert.Equal("json_schema", responseFormatType(t, attempts[0].body))
+	assert.Contains(attempts[0].body, "max_completion_tokens")
+	assert.Equal("json_schema", responseFormatType(t, attempts[1].body))
+	assert.Contains(attempts[1].body, "max_tokens")
+}
+
+func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		body     string
+		wantDiag ProviderDiagnostics
+	}{
+		{name: "unknown code", body: `{"error":{"type":"invalid_request_error","code":"model_not_found","message":"message-fragment-canary-never-report"}}`,
+			wantDiag: recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)},
+		{name: "other class", body: `{"error":{"type":"billing_error","code":"insufficient_quota"}}`,
+			wantDiag: otherClassProviderDiagnostics()},
+		{name: "malformed", body: `{"error":`, wantDiag: unreadableProviderDiagnostics()},
+		{name: "null parameter", body: `{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":null}}`,
+			wantDiag: recognizedProviderDiagnostics(ProviderDiagnosticCodeRejectedField, ProviderDiagnosticFieldMalformed)},
+		{name: "duplicate", body: `{"error":{"type":"invalid_request_error","code":"model_not_found"},"error":{}}`,
+			wantDiag: unreadableProviderDiagnostics()},
+		{name: "oversized", body: strings.Repeat("x", (32<<10)+1), wantDiag: unreadableProviderDiagnostics()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Request-ID", "safe-diagnostic-request")
+				w.WriteHeader(http.StatusBadRequest)
+				_, err := w.Write([]byte(test.body))
+				require.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			registry, err := NewDriverRegistry(server.Client(), nil, nil)
+			require.NoError(err)
+			_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+				NewCredential(AuthBearer, capabilityCredentialValue))
+			require.Error(negotiationErr)
+			var typedErr *NegotiationError
+			require.ErrorAs(negotiationErr, &typedErr)
+			assert.Equal(test.wantDiag, typedErr.Diagnostics)
+			assert.Equal("safe-diagnostic-request", typedErr.RequestID)
+			assert.NotContains(typedErr.Error(), "message-fragment-canary-never-report")
+			assert.NotContains(typedErr.Error(), capabilityCredentialValue)
+		})
+	}
+}
+
+func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
+	t.Run("probe", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("X-Request-ID", "probe-request")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err := w.Write([]byte(capabilityResponseCanary))
+			require.NoError(err)
+		}))
+		t.Cleanup(server.Close)
+		registry, err := NewDriverRegistry(server.Client(), nil, nil)
+		require.NoError(err)
+		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+			capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+			NewCredential(AuthBearer, capabilityCredentialValue))
+		require.Error(negotiationErr)
+		var typedErr *NegotiationError
+		require.ErrorAs(negotiationErr, &typedErr)
+		assert.Equal(NegotiationStageProbe, typedErr.Stage)
+		assert.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
+		assert.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
+		assert.Equal(http.StatusInternalServerError, typedErr.StatusCode)
+		assert.Equal("probe-request", typedErr.RequestID)
+	})
+
+	t.Run("reasoning probe", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var calls atomic.Int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if calls.Add(1) == 1 {
+				_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
+				require.NoError(err)
+				return
+			}
+			w.Header().Set("X-Request-ID", "reasoning-request")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err := w.Write([]byte(capabilityResponseCanary))
+			require.NoError(err)
+		}))
+		t.Cleanup(server.Close)
+		registry, err := NewDriverRegistry(server.Client(), nil, nil)
+		require.NoError(err)
+		candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
+		candidate.ReasoningEffort = "high"
+		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
+			NewCredential(AuthBearer, capabilityCredentialValue))
+		require.Error(negotiationErr)
+		var typedErr *NegotiationError
+		require.ErrorAs(negotiationErr, &typedErr)
+		assert.Equal(NegotiationStageReasoningProbe, typedErr.Stage)
+		assert.True(typedErr.Reasoning)
+		assert.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
+		assert.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
+		assert.Equal(http.StatusInternalServerError, typedErr.StatusCode)
+	})
+
+	t.Run("exhausted", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var calls atomic.Int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			var body map[string]any
+			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			parameter := "max_completion_tokens"
+			if _, present := body["max_tokens"]; present {
+				parameter = "max_tokens"
+			}
+			w.Header().Set("X-Request-ID", "last-attempt")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"` + parameter + `"}}`))
+			require.NoError(err)
+		}))
+		t.Cleanup(server.Close)
+		registry, err := NewDriverRegistry(server.Client(), nil, nil)
+		require.NoError(err)
+		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+			capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+			NewCredential(AuthBearer, capabilityCredentialValue))
+		require.Error(negotiationErr)
+		var typedErr *NegotiationError
+		require.ErrorAs(negotiationErr, &typedErr)
+		assert.Equal(NegotiationStageExhausted, typedErr.Stage)
+		assert.Equal(OutputModePromptJSON, typedErr.OutputMode)
+		assert.Equal("max_tokens", typedErr.TokenLimitParameter)
+		assert.Equal(http.StatusUnprocessableEntity, typedErr.StatusCode)
+		assert.Equal("last-attempt", typedErr.RequestID)
+		assert.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
+		assert.Equal(ProviderDiagnosticFieldTokenLimit, typedErr.Diagnostics.Field)
+		assert.Equal(int32(6), calls.Load())
+	})
+
+	t.Run("settings and driver stages", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		registry, err := NewDriverRegistry(nil, nil, nil)
+		require.NoError(err)
+		invalid := capabilityTestCandidate(ProtocolAnthropicMessages, "https://example.test")
+		invalid.ReasoningEffort = "high"
+		_, settingsErr := NewCapabilityChecker(registry).Negotiate(t.Context(), invalid,
+			NewCredential(AuthXAPIKey, capabilityCredentialValue))
+		require.Error(settingsErr)
+		var settingsTyped *NegotiationError
+		require.ErrorAs(settingsErr, &settingsTyped)
+		assert.Equal(NegotiationStageSettingsInvalid, settingsTyped.Stage)
+		assert.Nil(settingsTyped.Unwrap())
+
+		unsupported := capabilityTestCandidate(ProtocolCodexAppServer, "https://example.test")
+		_, driverErr := NewCapabilityChecker(registry).Negotiate(t.Context(), unsupported,
+			NewCredential(AuthNone, ""))
+		require.Error(driverErr)
+		var driverTyped *NegotiationError
+		require.ErrorAs(driverErr, &driverTyped)
+		assert.Equal(NegotiationStageDriverUnavailable, driverTyped.Stage)
+		assert.Nil(driverTyped.Unwrap())
+	})
+}
+
+func TestNegotiationErrorUnwrapsProviderHTTPFailures(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Request-ID", "unwrap-request")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	registry, err := NewDriverRegistry(server.Client(), nil, nil)
+	require.NoError(err)
+	_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
+		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
+		NewCredential(AuthBearer, capabilityCredentialValue))
+	require.Error(negotiationErr)
+	var providerErr *ProviderError
+	require.ErrorAs(negotiationErr, &providerErr)
+	assert.Equal(http.StatusInternalServerError, providerErr.StatusCode)
+	assert.Equal("unwrap-request", providerErr.RequestID)
 }
 
 func TestCapabilityNegotiationRetriesClassifiedErrorsForEachProtocolFamily(t *testing.T) {

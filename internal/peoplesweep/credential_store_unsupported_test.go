@@ -11,15 +11,17 @@ import (
 )
 
 func TestCredentialStoreFailsClosedOnUnsupportedPlatform(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	tokensDir := t.TempDir()
 	store := NewFileCredentialStore(tokensDir)
 
 	err := store.Save("profile", NewCredential(AuthBearer, "unsupported-platform-test-value"))
-	require.ErrorIs(t, err, errCredentialStoreUnsupported)
+	require.ErrorIs(err, errCredentialStoreUnsupported)
 	guard, err := store.PreflightDelete("profile")
-	require.ErrorIs(t, err, errCredentialStoreUnsupported)
-	assert.Nil(t, guard)
+	require.ErrorIs(err, errCredentialStoreUnsupported)
+	assert.Nil(guard)
 	err = store.Delete("profile", nil)
-	require.ErrorIs(t, err, errCredentialStoreUnsupported)
-	assert.NoDirExists(t, filepath.Join(tokensDir, credentialNamespace))
+	require.ErrorIs(err, errCredentialStoreUnsupported)
+	assert.NoDirExists(filepath.Join(tokensDir, credentialNamespace))
 }
