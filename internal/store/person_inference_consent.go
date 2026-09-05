@@ -89,7 +89,7 @@ func personInferenceProfileInsertValues(jsonBindExpr string) string {
 }
 
 func personInferenceProfileColumnsFor(render func(name string, isJSON bool) string) string {
-	typeOfProjection := reflect.TypeOf(personInferenceProfileProjection{})
+	typeOfProjection := reflect.TypeFor[personInferenceProfileProjection]()
 	indexes := personInferenceProfileDBFieldIndexes(typeOfProjection)
 	columns := make([]string, len(indexes))
 	for columnIndex, fieldIndex := range indexes {
@@ -103,7 +103,7 @@ func personInferenceProfileColumnsFor(render func(name string, isJSON bool) stri
 
 func personInferenceProfileDBFieldIndexes(typeOfProjection reflect.Type) []int {
 	indexes := make([]int, 0, typeOfProjection.NumField())
-	for index := 0; index < typeOfProjection.NumField(); index++ {
+	for index := range typeOfProjection.NumField() {
 		name, _, _ := strings.Cut(typeOfProjection.Field(index).Tag.Get("db"), ",")
 		if name != "" && name != "-" {
 			indexes = append(indexes, index)
@@ -117,7 +117,7 @@ func newPersonInferenceProfileProjection(
 ) (personInferenceProfileProjection, error) {
 	profileValue := reflect.ValueOf(profile)
 	profileFields := make(map[string]reflect.Value, profileValue.NumField())
-	for index := 0; index < profileValue.NumField(); index++ {
+	for index := range profileValue.NumField() {
 		field := reflect.TypeOf(profile).Field(index)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if field.Name == "PolicyJSON" {
@@ -130,7 +130,7 @@ func newPersonInferenceProfileProjection(
 	projection := personInferenceProfileProjection{}
 	projectionValue := reflect.ValueOf(&projection).Elem()
 	projectionType := projectionValue.Type()
-	for index := 0; index < projectionValue.NumField(); index++ {
+	for index := range projectionValue.NumField() {
 		field := projectionType.Field(index)
 		name, option, _ := strings.Cut(field.Tag.Get("profile"), ",")
 		if name == "" || name == "-" {
@@ -184,14 +184,18 @@ func (p *personInferenceProfileProjection) scanDestinations() []any {
 	return destinations
 }
 
-func (p personInferenceProfileProjection) insertValues() []any {
-	value := reflect.ValueOf(p)
+func (p *personInferenceProfileProjection) insertValues() []any {
+	value := reflect.ValueOf(p).Elem()
 	indexes := personInferenceProfileDBFieldIndexes(value.Type())
 	values := make([]any, len(indexes))
 	for valueIndex, fieldIndex := range indexes {
 		field := value.Field(fieldIndex)
-		if field.Type() == reflect.TypeOf(sql.NullString{}) {
-			sourceUntil := field.Interface().(sql.NullString)
+		if field.Type() == reflect.TypeFor[sql.NullString]() {
+			sourceUntil, ok := field.Interface().(sql.NullString)
+			if !ok {
+				values[valueIndex] = field.Interface()
+				continue
+			}
 			if !sourceUntil.Valid {
 				values[valueIndex] = nil
 				continue
@@ -204,14 +208,18 @@ func (p personInferenceProfileProjection) insertValues() []any {
 	return values
 }
 
-func (p personInferenceProfileProjection) equal(expected personInferenceProfileProjection) bool {
-	value, expectedValue := reflect.ValueOf(p), reflect.ValueOf(expected)
+func (p *personInferenceProfileProjection) equal(expected personInferenceProfileProjection) bool {
+	value, expectedValue := reflect.ValueOf(p).Elem(), reflect.ValueOf(expected)
 	indexes := personInferenceProfileDBFieldIndexes(value.Type())
 	for _, fieldIndex := range indexes {
 		field := value.Type().Field(fieldIndex)
 		actual, want := value.Field(fieldIndex).Interface(), expectedValue.Field(fieldIndex).Interface()
-		if field.Type == reflect.TypeOf(sql.NullString{}) {
-			actualUntil, expectedUntil := actual.(sql.NullString), want.(sql.NullString)
+		if field.Type == reflect.TypeFor[sql.NullString]() {
+			actualUntil, actualOK := actual.(sql.NullString)
+			expectedUntil, expectedOK := want.(sql.NullString)
+			if !actualOK || !expectedOK {
+				return false
+			}
 			if actualUntil.String != expectedUntil.String {
 				return false
 			}
@@ -219,7 +227,9 @@ func (p personInferenceProfileProjection) equal(expected personInferenceProfileP
 		}
 		_, options, _ := strings.Cut(field.Tag.Get("db"), ",")
 		if options == "json" {
-			if !equalJSON([]byte(actual.(string)), []byte(want.(string))) {
+			actualString, actualOK := actual.(string)
+			wantString, wantOK := want.(string)
+			if !actualOK || !wantOK || !equalJSON([]byte(actualString), []byte(wantString)) {
 				return false
 			}
 			continue
@@ -231,7 +241,7 @@ func (p personInferenceProfileProjection) equal(expected personInferenceProfileP
 	return true
 }
 
-func (p personInferenceProfileProjection) profile() (peoplesweep.ProviderProfile, error) {
+func (p *personInferenceProfileProjection) profile() (peoplesweep.ProviderProfile, error) {
 	var storedSources []peoplesweep.SourceClass
 	if err := json.Unmarshal([]byte(p.AllowedSources), &storedSources); err != nil {
 		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode allowed sources: %w", err)

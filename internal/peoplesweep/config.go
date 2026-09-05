@@ -158,7 +158,7 @@ func ProviderTOMLValues(provider ProviderConfig) map[string]any {
 	values := make(map[string]any)
 	value := reflect.ValueOf(provider)
 	typeOfProvider := value.Type()
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		field := typeOfProvider.Field(index)
 		tag := field.Tag.Get("toml")
 		name, options, _ := strings.Cut(tag, ",")
@@ -624,7 +624,7 @@ func policyJSONForProviderProfile(profile ProviderProfile) ([]byte, error) {
 	value := reflect.ValueOf(profile)
 	fields := make([]reflect.StructField, 0, value.NumField()-2)
 	values := make([]reflect.Value, 0, value.NumField()-2)
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		field := typeOfProfile.Field(index)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name == "fingerprint" || name == "" || name == "-" {
