@@ -536,6 +536,7 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 	})
 	manifest.CreatedBy = "tui"
 	manifest.Filters.ListIDs = []string{"announce.example.org"}
+	manifest.RawFilter = json.RawMessage(`{"scope":"all_matches","search_query":"invoice","match_filter":{"attachments_only":true}}`)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
@@ -553,6 +554,7 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal("tui", body.CreatedBy, "created by")
 		assert.Equal([]string{"gid1", "gid2"}, body.GmailIDs, "gmail ids")
 		assert.Equal([]string{"announce.example.org"}, body.Filters.ListIDs, "list ids")
+		assert.JSONEq(string(manifest.RawFilter), string(body.RawFilter), "raw filter")
 		if !assert.NotNil(body.Source) {
 			http.Error(w, "missing source", http.StatusBadRequest)
 			return

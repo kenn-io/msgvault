@@ -3,6 +3,7 @@
  */
 import type { BodySearchContext } from "./bodySearchContext";
 import type { MessageSummary } from "./messageSummary";
+import type { TotalStatsResponse } from "./totalStatsResponse";
 
 export interface DeepSearchResponse {
   body_contexts?: BodySearchContext[];
@@ -13,5 +14,7 @@ export interface DeepSearchResponse {
   offset: number;
   query: string;
   scope?: string;
+  stats?: TotalStatsResponse;
+  total_count: number;
   [key: string]: unknown;
 }

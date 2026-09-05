@@ -846,7 +846,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "listChangedMessages":
 		return changesParams()
 	case "getGmailIDsByFilter":
-		return messageFilterParams()
+		return append(messageFilterParams(),
+			queryStringParam("q", "Structured search query", false),
+			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate; required with q", false),
+			queryStringParam("view_type", "Aggregate view type; required for aggregate search", false),
+			queryStringParam("aggregate_key", "Displayed aggregate row key; required for aggregate search", false),
+		)
 	case "searchMessagesByDomains":
 		return []*huma.Param{
 			queryStringParam("domains", "Comma-separated participant domains", true),
@@ -866,15 +871,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryBooleanParam("has_attachment", "Only include messages with attachments"),
 		}
 	case "getTotalStats":
-		return []*huma.Param{
-			queryIntegerParam("source_id", "Source ID"),
+		return mergeParams([]*huma.Param{
 			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
-			queryBooleanParam("attachments_only", "Only include messages with attachments"),
-			queryBooleanParam("hide_deleted", "Exclude deleted messages"),
 			queryStringParam("search_query", "Search query", false),
 			queryBooleanParam("search_scope", "Include all message types when the search has no explicit message_type"),
 			queryStringParam("group_by", "Aggregate view type for grouping", false),
-		}
+		}, messageFilterScopeParams())
 	case "fastSearch":
 		params := append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
@@ -887,9 +889,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		filterParams := messageFilterParams()
 		for _, parameter := range filterParams {
 			switch parameter.Name {
-			case "sender_name", "recipient_name", "time_period", "conversation_id",
+			case "sender", "sender_name", recipientParam, "recipient_name", "domain", "label",
+				"time_period", "conversation_id",
 				"empty_targets", "message_type", "list_id":
-				parameter.Description += "; not supported by deep search"
+				parameter.Description += "; not supported when scope=body"
 			}
 		}
 		return append([]*huma.Param{
@@ -980,6 +983,15 @@ func aggregateOptionParams() []*huma.Param {
 }
 
 func messageFilterParams() []*huma.Param {
+	return append(messageFilterScopeParams(),
+		queryIntegerParam("offset", "Zero-based row offset"),
+		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
+		queryStringParam("sort", "Sort field: date, size, or subject", false),
+		queryStringParam("direction", "Sort direction: asc or desc", false),
+	)
+}
+
+func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
@@ -998,10 +1010,6 @@ func messageFilterParams() []*huma.Param {
 		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("empty_targets", "Comma-separated aggregate view names to match empty values", false),
-		queryIntegerParam("offset", "Zero-based row offset"),
-		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
-		queryStringParam("sort", "Sort field: date, size, or subject", false),
-		queryStringParam("direction", "Sort direction: asc or desc", false),
 	}
 }
 

@@ -900,6 +900,37 @@ func TestDuckDBEngine_RecipientEmailAndName_SameToRow(t *testing.T) {
 		"same-row recipient email+name must still match in GetDeletionTargetsByFilter")
 }
 
+func TestDuckDBEngine_RecipientPhoneFilter(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	recipient := b.AddPhoneParticipant("+15551234567", "Phone Recipient")
+	messageID := b.AddMessage(MessageOpt{Subject: "Phone recipient", SentAt: makeDate(6, 10), SizeEstimate: 1000})
+	b.AddTo(messageID, recipient, "Phone Recipient")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	for _, filter := range []MessageFilter{
+		{Recipient: "+15551234567"},
+		{Recipient: "+15551234567", RecipientName: "Phone Recipient"},
+	} {
+		messages, err := engine.SearchFast(ctx, &search.Query{}, filter, 100, 0)
+		require.NoError(err, "SearchFast")
+		assertMessageIDs(t, messages, []int64{messageID})
+
+		count, err := engine.SearchFastCount(ctx, &search.Query{}, filter)
+		require.NoError(err, "SearchFastCount")
+		assert.Equal(t, int64(1), count)
+
+		targets, err := engine.GetDeletionTargetsByFilter(ctx, filter)
+		require.NoError(err, "GetDeletionTargetsByFilter")
+		require.Len(targets, 1)
+		assert.Equal(t, messageID, targets[0].MessageID)
+	}
+}
+
 func TestDuckDBEngine_GetDeletionTargetsByFilter_SenderName(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
@@ -1359,8 +1390,6 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 		{"LabelFilter_CaseInsensitive", "label:work", MessageFilter{}, []string{"Hello World", "Question"}},
 		{"LabelFilter_Substring", "label:wor", MessageFilter{}, []string{"Hello World", "Question"}},
 		{"HasAttachment", "has:attachment", MessageFilter{}, []string{"Re: Hello", "Question"}},
-		{"ToFilter_Bob", "to:bob", MessageFilter{}, []string{"Hello World", "Re: Hello", "Follow up"}},
-		{"ToFilter_Carol", "to:carol", MessageFilter{}, []string{"Hello World"}},
 
 		// Context filters (search + MessageFilter)
 		{"ContextFilter_SenderAlice", "Hello", MessageFilter{Sender: "alice@example.com"}, []string{"Hello World", "Re: Hello"}},
@@ -1410,6 +1439,82 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 		}
 		assert.True(t, foundFromBob, "expected at least one message from bob@company.org")
 	})
+}
+
+func TestDuckDBEngine_SearchFastRecipientOperatorParity(t *testing.T) {
+	requirements := require.New(t)
+	ctx := t.Context()
+
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	_, err := tdb.DB.Exec(`
+		INSERT INTO participants (id, email_address, display_name, domain)
+		VALUES (4, 'recipient@example.net', 'Test Recipient', 'example.net');
+		INSERT INTO participants (id, phone_number, display_name)
+		VALUES (5, '+15551234567', 'Phone Recipient');
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+		VALUES (1, 4, 'to', 'Test Recipient'),
+		       (2, 4, 'cc', 'Test Recipient'),
+		       (3, 4, 'bcc', 'Test Recipient'),
+		       (1, 5, 'to', 'Phone Recipient'),
+		       (2, 5, 'cc', 'Phone Recipient'),
+		       (3, 5, 'bcc', 'Phone Recipient');
+	`)
+	requirements.NoError(err)
+	sqliteEngine := NewSQLiteEngine(tdb.DB)
+
+	builder := buildStandardTestData(t)
+	recipientID := builder.AddParticipant("recipient@example.net", "example.net", "Test Recipient")
+	phoneRecipientID := builder.AddPhoneParticipant("+15551234567", "Phone Recipient")
+	builder.AddTo(1, recipientID, "Test Recipient")
+	builder.AddCc(2, recipientID, "Test Recipient")
+	builder.AddRecipient(3, recipientID, "bcc", "Test Recipient")
+	builder.AddTo(1, phoneRecipientID, "Phone Recipient")
+	builder.AddCc(2, phoneRecipientID, "Phone Recipient")
+	builder.AddRecipient(3, phoneRecipientID, "bcc", "Phone Recipient")
+	duckDBEngine := builder.BuildEngine()
+
+	for _, testCase := range []struct {
+		query string
+		want  []int64
+	}{
+		{query: "to:recipient@example.net", want: []int64{1}},
+		{query: "cc:recipient@example.net", want: []int64{2}},
+		{query: "bcc:recipient@example.net", want: []int64{3}},
+		{query: "to:example.net", want: []int64{1}},
+		{query: "cc:example.net", want: []int64{2}},
+		{query: "bcc:example.net", want: []int64{3}},
+		{query: "to:+15551234567", want: []int64{1}},
+		{query: "cc:+15551234567", want: []int64{2}},
+		{query: "bcc:+15551234567", want: []int64{3}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			requirements := require.New(t)
+			parsed := search.Parse(testCase.query)
+			sqliteResults, err := sqliteEngine.SearchFast(ctx, parsed, MessageFilter{}, 100, 0)
+			requirements.NoError(err)
+			duckDBResults, err := duckDBEngine.SearchFast(ctx, parsed, MessageFilter{}, 100, 0)
+			requirements.NoError(err)
+			sqliteCount, err := sqliteEngine.SearchFastCount(ctx, parsed, MessageFilter{})
+			requirements.NoError(err)
+			duckDBCount, err := duckDBEngine.SearchFastCount(ctx, parsed, MessageFilter{})
+			requirements.NoError(err)
+			deletionTargets, err := sqliteEngine.GetDeletionTargetsBySearch(
+				ctx, parsed, MessageFilter{}, DeletionSearchFast,
+			)
+			requirements.NoError(err)
+
+			assertMessageIDs(t, sqliteResults, testCase.want)
+			assertMessageIDs(t, duckDBResults, testCase.want)
+			assert.Equal(t, int64(len(testCase.want)), sqliteCount)
+			assert.Equal(t, int64(len(testCase.want)), duckDBCount)
+			deletionIDs := make([]int64, len(deletionTargets))
+			for i, target := range deletionTargets {
+				deletionIDs[i] = target.MessageID
+			}
+			assertSetEqual(t, deletionIDs, testCase.want)
+		})
+	}
 }
 
 func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
@@ -2285,6 +2390,11 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
 			wantIDs: []string{"msg1", "msg2"},
 		},
 		{
+			name:    "attachments",
+			filter:  MessageFilter{WithAttachmentsOnly: true},
+			wantIDs: []string{"msg2", "msg4"},
+		},
+		{
 			name:    "time_period=2024-01",
 			filter:  MessageFilter{TimeRange: TimeRange{Period: "2024-01", Granularity: TimeMonth}},
 			wantIDs: []string{"msg1", "msg2"},
@@ -2327,6 +2437,140 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_MessageTypeEmailIncludesLegacy(
 		[]string{fmt.Sprintf("msg%d", typedEmailID), fmt.Sprintf("msg%d", legacyEmailID)},
 		ids,
 	)
+}
+
+func TestDuckDBEngine_GetDeletionTargetsByAggregateSearch(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	builder := buildStandardTestData(t)
+	listID := "<dev@example.test>"
+	builder.messages[0].ListID = &listID
+	builder.messages[1].ListID = &listID
+	analyticsDir, cleanup := builder.Build()
+	t.Cleanup(cleanup)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	_, err := tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, listID)
+	requirements.NoError(err)
+	engine, err := NewDuckDBEngine(analyticsDir, "", tdb.DB)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	filter := MessageFilter{Sender: "alice@example.com", MessageType: messageTypeEmail}
+	rows, err := engine.SubAggregate(t.Context(), MessageFilter{MessageType: messageTypeEmail}, ViewSenders,
+		AggregateOptions{SearchQuery: "Hello"})
+	requirements.NoError(err)
+	requirements.NotEmpty(rows)
+
+	targets, err := engine.GetDeletionTargetsByAggregateSearch(
+		t.Context(), "Hello", filter, ViewSenders, "alice@example.com")
+	requirements.NoError(err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]string{"msg1", "msg2"}, ids)
+
+	targets, err = engine.GetDeletionTargetsByAggregateSearch(
+		t.Context(), "Hello", MessageFilter{MessageType: messageTypeEmail}, ViewLists, listID)
+	requirements.NoError(err)
+	ids, err = deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]string{"msg1", "msg2"}, ids)
+}
+
+func TestDuckDBEngine_AggregateSearchAndDeletionShareBodyScope(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	builder := buildStandardTestData(t)
+	analyticsDir, cleanup := builder.Build()
+	t.Cleanup(cleanup)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	_, err := tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'aggregatebodyneedle' WHERE message_id = 1`)
+	requirements.NoError(err)
+	tdb.EnableFTS()
+	engine, err := NewDuckDBEngine(analyticsDir, "", tdb.DB)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	filter := MessageFilter{MessageType: messageTypeEmail}
+	rows, err := engine.SubAggregate(t.Context(), filter, ViewSenders,
+		AggregateOptions{SearchQuery: "aggregatebodyneedle"})
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Equal("alice@example.com", rows[0].Key)
+	assertions.Equal(int64(1), rows[0].Count)
+
+	filter.Sender = rows[0].Key
+	targets, err := engine.GetDeletionTargetsByAggregateSearch(
+		t.Context(), "aggregatebodyneedle", filter, ViewSenders, rows[0].Key)
+	requirements.NoError(err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.Equal([]string{"msg1"}, ids)
+}
+
+func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	builder := buildStandardTestData(t)
+	analyticsDir, cleanup := builder.Build()
+	t.Cleanup(cleanup)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	engine, err := NewDuckDBEngine(analyticsDir, "", tdb.DB)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	_, err = tdb.DB.Exec(`UPDATE messages SET
+		subject = CASE id
+			WHEN 1 THEN 'No longer matches'
+			WHEN 2 THEN 'No longer matches either'
+			WHEN 3 THEN 'Hello from live SQLite'
+			ELSE subject END,
+		has_attachments = CASE id
+			WHEN 1 THEN 1
+			WHEN 2 THEN 0
+			WHEN 4 THEN 0
+			ELSE has_attachments END,
+		deleted_from_source_at = CASE id
+			WHEN 5 THEN '2026-09-03 12:00:00'
+			ELSE deleted_from_source_at END`)
+	requirements.NoError(err)
+	q := search.Parse("Hello")
+	filter := MessageFilter{MessageType: messageTypeEmail}
+
+	visible, err := engine.SearchFast(t.Context(), q, filter, 100, 0)
+	requirements.NoError(err)
+	requirements.Len(visible, 2)
+	assertions.ElementsMatch([]int64{1, 2}, []int64{visible[0].ID, visible[1].ID})
+
+	targets, err := engine.GetDeletionTargetsBySearch(t.Context(), q, filter, DeletionSearchFast)
+	requirements.NoError(err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.Equal([]string{"msg3"}, ids)
+
+	attachmentFilter := MessageFilter{MessageType: messageTypeEmail, WithAttachmentsOnly: true}
+	visible, err = engine.ListMessages(t.Context(), attachmentFilter)
+	requirements.NoError(err)
+	requirements.Len(visible, 2)
+	assertions.ElementsMatch([]int64{2, 4}, []int64{visible[0].ID, visible[1].ID})
+
+	targets, err = engine.GetDeletionTargetsByFilter(t.Context(), attachmentFilter)
+	requirements.NoError(err)
+	ids, err = deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.Equal([]string{"msg1"}, ids)
+
+	limitedFilter := MessageFilter{
+		MessageType: messageTypeEmail,
+		Pagination:  Pagination{Limit: 1},
+	}
+	targets, err = engine.GetDeletionTargetsByFilter(t.Context(), limitedFilter)
+	requirements.NoError(err)
+	ids, err = deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.Equal([]string{"msg4"}, ids)
 }
 
 // buildEmptyBucketsTestData creates a TestDataBuilder with messages that have
@@ -2675,6 +2919,33 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyFilter(t *testing.T) {
 	assertSetEqual(t, ids, []string{"msg1", "msg2", "msg3", "msg4", "msg5"})
 }
 
+func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyBuckets(t *testing.T) {
+	engine := newEmptyBucketsEngine(t)
+
+	tests := []struct {
+		name string
+		view ViewType
+		want []string
+	}{
+		{name: "sender", view: ViewSenders, want: []string{"msg3"}},
+		{name: "sender name", view: ViewSenderNames, want: []string{"msg3"}},
+		{name: "recipient", view: ViewRecipients, want: []string{"msg4"}},
+		{name: "recipient name", view: ViewRecipientNames, want: []string{"msg4"}},
+		{name: "domain", view: ViewDomains, want: []string{"msg3", "msg6"}},
+		{name: "label", view: ViewLabels, want: []string{"msg5"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids, err := deletionTargetSourceMessageIDs(engine.GetDeletionTargetsByFilter(
+				context.Background(), MessageFilter{EmptyValueTargets: map[ViewType]bool{tt.view: true}},
+			))
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.want, ids)
+		})
+	}
+}
+
 // TestDuckDBEngine_GetDeletionTargetsByFilter_CombinedNoMatch verifies empty results for
 // combined filters that match nothing.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_CombinedNoMatch(t *testing.T) {
@@ -2766,8 +3037,8 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 		},
 		{
 			name:        "to operator",
-			searchQuery: "to:bob",
-			wantClauses: []string{"recipient_type IN ('to', 'cc', 'bcc')", "email_address ILIKE"},
+			searchQuery: "to:recipient@example.net",
+			wantClauses: []string{"recipient_type = ?", "LOWER(p_recipient.email_address) = ?"},
 		},
 		{
 			name:        "subject operator",
@@ -2943,6 +3214,29 @@ func TestAggregateByLabel_WithLabelSearch(t *testing.T) {
 	assert.Len(rows, 1, "expected 1 label row")
 }
 
+func TestDuckDBEngine_AggregateLabelSearchStatsCorrelateFilterAndText(t *testing.T) {
+	b := buildStandardTestData(t)
+	needle := b.AddLabel("Needle")
+	b.AddMessageLabel(1, needle)
+	workNeedle := b.AddLabel("Work Needle")
+	b.AddMessageLabel(2, workNeedle)
+	engine := b.BuildEngine()
+	ctx := context.Background()
+	searchQuery := "label:Work Needle"
+
+	rows, err := engine.Aggregate(ctx, ViewLabels,
+		AggregateOptions{SearchQuery: searchQuery})
+	require.NoError(t, err)
+	assertAggregateCounts(t, rows, map[string]int64{"Work Needle": 1})
+
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{
+		SearchQuery: searchQuery,
+		GroupBy:     ViewLabels,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), stats.MessageCount)
+}
+
 // TestBuildSearchConditions_EscapedWildcards verifies that buildSearchConditions
 // escapes wildcards: ILIKE ESCAPE for TextTerms and operators.
 func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
@@ -2969,14 +3263,6 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 			},
 			wantClauses: []string{"p.email_address ILIKE", "ESCAPE"},
 			wantInArgs:  []string{"test\\_user\\%"},
-		},
-		{
-			name: "to: with wildcards",
-			query: &search.Query{
-				ToAddrs: []string{"bob_smith%"},
-			},
-			wantClauses: []string{"email_address ILIKE", "ESCAPE"},
-			wantInArgs:  []string{"bob\\_smith\\%"},
 		},
 		{
 			name: "subject: with wildcards",
@@ -3251,14 +3537,15 @@ func TestDuckDBEngine_GetTotalStats_GroupByRecipients(t *testing.T) {
 	}
 	engine := newParquetEngine(t)
 
-	// Search "bob" with GroupBy=ViewRecipients should search recipient key columns.
-	// Bob is a recipient (to) on msgs 1,2,3 — searching "bob" should match those.
+	// Search "bob" with GroupBy=ViewRecipients should search message metadata and
+	// recipient key columns. Bob is the recipient on msgs 1,2,3 and the sender on
+	// msgs 4,5, so all five messages match the displayed aggregate scope.
 	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{
 		SearchQuery: "bob",
 		GroupBy:     ViewRecipients,
 	})
 	require.NoError(t, err, "GetTotalStats")
-	assert.Equal(t, int64(3), stats.MessageCount, "recipient search 'bob'")
+	assert.Equal(t, int64(5), stats.MessageCount, "recipient search 'bob'")
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByLabels(t *testing.T) {
@@ -3290,6 +3577,111 @@ func TestDuckDBEngine_GetTotalStats_GroupByDefault(t *testing.T) {
 	})
 	require.NoError(t, err, "GetTotalStats")
 	assert.Equal(t, int64(3), stats.MessageCount, "sender search 'alice'")
+}
+
+func TestDuckDBEngine_GetTotalStats_GroupedSearchMatchesVisibleRows(t *testing.T) {
+	tests := []struct {
+		name             string
+		query            string
+		groupBy          ViewType
+		wantRow          string
+		wantRowCount     int64
+		wantMessageCount int64
+	}{
+		{
+			name:             "recipient view subject match",
+			query:            "follow",
+			groupBy:          ViewRecipients,
+			wantRow:          "bob@company.org",
+			wantRowCount:     1,
+			wantMessageCount: 1,
+		},
+		{
+			name:             "label view sender match",
+			query:            "alice",
+			groupBy:          ViewLabels,
+			wantRow:          "INBOX",
+			wantRowCount:     3,
+			wantMessageCount: 3,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			engine := newParquetEngine(t)
+			ctx := context.Background()
+			opts := DefaultAggregateOptions()
+			opts.SearchQuery = tc.query
+
+			rows, err := engine.Aggregate(ctx, tc.groupBy, opts)
+			require.NoError(err, "Aggregate")
+			assert.Equal(tc.wantRowCount, requireAggregateRow(t, rows, tc.wantRow).Count)
+
+			stats, err := engine.GetTotalStats(ctx, StatsOptions{
+				SearchQuery: tc.query,
+				GroupBy:     tc.groupBy,
+			})
+			require.NoError(err, "GetTotalStats")
+			assert.Equal(tc.wantMessageCount, stats.MessageCount)
+		})
+	}
+}
+
+func TestDuckDBEngine_GetTotalStats_NameGroupSearchMatchesVisibleRows(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	listSender := b.AddParticipant("list@example.org", "example.org", "List Sender")
+	phoneRecipient := b.AddPhoneParticipant("+15551234567", "")
+
+	senderNameMessage := b.AddMessage(MessageOpt{Subject: "Sender name", SizeEstimate: 1000})
+	b.AddFrom(senderNameMessage, listSender, "Alice via List")
+	recipientNameMessage := b.AddMessage(MessageOpt{Subject: "Recipient name", SizeEstimate: 2000})
+	b.AddTo(recipientNameMessage, phoneRecipient, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	tests := []struct {
+		name    string
+		query   string
+		groupBy ViewType
+		wantRow string
+	}{
+		{
+			name:    "sender per-message display name",
+			query:   "Alice via List",
+			groupBy: ViewSenderNames,
+			wantRow: "Alice via List",
+		},
+		{
+			name:    "recipient phone fallback",
+			query:   "+15551234567",
+			groupBy: ViewRecipientNames,
+			wantRow: "+15551234567",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := context.Background()
+			opts := DefaultAggregateOptions()
+			opts.SearchQuery = tc.query
+
+			rows, err := engine.Aggregate(ctx, tc.groupBy, opts)
+			require.NoError(err, "Aggregate")
+			assert.Equal(int64(1), requireAggregateRow(t, rows, tc.wantRow).Count)
+
+			stats, err := engine.GetTotalStats(ctx, StatsOptions{
+				SearchQuery: tc.query,
+				GroupBy:     tc.groupBy,
+			})
+			require.NoError(err, "GetTotalStats")
+			assert.Equal(int64(1), stats.MessageCount)
+		})
+	}
 }
 
 // TestBuildStatsSearchConditions_PlaceholderArgCount is a regression test for

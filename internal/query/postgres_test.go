@@ -39,6 +39,14 @@ func TestPostgresEngineHidesTextEngine(t *testing.T) {
 	require.True(t, ok, "SQLite engine should satisfy TextEngine")
 }
 
+func TestPostgresEngineExposesAggregateDeletionResolver(t *testing.T) {
+	requirements := require.New(t)
+	engine := NewPostgreSQLEngine(nil)
+
+	_, ok := engine.(DeletionTargetAggregateSearchResolver)
+	requirements.True(ok, "PostgreSQL engine must forward aggregate deletion resolution")
+}
+
 // TestPostgresTimeTruncExpression verifies the PostgreSQL time truncation expressions.
 func TestPostgresTimeTruncExpression(t *testing.T) {
 	d := PostgreSQLQueryDialect{}

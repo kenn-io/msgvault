@@ -20,6 +20,9 @@ Override the data directory with the `MSGVAULT_HOME` environment variable or the
 # Base data directory (default: ~/.msgvault)
 data_dir = "/path/to/msgvault/data"
 
+# User-requested exports (default: {data_dir}/exports)
+export_dir = "/path/to/msgvault/exports"
+
 # Database URL (default: {data_dir}/msgvault.db; PostgreSQL DSN supported)
 database_url = "/path/to/msgvault.db"
 
@@ -345,6 +348,7 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 | Key | Default | Description |
 |---|---|---|
 | `data_dir` | `~/.msgvault` | Base directory for all data |
+| `export_dir` | `{data_dir}/exports` | Directory for attachment ZIPs, downloads, and files opened from the TUI |
 | `database_url` | `{data_dir}/msgvault.db` | SQLite database path or PostgreSQL DSN |
 | `loose_attachments` | `false` | Keep attachments as loose files and reject pack/repack commands instead of creating immutable packs |
 

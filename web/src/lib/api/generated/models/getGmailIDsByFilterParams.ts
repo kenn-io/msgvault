@@ -87,4 +87,20 @@ export type GetGmailIDsByFilterParams = {
    * Sort direction: asc or desc
    */
   direction?: string;
+  /**
+   * Structured search query
+   */
+  q?: string;
+  /**
+   * Search mode: fast, deep, or aggregate; required with q
+   */
+  search_mode?: string;
+  /**
+   * Aggregate view type; required for aggregate search
+   */
+  view_type?: string;
+  /**
+   * Displayed aggregate row key; required for aggregate search
+   */
+  aggregate_key?: string;
 };

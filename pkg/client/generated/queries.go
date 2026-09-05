@@ -590,6 +590,18 @@ type GetGmailIDsByFilterQuery struct {
 
 	// Direction Sort direction: asc or desc
 	Direction *string `json:"direction,omitempty"`
+
+	// Q Structured search query
+	Q *string `json:"q,omitempty"`
+
+	// SearchMode Search mode: fast, deep, or aggregate; required with q
+	SearchMode *string `json:"search_mode,omitempty"`
+
+	// ViewType Aggregate view type; required for aggregate search
+	ViewType *string `json:"view_type,omitempty"`
+
+	// AggregateKey Displayed aggregate row key; required for aggregate search
+	AggregateKey *string `json:"aggregate_key,omitempty"`
 }
 
 type GetMessageInlinePartQuery struct {
@@ -1000,37 +1012,37 @@ type DeepSearchQuery struct {
 	// Scope Exact search scope: body; omit for composite full-text search
 	Scope *string `json:"scope,omitempty"`
 
-	// Sender Sender email/address filter
+	// Sender Sender email/address filter; not supported when scope=body
 	Sender *string `json:"sender,omitempty"`
 
-	// SenderName Sender display-name filter; not supported by deep search
+	// SenderName Sender display-name filter; not supported when scope=body
 	SenderName *string `json:"sender_name,omitempty"`
 
-	// Recipient Recipient email/address filter
+	// Recipient Recipient email/address filter; not supported when scope=body
 	Recipient *string `json:"recipient,omitempty"`
 
-	// RecipientName Recipient display-name filter; not supported by deep search
+	// RecipientName Recipient display-name filter; not supported when scope=body
 	RecipientName *string `json:"recipient_name,omitempty"`
 
-	// Domain Domain filter
+	// Domain Domain filter; not supported when scope=body
 	Domain *string `json:"domain,omitempty"`
 
-	// Label Label filter
+	// Label Label filter; not supported when scope=body
 	Label *string `json:"label,omitempty"`
 
-	// ListID Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search
+	// ListID Exact case-insensitive RFC 2919 List-Id filter; not supported when scope=body
 	ListID *string `json:"list_id,omitempty"`
 
-	// MessageType Message type filter; not supported by deep search
+	// MessageType Message type filter; not supported when scope=body
 	MessageType *string `json:"message_type,omitempty"`
 
-	// TimePeriod Named time period; not supported by deep search
+	// TimePeriod Named time period; not supported when scope=body
 	TimePeriod *string `json:"time_period,omitempty"`
 
 	// TimeGranularity Time bucket granularity
 	TimeGranularity *string `json:"time_granularity,omitempty"`
 
-	// ConversationID Conversation ID; not supported by deep search
+	// ConversationID Conversation ID; not supported when scope=body
 	ConversationID *int64 `json:"conversation_id,omitempty"`
 
 	// SourceID Source ID
@@ -1048,7 +1060,7 @@ type DeepSearchQuery struct {
 	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
 	Before *string `json:"before,omitempty"`
 
-	// EmptyTargets Comma-separated aggregate view names to match empty values; not supported by deep search
+	// EmptyTargets Comma-separated aggregate view names to match empty values; not supported when scope=body
 	EmptyTargets *string `json:"empty_targets,omitempty"`
 
 	// Offset Zero-based row offset
@@ -1196,17 +1208,8 @@ type ListSourceStatusQuery struct {
 }
 
 type GetTotalStatsQuery struct {
-	// SourceID Source ID
-	SourceID *int64 `json:"source_id,omitempty"`
-
 	// SourceIds Source IDs; repeat the parameter for multiple sources
 	SourceIds []int64 `json:"source_ids,omitempty"`
-
-	// AttachmentsOnly Only include messages with attachments
-	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
-
-	// HideDeleted Exclude deleted messages
-	HideDeleted *bool `json:"hide_deleted,omitempty"`
 
 	// SearchQuery Search query
 	SearchQuery *string `json:"search_query,omitempty"`
@@ -1216,6 +1219,57 @@ type GetTotalStatsQuery struct {
 
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`
+
+	// Sender Sender email/address filter
+	Sender *string `json:"sender,omitempty"`
+
+	// SenderName Sender display-name filter
+	SenderName *string `json:"sender_name,omitempty"`
+
+	// Recipient Recipient email/address filter
+	Recipient *string `json:"recipient,omitempty"`
+
+	// RecipientName Recipient display-name filter
+	RecipientName *string `json:"recipient_name,omitempty"`
+
+	// Domain Domain filter
+	Domain *string `json:"domain,omitempty"`
+
+	// Label Label filter
+	Label *string `json:"label,omitempty"`
+
+	// ListID Exact case-insensitive RFC 2919 List-Id filter
+	ListID *string `json:"list_id,omitempty"`
+
+	// MessageType Message type filter
+	MessageType *string `json:"message_type,omitempty"`
+
+	// TimePeriod Named time period
+	TimePeriod *string `json:"time_period,omitempty"`
+
+	// TimeGranularity Time bucket granularity
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// ConversationID Conversation ID
+	ConversationID *int64 `json:"conversation_id,omitempty"`
+
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// AttachmentsOnly Only include messages with attachments
+	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
+
+	// HideDeleted Exclude deleted messages
+	HideDeleted *bool `json:"hide_deleted,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+
+	// EmptyTargets Comma-separated aggregate view names to match empty values
+	EmptyTargets *string `json:"empty_targets,omitempty"`
 }
 
 type TriggerSyncQuery struct {
