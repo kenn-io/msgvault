@@ -867,6 +867,27 @@ func TestEngineGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	}}, targets)
 }
 
+func TestEngineGetDeletionTargetsByFilterForwardsSourceIDs(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, []string{"7", "8"}, r.URL.Query()["source_ids"])
+		assert.Empty(t, r.URL.Query().Get("source_id"))
+		writeJSONResponse(t, w, map[string]any{
+			"gmail_ids":          []string{"shared-id"},
+			"applied_source_ids": []int64{8, 7},
+			"targets": []map[string]any{{
+				"message_id": 7, "source_id": 8, "source_type": "gmail",
+				"source_identifier": "account@example.invalid", "source_message_id": "shared-id",
+			}},
+		})
+	})
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
+		SourceIDs: []int64{7, 8},
+	})
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	assert.Equal(t, int64(8), targets[0].SourceID)
+}
+
 func TestEngineRejectsListIDFilterAgainstOlderDaemonBeforeScopedRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -2314,6 +2335,21 @@ func TestEngineAggregateForwardsAndConfirmsCollectionSourceIDs(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+func TestEngineSubAggregateForwardsOptionSourceIDs(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, []string{"7", "8"}, r.URL.Query()["source_ids"])
+		assert.Empty(t, r.URL.Query().Get("source_id"))
+		writeJSONResponse(t, w, map[string]any{
+			"view_type": "senders", "rows": []map[string]any{}, "applied_source_ids": []int64{8, 7},
+		})
+	})
+
+	rows, err := NewEngineAdapter(store).SubAggregate(context.Background(), query.MessageFilter{}, query.ViewSenders,
+		query.AggregateOptions{SourceIDs: []int64{7, 8}})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }

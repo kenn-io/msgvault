@@ -336,7 +336,7 @@ func gmailIDsFilterQuery(filter query.MessageFilter) *generated.GetGmailIDsByFil
 		Recipient: base.Recipient, RecipientName: base.RecipientName,
 		Domain: base.Domain, Label: base.Label, ListID: base.ListID, MessageType: base.MessageType,
 		TimePeriod: base.TimePeriod, TimeGranularity: base.TimeGranularity,
-		ConversationID: base.ConversationID, SourceID: base.SourceID,
+		ConversationID: base.ConversationID, SourceID: base.SourceID, SourceIds: copyInt64sPreserveNil(base.SourceIds),
 		AttachmentsOnly: base.AttachmentsOnly, HideDeleted: base.HideDeleted,
 		After: base.After, Before: base.Before, EmptyTargets: base.EmptyTargets,
 		Offset: base.Offset, Sort: base.Sort, Direction: base.Direction,
@@ -683,7 +683,13 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 
 // SubAggregate performs aggregation on a filtered subset of messages.
 func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, groupBy query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
-	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+	sourceID, sourceIDs := filter.SourceID, filter.SourceIDs
+	if opts.SourceIDs != nil {
+		sourceID, sourceIDs = opts.SourceID, opts.SourceIDs
+	} else if opts.SourceID != nil {
+		sourceID, sourceIDs = opts.SourceID, nil
+	}
+	if sourceIDs != nil && len(sourceIDs) == 0 {
 		return []query.AggregateRow{}, nil
 	}
 	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, groupBy); err != nil {
@@ -708,8 +714,8 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 				TimePeriod:      optionalString(filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
 				ConversationID:  filter.ConversationID,
-				SourceID:        sourceIDForSourceIDs(filter.SourceID, filter.SourceIDs),
-				SourceIds:       copyInt64sPreserveNil(filter.SourceIDs),
+				SourceID:        sourceIDForSourceIDs(sourceID, sourceIDs),
+				SourceIds:       copyInt64sPreserveNil(sourceIDs),
 				AttachmentsOnly: optionalBool(filter.WithAttachmentsOnly),
 				HideDeleted:     optionalBool(filter.HideDeletedFromSource),
 				After:           optionalTimeRFC3339(filter.After),
@@ -726,7 +732,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 	if err != nil {
 		return nil, err
 	}
-	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "sub-aggregate"); err != nil {
+	if err := requireAppliedSourceIDs(sourceIDs, resp.JSON200.AppliedSourceIds, "sub-aggregate"); err != nil {
 		return nil, err
 	}
 	return aggregateRowsFromGenerated(resp.JSON200), nil
