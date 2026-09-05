@@ -163,7 +163,6 @@
     pending = true;
     error = '';
     const stagedSelection = selection;
-    const stagedFingerprint = fingerprint(stagedSelection);
     try {
       const {
         data,
@@ -181,9 +180,6 @@
       );
       if (!data || response.status !== 201)
         throw new Error(messageFor(responseError, 'Unable to stage this deletion.'));
-      if (stagedFingerprint !== fingerprint(selection)) {
-        throw new Error('The selection changed while it was being staged. Review it again.');
-      }
       reviewed = undefined;
       preview = data;
       confirmStage = undefined;
@@ -237,7 +233,8 @@
     const { matched, staged, skipped } = stageCounts(value);
     const prefix = value.dry_run ? 'Dry run' : 'Staged';
     const account = value.account ? ` in ${value.account}` : '';
-    return `${prefix}: Matched: ${matched.toLocaleString()} · Staged: ${staged.toLocaleString()} · Skipped: ${skipped.toLocaleString()}${account}`;
+    const batch = !value.dry_run && value.id ? ` · Batch ID: ${value.id}` : '';
+    return `${prefix}: Matched: ${matched.toLocaleString()} · Staged: ${staged.toLocaleString()} · Skipped: ${skipped.toLocaleString()}${account}${batch}`;
   }
   function partialWarning(value: StageDeletionResponse): string {
     const { staged, skipped } = stageCounts(value);

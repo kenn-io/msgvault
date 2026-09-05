@@ -88,6 +88,7 @@ describe('DeletionsWorkspace', () => {
     expect(deletionPosts).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
     await waitFor(() => expect(deletionPosts).toBe(2));
+    expect(await screen.findByText(/Batch ID: batch-2/)).toBeDefined();
 
     const preflightBody = await requests
       .find((request) => new URL(request.url).pathname.endsWith('/explore/preflight'))!
@@ -194,6 +195,68 @@ describe('DeletionsWorkspace', () => {
 
     expect(await screen.findByText('The selection changed while it was being reviewed. Review it again.')).toBeDefined();
     expect(screen.queryByText(/Dry run: Matched/)).toBeNull();
+    rendered.unmount();
+  });
+
+  it('keeps a committed stage result and refreshes manifests after the selection changes', async () => {
+    let resolveStage!: (response: Response) => void;
+    const pendingStage = new Promise<Response>((resolve) => {
+      resolveStage = resolve;
+    });
+    let listCalls = 0;
+    let stagePosts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight());
+      if (request.method === 'POST') {
+        stagePosts += 1;
+        return pendingStage;
+      }
+      listCalls += 1;
+      return listCalls === 1
+        ? Response.json({ manifests: [] })
+        : Response.json({
+            manifests: [
+              {
+                id: 'batch-committed',
+                status: 'pending',
+                created_at: '2026-07-19T10:00:00Z',
+                created_by: 'api',
+                description: 'reviewed selection',
+                message_count: 1,
+              },
+            ],
+          });
+    });
+    const rendered = render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
+    await waitFor(() => expect(stagePosts).toBe(1));
+    await rendered.rerender({ client: createAPIClient(fetchFn), selection: matching });
+
+    resolveStage(
+      Response.json(
+        {
+          dry_run: false,
+          matched_count: 1,
+          message_count: 1,
+          skipped_count: 0,
+          account: 'archive@example.com',
+          id: 'batch-committed',
+          status: 'pending',
+        },
+        { status: 201 },
+      ),
+    );
+
+    expect(await screen.findByText(/Staged: Matched: 1 · Staged: 1 · Skipped: 0 in archive@example.com · Batch ID: batch-committed/)).toBeDefined();
+    expect(await screen.findByText('batch-committed')).toBeDefined();
+    expect(listCalls).toBe(2);
     rendered.unmount();
   });
 
