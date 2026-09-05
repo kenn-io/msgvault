@@ -21,20 +21,22 @@ import (
 const whatsappIdentityTestPhone = "+15555550100"
 
 func TestImportWhatsAppConfirmsDefaultIdentityWithRecoverableErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	home := t.TempDir()
 	fixture := createWhatsAppIdentityFixture(t, true, false)
 	output, err := runWhatsAppIdentityCommand(t, home, fixture, false)
 
-	require.NoError(t, err)
-	assert.Contains(t, output, "Confirmed identity "+whatsappIdentityTestPhone)
-	assert.Contains(t, output, "phone-e164")
-	assert.Contains(t, output, "Messages:       3 processed, 1 added, 2 skipped")
-	assert.Contains(t, output, "Errors:         1")
+	require.NoError(err)
+	assert.Contains(output, "Confirmed identity "+whatsappIdentityTestPhone)
+	assert.Contains(output, "phone-e164")
+	assert.Contains(output, "Messages:       3 processed, 1 added, 2 skipped")
+	assert.Contains(output, "Errors:         1")
 
 	identities := whatsappIdentityTestIdentities(t, home)
-	require.Len(t, identities, 1)
-	assert.Equal(t, whatsappIdentityTestPhone, identities[0].Address)
-	assert.Equal(t, "phone-e164", identities[0].SourceSignal)
+	require.Len(identities, 1)
+	assert.Equal(whatsappIdentityTestPhone, identities[0].Address)
+	assert.Equal("phone-e164", identities[0].SourceSignal)
 }
 
 func TestImportWhatsAppConfirmsDefaultIdentityOnCleanImport(t *testing.T) {
@@ -77,16 +79,17 @@ func TestImportWhatsAppDoesNotCreateSourceForUnknownDatabase(t *testing.T) {
 }
 
 func TestImportWhatsAppIdentityIsIdempotent(t *testing.T) {
+	require := require.New(t)
 	home := t.TempDir()
 	fixture := createWhatsAppIdentityFixture(t, true, false)
 
 	_, err := runWhatsAppIdentityCommand(t, home, fixture, false)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = runWhatsAppIdentityCommand(t, home, fixture, false)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	identities := whatsappIdentityTestIdentities(t, home)
-	require.Len(t, identities, 1)
+	require.Len(identities, 1)
 	assert.Equal(t, whatsappIdentityTestPhone, identities[0].Address)
 }
 
