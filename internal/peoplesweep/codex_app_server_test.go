@@ -658,6 +658,7 @@ func TestCodexCleanupReturnsBoundedSafeErrorWhenKillFailsAndWaitBlocks(t *testin
 	const secret = "failed-kill-secret"
 	release := make(chan struct{})
 	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	transcript := &codexTranscript{}
 	baseScript := successfulCodexScript(t, transcript, "gpt-test", []string{"high"}, nil, `{"claims":[]}`)
 	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
@@ -680,21 +681,19 @@ func TestCodexCleanupReturnsBoundedSafeErrorWhenKillFailsAndWaitBlocks(t *testin
 	prepared, err := transport.Prepare(profile, codexTestRequest())
 	must.NoError(err)
 	done := make(chan error, 1)
-	startedAt := time.Now()
 	go func() {
 		_, generateErr := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 		done <- generateErr
 	}()
 	process := <-processReady
+	// Cleanup must return while the process is still blocked. The timeout
+	// only catches a hang; runner throughput is not part of this contract.
 	select {
 	case err = <-done:
-	case <-time.After(500 * time.Millisecond):
-		checks.Fail("failed process kill left cleanup blocked in Wait")
-		releaseOnce.Do(func() { close(release) })
-		err = <-done
+	case <-time.After(30 * time.Second):
+		must.FailNow("failed process kill left cleanup blocked in Wait")
 	}
 	must.Error(err)
-	checks.Less(time.Since(startedAt), 500*time.Millisecond)
 	checks.NotContains(err.Error(), secret)
 	checks.Equal(int64(1), process.kills.Load())
 	checks.Equal(int64(1), process.waits.Load())
@@ -709,7 +708,7 @@ func TestCodexCleanupReturnsBoundedSafeErrorWhenKillFailsAndWaitBlocks(t *testin
 	releaseOnce.Do(func() { close(release) })
 	select {
 	case <-process.done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(30 * time.Second):
 		checks.Fail("released process did not finish after bounded cleanup returned")
 	}
 	checks.NoDirExists(starter.records[0].dir)

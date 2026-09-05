@@ -94,6 +94,11 @@ func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) 
 		_, err = f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`
 			CREATE FUNCTION park_reclaimed_batch_update() RETURNS trigger AS $$
 			BEGIN
+				-- Keep the reclaim from choosing itself as the victim, including
+				-- if the mark retries and forms another cycle. This transaction's
+				-- detector is deferred beyond the test's bounded wait; the mark's
+				-- detector still breaks each cycle normally.
+				PERFORM set_config('deadlock_timeout', '1h', true);
 				PERFORM pg_advisory_xact_lock(%d);
 				RETURN NEW;
 			END;
@@ -133,10 +138,6 @@ func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) 
 			return postgreSQLWaitingLockCount(t, f.store) >= waitingBefore+2
 		}, 5*time.Second, 10*time.Millisecond,
 			"the mark did not park behind the reclaim's batch row lock")
-		// Let the mark's deadlock timer run well ahead of the reclaim's before
-		// the reclaim closes the cycle, so the mark is the victim and its
-		// bounded contention retry is what the test observes.
-		time.Sleep(250 * time.Millisecond)
 		_, err = holder.ExecContext(t.Context(), `SELECT pg_advisory_unlock($1)`, advisoryKey)
 		requirements.NoError(err)
 

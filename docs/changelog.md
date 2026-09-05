@@ -101,6 +101,16 @@ All notable changes to msgvault, grouped by release.
   and staging responses preserve the source type and identifier so execution
   remains scoped when two source types share the same identifier.
 
+- The MCP server answers "who is this", "when did we last talk", and "which
+  network do I reach them on" for a durable person through one read-only
+  `get_person_profile` tool. It returns the display name, tracking state,
+  the deterministic contact state (first and last contact, last inbound and
+  outbound, interaction count, inferred channel), the curated
+  `primary_channel`, non-sensitive attributes, current employment, typed
+  relationships, contact points, dates, and categories, all from local
+  derived state. Sensitive attributes, private Notes, addresses, and media
+  are excluded, and the tool makes no provider calls.
+
 - Person profile catalog and tracking foundation: eleven reconciled system
   profile attributes (location, birthplace, membership, religion, politics,
   personality, pets, interests, favorites) with portable `is_sensitive`
