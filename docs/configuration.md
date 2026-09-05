@@ -344,7 +344,7 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 `[attachments.documents]`, and `[people.sweep]` sections from the API keys in
 your environment, and `msgvault setup status` reports every lane with its
 provider, model, consent state, and next step. The values it chooses are
-listed in [Recommended Configuration](/usage/recommended-configuration/).
+listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
 
 ### `[data]`
 
@@ -1055,7 +1055,7 @@ Optional background scheduling for the embed worker inside `msgvault serve`. Emp
 | `cron` | — | 5-field cron expression. Empty string disables the standalone cron. |
 | `run_after_sync` | `false` | When `true`, an embed pass runs after every successful scheduled sync. |
 
-`msgvault setup providers` sets `run_after_sync = true` and `cron = "*/15 * * * *"` when it enables a text lane. See [Recommended Configuration](/usage/recommended-configuration/).
+`msgvault setup providers` sets `run_after_sync = true` and `cron = "*/15 * * * *"` when it enables a text lane. See [Recommended Configuration](/docs/usage/recommended-configuration/).
 
 #### `[vector.people]`
 

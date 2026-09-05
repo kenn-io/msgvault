@@ -78,9 +78,11 @@ All notable changes to msgvault, grouped by release.
   configures contextual text search (`voyage-context-4`), semantic people
   search, and the visual lane once its probe manifest exists; a Mistral key
   configures document extraction and, with a text lane, document vectors; an
-  OpenAI key onboards the people sweep on `gpt-5.6-luna` (and the
-  OpenAI-compatible text lane when no Voyage key is present); with no hosted
-  key a reachable local Ollama server is used. Setup asks once per hosted
+  OpenAI key configures fallback text search when no Voyage key is present
+  and, with `--allow-sensitive`, the people sweep on `gpt-5.6-luna`; with no hosted
+  key a reachable local Ollama server is used. The sweep requires a separate
+  `--allow-sensitive` opt-in for sensitive archive excerpts and personal
+  inferences. Setup asks once per hosted
   provider, never turns a hosted lane on from a key alone, leaves configured
   lanes untouched, and prints the next commands. `msgvault setup status`
   reports every lane with provider, model, consent state, schedule, and the

@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -107,6 +108,13 @@ func (e setupEnvironment) hasEnv(name string) bool {
 	}
 	value, ok := e.lookupEnv(name)
 	return ok && strings.TrimSpace(value) != ""
+}
+
+func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string) {
+	if name != "" && !e.hasEnv(name) {
+		lane.State = laneStatePending
+		lane.Reason += "; environment variable " + name + " is not set"
+	}
 }
 
 func (e setupEnvironment) exists(path string) bool {
@@ -305,12 +313,14 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.State = laneStatePending
 			lane.Reason = "capabilities_file is missing; the daemon refuses every vector lane until it exists"
 			lane.Next = []string{visualProbeCommand(cfg)}
+			env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
 			return lane
 		}
 		lane.Reason = "eligible images and short videos are embedded with bounded message context"
 		if lane.Consent != consentActive {
 			lane.Next = []string{"msgvault multimodal build --yes"}
 		}
+		env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
 		return lane
 	}
 	lane.State = laneStateOff
@@ -357,6 +367,7 @@ func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 				}
 			}
 		}
+		env.reportMissingCredential(&lane, documents.APIKeyEnv)
 		return lane
 	}
 	lane.State = laneStateOff
@@ -411,6 +422,9 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.Next = []string{"msgvault person provider consent " + name + " --yes"}
 		}
 		lane.Next = append(lane.Next, "msgvault person track <person-id>")
+		if err == nil && provider.Auth != peoplesweep.AuthNone && provider.Credential == peoplesweep.CredentialEnv {
+			env.reportMissingCredential(&lane, provider.CredentialEnv)
+		}
 		return lane
 	}
 	lane.State = laneStateOff

@@ -19,6 +19,7 @@ export OPENAI_API_KEY="..."      # people sweep (and text search when no Voyage 
 
 msgvault setup providers --dry-run   # show the plan and each provider disclosure
 msgvault setup providers             # answer once per provider, write config.toml
+msgvault setup providers --allow-sensitive # opt into sensitive evidence for the people sweep
 msgvault setup status                # what is on, what is off, and why
 ```
 
@@ -31,6 +32,12 @@ adding a key upgrades only the lanes that are still unset; a configured lane
 keeps its model, because switching the embedding policy invalidates the
 index and is your call.
 
+The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
+The flag permits sending sensitive archive excerpts to the inference provider
+and inferring sensitive personal attributes. The plan describes this policy
+in both human and JSON output. Vector lanes stay pending if the binary lacks
+the backend needed for your database; rebuild as directed before re-running.
+
 Every value below is settable per lane exactly as before. This page only
 describes what happens when nothing is set.
 
@@ -40,12 +47,13 @@ describes what happens when nothing is set.
 |---|---|---|---|
 | `VOYAGE_API_KEY` | text search, semantic people search, visual attachments (after the probe) | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024) | Chats embed as conversation windows and meetings as turn-aware chunks; email rides the same generation. |
 | `MISTRAL_API_KEY` | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`. |
-| `OPENAI_API_KEY` | people sweep; text search only when no Voyage key | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536) | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints. |
-| none | local Ollama at `[chat].server` when reachable | `nomic-embed-text` (768); the `[chat].model` for the sweep | Text stays on your machine. Setup skips a lane the server cannot serve and says why. |
+| `OPENAI_API_KEY` | people sweep with `--allow-sensitive`; text search only when no Voyage key | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536) | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints. |
+| none | local Ollama at `[chat].server` when reachable | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text stays on your machine. Setup skips a lane the server cannot serve and says why. |
 
 ## The file setup writes
 
-With a Voyage key, a Mistral key, and an OpenAI key present, setup writes
+With a Voyage key, a Mistral key, and an OpenAI key present and
+`--allow-sensitive` supplied, setup writes
 the sections below into an otherwise empty `config.toml`. Comments and
 sections you already have are preserved.
 
@@ -116,7 +124,7 @@ text leaves the machine either way; setup states that before it asks.
 
 `run_after_sync` covers Gmail, IMAP, Teams, and Discord syncs. The cron
 covers Slack, Beeper, calendar, and meeting sources, which do not trigger a
-post-sync embed. See [Vector Search](/usage/vector-search/).
+post-sync embed. See [Vector Search](/docs/usage/vector-search/).
 
 ### `[vector.people]`
 
@@ -151,7 +159,7 @@ legal postures (`standard` retention, `default-opt-out` training) unless you
 pass `--document-retention zdr` or `--document-training opted-out`; use the
 values your account actually has. Uploads stay manual: build the fixture
 matrix, probe, consent, then build. See
-[Document Attachment Indexing](/usage/document-indexing/).
+[Document Attachment Indexing](/docs/usage/document-indexing/).
 
 ```bash
 msgvault documents probe-mistral --fixtures <private-fixture-dir> > ~/.msgvault/mistral-capabilities.json
@@ -168,8 +176,10 @@ track (`msgvault person track <person-id>`). Deterministic contact state
 through `[activity]` and needs no model. Setup onboards the `openai` profile
 through `person provider add` (a synthetic check request is sent), records
 consent, and selects it; the daily schedule is the `[people.sweep]` default.
-`allow_sensitive = true` is required for real sweeps because every evidence
-packet is marked sensitive. The Codex app-server adapter is release-gated and
+`allow_sensitive = true` is required for real sweeps because every archive
+evidence packet is marked sensitive. Setup sets it only when you pass
+`--allow-sensitive`; without that flag it leaves the sweep unconfigured.
+The Codex app-server adapter is release-gated and
 cannot be the default. With no OpenAI key, setup offers a loopback Ollama
 profile on `[chat].model`.
 
@@ -177,14 +187,14 @@ profile on `[chat].model`.
 
 On by default (`17 * * * *`, UTC). It projects archived messages into dated
 per-person contact state. Nothing to configure; see
-[Configuration](/configuration/#activity).
+[Configuration](/docs/configuration/#activity).
 
 ### Media policy
 
 Chat sources cap collection by conversation size: media from rooms above 20
 participants is skipped with a typed `participant_threshold` marker, direct
 and small-group media is kept. Set `media_max_participants = 0` on a source
-to lift the cap. See the `[beeper]`, `[slack]`, `[discord]`, and `[teams]` sections of [Configuration](/configuration/#beeper).
+to lift the cap. See the `[beeper]`, `[slack]`, `[discord]`, and `[teams]` sections of [Configuration](/docs/configuration/#beeper).
 
 ## What the MCP server answers with these defaults
 
@@ -208,4 +218,6 @@ Document attachments (...)                on       mistral   mistral-ocr-4-0   m
 `pending` means the lane is configured or the key is present but an
 operator step remains; the `next` line under the table names it. `unknown`
 consent means the archive could not be read (for example, the database does
-not exist yet). Use `--json` for scripting.
+not exist yet). Hosted visual, document, and people-sweep lanes also show
+`pending` when a required credential environment variable is missing.
+Use `--json` for scripting.

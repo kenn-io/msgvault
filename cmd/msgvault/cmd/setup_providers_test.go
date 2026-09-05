@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
 )
 
 const setupProvidersTestKey = "setup-providers-test-key"
@@ -176,6 +177,84 @@ const setupProvidersMinimalConfig = `# operator comment survives setup
 data_dir = "{{DIR}}/data"
 `
 
+func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`database_url = "postgres://localhost/setup_test"`)
+	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	output, err := fixture.run(t, "providers", "--yes", "--json")
+	require.NoError(err, output)
+	loaded := fixture.load(t)
+	assert.Equal(pgvector.Available(), loaded.Vector.Enabled)
+	assert.Equal(pgvector.Available(), loaded.Vector.Multimodal.Enabled)
+	assert.Equal(pgvector.Available(), loaded.Vector.People.Enabled)
+	previous := cfg
+	cfg = loaded
+	t.Cleanup(func() { cfg = previous })
+	require.NoError(precheckVectorFeatures(loaded.DatabaseDSN()))
+	if !pgvector.Available() {
+		var result setupProvidersOutput
+		require.NoError(json.Unmarshal([]byte(output), &result))
+		assert.False(result.Applied)
+		assert.Contains(output, "rebuild")
+	}
+}
+
+func TestSetupProvidersRequiresSensitiveOptIn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
+	output, err := fixture.run(t, "providers", "--yes", "--json")
+	require.NoError(err, output)
+	assert.False(fixture.load(t).People.Sweep.Enabled)
+	assert.NotContains(fixture.load(t).People.Sweep.Providers, setupInferenceProfile)
+	assert.Zero(fixture.checker.calls.Load())
+	assert.Contains(output, "--allow-sensitive")
+
+	output, err = fixture.run(t, "providers", "--yes", "--allow-sensitive", "--json")
+	require.NoError(err, output)
+	assert.Contains(output, "sensitive archive excerpts")
+	assert.EqualValues(1, fixture.checker.calls.Load())
+	profile, err := fixture.load(t).People.Sweep.Profile()
+	require.NoError(err)
+	consented, err := fixture.store.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.True(consented)
+	assert.True(profile.AllowSensitive)
+}
+
+func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
+		fixture.env[key] = setupProvidersTestKey
+	}
+	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	_, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
+	require.NoError(err)
+	for lane, key := range map[string]string{
+		laneVisualSearch: setupVoyageKeyEnv, laneDocuments: "MISTRAL_API_KEY", lanePeopleInference: setupOpenAIKeyEnv,
+	} {
+		fixture.env[key] = "  "
+		output, err := fixture.run(t, "status", "--json")
+		require.NoError(err, output)
+		var report laneReport
+		require.NoError(json.Unmarshal([]byte(output), &report))
+		status := findLane(t, report, lane)
+		assert.Equal(laneStatePending, status.State)
+		assert.Contains(status.Reason, key)
+		assert.Contains(status.Reason, "not set")
+		fixture.env[key] = setupProvidersTestKey
+		output, err = fixture.run(t, "status", "--json")
+		require.NoError(err, output)
+		require.NoError(json.Unmarshal([]byte(output), &report))
+		assert.Equal(laneStateOn, findLane(t, report, lane).State)
+	}
+}
+
 func TestSetupProvidersVoyageWritesRecommendedDefaults(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -291,7 +370,7 @@ func TestSetupProvidersOpenAIFallbackOnboardsInference(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
 
-	output, err := fixture.run(t, "providers", "--yes")
+	output, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 	require.NoError(err, output)
 
 	loaded := fixture.load(t)
@@ -348,7 +427,7 @@ func TestSetupProvidersLocalOllamaFallback(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:latest"}}
 
-	output, err := fixture.run(t, "providers")
+	output, err := fixture.run(t, "providers", "--allow-sensitive")
 	require.NoError(err, output)
 
 	loaded := fixture.load(t)
@@ -422,9 +501,10 @@ func TestSetupProvidersDisclosureListsInferenceSources(t *testing.T) {
 	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
 	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
 
-	output, err := fixture.run(t, "providers", "--dry-run")
+	output, err := fixture.run(t, "providers", "--dry-run", "--allow-sensitive")
 	require.NoError(err, output)
 	assert.Contains(output, "bounded evidence packets of conversation_text, meeting_text, document_text for tracked people")
+	assert.Contains(output, "--allow-sensitive authorizes sending sensitive archive excerpts to OpenAI")
 }
 
 func TestSetupProvidersDeclinedDocumentsUpdateDependentLanes(t *testing.T) {
@@ -444,7 +524,7 @@ func TestSetupProvidersDeclinedDocumentsUpdateDependentLanes(t *testing.T) {
 				fixture.input = strings.NewReader("n\ny\n")
 			}
 
-			output, err := fixture.run(t, "providers")
+			output, err := fixture.run(t, "providers", "--allow-sensitive")
 			require.NoError(t, err, output)
 			loaded := fixture.load(t)
 			assert.False(loaded.Attachments.Documents.Enabled)
@@ -494,7 +574,7 @@ func TestSetupProvidersFailureRestoresConfig(t *testing.T) {
 					return provider
 				}
 				command := newSetupProvidersCommand(deps)
-				command.SetArgs([]string{"--yes"})
+				command.SetArgs([]string{"--yes", "--allow-sensitive"})
 				command.SetOut(io.Discard)
 				command.SetErr(io.Discard)
 
@@ -506,7 +586,7 @@ func TestSetupProvidersFailureRestoresConfig(t *testing.T) {
 					require.ErrorIs(err, os.ErrNotExist)
 				}
 				fixture.checker.err = nil
-				output, err := fixture.run(t, "providers", "--yes")
+				output, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 				require.NoError(err, output)
 				assert.True(fixture.load(t).People.Sweep.Enabled)
 			})
@@ -536,7 +616,7 @@ func TestSetupProvidersRollbackPreservesConcurrentConfig(t *testing.T) {
 		return provider
 	}
 	command := newSetupProvidersCommand(deps)
-	command.SetArgs([]string{"--yes"})
+	command.SetArgs([]string{"--yes", "--allow-sensitive"})
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 
@@ -634,7 +714,7 @@ dimension = 3072
 	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
 	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
 
-	output, err := fixture.run(t, "providers", "--yes")
+	output, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 	require.NoError(err, output)
 
 	loaded := fixture.load(t)

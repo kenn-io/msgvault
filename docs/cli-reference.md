@@ -1915,7 +1915,13 @@ the recommended sections to `config.toml`, onboards the people-sweep
 provider through the same check and consent gates as `person provider`, and
 prints the lane report with the next commands. Lanes that are already
 configured are left alone. See
-[Recommended Configuration](/usage/recommended-configuration/).
+[Recommended Configuration](/docs/usage/recommended-configuration/).
+
+The people sweep stays pending unless `--allow-sensitive` is supplied.
+This permits sending sensitive archive excerpts to its inference provider
+and inferring sensitive personal attributes. `--yes` alone does not grant
+this permission. Vector lanes also stay pending when the binary lacks the
+backend required by the configured database; setup prints rebuild guidance.
 
 ```bash
 msgvault setup providers --dry-run
@@ -1926,6 +1932,7 @@ msgvault setup providers --yes --document-retention zdr --document-training opte
 | Flag | Default | Description |
 |---|---|---|
 | `--yes` | `false` | Accept every provider disclosure without prompting (required when stdin is not a terminal) |
+| `--allow-sensitive` | `false` | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes |
 | `--dry-run` | `false` | Print the plan, the disclosures, and the current lane report without writing |
 | `--document-retention` | `standard` | Mistral retention posture to record: `standard` or `zdr` |
 | `--document-training` | `default-opt-out` | Mistral training posture to record: `default-opt-out` or `opted-out` |

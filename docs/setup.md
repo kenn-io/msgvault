@@ -322,7 +322,10 @@ msgvault setup providers        # one consent per provider, then config.toml is 
 msgvault setup status           # what is on, what is off, and why
 ```
 
-See [Recommended Configuration](/usage/recommended-configuration/) for the
+The people sweep additionally requires `msgvault setup providers --allow-sensitive`
+to permit sensitive archive excerpts and sensitive personal inferences.
+
+See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
 values it writes and the probe steps the hosted lanes still need.
 
 ## Optional: Sync Google Calendar

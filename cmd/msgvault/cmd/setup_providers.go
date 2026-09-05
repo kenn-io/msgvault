@@ -23,6 +23,8 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 const (
@@ -48,6 +50,7 @@ type setupProvidersOptions struct {
 	yes               bool
 	dryRun            bool
 	jsonOutput        bool
+	allowSensitive    bool
 	documentRetention string
 	documentTraining  string
 	retentionPosture  string
@@ -188,16 +191,17 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // the local Ollama server offers, which probe manifests are already written,
 // and which vector backend the archive selects.
 type setupDetection struct {
-	voyageKey       bool
-	mistralKey      bool
-	mistralKeyEnv   string
-	openAIKey       bool
-	ollama          ollamaProbeResult
-	ollamaEndpoint  string
-	ollamaLoopback  bool
-	voyageManifest  string
-	mistralManifest string
-	backend         string
+	voyageKey          bool
+	mistralKey         bool
+	mistralKeyEnv      string
+	openAIKey          bool
+	ollama             ollamaProbeResult
+	ollamaEndpoint     string
+	ollamaLoopback     bool
+	voyageManifest     string
+	mistralManifest    string
+	backend            string
+	backendUnavailable string
 }
 
 func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps) setupDetection {
@@ -211,6 +215,11 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
 	if store.IsPostgresURL(loaded.DatabaseDSN()) {
 		detection.backend = "pgvector"
+		if !pgvector.Available() {
+			detection.backendUnavailable = "pgvector support is not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"`, then re-run setup"
+		}
+	} else if !sqlitevec.Available() {
+		detection.backendUnavailable = "sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup"
 	}
 	if path := loaded.Vector.Multimodal.CapabilitiesFile; path != "" && env.exists(path) {
 		detection.voyageManifest = path
@@ -441,6 +450,10 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 		lane.Reason = "configured but disabled; set [vector] enabled = true to turn it on"
 		return lane
 	}
+	if detection.backendUnavailable != "" {
+		lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
+		return lane
+	}
 	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true, "backend": detection.backend}}
 	switch {
 	case detection.voyageKey:
@@ -529,6 +542,8 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 		lane.Action = planActionSkip
 		lane.Provider, lane.Model = "", ""
 		lane.Reason = "needs " + setupVoyageKeyEnv
+	case detection.backendUnavailable != "":
+		lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
 	case detection.voyageManifest != "":
 		lane.Action, lane.Gate = planActionEnable, gateVoyage
 		lane.Reason = "probe manifest found at " + detection.voyageManifest
@@ -627,6 +642,13 @@ func planPeopleInference(
 		lane.Reason = "already enabled"
 		return lane, nil
 	}
+	if !options.allowSensitive && (detection.openAIKey ||
+		(detection.ollama.Reachable && detection.ollamaLoopback && detection.ollama.hasModel(loaded.Chat.Model))) {
+		lane.Action = planActionPending
+		lane.Reason = "people sweep requires --allow-sensitive: sensitive archive excerpts may be sent to the selected inference provider and used to infer sensitive personal attributes"
+		lane.next = []string{"msgvault setup providers --allow-sensitive"}
+		return lane, nil
+	}
 	sources := []string{string(peoplesweep.SourceConversationText), string(peoplesweep.SourceMeetingText)}
 	if plan.laneOn(laneDocuments) {
 		sources = append(sources, string(peoplesweep.SourceDocumentText))
@@ -635,7 +657,7 @@ func planPeopleInference(
 	base := personProviderAddOptions{
 		custom: true, protocol: string(peoplesweep.ProtocolOpenAIChat),
 		retentionPosture: options.retentionPosture, trainingPosture: options.trainingPosture,
-		allowedSources: sources, sourceSince: since, allowSensitive: true,
+		allowedSources: sources, sourceSince: since, allowSensitive: options.allowSensitive,
 		requestTimeout: time.Minute, confirmed: true,
 	}
 	switch {
@@ -650,7 +672,7 @@ func planPeopleInference(
 		base.endpoint, base.model, base.auth = setupOpenAIEndpoint, setupInferenceModel, string(peoplesweep.AuthBearer)
 		base.credentialEnv, base.reasoningEffort = setupOpenAIKeyEnv, setupInferenceReasoning
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionOnboard, setupInferenceProfile, setupInferenceModel, gateOpenAI
-		lane.Reason = fmt.Sprintf("openai_chat profile %q at %s reasoning; evidence from %s since %s; extraction runs for tracked people only",
+		lane.Reason = fmt.Sprintf("openai_chat profile %q at %s reasoning; sensitive archive excerpts from %s since %s may be sent to OpenAI and used to infer sensitive personal attributes; extraction runs for tracked people only",
 			setupInferenceProfile, setupInferenceReasoning, strings.Join(sources, ", "), since)
 		lane.next = []string{"msgvault person track <person-id>"}
 		return lane, &setupInferencePlan{name: setupInferenceProfile, options: base, gate: gateOpenAI}
@@ -668,7 +690,7 @@ func planPeopleInference(
 		model := loaded.Chat.Model
 		base.endpoint, base.model, base.auth = detection.ollamaEndpoint, model, string(peoplesweep.AuthNone)
 		lane.Action, lane.Provider, lane.Model = planActionOnboard, setupOllamaProfile, model
-		lane.Reason = "local Ollama server at " + detection.ollamaEndpoint + "; evidence stays on this machine"
+		lane.Reason = "local Ollama server at " + detection.ollamaEndpoint + "; sensitive archive excerpts may be used to infer sensitive personal attributes; evidence stays on this machine"
 		lane.next = []string{"msgvault person track <person-id>"}
 		return lane, &setupInferencePlan{name: setupOllamaProfile, options: base}
 	case detection.ollama.Reachable && !detection.ollamaLoopback:
@@ -723,7 +745,8 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		if plan.inference != nil && plan.inference.gate == gateOpenAI {
 			lines = append(lines, "  - bounded evidence packets of "+
 				strings.Join(plan.inference.options.allowedSources, ", ")+
-				" for tracked people ("+setupInferenceModel+"); a synthetic check request is sent now")
+				" for tracked people ("+setupInferenceModel+"); a synthetic check request is sent now",
+				"  - --allow-sensitive authorizes sending sensitive archive excerpts to OpenAI and inferring sensitive personal attributes")
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -792,7 +815,11 @@ writes the recommended values to config.toml, runs the people-provider
 check and consent, and prints what is on, what is off, and why. Lanes that
 are already configured are left alone, so re-running after adding a key
 upgrades only that lane. Probe manifests are expected at
-<home>/` + setupVoyageManifestName + ` and <home>/` + setupMistralManifestName + `.`,
+<home>/` + setupVoyageManifestName + ` and <home>/` + setupMistralManifestName + `.
+
+The people sweep also requires --allow-sensitive: archive excerpts may contain
+sensitive details and may be used to infer sensitive personal attributes.
+--yes accepts provider prompts but does not grant this separate opt-in.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runSetupProviders(command, deps, options)
@@ -802,6 +829,8 @@ upgrades only that lane. Probe manifests are expected at
 	flags.BoolVar(&options.yes, "yes", false, "Accept every provider disclosure without prompting")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "Print the plan and the current lane report without writing anything")
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
+	flags.BoolVar(&options.allowSensitive, "allow-sensitive", false,
+		"Allow the people sweep to send sensitive archive excerpts to its inference provider and infer sensitive personal attributes")
 	flags.StringVar(&options.documentRetention, "document-retention", documentindex.RetentionStandard,
 		"Mistral retention posture to record: standard or zdr")
 	flags.StringVar(&options.documentTraining, "document-training", documentindex.TrainingDefaultOptOut,
