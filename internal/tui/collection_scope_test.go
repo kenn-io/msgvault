@@ -21,6 +21,8 @@ func (l reproductionCollectionScopeLister) ListCollectionScopes(_ context.Contex
 }
 
 func TestCollectionScopeSelectorReproduction(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	var captured query.MessageFilter
 	engine := newMockEngine(MockConfig{})
 	engine.ListMessagesFunc = func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
@@ -38,54 +40,57 @@ func TestCollectionScopeSelectorReproduction(t *testing.T) {
 	model.accounts = []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}, {ID: 2, Identifier: "bob@example.com"}}
 
 	scopesMsg, ok := model.loadCollectionScopes()().(collectionScopesLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, scopesMsg.err)
+	requirements.True(ok)
+	requirements.NoError(scopesMsg.err)
 	model = sendMsg(t, model, scopesMsg)
 	model.openAccountSelector()
 
 	modal := stripANSI(model.renderAccountSelectorModal())
-	assert.Contains(t, modal, "Work")
+	assertions.Contains(modal, "Work")
 
 	model, _ = sendKey(t, model, keyDown())
 	model, _ = sendKey(t, model, keyDown())
 	model, _ = sendKey(t, model, keyDown())
 	model, cmd := sendKey(t, model, keyEnter())
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "Collection: Work", model.scopeTitle())
+	assertions.NotNil(cmd)
+	assertions.Equal("Collection: Work", model.scopeTitle())
 
 	loaded, ok := model.loadMessages()().(messagesLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, loaded.err)
-	assert.Equal(t, []int64{1, 2}, captured.SourceIDs)
-	assert.Nil(t, captured.SourceID)
+	requirements.True(ok)
+	requirements.NoError(loaded.err)
+	assertions.Equal([]int64{1, 2}, captured.SourceIDs)
+	assertions.Nil(captured.SourceID)
 }
 
 func TestCollectionScopeSourceFieldsPreserveKindsAndCopies(t *testing.T) {
+	assertions := assert.New(t)
 	accountID := int64(7)
 	collectionIDs := []int64{7, 8}
 	collection := query.CollectionScope{Name: "Work", SourceIDs: collectionIDs}
 
 	accountFilter := query.MessageFilter{SourceID: &accountID, SourceIDs: []int64{99}}
 	accountSourceScope(&accountID).apply(&accountFilter)
-	assert.Equal(t, &accountID, accountFilter.SourceID)
-	assert.Nil(t, accountFilter.SourceIDs)
+	assertions.Equal(&accountID, accountFilter.SourceID)
+	assertions.Nil(accountFilter.SourceIDs)
 
 	collectionFilter := query.MessageFilter{SourceID: &accountID}
 	collectionSourceScope(collection).apply(&collectionFilter)
-	assert.Nil(t, collectionFilter.SourceID)
-	assert.Equal(t, []int64{7, 8}, collectionFilter.SourceIDs)
+	assertions.Nil(collectionFilter.SourceID)
+	assertions.Equal([]int64{7, 8}, collectionFilter.SourceIDs)
 	collectionIDs[0] = 99
-	assert.Equal(t, []int64{7, 8}, collectionFilter.SourceIDs)
+	assertions.Equal([]int64{7, 8}, collectionFilter.SourceIDs)
 
 	empty := collectionSourceScope(query.CollectionScope{Name: "Empty", SourceIDs: []int64{}})
 	emptyFilter := query.MessageFilter{SourceID: &accountID}
 	empty.apply(&emptyFilter)
-	assert.True(t, empty.isEmpty())
-	assert.NotNil(t, emptyFilter.SourceIDs)
-	assert.Empty(t, emptyFilter.SourceIDs)
+	assertions.True(empty.isEmpty())
+	assertions.NotNil(emptyFilter.SourceIDs)
+	assertions.Empty(emptyFilter.SourceIDs)
 }
 
 func TestEmptyCollectionReadsDoNotCallEngine(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	calls := 0
 	engine := newMockEngine(MockConfig{})
 	engine.ListMessagesFunc = func(_ context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
@@ -104,22 +109,22 @@ func TestEmptyCollectionReadsDoNotCallEngine(t *testing.T) {
 	model.sourceScope = collectionSourceScope(query.CollectionScope{Name: "Empty", SourceIDs: []int64{}})
 
 	data, ok := model.loadData()().(dataLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, data.err)
-	assert.Empty(t, data.rows)
+	requirements.True(ok)
+	requirements.NoError(data.err)
+	assertions.Empty(data.rows)
 	stats, ok := model.loadStats()().(statsLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, stats.err)
-	assert.Equal(t, &query.TotalStats{}, stats.stats)
+	requirements.True(ok)
+	requirements.NoError(stats.err)
+	assertions.Equal(&query.TotalStats{}, stats.stats)
 	messages, ok := model.loadMessages()().(messagesLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, messages.err)
-	assert.Empty(t, messages.messages)
+	requirements.True(ok)
+	requirements.NoError(messages.err)
+	assertions.Empty(messages.messages)
 	searchResults, ok := model.loadSearch("needle")().(searchResultsMsg)
-	require.True(t, ok)
-	require.NoError(t, searchResults.err)
-	assert.Empty(t, searchResults.messages)
-	assert.Equal(t, 0, calls)
+	requirements.True(ok)
+	requirements.NoError(searchResults.err)
+	assertions.Empty(searchResults.messages)
+	assertions.Equal(0, calls)
 }
 
 func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
@@ -307,6 +312,7 @@ func TestLoadDataCarriesAggregateRequestID(t *testing.T) {
 }
 
 func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {
+	assertions := assert.New(t)
 	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
 	model.level = levelMessageDetail
 	model.breadcrumbs = []navigationSnapshot{{state: viewState{level: levelAggregates}}}
@@ -317,19 +323,20 @@ func TestCollectionScopeInvalidationClearsNavigationAndReaders(t *testing.T) {
 
 	model.invalidateSourceScope()
 
-	assert.Equal(t, levelAggregates, model.level)
-	assert.Empty(t, model.breadcrumbs)
-	assert.Nil(t, model.messageDetail)
-	assert.Empty(t, model.threadMessages)
-	assert.Zero(t, model.threadConversationID)
-	assert.Nil(t, model.parkedMessageReaders[modeEmail].messageDetail)
+	assertions.Equal(levelAggregates, model.level)
+	assertions.Empty(model.breadcrumbs)
+	assertions.Nil(model.messageDetail)
+	assertions.Empty(model.threadMessages)
+	assertions.Zero(model.threadConversationID)
+	assertions.Nil(model.parkedMessageReaders[modeEmail].messageDetail)
 	_, cmd := model.goBack()
-	assert.Nil(t, cmd)
+	assertions.Nil(cmd)
 }
 
 func TestTextAccountSelectionKeepsEmailScopeInSync(t *testing.T) {
 	accountID := int64(7)
 	t.Run("clears inherited email source", func(t *testing.T) {
+		assertions := assert.New(t)
 		model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
 		model.mode = modeTexts
 		model.accountFilter = &accountID
@@ -337,13 +344,13 @@ func TestTextAccountSelectionKeepsEmailScopeInSync(t *testing.T) {
 		model.drillFilter = query.MessageFilter{Sender: "sender@example.test", SourceID: &accountID}
 
 		model, _ = sendKey(t, model, keyEnter())
-		assert.Nil(t, model.accountFilter)
-		assert.Equal(t, sourceScopeAll, model.sourceScope.kind)
-		assert.True(t, model.sourceScopeExplicit)
+		assertions.Nil(model.accountFilter)
+		assertions.Equal(sourceScopeAll, model.sourceScope.kind)
+		assertions.True(model.sourceScopeExplicit)
 
 		model.mode = modeEmail
 		filter := model.buildMessageFilter()
-		assert.Nil(t, filter.SourceID)
+		assertions.Nil(filter.SourceID)
 	})
 
 	t.Run("clears explicit email account", func(t *testing.T) {
@@ -419,6 +426,7 @@ func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
 }
 
 func TestCollectionRowsStayEmailOnly(t *testing.T) {
+	assertions := assert.New(t)
 	model := New(newMockEngine(MockConfig{}), Options{
 		DataDir: "/tmp/test",
 		Version: "test",
@@ -430,17 +438,18 @@ func TestCollectionRowsStayEmailOnly(t *testing.T) {
 	model.collectionScopes = []query.CollectionScope{{Name: "Work", SourceIDs: []int64{1}}}
 
 	model.mode = modeTexts
-	assert.Len(t, model.selectorOptions(), 2)
+	assertions.Len(model.selectorOptions(), 2)
 	model.mode = modeMeetings
-	assert.Len(t, model.selectorOptions(), 2)
+	assertions.Len(model.selectorOptions(), 2)
 	model.mode = modeEmail
-	assert.Len(t, model.selectorOptions(), 3)
+	assertions.Len(model.selectorOptions(), 3)
 	model.sourceScope = collectionSourceScope(query.CollectionScope{Name: "Work", SourceIDs: []int64{1}})
 	model.mode = modeTexts
-	assert.Equal(t, "All Accounts", model.scopeTitle())
+	assertions.Equal("All Accounts", model.scopeTitle())
 }
 
 func TestCollectionScopeSelectionFencesPendingResponses(t *testing.T) {
+	assertions := assert.New(t)
 	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
 	model.accounts = []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}
 	model.collectionScopes = []query.CollectionScope{{Name: "Work", SourceIDs: []int64{1}}}
@@ -455,9 +464,9 @@ func TestCollectionScopeSelectionFencesPendingResponses(t *testing.T) {
 
 	model.modalCursor = 2
 	updated, cmd := sendKey(t, model, keyEnter())
-	assert.NotNil(t, cmd)
-	assert.Greater(t, updated.aggregateRequestID, oldAggregateRequestID)
-	assert.Greater(t, updated.presentationGeneration, oldPresentationGeneration)
+	assertions.NotNil(cmd)
+	assertions.Greater(updated.aggregateRequestID, oldAggregateRequestID)
+	assertions.Greater(updated.presentationGeneration, oldPresentationGeneration)
 
 	stale := dataLoadedMsg{
 		rows:                   []query.AggregateRow{{Key: "old", Count: 1}},
@@ -465,7 +474,7 @@ func TestCollectionScopeSelectionFencesPendingResponses(t *testing.T) {
 		presentationGeneration: oldPresentationGeneration,
 	}
 	updated = sendMsg(t, updated, stale)
-	assert.Empty(t, updated.rows)
+	assertions.Empty(updated.rows)
 }
 
 func TestCollectionDeletionRetainsExactSourcesAndRejectsMultipleSources(t *testing.T) {
