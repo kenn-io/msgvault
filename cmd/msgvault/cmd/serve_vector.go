@@ -828,12 +828,6 @@ func newVisualRuntime(
 	// shapes this archive sends: the document capability always, and its
 	// interleaved twin because owning-message context accompanies media
 	// whenever the message has any.
-	// Every visual search embeds its text query through the same client;
-	// without probed text-query authority the lane would index (and bill)
-	// while rejecting every search. Fail initialization with the remedy.
-	if !slices.Contains(provider.AuthorizedCapabilities(), voyage.CapabilityQueryText) {
-		return nil, errors.New("the capability manifest does not authorize text queries; re-run `msgvault multimodal probe` and configure the new manifest")
-	}
 	mediaPolicy.AuthorizedCapabilities = eligibleVisualCapabilities(
 		provider.AuthorizedCapabilities(), vecCfg.Multimodal.MaxContextChars > 0)
 	consumerKey := "visual/" + fingerprint

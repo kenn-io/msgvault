@@ -16,6 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/voyage"
+	"go.kenn.io/docbank/document/voyage/voyagetest"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -23,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 const setupProvidersTestKey = "setup-providers-test-key"
@@ -75,6 +78,132 @@ func (f *setupProvidersFixture) load(t *testing.T) *config.Config {
 func (f *setupProvidersFixture) lookupEnv(name string) (string, bool) {
 	value, ok := f.env[name]
 	return value, ok
+}
+
+func (f *setupProvidersFixture) writeVisualManifest(t *testing.T, path string, capabilities ...string) {
+	t.Helper()
+	require := require.New(t)
+	multimodal := f.load(t).Vector.Multimodal
+	provider := visual.VoyageConfig{Model: multimodal.Model, Dimension: multimodal.Dimension, Media: visual.DefaultMediaPolicy()}
+	policy, err := provider.Policy()
+	require.NoError(err)
+	manifest, err := voyagetest.SyntheticManifest(policy, capabilities...)
+	require.NoError(err)
+	require.NoError(writeVisualCapabilityManifest(path, manifest))
+	f.files[path] = true
+}
+
+func TestSetupProvidersRejectsUnusableVisualManifest(t *testing.T) {
+	for _, kind := range []string{"malformed", "no text queries", "wrong model"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+			path := filepath.Join(fixture.dir, setupVoyageManifestName)
+			if kind == "malformed" {
+				require.NoError(os.WriteFile(path, []byte("not JSON"), 0o600))
+				fixture.files[path] = true
+			} else {
+				capability := voyage.CapabilityQueryText
+				if kind == "no text queries" {
+					capability = voyage.CapabilityImagePNG
+				}
+				fixture.writeVisualManifest(t, path, capability)
+				if kind == "wrong model" {
+					snapshot, err := config.ReadConfigFile(fixture.path)
+					require.NoError(err)
+					_, err = config.EditConfigTables(fixture.path, snapshot.ETag, []config.TableEdit{{
+						Path: []string{"vector", "multimodal"}, Values: map[string]any{"model": "different-model"},
+					}})
+					require.NoError(err)
+				}
+			}
+			output, err := fixture.run(t, "providers", "--yes")
+			require.NoError(err, output)
+			loaded := fixture.load(t)
+			assert.False(loaded.Vector.Multimodal.Enabled)
+			assert.Contains(output, "capability manifest")
+			if kind == "no text queries" {
+				assert.Contains(output, "does not authorize text queries")
+			}
+			loaded.Vector.Multimodal.Enabled = true
+			loaded.Vector.Multimodal.CapabilitiesFile = path
+			lane := visualSearchLane(loaded, setupEnvironment{
+				lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists, consent: &setupConsentState{Visual: true},
+			})
+			assert.Equal(laneStatePending, lane.State)
+			assert.Contains(lane.Reason, "capability manifest")
+		})
+	}
+}
+
+func TestSetupProvidersPreservesMissingCustomVisualManifest(t *testing.T) {
+	assert := assert.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector.multimodal]
+capabilities_file = "{{DIR}}/custom-voyage.json"
+`)
+	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
+	output, err := fixture.run(t, "providers", "--yes")
+	require.NoError(t, err, output)
+	loaded := fixture.load(t)
+	custom := filepath.Join(fixture.dir, "custom-voyage.json")
+	assert.False(loaded.Vector.Multimodal.Enabled)
+	assert.Equal(custom, loaded.Vector.Multimodal.CapabilitiesFile)
+	assert.Contains(output, "--out "+custom+" --yes")
+	for _, enabled := range []bool{false, true} {
+		loaded.Vector.Multimodal.Enabled = enabled
+		lane := visualSearchLane(loaded, setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists})
+		assert.Equal(laneStatePending, lane.State)
+		assert.Contains(lane.Next, "msgvault multimodal probe --seeds <private-seed-dir> --out "+custom+" --yes")
+	}
+}
+
+func TestSetupDocumentConsentMatchesConfiguredProvider(t *testing.T) {
+	require := require.New(t)
+	c := config.NewDefaultConfig()
+	c.Attachments.Documents.Enabled = true
+	c.Attachments.Documents.RetentionPosture = documentindex.RetentionZDR
+	c.Attachments.Documents.TrainingPosture = documentindex.TrainingOptedOut
+	_, profile, err := documentProfileForConfig(&c.Attachments.Documents, commandCapabilityManifest(t, c.Attachments.Documents.MaxPagesPerDocument))
+	require.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	assert.False(t, setupConsentFromStore(t.Context(), c, st).Documents)
+	require.NoError(st.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+	assert.True(t, setupConsentFromStore(t.Context(), c, st).Documents)
+	for _, field := range []string{"provider", "model", "region", "retention", "training"} {
+		t.Run(field, func(t *testing.T) {
+			changed := *c
+			documents := &changed.Attachments.Documents
+			switch field {
+			case "provider":
+				documents.Provider = "other"
+			case "model":
+				documents.Model = "other-model"
+			case "region":
+				documents.Region = "other-region"
+			case "retention":
+				documents.RetentionPosture = documentindex.RetentionStandard
+			case "training":
+				documents.TrainingPosture = documentindex.TrainingDefaultOptOut
+			}
+			consent := setupConsentFromStore(t.Context(), &changed, st)
+			assert.False(t, consent.Documents)
+			lane := documentsLane(&changed, setupEnvironment{consent: consent, lookupEnv: func(string) (string, bool) { return setupProvidersTestKey, true }})
+			assert.Equal(t, laneStatePending, lane.State)
+			assert.Equal(t, consentMissing, lane.Consent)
+		})
+	}
+	_, err = st.RetireDocumentExtractionProfile(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.False(t, setupConsentFromStore(t.Context(), c, st).Documents)
 }
 
 func (f *setupProvidersFixture) personProviderDeps(t *testing.T) personProviderCommandDeps {
@@ -300,7 +429,7 @@ func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 	require := require.New(t)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`database_url = "postgres://localhost/setup_test"`)
 	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
 	output, err := fixture.run(t, "providers", "--yes", "--json")
 	require.NoError(err, output)
 	loaded := fixture.load(t)
@@ -323,7 +452,7 @@ func TestSetupStatusConfiguredVectorLanesRequireCompiledBackend(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
 	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
 	output, err := fixture.run(t, "providers", "--yes")
 	require.NoError(t, err, output)
 	loaded := fixture.load(t)
@@ -384,7 +513,7 @@ func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
 	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
 		fixture.env[key] = setupProvidersTestKey
 	}
-	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
 	_, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 	require.NoError(err)
 	for lane, key := range map[string]string{
@@ -419,7 +548,7 @@ func TestSetupStatusConsentGatedLanesRequireActiveConsent(t *testing.T) {
 	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
 		fixture.env[key] = setupProvidersTestKey
 	}
-	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
 	output, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 	require.NoError(t, err, output)
 	loaded := fixture.load(t)
@@ -472,7 +601,9 @@ func TestSetupProvidersPreservesExplicitSchedules(t *testing.T) {
 					"\n[vector.embed.schedule]\n"+schedule.toml+
 					"\n[vector.multimodal.schedule]\n"+schedule.toml+"\n")
 				fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-				fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = manifest
+				if manifest {
+					fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
+				}
 				output, err := fixture.run(t, "providers", "--yes")
 				require.NoError(t, err, output)
 				loaded := fixture.load(t)
@@ -547,7 +678,7 @@ func TestSetupProvidersEnablesVisualLaneWhenManifestExists(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
 	manifest := filepath.Join(fixture.dir, setupVoyageManifestName)
-	fixture.files[manifest] = true
+	fixture.writeVisualManifest(t, manifest, voyage.CapabilityQueryText)
 
 	output, err := fixture.run(t, "providers", "--yes")
 	require.NoError(err, output)

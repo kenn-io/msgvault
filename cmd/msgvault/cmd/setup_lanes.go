@@ -168,7 +168,27 @@ func setupVectorBackend(cfg *config.Config) (backend, unavailable string) {
 // capability manifest, so a re-run can enable the visual lane once the probe
 // has written it.
 func setupVoyageManifestPath(cfg *config.Config) string {
+	if cfg.Vector.Multimodal.CapabilitiesFile != "" {
+		return cfg.Vector.Multimodal.CapabilitiesFile
+	}
 	return filepath.Join(cfg.HomeDir, setupVoyageManifestName)
+}
+
+func setupVisualManifestError(cfg *config.Config, env setupEnvironment) error {
+	path := setupVoyageManifestPath(cfg)
+	if !env.exists(path) {
+		return fmt.Errorf("capability manifest is missing at %s", path)
+	}
+	vectorConfig := cfg.Vector
+	if !vectorConfig.Multimodal.Enabled {
+		vectorConfig.Multimodal.CapabilitiesFile = path
+		vectorConfig.Multimodal.Enabled = true
+	}
+	_, err := visualVoyageConfig(vectorConfig)
+	if err != nil {
+		return fmt.Errorf("invalid visual capability manifest: %w; move the existing manifest aside before probing again", err)
+	}
+	return nil
 }
 
 // setupMistralManifestPath is the recommended Mistral capability manifest path.
@@ -208,8 +228,16 @@ func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.St
 			}
 		}
 	}
-	if consented, err := st.HasActiveDocumentProviderConsent(ctx); err == nil {
-		state.Documents = consented
+	documents := cfg.Attachments.Documents
+	if documents.Enabled && documents.Validate() == nil {
+		if policy, err := documents.MistralPolicy(); err == nil {
+			values := policy.Values()
+			consented, err := st.HasMatchingDocumentProviderConsent(ctx, store.DocumentExtractionProfile{
+				Provider: values.Provider, Endpoint: values.Endpoint, Region: values.Region,
+				Model: values.Model, RetentionPosture: values.Retention, TrainingPosture: values.Training,
+			})
+			state.Documents = err == nil && consented
+		}
 	}
 	state.Visual = setupVisualConsent(ctx, cfg, st)
 	if cfg.People.Sweep.Enabled {
@@ -389,9 +417,9 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
 			return lane
 		}
-		if !env.exists(multimodal.CapabilitiesFile) {
+		if err := setupVisualManifestError(cfg, env); err != nil {
 			lane.State = laneStatePending
-			lane.Reason = "capabilities_file is missing; the daemon refuses every vector lane until it exists"
+			lane.Reason = err.Error() + "; the daemon refuses every vector lane until a valid manifest is configured"
 			lane.Next = []string{visualProbeCommand(cfg)}
 			env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
 			return lane
@@ -410,12 +438,13 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		return lane
 	}
 	lane.State = laneStatePending
-	if env.exists(setupVoyageManifestPath(cfg)) {
+	err := setupVisualManifestError(cfg, env)
+	if err == nil {
 		lane.Reason = "probe manifest found; setup can enable the lane"
 		lane.Next = []string{"msgvault setup providers"}
 		return lane
 	}
-	lane.Reason = "key present; the provider probe needs private synthetic WebP and MP4 seeds before uploads are authorized"
+	lane.Reason = err.Error() + "; the provider probe needs private synthetic WebP and MP4 seeds before uploads are authorized"
 	lane.Next = []string{visualProbeCommand(cfg), "msgvault setup providers"}
 	return lane
 }

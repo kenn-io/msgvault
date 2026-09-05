@@ -158,10 +158,20 @@ func visualVoyageConfig(cfg vector.Config) (visual.VoyageConfig, error) {
 	media.IncludeImages = cfg.Multimodal.ImagesEnabled() || cfg.Multimodal.ImageQueriesEnabled()
 	media.IncludeVideo = cfg.Multimodal.VideoEnabled()
 	media.AllowAnimatedGIF = cfg.Multimodal.AnimatedGIFsEnabled()
-	return visual.VoyageConfig{
+	provider := visual.VoyageConfig{
 		Model: cfg.Multimodal.Model, Dimension: cfg.Multimodal.Dimension,
 		Manifest: manifest, Media: media,
-	}, nil
+	}
+	policy, err := provider.Policy()
+	if err != nil {
+		return visual.VoyageConfig{}, fmt.Errorf("configure visual capability policy: %w", err)
+	}
+	// Every visual search embeds its text query through this provider. A
+	// manifest that only authorizes indexing cannot make the lane usable.
+	if _, err := policy.Authorize(manifest, voyage.CapabilityQueryText); err != nil {
+		return visual.VoyageConfig{}, fmt.Errorf("capability manifest does not authorize text queries; re-run `msgvault multimodal probe`: %w", err)
+	}
+	return provider, nil
 }
 
 // loadVisualCapabilityManifest reads and strictly validates the operator's

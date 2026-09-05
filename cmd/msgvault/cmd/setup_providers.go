@@ -190,18 +190,19 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // the local Ollama server offers, which probe manifests are already written,
 // and which vector backend the archive selects.
 type setupDetection struct {
-	configKeys         toml.MetaData
-	voyageKey          bool
-	mistralKey         bool
-	mistralKeyEnv      string
-	openAIKey          bool
-	ollama             ollamaProbeResult
-	ollamaEndpoint     string
-	ollamaLoopback     bool
-	voyageManifest     string
-	mistralManifest    string
-	backend            string
-	backendUnavailable string
+	configKeys          toml.MetaData
+	voyageKey           bool
+	mistralKey          bool
+	mistralKeyEnv       string
+	openAIKey           bool
+	ollama              ollamaProbeResult
+	ollamaEndpoint      string
+	ollamaLoopback      bool
+	voyageManifest      string
+	voyageManifestError string
+	mistralManifest     string
+	backend             string
+	backendUnavailable  string
 }
 
 func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps) setupDetection {
@@ -213,10 +214,10 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	}
 	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
 	detection.backend, detection.backendUnavailable = setupVectorBackend(loaded)
-	if path := loaded.Vector.Multimodal.CapabilitiesFile; path != "" && env.exists(path) {
-		detection.voyageManifest = path
-	} else if path := setupVoyageManifestPath(loaded); env.exists(path) {
-		detection.voyageManifest = path
+	if err := setupVisualManifestError(loaded, env); err != nil {
+		detection.voyageManifestError = err.Error()
+	} else {
+		detection.voyageManifest = setupVoyageManifestPath(loaded)
 	}
 	if path := setupMistralManifestPath(loaded); env.exists(path) {
 		detection.mistralManifest = path
@@ -549,7 +550,7 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 		lane.next = []string{"msgvault multimodal build --yes"}
 	default:
 		lane.Action = planActionPending
-		lane.Reason = "the provider probe needs private synthetic WebP and MP4 seeds; the lane stays off until the manifest exists"
+		lane.Reason = detection.voyageManifestError + "; the provider probe needs private synthetic WebP and MP4 seeds; the lane stays off until a valid manifest is configured"
 		lane.edits = setupScheduleEdits(detection.configKeys, "multimodal")
 		lane.next = []string{visualProbeCommand(loaded), "msgvault setup providers"}
 	}
