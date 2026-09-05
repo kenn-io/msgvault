@@ -1,42 +1,102 @@
+<script lang="ts" module>
+  function formatDate(value: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.valueOf())
+      ? value
+      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+  }
+  function formatBytes(value: number): string {
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  function people(row: FileSearchRow): string {
+    const labels = row.participant_labels ?? [];
+    const domains = row.participant_domains ?? [];
+    return [...labels, ...domains].join(', ') || '—';
+  }
+  function relationship(row: FileSearchRow | PersonFileSearchRow): string {
+    const provenance = (row as Partial<PersonFileSearchRow>).person_provenance;
+    if (!provenance) return '—';
+    const labels: string[] = [];
+    if (provenance.directions?.includes('from_person')) labels.push('From them');
+    if (provenance.directions?.includes('to_person')) {
+      const roles = (provenance.roles ?? []).filter((role) => role === 'to' || role === 'cc' || role === 'bcc');
+      labels.push(`To them${roles.length ? ` (${roles.join(', ')})` : ''}`);
+    }
+    if (provenance.directions?.includes('group')) labels.push('Group conversation');
+    return labels.join(' · ') || '—';
+  }
+  function availability(row: FileSearchRow): string {
+    if (row.content_state === 'local_content') return 'Local content';
+    if (row.content_state === 'missing_blob') return 'Missing blob';
+    if (row.content_state === 'url_only') return 'URL only';
+    return 'Metadata only';
+  }
+</script>
+
 <script lang="ts">
+  import {
+    searchDomainFiles as generatedSearchDomainFiles,
+    searchFiles as generatedSearchFiles,
+    searchParticipantFiles as generatedSearchParticipantFiles,
+    searchPersonFiles as generatedSearchPersonFiles,
+  } from '../../api/generated/exploration/exploration';
   import { Button, Checkbox, SearchInput, SegmentedControl, Toggle, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
-
   import type { APIClient } from '../../api/client';
   import { analyticalAuthority } from '../../explore/authority';
   import type {
-    ExploreCacheUnavailable, ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort,
-    PersonFileDirection, PersonFileSearchResponse, PersonFileSearchRow
+    ExploreCacheUnavailable,
+    ExplorePredicate,
+    FileMIMEFamily,
+    FileSearchResponse,
+    FileSearchRow,
+    FileSearchSort,
+    PersonFileDirection,
+    PersonFileSearchResponse,
+    PersonFileSearchRow,
   } from '../../explore/models';
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
-
   type IdentityFileScope =
-    | { kind: 'person'; id: number }
+    | {
+        kind: 'person';
+        id: number;
+      }
     /** A durable Directory person; unlike analytical participants it uses the People API. */
-    | { kind: 'durable-person'; id: number }
-    | { kind: 'domain'; domain: string };
-
+    | {
+        kind: 'durable-person';
+        id: number;
+      }
+    | {
+        kind: 'domain';
+        domain: string;
+      };
   interface PendingRestoration {
     generation: number;
     epoch: number;
     activeKey: string | null;
   }
-
   type WorkspaceFileRow = FileSearchRow | PersonFileSearchRow;
-
   const ALL_MIME_FAMILIES: FileMIMEFamily[] = [
-    'image', 'pdf', 'audio', 'video', 'text', 'document', 'archive', 'other'
+    'image',
+    'pdf',
+    'audio',
+    'video',
+    'text',
+    'document',
+    'archive',
+    'other',
   ];
   const PERSON_MEDIA_FAMILIES: FileMIMEFamily[] = ['image', 'video'];
   const PERSON_FILE_FAMILIES: FileMIMEFamily[] = ['pdf', 'audio', 'text', 'document', 'archive', 'other'];
   const PERSON_PRESENTATIONS = [
     { value: 'media', label: 'Media' },
-    { value: 'files', label: 'Files' }
+    { value: 'files', label: 'Files' },
   ];
-
   interface Props {
     client: APIClient;
     predicate: ExplorePredicate;
@@ -62,7 +122,6 @@
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
-
   let {
     client,
     predicate,
@@ -86,9 +145,8 @@
     onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
     onOpenItem = undefined,
-    onOpenConversation = undefined
+    onOpenConversation = undefined,
   }: Props = $props();
-
   const geometry = new RowGeometry();
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
@@ -117,23 +175,23 @@
   let requestSignature = '';
   let previousRowHeight = untrack(() => rowHeight);
   let pendingRestoration = $state<PendingRestoration>();
-	let hostedVisualSearch = $state(false);
-	let visualQuery = $state('');
-	let visualQueryDraft = $state('');
-	let visualQueryDebounce: ReturnType<typeof setTimeout> | undefined;
-	// Each committed visual query is a billable hosted embedding request, so
-	// keystrokes edit a local draft and commit only after a typing pause.
-	function commitVisualQuery(value: string) {
-		visualQueryDraft = value;
-		if (value) removeVisualImage();
-		clearTimeout(visualQueryDebounce);
-		visualQueryDebounce = setTimeout(() => {
-			visualQuery = visualQueryDraft.trim();
-		}, 600);
-	}
-	let visualImageBase64 = $state('');
-	let visualImageName = $state('');
-	let visualImageRevision = $state(0);
+  let hostedVisualSearch = $state(false);
+  let visualQuery = $state('');
+  let visualQueryDraft = $state('');
+  let visualQueryDebounce: ReturnType<typeof setTimeout> | undefined;
+  // Each committed visual query is a billable hosted embedding request, so
+  // keystrokes edit a local draft and commit only after a typing pause.
+  function commitVisualQuery(value: string) {
+    visualQueryDraft = value;
+    if (value) removeVisualImage();
+    clearTimeout(visualQueryDebounce);
+    visualQueryDebounce = setTimeout(() => {
+      visualQuery = visualQueryDraft.trim();
+    }, 600);
+  }
+  let visualImageBase64 = $state('');
+  let visualImageName = $state('');
+  let visualImageRevision = $state(0);
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -144,26 +202,36 @@
   let personPresentation = $state<'media' | 'files'>(untrack(() => providedPersonPresentation));
   let personDirections = $state<PersonFileDirection[]>(untrack(() => providedPersonDirections));
   const personScoped = $derived(identityScope?.kind === 'person' || identityScope?.kind === 'durable-person');
-  const visibleMIMEFamilies = $derived(personScoped
-    ? (personPresentation === 'media' ? PERSON_MEDIA_FAMILIES : PERSON_FILE_FAMILIES)
-    : ALL_MIME_FAMILIES);
+  const visibleMIMEFamilies = $derived(
+    personScoped ? (personPresentation === 'media' ? PERSON_MEDIA_FAMILIES : PERSON_FILE_FAMILIES) : ALL_MIME_FAMILIES,
+  );
   const effectiveMIMEFamilies = $derived.by(() => {
     if (!personScoped) return mimeFamilies;
     const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
     return selected.length > 0 ? selected : visibleMIMEFamilies;
   });
   const mediaRows = $derived(rows as PersonFileSearchRow[]);
-
-  $effect(() => { personPresentation = providedPersonPresentation; });
-  $effect(() => { personDirections = providedPersonDirections; });
-
+  $effect(() => {
+    personPresentation = providedPersonPresentation;
+  });
+  $effect(() => {
+    personDirections = providedPersonDirections;
+  });
   $effect(() => {
     const signature = JSON.stringify({
-      predicate, identityScope, expectedAuthority, sort, filenameQuery,
+      predicate,
+      identityScope,
+      expectedAuthority,
+      sort,
+      filenameQuery,
       mimeFamilies: effectiveMIMEFamilies,
       directions: personScoped ? personDirections : undefined,
       personPresentation: personScoped ? personPresentation : undefined,
-      restorationEpoch, hostedVisualSearch, visualQuery, visualImageName, visualImageRevision
+      restorationEpoch,
+      hostedVisualSearch,
+      visualQuery,
+      visualImageName,
+      visualImageRevision,
     });
     signature;
     if (signature === requestSignature) return;
@@ -186,11 +254,9 @@
       if (loaded) return restoreDeepState(currentGeneration, restorationEpoch, signal);
     });
   });
-
   $effect(() => {
     if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) activeKey = providedActiveKey;
   });
-
   // Controlled-selection sync: history navigation (Back/Forward) rewrites
   // selectedKey from the URL, so a transition to null must also close an open
   // viewer. Only a transition closes it — an unchanged null selection leaves
@@ -217,7 +283,6 @@
       pendingViewerKey = null;
     }
   });
-
   const pendingViewerState = $derived.by(() => {
     if (!pendingViewerKey || viewerFile) return undefined;
     if (rows.some((row) => row.key === pendingViewerKey)) return undefined;
@@ -225,13 +290,16 @@
     if (error || pageError || unavailable) return 'missing';
     return nextCursor ? 'pending' : 'missing';
   });
-
   const slice = $derived.by(() => {
     const height = rowHeight;
     if (height === undefined) return undefined;
     return virtualSlice({
-      scrollTop, viewport, count: rows.length, overscan: OVERSCAN,
-      fixedHeight: height, heightOf: () => height
+      scrollTop,
+      viewport,
+      count: rows.length,
+      overscan: OVERSCAN,
+      fixedHeight: height,
+      heightOf: () => height,
     });
   });
   const renderedRows = $derived(slice ? rows.slice(slice.start, slice.end) : []);
@@ -243,9 +311,8 @@
   const activeIndex = $derived(activeKey ? rows.findIndex((row) => row.key === activeKey) : -1);
   const activeRow = $derived(activeIndex >= 0 ? rows[activeIndex] : rows[0]);
   const renderedActiveRow = $derived(
-    activeRow && renderedRows.some((row) => row.key === activeRow.key) ? activeRow : undefined
+    activeRow && renderedRows.some((row) => row.key === activeRow.key) ? activeRow : undefined,
   );
-
   $effect(() => {
     const pending = pendingRestoration;
     const height = rowHeight;
@@ -255,22 +322,17 @@
     completingRestoration = signature;
     void completeDeepRestoration(pending, height, signature);
   });
-
   $effect(() => {
     const nextHeight = rowHeight;
     const previousHeight = previousRowHeight;
     previousRowHeight = nextHeight;
     if (!grid || nextHeight === undefined || previousHeight === undefined || previousHeight === nextHeight) return;
     const element = grid;
-    const rebased = activeIndex >= 0
-      ? activeIndex * nextHeight
-      : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased =
+      activeIndex >= 0 ? activeIndex * nextHeight : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
     const expectedScrollHeight = rows.length * nextHeight;
-    requestAnimationFrame(() => applyDensityRebase(
-      element, nextHeight, expectedScrollHeight, rebased
-    ));
+    requestAnimationFrame(() => applyDensityRebase(element, nextHeight, expectedScrollHeight, rebased));
   });
-
   $effect(() => {
     const element = grid;
     const header = headerElement;
@@ -289,8 +351,10 @@
     clearCacheBuildRetry();
     geometry.destroy();
   });
-
-  function restartListing(): { generation: number; signal: AbortSignal } {
+  function restartListing(): {
+    generation: number;
+    signal: AbortSignal;
+  } {
     const currentGeneration = ++generation;
     clearCacheBuildRetry();
     controller?.abort();
@@ -310,7 +374,6 @@
     loading = true;
     return { generation: currentGeneration, signal: nextController.signal };
   }
-
   function reloadListing(): void {
     // Reload restarts from page one; when a restoration epoch is still
     // unacknowledged the deep restoration restarts against the fresh listing.
@@ -320,8 +383,11 @@
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
   }
-
-  async function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
+  async function loadPage(
+    currentGeneration: number,
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     if (cursor) {
       if (seenCursors.has(cursor)) {
         failPaging('Pagination stopped because the server repeated a cursor without progress.');
@@ -330,30 +396,45 @@
     }
     const requestPredicate = { ...predicate };
     const body = {
-      predicate: requestPredicate, sort, limit: 500,
+      predicate: requestPredicate,
+      sort,
+      limit: 500,
       ...(filenameQuery ? { filename_query: filenameQuery } : {}),
       ...(hostedVisualSearch && visualQuery.trim() ? { visual_query: visualQuery.trim() } : {}),
       ...(hostedVisualSearch && visualImageBase64 ? { visual_image_base64: visualImageBase64 } : {}),
       ...(effectiveMIMEFamilies.length ? { mime_families: effectiveMIMEFamilies } : {}),
-      ...(cursor ? { cursor } : {})
+      ...(cursor ? { cursor } : {}),
     };
     let searchResponse;
     try {
-      searchResponse = identityScope?.kind === 'durable-person'
-        ? await client.POST('/api/v1/people/{id}/files/search', {
-            params: { path: { id: identityScope.id } },
-            body: { ...body, directions: personDirections }, signal
-          })
-        : identityScope?.kind === 'person'
-        ? await client.POST('/api/v1/participants/{id}/files/search', {
-            params: { path: { id: identityScope.id } },
-            body: { ...body, directions: personDirections }, signal
-          })
-        : identityScope?.kind === 'domain'
-          ? await client.POST('/api/v1/domains/{domain}/files/search', {
-              params: { path: { domain: identityScope.domain } }, body, signal
-            })
-          : await client.POST('/api/v1/files/search', { body, signal });
+      searchResponse =
+        identityScope?.kind === 'durable-person'
+          ? await generatedSearchPersonFiles(
+              { id: identityScope.id },
+              { ...body, directions: personDirections },
+              {
+                ...client,
+                signal,
+              },
+            )
+          : identityScope?.kind === 'person'
+            ? await generatedSearchParticipantFiles(
+                { id: identityScope.id },
+                { ...body, directions: personDirections },
+                {
+                  ...client,
+                  signal,
+                },
+              )
+            : identityScope?.kind === 'domain'
+              ? await generatedSearchDomainFiles({ domain: identityScope.domain }, body, {
+                  ...client,
+                  signal,
+                })
+              : await generatedSearchFiles(body, {
+                  ...client,
+                  signal,
+                });
     } catch (cause: unknown) {
       if (!signal.aborted && currentGeneration === generation) {
         const message = cause instanceof Error ? cause.message : 'Files could not be loaded.';
@@ -371,9 +452,10 @@
     loading = false;
     loadingMore = false;
     if (!data) {
-      const message = responseError && typeof responseError === 'object' && 'message' in responseError
-        ? String(responseError.message)
-        : 'Files could not be loaded.';
+      const message =
+        responseError && typeof responseError === 'object' && 'message' in responseError
+          ? String(responseError.message)
+          : 'Files could not be loaded.';
       // Cursor-page failures must not wipe the rows already loaded. A
       // transient status (429, 5xx — including a 503 mid-scroll) keeps the
       // cursor and surfaces a retryable page error; any other status (e.g. a
@@ -382,17 +464,15 @@
       if (cursor) {
         if (isRetryableStatus(response.status)) pageError = message;
         else failPaging(message);
-      }
-      else if (response.status === 503 && isCacheUnavailable(responseError)) {
+      } else if (response.status === 503 && isCacheUnavailable(responseError)) {
         unavailable = responseError;
         if (responseError.readiness === 'building') {
           cacheBuildRetry = setTimeout(() => {
             cacheBuildRetry = undefined;
             if (currentGeneration === generation && !signal.aborted) reloadListing();
-          }, 1_000);
+          }, 1000);
         }
-      }
-      else if (response.status === 503) error = message;
+      } else if (response.status === 503) error = message;
       else error = message;
       return false;
     }
@@ -433,38 +513,35 @@
     }
     return true;
   }
-
   function clearCacheBuildRetry(): void {
     if (cacheBuildRetry === undefined) return;
     clearTimeout(cacheBuildRetry);
     cacheBuildRetry = undefined;
   }
-
   function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
-    return typeof value === 'object' && value !== null &&
-      'readiness' in value && 'recovery_action' in value;
+    return typeof value === 'object' && value !== null && 'readiness' in value && 'recovery_action' in value;
   }
-
   function failPaging(message: string): void {
     error = message;
     nextCursor = undefined;
     loading = false;
     loadingMore = false;
   }
-
   async function restoreDeepState(
     currentGeneration: number,
     epoch: number | undefined,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
   ): Promise<void> {
     if (epoch === undefined || !signal) return;
     const targets = [providedActiveKey, selectedKey].filter((key): key is string => Boolean(key));
     while (
-      currentGeneration === generation && !signal.aborted && nextCursor &&
+      currentGeneration === generation &&
+      !signal.aborted &&
+      nextCursor &&
       targets.some((key) => !rows.some((row) => row.key === key))
     ) {
       loadingMore = true;
-      if (!await loadPage(currentGeneration, nextCursor, signal)) return;
+      if (!(await loadPage(currentGeneration, nextCursor, signal))) return;
     }
     if (currentGeneration !== generation || signal.aborted) return;
     if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) {
@@ -473,20 +550,17 @@
     pendingRestoration = {
       generation: currentGeneration,
       epoch,
-      activeKey: providedActiveKey
+      activeKey: providedActiveKey,
     };
   }
-
   async function completeDeepRestoration(
     pending: PendingRestoration,
     height: number,
-    signature: string
+    signature: string,
   ): Promise<void> {
     try {
       if (!isCurrentRestoration(pending)) return;
-      const target = pending.activeKey
-        ? rows.find((row) => row.key === pending.activeKey)
-        : undefined;
+      const target = pending.activeKey ? rows.find((row) => row.key === pending.activeKey) : undefined;
       if (target) activeKey = target.key;
       await tick();
       if (!isCurrentRestoration(pending) || !grid) return;
@@ -506,13 +580,13 @@
       if (completingRestoration === signature) completingRestoration = '';
     }
   }
-
   function isCurrentRestoration(pending: PendingRestoration): boolean {
-    return pending.generation === generation &&
+    return (
+      pending.generation === generation &&
       pendingRestoration?.generation === pending.generation &&
-      pendingRestoration.epoch === pending.epoch;
+      pendingRestoration.epoch === pending.epoch
+    );
   }
-
   async function loadMore(): Promise<void> {
     if (!nextCursor || loadingMore || !controller) return;
     pageError = '';
@@ -527,15 +601,13 @@
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
   }
-
   function toggleMIME(family: FileMIMEFamily): void {
     const selected = personScoped ? effectiveMIMEFamilies : mimeFamilies;
     if (selected.includes(family) && personScoped && selected.length === 1) return;
-    onMIMEFamiliesChange?.(selected.includes(family)
-      ? selected.filter((value) => value !== family)
-      : [...selected, family]);
+    onMIMEFamiliesChange?.(
+      selected.includes(family) ? selected.filter((value) => value !== family) : [...selected, family],
+    );
   }
-
   function togglePersonDirection(direction: PersonFileDirection): void {
     if (personDirections.includes(direction)) {
       if (personDirections.length === 1) return;
@@ -547,23 +619,19 @@
     personDirections = order.filter((value) => value === direction || personDirections.includes(value));
     onPersonDirectionsChange?.(personDirections);
   }
-
   function choosePersonPresentation(presentation: 'media' | 'files'): void {
     if (personPresentation === presentation) return;
     personPresentation = presentation;
     onPersonPresentationChange?.(presentation);
     onMIMEFamiliesChange?.([]);
   }
-
   function chooseSort(field: FileSearchSort['field']): void {
     const direction = sort.field === field && sort.direction === 'asc' ? 'desc' : 'asc';
     onSortChange?.({ field, direction });
   }
-
   function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
-
   function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
@@ -572,7 +640,6 @@
     pendingViewerKey = null;
     onSelectedKey?.(row.key);
   }
-
   function move(index: number): void {
     const height = rowHeight;
     if (height === undefined) return;
@@ -586,15 +653,9 @@
     if (grid && top < grid.scrollTop) grid.scrollTop = top;
     else if (grid && top + height > grid.scrollTop + visibleHeight) grid.scrollTop = top + height - visibleHeight;
   }
-
   function measuredViewport(element: HTMLDivElement, header: HTMLDivElement): number {
-    return tableViewportHeight(
-      element.clientHeight,
-      header.offsetHeight || 34,
-      window.innerHeight
-    );
+    return tableViewportHeight(element.clientHeight, header.offsetHeight || 34, window.innerHeight);
   }
-
   function applyDensityRebase(
     element: HTMLDivElement,
     height: number,
@@ -603,18 +664,16 @@
   ): void {
     if (grid !== element || previousRowHeight !== height) return;
     if (!element.isConnected) return;
-    if (element.scrollHeight !== 0 && (
-      element.scrollHeight < expectedScrollHeight || element.clientHeight > window.innerHeight
-    )) {
-      requestAnimationFrame(() => applyDensityRebase(
-        element, height, expectedScrollHeight, rebased
-      ));
+    if (
+      element.scrollHeight !== 0 &&
+      (element.scrollHeight < expectedScrollHeight || element.clientHeight > window.innerHeight)
+    ) {
+      requestAnimationFrame(() => applyDensityRebase(element, height, expectedScrollHeight, rebased));
       return;
     }
     element.scrollTop = rebased;
     scrollTop = element.scrollTop;
   }
-
   function handleKeydown(event: KeyboardEvent): void {
     if (event.target !== grid || rows.length === 0 || rowHeight === undefined) return;
     if (event.key === 'ArrowDown' || event.key === 'j') move(activeIndex + 1);
@@ -625,48 +684,47 @@
     else return;
     event.preventDefault();
   }
-
   function handleScroll(): void {
     scrollTop = grid?.scrollTop ?? 0;
     if (!slice) return;
     if (nextCursor && !loadingMore && slice.end >= rows.length - OVERSCAN) void loadMore();
   }
-
-	async function chooseVisualImage(event: Event): Promise<void> {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		if (file.size > 20 * 1024 * 1024) {
-			error = 'Visual query images must be 20 MiB or smaller.';
-			input.value = '';
-			return;
-		}
-		const dataURL = await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onerror = () => reject(reader.error ?? new Error('Could not read the query image.'));
-			reader.onload = () => resolve(String(reader.result));
-			reader.readAsDataURL(file);
-		});
-		visualQuery = '';
-		visualImageName = file.name;
-		visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
-		visualImageRevision += 1;
-		clearTimeout(visualQueryDebounce);
-		visualQueryDraft = '';
-	}
-
-	function removeVisualImage(): void {
-		if (!visualImageBase64 && !visualImageName) return;
-		visualImageBase64 = '';
-		visualImageName = '';
-		visualImageRevision += 1;
-	}
+  async function chooseVisualImage(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      error = 'Visual query images must be 20 MiB or smaller.';
+      input.value = '';
+      return;
+    }
+    const dataURL = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error('Could not read the query image.'));
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsDataURL(file);
+    });
+    visualQuery = '';
+    visualImageName = file.name;
+    visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
+    visualImageRevision += 1;
+    clearTimeout(visualQueryDebounce);
+    visualQueryDraft = '';
+  }
+  function removeVisualImage(): void {
+    if (!visualImageBase64 && !visualImageName) return;
+    visualImageBase64 = '';
+    visualImageName = '';
+    visualImageRevision += 1;
+  }
 </script>
 
 <svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
   <header class="workspace-header">
     <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
-    <span aria-live="polite">{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span>
+    <span aria-live="polite"
+      >{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span
+    >
   </header>
 
   <div class="file-controls" aria-label="File filters">
@@ -678,9 +736,21 @@
         onchange={(value) => choosePersonPresentation(value as 'media' | 'files')}
       />
       <div class="direction-controls" aria-label="Relationship directions">
-        <Checkbox checked={personDirections.includes('from_person')} label="From them" onchange={() => togglePersonDirection('from_person')} />
-        <Checkbox checked={personDirections.includes('to_person')} label="To them" onchange={() => togglePersonDirection('to_person')} />
-        <Checkbox checked={personDirections.includes('group')} label="Group conversations" onchange={() => togglePersonDirection('group')} />
+        <Checkbox
+          checked={personDirections.includes('from_person')}
+          label="From them"
+          onchange={() => togglePersonDirection('from_person')}
+        />
+        <Checkbox
+          checked={personDirections.includes('to_person')}
+          label="To them"
+          onchange={() => togglePersonDirection('to_person')}
+        />
+        <Checkbox
+          checked={personDirections.includes('group')}
+          label="Group conversations"
+          onchange={() => togglePersonDirection('group')}
+        />
       </div>
     {/if}
     <label>
@@ -692,34 +762,34 @@
         oninput={(value) => onFilenameQueryChange?.(value)}
       />
     </label>
-		<Toggle bind:checked={hostedVisualSearch} label="Hosted visual search" />
-		{#if hostedVisualSearch}
-			<label>
-				Visual query
-				<SearchInput
-					value={visualQueryDraft}
-					ariaLabel="Search attachment pixels"
-					placeholder="Describe what is visible"
-					oninput={commitVisualQuery}
-				/>
-			</label>
-			<label>
-				Query image
-				<input type="file" accept="image/jpeg,image/png,image/webp" onchange={(event) => void chooseVisualImage(event)} />
-			</label>
-			{#if visualImageName}
-				<span>{visualImageName}</span>
-				<Button size="sm" surface="outline" label="Remove query image" onclick={removeVisualImage} />
-			{/if}
-			<span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
-		{/if}
+    <Toggle bind:checked={hostedVisualSearch} label="Hosted visual search" />
+    {#if hostedVisualSearch}
+      <label>
+        Visual query
+        <SearchInput
+          value={visualQueryDraft}
+          ariaLabel="Search attachment pixels"
+          placeholder="Describe what is visible"
+          oninput={commitVisualQuery}
+        />
+      </label>
+      <label>
+        Query image
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onchange={(event) => void chooseVisualImage(event)}
+        />
+      </label>
+      {#if visualImageName}
+        <span>{visualImageName}</span>
+        <Button size="sm" surface="outline" label="Remove query image" onclick={removeVisualImage} />
+      {/if}
+      <span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
+    {/if}
     <div class="mime-controls" aria-label="MIME families">
       {#each visibleMIMEFamilies as family}
-        <Checkbox
-          checked={effectiveMIMEFamilies.includes(family)}
-          label={family}
-          onchange={() => toggleMIME(family)}
-        />
+        <Checkbox checked={effectiveMIMEFamilies.includes(family)} label={family} onchange={() => toggleMIME(family)} />
       {/each}
     </div>
   </div>
@@ -734,113 +804,184 @@
       error={unavailable?.message || error}
       {pageError}
       onOpen={(row, returnFocus) => open(row, returnFocus)}
-      onLoadMore={() => { void loadMore(); }}
+      onLoadMore={() => {
+        void loadMore();
+      }}
       onReload={reloadListing}
     />
   {:else}
-  <section class="files-table" aria-label="Files table">
-    <div
-      class="files-grid"
-      bind:this={grid}
-      role="grid"
-      aria-label="Files results"
-      aria-rowcount={accessibilityRowCount}
-      aria-colcount={personScoped ? 9 : 8}
-      aria-busy={loading || loadingMore || pendingRestoration !== undefined || (restorationEpoch !== undefined && rowHeight === undefined)}
-      aria-activedescendant={renderedActiveRow ? rowID(renderedActiveRow) : undefined}
-      tabindex="0"
-      onkeydown={handleKeydown}
-      onscroll={handleScroll}
-    >
-      <div class="table-header" class:person-columns={personScoped} bind:this={headerElement} role="row">
-        <span role="columnheader"><button type="button" aria-label="Sort by date" onclick={() => chooseSort('occurred_at')}>Date</button></span>
-        <span role="columnheader"><button type="button" aria-label="Sort by filename" onclick={() => chooseSort('filename')}>Filename</button></span>
-        <span role="columnheader">Type</span>
-        <span role="columnheader"><button type="button" aria-label="Sort by size" onclick={() => chooseSort('size')}>Size</button></span>
-        {#if personScoped}<span role="columnheader">Relationship</span>{/if}
-        <span role="columnheader">People / domain</span>
-        <span role="columnheader">Source</span>
-        <span role="columnheader">Containing item</span>
-        <span role="columnheader">Availability</span>
-      </div>
-      <div class="table-body" role="rowgroup">
-        {#if unavailable?.readiness === 'building'}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Preparing analytical cache…</div></div></div>
-        {:else if unavailable}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="alert"><strong>Analytical cache unavailable</strong><span>{unavailable.message}</span></div></div></div>
-        {:else if error && rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="alert">{error}</div></div></div>
-        {:else if loading && rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Loading files…</div></div></div>
-        {:else if rows.length === 0}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice">No files match this view.</div></div></div>
-        {:else if !slice || rowHeight === undefined}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="notice" role="status">Preparing files layout…</div></div></div>
-        {:else}
-        <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
-          <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
-            {#each renderedRows as row, offset (row.key)}
-              {@const index = slice.start + offset}
-              <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
-                   the focused grid opens the same file via handleKeydown. -->
-              <div
-                id={rowID(row)}
-                class="data-row"
-                class:person-columns={personScoped}
-                class:data-row--active={index === activeIndex}
-                role="row"
-                tabindex="-1"
-                aria-rowindex={index + 2}
-                onpointerdown={(event) => { activeKey = row.key; onActiveKey?.(row.key); grid?.focus(); viewerReturnFocus = event.currentTarget as HTMLElement; }}
-                onclick={(event) => {
-                  if (!(event.target as Element).closest('button')) {
-                    open(row, event.currentTarget as HTMLElement);
-                  }
-                }}
-              >
-                <span role="gridcell"><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span>
-				<span role="gridcell">
-					<strong>{row.filename || '(unnamed)'}</strong>
-					{#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
-				</span>
-                <span role="gridcell">{row.mime_type || row.mime_family}</span>
-                <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
-                {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
-                <span role="gridcell">{people(row)}</span>
-                <span role="gridcell">{row.source_identifier}</span>
-                <span role="gridcell">{row.containing_title || row.entry_key}</span>
-                <span role="gridcell">{availability(row)}</span>
-              </div>
-            {/each}
-          </div>
+    <section class="files-table" aria-label="Files table">
+      <div
+        class="files-grid"
+        bind:this={grid}
+        role="grid"
+        aria-label="Files results"
+        aria-rowcount={accessibilityRowCount}
+        aria-colcount={personScoped ? 9 : 8}
+        aria-busy={loading ||
+          loadingMore ||
+          pendingRestoration !== undefined ||
+          (restorationEpoch !== undefined && rowHeight === undefined)}
+        aria-activedescendant={renderedActiveRow ? rowID(renderedActiveRow) : undefined}
+        tabindex="0"
+        onkeydown={handleKeydown}
+        onscroll={handleScroll}
+      >
+        <div class="table-header" class:person-columns={personScoped} bind:this={headerElement} role="row">
+          <span role="columnheader"
+            ><button type="button" aria-label="Sort by date" onclick={() => chooseSort('occurred_at')}>Date</button
+            ></span
+          >
+          <span role="columnheader"
+            ><button type="button" aria-label="Sort by filename" onclick={() => chooseSort('filename')}>Filename</button
+            ></span
+          >
+          <span role="columnheader">Type</span>
+          <span role="columnheader"
+            ><button type="button" aria-label="Sort by size" onclick={() => chooseSort('size')}>Size</button></span
+          >
+          {#if personScoped}<span role="columnheader">Relationship</span>{/if}
+          <span role="columnheader">People / domain</span>
+          <span role="columnheader">Source</span>
+          <span role="columnheader">Containing item</span>
+          <span role="columnheader">Availability</span>
         </div>
-        {/if}
-        {#if error && rows.length > 0}
-          <!-- Pagination that cannot continue (results changed underneath the
+        <div class="table-body" role="rowgroup">
+          {#if unavailable?.readiness === 'building'}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice" role="status">Preparing analytical cache…</div>
+              </div>
+            </div>
+          {:else if unavailable}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice" role="alert">
+                  <strong>Analytical cache unavailable</strong><span>{unavailable.message}</span>
+                </div>
+              </div>
+            </div>
+          {:else if error && rows.length === 0}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice" role="alert">{error}</div>
+              </div>
+            </div>
+          {:else if loading && rows.length === 0}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice" role="status">Loading files…</div>
+              </div>
+            </div>
+          {:else if rows.length === 0}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice">No files match this view.</div>
+              </div>
+            </div>
+          {:else if !slice || rowHeight === undefined}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="notice" role="status">Preparing files layout…</div>
+              </div>
+            </div>
+          {:else}
+            <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
+              <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
+                {#each renderedRows as row, offset (row.key)}
+                  {@const index = slice.start + offset}
+                  <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
+                   the focused grid opens the same file via handleKeydown. -->
+                  <div
+                    id={rowID(row)}
+                    class="data-row"
+                    class:person-columns={personScoped}
+                    class:data-row--active={index === activeIndex}
+                    role="row"
+                    tabindex="-1"
+                    aria-rowindex={index + 2}
+                    onpointerdown={(event) => {
+                      activeKey = row.key;
+                      onActiveKey?.(row.key);
+                      grid?.focus();
+                      viewerReturnFocus = event.currentTarget as HTMLElement;
+                    }}
+                    onclick={(event) => {
+                      if (!(event.target as Element).closest('button')) {
+                        open(row, event.currentTarget as HTMLElement);
+                      }
+                    }}
+                  >
+                    <span role="gridcell"
+                      ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
+                    >
+                    <span role="gridcell">
+                      <strong>{row.filename || '(unnamed)'}</strong>
+                      {#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
+                    </span>
+                    <span role="gridcell">{row.mime_type || row.mime_family}</span>
+                    <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
+                    {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
+                    <span role="gridcell">{people(row)}</span>
+                    <span role="gridcell">{row.source_identifier}</span>
+                    <span role="gridcell">{row.containing_title || row.entry_key}</span>
+                    <span role="gridcell">{availability(row)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if error && rows.length > 0}
+            <!-- Pagination that cannot continue (results changed underneath the
                cursor) stays visible next to the rows already loaded; Reload
                restarts the listing from page one. -->
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
-            <span>{error}</span>
-            <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
-          </div></div></div>
-        {/if}
-        {#if pageError}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
-            <span>{pageError}</span>
-            <Button size="sm" surface="outline" label="Retry loading more files" onclick={() => void loadMore()} />
-          </div></div></div>
-        {/if}
-        {#if loadingMore}<div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="progress" role="status">Loading more…</div></div></div>{/if}
-        {#if pendingViewerState === 'pending'}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="progress" role="status">Opening file…</div></div></div>
-        {:else if pendingViewerState === 'missing'}
-          <div role="row"><div role="gridcell" aria-colspan={personScoped ? 9 : 8}><div class="page-error" role="alert">
-            <span>The selected file is not in the current results.</span>
-          </div></div></div>
-        {/if}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="page-error" role="alert">
+                  <span>{error}</span>
+                  <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
+                </div>
+              </div>
+            </div>
+          {/if}
+          {#if pageError}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="page-error" role="alert">
+                  <span>{pageError}</span>
+                  <Button
+                    size="sm"
+                    surface="outline"
+                    label="Retry loading more files"
+                    onclick={() => void loadMore()}
+                  />
+                </div>
+              </div>
+            </div>
+          {/if}
+          {#if loadingMore}<div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="progress" role="status">Loading more…</div>
+              </div>
+            </div>{/if}
+          {#if pendingViewerState === 'pending'}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="progress" role="status">Opening file…</div>
+              </div>
+            </div>
+          {:else if pendingViewerState === 'missing'}
+            <div role="row">
+              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+                <div class="page-error" role="alert">
+                  <span>The selected file is not in the current results.</span>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
   {/if}
 </svelte:element>
 
@@ -849,71 +990,184 @@
     {client}
     file={viewerFile}
     returnFocus={viewerReturnFocus ?? grid}
-    onClose={() => { viewerFile = undefined; onSelectedKey?.(null); }}
+    onClose={() => {
+      viewerFile = undefined;
+      onSelectedKey?.(null);
+    }}
     {onOpenItem}
     {onOpenConversation}
   />
 {/if}
 
-<script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
-  function formatBytes(value: number): string {
-    if (value < 1024) return `${value} B`;
-    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  function people(row: FileSearchRow): string {
-    const labels = row.participant_labels ?? [];
-    const domains = row.participant_domains ?? [];
-    return [...labels, ...domains].join(', ') || '—';
-  }
-  function relationship(row: FileSearchRow | PersonFileSearchRow): string {
-    const provenance = (row as Partial<PersonFileSearchRow>).person_provenance;
-    if (!provenance) return '—';
-    const labels: string[] = [];
-    if (provenance.directions?.includes('from_person')) labels.push('From them');
-    if (provenance.directions?.includes('to_person')) {
-      const roles = (provenance.roles ?? []).filter((role) => role === 'to' || role === 'cc' || role === 'bcc');
-      labels.push(`To them${roles.length ? ` (${roles.join(', ')})` : ''}`);
-    }
-    if (provenance.directions?.includes('group')) labels.push('Group conversation');
-    return labels.join(' · ') || '—';
-  }
-  function availability(row: FileSearchRow): string {
-    if (row.content_state === 'local_content') return 'Local content';
-    if (row.content_state === 'missing_blob') return 'Missing blob';
-    if (row.content_state === 'url_only') return 'URL only';
-    return 'Metadata only';
-  }
-</script>
-
 <style>
-  .files-workspace { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); }
-  .workspace-header { display: flex; align-items: baseline; justify-content: space-between; }
-  h1 { margin: 0; font-family: var(--font-sans); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.2; }
-  .workspace-header span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .file-controls, .mime-controls, .direction-controls { display: flex; align-items: center; gap: var(--space-3); }
-  .file-controls { flex-wrap: wrap; }
-  .file-controls label { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
-  .hosted-disclosure { color: var(--text-muted); font-size: var(--font-size-2xs); }
-  .data-row small { display: block; color: var(--text-muted); font-size: var(--font-size-2xs); }
-  .files-table { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
-  .table-header, .data-row { display: grid; grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(160px, 1.3fr) 105px; align-items: center; }
-  .table-header.person-columns, .data-row.person-columns { grid-template-columns: 112px minmax(150px, 1.5fr) minmax(110px, 1fr) 82px minmax(150px, 1.2fr) minmax(130px, 1.1fr) minmax(120px, 1fr) minmax(150px, 1.2fr) 105px; }
-  .files-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; outline: none; }
-  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
-  .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  .table-header span, .data-row span { min-width: 0; padding: 0 var(--space-3); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-  .table-header button { width: 100%; height: var(--table-header-height); padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; text-transform: inherit; }
-  .table-body { position: relative; min-height: 220px; flex: 0 0 auto; outline: none; }
-  .virtual-spacer { position: relative; }
-  .virtual-window { position: absolute; inset: 0 0 auto; }
-  .data-row { height: var(--row-height); border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); font-size: var(--font-size-xs); cursor: default; }
-  .data-row--active { background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface)); box-shadow: inset 2px 0 0 var(--accent-blue); }
-  .notice { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: var(--space-3); flex-direction: column; color: var(--text-secondary); }
-  .page-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); color: var(--text-danger); }
-  .progress { position: sticky; bottom: 0; padding: var(--space-2); background: var(--bg-inset); text-align: center; }
+  .files-workspace {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .workspace-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xl);
+    font-weight: 650;
+    line-height: 1.2;
+  }
+  .workspace-header span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .file-controls,
+  .mime-controls,
+  .direction-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .file-controls {
+    flex-wrap: wrap;
+  }
+  .file-controls label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
+  .hosted-disclosure {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+  }
+  .data-row small {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+  }
+  .files-table {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+  .table-header,
+  .data-row {
+    display: grid;
+    grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(
+        130px,
+        1fr
+      ) minmax(160px, 1.3fr) 105px;
+    align-items: center;
+  }
+  .table-header.person-columns,
+  .data-row.person-columns {
+    grid-template-columns: 112px minmax(150px, 1.5fr) minmax(110px, 1fr) 82px minmax(150px, 1.2fr) minmax(
+        130px,
+        1.1fr
+      ) minmax(120px, 1fr) minmax(150px, 1.2fr) 105px;
+  }
+  .files-grid {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: auto;
+    outline: none;
+  }
+  .files-grid:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--accent-blue);
+  }
+  .table-header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    min-height: var(--table-header-height);
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    box-shadow: 0 1px 0 var(--hairline-sheen);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .table-header span,
+  .data-row span {
+    min-width: 0;
+    padding: 0 var(--space-3);
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .table-header button {
+    width: 100%;
+    height: var(--table-header-height);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    text-transform: inherit;
+  }
+  .table-body {
+    position: relative;
+    min-height: 220px;
+    flex: 0 0 auto;
+    outline: none;
+  }
+  .virtual-spacer {
+    position: relative;
+  }
+  .virtual-window {
+    position: absolute;
+    inset: 0 0 auto;
+  }
+  .data-row {
+    height: var(--row-height);
+    border-bottom: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    cursor: default;
+  }
+  .data-row--active {
+    background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
+    box-shadow: inset 2px 0 0 var(--accent-blue);
+  }
+  .notice {
+    display: flex;
+    min-height: 180px;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    flex-direction: column;
+    color: var(--text-secondary);
+  }
+  .page-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-danger);
+  }
+  .progress {
+    position: sticky;
+    bottom: 0;
+    padding: var(--space-2);
+    background: var(--bg-inset);
+    text-align: center;
+  }
 </style>

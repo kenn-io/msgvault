@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
-
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
@@ -9,18 +9,19 @@
   import type { ExploreSearchMode } from './lib/explore/models';
   import { parseSearchMode } from './lib/search/modes';
   import { createAppearancePreferences, type AppearanceDefaults } from './lib/theme/preferences.svelte';
-
-  let { session = createSessionController() }: { session?: SessionController } = $props();
+  let {
+    session = createSessionController(),
+  }: {
+    session?: SessionController;
+  } = $props();
   let appearanceDefaults = $state<AppearanceDefaults>({ theme: 'system', density: 'compact' });
   let shellMounted = $derived(session.status !== undefined && session.authMode !== 'required');
   let searchModeDefault = $state<ExploreSearchMode | undefined>();
   let authenticated = false;
   let browserDefaultsRequestGeneration = 0;
-
   onMount(() => {
     void session.bootstrap();
   });
-
   // AppShell owns appearance while mounted; the boot and login screens apply
   // the same defaults and stored override so they render in the right theme.
   $effect(() => {
@@ -28,7 +29,6 @@
     const appearance = createAppearancePreferences(appearanceDefaults);
     return () => appearance.destroy();
   });
-
   $effect(() => {
     const isAuthenticated = session.authMode !== undefined && session.authMode !== 'required';
     if (!isAuthenticated) {
@@ -41,26 +41,30 @@
     const generation = ++browserDefaultsRequestGeneration;
     void loadBrowserDefaults(generation);
   });
-
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {
-      const { data } = await session.client.GET('/api/v1/settings');
+      const { data } = await generatedGetSettings(session.client);
       if (generation !== browserDefaultsRequestGeneration || session.authMode === 'required') return;
       const theme = settingString(data?.settings.find(({ key }) => key === 'web.theme'));
       const density = settingString(data?.settings.find(({ key }) => key === 'web.density'));
       appearanceDefaults = {
         theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system',
-        density: density === 'comfortable' ? density : 'compact'
+        density: density === 'comfortable' ? density : 'compact',
       };
       searchModeDefault = parseSearchMode(
-        settingString(data?.settings.find(({ key }) => key === 'web.default_search_mode'))
+        settingString(data?.settings.find(({ key }) => key === 'web.default_search_mode')),
       );
     } catch {
       // Keep the safe fallback when settings authority is temporarily unavailable.
     }
   }
-
-  function settingString(setting: { value?: unknown } | undefined): string | undefined {
+  function settingString(
+    setting:
+      | {
+          value?: unknown;
+        }
+      | undefined,
+  ): string | undefined {
     const value = setting?.value;
     return value && typeof value === 'object' && 'string' in value && typeof value.string === 'string'
       ? value.string

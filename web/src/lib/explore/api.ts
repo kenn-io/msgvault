@@ -1,3 +1,12 @@
+import { runCLI as generatedRunCLI } from '../api/generated/api/api';
+import {
+  countExploreMatches as generatedCountExploreMatches,
+  explore as generatedExplore,
+  exploreGroups as generatedExploreGroups,
+  getSearchCoverage as generatedGetSearchCoverage,
+  groupFiles as generatedGroupFiles,
+  listExploreFiles as generatedListExploreFiles,
+} from '../api/generated/exploration/exploration';
 import type { APIClient } from '../api/client';
 import type {
   ExploreCacheUnavailable,
@@ -13,17 +22,20 @@ import type {
   ExploreResponse,
   ExploreResult,
   FileGroupsResponse,
-  FileMIMEFamily
+  FileMIMEFamily,
 } from './models';
-import { parseSearchCoverage, type SearchCoverageAction, type SearchCoverageStatus, type SearchCoverageValue } from '../search/modes';
-
+import {
+  parseSearchCoverage,
+  type SearchCoverageAction,
+  type SearchCoverageStatus,
+  type SearchCoverageValue,
+} from '../search/modes';
 export interface VisibleLexicalCounts {
   counts: Record<string, number>;
   cacheRevision: string;
   lexicalRevision: string;
   canonicalQueryHash: string;
 }
-
 function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Partial<ExploreCacheUnavailable>;
@@ -34,7 +46,6 @@ function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
     typeof candidate.recovery_action === 'string'
   );
 }
-
 function normalize(data: ExploreResponse): ExploreResult {
   return {
     rows: data.rows,
@@ -44,11 +55,15 @@ function normalize(data: ExploreResponse): ExploreResult {
     candidateSnapshotId: data.candidate_snapshot_id,
     candidatePoolSaturated: data.candidate_pool_saturated ?? false,
     searchDeletionScope: data.search_deletion_scope,
-    nextCursor: data.next_cursor
+    nextCursor: data.next_cursor,
   };
 }
-
-function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extract<ExploreGroupLoadResult, { status: 'ready' }>['result'] {
+function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extract<
+  ExploreGroupLoadResult,
+  {
+    status: 'ready';
+  }
+>['result'] {
   // File-group responses never declare a deletion scope; on the union that
   // access widens to unknown, so keep only the declared string form.
   const scope = data.search_deletion_scope;
@@ -59,78 +74,81 @@ function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extr
     searchProvenance: data.search_provenance,
     candidateSnapshotId: data.candidate_snapshot_id,
     searchDeletionScope: typeof scope === 'string' ? scope : undefined,
-    nextCursor: data.next_cursor
+    nextCursor: data.next_cursor,
   };
 }
-
-function normalizeFiles(data: ExploreFilesResponse): Extract<ExploreFilesLoadResult, { status: 'ready' }>['result'] {
+function normalizeFiles(data: ExploreFilesResponse): Extract<
+  ExploreFilesLoadResult,
+  {
+    status: 'ready';
+  }
+>['result'] {
   return {
     files: data.files,
     totalCount: data.total_count,
     cacheRevision: data.cache_revision,
     searchProvenance: data.search_provenance,
     candidateSnapshotId: data.candidate_snapshot_id,
-    nextCursor: data.next_cursor
+    nextCursor: data.next_cursor,
   };
 }
-
 function messageFor(error: unknown, status: number): string {
   return typeof error === 'object' && error !== null && 'message' in error
     ? String(error.message)
     : `Exploration request failed (${status})`;
 }
-
 export interface ExploreAPI {
   explore(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreLoadResult>;
   groups(
     predicate: ExploreGroupsPredicate,
     dimension: ExploreGroupDimension,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   fileGroups(
     predicate: ExplorePredicate,
     filenameQuery: string,
     mimeFamilies: FileMIMEFamily[],
     dimension: ExploreGroupDimension,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   files(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreFilesLoadResult>;
   coverage(filters: ExploreFilter[], signal?: AbortSignal): Promise<SearchCoverageValue>;
   matchCounts(predicate: ExplorePredicate, rowKeys: string[], signal?: AbortSignal): Promise<VisibleLexicalCounts>;
-  runCoverageAction(
-    action: SearchCoverageAction,
-    status: SearchCoverageStatus,
-    signal?: AbortSignal
-  ): Promise<void>;
+  runCoverageAction(action: SearchCoverageAction, status: SearchCoverageStatus, signal?: AbortSignal): Promise<void>;
 }
-
 function requireCompletedCLIRun(stream: string): void {
   let completed = false;
   for (const line of stream.split('\n')) {
     if (!line.trim()) continue;
-    let event: { type?: unknown; error?: unknown };
+    let event: {
+      type?: unknown;
+      error?: unknown;
+    };
     try {
-      event = JSON.parse(line) as { type?: unknown; error?: unknown };
+      event = JSON.parse(line) as {
+        type?: unknown;
+        error?: unknown;
+      };
     } catch {
       throw new Error('Semantic index action returned an invalid event stream');
     }
-    if (event.type === 'error' || event.type === 'failed' ||
-      (event.type === 'complete' && typeof event.error === 'string' && event.error)) {
-      throw new Error(typeof event.error === 'string' && event.error
-        ? event.error
-        : 'Semantic index action failed');
+    if (
+      event.type === 'error' ||
+      event.type === 'failed' ||
+      (event.type === 'complete' && typeof event.error === 'string' && event.error)
+    ) {
+      throw new Error(typeof event.error === 'string' && event.error ? event.error : 'Semantic index action failed');
     }
     if (event.type === 'complete') completed = true;
   }
   if (!completed) throw new Error('Semantic index action did not complete');
 }
-
 export function createExploreAPI(client: APIClient): ExploreAPI {
   return {
     async explore(predicate, signal) {
-      const { data, error, response } = await client.POST('/api/v1/explore', {
-        body: predicate,
-        signal
+      const { data, error, response } = await generatedExplore(predicate, {
+        ...client,
+        signal,
       });
       if (data) return { status: 'ready', result: normalize(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
@@ -146,11 +164,11 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         grouping: [dimension],
         limit: predicate.limit,
-        presentation: 'table' as const
+        presentation: 'table' as const,
       };
-      const { data, error, response } = await client.POST('/api/v1/explore/groups', {
-        body,
-        signal
+      const { data, error, response } = await generatedExploreGroups(body, {
+        ...client,
+        signal,
       });
       if (data) return { status: 'ready', result: normalizeGroups(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
@@ -160,17 +178,20 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
     },
     async fileGroups(predicate, filenameQuery, mimeFamilies, dimension, signal) {
       const { cursor, ...context } = predicate;
-      const { data, error, response } = await client.POST('/api/v1/files/groups', {
-        body: {
+      const { data, error, response } = await generatedGroupFiles(
+        {
           predicate: context,
           ...(filenameQuery ? { filename_query: filenameQuery } : {}),
           ...(mimeFamilies.length ? { mime_families: mimeFamilies } : {}),
           grouping: [dimension],
           limit: predicate.limit,
-          ...(cursor ? { cursor } : {})
+          ...(cursor ? { cursor } : {}),
         },
-        signal
-      });
+        {
+          ...client,
+          signal,
+        },
+      );
       if (data) return { status: 'ready', result: normalizeGroups(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
@@ -179,10 +200,13 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
     },
     async files(predicate, signal) {
       const { cursor, ...context } = predicate;
-      const { data, error, response } = await client.POST('/api/v1/explore/files', {
-        body: { predicate: context, limit: 100, ...(cursor ? { cursor } : {}) },
-        signal
-      });
+      const { data, error, response } = await generatedListExploreFiles(
+        { predicate: context, limit: 100, ...(cursor ? { cursor } : {}) },
+        {
+          ...client,
+          signal,
+        },
+      );
       if (data) return { status: 'ready', result: normalizeFiles(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
@@ -190,9 +214,13 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       throw new Error(messageFor(error, response.status));
     },
     async coverage(filters, signal) {
-      const { data, error, response } = await client.POST('/api/v1/search/coverage', {
-        body: { filters }, signal
-      });
+      const { data, error, response } = await generatedGetSearchCoverage(
+        { filters },
+        {
+          ...client,
+          signal,
+        },
+      );
       const coverage = parseSearchCoverage(data);
       if (coverage) return coverage;
       if (data) throw new Error('Semantic coverage response is incompatible with this browser');
@@ -204,30 +232,38 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
           cache_revision: '',
           status: 'initializing',
           detail: error.message,
-          actions: []
+          actions: [],
         };
       }
       throw new Error(messageFor(error, response.status));
     },
     async matchCounts(predicate, rowKeys, signal) {
-      const { data, error, response } = await client.POST('/api/v1/explore/match-counts', {
-        body: { predicate, row_keys: rowKeys }, signal
-      });
+      const { data, error, response } = await generatedCountExploreMatches(
+        { predicate, row_keys: rowKeys },
+        {
+          ...client,
+          signal,
+        },
+      );
       if (!data) throw new Error(messageFor(error, response.status));
       return {
         counts: Object.fromEntries(data.counts.map((entry) => [entry.row_key, entry.count])),
         cacheRevision: data.cache_revision,
         lexicalRevision: data.lexical_index_revision,
-        canonicalQueryHash: data.canonical_query_hash
+        canonicalQueryHash: data.canonical_query_hash,
       };
     },
     async runCoverageAction(action, _status, signal) {
       if (action === 'retry') return;
-      const { data, error, response } = await client.POST('/api/v1/cli/run', {
-        body: { args: ['embeddings', 'build', '--full-rebuild', '--yes'] }, signal, parseAs: 'text'
-      });
+      const { data, error, response } = await generatedRunCLI(
+        { args: ['embeddings', 'build', '--full-rebuild', '--yes'] },
+        {
+          ...client,
+          signal,
+        },
+      );
       if (!response.ok) throw new Error(messageFor(error, response.status));
       requireCompletedCLIRun(data ?? '');
-    }
+    },
   };
 }

@@ -53,7 +53,7 @@ type OperationRunSummary struct {
 	Trigger    *operations.Trigger      `json:"trigger,omitempty" enum:"manual,scheduled"`
 	StartedAt  time.Time                `json:"started_at"`
 	FinishedAt *time.Time               `json:"finished_at,omitempty"`
-	Counters   []OperationPublicCounter `json:"counters" nullable:"false"`
+	Counters   []OperationPublicCounter `json:"counters"`
 	Error      *OperationPublicError    `json:"error,omitempty"`
 }
 
@@ -68,9 +68,9 @@ type OperationUnavailableKind struct {
 }
 
 type OperationRunsResponse struct {
-	Runs             []OperationRunSummary      `json:"runs" nullable:"false"`
+	Runs             []OperationRunSummary      `json:"runs"`
 	NextCursor       string                     `json:"next_cursor,omitempty"`
-	UnavailableKinds []OperationUnavailableKind `json:"unavailable_kinds" nullable:"false"`
+	UnavailableKinds []OperationUnavailableKind `json:"unavailable_kinds"`
 }
 
 type OperationLaneStatus struct {
@@ -83,11 +83,11 @@ type OperationLaneStatus struct {
 	Latest              *OperationRunSummary           `json:"latest,omitempty"`
 	LatestSuccessful    *OperationRunSummary           `json:"latest_successful,omitempty"`
 	RelatedStatus       *operations.RelatedStatusID    `json:"related_status,omitempty" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
-	SupportedActions    []operations.ActionID          `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume" nullable:"false"`
+	SupportedActions    []operations.ActionID          `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume"`
 }
 
 type OperationStatusResponse struct {
-	Lanes []OperationLaneStatus `json:"lanes" nullable:"false"`
+	Lanes []OperationLaneStatus `json:"lanes"`
 }
 
 type operationRunReferencePayload struct {

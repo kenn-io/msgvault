@@ -1,13 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import type { components } from '../api/generated/schema';
-import {
-  RelationshipReviewController,
-  type RelationshipReviewState
-} from './relationship-review-controller.svelte';
+import type { RelationshipReview as GeneratedRelationshipReview } from '../api/generated/models';
+import { RelationshipReviewController, type RelationshipReviewState } from './relationship-review-controller.svelte';
 
-type GeneratedReview = components['schemas']['RelationshipReview'];
+type GeneratedReview = GeneratedRelationshipReview;
 
 function generatedReview(overrides: Partial<GeneratedReview> = {}): GeneratedReview {
   return {
@@ -20,8 +17,11 @@ function generatedReview(overrides: Partial<GeneratedReview> = {}): GeneratedRev
     status: 'pending',
     source: 'vcard_import',
     vcard_identity: {
-      property: 'forbidden-vcard-property', group: 'forbidden-vcard-group',
-      prop_id: 'forbidden-vcard-prop-id', pid: ['forbidden-vcard-pid'], altid: 'forbidden-vcard-altid'
+      property: 'forbidden-vcard-property',
+      group: 'forbidden-vcard-group',
+      prop_id: 'forbidden-vcard-prop-id',
+      pid: ['forbidden-vcard-pid'],
+      altid: 'forbidden-vcard-altid',
     },
     source_ref: 'forbidden-source-ref',
     source_resource_uid: 'forbidden-resource-uid',
@@ -34,13 +34,15 @@ function generatedReview(overrides: Partial<GeneratedReview> = {}): GeneratedRev
     href: 'https://forbidden.example.test/related',
     authorization: 'forbidden-credential',
     raw_vcard: 'BEGIN:VCARD\nforbidden-raw-vcard\nEND:VCARD',
-    ...overrides
+    ...overrides,
   };
 }
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((settle) => { resolve = settle; });
+  const promise = new Promise<Response>((settle) => {
+    resolve = settle;
+  });
   return { promise, resolve };
 }
 
@@ -64,25 +66,31 @@ describe('RelationshipReviewController', () => {
       controller.applyContext(true, state, false);
       await vi.waitFor(() => expect(controller.loading).toBe(false));
 
-      expect(requests).toEqual([{
-        method: 'GET', path: '/api/v1/person-relationship-reviews', query: [['status', state]]
-      }]);
-      expect(controller.rows).toEqual([{
-        id: 41,
-        person_id: 7,
-        matched_person_id: 9,
-        raw_related_value: 'urn:uuid:synthetic-related-person',
-        raw_related_type: 'friend',
-        value_kind: 'uri',
-        status: state,
-        source: 'vcard_import',
-        created_at: '2026-08-01T10:00:00Z',
-        updated_at: '2026-08-02T11:00:00Z',
-        reviewed_at: '2026-08-03T12:00:00Z'
-      }]);
+      expect(requests).toEqual([
+        {
+          method: 'GET',
+          path: '/api/v1/person-relationship-reviews',
+          query: [['status', state]],
+        },
+      ]);
+      expect(controller.rows).toEqual([
+        {
+          id: 41,
+          person_id: 7,
+          matched_person_id: 9,
+          raw_related_value: 'urn:uuid:synthetic-related-person',
+          raw_related_type: 'friend',
+          value_kind: 'uri',
+          status: state,
+          source: 'vcard_import',
+          created_at: '2026-08-01T10:00:00Z',
+          updated_at: '2026-08-02T11:00:00Z',
+          reviewed_at: '2026-08-03T12:00:00Z',
+        },
+      ]);
       expect(JSON.stringify(controller.rows)).not.toMatch(/forbidden|source_ref|accepted_relationship/i);
       controller.destroy();
-    }
+    },
   );
 
   it('commits a user state once before replacing context and never commits restored state', async () => {
@@ -140,7 +148,9 @@ describe('RelationshipReviewController', () => {
     expect(controller.rows).toEqual([]);
 
     firstReplacement.resolve(Response.json({ reviews: [generatedReview({ id: 51, status: 'accepted' })] }));
-    restoredReplacement.resolve(Response.json({ error: 'unavailable', message: 'forbidden-stale-error' }, { status: 503 }));
+    restoredReplacement.resolve(
+      Response.json({ error: 'unavailable', message: 'forbidden-stale-error' }, { status: 503 }),
+    );
     await vi.waitFor(() => expect(controller.loading).toBe(false));
     expect(controller.rows).toEqual([]);
     expect(controller.error).toBe('Unable to load imported relationship reviews.');
@@ -200,9 +210,13 @@ describe('RelationshipReviewController', () => {
   });
 
   it('surfaces invalid-status responses as a bounded programming error', async () => {
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async () =>
-      Response.json({ error: 'invalid_status', message: 'forbidden-validator-detail' }, { status: 400 })
-    )));
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async () =>
+          Response.json({ error: 'invalid_status', message: 'forbidden-validator-detail' }, { status: 400 }),
+        ),
+      ),
+    );
 
     controller.applyContext(true, 'pending', false);
     await vi.waitFor(() => expect(controller.loading).toBe(false));
@@ -213,9 +227,11 @@ describe('RelationshipReviewController', () => {
   });
 
   it('rejects a row whose status does not match the selected queue', async () => {
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async () =>
-      Response.json({ reviews: [generatedReview({ status: 'accepted' })] })
-    )));
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async () => Response.json({ reviews: [generatedReview({ status: 'accepted' })] })),
+      ),
+    );
 
     controller.applyContext(true, 'pending', false);
     await vi.waitFor(() => expect(controller.loading).toBe(false));
@@ -228,10 +244,14 @@ describe('RelationshipReviewController', () => {
   it('destroy aborts the active request and blocks late state', async () => {
     const pending = deferredResponse();
     let signal!: AbortSignal;
-    const controller = new RelationshipReviewController(createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      signal = requestOf(input).signal;
-      return pending.promise;
-    })));
+    const controller = new RelationshipReviewController(
+      createAPIClient(
+        vi.fn<typeof fetch>(async (input) => {
+          signal = requestOf(input).signal;
+          return pending.promise;
+        }),
+      ),
+    );
     controller.applyContext(true, 'pending', false);
     await vi.waitFor(() => expect(controller.loading).toBe(true));
 

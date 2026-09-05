@@ -1130,7 +1130,7 @@ describe('RelationshipsController filtered header metrics', () => {
   }
 
   function filteredPersonSummary(id: number): PersonSummary {
-    return { ...person(id), activity_count: 7, file_count: 2, first_at: '2026-01-05T00:00:00Z', identifiers: null };
+    return { ...person(id), activity_count: 7, file_count: 2, first_at: '2026-01-05T00:00:00Z', identifiers: [] };
   }
 
   it('shows the contextual person summary metrics, keeping cluster metadata from the unfiltered GET', async () => {

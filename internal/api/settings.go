@@ -101,7 +101,7 @@ type SettingUpdate struct {
 }
 
 type SettingsPatchRequest struct {
-	Updates []SettingUpdate `json:"updates" minItems:"1" nullable:"false"`
+	Updates []SettingUpdate `json:"updates" minItems:"1"`
 }
 
 var (

@@ -1,32 +1,24 @@
+import { logoutSession as generatedLogoutSession } from './generated/session/session';
 import { describe, expect, it, vi } from 'vitest';
-
 import { createSessionController } from './session.svelte';
-
-function sessionResponse(
-  authMode: 'loopback' | 'api_key' | 'session' | 'required',
-  csrfToken?: string
-) {
+function sessionResponse(authMode: 'loopback' | 'api_key' | 'session' | 'required', csrfToken?: string) {
   return Response.json({
     auth_mode: authMode,
     ...(csrfToken ? { csrf_token: csrfToken } : {}),
     https: false,
-    plain_http_warning: true
+    plain_http_warning: true,
   });
 }
-
 describe('browser session controller', () => {
   it('bootstraps authentication from the same-origin session endpoint', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => sessionResponse('session', 'csrf-token'));
     const session = createSessionController(fetchFn);
-
     await session.bootstrap();
-
     expect(session.authMode).toBe('session');
     expect(session.csrfToken).toBe('csrf-token');
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(new URL((fetchFn.mock.calls[0]?.[0] as Request).url).pathname).toBe('/api/session');
   });
-
   it('attaches the session token to same-origin mutations', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -39,13 +31,10 @@ describe('browser session controller', () => {
     });
     const session = createSessionController(fetchFn);
     await session.bootstrap();
-
-    await session.client.DELETE('/api/session');
-
+    await generatedLogoutSession(session.client);
     expect(requests[1]?.headers.get('X-CSRF-Token')).toBe('csrf-token');
     expect(requests[1]?.headers.get('Origin')).toBeNull();
   });
-
   it('does not retry a mutation after an unauthorized response', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input as Request;
@@ -54,9 +43,7 @@ describe('browser session controller', () => {
     });
     const session = createSessionController(fetchFn);
     await session.bootstrap();
-
-    await session.client.DELETE('/api/session');
-
+    await generatedLogoutSession(session.client);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(session.authMode).toBe('required');
   });

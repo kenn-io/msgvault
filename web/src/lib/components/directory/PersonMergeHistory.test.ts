@@ -2,10 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { components } from '../../api/generated/schema';
+import type { PersonMergeDetail as GeneratedPersonMergeDetail } from '../../api/generated/models';
 import PersonMergeHistory from './PersonMergeHistory.svelte';
 
-type MergeDetail = components['schemas']['PersonMergeDetail'];
+type MergeDetail = GeneratedPersonMergeDetail;
 
 afterEach(() => {
   cleanup();
@@ -27,33 +27,53 @@ function detail(currentPersonID: number | null = 12): MergeDetail {
       actor: 'web',
       snapshot_version: 1,
       snapshot_sha256: 'synthetic-digest',
-      created_at: '2026-08-03T00:00:00Z'
+      created_at: '2026-08-03T00:00:00Z',
     },
     participants: [
       { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
-      { merge_id: 41, participant_id: 702, origin_side: 'survivor', split_id: 55 }
+      { merge_id: 41, participant_id: 702, origin_side: 'survivor', split_id: 55 },
     ],
-    rows: [{
-      merge_id: 41,
-      table_name: 'person_names',
-      original_row_key: 'opaque-row-key-must-not-appear',
-      snapshot_path: 'private/snapshot/path-must-not-appear',
-      action: 'restored',
-      origin_side: 'absorbed',
-      provenance_kind: 'copied',
-      participant_id: 701
-    }],
-    splits: [{
-      id: 55, merge_id: 41, source_person_id: 12, new_person_id: 19,
-      new_person_uid: 'synthetic-19', source_revision_before: 4, source_revision_after: 5,
-      exact_reversal: false, actor: 'web', created_at: '2026-08-04T00:00:00Z'
-    }],
-    review_candidates: [{
-      id: 61, merge_id: 41, person_id: 12, definition_id: 3,
-      survivor_value_id: 81, absorbed_value_id: 82, resolution_value_id: 83,
-      state: 'resolved', reviewed_at: '2026-08-05T00:00:00Z', reviewed_by: 'reviewer',
-      created_at: '2026-08-03T00:00:00Z'
-    }]
+    rows: [
+      {
+        merge_id: 41,
+        table_name: 'person_names',
+        original_row_key: 'opaque-row-key-must-not-appear',
+        snapshot_path: 'private/snapshot/path-must-not-appear',
+        action: 'restored',
+        origin_side: 'absorbed',
+        provenance_kind: 'copied',
+        participant_id: 701,
+      },
+    ],
+    splits: [
+      {
+        id: 55,
+        merge_id: 41,
+        source_person_id: 12,
+        new_person_id: 19,
+        new_person_uid: 'synthetic-19',
+        source_revision_before: 4,
+        source_revision_after: 5,
+        exact_reversal: false,
+        actor: 'web',
+        created_at: '2026-08-04T00:00:00Z',
+      },
+    ],
+    review_candidates: [
+      {
+        id: 61,
+        merge_id: 41,
+        person_id: 12,
+        definition_id: 3,
+        survivor_value_id: 81,
+        absorbed_value_id: 82,
+        resolution_value_id: 83,
+        state: 'resolved',
+        reviewed_at: '2026-08-05T00:00:00Z',
+        reviewed_by: 'reviewer',
+        created_at: '2026-08-03T00:00:00Z',
+      },
+    ],
   };
 }
 
@@ -64,7 +84,7 @@ function summary(mergeDetail: MergeDetail) {
     pending_candidate_count: 0,
     row_action_counts: { restored: 1 },
     row_count: 1,
-    split_count: 1
+    split_count: 1,
   };
 }
 
@@ -79,7 +99,11 @@ function renderHistory(currentPersonID: number | null = 12) {
       return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
     }
     if (path === '/api/v1/person-merges/41/snapshot') {
-      return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { explicitly_revealed: 'synthetic content' } });
+      return Response.json({
+        version: 1,
+        sha256: 'synthetic-digest',
+        snapshot: { explicitly_revealed: 'synthetic content' },
+      });
     }
     return Response.json(mergeDetail);
   });
@@ -138,10 +162,18 @@ describe('PersonMergeHistory', () => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/merges')) return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
       if (path === '/api/v1/people/12') {
-        return Response.json({
-          id: 12, revision: 4, display_name: 'Synthetic Source', participant_ids: [701],
-          created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z', vcard_uid: 'synthetic-12'
-        }, { headers: { ETag: '"person-12-r4"' } });
+        return Response.json(
+          {
+            id: 12,
+            revision: 4,
+            display_name: 'Synthetic Source',
+            participant_ids: [701],
+            created_at: '2026-08-01T00:00:00Z',
+            updated_at: '2026-08-02T00:00:00Z',
+            vcard_uid: 'synthetic-12',
+          },
+          { headers: { ETag: '"person-12-r4"' } },
+        );
       }
       return Response.json(mergeDetail);
     });

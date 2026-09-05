@@ -143,7 +143,7 @@ WHERE EXISTS (
 | Library | Purpose |
 |---|---|
 | `svelte` | Embedded analytical Web UI |
-| `openapi-fetch` | Typed browser API client |
+| `orval` | Typed browser API client generation |
 | `cobra` | CLI framework |
 | `charmbracelet/bubbletea` | TUI framework |
 | `charmbracelet/lipgloss` | TUI styling |

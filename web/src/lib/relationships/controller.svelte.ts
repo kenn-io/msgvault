@@ -1,3 +1,19 @@
+import {
+  getDomain as generatedGetDomain,
+  getParticipant as generatedGetParticipant,
+  linkIdentityParticipants as generatedLinkIdentityParticipants,
+  unlinkIdentityParticipants as generatedUnlinkIdentityParticipants,
+} from '../api/generated/api/api';
+import {
+  getDomainContextSummary as generatedGetDomainContextSummary,
+  getDomainTimeline as generatedGetDomainTimeline,
+  getParticipantContextSummary as generatedGetParticipantContextSummary,
+  getRelationshipCalendar as generatedGetRelationshipCalendar,
+  getRelationshipTimeline as generatedGetRelationshipTimeline,
+  listRelationships as generatedListRelationships,
+  searchDomains as generatedSearchDomains,
+  searchParticipants as generatedSearchParticipants,
+} from '../api/generated/exploration/exploration';
 import type { APIClient } from '../api/client';
 import type {
   DomainSummary,
@@ -5,17 +21,28 @@ import type {
   ExploreFilter,
   ExplorePredicate,
   IdentitySearchSort,
-  PersonSummary
+  PersonSummary,
 } from '../explore/models';
 import { canonicalFingerprint, predicateFingerprint } from '../explore/selection';
 import { validatePersonMergeRequired, type ValidatedPersonMergeRequired } from '../directory/person-merge';
 import type { RelationshipCalendar, RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
-
 export type LinkOutcome =
-  | { ok: true; identityRevision: number; cacheState: 'ready' | 'stale' }
-  | { ok: false; code: 'merge_required'; message: string; conflict: ValidatedPersonMergeRequired }
-  | { ok: false; code: 'already_linked' | 'invalid' | 'error'; message: string };
-
+  | {
+      ok: true;
+      identityRevision: number;
+      cacheState: 'ready' | 'stale';
+    }
+  | {
+      ok: false;
+      code: 'merge_required';
+      message: string;
+      conflict: ValidatedPersonMergeRequired;
+    }
+  | {
+      ok: false;
+      code: 'already_linked' | 'invalid' | 'error';
+      message: string;
+    };
 export interface RelationshipsMergeContext {
   target: string | null;
   targetPredicate?: ExplorePredicate;
@@ -26,23 +53,31 @@ export interface RelationshipsMergeContext {
   query: string;
   showAll: boolean;
 }
-
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
-
 /** Snapshot of the query context a list page belongs to, captured by
  * loadList so loadMoreList replays the exact same endpoint and body (plus
  * the cursor) even if `facet`/`query`/`showAll` have since been reassigned. */
 type ListPageRequest =
-  | { kind: 'relationships'; filters: ExplorePredicate['filters']; showAll: boolean }
-  | { kind: 'people' | 'domains'; context: ExplorePredicate; query: string };
-
+  | {
+      kind: 'relationships';
+      filters: ExplorePredicate['filters'];
+      showAll: boolean;
+    }
+  | {
+      kind: 'people' | 'domains';
+      context: ExplorePredicate;
+      query: string;
+    };
 interface ListPageResponse {
-  data?: { rows?: unknown[] | null; next_cursor?: string; total_count?: number };
+  data?: {
+    rows?: unknown[] | null;
+    next_cursor?: string;
+    total_count?: number;
+  };
   error?: unknown;
   response: Response;
 }
-
 const RANKED_LIST_LIMIT = 200;
 const SEARCH_LIST_LIMIT = 500;
 const TIMELINE_PAGE_LIMIT = 200;
@@ -50,7 +85,6 @@ const MIN_RELATIONSHIP_CALENDAR_YEAR = 1970;
 const DEFAULT_IDENTITY_SORT: IdentitySearchSort = { field: 'activity_count', direction: 'desc' };
 const REPEATED_CURSOR_MESSAGE = 'Pagination stopped because the server repeated a cursor without progress.';
 const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
-
 /**
  * Data controller for the Relationships hub's left list (ranked/searched
  * people or domains), center detail (cluster or domain header + timeline),
@@ -80,7 +114,6 @@ export class RelationshipsController {
   listCursor = $state<string | null>(null);
   listTotalCount = $state<number | null>(null);
   degraded = $state<ExploreCacheUnavailable | null>(null);
-
   target = $state<string | null>(null);
   /** Fingerprint of the predicate `target` was last opened with — lets a
    * caller (AppShell's URL-hydration effect) tell "this target is already
@@ -108,7 +141,6 @@ export class RelationshipsController {
   relationshipCalendarFirstYear = $state(this.relationshipCalendarYear);
   relationshipCalendarLoading = $state(false);
   relationshipCalendarError = $state<string | null>(null);
-
   private readonly client: APIClient;
   private readonly timezone: () => string;
   private listAbort: AbortController | undefined;
@@ -131,7 +163,6 @@ export class RelationshipsController {
   private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
   private lastListPredicate: ExplorePredicate | undefined;
-
   constructor(client: APIClient, timezone: () => string) {
     this.client = client;
     this.timezone = timezone;
@@ -139,7 +170,6 @@ export class RelationshipsController {
     this.relationshipCalendarCurrentYear = this.relationshipCalendarYear;
     this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
   }
-
   personMergeContextSnapshot(): RelationshipsMergeContext {
     return {
       target: this.target,
@@ -149,24 +179,31 @@ export class RelationshipsController {
       listPredicateFingerprint: this.lastListPredicate ? predicateFingerprint(this.lastListPredicate) : null,
       facet: this.facet,
       query: this.query,
-      showAll: this.showAll
+      showAll: this.showAll,
     };
   }
-
   async reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     const reloads: Promise<void>[] = [];
-    if (context.target && context.targetPredicate && this.target === context.target &&
-      this.lastPredicateFingerprint === context.targetPredicateFingerprint) {
+    if (
+      context.target &&
+      context.targetPredicate &&
+      this.target === context.target &&
+      this.lastPredicateFingerprint === context.targetPredicateFingerprint
+    ) {
       reloads.push(this.openTarget(context.target, context.targetPredicate));
     }
-    if (context.listPredicate && this.lastListPredicate && this.facet === context.facet &&
-      this.query === context.query && this.showAll === context.showAll &&
-      predicateFingerprint(this.lastListPredicate) === context.listPredicateFingerprint) {
+    if (
+      context.listPredicate &&
+      this.lastListPredicate &&
+      this.facet === context.facet &&
+      this.query === context.query &&
+      this.showAll === context.showAll &&
+      predicateFingerprint(this.lastListPredicate) === context.listPredicateFingerprint
+    ) {
       reloads.push(this.loadList(context.listPredicate));
     }
     await Promise.all(reloads);
   }
-
   async loadList(predicate: ExplorePredicate): Promise<void> {
     this.clearCacheBuildRetry();
     this.listAbort?.abort();
@@ -185,11 +222,12 @@ export class RelationshipsController {
     this.listTotalCount = null;
     this.listSeenCursors = new Set<string>();
     const query = this.query.trim();
-    const request: ListPageRequest = this.facet === 'domains'
-      ? { kind: 'domains', context: contextPredicate(predicate), query }
-      : query === ''
-        ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
-        : { kind: 'people', context: contextPredicate(predicate), query };
+    const request: ListPageRequest =
+      this.facet === 'domains'
+        ? { kind: 'domains', context: contextPredicate(predicate), query }
+        : query === ''
+          ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
+          : { kind: 'people', context: contextPredicate(predicate), query };
     this.listPageRequest = request;
     const signature = canonicalFingerprint(request);
     if (signature !== this.listContextSignature) {
@@ -215,7 +253,6 @@ export class RelationshipsController {
       if (generation === this.listGeneration) this.listLoading = false;
     }
   }
-
   /** Fetches the next list page for the context loadList captured, appending
    * deduped rows. Guarded no-op while a load is in flight or at the end. */
   async loadMoreList(): Promise<void> {
@@ -249,36 +286,43 @@ export class RelationshipsController {
       if (generation === this.listGeneration) this.listLoadingMore = false;
     }
   }
-
   private postListPage(
     request: ListPageRequest,
     cursor: string | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<ListPageResponse> {
     const page = cursor === undefined ? {} : { cursor };
     if (request.kind === 'relationships') {
-      return this.client.POST('/api/v1/relationships', {
-        body: { filters: request.filters, show_all: request.showAll, limit: RANKED_LIST_LIMIT, ...page },
-        signal
-      });
+      return generatedListRelationships(
+        { filters: request.filters, show_all: request.showAll, limit: RANKED_LIST_LIMIT, ...page },
+        {
+          ...this.client,
+          signal,
+        },
+      );
     }
     const body = {
       predicate: request.context,
       identity_query: request.query,
       sort: DEFAULT_IDENTITY_SORT,
       limit: SEARCH_LIST_LIMIT,
-      ...page
+      ...page,
     };
     return request.kind === 'domains'
-      ? this.client.POST('/api/v1/domains/search', { body, signal })
-      : this.client.POST('/api/v1/participants/search', { body, signal });
+      ? generatedSearchDomains(body, {
+          ...this.client,
+          signal,
+        })
+      : generatedSearchParticipants(body, {
+          ...this.client,
+          signal,
+        });
   }
-
   private applyListResponse(
     generation: number,
     signal: AbortSignal,
     response: ListPageResponse,
-    append: boolean
+    append: boolean,
   ): void {
     if (signal.aborted || generation !== this.listGeneration) return;
     const { data, error, response: res } = response;
@@ -311,22 +355,20 @@ export class RelationshipsController {
           if (generation === this.listGeneration && !signal.aborted && this.lastListPredicate) {
             void this.loadList(this.lastListPredicate);
           }
-        }, 1_000);
+        }, 1000);
       }
       return;
     }
     this.listError = errorMessage(error, res.status);
   }
-
   async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
     await this.openTargetWithCalendarState(target, predicate);
   }
-
   private async openTargetWithCalendarState(
     target: string,
     predicate: ExplorePredicate,
     selectedCalendarYear?: number,
-    calendarRestarted = false
+    calendarRestarted = false,
   ): Promise<void> {
     this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
@@ -346,7 +388,6 @@ export class RelationshipsController {
     this.identityRevision = null;
     this.resetRelationshipCalendar(selectedCalendarYear, calendarRestarted);
     this.seenCursors = new Set<string>();
-
     const clusterID = parseClusterID(target);
     const domainName = parseDomainName(target);
     if (clusterID === undefined && domainName === undefined) {
@@ -363,12 +404,12 @@ export class RelationshipsController {
           this.relationshipCalendarFirstYear = clampNumber(
             personFirstYear(personDetail, this.timezone(), this.relationshipCalendarCurrentYear),
             MIN_RELATIONSHIP_CALENDAR_YEAR,
-            this.relationshipCalendarCurrentYear
+            this.relationshipCalendarCurrentYear,
           );
           this.relationshipCalendarYear = clampNumber(
             this.relationshipCalendarYear,
             this.relationshipCalendarFirstYear,
-            this.relationshipCalendarCurrentYear
+            this.relationshipCalendarCurrentYear,
           );
           this.relationshipCalendarCacheRevision = personDetail.cache_revision;
           this.relationshipCalendarIdentityRevision = this.identityRevision;
@@ -381,12 +422,11 @@ export class RelationshipsController {
       if (generation === this.detailGeneration) this.timelineLoading = false;
     }
   }
-
   private async openCluster(
     id: number,
     predicate: ExplorePredicate,
     generation: number,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<PersonSummary | null> {
     const context = contextPredicate(predicate);
     try {
@@ -395,24 +435,34 @@ export class RelationshipsController {
       // contextual /summary carries the header metrics so they agree with the
       // filtered timeline and files below instead of the whole archive.
       const [personResponse, , summaryResponse] = await Promise.all([
-        this.client.GET('/api/v1/participants/{id}', { params: { path: { id } }, signal }),
+        generatedGetParticipant(
+          { id: id },
+          {
+            ...this.client,
+            signal,
+          },
+        ),
         this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal),
         hasActiveFilters(context)
-          ? this.client.POST('/api/v1/participants/{id}/summary', { params: { path: { id } }, body: context, signal })
-          : undefined
+          ? generatedGetParticipantContextSummary({ id: id }, context, {
+              ...this.client,
+              signal,
+            })
+          : undefined,
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
       const summary = summaryResponse?.data?.summary;
       const base = personResponse.data;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
-      if (!base && !this.handleDetailCacheBuilding(
-        personResponse.error, personResponse.response.status, generation, signal
-      )) this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
+      if (
+        !base &&
+        !this.handleDetailCacheBuilding(personResponse.error, personResponse.response.status, generation, signal)
+      )
+        this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
       if (summaryResponse && !summaryResponse.data) {
-        if (!this.handleDetailCacheBuilding(
-          summaryResponse.error, summaryResponse.response.status, generation, signal
-        )) this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+        if (!this.handleDetailCacheBuilding(summaryResponse.error, summaryResponse.response.status, generation, signal))
+          this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
       }
       return base ?? summary ?? null;
     } catch (cause: unknown) {
@@ -420,40 +470,48 @@ export class RelationshipsController {
       return null;
     }
   }
-
   private async openDomain(
     domain: string,
     predicate: ExplorePredicate,
     generation: number,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const context = contextPredicate(predicate);
     try {
       const [detailResponse, , summaryResponse] = await Promise.all([
-        this.client.GET('/api/v1/domains/{domain}', { params: { path: { domain } }, signal }),
+        generatedGetDomain(
+          { domain: domain },
+          {
+            ...this.client,
+            signal,
+          },
+        ),
         this.fetchDomainPage(domain, context, generation, undefined, signal),
         hasActiveFilters(context)
-          ? this.client.POST('/api/v1/domains/{domain}/summary', { params: { path: { domain } }, body: context, signal })
-          : undefined
+          ? generatedGetDomainContextSummary({ domain: domain }, context, {
+              ...this.client,
+              signal,
+            })
+          : undefined,
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
       const summary = summaryResponse?.data?.summary;
       const base = detailResponse.data;
       if (base) this.detail = summary ? { ...base, ...summary } : base;
       else if (summary) this.detail = summary;
-      if (!base && !this.handleDetailCacheBuilding(
-        detailResponse.error, detailResponse.response.status, generation, signal
-      )) this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
+      if (
+        !base &&
+        !this.handleDetailCacheBuilding(detailResponse.error, detailResponse.response.status, generation, signal)
+      )
+        this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
       if (summaryResponse && !summaryResponse.data) {
-        if (!this.handleDetailCacheBuilding(
-          summaryResponse.error, summaryResponse.response.status, generation, signal
-        )) this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+        if (!this.handleDetailCacheBuilding(summaryResponse.error, summaryResponse.response.status, generation, signal))
+          this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
       }
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
     }
   }
-
   /**
    * Drops the open target and its detail/timeline state (cluster or domain
    * header, rows, canonical ID, revision) back to the hub's empty state.
@@ -479,47 +537,62 @@ export class RelationshipsController {
     this.timelineRestartNotice = null;
     this.canonicalID = null;
     this.identityRevision = null;
-  this.resetRelationshipCalendar();
+    this.resetRelationshipCalendar();
     this.seenCursors = new Set<string>();
   }
-
   async loadRelationshipYear(year: number): Promise<void> {
-  const target = this.target;
-  const clusterID = target ? parseClusterID(target) : undefined;
-  const signal = this.detailAbort?.signal;
-  const detailGeneration = this.detailGeneration;
-  const currentYear = currentYearInTimezone(this.timezone());
-  if (clusterID === undefined || !signal || signal.aborted ||
-    year < this.relationshipCalendarFirstYear || year > currentYear) return;
-
-  const canonicalID = this.canonicalID ?? clusterID;
-  const timezone = this.timezone();
-  this.relationshipCalendarYear = year;
-  if (this.relationshipCalendarError !== null) this.relationshipCalendarRestarted = false;
-  this.relationshipCalendarError = null;
-  const cached = this.relationshipCalendarCache.get(relationshipCalendarCacheKey(
-    canonicalID, year, timezone,
-    this.relationshipCalendarCacheRevision,
-    this.relationshipCalendarIdentityRevision
-  ));
-  if (cached) {
-    this.relationshipCalendar = cached;
-    this.relationshipCalendarLoading = false;
-    return;
-  }
-
-  const generation = ++this.relationshipCalendarGeneration;
-  this.relationshipCalendar = null;
-  this.relationshipCalendarLoading = true;
-  try {
-    const { data, error, response } = await this.client.POST('/api/v1/relationships/{id}/calendar', {
-      params: { path: { id: clusterID } },
-      body: { year, timezone },
-      signal
-    });
-    if (signal.aborted || generation !== this.relationshipCalendarGeneration ||
-      detailGeneration !== this.detailGeneration || target !== this.target ||
-      year !== this.relationshipCalendarYear) return;
+    const target = this.target;
+    const clusterID = target ? parseClusterID(target) : undefined;
+    const signal = this.detailAbort?.signal;
+    const detailGeneration = this.detailGeneration;
+    const currentYear = currentYearInTimezone(this.timezone());
+    if (
+      clusterID === undefined ||
+      !signal ||
+      signal.aborted ||
+      year < this.relationshipCalendarFirstYear ||
+      year > currentYear
+    )
+      return;
+    const canonicalID = this.canonicalID ?? clusterID;
+    const timezone = this.timezone();
+    this.relationshipCalendarYear = year;
+    if (this.relationshipCalendarError !== null) this.relationshipCalendarRestarted = false;
+    this.relationshipCalendarError = null;
+    const cached = this.relationshipCalendarCache.get(
+      relationshipCalendarCacheKey(
+        canonicalID,
+        year,
+        timezone,
+        this.relationshipCalendarCacheRevision,
+        this.relationshipCalendarIdentityRevision,
+      ),
+    );
+    if (cached) {
+      this.relationshipCalendar = cached;
+      this.relationshipCalendarLoading = false;
+      return;
+    }
+    const generation = ++this.relationshipCalendarGeneration;
+    this.relationshipCalendar = null;
+    this.relationshipCalendarLoading = true;
+    try {
+      const { data, error, response } = await generatedGetRelationshipCalendar(
+        { id: clusterID },
+        { year, timezone },
+        {
+          ...this.client,
+          signal,
+        },
+      );
+      if (
+        signal.aborted ||
+        generation !== this.relationshipCalendarGeneration ||
+        detailGeneration !== this.detailGeneration ||
+        target !== this.target ||
+        year !== this.relationshipCalendarYear
+      )
+        return;
       if (!data) {
         this.relationshipCalendarError = errorMessage(error, response.status);
         return;
@@ -528,37 +601,47 @@ export class RelationshipsController {
         this.relationshipCalendarError = 'Relationship activity returned an incomplete response.';
         return;
       }
-    const changed =
-      (this.relationshipCalendarCacheRevision !== null &&
-       data.cache_revision !== this.relationshipCalendarCacheRevision) ||
-      (this.relationshipCalendarIdentityRevision !== null &&
-       data.identity_revision !== this.relationshipCalendarIdentityRevision);
-    if (changed) {
-      this.relationshipCalendarCache.clear();
-      if (!this.relationshipCalendarRestarted && target !== null && this.lastPredicate) {
-        await this.openTargetWithCalendarState(target, this.lastPredicate, year, true);
+      const changed =
+        (this.relationshipCalendarCacheRevision !== null &&
+          data.cache_revision !== this.relationshipCalendarCacheRevision) ||
+        (this.relationshipCalendarIdentityRevision !== null &&
+          data.identity_revision !== this.relationshipCalendarIdentityRevision);
+      if (changed) {
+        this.relationshipCalendarCache.clear();
+        if (!this.relationshipCalendarRestarted && target !== null && this.lastPredicate) {
+          await this.openTargetWithCalendarState(target, this.lastPredicate, year, true);
+          return;
+        }
+        this.relationshipCalendarError = 'Relationship activity changed again. Retry when the archive settles.';
         return;
       }
-      this.relationshipCalendarError = 'Relationship activity changed again. Retry when the archive settles.';
-      return;
+      this.relationshipCalendarCacheRevision = data.cache_revision;
+      this.relationshipCalendarIdentityRevision = data.identity_revision;
+      this.relationshipCalendarRestarted = false;
+      this.relationshipCalendarCache.set(
+        relationshipCalendarCacheKey(
+          data.canonical_id,
+          data.year,
+          data.timezone,
+          data.cache_revision,
+          data.identity_revision,
+        ),
+        data,
+      );
+      this.relationshipCalendar = data;
+    } catch (cause: unknown) {
+      if (
+        !signal.aborted &&
+        generation === this.relationshipCalendarGeneration &&
+        detailGeneration === this.detailGeneration &&
+        target === this.target
+      ) {
+        this.relationshipCalendarError = errorMessage(cause, 0);
+      }
+    } finally {
+      if (generation === this.relationshipCalendarGeneration) this.relationshipCalendarLoading = false;
     }
-    this.relationshipCalendarCacheRevision = data.cache_revision;
-    this.relationshipCalendarIdentityRevision = data.identity_revision;
-    this.relationshipCalendarRestarted = false;
-    this.relationshipCalendarCache.set(relationshipCalendarCacheKey(
-      data.canonical_id, data.year, data.timezone, data.cache_revision, data.identity_revision
-    ), data);
-    this.relationshipCalendar = data;
-  } catch (cause: unknown) {
-    if (!signal.aborted && generation === this.relationshipCalendarGeneration &&
-      detailGeneration === this.detailGeneration && target === this.target) {
-      this.relationshipCalendarError = errorMessage(cause, 0);
-    }
-  } finally {
-    if (generation === this.relationshipCalendarGeneration) this.relationshipCalendarLoading = false;
   }
-  }
-
   async loadMoreTimeline(): Promise<void> {
     if (this.timelineLoadingMore || !this.timelineCursor || !this.target || !this.lastPredicate || !this.detailAbort) {
       return;
@@ -576,24 +659,26 @@ export class RelationshipsController {
       await this.fetchDomainPage(domainName, contextPredicate(this.lastPredicate), generation, cursor, signal);
     }
   }
-
   private async fetchClusterPage(
     id: number,
     filters: ExploreFilter[] | undefined,
     generation: number,
     cursor: string | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     try {
       if (cursor && this.seenCursors.has(cursor)) {
         this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
         return;
       }
-      const response = await this.client.POST('/api/v1/relationships/{id}/timeline', {
-        params: { path: { id } },
-        body: { timezone: this.timezone(), filters, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
-        signal
-      });
+      const response = await generatedGetRelationshipTimeline(
+        { id: id },
+        { timezone: this.timezone(), filters, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
+        {
+          ...this.client,
+          signal,
+        },
+      );
       if (signal.aborted || generation !== this.detailGeneration) return;
       const { data, error, response: res } = response;
       if (!data) {
@@ -606,7 +691,11 @@ export class RelationshipsController {
           await this.fetchClusterPage(id, filters, generation, undefined, signal);
           return;
         }
-        this.applyTimelineFailure(generation, errorMessage(error, res.status), retryableCursorFailure(cursor, res.status));
+        this.applyTimelineFailure(
+          generation,
+          errorMessage(error, res.status),
+          retryableCursorFailure(cursor, res.status),
+        );
         return;
       }
       this.timelineError = null;
@@ -621,24 +710,26 @@ export class RelationshipsController {
       if (generation === this.detailGeneration) this.timelineLoadingMore = false;
     }
   }
-
   private async fetchDomainPage(
     domain: string,
     context: ExplorePredicate,
     generation: number,
     cursor: string | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     try {
       if (cursor && this.seenCursors.has(cursor)) {
         this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
         return;
       }
-      const response = await this.client.POST('/api/v1/domains/{domain}/timeline', {
-        params: { path: { domain } },
-        body: { ...context, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
-        signal
-      });
+      const response = await generatedGetDomainTimeline(
+        { domain: domain },
+        { ...context, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
+        {
+          ...this.client,
+          signal,
+        },
+      );
       if (signal.aborted || generation !== this.detailGeneration) return;
       const { data, error, response: res } = response;
       if (!data) {
@@ -655,7 +746,11 @@ export class RelationshipsController {
           await this.fetchDomainPage(domain, context, generation, undefined, signal);
           return;
         }
-        this.applyTimelineFailure(generation, errorMessage(error, res.status), retryableCursorFailure(cursor, res.status));
+        this.applyTimelineFailure(
+          generation,
+          errorMessage(error, res.status),
+          retryableCursorFailure(cursor, res.status),
+        );
         return;
       }
       this.timelineError = null;
@@ -668,33 +763,32 @@ export class RelationshipsController {
       if (generation === this.detailGeneration) this.timelineLoadingMore = false;
     }
   }
-
   private applyTimelineFailure(generation: number, message: string, keepCursor: boolean): void {
     if (generation !== this.detailGeneration) return;
     this.timelineError = message;
     if (!keepCursor) this.timelineCursor = null;
   }
-
   async linkParticipants(a: number, b: number): Promise<LinkOutcome> {
     try {
-      const response = await this.client.POST('/api/v1/identity/links', { body: { participant_a: a, participant_b: b } });
+      const response = await generatedLinkIdentityParticipants({ participant_a: a, participant_b: b }, this.client);
       return await this.applyLinkResponse(response);
     } catch (cause: unknown) {
       return { ok: false, code: 'error', message: errorMessage(cause, 0) };
     }
   }
-
   async unlinkParticipants(a: number, b: number): Promise<LinkOutcome> {
     try {
-      const response = await this.client.POST('/api/v1/identity/unlinks', { body: { participant_a: a, participant_b: b } });
+      const response = await generatedUnlinkIdentityParticipants({ participant_a: a, participant_b: b }, this.client);
       return await this.applyLinkResponse(response);
     } catch (cause: unknown) {
       return { ok: false, code: 'error', message: errorMessage(cause, 0) };
     }
   }
-
   private async applyLinkResponse(response: {
-    data?: { identity_revision: number; cache_state: 'ready' | 'stale' };
+    data?: {
+      identity_revision: number;
+      cache_state: 'ready' | 'stale';
+    };
     error?: unknown;
     response: Response;
   }): Promise<LinkOutcome> {
@@ -716,47 +810,45 @@ export class RelationshipsController {
     const message = errorMessage(error, res.status);
     const conflict = res.status === 409 ? validatePersonMergeRequired(error) : null;
     if (conflict) return { ok: false, code: 'merge_required', message, conflict };
-    if (res.status === 409 && isErrorCode(error, 'already_linked')) return { ok: false, code: 'already_linked', message };
+    if (res.status === 409 && isErrorCode(error, 'already_linked'))
+      return { ok: false, code: 'already_linked', message };
     if (res.status === 400) return { ok: false, code: 'invalid', message };
     return { ok: false, code: 'error', message };
   }
-
   destroy(): void {
     this.clearCacheBuildRetry();
     this.clearDetailCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
-  ++this.relationshipCalendarGeneration;
-  this.relationshipCalendarLoading = false;
+    ++this.relationshipCalendarGeneration;
+    this.relationshipCalendarLoading = false;
   }
-
   private resetRelationshipCalendar(selectedYear?: number, restarted = false): void {
-  ++this.relationshipCalendarGeneration;
-  this.relationshipCalendar = null;
-  this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
-  this.relationshipCalendarYear = selectedYear ?? this.relationshipCalendarCurrentYear;
-  this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
-  this.relationshipCalendarLoading = false;
-  this.relationshipCalendarError = null;
-  this.relationshipCalendarCacheRevision = null;
-  this.relationshipCalendarIdentityRevision = null;
-  this.relationshipCalendarRestarted = restarted;
+    ++this.relationshipCalendarGeneration;
+    this.relationshipCalendar = null;
+    this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
+    this.relationshipCalendarYear = selectedYear ?? this.relationshipCalendarCurrentYear;
+    this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
+    this.relationshipCalendarLoading = false;
+    this.relationshipCalendarError = null;
+    this.relationshipCalendarCacheRevision = null;
+    this.relationshipCalendarIdentityRevision = null;
+    this.relationshipCalendarRestarted = restarted;
   }
-
   private clearCacheBuildRetry(): void {
     if (this.cacheBuildRetry === undefined) return;
     clearTimeout(this.cacheBuildRetry);
     this.cacheBuildRetry = undefined;
   }
-
-  private handleDetailCacheBuilding(
-    error: unknown,
-    status: number,
-    generation: number,
-    signal: AbortSignal
-  ): boolean {
-    if (signal.aborted || generation !== this.detailGeneration || status !== 503 ||
-      !isCacheUnavailable(error) || error.readiness !== 'building') return false;
+  private handleDetailCacheBuilding(error: unknown, status: number, generation: number, signal: AbortSignal): boolean {
+    if (
+      signal.aborted ||
+      generation !== this.detailGeneration ||
+      status !== 503 ||
+      !isCacheUnavailable(error) ||
+      error.readiness !== 'building'
+    )
+      return false;
     this.timelineError = error.message;
     if (this.detailCacheBuildRetry === undefined && this.target && this.lastPredicate) {
       const target = this.target;
@@ -766,35 +858,37 @@ export class RelationshipsController {
         if (generation === this.detailGeneration && !signal.aborted) {
           void this.openTarget(target, predicate);
         }
-      }, 1_000);
+      }, 1000);
     }
     return true;
   }
-
   private clearDetailCacheBuildRetry(): void {
     if (this.detailCacheBuildRetry === undefined) return;
     clearTimeout(this.detailCacheBuildRetry);
     this.detailCacheBuildRetry = undefined;
   }
 }
-
 function relationshipCalendarCacheKey(
   canonicalID: number,
   year: number,
   timezone: string,
   cacheRevision: string | null,
-  identityRevision: number | null
+  identityRevision: number | null,
 ): string {
   return `${canonicalID}:${year}:${timezone}:${cacheRevision ?? ''}:${identityRevision ?? ''}`;
 }
-
 function isRelationshipCalendar(value: RelationshipCalendar): boolean {
-  return typeof value.canonical_id === 'number' && typeof value.year === 'number' &&
-    typeof value.timezone === 'string' && typeof value.cache_revision === 'string' &&
-    typeof value.identity_revision === 'number' && typeof value.current?.temperature === 'number' &&
-    typeof value.peak_temperature === 'number' && typeof value.peak_year === 'number';
+  return (
+    typeof value.canonical_id === 'number' &&
+    typeof value.year === 'number' &&
+    typeof value.timezone === 'string' &&
+    typeof value.cache_revision === 'string' &&
+    typeof value.identity_revision === 'number' &&
+    typeof value.current?.temperature === 'number' &&
+    typeof value.peak_temperature === 'number' &&
+    typeof value.peak_year === 'number'
+  );
 }
-
 function currentYearInTimezone(timezone: string): number {
   try {
     return Number(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date()));
@@ -802,20 +896,19 @@ function currentYearInTimezone(timezone: string): number {
     return new Date().getUTCFullYear();
   }
 }
-
 function personFirstYear(person: PersonSummary | null, timezone: string, fallback: number): number {
   if (!person?.first_at) return fallback;
   try {
-    return Number(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date(person.first_at)));
+    return Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric' }).format(new Date(person.first_at)),
+    );
   } catch {
     return new Date(person.first_at).getUTCFullYear() || fallback;
   }
 }
-
 function clampNumber(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
-
 // Also drops the workspace text query: the relationships ranking and
 // cluster-timeline endpoints accept no text query, so the hub applies none on
 // ANY surface — a predicate that still carries one (a deep link minted before
@@ -823,12 +916,15 @@ function clampNumber(value: number, minimum: number, maximum: number): number {
 // domain/people search surfaces only.
 function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
   const {
-    cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot,
-    query: _query, search_mode: _searchMode, ...context
+    cursor: _cursor,
+    grouping: _grouping,
+    candidate_snapshot_id: _snapshot,
+    query: _query,
+    search_mode: _searchMode,
+    ...context
   } = predicate;
   return { ...context, presentation: 'table' };
 }
-
 /** True when the workspace context carries filters that narrow the archive —
  * the only predicate fields (after contextPredicate stripping) that change
  * what the timeline and files show, and therefore the only case where the
@@ -836,7 +932,6 @@ function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
 function hasActiveFilters(context: ExplorePredicate): boolean {
   return (context.filters ?? []).length > 0;
 }
-
 /** Contextual summary metrics win; the unfiltered GET remains the fallback
  * source of cluster metadata (identifiers, member/edge graph) that the
  * link/unlink UI needs and the summary row may omit. */
@@ -845,10 +940,9 @@ function mergePersonDetail(base: PersonSummary, summary: PersonSummary): PersonS
     ...base,
     ...summary,
     cluster: summary.cluster ?? base.cluster,
-    identifiers: summary.identifiers ?? base.identifiers
+    identifiers: summary.identifiers.length > 0 ? summary.identifiers : base.identifiers,
   };
 }
-
 // The generated summary types carry `[key: string]: unknown` index
 // signatures, which defeat `in`-based narrowing (same limitation noted in
 // RelationshipList.svelte) — hence the casts after each runtime check.
@@ -857,7 +951,6 @@ function listRowKey(row: ListRow): string {
   if ('domain' in row) return `domain:${(row as DomainSummary).domain}`;
   return `cluster:${(row as PersonSummary).id}`;
 }
-
 /** Appends a page without duplicating a boundary row the backend re-served,
  * keyed by the same canonical id / domain the list keys its rows with. */
 function mergeListRows(existing: ListRow[], incoming: ListRow[]): ListRow[] {
@@ -865,24 +958,24 @@ function mergeListRows(existing: ListRow[], incoming: ListRow[]): ListRow[] {
   for (const row of incoming) merged.set(listRowKey(row), row);
   return [...merged.values()];
 }
-
-function mergeTimelineRows<Row extends { key: string }>(existing: Row[], incoming: Row[]): Row[] {
+function mergeTimelineRows<
+  Row extends {
+    key: string;
+  },
+>(existing: Row[], incoming: Row[]): Row[] {
   const merged = new Map(existing.map((row) => [row.key, row]));
   for (const row of incoming) merged.set(row.key, row);
   return [...merged.values()];
 }
-
 function parseClusterID(target: string | null): number | undefined {
   const match = target ? /^cluster:([1-9][0-9]*)$/.exec(target) : null;
   if (!match?.[1]) return undefined;
   const id = Number(match[1]);
   return Number.isSafeInteger(id) ? id : undefined;
 }
-
 function parseDomainName(target: string | null): string | undefined {
   return target?.startsWith('domain:') ? target.slice('domain:'.length) : undefined;
 }
-
 /** Transient failures — network throws (status 0), rate limiting, and server
  * errors — keep the continuation cursor so a retry can re-attempt the same
  * page. Any other status rejected the cursor itself (invalid, revision
@@ -891,25 +984,34 @@ function parseDomainName(target: string | null): string | undefined {
 export function isRetryableStatus(status: number): boolean {
   return status === 0 || status === 429 || status >= 500;
 }
-
 /** A timeline failure keeps its cursor only when it was a pagination page
  * (not the fresh first page, which has no cursor to keep) that failed with a
  * transient status. */
 function retryableCursorFailure(cursor: string | undefined, status: number): boolean {
   return cursor !== undefined && isRetryableStatus(status);
 }
-
 function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
   return typeof value === 'object' && value !== null && 'readiness' in value && 'recovery_action' in value;
 }
-
 function isErrorCode(value: unknown, code: string): boolean {
-  return typeof value === 'object' && value !== null && 'error' in value && (value as { error?: unknown }).error === code;
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'error' in value &&
+    (
+      value as {
+        error?: unknown;
+      }
+    ).error === code
+  );
 }
-
 function errorMessage(value: unknown, status: number): string {
   if (typeof value === 'object' && value !== null && 'message' in value) {
-    const message = (value as { message?: unknown }).message;
+    const message = (
+      value as {
+        message?: unknown;
+      }
+    ).message;
     if (typeof message === 'string' && message) return message;
   }
   return status ? `Request failed (${status})` : 'Request failed';

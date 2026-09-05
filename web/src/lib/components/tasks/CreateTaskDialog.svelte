@@ -1,18 +1,39 @@
 <script lang="ts">
+  import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
   import { Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
-
   import type { APIClient } from '../../api/client';
-
-  let { client, messageId, project, defaultTitle, archiveUID, conversationId, sourceType, sourceIdentifier,
-    sourceMessageId, subject, from, sentAt,
-    oncreated = () => undefined, onclose = () => undefined }: {
-    client: APIClient; messageId: number; project: string; defaultTitle: string;
-    archiveUID: string; conversationId: number; sourceType: string; sourceIdentifier: string;
-    sourceMessageId: string; subject: string; from: string; sentAt: string;
-    oncreated?: () => void; onclose?: () => void;
+  let {
+    client,
+    messageId,
+    project,
+    defaultTitle,
+    archiveUID,
+    conversationId,
+    sourceType,
+    sourceIdentifier,
+    sourceMessageId,
+    subject,
+    from,
+    sentAt,
+    oncreated = () => undefined,
+    onclose = () => undefined,
+  }: {
+    client: APIClient;
+    messageId: number;
+    project: string;
+    defaultTitle: string;
+    archiveUID: string;
+    conversationId: number;
+    sourceType: string;
+    sourceIdentifier: string;
+    sourceMessageId: string;
+    subject: string;
+    from: string;
+    sentAt: string;
+    oncreated?: () => void;
+    onclose?: () => void;
   } = $props();
-
   let title = $state(untrack(() => defaultTitle));
   let description = $state('');
   let priority = $state('');
@@ -27,48 +48,53 @@
     { value: 'low', label: 'Low' },
     { value: 'normal', label: 'Normal' },
     { value: 'high', label: 'High' },
-    { value: 'urgent', label: 'Urgent' }
+    { value: 'urgent', label: 'Urgent' },
   ];
   const payloadFingerprint = $derived(JSON.stringify(currentPayload()));
-
   $effect(() => {
     const fingerprint = payloadFingerprint;
     if (lastAttemptFingerprint === undefined || lastAttemptFingerprint === fingerprint) return;
     rotateRetryIdentity();
     lastAttemptFingerprint = undefined;
   });
-
   async function create(): Promise<void> {
     if (!title.trim() || pending) return;
     const payload = currentPayload();
     const fingerprint = JSON.stringify(payload);
     lastAttemptFingerprint = fingerprint;
-    pending = true; error = '';
+    pending = true;
+    error = '';
     try {
-      const { data, error: responseError } = await client.POST('/api/v1/messages/{id}/tasks', {
-        params: { path: { id: messageId }, header: { 'X-Request-Id': browserRequestID } },
-        body: {
+      const { data, error: responseError } = await generatedCreateOrLinkMessageTask(
+        { id: messageId },
+        {
           ...payload,
-          added_at: addedAt
-        }
-      });
+          added_at: addedAt,
+        },
+        {
+          ...client,
+          headers: { 'X-Request-Id': browserRequestID },
+        },
+      );
       if (!data) throw new Error(messageFor(responseError));
       oncreated();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to create task.';
-    } finally { pending = false; }
+    } finally {
+      pending = false;
+    }
   }
-
   function rotateRetryIdentity(): void {
     browserRequestID = globalThis.crypto.randomUUID();
     const now = new Date().toISOString();
     addedAt = now > addedAt ? now : new Date(Date.parse(addedAt) + 1).toISOString();
   }
-
   function parsedLabels(): string[] {
-    return labels.split(',').map((label) => label.trim()).filter(Boolean);
+    return labels
+      .split(',')
+      .map((label) => label.trim())
+      .filter(Boolean);
   }
-
   function currentPayload(): {
     title: string;
     description?: string;
@@ -80,15 +106,14 @@
       title: title.trim(),
       ...(description.trim() ? { description: description.trim() } : {}),
       ...(priority ? { priority } : {}),
-      ...(normalizedLabels.length ? { labels: normalizedLabels } : {})
+      ...(normalizedLabels.length ? { labels: normalizedLabels } : {}),
     };
   }
-
   function messageFor(value: unknown): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
-      ? value.message : 'Unable to create task.';
+      ? value.message
+      : 'Unable to create task.';
   }
-
   /** Every dismissal path (Cancel, Escape, backdrop, the × button) funnels
    * through here: while the create request is in flight the dialog must stay
    * visible until the outcome is known — hiding it would let the task be
@@ -100,25 +125,78 @@
 </script>
 
 <Modal title="Create task" onclose={requestClose}>
-  <form aria-busy={pending} onsubmit={(event) => { event.preventDefault(); void create(); }}>
+  <form
+    aria-busy={pending}
+    onsubmit={(event) => {
+      event.preventDefault();
+      void create();
+    }}
+  >
     <p class="project"><span>Project</span><strong>{project}</strong></p>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
-    <label>Priority<SelectDropdown title="Priority" value={priority} options={priorityOptions} onchange={(value) => { priority = value; }} /></label>
-    <label>Labels<TextInput ariaLabel="Labels" bind:value={labels} placeholder="mail, follow-up" autocomplete="off" block /></label>
+    <label
+      >Priority<SelectDropdown
+        title="Priority"
+        value={priority}
+        options={priorityOptions}
+        onchange={(value) => {
+          priority = value;
+        }}
+      /></label
+    >
+    <label
+      >Labels<TextInput
+        ariaLabel="Labels"
+        bind:value={labels}
+        placeholder="mail, follow-up"
+        autocomplete="off"
+        block
+      /></label
+    >
     <details>
       <summary>Metadata leaving the archive</summary>
       <dl>
-        <div><dt>Archive UID</dt><dd>{archiveUID}</dd></div>
-        <div><dt>Message ID</dt><dd>{messageId}</dd></div>
-        <div><dt>Conversation ID</dt><dd>{conversationId}</dd></div>
-        <div><dt>Source type</dt><dd>{sourceType}</dd></div>
-        <div><dt>Source identifier</dt><dd>{sourceIdentifier}</dd></div>
-        <div><dt>Source message ID</dt><dd>{sourceMessageId}</dd></div>
-        <div><dt>Subject snapshot</dt><dd>{subject}</dd></div>
-        <div><dt>Sender snapshot</dt><dd>{from}</dd></div>
-        <div><dt>Sent at</dt><dd>{sentAt}</dd></div>
-        <div><dt>Link added at</dt><dd>{addedAt}</dd></div>
+        <div>
+          <dt>Archive UID</dt>
+          <dd>{archiveUID}</dd>
+        </div>
+        <div>
+          <dt>Message ID</dt>
+          <dd>{messageId}</dd>
+        </div>
+        <div>
+          <dt>Conversation ID</dt>
+          <dd>{conversationId}</dd>
+        </div>
+        <div>
+          <dt>Source type</dt>
+          <dd>{sourceType}</dd>
+        </div>
+        <div>
+          <dt>Source identifier</dt>
+          <dd>{sourceIdentifier}</dd>
+        </div>
+        <div>
+          <dt>Source message ID</dt>
+          <dd>{sourceMessageId}</dd>
+        </div>
+        <div>
+          <dt>Subject snapshot</dt>
+          <dd>{subject}</dd>
+        </div>
+        <div>
+          <dt>Sender snapshot</dt>
+          <dd>{from}</dd>
+        </div>
+        <div>
+          <dt>Sent at</dt>
+          <dd>{sentAt}</dd>
+        </div>
+        <div>
+          <dt>Link added at</dt>
+          <dd>{addedAt}</dd>
+        </div>
       </dl>
       <p>Bodies and attachments are never sent.</p>
     </details>
@@ -131,13 +209,56 @@
 </Modal>
 
 <style>
-  form { display: grid; gap: var(--space-4); min-width: min(28rem, 80vw); }
-  label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  textarea { min-height: 6rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
-  .project { display: flex; justify-content: space-between; margin: 0; }
-  .project span, details { color: var(--text-muted); font-size: var(--font-size-xs); }
-  dl { display: grid; gap: var(--space-1); }
-  dl div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--space-2); }
-  dt { color: var(--text-muted); } dd { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); }
-  .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+  form {
+    display: grid;
+    gap: var(--space-4);
+    min-width: min(28rem, 80vw);
+  }
+  label {
+    display: grid;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  textarea {
+    min-height: 6rem;
+    resize: vertical;
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+  }
+  .project {
+    display: flex;
+    justify-content: space-between;
+    margin: 0;
+  }
+  .project span,
+  details {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  dl {
+    display: grid;
+    gap: var(--space-1);
+  }
+  dl div {
+    display: grid;
+    grid-template-columns: 8rem minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  dt {
+    color: var(--text-muted);
+  }
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
+  }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
 </style>

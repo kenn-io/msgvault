@@ -64,7 +64,7 @@ type PeopleResponse struct {
 // DirectoryPeopleResponse is the non-sensitive, paginated Directory view of
 // durable person roots.
 type DirectoryPeopleResponse struct {
-	People     []store.DirectoryPersonSummary `json:"people" nullable:"false"`
+	People     []store.DirectoryPersonSummary `json:"people"`
 	NextCursor string                         `json:"next_cursor,omitempty"`
 }
 

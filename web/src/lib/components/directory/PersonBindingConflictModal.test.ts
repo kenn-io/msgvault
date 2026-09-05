@@ -3,11 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { components } from '../../api/generated/schema';
+import type { Person as GeneratedPerson } from '../../api/generated/models';
 import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
 import PersonBindingConflictModal from './PersonBindingConflictModal.svelte';
 
-type Person = components['schemas']['Person'];
+type Person = GeneratedPerson;
 
 afterEach(() => {
   cleanup();
@@ -22,7 +22,7 @@ function person(id: number, revision: number, displayName: string): Person {
     participant_ids: [id * 10],
     created_at: '2026-08-01T00:00:00Z',
     updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`
+    vcard_uid: `synthetic-${id}`,
   };
 }
 
@@ -32,8 +32,8 @@ function conflict(): ValidatedPersonMergeRequired {
     message: 'Choose a survivor',
     profiles: [
       { person: person(7, 4, 'Synthetic One'), etag: '"person-7-r4"' },
-      { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' }
-    ]
+      { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' },
+    ],
   };
 }
 
@@ -54,10 +54,10 @@ function mergeResult(survivor: Person, cacheState: 'ready' | 'stale' = 'ready') 
       actor: 'web',
       snapshot_version: 1,
       snapshot_sha256: 'synthetic-digest',
-      created_at: '2026-08-03T00:00:00Z'
+      created_at: '2026-08-03T00:00:00Z',
     },
     person: survivor,
-    review_candidates: []
+    review_candidates: [],
   } as const;
 }
 
@@ -65,11 +65,14 @@ function requestOf(input: RequestInfo | URL): Request {
   return input instanceof Request ? input : new Request(input);
 }
 
-function renderModal(fetchFn: typeof fetch, overrides: Partial<{
-  onOpenProfile: (personID: number) => void;
-  onSuccess: (success: PersonMergeSuccess) => void | Promise<void>;
-  onClose: () => void;
-}> = {}) {
+function renderModal(
+  fetchFn: typeof fetch,
+  overrides: Partial<{
+    onOpenProfile: (personID: number) => void;
+    onSuccess: (success: PersonMergeSuccess) => void | Promise<void>;
+    onClose: () => void;
+  }> = {},
+) {
   const onOpenProfile = overrides.onOpenProfile ?? vi.fn();
   const onSuccess = overrides.onSuccess ?? vi.fn();
   const onClose = overrides.onClose ?? vi.fn();
@@ -78,7 +81,7 @@ function renderModal(fetchFn: typeof fetch, overrides: Partial<{
     conflict: conflict(),
     onOpenProfile,
     onSuccess,
-    onClose
+    onClose,
   });
   return { ...rendered, onOpenProfile, onSuccess, onClose };
 }
@@ -110,7 +113,9 @@ describe('PersonBindingConflictModal', () => {
     expect(requests[0]!.headers.get('Idempotency-Key')).toBe('11111111-1111-4111-8111-111111111111');
     await expect(requests[0]!.clone().json()).resolves.toEqual({ absorbed_person_id: 9 });
     expect(onSuccess).toHaveBeenCalledWith({
-      result: mergeResult(merged, 'stale'), survivor: merged, responseETag: '"person-7-r5"'
+      result: mergeResult(merged, 'stale'),
+      survivor: merged,
+      responseETag: '"person-7-r5"',
     });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Merge into selected survivor' })).toBeNull();
@@ -126,8 +131,7 @@ describe('PersonBindingConflictModal', () => {
       if (attempts === 1) throw new TypeError('connection reset');
       return Response.json(mergeResult(merged), { headers: { ETag: '"person-7-r5"' } });
     });
-    const uuid = vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
+    const uuid = vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -138,7 +142,7 @@ describe('PersonBindingConflictModal', () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
       '11111111-1111-4111-8111-111111111111',
-      '11111111-1111-4111-8111-111111111111'
+      '11111111-1111-4111-8111-111111111111',
     ]);
     expect(uuid).toHaveBeenCalledOnce();
   });
@@ -159,7 +163,10 @@ describe('PersonBindingConflictModal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
     await screen.findByRole('alert');
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
-    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty('checked', false);
+    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
+      'checked',
+      false,
+    );
     expect(screen.getByRole('button', { name: 'Merge into selected survivor' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
@@ -169,7 +176,7 @@ describe('PersonBindingConflictModal', () => {
     expect(requests[1]!.headers.get('If-Match')).toBe('"person-9-r2", "person-7-r4"');
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
       '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222'
+      '22222222-2222-4222-8222-222222222222',
     ]);
   });
 
@@ -204,9 +211,12 @@ describe('PersonBindingConflictModal', () => {
 
     expect(await screen.findByText('Synthetic One Updated (Person 7)')).toBeDefined();
     expect(screen.getByText('Synthetic Two Updated (Person 9)')).toBeDefined();
-    expect(requests.filter((request) => request.method === 'GET').map((request) => new URL(request.url).pathname).sort()).toEqual([
-      '/api/v1/people/7', '/api/v1/people/9'
-    ]);
+    expect(
+      requests
+        .filter((request) => request.method === 'GET')
+        .map((request) => new URL(request.url).pathname)
+        .sort(),
+    ).toEqual(['/api/v1/people/7', '/api/v1/people/9']);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     const refreshedSurvivor = screen.getByRole('radio', { name: 'Synthetic One Updated (Person 7)' });
     const refreshedAbsorbed = screen.getByRole('radio', { name: 'Synthetic Two Updated (Person 9)' });
@@ -235,14 +245,15 @@ describe('PersonBindingConflictModal', () => {
   it.each([
     { status: 409, error: 'person_merge_idempotency_conflict' },
     { status: 409, error: 'person_carddav_published' },
-    { status: 412, error: 'precondition_failed' }
+    { status: 412, error: 'precondition_failed' },
   ])('does not reload or reuse a key for application failure $status/$error', async ({ status, error }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(requestOf(input));
       return Response.json({ error, message: 'Application failure' }, { status });
     });
-    const uuid = vi.spyOn(globalThis.crypto, 'randomUUID')
+    const uuid = vi
+      .spyOn(globalThis.crypto, 'randomUUID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     renderModal(fetchFn);
@@ -251,14 +262,17 @@ describe('PersonBindingConflictModal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Application failure');
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(0);
-    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty('checked', false);
+    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
+      'checked',
+      false,
+    );
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
       '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222'
+      '22222222-2222-4222-8222-222222222222',
     ]);
     expect(uuid).toHaveBeenCalledTimes(2);
   });
@@ -268,16 +282,16 @@ describe('PersonBindingConflictModal', () => {
       name: 'a wrong self-consistent person ID',
       responses: {
         7: { body: person(8, 5, 'Wrong Person'), etag: '"person-8-r5"' },
-        9: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' }
-      }
+        9: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
+      },
     },
     {
       name: 'swapped self-consistent person IDs',
       responses: {
         7: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
-        9: { body: person(7, 5, 'Synthetic One Updated'), etag: '"person-7-r5"' }
-      }
-    }
+        9: { body: person(7, 5, 'Synthetic One Updated'), etag: '"person-7-r5"' },
+      },
+    },
   ])('rejects the entire stale reload when it returns $name', async ({ responses }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -299,8 +313,10 @@ describe('PersonBindingConflictModal', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
     expect(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' })).toBeDefined();
     expect(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' })).toBeDefined();
-    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }))
-      .toHaveProperty('checked', false);
+    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
+      'checked',
+      false,
+    );
     expect(screen.getByRole('button', { name: 'Merge into selected survivor' })).toHaveProperty('disabled', true);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
@@ -354,7 +370,9 @@ describe('PersonBindingConflictModal', () => {
     expect(survivor).toHaveProperty('disabled', true);
     expect(confirmation).toHaveProperty('disabled', true);
     expect(submit).toHaveProperty('disabled', true);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false),
+    );
 
     await fireEvent.click(confirmation);
     await fireEvent.click(submit);
@@ -373,14 +391,18 @@ describe('PersonBindingConflictModal', () => {
       }
       getCount += 1;
       if (getCount <= 2) return Response.json({ error: 'unavailable', message: 'Reload unavailable' }, { status: 503 });
-      return new Promise<Response>((resolve) => { retrySettlers.push(resolve); });
+      return new Promise<Response>((resolve) => {
+        retrySettlers.push(resolve);
+      });
     });
     const onClose = vi.fn();
     renderModal(fetchFn, { onClose });
 
     await selectSurvivor();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false),
+    );
 
     await fireEvent.click(screen.getByRole('button', { name: 'Retry profile reload' }));
     await waitFor(() => expect(retrySettlers).toHaveLength(2));
@@ -392,10 +414,15 @@ describe('PersonBindingConflictModal', () => {
     for (const settle of retrySettlers) {
       settle(Response.json({ error: 'unavailable', message: 'Reload unavailable' }, { status: 503 }));
     }
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false),
+    );
     expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
     expect(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
+      'disabled',
+      true,
+    );
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(4);
   });
@@ -413,9 +440,14 @@ describe('PersonBindingConflictModal', () => {
       if (request.method === 'POST') {
         mergeAttempts += 1;
         if (mergeAttempts === 1) {
-          return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
+          return Response.json(
+            { error: 'person_merge_revision_conflict', message: 'Reload profiles' },
+            { status: 409 },
+          );
         }
-        return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
+        return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), {
+          headers: { ETag: '"person-7-r6"' },
+        });
       }
       const requestedID = Number(path.split('/').at(-1));
       const count = (getCounts.get(requestedID) ?? 0) + 1;
@@ -431,7 +463,9 @@ describe('PersonBindingConflictModal', () => {
 
     await selectSurvivor();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false),
+    );
     await fireEvent.click(screen.getByRole('button', { name: 'Retry profile reload' }));
 
     expect(await screen.findByText('Synthetic One Updated (Person 7)')).toBeDefined();
@@ -476,7 +510,12 @@ describe('PersonBindingConflictModal', () => {
 
   it('blocks dismissal and root shortcuts while merge work is pending', async () => {
     let resolveMerge: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { resolveMerge = resolve; }));
+    const fetchFn = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveMerge = resolve;
+        }),
+    );
     const onClose = vi.fn();
     const rootShortcut = vi.fn();
     const unregister = appShortcuts.register('x', rootShortcut);

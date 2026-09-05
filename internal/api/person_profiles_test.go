@@ -355,6 +355,13 @@ func TestDirectoryPeopleHTTPAlwaysEmitsArrays(t *testing.T) {
 	assert.Empty(body.People[0].Organizations)
 }
 
+func TestListPeopleHTTPEncodesNilSliceAsArray(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	response := personRequest(t, srv, http.MethodGet, peoplePath, nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(t, `{"people":[]}`, response.Body.String())
+}
+
 func assertDirectoryPeopleError(t *testing.T, response *httptest.ResponseRecorder, want string) {
 	t.Helper()
 	var body ErrorResponse
