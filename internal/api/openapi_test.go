@@ -1752,30 +1752,32 @@ func generatedGoFiles(dir string) ([]string, error) {
 }
 
 func TestOpenAPICollectionScopeContracts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	doc := OpenAPIDocument()
 	for _, path := range []string{"/api/v1/aggregates", "/api/v1/aggregates/sub", "/api/v1/messages/filter", "/api/v1/messages/gmail-ids"} {
 		op := doc.Paths[path].Get
-		require.NotNil(t, op, path+" operation")
+		requirements.NotNil(op, path+" operation")
 		found := false
 		for _, parameter := range op.Parameters {
 			if parameter.Name != "source_ids" {
 				continue
 			}
 			found = true
-			assert.Equal(t, "query", parameter.In, path+" source_ids location")
-			require.NotNil(t, parameter.Schema, path+" source_ids schema")
-			assert.Equal(t, "array", parameter.Schema.Type, path+" source_ids type")
+			assertions.Equal("query", parameter.In, path+" source_ids location")
+			requirements.NotNil(parameter.Schema, path+" source_ids schema")
+			assertions.Equal("array", parameter.Schema.Type, path+" source_ids type")
 		}
-		assert.True(t, found, path+" documents source_ids")
+		assertions.True(found, path+" documents source_ids")
 	}
 
 	deep := doc.Paths["/api/v1/search/deep"].Get
-	require.NotNil(t, deep, "deep search operation")
+	requirements.NotNil(deep, "deep search operation")
 	for _, parameter := range deep.Parameters {
 		if parameter.Name == "source_ids" {
-			assert.Contains(t, parameter.Description, "not supported by deep search")
+			assertions.Contains(parameter.Description, "not supported by deep search")
 			return
 		}
 	}
-	assert.Fail(t, "deep search documents source_ids rejection")
+	assertions.Fail("deep search documents source_ids rejection")
 }

@@ -8253,6 +8253,8 @@ func TestHandleAggregatesEchoesNormalizedSourceIDs(t *testing.T) {
 }
 
 func TestHandleFilteredMessagesUsesSourceIDsAndEchoesThem(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	var captured query.MessageFilter
 	engine := &querytest.MockEngine{
 		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
@@ -8263,13 +8265,13 @@ func TestHandleFilteredMessagesUsesSourceIDsAndEchoesThem(t *testing.T) {
 	srv := newTestServerWithEngine(t, engine)
 	w := doGet(srv, "/api/v1/messages/filter?source_id=99&source_ids=8,7&source_ids=8")
 
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, []int64{7, 8}, captured.SourceIDs)
-	require.NotNil(t, captured.SourceID)
-	assert.Equal(t, int64(99), *captured.SourceID)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Equal([]int64{7, 8}, captured.SourceIDs)
+	requirements.NotNil(captured.SourceID)
+	assertions.Equal(int64(99), *captured.SourceID)
 	var response map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-	assert.Equal(t, []any{float64(7), float64(8)}, response["applied_source_ids"])
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&response))
+	assertions.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"])
 }
 
 func TestHandleDeepSearchRejectsSourceIDs(t *testing.T) {
@@ -8288,6 +8290,8 @@ func TestHandleDeepSearchRejectsSourceIDs(t *testing.T) {
 }
 
 func TestHandleGmailIDsEchoesSourceIDs(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	var captured query.MessageFilter
 	engine := &querytest.MockEngine{
 		GetDeletionTargetsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {
@@ -8298,9 +8302,9 @@ func TestHandleGmailIDsEchoesSourceIDs(t *testing.T) {
 	srv := newTestServerWithEngine(t, engine)
 	w := doGet(srv, "/api/v1/messages/gmail-ids?source_ids=8,7")
 
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, []int64{7, 8}, captured.SourceIDs)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Equal([]int64{7, 8}, captured.SourceIDs)
 	var response map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-	assert.Equal(t, []any{float64(7), float64(8)}, response["applied_source_ids"])
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&response))
+	assertions.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"])
 }
