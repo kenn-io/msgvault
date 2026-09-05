@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -63,18 +64,19 @@ type ollamaProbeResult struct {
 // environment, the config file, the archive, the daemon, and the people
 // provider onboarding machinery are all injectable.
 type setupProvidersDeps struct {
-	lookupEnv        func(string) (string, bool)
-	fileExists       func(string) bool
-	readConfigFile   func() (config.ConfigFile, error)
-	editConfigTables func(string, []config.TableEdit) (config.ConfigFile, error)
-	loadConfig       func(config.ConfigFile) (*config.Config, error)
-	remoteConfigured func() bool
-	isTerminal       func(*cobra.Command) bool
-	probeOllama      func(context.Context, string) ollamaProbeResult
-	consentState     func(context.Context, *config.Config) *setupConsentState
-	daemonAlive      func(context.Context, *config.Config) bool
-	personProvider   func() personProviderCommandDeps
-	now              func() time.Time
+	lookupEnv         func(string) (string, bool)
+	fileExists        func(string) bool
+	readConfigFile    func() (config.ConfigFile, error)
+	editConfigTables  func(string, []config.TableEdit) (config.ConfigFile, error)
+	restoreConfigFile func(config.ConfigFile, config.ConfigFile) (config.ConfigFile, error)
+	loadConfig        func(config.ConfigFile) (*config.Config, error)
+	remoteConfigured  func() bool
+	isTerminal        func(*cobra.Command) bool
+	probeOllama       func(context.Context, string) ollamaProbeResult
+	consentState      func(context.Context, *config.Config) *setupConsentState
+	daemonAlive       func(context.Context, *config.Config) bool
+	personProvider    func() personProviderCommandDeps
+	now               func() time.Time
 }
 
 func defaultSetupProvidersDeps() setupProvidersDeps {
@@ -92,6 +94,9 @@ func defaultSetupProvidersDeps() setupProvidersDeps {
 				return config.ConfigFile{}, errors.New("configuration is unavailable")
 			}
 			return config.EditConfigTables(cfg.ConfigFilePath(), ifMatch, edits)
+		},
+		restoreConfigFile: func(published, before config.ConfigFile) (config.ConfigFile, error) {
+			return config.RestoreConfigFile(before.LogicalPath, published, before)
 		},
 		loadConfig: func(snapshot config.ConfigFile) (*config.Config, error) {
 			if cfg == nil {
@@ -305,6 +310,24 @@ func (p *setupProvidersPlan) declineGate(gate string) {
 	}
 	if p.inference != nil && p.inference.gate == gate {
 		p.inference = nil
+	}
+}
+
+// Refresh only still-approved dependent lanes. A declined lane must not be
+// proposed again, and subsequent disclosures must describe the reduced plan.
+func (p *setupProvidersPlan) refreshDependencies(loaded *config.Config, detection setupDetection, options setupProvidersOptions, now time.Time) {
+	for i, lane := range p.Lanes {
+		if lane.Action != planActionEnable && lane.Action != planActionOnboard {
+			continue
+		}
+		switch lane.Lane {
+		case lanePersonSearch:
+			p.Lanes[i] = planPersonSearch(loaded, p, options)
+		case laneDocumentVectors:
+			p.Lanes[i] = planDocumentVectors(loaded, p)
+		case lanePeopleInference:
+			p.Lanes[i], p.inference = planPeopleInference(loaded, detection, p, options, now)
+		}
 	}
 }
 
@@ -840,6 +863,9 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 		reader := bufio.NewReader(command.InOrStdin())
 		for _, gate := range gates {
+			if !slices.Contains(plan.gates(), gate) {
+				continue
+			}
 			_, _ = fmt.Fprintln(out, gateDisclosure(gate, &plan))
 			_, _ = fmt.Fprintf(out, "Enable the %s lanes? [y/N]: ", gate)
 			answer, readErr := reader.ReadString('\n')
@@ -849,6 +875,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 			if !isYesAnswer(strings.ToLower(strings.TrimSpace(answer))) {
 				declined = append(declined, gate)
 				plan.declineGate(gate)
+				plan.refreshDependencies(loaded, detection, options, now)
 			}
 			_, _ = fmt.Fprintln(out)
 		}
@@ -859,21 +886,76 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 	}
 
+	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
+		return err
+	}
+	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
+}
+
+// The people-provider commands need a published profile for daemon-owned
+// checks and consent. Keep their existing gates and restore the entire setup
+// configuration if any step fails. Retain each publication's identity so a
+// concurrent edit is never adopted as our rollback target.
+func applySetupProvidersPlan(command *cobra.Command, deps setupProvidersDeps, before config.ConfigFile, plan *setupProvidersPlan, quiet bool) (retErr error) {
 	edits := plan.mergedEdits()
+	if len(edits) == 0 && plan.inference == nil {
+		return nil
+	}
+	if deps.restoreConfigFile == nil {
+		return errors.New("setup providers config rollback is unavailable")
+	}
+	current := before
+	changed := false
+	defer func() {
+		if retErr != nil && changed && current.Exists {
+			if _, err := deps.restoreConfigFile(current, before); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("restore setup config: %w", err))
+			}
+		}
+	}()
+	record := func(snapshot config.ConfigFile, err error) (config.ConfigFile, error) {
+		if err == nil || (errors.Is(err, config.ErrConfigChanged) && snapshot.Exists) {
+			current = snapshot
+			changed = true
+		}
+		return snapshot, err
+	}
+	edit := func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
+		if etag != current.ETag {
+			return config.ConfigFile{}, config.ErrConfigConflict
+		}
+		return record(deps.editConfigTables(etag, edits))
+	}
 	if len(edits) > 0 {
 		if err := config.ValidateConfigTableEdits(before, edits); err != nil {
 			return fmt.Errorf("planned config changes are invalid: %w", err)
 		}
-		if _, err := deps.editConfigTables(before.ETag, edits); err != nil {
+		if _, err := edit(before.ETag, edits); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}
-	if plan.inference != nil && deps.personProvider != nil {
-		if err := onboardSetupInferenceProfile(command, deps.personProvider(), *plan.inference, options.jsonOutput); err != nil {
+	if plan.inference != nil {
+		if deps.personProvider == nil {
+			return errors.New("people provider onboarding is unavailable")
+		}
+		provider := deps.personProvider()
+		provider.readConfigFile = func() (config.ConfigFile, error) {
+			snapshot, err := deps.readConfigFile()
+			if err == nil && (snapshot.Exists != current.Exists ||
+				(current.Exists && !config.SameConfigFileVersion(snapshot, current))) {
+				return config.ConfigFile{}, config.ErrConfigConflict
+			}
+			return snapshot, err
+		}
+		provider.editConfigTables = edit
+		provider.restoreConfigFile = func(published, previous config.ConfigFile) (config.ConfigFile, error) {
+			return record(deps.restoreConfigFile(published, previous))
+		}
+		if err := onboardSetupInferenceProfile(command, provider, *plan.inference, quiet); err != nil {
 			return err
 		}
 	}
-	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
+	return nil
 }
 
 // writeSetupProvidersResult reloads the config (unless the caller passes the

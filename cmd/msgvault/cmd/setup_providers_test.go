@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -111,6 +113,9 @@ func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 		},
 		editConfigTables: func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
 			return config.EditConfigTables(f.path, etag, edits)
+		},
+		restoreConfigFile: func(published, before config.ConfigFile) (config.ConfigFile, error) {
+			return config.RestoreConfigFile(f.path, published, before)
 		},
 		loadConfig: func(snapshot config.ConfigFile) (*config.Config, error) {
 			return loadSetupConfig(snapshot, f.dir)
@@ -420,6 +425,125 @@ func TestSetupProvidersDisclosureListsInferenceSources(t *testing.T) {
 	output, err := fixture.run(t, "providers", "--dry-run")
 	require.NoError(err, output)
 	assert.Contains(output, "bounded evidence packets of conversation_text, meeting_text, document_text for tracked people")
+}
+
+func TestSetupProvidersDeclinedDocumentsUpdateDependentLanes(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		t.Run(fmt.Sprint("local=", local), func(t *testing.T) {
+			assert := assert.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+			fixture.tty = true
+			profileName := setupInferenceProfile
+			if local {
+				fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:latest"}}
+				fixture.input = strings.NewReader("n\n")
+				profileName = setupOllamaProfile
+			} else {
+				fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
+				fixture.input = strings.NewReader("n\ny\n")
+			}
+
+			output, err := fixture.run(t, "providers")
+			require.NoError(t, err, output)
+			loaded := fixture.load(t)
+			assert.False(loaded.Attachments.Documents.Enabled)
+			assert.False(loaded.Attachments.Documents.Index.Embeddings.Enabled)
+			assert.ElementsMatch([]peoplesweep.SourceClass{peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText},
+				loaded.People.Sweep.Providers[profileName].AllowedSources)
+			assert.NotContains(output, "bounded evidence packets of conversation_text, meeting_text, document_text")
+			assert.NotContains(output, "msgvault documents vectors consent --yes")
+		})
+	}
+}
+
+func TestSetupProvidersFailureRestoresConfig(t *testing.T) {
+	for _, stage := range []string{"negotiate", "check", "consent", "selection"} {
+		for _, content := range []string{"", setupProvidersMinimalConfig} {
+			t.Run(fmt.Sprintf("%s/missing=%t", stage, content == ""), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				fixture := newSetupProvidersFixture(t, content)
+				fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
+				fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+				before := fixture.readConfig(t)
+				failure := errors.New("provider setup failed")
+				deps := fixture.deps(t)
+				deps.personProvider = func() personProviderCommandDeps {
+					provider := fixture.personProviderDeps(t)
+					switch stage {
+					case "negotiate":
+						provider.setup.negotiate = func(context.Context, peoplesweep.ProviderConfig, peoplesweep.Credential) (peoplesweep.NegotiatedCapabilities, error) {
+							return peoplesweep.NegotiatedCapabilities{}, failure
+						}
+					case "check":
+						fixture.checker.err = failure
+					case "consent":
+						openStore := provider.openStore
+						provider.openStore = func() (personProviderStore, func(), error) {
+							if fixture.checker.calls.Load() > 0 {
+								return nil, nil, failure
+							}
+							return openStore()
+						}
+					case "selection":
+						provider.openReadStore = func() (personProviderStore, func(), error) {
+							return nil, nil, failure
+						}
+					}
+					return provider
+				}
+				command := newSetupProvidersCommand(deps)
+				command.SetArgs([]string{"--yes"})
+				command.SetOut(io.Discard)
+				command.SetErr(io.Discard)
+
+				err := command.ExecuteContext(t.Context())
+				require.ErrorIs(err, failure)
+				assert.Equal(before, fixture.readConfig(t))
+				if content == "" {
+					_, err := os.Stat(fixture.path)
+					require.ErrorIs(err, os.ErrNotExist)
+				}
+				fixture.checker.err = nil
+				output, err := fixture.run(t, "providers", "--yes")
+				require.NoError(err, output)
+				assert.True(fixture.load(t).People.Sweep.Enabled)
+			})
+		}
+	}
+}
+
+func TestSetupProvidersRollbackPreservesConcurrentConfig(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
+	deps := fixture.deps(t)
+	failure := errors.New("provider check failed")
+	var concurrent config.ConfigFile
+	deps.personProvider = func() personProviderCommandDeps {
+		provider := fixture.personProviderDeps(t)
+		provider.newChecker = func(peoplesweep.Config, personProviderStore) (personProviderChecker, error) {
+			return callbackPersonProviderChecker(func(context.Context) (peoplesweep.StructuredResponse, error) {
+				before, err := config.ReadConfigFile(fixture.path)
+				require.NoError(t, err)
+				concurrent, err = config.EditConfigTables(fixture.path, before.ETag, []config.TableEdit{{
+					Path: []string{"activity"}, Values: map[string]any{"schedule": "0 * * * *"},
+				}})
+				require.NoError(t, err)
+				return peoplesweep.StructuredResponse{}, failure
+			}), nil
+		}
+		return provider
+	}
+	command := newSetupProvidersCommand(deps)
+	command.SetArgs([]string{"--yes"})
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+
+	err := command.ExecuteContext(t.Context())
+	require.ErrorIs(t, err, failure)
+	require.ErrorIs(t, err, config.ErrConfigConflict)
+	assert.Equal(t, string(concurrent.Content), fixture.readConfig(t))
 }
 
 func TestSetupProvidersWithoutProvidersReportsEveryLaneOff(t *testing.T) {
