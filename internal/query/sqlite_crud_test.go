@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -1924,12 +1925,16 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require.NoError(err, "insert dedup-deleted message")
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (904, 1, 1, '', 'email', '2024-01-04')`)
 	require.NoError(err, "insert message without provider ID")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (905, 1, 1, 'legacy-empty', '', '2024-01-05')`)
+	require.NoError(err, "insert legacy empty-type message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (?, 1, 1, 'chat-1', ?, '2024-01-07')`, 907, store.MessageTypeGoogleChat)
+	require.NoError(err, "insert Gmail Chat message")
 
-	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904})
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904, 905, 907})
 	require.NoError(err, "resolve mixed ids")
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
 	require.NoError(err)
-	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
+	assert.ElementsMatch([]string{"msg1", "legacy-empty"}, ids, "non-Gmail, Gmail Chat, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
 }
 
 func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
