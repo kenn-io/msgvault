@@ -193,6 +193,7 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // the local Ollama server offers, which probe manifests are already written,
 // and which vector backend the archive selects.
 type setupDetection struct {
+	configKeys         toml.MetaData
 	voyageKey          bool
 	mistralKey         bool
 	mistralKeyEnv      string
@@ -423,15 +424,18 @@ func textLaneGateForProvider(provider string) string {
 	}
 }
 
-func embedScheduleEdit(loaded *config.Config) []config.TableEdit {
-	schedule := loaded.Vector.Embed.Schedule
-	if schedule.Cron != "" || schedule.RunAfterSync {
+func setupScheduleEdits(keys toml.MetaData, lane string) []config.TableEdit {
+	path := []string{tomlTableVector, lane, "schedule"}
+	values := map[string]any{}
+	for name, value := range map[string]any{"run_after_sync": true, "cron": setupEmbedCron} {
+		if !keys.IsDefined(tomlTableVector, lane, "schedule", name) {
+			values[name] = value
+		}
+	}
+	if len(values) == 0 {
 		return nil
 	}
-	return []config.TableEdit{{
-		Path:   []string{tomlTableVector, "embed", "schedule"},
-		Values: map[string]any{"run_after_sync": true, "cron": setupEmbedCron},
-	}}
+	return []config.TableEdit{{Path: path, Values: values}}
 }
 
 func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
@@ -464,7 +468,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				"api_format": "voyage-contextual", "endpoint": setupVoyageEndpoint,
 				"api_key_env": setupVoyageKeyEnv, "model": setupVoyageTextModel, "dimension": setupVoyageTextDim,
 			},
-		}}, embedScheduleEdit(loaded)...)
+		}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	case detection.openAIKey:
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionEnable, "openai", setupOpenAITextModel, gateOpenAI
 		lane.Reason = "per-message vectors; no conversation-window context and no visual lane, both are Voyage-only"
@@ -474,7 +478,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				"api_format": "openai", "endpoint": setupOpenAIEndpoint,
 				"api_key_env": setupOpenAIKeyEnv, "model": setupOpenAITextModel, "dimension": setupOpenAITextDim,
 			},
-		}}, embedScheduleEdit(loaded)...)
+		}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	case detection.ollama.Reachable && !detection.ollamaLoopback:
 		// A reachable server that is not on this machine would receive
 		// message text without a credential or a disclosure; only the operator
@@ -493,7 +497,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
 				"max_input_chars": setupOllamaMaxInput,
 			},
-		}}, embedScheduleEdit(loaded)...)
+		}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	case detection.ollama.Reachable:
 		lane.Action = planActionSkip
 		lane.Reason = "Ollama is reachable but has no " + setupOllamaTextModel + "; run `ollama pull " + setupOllamaTextModel + "` or set " + setupVoyageKeyEnv
@@ -549,17 +553,14 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 	case detection.voyageManifest != "":
 		lane.Action, lane.Gate = planActionEnable, gateVoyage
 		lane.Reason = "probe manifest found at " + detection.voyageManifest
-		lane.edits = []config.TableEdit{
+		lane.edits = append([]config.TableEdit{
 			{Path: []string{tomlTableVector, "multimodal"}, Values: map[string]any{"enabled": true, "capabilities_file": detection.voyageManifest}},
-			{Path: []string{tomlTableVector, "multimodal", "schedule"}, Values: map[string]any{"run_after_sync": true, "cron": setupEmbedCron}},
-		}
+		}, setupScheduleEdits(detection.configKeys, "multimodal")...)
 		lane.next = []string{"msgvault multimodal build --yes"}
 	default:
 		lane.Action = planActionPending
 		lane.Reason = "the provider probe needs private synthetic WebP and MP4 seeds; the lane stays off until the manifest exists"
-		lane.edits = []config.TableEdit{
-			{Path: []string{tomlTableVector, "multimodal", "schedule"}, Values: map[string]any{"run_after_sync": true, "cron": setupEmbedCron}},
-		}
+		lane.edits = setupScheduleEdits(detection.configKeys, "multimodal")
 		lane.next = []string{visualProbeCommand(loaded), "msgvault setup providers"}
 	}
 	return lane
@@ -872,8 +873,9 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	// posture into "unknown". Only the corresponding explicit flag replaces
 	// an existing assertion; inference still uses its own command defaults.
 	var saved config.Config
-	if _, err := toml.Decode(string(before.Content), &saved); err != nil {
-		return fmt.Errorf("read saved provider postures: %w", err)
+	keys, err := toml.Decode(string(before.Content), &saved)
+	if err != nil {
+		return fmt.Errorf("read saved provider settings: %w", err)
 	}
 	options.personRetentionPosture = setupPosture(saved.Vector.People.RetentionPosture, options.retentionPosture, command.Flags().Changed("retention-posture"))
 	options.personTrainingPosture = setupPosture(saved.Vector.People.TrainingPosture, options.trainingPosture, command.Flags().Changed("training-posture"))
@@ -884,6 +886,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		now = deps.now()
 	}
 	detection := detectSetupProviders(ctx, loaded, deps)
+	detection.configKeys = keys
 	plan := planSetupProviders(loaded, detection, options, now)
 	out := command.OutOrStdout()
 	if !options.jsonOutput {

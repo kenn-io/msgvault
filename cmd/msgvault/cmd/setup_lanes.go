@@ -286,9 +286,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		} else {
 			lane.Reason = "per-message vectors; no conversation-window context (Voyage contextual only)"
 		}
-		if embeddings.APIKeyEnv != "" && !env.hasEnv(embeddings.APIKeyEnv) {
-			lane.Reason += "; environment variable " + embeddings.APIKeyEnv + " is not set"
-		}
+		env.reportMissingCredential(&lane, embeddings.APIKeyEnv)
 		return lane
 	}
 	lane.State = laneStateOff
@@ -315,6 +313,10 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
 		lane.Reason = "one curated document per person rides the text-search generation"
+		if text := textSearchLane(cfg, env); text.State != laneStateOn {
+			lane.State = laneStatePending
+			lane.Reason += "; text search is not ready: " + text.Reason
+		}
 		if lane.Consent != consentActive {
 			lane.Next = []string{"msgvault person provider consent --semantic-embeddings --yes"}
 		}
@@ -419,6 +421,10 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
+		if text := textSearchLane(cfg, env); text.State != laneStateOn {
+			lane.State = laneStatePending
+			lane.Reason += "; text search is not ready: " + text.Reason
+		}
 		lane.ConsentPurposes = map[string]string{
 			"document_embedding": env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding }),
 			"query_embedding":    env.consentState(func(s setupConsentState) bool { return s.QueryEmbedding }),

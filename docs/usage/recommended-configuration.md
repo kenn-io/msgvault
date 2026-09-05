@@ -38,6 +38,12 @@ postures. Defaults fill only unset values. Pass `--retention-posture` or
 or `--document-retention` or `--document-training` for document extraction.
 Already enabled lanes remain unchanged.
 
+Setup also preserves each explicit `cron` and `run_after_sync` setting for
+text and visual embeddings, including `cron = ""` and `run_after_sync = false`.
+Only absent keys receive schedule defaults. Missing embedding credentials
+leave text search and its dependent people-search and document-vector lanes
+pending in the status report.
+
 For existing text endpoints, setup recognizes the exact OpenAI and Voyage
 API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
 configure their people-search and document-vector lanes explicitly, then

@@ -312,6 +312,7 @@ func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
 	_, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
 	require.NoError(err)
 	for lane, key := range map[string]string{
+		laneTextSearch: setupVoyageKeyEnv, lanePersonSearch: setupVoyageKeyEnv, laneDocumentVectors: setupVoyageKeyEnv,
 		laneVisualSearch: setupVoyageKeyEnv, laneDocuments: "MISTRAL_API_KEY", lanePeopleInference: setupOpenAIKeyEnv,
 	} {
 		fixture.env[key] = "  "
@@ -328,6 +329,38 @@ func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
 		require.NoError(err, output)
 		require.NoError(json.Unmarshal([]byte(output), &report))
 		assert.Equal(laneStateOn, findLane(t, report, lane).State)
+	}
+}
+
+func TestSetupProvidersPreservesExplicitSchedules(t *testing.T) {
+	for _, manifest := range []bool{false, true} {
+		for _, schedule := range []struct {
+			name, toml, cron string
+			runAfterSync     bool
+		}{
+			{name: "manual", toml: "cron = \"\"\nrun_after_sync = false"},
+			{name: "sync only", toml: "cron = \"\"\nrun_after_sync = true", runAfterSync: true},
+			{name: "custom cron", toml: "cron = \"15 4 * * *\"\nrun_after_sync = false", cron: "15 4 * * *"},
+			{name: "unset", cron: setupEmbedCron, runAfterSync: true},
+			{name: "cron disabled", toml: "cron = \"\"", runAfterSync: true},
+			{name: "sync disabled", toml: "run_after_sync = false", cron: setupEmbedCron},
+		} {
+			t.Run(fmt.Sprintf("%s/manifest=%t", schedule.name, manifest), func(t *testing.T) {
+				assert := assert.New(t)
+				fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+
+					"\n[vector.embed.schedule]\n"+schedule.toml+
+					"\n[vector.multimodal.schedule]\n"+schedule.toml+"\n")
+				fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+				fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = manifest
+				output, err := fixture.run(t, "providers", "--yes")
+				require.NoError(t, err, output)
+				loaded := fixture.load(t)
+				assert.Equal(schedule.cron, loaded.Vector.Embed.Schedule.Cron)
+				assert.Equal(schedule.runAfterSync, loaded.Vector.Embed.Schedule.RunAfterSync)
+				assert.Equal(schedule.cron, loaded.Vector.Multimodal.Schedule.Cron)
+				assert.Equal(schedule.runAfterSync, loaded.Vector.Multimodal.Schedule.RunAfterSync)
+			})
+		}
 	}
 }
 

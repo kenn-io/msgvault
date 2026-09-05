@@ -1026,7 +1026,26 @@ func executeSavedPersonProviderCheck(
 		}
 		return writePersonProviderCheckOutput(out, output, false)
 	}
-	return proxySavedPersonProviderOperation(command, deps, "check", name, ifFingerprint, out)
+	selected, err := selectPersonProviderConfig(deps.config(), name)
+	if err != nil {
+		return err
+	}
+	selected.Enabled = true
+	profile, err := selected.Profile()
+	if err != nil {
+		return err
+	}
+	if ifFingerprint != "" && ifFingerprint != profile.Fingerprint {
+		return errors.New("people provider profile changed before checking")
+	}
+	var env map[string]string
+	if profile.Credential == peoplesweep.CredentialEnv && profile.Auth != peoplesweep.AuthNone && deps.setup.lookupEnv != nil {
+		if value, ok := deps.setup.lookupEnv(profile.CredentialRef); ok && strings.TrimSpace(value) != "" {
+			env = map[string]string{profile.CredentialRef: value}
+		}
+	}
+	return proxySavedPersonProviderOperationWithFlag(command, deps, "check", name,
+		personProviderIfFingerprintFlag, profile.Fingerprint, out, env)
 }
 
 func verifyPersonProviderFingerprint(
@@ -1070,7 +1089,7 @@ func proxySavedPersonProviderRevokeFingerprint(
 	fingerprint string,
 ) error {
 	return proxySavedPersonProviderOperationWithFlag(
-		command, deps, "revoke", name, "fingerprint", fingerprint, io.Discard,
+		command, deps, "revoke", name, "fingerprint", fingerprint, io.Discard, nil,
 	)
 }
 
@@ -1083,7 +1102,7 @@ func proxySavedPersonProviderOperation(
 	out io.Writer,
 ) error {
 	return proxySavedPersonProviderOperationWithFlag(
-		command, deps, operation, name, personProviderIfFingerprintFlag, fingerprint, out,
+		command, deps, operation, name, personProviderIfFingerprintFlag, fingerprint, out, nil,
 	)
 }
 
@@ -1095,6 +1114,7 @@ func proxySavedPersonProviderOperationWithFlag(
 	flag string,
 	fingerprint string,
 	out io.Writer,
+	env map[string]string,
 ) error {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
 		return err
@@ -1123,7 +1143,8 @@ func proxySavedPersonProviderOperationWithFlag(
 	root.AddCommand(person)
 	leaf.SetOut(out)
 	leaf.SetErr(command.ErrOrStderr())
-	return deps.proxy(leaf, []string{name}, nil)
+	leaf.SetContext(command.Context())
+	return deps.proxy(leaf, []string{name}, env)
 }
 
 func rollbackNewPersonProviderCredential(
