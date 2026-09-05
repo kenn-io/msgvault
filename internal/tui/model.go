@@ -1917,6 +1917,22 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.settings.active {
 		return m.handleSettingsKeyPress(msg)
 	}
+
+	// Resolving every deletion match is view-independent. Keep the current
+	// scope stable until it finishes, while still allowing cancellation and
+	// the normal quit flow from every mode.
+	if m.deletionLoading {
+		switch msg.String() {
+		case keyNameEsc:
+			m.cancelDeletionResolution()
+			return m.showFlash("Deletion match resolution canceled")
+		case "q", keyNameCtrlC:
+			m.cancelDeletionResolution()
+		default:
+			return m, nil
+		}
+	}
+
 	if msg.String() == "," && m.settingsShortcutAvailable() {
 		return m.openSettings()
 	}
@@ -1934,21 +1950,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle modal first (error modals must dismiss even during search)
 	if m.modal != modalNone {
 		return m.handleModalKeys(msg)
-	}
-
-	// Resolving every deletion match is view-independent. Keep the current
-	// scope stable until it finishes, while still allowing cancellation and
-	// the normal quit flow from aggregate and message-list views alike.
-	if m.deletionLoading {
-		switch msg.String() {
-		case keyNameEsc:
-			m.cancelDeletionResolution()
-			return m.showFlash("Deletion match resolution canceled")
-		case "q", keyNameCtrlC:
-			m.cancelDeletionResolution()
-		default:
-			return m, nil
-		}
 	}
 
 	// Handle inline search (takes priority over view)

@@ -222,6 +222,42 @@ func TestDeletionKeyScope(t *testing.T) {
 	})
 }
 
+func TestDeletionResolutionCannotCrossScopeChanges(t *testing.T) {
+	model := NewBuilder().Build()
+	model.deletionLoading = true
+	model.deletionRequestID = 7
+	oldRequestID := model.deletionRequestID
+	canceled := false
+	model.deletionCancel = func() { canceled = true }
+
+	model.invalidateSourceScope()
+
+	assert.True(t, canceled)
+	assert.False(t, model.deletionLoading)
+	assert.Greater(t, model.deletionRequestID, oldRequestID)
+	model = sendMsg(t, model, deletionPreparedMsg{
+		manifest:  &deletion.Manifest{},
+		requestID: oldRequestID,
+	})
+	assertModal(t, model, modalNone)
+}
+
+func TestDeletionResolutionBlocksTextScopeInput(t *testing.T) {
+	assertions := assert.New(t)
+	model := NewBuilder().Build()
+	model.mode = modeTexts
+	model.deletionLoading = true
+
+	model, cmd := sendKey(t, model, key('A'))
+	assertions.Nil(cmd)
+	assertions.Equal(modeTexts, model.mode)
+	assertModal(t, model, modalNone)
+
+	model, cmd = sendKey(t, model, key('m'))
+	assertions.Nil(cmd)
+	assertions.Equal(modeTexts, model.mode)
+}
+
 func TestUppercaseDResolvesEveryFilteredMessageInOneBackendCall(t *testing.T) {
 	allMessages := deletionScopeMessages(searchPageSize + 1)
 	var calls int

@@ -1663,6 +1663,8 @@ func (m *Model) openAccountSelector() {
 }
 
 func (m *Model) invalidateSourceScope() {
+	m.deletionRequestID++
+	m.finishDeletionResolution()
 	m.aggregateRequestID++
 	m.statsRequestID++
 	m.loadRequestID++
