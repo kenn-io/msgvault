@@ -435,6 +435,128 @@ func TestStageDeletionConcurrentDoubleSubmitStagesExactlyOnce(t *testing.T) {
 	assertions.Equal([]string{"m2"}, st.saved[0].GmailIDs)
 }
 
+// mixedDeletabilityFixtureMessages puts a live Gmail email, a calendar event,
+// and a legacy blank-typed Gmail email in one source, so a selection over the
+// source matches three items of which two can be deleted.
+const mixedDeletabilityFixtureMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Receipt', 'alpha', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
+	(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Standup', 'beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'calendar_event', NULL::VARCHAR, false, 2026, 7),
+	(3::BIGINT, 1::BIGINT, 'm3', 103::BIGINT, 'Old receipt', 'gamma', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, '', NULL::VARCHAR, false, 2026, 7)`
+
+// TestStageDeletionStagesDeletableSubsetOfMixedSelection is the issue #768
+// reproduction: a search that also matches items no source can delete used to
+// reject the whole selection, dry run included. It must stage the deletable
+// subset instead and report what it left out, with the legacy blank-typed
+// Gmail row counted as email.
+func TestStageDeletionStagesDeletableSubsetOfMixedSelection(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, mixedDeletabilityFixtureMessages, 3)
+	st := &deletionMockStore{}
+	srv := newDeletionTestServer(t, st, engine)
+
+	explore := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"source","values":["1"]}]}`)
+	requirements.Equal(http.StatusOK, explore.Code, explore.Body.String())
+	var explored struct {
+		CacheRevision string `json:"cache_revision"`
+	}
+	requirements.NoError(json.Unmarshal(explore.Body.Bytes(), &explored))
+	selection := fmt.Sprintf(
+		`{"mode":"all_matching","predicate":{"filters":[{"dimension":"source","values":["1"]}]},"cache_revision":%q}`,
+		explored.CacheRevision)
+
+	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
+	requirements.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var reviewed ExplorePreflightResponse
+	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &reviewed))
+	assertions.Equal(int64(3), reviewed.Count, "all three items match")
+	assertions.NotContains(reviewed.UnavailableActions, ExploreUnavailableAction{
+		Action: "stage_deletion", Reason: "selection_contains_items_that_cannot_be_deleted_from_source",
+	}, "a partly deletable selection can still be staged")
+
+	dryRun := postDeletions(t, srv, fmt.Sprintf(
+		`{"selection":%s,"operation_token":%q,"dry_run":true}`, selection, reviewed.OperationToken))
+	requirements.Equal(http.StatusOK, dryRun.Code, dryRun.Body.String())
+	var preview StageDeletionResponse
+	requirements.NoError(json.Unmarshal(dryRun.Body.Bytes(), &preview))
+	assertions.True(preview.DryRun)
+	assertions.Equal(2, preview.MessageCount, "dry run previews the deletable subset")
+	assertions.Equal(3, preview.MatchedCount)
+	assertions.Equal(1, preview.SkippedCount)
+	assertions.ElementsMatch([]string{"m1", "m3"}, preview.SampleGmailIDs)
+	assertions.Empty(st.saved, "dry run persists nothing")
+
+	stage := postDeletions(t, srv, fmt.Sprintf(
+		`{"selection":%s,"operation_token":%q,"description":"mixed batch"}`, selection, reviewed.OperationToken))
+	requirements.Equal(http.StatusCreated, stage.Code, stage.Body.String())
+	var staged StageDeletionResponse
+	requirements.NoError(json.Unmarshal(stage.Body.Bytes(), &staged))
+	assertions.Equal(2, staged.MessageCount, "staging matches the dry run")
+	assertions.Equal(3, staged.MatchedCount)
+	assertions.Equal(1, staged.SkippedCount)
+	requirements.Len(st.saved, 1)
+	assertions.ElementsMatch([]string{"m1", "m3"}, st.saved[0].GmailIDs)
+}
+
+// TestStageDeletionRejectsSelectionWithNothingDeletable keeps the dead-end
+// case an error: partial staging only helps when something is stageable.
+func TestStageDeletionRejectsSelectionWithNothingDeletable(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine := newExploreDuckDBFixture(t)
+	st := &deletionMockStore{}
+	srv := newDeletionTestServer(t, st, engine)
+
+	explore := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"source","values":["2"]}]}`)
+	requirements.Equal(http.StatusOK, explore.Code, explore.Body.String())
+	var explored struct {
+		CacheRevision string `json:"cache_revision"`
+	}
+	requirements.NoError(json.Unmarshal(explore.Body.Bytes(), &explored))
+	selection := fmt.Sprintf(
+		`{"mode":"all_matching","predicate":{"filters":[{"dimension":"source","values":["2"]}]},"cache_revision":%q}`,
+		explored.CacheRevision)
+
+	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
+	requirements.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var reviewed ExplorePreflightResponse
+	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &reviewed))
+	assertions.Contains(reviewed.UnavailableActions, ExploreUnavailableAction{
+		Action: "stage_deletion", Reason: "selection_contains_items_that_cannot_be_deleted_from_source",
+	})
+
+	stage := postDeletions(t, srv, fmt.Sprintf(
+		`{"selection":%s,"operation_token":%q}`, selection, reviewed.OperationToken))
+	assertions.Equal(http.StatusConflict, stage.Code, stage.Body.String())
+	assertions.Contains(stage.Body.String(), "selection_not_deletable")
+	assertions.Empty(st.saved)
+}
+
+// TestDeletionSelectionRejectsEmptyAddressFilter covers the widening form of
+// a narrowing typo: from: with no value renders as LIKE '%%' and would stage
+// the whole archive.
+func TestDeletionSelectionRejectsEmptyAddressFilter(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine := newExploreDuckDBFixture(t)
+	st := &deletionMockStore{}
+	srv := newDeletionTestServer(t, st, engine)
+
+	for _, queryText := range []string{"from:", `to:"   "`, `cc:""`, "bcc:"} {
+		selection := fmt.Sprintf(
+			`{"mode":"all_matching","predicate":{"query":%q,"search_mode":"full_text","filters":[{"dimension":"source","values":["1"]}]},"cache_revision":"cache-1"}`,
+			queryText)
+
+		preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
+		assertions.Equal(http.StatusBadRequest, preflight.Code, "query %q -> preflight status", queryText)
+		assertions.Contains(preflight.Body.String(), "invalid_selection_predicate", "query %q -> preflight code", queryText)
+
+		stage := postDeletions(t, srv, `{"selection":`+selection+`,"operation_token":"token-1"}`)
+		assertions.Equal(http.StatusBadRequest, stage.Code, "query %q -> stage status", queryText)
+		assertions.Contains(stage.Body.String(), "invalid_selection_predicate", "query %q -> stage code", queryText)
+	}
+	requirements.Empty(st.saved, "nothing staged from a wildcard address filter")
+}
+
 func TestStageDeletionRejectsEmptyFilter(t *testing.T) {
 	st := &deletionMockStore{}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})

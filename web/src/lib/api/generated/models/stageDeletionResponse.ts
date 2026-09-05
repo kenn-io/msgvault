@@ -7,8 +7,10 @@ export interface StageDeletionResponse {
   account?: string;
   dry_run: boolean;
   id?: string;
+  matched_count?: number;
   message_count: number;
   sample_gmail_ids?: string[];
+  skipped_count?: number;
   source?: SourceReference;
   status?: string;
   [key: string]: unknown;

@@ -66,9 +66,9 @@ describe('DeletionsWorkspace', () => {
       if (request.method === 'POST') {
         deletionPosts += 1;
         return deletionPosts === 1
-          ? Response.json({ dry_run: true, message_count: 1, account: 'archive@example.com', sample_gmail_ids: ['m1'] })
+          ? Response.json({ dry_run: true, matched_count: 1, message_count: 1, skipped_count: 0, account: 'archive@example.com', sample_gmail_ids: ['m1'] })
           : Response.json(
-              { dry_run: false, message_count: 1, account: 'archive@example.com', id: 'batch-2', status: 'pending' },
+              { dry_run: false, matched_count: 1, message_count: 1, skipped_count: 0, account: 'archive@example.com', id: 'batch-2', status: 'pending' },
               { status: 201 },
             );
       }
@@ -80,13 +80,15 @@ describe('DeletionsWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
     expect(await screen.findByText('1 item · 120 bytes')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
-    expect(await screen.findByText('Dry run: 1 item in archive@example.com')).toBeDefined();
+    expect(await screen.findByText(/Dry run: Matched: 1 · Staged: 1 · Skipped: 0 in archive@example.com/)).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
     expect(screen.getByRole('dialog', { name: 'Confirm selected deletion' })).toBeDefined();
     expect(deletionPosts).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
     await waitFor(() => expect(deletionPosts).toBe(2));
+    expect(await screen.findByText(/Batch ID: batch-2/)).toBeDefined();
 
     const preflightBody = await requests
       .find((request) => new URL(request.url).pathname.endsWith('/explore/preflight'))!
@@ -99,6 +101,163 @@ describe('DeletionsWorkspace', () => {
       .clone()
       .json();
     expect(stageBody).toMatchObject({ selection: explicit, operation_token: 'operation-1', dry_run: false });
+  });
+
+  it('shows mixed dry-run and staged counts with a partial-staging warning', async () => {
+    const requests: Request[] = [];
+    let deletionPosts = 0;
+    const mixed = { dry_run: true, matched_count: 3, message_count: 2, skipped_count: 1, account: 'archive@example.com' };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3 }));
+      if (request.method === 'POST') {
+        deletionPosts += 1;
+        return deletionPosts === 1
+          ? Response.json(mixed)
+          : Response.json({ ...mixed, dry_run: false, id: 'batch-2', status: 'pending' }, { status: 201 });
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('3 items · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1 in archive@example.com/)).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toMatch(/Partial staging.*deletable Gmail subset.*unsupported match may be skipped/);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirm selected deletion' });
+    expect(dialog.textContent).toMatch(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/);
+    expect(dialog.textContent).toMatch(/deletable Gmail subset/);
+    expect(deletionPosts).toBe(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
+    await waitFor(() => expect(deletionPosts).toBe(2));
+    expect(await screen.findByText(/Staged: Matched: 3 · Staged: 2 · Skipped: 1 in archive@example.com/)).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toMatch(/was staged.*unsupported match was skipped/);
+    expect(requests.filter((request) => request.method === 'POST').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('derives optional counts when the response omits one field at a time', async () => {
+    let deletionPosts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3 }));
+      if (request.method === 'POST') {
+        deletionPosts += 1;
+        return deletionPosts === 1
+          ? Response.json({ dry_run: true, message_count: 2, skipped_count: 1 })
+          : Response.json({ dry_run: true, matched_count: 3, message_count: 2 });
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('3 items · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/)).toBeDefined();
+    expect(screen.getByRole('alert')).toBeDefined();
+  });
+
+  it('discards a late dry-run response after the selection changes', async () => {
+    let resolveDryRun!: (response: Response) => void;
+    const pendingDryRun = new Promise<Response>((resolve) => {
+      resolveDryRun = resolve;
+    });
+    let posts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight());
+      if (request.method === 'POST') {
+        posts += 1;
+        return pendingDryRun;
+      }
+      return Response.json({ manifests: [] });
+    });
+    const rendered = render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    await waitFor(() => expect(posts).toBe(1));
+    await rendered.rerender({ client: createAPIClient(fetchFn), selection: matching });
+    resolveDryRun(Response.json({ dry_run: true, message_count: 1 }));
+
+    expect(await screen.findByText('The selection changed while it was being reviewed. Review it again.')).toBeDefined();
+    expect(screen.queryByText(/Dry run: Matched/)).toBeNull();
+    rendered.unmount();
+  });
+
+  it('keeps a committed stage result and refreshes manifests after the selection changes', async () => {
+    let resolveStage!: (response: Response) => void;
+    const pendingStage = new Promise<Response>((resolve) => {
+      resolveStage = resolve;
+    });
+    let listCalls = 0;
+    let stagePosts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight());
+      if (request.method === 'POST') {
+        stagePosts += 1;
+        return pendingStage;
+      }
+      listCalls += 1;
+      return listCalls === 1
+        ? Response.json({ manifests: [] })
+        : Response.json({
+            manifests: [
+              {
+                id: 'batch-committed',
+                status: 'pending',
+                created_at: '2026-07-19T10:00:00Z',
+                created_by: 'api',
+                description: 'reviewed selection',
+                message_count: 1,
+              },
+            ],
+          });
+    });
+    const rendered = render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
+    await waitFor(() => expect(stagePosts).toBe(1));
+    await rendered.rerender({ client: createAPIClient(fetchFn), selection: matching });
+
+    resolveStage(
+      Response.json(
+        {
+          dry_run: false,
+          matched_count: 1,
+          message_count: 1,
+          skipped_count: 0,
+          account: 'archive@example.com',
+          id: 'batch-committed',
+          status: 'pending',
+        },
+        { status: 201 },
+      ),
+    );
+
+    expect(await screen.findByText(/Staged: Matched: 1 · Staged: 1 · Skipped: 0 in archive@example.com · Batch ID: batch-committed/)).toBeDefined();
+    expect(await screen.findByText('batch-committed')).toBeDefined();
+    expect(listCalls).toBe(2);
+    rendered.unmount();
   });
 
   it('uses d/D shortcuts to preflight the matching selection and never acts before confirmation', async () => {
@@ -119,7 +278,8 @@ describe('DeletionsWorkspace', () => {
       await screen.findByText('No deletion manifests yet.');
       await fireEvent.keyDown(window, { key: 'D', shiftKey: true });
       expect(await screen.findByRole('dialog', { name: 'Confirm matching deletion' })).toBeDefined();
-      expect(screen.getByText(/8 matching items minus 1 exclusion/)).toBeDefined();
+      expect(screen.getByText(/server stages only deletable Gmail matches and may skip unsupported matches/)).toBeDefined();
+      expect(screen.queryByText(/8 matching items minus 1 exclusion/)).toBeNull();
       expect(staged).toBe(0);
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
       expect(staged).toBe(0);
@@ -221,5 +381,37 @@ describe('DeletionsWorkspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Review selection' }));
     expect(await screen.findByText(/selection_contains_items_that_cannot_be_deleted_from_source/)).toBeDefined();
     expect((screen.getByRole('button', { name: 'Stage deletion' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('clears stale result counts when dry-run and create requests fail', async () => {
+    let deletionPosts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/explore/preflight')) return Response.json(preflight());
+      if (request.method === 'POST') {
+        deletionPosts += 1;
+        if (deletionPosts === 1 || deletionPosts === 3)
+          return Response.json({ dry_run: true, message_count: 1 });
+        return Response.json({ message: deletionPosts === 2 ? 'dry run failed' : 'create failed' }, { status: 500 });
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 1/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText('dry run failed')).toBeDefined();
+    expect(screen.queryByText(/Dry run: Matched: 1/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 1/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
+    expect(await screen.findByText('create failed')).toBeDefined();
+    expect(screen.queryByText(/Dry run: Matched: 1/)).toBeNull();
   });
 });

@@ -155,6 +155,12 @@ All notable changes to msgvault, grouped by release.
 - Everything and Files now page narrow analytical metadata before enriching
   participant details, preventing default listings on multi-million-message
   archives from exhausting the interactive DuckDB memory budget.
+- Deletion staging over a search that also matches chats, meetings, or
+  non-Gmail mail now stages the deletable subset and reports the skipped count
+  instead of rejecting the whole selection, dry run included. `message_type:email`
+  matches legacy Gmail rows whose stored type is blank, as the search
+  documentation already described, and an empty `from` / `to` / `cc` / `bcc`
+  value in a deletion selection is rejected instead of matching everything.
 
 ---
 
