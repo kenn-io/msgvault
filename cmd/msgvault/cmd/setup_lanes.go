@@ -211,11 +211,7 @@ func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.St
 	if consented, err := st.HasActiveDocumentProviderConsent(ctx); err == nil {
 		state.Documents = consented
 	}
-	if generation, err := st.ActiveVisualGeneration(ctx); err == nil && generation.Consented {
-		state.Visual = true
-	} else if generation, err := st.BuildingVisualGeneration(ctx); err == nil && generation.Consented {
-		state.Visual = true
-	}
+	state.Visual = setupVisualConsent(ctx, cfg, st)
 	if cfg.People.Sweep.Enabled {
 		if profile, err := cfg.People.Sweep.Profile(); err == nil {
 			if active, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint); err == nil {
@@ -231,6 +227,33 @@ func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.St
 		}
 	}
 	return state
+}
+
+func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store) bool {
+	if !cfg.Vector.Multimodal.Enabled {
+		return false
+	}
+	providerConfig, err := visualVoyageConfig(cfg.Vector)
+	if err != nil {
+		return false
+	}
+	policy, err := providerConfig.Policy()
+	if err != nil {
+		return false
+	}
+	policyFingerprint, err := policy.Fingerprint(providerConfig.Manifest)
+	if err != nil {
+		return false
+	}
+	fingerprint := cfg.Vector.MultimodalGenerationFingerprint()
+	for _, read := range []func(context.Context) (store.VisualGeneration, error){st.ActiveVisualGeneration, st.BuildingVisualGeneration} {
+		generation, err := read(ctx)
+		if err == nil && generation.Consented && generation.Fingerprint == fingerprint &&
+			generation.ConsentPolicyFingerprint == policyFingerprint {
+			return true
+		}
+	}
+	return false
 }
 
 // embeddingProviderName names the embedding destination for the report.

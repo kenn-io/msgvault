@@ -209,6 +209,48 @@ training_posture = "opted-out"
 	}
 }
 
+func TestSetupProvidersResolvesUnknownDocumentPostures(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("enabled=%t/explicit=%t", enabled, explicit), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				savedTraining, wantTraining := documentindex.TrainingUnknown, documentindex.TrainingDefaultOptOut
+				if explicit {
+					savedTraining, wantTraining = documentindex.TrainingOptedOut, documentindex.TrainingOptedOut
+				}
+				fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
+[attachments.documents]
+enabled = %t
+retention_posture = "unknown"
+training_posture = %q
+`, enabled, savedTraining))
+				fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+				args := []string{"providers", "--yes"}
+				wantRetention := documentindex.RetentionStandard
+				if explicit {
+					args = append(args, "--document-retention", documentindex.RetentionZDR)
+					wantRetention = documentindex.RetentionZDR
+				}
+				output, err := fixture.run(t, args...)
+				require.NoError(err, output)
+				loaded := fixture.load(t)
+				assert.True(loaded.Attachments.Documents.Enabled)
+				assert.Equal(wantRetention, loaded.Attachments.Documents.RetentionPosture)
+				assert.Equal(wantTraining, loaded.Attachments.Documents.TrainingPosture)
+				assert.Contains(output, "retention="+wantRetention+", training="+wantTraining)
+				if explicit {
+					previous := cfg
+					cfg = loaded
+					t.Cleanup(func() { cfg = previous })
+					_, _, _, _, err := configuredDocumentProfile(writeCommandCapabilityManifest(t, loaded.Attachments.Documents.MaxPagesPerDocument))
+					require.NoError(err)
+				}
+			})
+		}
+	}
+}
+
 func TestSetupProvidersCustomHostedEndpointNeedsExplicitConfiguration(t *testing.T) {
 	for _, endpoint := range []string{"https://api.openai.com.example.test/v1", "https://localhost.example.test/v1", "https://embeddings.example.test/v1"} {
 		t.Run(endpoint, func(t *testing.T) {

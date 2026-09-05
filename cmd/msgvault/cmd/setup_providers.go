@@ -561,7 +561,7 @@ func planDocuments(loaded *config.Config, detection setupDetection, options setu
 	lane := setupLanePlan{Lane: laneDocuments, Label: "Document attachments", Provider: documents.Provider, Model: documents.Model}
 	manifest := setupMistralManifestPath(loaded)
 	switch {
-	case documents.Enabled:
+	case documents.Enabled && documents.RetentionPosture != documentindex.RetentionUnknown && documents.TrainingPosture != documentindex.TrainingUnknown:
 		lane.Action = planActionKeep
 		lane.Reason = "already enabled"
 	case !detection.mistralKey:
@@ -937,7 +937,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 }
 
 func setupPosture(saved, proposed string, override bool) string {
-	if saved != "" && !override {
+	if saved != "" && !strings.EqualFold(strings.TrimSpace(saved), "unknown") && !override {
 		return saved
 	}
 	return proposed

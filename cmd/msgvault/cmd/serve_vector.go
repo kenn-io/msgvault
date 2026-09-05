@@ -10,7 +10,6 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -806,7 +805,7 @@ func newVisualRuntime(
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := loadVisualCapabilityManifest(vecCfg.Multimodal.CapabilitiesFile)
+	providerConfig, err := visualVoyageConfig(vecCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -819,15 +818,9 @@ func newVisualRuntime(
 	// input the search layer permits. Document eligibility (the reconciler's
 	// mediaPolicy) stays unchanged. Configs with images already enabled are
 	// identical, so no existing consent fingerprint moves.
-	providerMedia := mediaPolicy
-	if vecCfg.Multimodal.ImageQueriesEnabled() {
-		providerMedia.IncludeImages = true
-	}
-	provider, err := visual.NewVoyageProvider(visual.VoyageConfig{
-		APIKey: apiKey, Model: vecCfg.Multimodal.Model,
-		Dimension: vecCfg.Multimodal.Dimension, Manifest: manifest, Media: providerMedia,
-		HTTPClient: providerHTTPClientWithoutRedirects(httpClient),
-	})
+	providerConfig.APIKey = apiKey
+	providerConfig.HTTPClient = providerHTTPClientWithoutRedirects(httpClient)
+	provider, err := visual.NewVoyageProvider(providerConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -908,26 +901,6 @@ func visualScopeCheck(s *store.Store, accounts []string, expected []int64) func(
 		}
 		return nil
 	}
-}
-
-// loadVisualCapabilityManifest reads and strictly validates the operator's
-// probed Voyage capability manifest. The multimodal lane cannot run without
-// one: nothing has upload authority until a probe recorded it.
-func loadVisualCapabilityManifest(path string) (voyage.CapabilityManifest, error) {
-	if strings.TrimSpace(path) == "" {
-		return voyage.CapabilityManifest{}, errors.New(
-			"vector.multimodal.capabilities_file is not set; run `msgvault multimodal probe` and configure the manifest path")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return voyage.CapabilityManifest{}, fmt.Errorf("open Voyage capability manifest: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	manifest, err := voyage.DecodeCapabilityManifest(file)
-	if err != nil {
-		return voyage.CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest %s: %w", path, err)
-	}
-	return manifest, nil
 }
 
 // eligibleVisualCapabilities filters probed document capabilities to those

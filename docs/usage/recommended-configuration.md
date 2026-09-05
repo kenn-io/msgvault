@@ -36,7 +36,10 @@ When enabling a disabled lane, setup preserves saved retention and training
 postures. Defaults fill only unset values. Pass `--retention-posture` or
 `--training-posture` to replace the corresponding people-search posture,
 or `--document-retention` or `--document-training` for document extraction.
-Already enabled lanes remain unchanged.
+Already enabled lanes with known postures remain unchanged. `unknown` is
+unset, not an assertion: setup fills it with the disclosed default, or the
+corresponding explicit flag. This also completes an already-enabled document
+lane whose postures are still unknown, under the Mistral confirmation.
 
 Setup also preserves each explicit `cron` and `run_after_sync` setting for
 text and visual embeddings, including `cron = ""` and `run_after_sync = false`.
@@ -48,7 +51,9 @@ Configured vector lanes also stay pending when the binary lacks the backend
 required by the archive database. Status includes the rebuild command.
 
 Consent-gated lanes also remain pending until their required consents are
-active, including when the consent records cannot be read. Local Ollama
+active, including when the consent records cannot be read. Visual consent
+must match both the current configuration and the capability-manifest policy;
+after either changes, run `msgvault multimodal build --yes` again. Local Ollama
 setup clears any old `api_key_env` setting because its selected loopback
 endpoint does not require authentication.
 

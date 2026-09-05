@@ -12,6 +12,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 var (
@@ -143,6 +145,43 @@ func writeVisualCapabilityManifest(path string, manifest voyage.CapabilityManife
 		return fmt.Errorf("write capability manifest: %w", err)
 	}
 	return nil
+}
+
+// visualVoyageConfig binds the manifest to the media policy used by both
+// runtime uploads and setup's read-only consent check.
+func visualVoyageConfig(cfg vector.Config) (visual.VoyageConfig, error) {
+	manifest, err := loadVisualCapabilityManifest(cfg.Multimodal.CapabilitiesFile)
+	if err != nil {
+		return visual.VoyageConfig{}, err
+	}
+	media := visual.DefaultMediaPolicy()
+	media.IncludeImages = cfg.Multimodal.ImagesEnabled() || cfg.Multimodal.ImageQueriesEnabled()
+	media.IncludeVideo = cfg.Multimodal.VideoEnabled()
+	media.AllowAnimatedGIF = cfg.Multimodal.AnimatedGIFsEnabled()
+	return visual.VoyageConfig{
+		Model: cfg.Multimodal.Model, Dimension: cfg.Multimodal.Dimension,
+		Manifest: manifest, Media: media,
+	}, nil
+}
+
+// loadVisualCapabilityManifest reads and strictly validates the operator's
+// probed Voyage capability manifest. The multimodal lane cannot run without
+// one: nothing has upload authority until a probe recorded it.
+func loadVisualCapabilityManifest(path string) (voyage.CapabilityManifest, error) {
+	if strings.TrimSpace(path) == "" {
+		return voyage.CapabilityManifest{}, errors.New(
+			"vector.multimodal.capabilities_file is not set; run `msgvault multimodal probe` and configure the manifest path")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return voyage.CapabilityManifest{}, fmt.Errorf("open Voyage capability manifest: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	manifest, err := voyage.DecodeCapabilityManifest(file)
+	if err != nil {
+		return voyage.CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest %s: %w", path, err)
+	}
+	return manifest, nil
 }
 
 func init() {
