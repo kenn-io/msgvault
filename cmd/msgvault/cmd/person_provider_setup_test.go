@@ -458,14 +458,16 @@ func TestPersonProviderCatalogAuthUsesProtocolCapabilities(t *testing.T) {
 		{name: "codex rejected", protocol: peoplesweep.ProtocolCodexAppServer, wantErr: "unsupported protocol"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			got, err := personProviderCatalogAuth(test.protocol, test.explicit)
 			if test.wantErr != "" {
-				require.ErrorContains(t, err, test.wantErr)
-				assert.Empty(t, got)
+				require.ErrorContains(err, test.wantErr)
+				assert.Empty(got)
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, test.want, got)
+			require.NoError(err)
+			assert.Equal(test.want, got)
 		})
 	}
 }

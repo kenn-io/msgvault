@@ -57,19 +57,21 @@ func TestProtocolCapabilities(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(string(test.protocol), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			capability, ok := ProtocolCapabilityFor(test.protocol)
-			require.True(t, ok)
-			assert.Equal(t, test.protocol, capability.Protocol)
-			assert.Equal(t, test.driverVersion, capability.DriverVersion)
-			assert.Equal(t, test.authSchemes, capability.AuthSchemes)
-			assert.Equal(t, test.requiredAuth, capability.RequiredAuth)
-			assert.Equal(t, test.outputModes, capability.OutputModes)
-			assert.Equal(t, test.tokenParameters, capability.TokenParameters)
-			assert.Equal(t, test.supportsReasoningEffort, capability.SupportsReasoningEffort)
-			assert.Equal(t, test.supportsCustomReasoningMode, capability.SupportsCustomReasoningMode)
-			assert.Equal(t, test.catalogAuthSchemes, capability.CatalogAuthSchemes)
-			assert.Equal(t, test.catalogDefaultAuth, capability.CatalogDefaultAuth)
-			assert.Equal(t, test.modelsDevShapes, capability.ModelsDevShapes)
+			require.True(ok)
+			assert.Equal(test.protocol, capability.Protocol)
+			assert.Equal(test.driverVersion, capability.DriverVersion)
+			assert.Equal(test.authSchemes, capability.AuthSchemes)
+			assert.Equal(test.requiredAuth, capability.RequiredAuth)
+			assert.Equal(test.outputModes, capability.OutputModes)
+			assert.Equal(test.tokenParameters, capability.TokenParameters)
+			assert.Equal(test.supportsReasoningEffort, capability.SupportsReasoningEffort)
+			assert.Equal(test.supportsCustomReasoningMode, capability.SupportsCustomReasoningMode)
+			assert.Equal(test.catalogAuthSchemes, capability.CatalogAuthSchemes)
+			assert.Equal(test.catalogDefaultAuth, capability.CatalogDefaultAuth)
+			assert.Equal(test.modelsDevShapes, capability.ModelsDevShapes)
 		})
 	}
 
@@ -80,8 +82,10 @@ func TestProtocolCapabilities(t *testing.T) {
 }
 
 func TestProtocolCapabilityLookupCopiesSlices(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	capability, ok := ProtocolCapabilityFor(ProtocolOpenAIChat)
-	require.True(t, ok)
+	require.True(ok)
 	capability.AuthSchemes[0] = AuthNone
 	capability.OutputModes[0] = OutputModePromptJSON
 	capability.TokenParameters[0] = "changed"
@@ -89,29 +93,31 @@ func TestProtocolCapabilityLookupCopiesSlices(t *testing.T) {
 	capability.ModelsDevShapes[0] = "changed"
 
 	unchanged, ok := ProtocolCapabilityFor(ProtocolOpenAIChat)
-	require.True(t, ok)
-	assert.Equal(t, AuthBearer, unchanged.AuthSchemes[0])
-	assert.Equal(t, OutputModeNativeJSONSchema, unchanged.OutputModes[0])
-	assert.Equal(t, "max_completion_tokens", unchanged.TokenParameters[0])
-	assert.Equal(t, AuthBearer, unchanged.CatalogAuthSchemes[0])
-	assert.Equal(t, "@ai-sdk/openai-compatible", unchanged.ModelsDevShapes[0])
+	require.True(ok)
+	assert.Equal(AuthBearer, unchanged.AuthSchemes[0])
+	assert.Equal(OutputModeNativeJSONSchema, unchanged.OutputModes[0])
+	assert.Equal("max_completion_tokens", unchanged.TokenParameters[0])
+	assert.Equal(AuthBearer, unchanged.CatalogAuthSchemes[0])
+	assert.Equal("@ai-sdk/openai-compatible", unchanged.ModelsDevShapes[0])
 }
 
 func TestProtocolCapabilityRegistrationPairsHTTPDriversAndExcludesCodex(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	registry, err := NewDriverRegistry(http.DefaultClient, nil, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	for _, protocol := range []Protocol{
 		ProtocolOpenAIChat, ProtocolOpenAIResponses,
 		ProtocolAnthropicMessages, ProtocolGoogleGenerateContent,
 	} {
 		registration, ok := registry.registrations[protocol]
-		require.True(t, ok)
-		assert.Equal(t, protocol, registration.capability.Protocol)
-		assert.NotNil(t, registration.driver)
+		require.True(ok)
+		assert.Equal(protocol, registration.capability.Protocol)
+		assert.NotNil(registration.driver)
 		_, err := registry.capabilityDriver(protocol)
-		assert.NoError(t, err)
+		assert.NoError(err)
 	}
 	_, err = registry.capabilityDriver(ProtocolCodexAppServer)
-	assert.Error(t, err)
+	assert.Error(err)
 }
