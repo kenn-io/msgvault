@@ -135,16 +135,21 @@
     if (!selection || !reviewedIsCurrent()) return;
     pending = true;
     error = '';
+    const dryRunSelection = selection;
+    const dryRunFingerprint = fingerprint(dryRunSelection);
     try {
       const { data, error: responseError } = await generatedStageDeletion(
         {
-          selection,
+          selection: dryRunSelection,
           operation_token: reviewed!.operation_token,
           dry_run: true,
         },
         client,
       );
       if (!data) throw new Error(messageFor(responseError, 'Unable to run the deletion preview.'));
+      if (dryRunFingerprint !== fingerprint(selection)) {
+        throw new Error('The selection changed while it was being reviewed. Review it again.');
+      }
       preview = data;
     } catch (cause) {
       preview = undefined;
@@ -158,6 +163,7 @@
     pending = true;
     error = '';
     const stagedSelection = selection;
+    const stagedFingerprint = fingerprint(stagedSelection);
     try {
       const {
         data,
@@ -175,6 +181,9 @@
       );
       if (!data || response.status !== 201)
         throw new Error(messageFor(responseError, 'Unable to stage this deletion.'));
+      if (stagedFingerprint !== fingerprint(selection)) {
+        throw new Error('The selection changed while it was being staged. Review it again.');
+      }
       reviewed = undefined;
       preview = data;
       confirmStage = undefined;

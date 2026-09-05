@@ -140,6 +140,63 @@ describe('DeletionsWorkspace', () => {
     expect(requests.filter((request) => request.method === 'POST').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('derives optional counts when the response omits one field at a time', async () => {
+    let deletionPosts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3 }));
+      if (request.method === 'POST') {
+        deletionPosts += 1;
+        return deletionPosts === 1
+          ? Response.json({ dry_run: true, message_count: 2, skipped_count: 1 })
+          : Response.json({ dry_run: true, matched_count: 3, message_count: 2 });
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('3 items · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/)).toBeDefined();
+    expect(screen.getByRole('alert')).toBeDefined();
+  });
+
+  it('discards a late dry-run response after the selection changes', async () => {
+    let resolveDryRun!: (response: Response) => void;
+    const pendingDryRun = new Promise<Response>((resolve) => {
+      resolveDryRun = resolve;
+    });
+    let posts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight());
+      if (request.method === 'POST') {
+        posts += 1;
+        return pendingDryRun;
+      }
+      return Response.json({ manifests: [] });
+    });
+    const rendered = render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await screen.findByText('No deletion manifests yet.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    await waitFor(() => expect(posts).toBe(1));
+    await rendered.rerender({ client: createAPIClient(fetchFn), selection: matching });
+    resolveDryRun(Response.json({ dry_run: true, message_count: 1 }));
+
+    expect(await screen.findByText('The selection changed while it was being reviewed. Review it again.')).toBeDefined();
+    expect(screen.queryByText(/Dry run: Matched/)).toBeNull();
+    rendered.unmount();
+  });
+
   it('uses d/D shortcuts to preflight the matching selection and never acts before confirmation', async () => {
     const detach = initShortcuts();
     let staged = 0;
@@ -271,7 +328,7 @@ describe('DeletionsWorkspace', () => {
       if (request.method === 'POST') {
         deletionPosts += 1;
         if (deletionPosts === 1 || deletionPosts === 3)
-          return Response.json({ dry_run: true, matched_count: 1, message_count: 1, skipped_count: 0 });
+          return Response.json({ dry_run: true, message_count: 1 });
         return Response.json({ message: deletionPosts === 2 ? 'dry run failed' : 'create failed' }, { status: 500 });
       }
       return Response.json({ manifests: [] });
