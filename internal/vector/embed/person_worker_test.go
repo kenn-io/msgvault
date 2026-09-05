@@ -9,10 +9,13 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -259,7 +262,7 @@ func newTestPersonWorker(
 ) *PersonWorker {
 	return NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: batchSize,
-		Gate: allowSemanticPersonGate(),
+		Gate: allowSemanticPersonGate(), Recorder: newTestOperationRecorder(),
 	})
 }
 
@@ -278,28 +281,29 @@ func TestPersonWorkerGateBlocksDisabledUnconsentedAndRevokedProviderCalls(t *tes
 	gateErr := vector.ErrSemanticPersonEmbeddingsDisabled
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 1,
-		Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
+		Gate:     vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	result, err := worker.RunOnce(t.Context(), 1)
+	result, err := worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Empty(client.calls)
 
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
-	result, err = worker.RunOnce(t.Context(), 1)
+	result, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Empty(client.calls)
 
 	gateErr = nil
-	_, err = worker.RunOnce(t.Context(), 1)
+	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 1)
 
 	source.put(personDocument(1, "rev-two", "Synthetic Two"))
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
-	_, err = worker.RunOnce(t.Context(), 1)
+	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Len(client.calls, 1, "revoked consent must make zero later provider calls")
 }
@@ -319,10 +323,11 @@ func TestPersonWorkerRechecksGateBeforeEveryProviderCall(t *testing.T) {
 	client.onEmbed = func() { gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired }
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 1,
-		Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
+		Gate:     vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	_, err := worker.RunOnce(t.Context(), 2)
+	_, err := worker.RunOnce(t.Context(), 2, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Len(client.calls, 1)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 2)
@@ -335,8 +340,9 @@ func TestPersonWorkerMissingGateFailsClosedBeforeProvider(t *testing.T) {
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store:   newPersonWorkerSource(personDocument(1, "rev-one", "Synthetic One")),
 		Backend: newPersonWorkerBackend(), Client: client,
+		Recorder: newTestOperationRecorder(),
 	})
-	_, err := worker.RunOnce(t.Context(), 1)
+	_, err := worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
 	require.ErrorContains(t, err, "gate")
 	assert.Empty(t, client.calls)
 }
@@ -356,7 +362,7 @@ func TestPersonWorkerEmbedsInitialAndChangedDocumentsInStableBatches(t *testing.
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 2)
 
-	result, err := worker.RunOnce(t.Context(), 7)
+	result, err := worker.RunOnce(t.Context(), 7, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(3, result.Claimed)
 	check.Equal(3, result.Succeeded)
@@ -368,7 +374,7 @@ func TestPersonWorkerEmbedsInitialAndChangedDocumentsInStableBatches(t *testing.
 	check.Equal([][]string{{"Synthetic Thirty"}}, client.calls[1])
 
 	source.put(personDocument(20, "rev-20-b", "Synthetic Twenty Updated"))
-	result, err = worker.RunOnce(t.Context(), 7)
+	result, err = worker.RunOnce(t.Context(), 7, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(1, result.Claimed)
 	check.Equal(1, result.Succeeded)
@@ -388,11 +394,11 @@ func TestPersonWorkerNoOpDoesNotCallProvider(t *testing.T) {
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
-	_, err := worker.RunOnce(t.Context(), 8)
+	_, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 1)
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Zero(result.Claimed)
 	check.Len(client.calls, 1, "unchanged person must not call the provider again")
@@ -408,7 +414,7 @@ func TestPersonWorkerSkipsEmptyCanonicalDocument(t *testing.T) {
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Empty(client.calls, "empty semantic documents must not reach the provider")
@@ -416,7 +422,7 @@ func TestPersonWorkerSkipsEmptyCanonicalDocument(t *testing.T) {
 	must.NoError(err)
 	check.Empty(revisions)
 
-	result, err = worker.RunOnce(t.Context(), 8)
+	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Empty(client.calls, "unchanged empty document must remain provider-free")
@@ -430,10 +436,11 @@ func TestPersonWorkerCapsProviderInput(t *testing.T) {
 	client := &personWorkerClient{}
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 8, MaxInputChars: 9,
-		Gate: allowSemanticPersonGate(),
+		Gate:     allowSemanticPersonGate(),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1, Truncated: 1}, result)
 	must.Len(client.calls, 1)
@@ -448,12 +455,12 @@ func TestPersonWorkerRemovesVectorWhenDocumentBecomesEmpty(t *testing.T) {
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 
-	_, err := worker.RunOnce(t.Context(), 8)
+	_, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 1)
 	source.put(personDocument(2, "rev-empty", ""))
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Len(client.calls, 1, "empty transition must not call the provider")
@@ -474,10 +481,11 @@ func TestPersonWorkerRecordsPoisonDocumentAndContinues(t *testing.T) {
 	client := &poisonPersonWorkerClient{}
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 3, MaxInputChars: 100,
-		Gate: allowSemanticPersonGate(),
+		Gate:     allowSemanticPersonGate(),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 3, Succeeded: 2, Failed: 1}, result)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 8)
@@ -488,7 +496,7 @@ func TestPersonWorkerRecordsPoisonDocumentAndContinues(t *testing.T) {
 	check.NotEmpty(backend.vectors[8][3])
 	check.Equal(4, client.calls, "rejected batch must downshift to single documents")
 
-	result, err = worker.RunOnce(t.Context(), 8)
+	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Equal(4, client.calls, "durable terminal revision must not be retried")
@@ -506,10 +514,11 @@ func TestPersonWorkerDoesNotHideEndpointWidePermanentFailure(t *testing.T) {
 	client := &poisonPersonWorkerClient{rejectAll: true}
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 3, MaxInputChars: 100,
-		Gate: allowSemanticPersonGate(),
+		Gate:     allowSemanticPersonGate(),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.ErrorIs(err, ErrPermanent4xx)
 	check.Equal(RunResult{Claimed: 3, Failed: 3}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
@@ -526,7 +535,7 @@ func TestPersonWorkerTerminatesLonePoisonRevisionAfterHealthyProbe(t *testing.T)
 	client := &poisonPersonWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 1)
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 1, Failed: 1}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
@@ -535,10 +544,81 @@ func TestPersonWorkerTerminatesLonePoisonRevisionAfterHealthyProbe(t *testing.T)
 	check.Empty(backend.vectors[8][1])
 	check.Equal(2, client.calls, "a synthetic probe must establish endpoint health")
 
-	result, err = worker.RunOnce(t.Context(), 8)
+	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{}, result)
 	check.Equal(2, client.calls, "the terminal revision must not be retried")
+}
+
+// TestPersonWorkerFailureOperationUsesFinalCounters catches a nil worker error
+// overriding a durable item rejection and falsely reporting success.
+func TestPersonWorkerFailureOperationUsesFinalCounters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	recorder := testutil.NewTestStore(t)
+	worker := NewPersonWorker(PersonWorkerDeps{
+		Store:   newPersonWorkerSource(personDocument(1, "rev-reject", "Synthetic Reject")),
+		Backend: newPersonWorkerBackend(), Client: &poisonPersonWorkerClient{},
+		BatchSize: 1, Gate: allowSemanticPersonGate(), Recorder: recorder,
+	})
+
+	result, err := worker.RunOnce(t.Context(), 8, operations.PassScope{
+		Key: "manual:person:lone-rejection", Trigger: operations.TriggerManual,
+		StartedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(RunResult{Claimed: 1, Failed: 1}, result)
+	runs := personOperationRuns(t, recorder)
+	require.Len(runs, 1)
+	assert.Equal(operations.StateFailed, runs[0].State)
+	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterAttempted))
+	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
+}
+
+// TestPersonWorkerFailureOperationRecordsMixedOutcomeAsPartial catches useful
+// publications being hidden by a sibling's permanent rejection.
+func TestPersonWorkerFailureOperationRecordsMixedOutcomeAsPartial(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	recorder := testutil.NewTestStore(t)
+	worker := NewPersonWorker(PersonWorkerDeps{
+		Store: newPersonWorkerSource(
+			personDocument(1, "rev-one", "Synthetic One"),
+			personDocument(2, "rev-reject", "Synthetic Reject"),
+		),
+		Backend: newPersonWorkerBackend(), Client: &poisonPersonWorkerClient{},
+		BatchSize: 2, Gate: allowSemanticPersonGate(), Recorder: recorder,
+	})
+
+	result, err := worker.RunOnce(t.Context(), 8, operations.PassScope{
+		Key: "manual:person:mixed", Trigger: operations.TriggerManual,
+		StartedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(RunResult{Claimed: 2, Succeeded: 1, Failed: 1}, result)
+	runs := personOperationRuns(t, recorder)
+	require.Len(runs, 1)
+	assert.Equal(operations.StatePartial, runs[0].State)
+	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterSucceeded))
+	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
+}
+
+func personOperationRuns(t *testing.T, recorder *store.Store) []operations.Run {
+	t.Helper()
+	snapshot, err := recorder.ListRuns(t.Context(), operations.Query{
+		Kinds: []operations.Kind{operations.KindPersonEmbedding}, Limit: 100,
+	})
+	require.NoError(t, err)
+	return snapshot.Runs
+}
+
+func personOperationCounter(run operations.Run, name operations.CounterName) int64 {
+	for _, counter := range run.Counters {
+		if counter.Name == name {
+			return counter.Value
+		}
+	}
+	return 0
 }
 
 func TestPersonWorkerScopesEndpointHealthToFailingBatch(t *testing.T) {
@@ -554,10 +634,11 @@ func TestPersonWorkerScopesEndpointHealthToFailingBatch(t *testing.T) {
 	client := &poisonPersonWorkerClient{rejectFromCall: 2}
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 2, MaxInputChars: 100,
-		Gate: allowSemanticPersonGate(),
+		Gate:     allowSemanticPersonGate(),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	result, err := worker.RunOnce(t.Context(), 8)
+	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.ErrorIs(err, ErrPermanent4xx)
 	check.Equal(RunResult{Claimed: 4, Succeeded: 2, Failed: 2}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
@@ -598,7 +679,7 @@ func TestPersonWorkerPreservesVectorWhenSourceProjectionCannotRender(t *testing.
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(f.Store, backend, client, 8)
 
-	_, err = worker.RunOnce(t.Context(), 8)
+	_, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
 	must.ErrorContains(err, "render person")
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
 	must.NoError(listErr)
@@ -619,7 +700,7 @@ func TestPersonWorkerStopsProviderCallsWhenGenerationRetiresMidRun(t *testing.T)
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 1)
 
-	_, err := worker.RunOnce(t.Context(), 9)
+	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Len(client.calls, 1, "retirement must stop later paid provider batches")
 }
@@ -636,10 +717,11 @@ func TestPersonWorkerStopsDownshiftWhenGenerationRetires(t *testing.T) {
 	client := &poisonPersonWorkerClient{}
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: source, Backend: backend, Client: client, BatchSize: 2, MaxInputChars: 100,
-		Gate: allowSemanticPersonGate(),
+		Gate:     allowSemanticPersonGate(),
+		Recorder: newTestOperationRecorder(),
 	})
 
-	_, err := worker.RunOnce(t.Context(), 9)
+	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(2, client.calls,
 		"retirement on the first singleton upsert must stop the rest of the downshift")
@@ -665,7 +747,7 @@ func TestPersonWorkerTreatsRetiredGenerationAsBenign(t *testing.T) {
 			worker := newTestPersonWorker(
 				newPersonWorkerSource(document), backend, &personWorkerClient{}, 8,
 			)
-			_, err := worker.RunOnce(t.Context(), 9)
+			_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 			require.NoError(t, err)
 		})
 	}
@@ -683,11 +765,11 @@ func TestPersonWorkerReconcilesDeletedPeople(t *testing.T) {
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
-	_, err := worker.RunOnce(t.Context(), 9)
+	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 	must.NoError(err)
 
 	source.delete(1)
-	result, err := worker.RunOnce(t.Context(), 9)
+	result, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Zero(result.Claimed)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
@@ -712,7 +794,7 @@ func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
 	}
 	worker := newTestPersonWorker(source, backend, client, 8)
 
-	result, err := worker.RunOnce(t.Context(), 10)
+	result, err := worker.RunOnce(t.Context(), 10, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(1, result.Claimed)
 	check.Zero(result.Succeeded)
@@ -720,7 +802,7 @@ func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
 	must.NoError(err)
 	check.Empty(revisions, "stale provider response must not be published")
 
-	result, err = worker.RunOnce(t.Context(), 10)
+	result, err = worker.RunOnce(t.Context(), 10, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(1, result.Succeeded)
 	revisions, err = backend.ListPersonRevisions(t.Context(), 10)
@@ -743,7 +825,7 @@ func TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder(t *testing.T) 
 	client := &personWorkerClient{failOnceAfter: 2}
 	worker := newTestPersonWorker(source, backend, client, 3)
 
-	result, err := worker.RunOnce(t.Context(), 11)
+	result, err := worker.RunOnce(t.Context(), 11, testEmbeddingPassScope())
 	must.ErrorContains(err, "synthetic provider interruption")
 	check.Equal(3, result.Claimed)
 	check.Equal(2, result.Succeeded)
@@ -751,7 +833,7 @@ func TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder(t *testing.T) 
 	must.NoError(listErr)
 	check.Equal(map[int64]string{1: "rev-1", 2: "rev-2"}, revisions)
 
-	result, err = worker.RunOnce(t.Context(), 11)
+	result, err = worker.RunOnce(t.Context(), 11, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(1, result.Claimed)
 	check.Equal(1, result.Succeeded)
@@ -778,7 +860,7 @@ func TestPersonWorkerPartialErrorCountsReturnedFencedDocuments(t *testing.T) {
 	}
 	worker := newTestPersonWorker(source, backend, client, 2)
 
-	result, err := worker.RunOnce(t.Context(), 12)
+	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
 	must.ErrorContains(err, "synthetic provider interruption")
 	check.Equal(2, result.Claimed)
 	check.Equal(1, result.Succeeded)
@@ -799,7 +881,7 @@ func TestPersonWorkerAccountsMalformedProviderBatchAsFailed(t *testing.T) {
 	backend := newPersonWorkerBackend()
 	worker := newTestPersonWorker(source, backend, &personWorkerClient{malformed: true}, 2)
 
-	result, err := worker.RunOnce(t.Context(), 12)
+	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
 	must.ErrorContains(err, "returned 0 results for 2 inputs")
 	check.Equal(RunResult{Claimed: 2, Failed: 2}, result)
 }
@@ -815,7 +897,7 @@ func TestPersonWorkerAccountsBackendWriteFailure(t *testing.T) {
 	backend.upsertErr = errors.New("synthetic backend failure")
 	worker := newTestPersonWorker(source, backend, &personWorkerClient{}, 2)
 
-	result, err := worker.RunOnce(t.Context(), 12)
+	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
 	must.ErrorContains(err, "synthetic backend failure")
 	check.Equal(RunResult{Claimed: 2, Failed: 2}, result)
 }
@@ -836,7 +918,7 @@ func TestPersonWorkerEarlyBatchErrorContinuesLaterBatches(t *testing.T) {
 	client := &personWorkerClient{failOnceAfter: 1}
 	worker := newTestPersonWorker(source, backend, client, 2)
 
-	result, err := worker.RunOnce(t.Context(), 13)
+	result, err := worker.RunOnce(t.Context(), 13, testEmbeddingPassScope())
 	must.ErrorContains(err, "synthetic provider interruption")
 	check.Equal(RunResult{Claimed: 4, Succeeded: 3, Failed: 1}, result)
 	check.Equal(result.Claimed, result.Succeeded+result.Failed)
@@ -847,7 +929,7 @@ func TestPersonWorkerEarlyBatchErrorContinuesLaterBatches(t *testing.T) {
 	check.Equal([][]string{{"Synthetic One"}, {"Synthetic Two"}}, client.calls[0])
 	check.Equal([][]string{{"Synthetic Three"}, {"Synthetic Four"}}, client.calls[1])
 
-	result, err = worker.RunOnce(t.Context(), 13)
+	result, err = worker.RunOnce(t.Context(), 13, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
 	revisions, listErr = backend.ListPersonRevisions(t.Context(), 13)
@@ -868,7 +950,7 @@ type personWorkerMessageRunner struct {
 }
 
 func (r *personWorkerMessageRunner) RunOnce(
-	_ context.Context, gen vector.GenerationID,
+	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
 	r.runOnce = append(r.runOnce, gen)
 	if r.runOnceResult != nil {
@@ -877,7 +959,9 @@ func (r *personWorkerMessageRunner) RunOnce(
 	return RunResult{Claimed: 2, Succeeded: 2}, r.runOnceErr
 }
 
-func (r *personWorkerMessageRunner) RunBackstop(_ context.Context, gen vector.GenerationID) (RunResult, error) {
+func (r *personWorkerMessageRunner) RunBackstop(
+	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+) (RunResult, error) {
 	r.runBackstop = append(r.runBackstop, gen)
 	return RunResult{}, r.runBackstopErr
 }
@@ -896,7 +980,7 @@ func TestGenerationWorkerMaintainsPeopleForAnActiveGeneration(t *testing.T) {
 	messages := &personWorkerMessageRunner{}
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
-	result, err := worker.RunOnce(t.Context(), 42)
+	result, err := worker.RunOnce(t.Context(), 42, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal([]vector.GenerationID{42}, messages.runOnce)
 	check.Equal(3, result.Claimed)
@@ -918,7 +1002,7 @@ func TestGenerationWorkerMaintainsPeopleWhenMessageRunFails(t *testing.T) {
 	messages := &personWorkerMessageRunner{runOnceErr: messageErr}
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
-	result, err := worker.RunOnce(t.Context(), 43)
+	result, err := worker.RunOnce(t.Context(), 43, testEmbeddingPassScope())
 	must.ErrorIs(err, messageErr)
 	check.Equal([]vector.GenerationID{43}, messages.runOnce)
 	check.Equal(RunResult{Claimed: 3, Succeeded: 3}, result)
@@ -938,17 +1022,57 @@ func TestGenerationWorkerScansPeopleOnlyAtContextualBuildBoundaries(t *testing.T
 	}}
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
-	_, err := worker.RunOnce(t.Context(), 44)
+	_, err := worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
 	must.NoError(err)
 	source.put(personDocument(7, "rev-two", "Synthetic Two"))
-	_, err = worker.RunOnce(t.Context(), 44)
+	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 1, "intermediate contextual pass must skip an unchanged corpus scan")
 
 	messages.runOnceResult.Contextual.Converged = true
-	_, err = worker.RunOnce(t.Context(), 44)
+	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 2, "final contextual pass must recheck the person corpus")
+}
+
+// TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans catches the
+// coordinator opening person rows for skipped intermediate contextual passes.
+func TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	recorder := testutil.NewTestStore(t)
+	source := newPersonWorkerSource(personDocument(7, "rev-one", "Synthetic One"))
+	backend := newPersonWorkerBackend()
+	backend.building = &vector.Generation{ID: 44}
+	messages := &personWorkerMessageRunner{runOnceResult: &RunResult{
+		Contextual: &ContextConvergence{Converged: false},
+	}}
+	persons := NewPersonWorker(PersonWorkerDeps{
+		Store: source, Backend: backend, Client: &personWorkerClient{}, BatchSize: 8,
+		Gate: allowSemanticPersonGate(), Recorder: recorder,
+	})
+	worker := NewGenerationWorker(messages, persons)
+	started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	_, err := worker.RunOnce(t.Context(), 44, operations.PassScope{
+		Key: "manual:generation:first", Trigger: operations.TriggerManual, StartedAt: started,
+	})
+	require.NoError(err)
+	_, err = worker.RunOnce(t.Context(), 44, operations.PassScope{
+		Key: "manual:generation:middle", Trigger: operations.TriggerManual, StartedAt: started.Add(time.Second),
+	})
+	require.NoError(err)
+	assert.Len(personOperationRuns(t, recorder), 1, "skipped person scan must create no row")
+
+	messages.runOnceResult.Contextual.Converged = true
+	_, err = worker.RunOnce(t.Context(), 44, operations.PassScope{
+		Key: "manual:generation:final", Trigger: operations.TriggerManual, StartedAt: started.Add(2 * time.Second),
+	})
+	require.NoError(err)
+	runs := personOperationRuns(t, recorder)
+	require.Len(runs, 2, "first and final executed scans each own one row")
+	assert.Equal([]operations.State{operations.StateSucceeded, operations.StateSucceeded},
+		[]operations.State{runs[0].State, runs[1].State})
 }
 
 func TestGenerationWorkerMaintainsActivePeopleDuringContextualFailures(t *testing.T) {
@@ -961,10 +1085,10 @@ func TestGenerationWorkerMaintainsActivePeopleDuringContextualFailures(t *testin
 	}}
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
-	_, err := worker.RunOnce(t.Context(), 45)
+	_, err := worker.RunOnce(t.Context(), 45, testEmbeddingPassScope())
 	must.NoError(err)
 	source.put(personDocument(7, "rev-two", "Synthetic Two"))
-	_, err = worker.RunOnce(t.Context(), 45)
+	_, err = worker.RunOnce(t.Context(), 45, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 2, "active generations must reconcile people on every scheduler tick")
 }
@@ -978,7 +1102,7 @@ func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
 	messages := &personWorkerMessageRunner{}
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
-	result, err := worker.RunBackstop(t.Context(), 45)
+	result, err := worker.RunBackstop(t.Context(), 45, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal([]vector.GenerationID{45}, messages.runBackstop)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)

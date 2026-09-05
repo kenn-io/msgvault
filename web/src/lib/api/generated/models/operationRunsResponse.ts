@@ -5,8 +5,9 @@ import type { OperationRunSummary } from "./operationRunSummary";
 import type { OperationUnavailableKind } from "./operationUnavailableKind";
 
 export interface OperationRunsResponse {
+  /** @minimum 0 */
+  membership_revision: number;
   next_cursor?: string;
   runs: OperationRunSummary[];
   unavailable_kinds: OperationUnavailableKind[];
-  [key: string]: unknown;
 }

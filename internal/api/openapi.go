@@ -276,6 +276,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument()
 	hardenSourceStatusPublicSchemas(doc)
 	relaxResponseAdditionalProperties(doc)
+	hardenOperationSchemas(doc)
 	return doc
 }
 
@@ -283,8 +284,30 @@ func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument()
 	hardenSourceStatusClientSchemas(doc)
 	clearResponseAdditionalProperties(doc)
+	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
 	return doc
+}
+
+func hardenOperationSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for _, name := range []string{
+		"OperationErrorResponse",
+		"OperationPublicCounter",
+		"OperationPublicError",
+		"OperationRunSummary",
+		"OperationRunDetail",
+		"OperationUnavailableKind",
+		"OperationRunsResponse",
+		"OperationLaneStatus",
+		"OperationStatusResponse",
+	} {
+		if schema := doc.Components.Schemas.Map()[name]; schema != nil {
+			schema.AdditionalProperties = false
+		}
+	}
 }
 
 func baseOpenAPIDocument() *huma.OpenAPI {
@@ -740,6 +763,18 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		"ExploreGroupDimensionSource", "ExploreGroupDimensionParticipant", "ExploreGroupDimensionDomain",
 		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth",
 	})
+	if counter := schemas["OperationPublicCounter"]; counter != nil {
+		setEnumNames(counter.Properties["unit"], []any{
+			"OperationPublicCounterUnitAttachments",
+			"OperationPublicCounterUnitBooks",
+			"OperationPublicCounterUnitChunks",
+			"OperationPublicCounterUnitContacts",
+			"OperationPublicCounterUnitDocuments",
+			"OperationPublicCounterUnitMessages",
+			"OperationPublicCounterUnitPeople",
+			"OperationPublicCounterUnitWrites",
+		})
+	}
 	if response := schemas["MeetingImportResponse"]; response != nil {
 		setEnumNames(response.Properties["status"], []any{
 			"MeetingImportResponseStatusCreated",

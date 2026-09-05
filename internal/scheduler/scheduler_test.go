@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -713,6 +714,9 @@ type fakeRunner struct {
 	personErr      error
 	personCalls    []vector.GenerationID
 	onPerson       func(vector.GenerationID)
+	runScopes      []operations.PassScope
+	backstopScopes []operations.PassScope
+	personScopes   []operations.PassScope
 	// onBackstop, if set, is invoked from RunBackstop (after recording the
 	// call) to let tests model a side effect of the backstop pass, e.g. a
 	// straggler becoming covered. Called while r.mu is held.
@@ -720,11 +724,12 @@ type fakeRunner struct {
 }
 
 func (r *fakeRunner) RunPersonsOnce(
-	_ context.Context, gen vector.GenerationID,
+	_ context.Context, gen vector.GenerationID, scope operations.PassScope,
 ) (embed.RunResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.personCalls = append(r.personCalls, gen)
+	r.personScopes = append(r.personScopes, scope)
 	if r.onPerson != nil && r.personErr == nil {
 		r.onPerson(gen)
 	}
@@ -743,10 +748,13 @@ func (r *fakeRunner) ReclaimStale(ctx context.Context) (int, error) {
 	return 0, reclaimErr
 }
 
-func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error) {
+func (r *fakeRunner) RunOnce(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (embed.RunResult, error) {
 	r.mu.Lock()
 	r.runCalls++
 	r.lastRunGen = gen
+	r.runScopes = append(r.runScopes, scope)
 	if r.onRunOnce != nil && r.runErr == nil {
 		r.onRunOnce(gen)
 	}
@@ -763,10 +771,13 @@ func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embe
 	return res, err
 }
 
-func (r *fakeRunner) RunBackstop(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error) {
+func (r *fakeRunner) RunBackstop(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (embed.RunResult, error) {
 	r.mu.Lock()
 	r.backstopCalls++
 	r.lastBackstop = gen
+	r.backstopScopes = append(r.backstopScopes, scope)
 	if r.onBackstop != nil && r.backstopErr == nil {
 		r.onBackstop()
 	}
@@ -796,6 +807,13 @@ func (r *fakeRunner) persons() []vector.GenerationID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]vector.GenerationID(nil), r.personCalls...)
+}
+
+func (r *fakeRunner) passScopes() (run, backstop []operations.PassScope) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]operations.PassScope(nil), r.runScopes...),
+		append([]operations.PassScope(nil), r.backstopScopes...)
 }
 
 // ---------- EmbedJob tests ----------
@@ -1071,8 +1089,8 @@ func TestEmbedJob_MaybeRunBackstop_YieldedCleanRunDoesNotRecordCompletion(t *tes
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	const gen = vector.GenerationID(5)
 
-	job.maybeRunBackstop(ctx, gen, logger)
-	job.maybeRunBackstop(ctx, gen, logger)
+	job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
+	job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
 
 	assert.NotContains(logs.String(), "embed backstop complete", "yield must not log completion")
 	n, _ := runner.backstops()
@@ -1423,6 +1441,35 @@ func TestEmbedJob_Run_BackstopRunsOnFirstTick(t *testing.T) {
 	assert.Equal(t, runGen, bsGen, "backstop targets the same generation as RunOnce")
 }
 
+// TestEmbedJobOperationPassScopesShareScheduledOccurrence catches scheduled
+// forward and backstop passes using manual triggers, unstable timestamps, or a
+// reused invocation key.
+func TestEmbedJobOperationPassScopesShareScheduledOccurrence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	occurrence := time.Date(2026, 8, 30, 12, 34, 0, 0, time.UTC)
+	backend := &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}}
+	runner := &fakeRunner{}
+	job := &EmbedJob{Worker: runner, Backend: backend, Now: func() time.Time { return occurrence }}
+
+	job.Run(t.Context())
+	runScopes, backstopScopes := runner.passScopes()
+	require.Len(runScopes, 1)
+	require.Len(backstopScopes, 1)
+	assert.Equal(operations.TriggerScheduled, runScopes[0].Trigger)
+	assert.Equal(operations.TriggerScheduled, backstopScopes[0].Trigger)
+	assert.Equal(occurrence, runScopes[0].StartedAt)
+	assert.Equal(occurrence, backstopScopes[0].StartedAt)
+	assert.Equal("scheduled:2026-08-30T12:34:00Z:g:5:forward", runScopes[0].Key)
+	assert.Equal("scheduled:2026-08-30T12:34:00Z:g:5:backstop", backstopScopes[0].Key)
+	messageScope, err := runScopes[0].ForKind(operations.KindMessageEmbedding)
+	require.NoError(err)
+	personScope, err := runScopes[0].ForKind(operations.KindPersonEmbedding)
+	require.NoError(err)
+	assert.Equal("scheduled:2026-08-30T12:34:00Z:g:5:forward:message_embedding", messageScope.Key)
+	assert.Equal("scheduled:2026-08-30T12:34:00Z:g:5:forward:person_embedding", personScope.Key)
+}
+
 // TestEmbedJob_Run_BackstopGatedByInterval verifies the ~daily gating: a
 // second tick within BackstopInterval does NOT run another backstop (only
 // RunOnce), and a tick after the interval elapses runs one again.
@@ -1747,7 +1794,9 @@ type slowRunner struct {
 
 func (r *slowRunner) ReclaimStale(context.Context) (int, error) { return 0, nil }
 
-func (r *slowRunner) RunOnce(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (r *slowRunner) RunOnce(
+	context.Context, vector.GenerationID, operations.PassScope,
+) (embed.RunResult, error) {
 	r.mu.Lock()
 	r.runCalls++
 	r.mu.Unlock()
@@ -1760,7 +1809,9 @@ func (r *slowRunner) RunOnce(context.Context, vector.GenerationID) (embed.RunRes
 	return embed.RunResult{}, nil
 }
 
-func (r *slowRunner) RunBackstop(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (r *slowRunner) RunBackstop(
+	context.Context, vector.GenerationID, operations.PassScope,
+) (embed.RunResult, error) {
 	return embed.RunResult{}, nil
 }
 

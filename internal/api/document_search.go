@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -50,6 +51,12 @@ type DocumentStatusStore interface {
 	) (int64, error)
 }
 
+// DocumentCurrentStatusScopeStore resolves the selected durable document
+// profile without requiring the browser to receive or retain its private ID.
+type DocumentCurrentStatusScopeStore interface {
+	GetCurrentDocumentIndexStatusScope(ctx context.Context) (string, []string, error)
+}
+
 type DocumentVectorStatusStore interface {
 	GetDocumentVectorTargetProfileID(ctx context.Context) (string, error)
 	GetDocumentVectorOperationsStatus(ctx context.Context, configured store.DocumentVectorGenerationSpec, documentEgressFingerprint, queryEgressFingerprint string, generationID int64, afterToken string, limit int) (store.DocumentVectorOperationsStatus, error)
@@ -68,6 +75,7 @@ type documentOccurrenceStatusReconciler interface {
 
 var _ DocumentSearchStore = (*store.Store)(nil)
 var _ DocumentStatusStore = (*store.Store)(nil)
+var _ DocumentCurrentStatusScopeStore = (*store.Store)(nil)
 
 func (s *Server) registerDocumentSearchRoute(api huma.API) {
 	registerAPIV1RawHumaJSONRouteWithErrors[store.DocumentSearchResponse](
@@ -81,6 +89,13 @@ func (s *Server) registerDocumentSearchRoute(api huma.API) {
 		api, "getDocumentIndexStatus", http.MethodGet, "/documents/status",
 		"Get extracted document index status",
 		s.documentSearchGuard("document status", s.handleDocumentIndexStatus),
+		http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests,
+		http.StatusServiceUnavailable,
+	)
+	registerAPIV1RawHumaJSONRouteWithErrors[store.DocumentIndexStatusResponse](
+		api, "getCurrentDocumentIndexStatus", http.MethodGet, "/documents/status/current",
+		"Get extracted document index status for the selected durable profile",
+		s.documentSearchGuard("current document status", s.handleCurrentDocumentIndexStatus),
 		http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests,
 		http.StatusServiceUnavailable,
 	)
@@ -191,15 +206,33 @@ func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.H
 }
 
 func (s *Server) handleDocumentIndexStatus(w http.ResponseWriter, r *http.Request) {
+	request, err := parseDocumentIndexStatusRequest(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	s.writeDocumentIndexStatus(w, r, request)
+}
+
+func (s *Server) handleCurrentDocumentIndexStatus(w http.ResponseWriter, r *http.Request) {
+	request, err := s.currentDocumentIndexStatusRequest(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "document_status_scope_unavailable",
+			"Current document status scope is unavailable")
+		return
+	}
+	s.writeDocumentIndexStatus(w, r, request)
+}
+
+func (s *Server) writeDocumentIndexStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+	request store.DocumentIndexStatusRequest,
+) {
 	statusStore, ok := s.store.(DocumentStatusStore)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "document_status_unavailable",
 			"Document attachment status is unavailable")
-		return
-	}
-	request, err := parseDocumentIndexStatusRequest(r)
-	if err != nil {
-		s.rejectBadParam(w, err)
 		return
 	}
 	if reconciler, ok := s.store.(documentOccurrenceStatusReconciler); ok {
@@ -240,6 +273,22 @@ func (s *Server) handleDocumentIndexStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) currentDocumentIndexStatusRequest(ctx context.Context) (store.DocumentIndexStatusRequest, error) {
+	resolver, ok := s.store.(DocumentCurrentStatusScopeStore)
+	if !ok {
+		return store.DocumentIndexStatusRequest{}, store.ErrDocumentIndexStatusScopeUnavailable
+	}
+	profileID, mediaTypes, err := resolver.GetCurrentDocumentIndexStatusScope(ctx)
+	if err != nil {
+		return store.DocumentIndexStatusRequest{}, err
+	}
+	return store.DocumentIndexStatusRequest{
+		ProfileID: profileID, ExtractionInputKey: "original",
+		AllowedMediaTypes:   mediaTypes,
+		AllowedMessageTypes: slices.Clone(s.cfg.Attachments.Documents.Scope.MessageTypes),
+	}, nil
 }
 
 func parseDocumentIndexStatusRequest(r *http.Request) (store.DocumentIndexStatusRequest, error) {

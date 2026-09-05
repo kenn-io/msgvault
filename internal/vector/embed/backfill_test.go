@@ -169,8 +169,9 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 		Store:     f.Store,
 		Client:    f.Client,
 		BatchSize: 8,
+		Recorder:  newTestOperationRecorder(),
 	})
-	res, err := w.RunOnce(ctx, gen)
+	res, err := w.RunOnce(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 

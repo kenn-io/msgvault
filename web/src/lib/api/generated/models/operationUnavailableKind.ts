@@ -8,5 +8,4 @@ export interface OperationUnavailableKind {
   kind: OperationUnavailableKindKind;
   lane: OperationUnavailableKindLane;
   unavailable_code: string;
-  [key: string]: unknown;
 }

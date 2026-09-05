@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -63,9 +64,13 @@ type cliPassRunner struct {
 	results []embed.RunResult
 	errs    []error
 	calls   int
+	scopes  []operations.PassScope
 }
 
-func (r *cliPassRunner) RunOnce(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (r *cliPassRunner) RunOnce(
+	_ context.Context, _ vector.GenerationID, scope operations.PassScope,
+) (embed.RunResult, error) {
+	r.scopes = append(r.scopes, scope)
 	call := r.calls
 	r.calls++
 	result := r.results[min(call, len(r.results)-1)]
@@ -75,7 +80,10 @@ func (r *cliPassRunner) RunOnce(context.Context, vector.GenerationID) (embed.Run
 	return result, r.errs[min(call, len(r.errs)-1)]
 }
 
-func (r *cliPassRunner) RunBackstop(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (r *cliPassRunner) RunBackstop(
+	_ context.Context, _ vector.GenerationID, scope operations.PassScope,
+) (embed.RunResult, error) {
+	r.scopes = append(r.scopes, scope)
 	return embed.RunResult{}, errors.New("unexpected backstop")
 }
 
@@ -97,6 +105,26 @@ func TestRunEmbeddingPasses_ContextualCLIContinuesUntilConverged(t *testing.T) {
 	assert.Equal(6, result.Succeeded)
 	require.NotNil(result.Contextual)
 	assert.True(result.Contextual.Converged)
+}
+
+// TestRunEmbeddingPassesOperationPassUsesFreshScopePerLoop catches a CLI
+// convergence loop reusing one invocation key across independently terminal
+// worker passes.
+func TestRunEmbeddingPassesOperationPassUsesFreshScopePerLoop(t *testing.T) {
+	runner := &cliPassRunner{results: []embed.RunResult{
+		{Claimed: 1, Succeeded: 1, Contextual: &embed.ContextConvergence{Converged: false}},
+		{Claimed: 1, Succeeded: 1, Contextual: &embed.ContextConvergence{Converged: true}},
+	}}
+
+	_, err := runEmbeddingPasses(t.Context(), runner, 7, false, vector.APIFormatVoyageContextual, &bytes.Buffer{})
+	require.NoError(t, err)
+	require.Len(t, runner.scopes, 2)
+	assert.NotEqual(t, runner.scopes[0].Key, runner.scopes[1].Key)
+	for _, scope := range runner.scopes {
+		assert.NotEmpty(t, scope.Key)
+		assert.Equal(t, operations.TriggerManual, scope.Trigger)
+		assert.False(t, scope.StartedAt.IsZero())
+	}
 }
 
 func TestRunEmbeddingPasses_ContextualCLIRejectsNonProgress(t *testing.T) {

@@ -198,6 +198,7 @@ type workerFixture struct {
 	Backend     vector.Backend
 	BuildingGen vector.GenerationID
 	FakeClient  *fakeEmbeddingClient
+	Recorder    *testOperationRecorder
 }
 
 // newWorkerFixture creates a main DB with n messages (subject="msg N",
@@ -253,6 +254,7 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 		Backend:     b,
 		BuildingGen: gid,
 		FakeClient:  fc,
+		Recorder:    newTestOperationRecorder(),
 	}
 }
 

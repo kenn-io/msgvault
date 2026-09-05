@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { selectKitOption, setKitTheme } from './kit-ui';
+import { selectKitOption, selectKitTopBarTab, setKitTheme } from './kit-ui';
 
 const row = {
   key: 'message:1',
@@ -171,19 +171,19 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(activeOption).toHaveClass(/highlighted/);
     await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: 'Saved Views' }).click();
+    await selectKitTopBarTab(page, 'Saved Views');
     const workflowButton = page.getByRole('button', { name: 'Save', exact: true });
     await expect(workflowButton).toHaveClass(/kit-button--solid/);
     await expect(workflowButton).toHaveClass(/kit-button--workflow/);
     await expectRenderedContrast(workflowButton, 4.5);
 
-    await page.getByRole('button', { name: 'Files' }).click();
+    await selectKitTopBarTab(page, 'Files');
     const filesGrid = page.getByRole('grid', { name: 'Files results' });
     await filesGrid.focus();
     await page.keyboard.press('ArrowDown');
     await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
-    await page.getByRole('button', { name: 'Settings' }).click();
+    await selectKitTopBarTab(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
     await expectRenderedContrast(settings.locator('.field-copy span').first(), 4.5);

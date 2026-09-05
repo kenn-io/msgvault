@@ -5060,6 +5060,19 @@ func (n NetworkNode) Validate() error {
 	return errors
 }
 
+type OperationErrorResponse struct {
+	ErrorData string  `json:"error" validate:"required"`
+	Message   *string `json:"message,omitempty"`
+}
+
+func (o OperationErrorResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(o))
+}
+
+func (s OperationErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
 type OperationHealth struct {
 	Busy      bool       `json:"busy"`
 	Label     *string    `json:"label,omitempty"`
@@ -5183,15 +5196,17 @@ func (o OperationPublicError) Validate() error {
 }
 
 type OperationRunDetail struct {
-	Counters   []OperationPublicCounter   `json:"counters" validate:"required"`
-	ErrorData  *OperationPublicError      `json:"error,omitempty"`
-	FinishedAt *time.Time                 `json:"finished_at,omitempty"`
-	ID         string                     `json:"id" validate:"required"`
-	Kind       OperationRunDetailKind     `json:"kind" validate:"required"`
-	Lane       OperationRunDetailLane     `json:"lane" validate:"required"`
-	StartedAt  time.Time                  `json:"started_at" validate:"required"`
-	State      OperationRunDetailState    `json:"state" validate:"required"`
-	Trigger    *OperationRunDetailTrigger `json:"trigger,omitempty"`
+	Counters         []OperationPublicCounter             `json:"counters" validate:"required"`
+	ErrorData        *OperationPublicError                `json:"error,omitempty"`
+	FinishedAt       *time.Time                           `json:"finished_at,omitempty"`
+	ID               string                               `json:"id" validate:"required"`
+	Kind             OperationRunDetailKind               `json:"kind" validate:"required"`
+	Lane             OperationRunDetailLane               `json:"lane" validate:"required"`
+	RelatedStatus    *OperationRunDetailRelatedStatus     `json:"related_status,omitempty"`
+	StartedAt        time.Time                            `json:"started_at" validate:"required"`
+	State            OperationRunDetailState              `json:"state" validate:"required"`
+	SupportedActions []OperationRunDetailSupportedActions `json:"supported_actions" validate:"required"`
+	Trigger          *OperationRunDetailTrigger           `json:"trigger,omitempty"`
 }
 
 func (o OperationRunDetail) Validate() error {
@@ -5223,12 +5238,26 @@ func (o OperationRunDetail) Validate() error {
 			errors = errors.Append("Lane", err)
 		}
 	}
+	if o.RelatedStatus != nil {
+		if v, ok := any(o.RelatedStatus).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RelatedStatus", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(o.StartedAt, "required"); err != nil {
 		errors = errors.Append("StartedAt", err)
 	}
 	if v, ok := any(o.State).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("State", err)
+		}
+	}
+	for i, item := range o.SupportedActions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SupportedActions[%d]", i), err)
+			}
 		}
 	}
 	if o.Trigger != nil {
@@ -5307,13 +5336,17 @@ func (o OperationRunSummary) Validate() error {
 }
 
 type OperationRunsResponse struct {
-	NextCursor       *string                    `json:"next_cursor,omitempty"`
-	Runs             []OperationRunSummary      `json:"runs" validate:"required"`
-	UnavailableKinds []OperationUnavailableKind `json:"unavailable_kinds" validate:"required"`
+	MembershipRevision int64                      `json:"membership_revision" validate:"gte=0"`
+	NextCursor         *string                    `json:"next_cursor,omitempty"`
+	Runs               []OperationRunSummary      `json:"runs" validate:"required"`
+	UnavailableKinds   []OperationUnavailableKind `json:"unavailable_kinds" validate:"required"`
 }
 
 func (o OperationRunsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.MembershipRevision, "gte=0"); err != nil {
+		errors = errors.Append("MembershipRevision", err)
+	}
 	for i, item := range o.Runs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

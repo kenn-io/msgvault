@@ -1,0 +1,13 @@
+{
+  "name": "Private Synthetic Name",
+  "address": "private-address@example.invalid",
+  "filename": "private-file-name.txt",
+  "provider": "private-provider-name",
+  "model": "private-model-name",
+  "endpoint": "https://private-endpoint.invalid",
+  "raw_error": "private raw adapter error",
+  "archive_uid": "a9c8e7d6b5f40123a9c8e7d6b5f40123",
+  "database_id": "9841",
+  "generation_fingerprint": "generation-fingerprint-private",
+  "credential": "credential-private-secret"
+}

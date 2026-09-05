@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -20,17 +21,17 @@ const defaultBackstopInterval = 24 * time.Hour
 // EmbedRunner is the subset of *embed.Worker that EmbedJob needs.
 // Tests satisfy it with a fake.
 type EmbedRunner interface {
-	RunOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
+	RunOnce(ctx context.Context, gen vector.GenerationID, scope operations.PassScope) (embed.RunResult, error)
 	// RunBackstop performs a full-scan pass that ignores the per-generation
 	// watermark, recovering below-watermark stragglers (repair-encoding
 	// resets, transient errors, crashes). Idempotent: already-covered rows
 	// are skipped by the scan predicate.
-	RunBackstop(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
+	RunBackstop(ctx context.Context, gen vector.GenerationID, scope operations.PassScope) (embed.RunResult, error)
 	ReclaimStale(ctx context.Context) (int, error)
 }
 
 type activePersonRunner interface {
-	RunPersonsOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
+	RunPersonsOnce(ctx context.Context, gen vector.GenerationID, scope operations.PassScope) (embed.RunResult, error)
 }
 
 // ConvergenceResult is the complete activation gate for one generation.
@@ -199,6 +200,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 	defer j.running.Unlock()
+	occurrence := j.now().UTC()
 
 	if j.ResolveBuildScope != nil {
 		resolved, err := j.ResolveBuildScope()
@@ -235,7 +237,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		log.Warn("embed reclaim failed", "error", err)
 	}
 
-	j.maintainActivePeopleDuringBuild(ctx, log)
+	j.maintainActivePeopleDuringBuild(ctx, log, occurrence)
 	if jobctx.YieldedToWaiter(ctx) {
 		return
 	}
@@ -245,7 +247,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 
-	res, err := j.Worker.RunOnce(ctx, target)
+	res, err := j.Worker.RunOnce(ctx, target, scheduledEmbeddingPassScope(occurrence, target, "forward"))
 	// The scheduler yield cause takes precedence over an operation error:
 	// drivers can return unwrapped errors after cancellation, so the cause at
 	// this operation boundary is authoritative.
@@ -301,7 +303,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	// scan/embed/stamp path with the cursor pinned at 0, in modest
 	// non-locking batches, and is idempotent (already-covered rows are
 	// skipped) so it never re-embeds stamped messages.
-	backstopRan := j.maybeRunBackstop(ctx, target, log)
+	backstopRan := j.maybeRunBackstop(ctx, target, log, occurrence)
 	if jobctx.YieldedToWaiter(ctx) {
 		return
 	}
@@ -366,7 +368,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	j.activateBuilding(ctx, target, contextualState, log)
 }
 
-func (j *EmbedJob) maintainActivePeopleDuringBuild(ctx context.Context, log *slog.Logger) {
+func (j *EmbedJob) maintainActivePeopleDuringBuild(
+	ctx context.Context, log *slog.Logger, occurrence time.Time,
+) {
 	runner, ok := j.Worker.(activePersonRunner)
 	if !ok || j.Fingerprint == "" {
 		return
@@ -386,7 +390,9 @@ func (j *EmbedJob) maintainActivePeopleDuringBuild(ctx context.Context, log *slo
 	if active.Fingerprint != j.Fingerprint {
 		return
 	}
-	res, err := runner.RunPersonsOnce(ctx, active.ID)
+	res, err := runner.RunPersonsOnce(
+		ctx, active.ID, scheduledEmbeddingPassScope(occurrence, active.ID, "active-people"),
+	)
 	if jobctx.YieldedToWaiter(ctx) {
 		return
 	}
@@ -457,7 +463,9 @@ func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID)
 // backstop failure is logged, not fatal — the next interval retries.
 // maybeRunBackstop reports whether it invoked RunBackstop, so the caller
 // knows durable state may have changed since any earlier convergence check.
-func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID, log *slog.Logger) bool {
+func (j *EmbedJob) maybeRunBackstop(
+	ctx context.Context, gen vector.GenerationID, log *slog.Logger, occurrence time.Time,
+) bool {
 	interval := j.BackstopInterval
 	if interval < 0 {
 		return false // explicitly disabled
@@ -465,17 +473,13 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 	if interval == 0 {
 		interval = defaultBackstopInterval
 	}
-	now := time.Now
-	if j.Now != nil {
-		now = j.Now
-	}
-	t := now()
+	t := occurrence
 	// First run for this generation (no recorded time) always runs a backstop;
 	// thereafter gate by the interval against this generation's own last run.
 	if last, ok := j.lastBackstop[gen]; ok && t.Sub(last) < interval {
 		return false
 	}
-	res, err := j.Worker.RunBackstop(ctx, gen)
+	res, err := j.Worker.RunBackstop(ctx, gen, scheduledEmbeddingPassScope(occurrence, gen, "backstop"))
 	if jobctx.YieldedToWaiter(ctx) {
 		return true
 	}
@@ -502,6 +506,23 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 		"truncated", res.Truncated,
 	)
 	return true
+}
+
+func (j *EmbedJob) now() time.Time {
+	if j.Now != nil {
+		return j.Now()
+	}
+	return time.Now()
+}
+
+func scheduledEmbeddingPassScope(
+	occurrence time.Time, gen vector.GenerationID, phase string,
+) operations.PassScope {
+	occurrence = occurrence.UTC()
+	return operations.PassScope{
+		Key:     fmt.Sprintf("scheduled:%s:g:%d:%s", occurrence.Format(time.RFC3339Nano), gen, phase),
+		Trigger: operations.TriggerScheduled, StartedAt: occurrence,
+	}
 }
 
 // pickTarget returns the generation to drain plus an isBuilding flag

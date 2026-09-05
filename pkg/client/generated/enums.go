@@ -1039,19 +1039,25 @@ const (
 	Attempted                           OperationPublicCounterName = "attempted"
 	Books                               OperationPublicCounterName = "books"
 	Created                             OperationPublicCounterName = "created"
+	IdentityRejected                    OperationPublicCounterName = "identity_rejected"
 	ItemErrors                          OperationPublicCounterName = "item_errors"
 	OperationPublicCounterNameFailed    OperationPublicCounterName = "failed"
 	OperationPublicCounterNameSucceeded OperationPublicCounterName = "succeeded"
 	Processed                           OperationPublicCounterName = "processed"
 	ProjectedWrites                     OperationPublicCounterName = "projected_writes"
 	Removed                             OperationPublicCounterName = "removed"
+	Requested                           OperationPublicCounterName = "requested"
+	Skipped                             OperationPublicCounterName = "skipped"
+	Started                             OperationPublicCounterName = "started"
+	Suppressed                          OperationPublicCounterName = "suppressed"
+	Truncated                           OperationPublicCounterName = "truncated"
 	Updated                             OperationPublicCounterName = "updated"
 )
 
 // Validate checks if the OperationPublicCounterName value is valid
 func (o OperationPublicCounterName) Validate() error {
 	switch o {
-	case Added, Attempted, Books, Created, ItemErrors, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, Processed, ProjectedWrites, Removed, Updated:
+	case Added, Attempted, Books, Created, IdentityRejected, ItemErrors, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, Processed, ProjectedWrites, Removed, Requested, Skipped, Started, Suppressed, Truncated, Updated:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterName value, got: %v", o))
@@ -1061,17 +1067,20 @@ func (o OperationPublicCounterName) Validate() error {
 type OperationPublicCounterUnit string
 
 const (
-	OperationPublicCounterUnitBooks    OperationPublicCounterUnit = "books"
-	OperationPublicCounterUnitContacts OperationPublicCounterUnit = "contacts"
-	OperationPublicCounterUnitMessages OperationPublicCounterUnit = "messages"
-	People                             OperationPublicCounterUnit = "people"
-	Writes                             OperationPublicCounterUnit = "writes"
+	OperationPublicCounterUnitAttachments OperationPublicCounterUnit = "attachments"
+	OperationPublicCounterUnitBooks       OperationPublicCounterUnit = "books"
+	OperationPublicCounterUnitChunks      OperationPublicCounterUnit = "chunks"
+	OperationPublicCounterUnitContacts    OperationPublicCounterUnit = "contacts"
+	OperationPublicCounterUnitDocuments   OperationPublicCounterUnit = "documents"
+	OperationPublicCounterUnitMessages    OperationPublicCounterUnit = "messages"
+	OperationPublicCounterUnitPeople      OperationPublicCounterUnit = "people"
+	OperationPublicCounterUnitWrites      OperationPublicCounterUnit = "writes"
 )
 
 // Validate checks if the OperationPublicCounterUnit value is valid
 func (o OperationPublicCounterUnit) Validate() error {
 	switch o {
-	case OperationPublicCounterUnitBooks, OperationPublicCounterUnitContacts, OperationPublicCounterUnitMessages, People, Writes:
+	case OperationPublicCounterUnitAttachments, OperationPublicCounterUnitBooks, OperationPublicCounterUnitChunks, OperationPublicCounterUnitContacts, OperationPublicCounterUnitDocuments, OperationPublicCounterUnitMessages, OperationPublicCounterUnitPeople, OperationPublicCounterUnitWrites:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterUnit value, got: %v", o))
@@ -1086,6 +1095,17 @@ const (
 	CarddavSyncFailed                            OperationPublicErrorCode = "carddav_sync_failed"
 	Internal                                     OperationPublicErrorCode = "internal"
 	InvalidOutput                                OperationPublicErrorCode = "invalid_output"
+	InvocationArchiveDrift                       OperationPublicErrorCode = "invocation_archive_drift"
+	InvocationAuthenticationFailed               OperationPublicErrorCode = "invocation_authentication_failed"
+	InvocationCancelled                          OperationPublicErrorCode = "invocation_cancelled"
+	InvocationDaemonRestarted                    OperationPublicErrorCode = "invocation_daemon_restarted"
+	InvocationInternal                           OperationPublicErrorCode = "invocation_internal"
+	InvocationInvalidOutput                      OperationPublicErrorCode = "invocation_invalid_output"
+	InvocationRateLimited                        OperationPublicErrorCode = "invocation_rate_limited"
+	InvocationSafetyLimit                        OperationPublicErrorCode = "invocation_safety_limit"
+	InvocationTimeout                            OperationPublicErrorCode = "invocation_timeout"
+	InvocationUnsafeErrorRedacted                OperationPublicErrorCode = "invocation_unsafe_error_redacted"
+	InvocationUpstreamFailed                     OperationPublicErrorCode = "invocation_upstream_failed"
 	LeaseLost                                    OperationPublicErrorCode = "lease_lost"
 	OperationPublicErrorCodeAuthenticationFailed OperationPublicErrorCode = "authentication_failed"
 	OperationPublicErrorCodeCancelled            OperationPublicErrorCode = "cancelled"
@@ -1106,7 +1126,7 @@ const (
 // Validate checks if the OperationPublicErrorCode value is valid
 func (o OperationPublicErrorCode) Validate() error {
 	switch o {
-	case ArchiveGap, Budget, CarddavSyncFailed, Internal, InvalidOutput, LeaseLost, OperationPublicErrorCodeAuthenticationFailed, OperationPublicErrorCodeCancelled, OperationPublicErrorCodeDaemonRestarted, OperationPublicErrorCodeRetryAfter, OperationPublicErrorCodeSafetyLimit, OperationPublicErrorCodeSyncFailed, OperationPublicErrorCodeUnsafeErrorRedacted, OperationPublicErrorCodeUpstreamFailed, PersonSweepFailed, Policy, ProviderHTTP, RateLimited, SourceSyncFailed, Timeout:
+	case ArchiveGap, Budget, CarddavSyncFailed, Internal, InvalidOutput, InvocationArchiveDrift, InvocationAuthenticationFailed, InvocationCancelled, InvocationDaemonRestarted, InvocationInternal, InvocationInvalidOutput, InvocationRateLimited, InvocationSafetyLimit, InvocationTimeout, InvocationUnsafeErrorRedacted, InvocationUpstreamFailed, LeaseLost, OperationPublicErrorCodeAuthenticationFailed, OperationPublicErrorCodeCancelled, OperationPublicErrorCodeDaemonRestarted, OperationPublicErrorCodeRetryAfter, OperationPublicErrorCodeSafetyLimit, OperationPublicErrorCodeSyncFailed, OperationPublicErrorCodeUnsafeErrorRedacted, OperationPublicErrorCodeUpstreamFailed, PersonSweepFailed, Policy, ProviderHTTP, RateLimited, SourceSyncFailed, Timeout:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicErrorCode value, got: %v", o))
@@ -1157,6 +1177,26 @@ func (o OperationRunDetailLane) Validate() error {
 	}
 }
 
+type OperationRunDetailRelatedStatus string
+
+const (
+	OperationRunDetailRelatedStatusGetCardDAVStatus          OperationRunDetailRelatedStatus = "getCardDAVStatus"
+	OperationRunDetailRelatedStatusGetDocumentIndexStatus    OperationRunDetailRelatedStatus = "getDocumentIndexStatus"
+	OperationRunDetailRelatedStatusGetDocumentVectorStatus   OperationRunDetailRelatedStatus = "getDocumentVectorStatus"
+	OperationRunDetailRelatedStatusGetVisualAttachmentStatus OperationRunDetailRelatedStatus = "getVisualAttachmentStatus"
+	OperationRunDetailRelatedStatusListSourceStatus          OperationRunDetailRelatedStatus = "listSourceStatus"
+)
+
+// Validate checks if the OperationRunDetailRelatedStatus value is valid
+func (o OperationRunDetailRelatedStatus) Validate() error {
+	switch o {
+	case OperationRunDetailRelatedStatusGetCardDAVStatus, OperationRunDetailRelatedStatusGetDocumentIndexStatus, OperationRunDetailRelatedStatusGetDocumentVectorStatus, OperationRunDetailRelatedStatusGetVisualAttachmentStatus, OperationRunDetailRelatedStatusListSourceStatus:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailRelatedStatus value, got: %v", o))
+	}
+}
+
 type OperationRunDetailState string
 
 const (
@@ -1192,6 +1232,24 @@ func (o OperationRunDetailTrigger) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailTrigger value, got: %v", o))
+	}
+}
+
+type OperationRunDetailSupportedActions string
+
+const (
+	OperationRunDetailSupportedActionsCarddavSync  OperationRunDetailSupportedActions = "carddav_sync"
+	OperationRunDetailSupportedActionsVisualBuild  OperationRunDetailSupportedActions = "visual_build"
+	OperationRunDetailSupportedActionsVisualResume OperationRunDetailSupportedActions = "visual_resume"
+)
+
+// Validate checks if the OperationRunDetailSupportedActions value is valid
+func (o OperationRunDetailSupportedActions) Validate() error {
+	switch o {
+	case OperationRunDetailSupportedActionsCarddavSync, OperationRunDetailSupportedActionsVisualBuild, OperationRunDetailSupportedActionsVisualResume:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailSupportedActions value, got: %v", o))
 	}
 }
 

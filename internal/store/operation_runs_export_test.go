@@ -90,6 +90,24 @@ func CardDAVOperationLaneStatusForTest(
 	return s.cardDAVOperationLaneStatus(ctx)
 }
 
+//nolint:revive // Test exports mirror the Store receiver-first API they expose.
+func ListInvocationOperationRunsWithFetchLimitForTest(
+	s *Store,
+	ctx context.Context,
+	kind operations.Kind,
+	query operations.Query,
+	fetchLimit int,
+) ([]operations.Run, error) {
+	return s.listInvocationOperationRunsFrom(ctx, s.db, kind, query, fetchLimit)
+}
+
+//nolint:revive // Test exports mirror the Store receiver-first API they expose.
+func ListPersonEnrichmentOperationRunsWithFetchLimitForTest(
+	s *Store, ctx context.Context, query operations.Query, fetchLimit int,
+) ([]operations.Run, error) {
+	return s.listPersonEnrichmentOperationRunsFrom(ctx, s.db, query, fetchLimit)
+}
+
 func SetOperationHistoryAfterAdapterReadHookForTest(
 	s *Store, hook func(operations.Kind),
 ) {

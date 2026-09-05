@@ -253,7 +253,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			"count", failedUnfinishedImports)
 	}
 	logger.Info("daemon startup step complete", "step", "init_archive_schema")
-	if err := recoverCardDAVSyncRunsAtStartup(cmd.Context(), s, logger); err != nil {
+	if err := recoverNativeOperationRunsAtStartup(cmd.Context(), s, logger); err != nil {
 		return err
 	}
 	// Legacy [identity] migration is deferred to the first scheduled sync's
@@ -813,6 +813,34 @@ func recoverCardDAVSyncRunsAtStartup(ctx context.Context, st *store.Store, logge
 	return nil
 }
 
+func recoverNativeOperationRunsAtStartup(ctx context.Context, st *store.Store, logger *slog.Logger) error {
+	recoveredAt := time.Now().UTC()
+	sourceRuns, err := st.RecoverSyncRunsContext(ctx, recoveredAt)
+	if err != nil {
+		return fmt.Errorf("recover source sync runs at daemon startup: %w", err)
+	}
+	if err := recoverCardDAVSyncRunsAtStartup(ctx, st, logger); err != nil {
+		return err
+	}
+	if err := st.RecoverOperationInvocations(ctx, recoveredAt); err != nil {
+		return fmt.Errorf("recover operation invocations at daemon startup: %w", err)
+	}
+	sweepRuns, err := st.RecoverPersonSweepRunsContext(ctx)
+	if err != nil {
+		return fmt.Errorf("recover person sweep runs at daemon startup: %w", err)
+	}
+	enrichmentRuns, err := st.RecoverPersonEnrichmentRunsContext(ctx, recoveredAt)
+	if err != nil {
+		return fmt.Errorf("recover person enrichment runs at daemon startup: %w", err)
+	}
+	if sourceRuns+sweepRuns+enrichmentRuns > 0 {
+		logger.Info("recovered orphaned operation runs",
+			"source_sync", sourceRuns, "person_sweep", sweepRuns,
+			"person_enrichment", enrichmentRuns)
+	}
+	return nil
+}
+
 func daemonCacheRefreshError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -1316,11 +1344,21 @@ func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error)
 	return a.store.ArchiveUIDContext(ctx)
 }
 
+func (a *storeAPIAdapter) ActiveOperationTokenKey(ctx context.Context) (store.OperationTokenKey, error) {
+	return a.store.ActiveOperationTokenKey(ctx)
+}
+
+func (a *storeAPIAdapter) OperationTokenKey(
+	ctx context.Context, keyID string,
+) (store.OperationTokenKey, error) {
+	return a.store.OperationTokenKey(ctx, keyID)
+}
+
 func (a *storeAPIAdapter) Kinds() []operations.Kind {
 	return a.store.Kinds()
 }
 
-func (a *storeAPIAdapter) ListRuns(ctx context.Context, query operations.Query) ([]operations.Run, error) {
+func (a *storeAPIAdapter) ListRuns(ctx context.Context, query operations.Query) (operations.HistorySnapshot, error) {
 	return a.store.ListRuns(ctx, query)
 }
 
@@ -1358,6 +1396,12 @@ func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
 	return a.store.GetDocumentIndexStatusForScope(
 		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
 	)
+}
+
+func (a *storeAPIAdapter) GetCurrentDocumentIndexStatusScope(
+	ctx context.Context,
+) (string, []string, error) {
+	return a.store.GetCurrentDocumentIndexStatusScope(ctx)
 }
 
 func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
@@ -2959,6 +3003,27 @@ func (r *personEnrichmentSchedule) Wake(ctx context.Context, occurrence time.Tim
 	for _, run := range runs {
 		if err := r.drainRun(ctx, run.ID); err != nil {
 			return err
+		}
+	}
+	for {
+		queued, err := r.Store.ListQueuedPersonEnrichmentRunsContext(ctx, 200)
+		if err != nil {
+			return fmt.Errorf("list queued person enrichment runs: %w", err)
+		}
+		if len(queued) == 0 {
+			break
+		}
+		for _, queuedRun := range queued {
+			claimed, ok, err := r.Store.ClaimQueuedPersonEnrichmentRunContext(ctx, queuedRun.ID)
+			if err != nil {
+				return fmt.Errorf("claim queued person enrichment run %d: %w", queuedRun.ID, err)
+			}
+			if !ok {
+				continue
+			}
+			if err := r.drainRun(ctx, claimed.ID); err != nil {
+				return err
+			}
 		}
 	}
 

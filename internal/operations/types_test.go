@@ -48,13 +48,14 @@ func TestOperationEnumsRejectUnknownValues(t *testing.T) {
 			name: "counter name",
 			valid: []string{
 				"processed", "added", "updated", "item_errors", "attempted", "succeeded",
-				"failed", "projected_writes", "books", "created", "removed",
+				"failed", "projected_writes", "books", "created", "removed", "truncated",
+				"skipped", "requested", "started", "suppressed", "identity_rejected",
 			},
 			validate: func(value string) error { return CounterName(value).Validate() },
 		},
 		{
 			name:     "counter unit",
-			valid:    []string{"messages", "people", "writes", "books", "contacts"},
+			valid:    []string{"messages", "people", "writes", "books", "contacts", "documents", "chunks", "attachments"},
 			validate: func(value string) error { return CounterUnit(value).Validate() },
 		},
 		{
@@ -92,6 +93,35 @@ func TestOperationEnumsRejectUnknownValues(t *testing.T) {
 			require.Error(t, test.validate("unknown"))
 		})
 	}
+}
+
+func TestOperationPublicEnumDomainsEnumerateEveryRuntimeValue(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []CounterName{
+		CounterAdded, CounterAttempted, CounterBooks, CounterCreated, CounterFailed,
+		CounterIdentityRejected, CounterItemErrors, CounterProcessed, CounterProjectedWrites,
+		CounterRemoved, CounterRequested, CounterSkipped, CounterStarted, CounterSucceeded,
+		CounterSuppressed, CounterTruncated, CounterUpdated,
+	}, CounterNames())
+	assert.Equal(t, []CounterUnit{
+		CounterUnitAttachments, CounterUnitBooks, CounterUnitChunks, CounterUnitContacts,
+		CounterUnitDocuments, CounterUnitMessages, CounterUnitPeople, CounterUnitWrites,
+	}, CounterUnits())
+	assert.Equal(t, []PublicErrorCode{
+		PublicErrorArchiveGap, PublicErrorAuthenticationFailed, PublicErrorBudget,
+		PublicErrorCancelled, PublicErrorCardDAVSyncFailed, PublicErrorDaemonRestarted,
+		PublicErrorInternal, PublicErrorInvalidOutput, PublicErrorInvocationArchiveDrift,
+		PublicErrorInvocationAuthenticationFailed, PublicErrorInvocationCancelled,
+		PublicErrorInvocationDaemonRestarted, PublicErrorInvocationInternal,
+		PublicErrorInvocationInvalidOutput, PublicErrorInvocationRateLimited,
+		PublicErrorInvocationSafetyLimit, PublicErrorInvocationTimeout,
+		PublicErrorInvocationUnsafeErrorRedacted, PublicErrorInvocationUpstreamFailed,
+		PublicErrorLeaseLost, PublicErrorPersonSweepFailed, PublicErrorPolicy,
+		PublicErrorProviderHTTP, PublicErrorRateLimited, PublicErrorRetryAfter,
+		PublicErrorSafetyLimit, PublicErrorSourceSyncFailed, PublicErrorSyncFailed,
+		PublicErrorTimeout, PublicErrorUnsafeErrorRedacted, PublicErrorUpstreamFailed,
+	}, PublicErrorCodes())
 }
 
 func TestOperationLaneRegistryIsClosedAndSorted(t *testing.T) {
@@ -158,8 +188,9 @@ func TestStableIDEnforcesKindPairingAndBounds(t *testing.T) {
 	require.Error(err)
 	_, err = NewInt64ID(KindPersonSweep, 10)
 	require.Error(err)
-	_, err = NewInt64ID(KindMessageEmbedding, 10)
-	require.Error(err, "unavailable lanes must not gain a run representation")
+	messageEmbedding, err := NewInt64ID(KindMessageEmbedding, 10)
+	require.NoError(err)
+	assert.Equal(KindMessageEmbedding, messageEmbedding.Kind())
 	require.Error((StableID{}).Validate())
 }
 
@@ -281,6 +312,249 @@ func TestRunValidationEnforcesCounterAllowLists(t *testing.T) {
 	}
 }
 
+func TestOperationCounterMatricesAreClosedForEveryKind(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		kind Kind
+		want []PublicCounter
+	}{
+		{KindSourceSync, []PublicCounter{
+			{Name: CounterProcessed, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterAdded, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterUpdated, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterItemErrors, Unit: CounterUnitMessages, Value: 1},
+		}},
+		{KindPersonSweep, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterProjectedWrites, Unit: CounterUnitWrites, Value: 1},
+		}},
+		{KindCardDAVSync, []PublicCounter{
+			{Name: CounterBooks, Unit: CounterUnitBooks, Value: 1},
+			{Name: CounterCreated, Unit: CounterUnitContacts, Value: 1},
+			{Name: CounterUpdated, Unit: CounterUnitContacts, Value: 1},
+			{Name: CounterRemoved, Unit: CounterUnitContacts, Value: 1},
+		}},
+		{KindMessageEmbedding, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitMessages, Value: 1},
+			{Name: CounterTruncated, Unit: CounterUnitMessages, Value: 1},
+		}},
+		{KindPersonEmbedding, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterTruncated, Unit: CounterUnitPeople, Value: 1},
+		}},
+		{KindDocumentExtraction, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitDocuments, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitDocuments, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitDocuments, Value: 1},
+		}},
+		{KindDocumentEmbedding, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitChunks, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitChunks, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitChunks, Value: 1},
+		}},
+		{KindVisualEmbedding, []PublicCounter{
+			{Name: CounterAttempted, Unit: CounterUnitAttachments, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitAttachments, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitAttachments, Value: 1},
+			{Name: CounterSkipped, Unit: CounterUnitAttachments, Value: 1},
+		}},
+		{KindPersonEnrichment, []PublicCounter{
+			{Name: CounterRequested, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterStarted, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterSucceeded, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterFailed, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterSuppressed, Unit: CounterUnitPeople, Value: 1},
+			{Name: CounterIdentityRejected, Unit: CounterUnitPeople, Value: 1},
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(string(test.kind), func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, ValidateCounters(test.kind, test.want))
+			wrong := append([]PublicCounter(nil), test.want...)
+			wrong = append(wrong, PublicCounter{Name: CounterCreated, Unit: CounterUnitContacts, Value: 1})
+			require.Error(t, ValidateCounters(test.kind, wrong))
+		})
+	}
+}
+
+func TestInvocationContractValidatesKeysCheckpointsAndFinalOutcomes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+
+	instant := time.Date(2026, 8, 30, 12, 0, 0, 0, time.FixedZone("synthetic", 2*60*60))
+	spec := InvocationSpec{
+		Kind: KindMessageEmbedding, Key: "scheduler:2026-08-30T12:00:00Z",
+		Trigger: TriggerScheduled, StartedAt: instant,
+	}
+	require.NoError(spec.Validate())
+	assert.Equal(time.UTC, spec.Normalized().StartedAt.Location())
+
+	for _, key := range []string{"", " leading", strings.Repeat("x", MaxInvocationKeyBytes+1), string([]byte{0xff})} {
+		invalid := spec
+		invalid.Key = key
+		require.Error(invalid.Validate())
+	}
+
+	previous := InvocationCounters{Attempted: 3, Succeeded: 2, Failed: 1}
+	checkpoint := InvocationCounters{Attempted: 4, Succeeded: 3, Failed: 1}
+	require.NoError(checkpoint.ValidateCheckpoint(KindMessageEmbedding, previous))
+	require.Error(previous.ValidateCheckpoint(KindMessageEmbedding, checkpoint))
+	require.Error((InvocationCounters{Requested: 1}).Validate(KindMessageEmbedding))
+	assert.Equal(InvocationCounters{Attempted: 3, Succeeded: 2, Failed: 1}, previous)
+
+	require.NoError(previous.ValidateFinal(KindMessageEmbedding))
+	require.Error((InvocationCounters{Attempted: 4, Succeeded: 2, Failed: 1}).ValidateFinal(KindMessageEmbedding))
+	require.NoError((InvocationCounters{Attempted: 4, Succeeded: 2, Failed: 1, Skipped: 1}).ValidateFinal(KindVisualEmbedding))
+	require.Error((InvocationCounters{Attempted: 4, Succeeded: 2, Failed: 1}).ValidateFinal(KindVisualEmbedding))
+
+	partialError := FixedPublicError(PublicErrorInvocationUpstreamFailed)
+	state, err := DeriveInvocationState(KindMessageEmbedding, previous, partialError)
+	require.NoError(err)
+	assert.Equal(StatePartial, state)
+	state, err = DeriveInvocationState(KindMessageEmbedding, InvocationCounters{}, partialError)
+	require.NoError(err)
+	assert.Equal(StateFailed, state)
+	state, err = DeriveInvocationState(KindMessageEmbedding, InvocationCounters{}, FixedPublicError(PublicErrorInvocationCancelled))
+	require.NoError(err)
+	assert.Equal(StateCancelled, state)
+	_, err = DeriveInvocationState(KindMessageEmbedding, previous, FixedPublicError(PublicErrorProviderHTTP))
+	require.Error(err, "a people-sweep error must not enter an invocation ledger")
+	_, err = DeriveInvocationState(KindDocumentExtraction, previous, &PublicError{
+		Code: "not_registered", Message: "Not registered.",
+	})
+	require.Error(err, "an unknown error must not enter an invocation ledger")
+
+	require.Error((&PublicError{Code: PublicErrorUpstreamFailed, Message: "provider returned a private detail"}).Validate())
+}
+
+func TestOperationRunQueuedStateIsLimitedToPersonEnrichment(t *testing.T) {
+	require := require.New(t)
+	t.Parallel()
+
+	started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	enrichmentID, err := NewInt64ID(KindPersonEnrichment, 1)
+	require.NoError(err)
+	queued := Run{
+		ID: enrichmentID, Lane: LanePersonFacts, State: StateQueued,
+		StartedAt: started,
+	}
+	require.NoError(queued.Validate())
+
+	for _, kind := range []Kind{
+		KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
+		KindDocumentEmbedding, KindVisualEmbedding,
+	} {
+		id, idErr := NewInt64ID(kind, 1)
+		require.NoError(idErr)
+		candidate := queued
+		candidate.ID = id
+		definition, ok := laneDefinition(kind)
+		require.True(ok)
+		candidate.Lane = definition.Lane
+		require.Error(candidate.Validate(), kind)
+	}
+}
+
+func TestInvocationPublicErrorKindCodeMatrix(t *testing.T) {
+	t.Parallel()
+	kinds := []Kind{
+		KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
+		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment,
+	}
+	allowed := []PublicErrorCode{
+		PublicErrorInvocationCancelled, PublicErrorInvocationTimeout,
+		PublicErrorInvocationRateLimited, PublicErrorInvocationAuthenticationFailed,
+		PublicErrorInvocationUpstreamFailed, PublicErrorInvocationInvalidOutput,
+		PublicErrorInvocationSafetyLimit, PublicErrorInvocationArchiveDrift,
+		PublicErrorInvocationDaemonRestarted, PublicErrorInvocationInternal,
+		PublicErrorInvocationUnsafeErrorRedacted,
+	}
+	for _, kind := range kinds {
+		for _, code := range allowed {
+			require.NoError(t, ValidateInvocationPublicError(kind, FixedPublicError(code)))
+		}
+		for _, code := range []PublicErrorCode{PublicErrorProviderHTTP, PublicErrorUpstreamFailed, "not_registered"} {
+			publicError := FixedPublicError(code)
+			if publicError == nil {
+				publicError = &PublicError{Code: code, Message: "Not registered."}
+			}
+			require.Error(t, ValidateInvocationPublicError(kind, publicError))
+		}
+	}
+	require.Error(t, ValidateInvocationPublicError(KindCardDAVSync,
+		FixedPublicError(PublicErrorInvocationUpstreamFailed)))
+}
+
+func TestTerminalReplayOutcomePreservesFixedNonSuccessSemantics(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 8, 30, 14, 0, 0, 0, time.UTC)
+	finished := started.Add(time.Minute)
+	trigger := TriggerManual
+	id := mustInt64ID(t, KindMessageEmbedding, 41)
+	tests := []struct {
+		name      string
+		state     State
+		counters  InvocationCounters
+		publicErr *PublicError
+		wantCode  PublicErrorCode
+		wantIs    error
+		wantErr   bool
+	}{
+		{name: "succeeded replay", state: StateSucceeded,
+			counters: InvocationCounters{Attempted: 1, Succeeded: 1}},
+		{name: "partial replay remains a useful completed outcome", state: StatePartial,
+			counters:  InvocationCounters{Attempted: 2, Succeeded: 1, Failed: 1},
+			publicErr: FixedPublicError(PublicErrorInvocationUpstreamFailed)},
+		{name: "failed replay", state: StateFailed,
+			counters:  InvocationCounters{Attempted: 1, Failed: 1},
+			publicErr: FixedPublicError(PublicErrorInvocationUpstreamFailed),
+			wantCode:  PublicErrorInvocationUpstreamFailed, wantErr: true},
+		{name: "cancelled replay", state: StateCancelled,
+			publicErr: FixedPublicError(PublicErrorInvocationCancelled),
+			wantCode:  PublicErrorInvocationCancelled, wantIs: context.Canceled, wantErr: true},
+		{name: "timed out replay", state: StateFailed,
+			publicErr: FixedPublicError(PublicErrorInvocationTimeout),
+			wantCode:  PublicErrorInvocationTimeout, wantIs: context.DeadlineExceeded, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			run := &Run{
+				ID: id, Lane: LaneMessages, State: test.state, Trigger: &trigger,
+				StartedAt: started, FinishedAt: &finished,
+				Counters: test.counters.PublicCounters(KindMessageEmbedding), Error: test.publicErr,
+			}
+			err := TerminalReplayOutcome(run)
+			if !test.wantErr {
+				require.NoError(err)
+				return
+			}
+			require.Error(err)
+			var terminalErr *TerminalReplayError
+			require.ErrorAs(err, &terminalErr)
+			assert.Equal(test.state, terminalErr.State())
+			assert.Equal(test.wantCode, terminalErr.Code())
+			assert.Equal(FixedPublicError(test.wantCode).Message, terminalErr.Error())
+			assert.NotContains(terminalErr.Error(), "private provider response")
+			if test.wantIs != nil {
+				assert.ErrorIs(err, test.wantIs)
+			}
+		})
+	}
+}
+
 func TestOperationSourceStateProjection(t *testing.T) {
 	t.Parallel()
 
@@ -387,11 +661,15 @@ func TestOperationQueryIsNormalizedAndPrivacyBounded(t *testing.T) {
 		StartedAt: time.Date(2026, 8, 28, 12, 34, 56, 0, time.UTC),
 		ID:        mustInt64ID(t, KindSourceSync, 12),
 	}
+	startedFrom := position.StartedAt.Add(-time.Hour)
+	startedBefore := position.StartedAt.Add(time.Hour)
 	valid := Query{
-		Kinds:    []Kind{KindCardDAVSync, KindSourceSync},
-		States:   []State{StateFailed, StatePartial},
-		Position: position,
-		Limit:    25,
+		Kinds:         []Kind{KindCardDAVSync, KindSourceSync},
+		States:        []State{StateFailed, StatePartial},
+		StartedFrom:   &startedFrom,
+		StartedBefore: &startedBefore,
+		Position:      position,
+		Limit:         25,
 	}
 	require.NoError(valid.Validate())
 	require.Error((Query{Kinds: []Kind{KindSourceSync, KindCardDAVSync}, Limit: 25}).Validate(), "kinds must be normalized")
@@ -409,13 +687,23 @@ func TestOperationQueryIsNormalizedAndPrivacyBounded(t *testing.T) {
 	nonUTCPosition := *position
 	nonUTCPosition.StartedAt = position.StartedAt.In(time.FixedZone("synthetic", 2*60*60))
 	require.Error((Query{Position: &nonUTCPosition, Limit: 25}).Validate(), "positions must be normalized to UTC")
+	nonUTCFrom := startedFrom.In(time.FixedZone("synthetic", 2*60*60))
+	require.Error((Query{StartedFrom: &nonUTCFrom, Limit: 25}).Validate(), "lower date bounds must be normalized to UTC")
+	nonUTCBefore := startedBefore.In(time.FixedZone("synthetic", -7*60*60))
+	require.Error((Query{StartedBefore: &nonUTCBefore, Limit: 25}).Validate(), "upper date bounds must be normalized to UTC")
+	equalBound := startedFrom
+	require.Error((Query{StartedFrom: &startedFrom, StartedBefore: &equalBound, Limit: 25}).Validate(),
+		"date bounds form a nonempty half-open interval")
+	reversedBound := startedFrom.Add(-time.Second)
+	require.Error((Query{StartedFrom: &startedFrom, StartedBefore: &reversedBound, Limit: 25}).Validate(),
+		"the lower date bound must precede the upper date bound")
 
 	queryType := reflect.TypeFor[Query]()
 	fields := make([]string, 0, queryType.NumField())
 	for field := range queryType.Fields() {
 		fields = append(fields, field.Name)
 	}
-	assert.Equal([]string{"Kinds", "States", "Position", "Limit"}, fields)
+	assert.Equal([]string{"Kinds", "States", "StartedFrom", "StartedBefore", "Position", "Limit"}, fields)
 }
 
 func TestOperationRunValidationRejectsCrossLaneAndArbitraryFailure(t *testing.T) {
@@ -599,6 +887,11 @@ func TestLaneHistoryStatusValidationEnforcesRegistryAndRunRoles(t *testing.T) {
 		Kind: KindSourceSync, Lane: LaneMessages, HistoryAvailability: HistoryAvailable,
 	}).Validate(), "available history with no runs is valid")
 	require.NoError((LaneHistoryStatus{
+		Kind: KindPersonSweep, Lane: LanePersonFacts,
+		HistoryAvailability: HistoryUnavailable,
+		UnavailableCode:     "person_sweep_history_unavailable",
+	}).Validate(), "a normally available native history may become dynamically unavailable")
+	require.NoError((LaneHistoryStatus{
 		Kind: KindVisualEmbedding, Lane: LaneVisualAttachments,
 		HistoryAvailability: HistoryUnavailable,
 		UnavailableCode:     "visual_embedding_history_unavailable",
@@ -610,7 +903,7 @@ func TestLaneHistoryStatusValidationEnforcesRegistryAndRunRoles(t *testing.T) {
 	}{
 		{name: "unknown kind", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.Kind = "unknown" }},
 		{name: "wrong lane", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.Lane = LaneMessages }},
-		{name: "wrong availability", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.HistoryAvailability = HistoryUnavailable }},
+		{name: "unavailable carries available runs", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.HistoryAvailability = HistoryUnavailable }},
 		{name: "available with unavailable code", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.UnavailableCode = "synthetic_unavailable" }},
 		{name: "active terminal", mutate: func(_ *testing.T, status *LaneHistoryStatus) { status.Active = &latestSuccessful }},
 		{name: "active wrong kind", mutate: func(t *testing.T, status *LaneHistoryStatus) {
@@ -664,6 +957,14 @@ func TestLaneHistoryStatusValidationEnforcesRegistryAndRunRoles(t *testing.T) {
 		status.UnavailableCode = "generic_unavailable"
 		require.Error(status.Validate())
 	})
+	t.Run("dynamic unavailable wrong code", func(t *testing.T) {
+		require := newRequirements(t)
+		require.Error((LaneHistoryStatus{
+			Kind: KindPersonSweep, Lane: LanePersonFacts,
+			HistoryAvailability: HistoryUnavailable,
+			UnavailableCode:     "generic_unavailable",
+		}).Validate())
+	})
 	t.Run("unavailable carries run", func(t *testing.T) {
 		require := newRequirements(t)
 		status := unavailable
@@ -682,7 +983,9 @@ type readerContractStub struct{}
 
 func (*readerContractStub) Kinds() []Kind { return nil }
 
-func (*readerContractStub) ListRuns(context.Context, Query) ([]Run, error) { return nil, nil }
+func (*readerContractStub) ListRuns(context.Context, Query) (HistorySnapshot, error) {
+	return HistorySnapshot{}, nil
+}
 
 func (*readerContractStub) GetRun(context.Context, StableID) (Run, error) { return Run{}, nil }
 

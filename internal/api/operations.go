@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,14 +18,15 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
-	operationTokenVersion         = "1"
 	operationRunsDefaultLimit     = 25
 	maxOperationTokenPayloadBytes = 16 * 1024
 	maxOperationArchiveUIDBytes   = 1024
+	operationPersonEnrichmentJob  = "person-enrichment"
 )
 
 var (
@@ -35,14 +35,23 @@ var (
 )
 
 type OperationPublicCounter struct {
-	Name  operations.CounterName `json:"name" enum:"processed,added,updated,item_errors,attempted,succeeded,failed,projected_writes,books,created,removed"`
-	Unit  operations.CounterUnit `json:"unit" enum:"messages,people,writes,books,contacts"`
+	Name  operations.CounterName `json:"name" enum:"added,attempted,books,created,failed,identity_rejected,item_errors,processed,projected_writes,removed,requested,skipped,started,succeeded,suppressed,truncated,updated"`
+	Unit  operations.CounterUnit `json:"unit" enum:"attachments,books,chunks,contacts,documents,messages,people,writes"`
 	Value int64                  `json:"value"`
 }
 
 type OperationPublicError struct {
-	Code    operations.PublicErrorCode `json:"code" enum:"source_sync_failed,person_sweep_failed,policy,budget,lease_lost,rate_limited,timeout,provider_http,invalid_output,archive_gap,internal,cancelled,retry_after,authentication_failed,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted,carddav_sync_failed"`
+	Code    operations.PublicErrorCode `json:"code" enum:"archive_gap,authentication_failed,budget,cancelled,carddav_sync_failed,daemon_restarted,internal,invalid_output,invocation_archive_drift,invocation_authentication_failed,invocation_cancelled,invocation_daemon_restarted,invocation_internal,invocation_invalid_output,invocation_rate_limited,invocation_safety_limit,invocation_timeout,invocation_unsafe_error_redacted,invocation_upstream_failed,lease_lost,person_sweep_failed,policy,provider_http,rate_limited,retry_after,safety_limit,source_sync_failed,sync_failed,timeout,unsafe_error_redacted,upstream_failed"`
 	Message string                     `json:"message"`
+}
+
+// OperationErrorResponse is the closed public error envelope for Operations
+// routes. Keep this separate from the legacy ErrorResponse: unrelated routes
+// retain their existing open response contract while Operations clients can
+// reject fields that were never approved for publication.
+type OperationErrorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
 }
 
 type OperationRunSummary struct {
@@ -59,6 +68,9 @@ type OperationRunSummary struct {
 
 type OperationRunDetail struct {
 	OperationRunSummary
+
+	RelatedStatus    *operations.RelatedStatusID `json:"related_status,omitempty" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
+	SupportedActions []operations.ActionID       `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume" nullable:"false"`
 }
 
 type OperationUnavailableKind struct {
@@ -68,9 +80,10 @@ type OperationUnavailableKind struct {
 }
 
 type OperationRunsResponse struct {
-	Runs             []OperationRunSummary      `json:"runs"`
-	NextCursor       string                     `json:"next_cursor,omitempty"`
-	UnavailableKinds []OperationUnavailableKind `json:"unavailable_kinds"`
+	Runs               []OperationRunSummary      `json:"runs"`
+	NextCursor         string                     `json:"next_cursor,omitempty"`
+	MembershipRevision int64                      `json:"membership_revision" minimum:"0"`
+	UnavailableKinds   []OperationUnavailableKind `json:"unavailable_kinds"`
 }
 
 type OperationLaneStatus struct {
@@ -91,47 +104,58 @@ type OperationStatusResponse struct {
 }
 
 type operationRunReferencePayload struct {
-	Kind       operations.Kind         `json:"kind"`
-	IDType     operations.StableIDType `json:"id_type"`
-	IntID      *int64                  `json:"int_id,omitempty"`
-	StringID   *string                 `json:"string_id,omitempty"`
-	ArchiveUID string                  `json:"archive_uid"`
+	Kind     operations.Kind         `json:"kind"`
+	IDType   operations.StableIDType `json:"id_type"`
+	IntID    *int64                  `json:"int_id,omitempty"`
+	StringID *string                 `json:"string_id,omitempty"`
 }
 
 type operationCursorPayload struct {
-	Timestamp  string                  `json:"t"`
-	Kind       operations.Kind         `json:"k"`
-	IDType     operations.StableIDType `json:"it"`
-	IntID      *int64                  `json:"i,omitempty"`
-	StringID   *string                 `json:"s,omitempty"`
-	FilterHash string                  `json:"f"`
-	ArchiveUID string                  `json:"a"`
+	Timestamp          string                  `json:"t"`
+	Kind               operations.Kind         `json:"k"`
+	IDType             operations.StableIDType `json:"it"`
+	IntID              *int64                  `json:"i,omitempty"`
+	StringID           *string                 `json:"s,omitempty"`
+	FilterHash         string                  `json:"f"`
+	MembershipRevision int64                   `json:"r"`
+	AvailableKinds     []operations.Kind       `json:"ak"`
+	UnavailableKinds   []operations.Kind       `json:"uk"`
 }
 
-// operationHistoryFilter retains the three HTTP-owned semantic filters. The
+type operationCursorBinding struct {
+	Position           operations.Position
+	MembershipRevision int64
+	AvailableKinds     []operations.Kind
+	UnavailableKinds   []operations.Kind
+}
+
+// operationHistoryFilter retains the five HTTP-owned semantic filters. The
 // normalized store query expands a lane to kinds, but the cursor must still
 // bind the exact public filter so a client cannot silently change its walk.
 type operationHistoryFilter struct {
-	Kind  operations.Kind
-	Lane  operations.Lane
-	State operations.State
+	Kind          operations.Kind
+	Lane          operations.Lane
+	State         operations.State
+	StartedFrom   *time.Time
+	StartedBefore *time.Time
 }
 
 type operationRunsQuery struct {
 	Query  operations.Query
 	filter operationHistoryFilter
+	cursor *operationCursorBinding
 }
 
-func encodeOperationRunReference(id operations.StableID, archiveUID string) (string, error) {
+func (codec operationTokenCodec) encodeRunReference(
+	ctx context.Context, id operations.StableID, archiveUID string,
+) (string, error) {
 	if err := id.Validate(); err != nil {
 		return "", fmt.Errorf("encode operation run reference: %w", err)
 	}
 	if err := validateOperationArchiveUID(archiveUID); err != nil {
 		return "", fmt.Errorf("encode operation run reference: %w", err)
 	}
-	payload := operationRunReferencePayload{
-		Kind: id.Kind(), IDType: id.Type(), ArchiveUID: archiveUID,
-	}
+	payload := operationRunReferencePayload{Kind: id.Kind(), IDType: id.Type()}
 	switch id.Type() {
 	case operations.StableIDInt64:
 		value, ok := id.Int64()
@@ -148,14 +172,16 @@ func encodeOperationRunReference(id operations.StableID, archiveUID string) (str
 	default:
 		return "", errors.New("encode operation run reference: unsupported ID type")
 	}
-	return encodeOperationToken(payload)
+	return codec.seal(ctx, archiveUID, payload)
 }
 
-func decodeOperationRunReference(raw string, archiveUID string) (operations.StableID, error) {
+func (codec operationTokenCodec) decodeRunReference(
+	ctx context.Context, raw string, archiveUID string,
+) (operations.StableID, error) {
 	if err := validateOperationArchiveUID(archiveUID); err != nil {
 		return operations.StableID{}, invalidOperationRunReference(err)
 	}
-	decoded, err := decodeOperationToken(raw)
+	decoded, err := codec.open(ctx, archiveUID, raw)
 	if err != nil {
 		return operations.StableID{}, invalidOperationRunReference(err)
 	}
@@ -163,12 +189,6 @@ func decodeOperationRunReference(raw string, archiveUID string) (operations.Stab
 	fields, err := decodeStrictOperationObject(decoded, &payload, operationRunReferenceFieldAllowed)
 	if err != nil {
 		return operations.StableID{}, invalidOperationRunReference(err)
-	}
-	if err := validateOperationArchiveUID(payload.ArchiveUID); err != nil {
-		return operations.StableID{}, invalidOperationRunReference(err)
-	}
-	if payload.ArchiveUID != archiveUID {
-		return operations.StableID{}, invalidOperationRunReference(errors.New("archive binding does not match"))
 	}
 	id, err := operationStableID(payload.Kind, payload.IDType,
 		payload.IntID, operationFieldPresent(fields, "int_id"),
@@ -179,93 +199,144 @@ func decodeOperationRunReference(raw string, archiveUID string) (operations.Stab
 	return id, nil
 }
 
-func encodeOperationCursor(
-	position operations.Position, filter operationHistoryFilter, archiveUID string,
+func (codec operationTokenCodec) encodeCursor(
+	ctx context.Context, binding operationCursorBinding, filter operationHistoryFilter, archiveUID string,
 ) (string, error) {
-	if err := position.Validate(); err != nil {
+	if err := binding.validate(filter); err != nil {
 		return "", fmt.Errorf("encode operation cursor: %w", err)
 	}
 	if err := filter.validate(); err != nil {
 		return "", fmt.Errorf("encode operation cursor: %w", err)
-	}
-	if !filter.allows(position.ID.Kind()) {
-		return "", errors.New("encode operation cursor: position kind is outside the filter")
 	}
 	if err := validateOperationArchiveUID(archiveUID); err != nil {
 		return "", fmt.Errorf("encode operation cursor: %w", err)
 	}
 	payload := operationCursorPayload{
-		Timestamp:  position.StartedAt.Format(time.RFC3339Nano),
-		Kind:       position.ID.Kind(),
-		IDType:     position.ID.Type(),
-		FilterHash: operationFilterFingerprint(filter),
-		ArchiveUID: archiveUID,
+		Timestamp:          binding.Position.StartedAt.Format(time.RFC3339Nano),
+		Kind:               binding.Position.ID.Kind(),
+		IDType:             binding.Position.ID.Type(),
+		FilterHash:         operationFilterFingerprint(filter),
+		MembershipRevision: binding.MembershipRevision,
+		AvailableKinds:     append([]operations.Kind{}, binding.AvailableKinds...),
+		UnavailableKinds:   append([]operations.Kind{}, binding.UnavailableKinds...),
 	}
-	switch position.ID.Type() {
+	switch binding.Position.ID.Type() {
 	case operations.StableIDInt64:
-		value, _ := position.ID.Int64()
+		value, _ := binding.Position.ID.Int64()
 		payload.IntID = &value
 	case operations.StableIDText:
-		value, _ := position.ID.Text()
+		value, _ := binding.Position.ID.Text()
 		payload.StringID = &value
 	default:
 		return "", errors.New("encode operation cursor: unsupported ID type")
 	}
-	return encodeOperationToken(payload)
+	return codec.seal(ctx, archiveUID, payload)
 }
 
-func decodeOperationCursor(
-	raw string, filter operationHistoryFilter, archiveUID string,
-) (operations.Position, error) {
+func (codec operationTokenCodec) decodeCursor(
+	ctx context.Context, raw string, filter operationHistoryFilter, archiveUID string,
+) (operationCursorBinding, error) {
 	if err := filter.validate(); err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
 	if err := validateOperationArchiveUID(archiveUID); err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
-	decoded, err := decodeOperationToken(raw)
+	decoded, err := codec.open(ctx, archiveUID, raw)
 	if err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
 	var payload operationCursorPayload
 	fields, err := decodeStrictOperationObject(decoded, &payload, operationCursorFieldAllowed)
 	if err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
-	if payload.ArchiveUID != archiveUID || !validOperationFilterHash(payload.FilterHash) ||
-		payload.FilterHash != operationFilterFingerprint(filter) {
-		return operations.Position{}, invalidOperationCursor(errors.New("archive or filter binding does not match"))
+	for _, required := range []string{"t", "k", "it", "f", "r", "ak", "uk"} {
+		if !operationFieldPresent(fields, required) {
+			return operationCursorBinding{}, invalidOperationCursor(
+				fmt.Errorf("required cursor field %q is missing", required))
+		}
 	}
-	if err := validateOperationArchiveUID(payload.ArchiveUID); err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+	if payload.AvailableKinds == nil || payload.UnavailableKinds == nil {
+		return operationCursorBinding{}, invalidOperationCursor(
+			errors.New("operation cursor kind sets must be arrays"))
+	}
+	if !validOperationFilterHash(payload.FilterHash) || payload.FilterHash != operationFilterFingerprint(filter) {
+		return operationCursorBinding{}, invalidOperationCursor(errors.New("filter binding does not match"))
 	}
 	startedAt, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
-	if err != nil || startedAt.Location() != time.UTC {
-		return operations.Position{}, invalidOperationCursor(errors.New("timestamp must be RFC3339 UTC"))
+	if err != nil || startedAt.Location() != time.UTC ||
+		startedAt.Format(time.RFC3339Nano) != payload.Timestamp {
+		return operationCursorBinding{}, invalidOperationCursor(
+			errors.New("timestamp must be canonical RFC3339 UTC"))
 	}
 	id, err := operationStableID(payload.Kind, payload.IDType,
 		payload.IntID, operationFieldPresent(fields, "i"),
 		payload.StringID, operationFieldPresent(fields, "s"))
 	if err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
-	if !filter.allows(id.Kind()) {
-		return operations.Position{}, invalidOperationCursor(errors.New("position kind is outside the filter"))
+	binding := operationCursorBinding{
+		Position:           operations.Position{StartedAt: startedAt, ID: id},
+		MembershipRevision: payload.MembershipRevision,
+		AvailableKinds:     slices.Clone(payload.AvailableKinds),
+		UnavailableKinds:   slices.Clone(payload.UnavailableKinds),
 	}
-	position := operations.Position{StartedAt: startedAt, ID: id}
-	if err := position.Validate(); err != nil {
-		return operations.Position{}, invalidOperationCursor(err)
+	if err := binding.validate(filter); err != nil {
+		return operationCursorBinding{}, invalidOperationCursor(err)
 	}
-	return position, nil
+	return binding, nil
 }
 
-func parseOperationRunsQuery(r *http.Request, archiveUID string) (operationRunsQuery, error) {
+func (binding operationCursorBinding) validate(filter operationHistoryFilter) error {
+	if err := binding.Position.Validate(); err != nil {
+		return err
+	}
+	if !filter.allows(binding.Position.ID.Kind()) {
+		return errors.New("operation cursor position kind is outside the filter")
+	}
+	if binding.MembershipRevision < 0 {
+		return errors.New("operation cursor membership revision is negative")
+	}
+	if err := validateOperationCursorKinds(binding.AvailableKinds); err != nil {
+		return fmt.Errorf("available kinds: %w", err)
+	}
+	if err := validateOperationCursorKinds(binding.UnavailableKinds); err != nil {
+		return fmt.Errorf("unavailable kinds: %w", err)
+	}
+	if !slices.Contains(binding.AvailableKinds, binding.Position.ID.Kind()) {
+		return errors.New("operation cursor position kind is unavailable")
+	}
+	for _, kind := range binding.AvailableKinds {
+		if slices.Contains(binding.UnavailableKinds, kind) {
+			return errors.New("operation cursor kind is both available and unavailable")
+		}
+	}
+	return nil
+}
+
+func validateOperationCursorKinds(kinds []operations.Kind) error {
+	for index, kind := range kinds {
+		if err := kind.Validate(); err != nil {
+			return err
+		}
+		if index > 0 && kinds[index-1] >= kind {
+			return errors.New("operation cursor kinds must be sorted and unique")
+		}
+	}
+	return nil
+}
+
+func parseOperationRunsQuery(
+	r *http.Request, codec operationTokenCodec, archiveUID string,
+) (operationRunsQuery, error) {
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return operationRunsQuery{}, newParamError("query", "operation history query is malformed")
 	}
 	allowed := map[string]struct{}{
-		"kind": {}, "lane": {}, "state": {}, "limit": {}, "cursor": {},
+		"kind": {}, "lane": {}, "state": {}, "started_from": {}, "started_before": {},
+		"limit": {}, "cursor": {},
 	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -305,6 +376,21 @@ func parseOperationRunsQuery(r *http.Request, archiveUID string) (operationRunsQ
 	if err := filter.validate(); err != nil {
 		return operationRunsQuery{}, newParamError("lane", err.Error())
 	}
+	if raw, present := operationSingleQueryValue(values, "started_from"); present {
+		filter.StartedFrom, err = parseCanonicalOperationTime("started_from", raw)
+		if err != nil {
+			return operationRunsQuery{}, err
+		}
+	}
+	if raw, present := operationSingleQueryValue(values, "started_before"); present {
+		filter.StartedBefore, err = parseCanonicalOperationTime("started_before", raw)
+		if err != nil {
+			return operationRunsQuery{}, err
+		}
+	}
+	if err := filter.validate(); err != nil {
+		return operationRunsQuery{}, newParamError("started_before", err.Error())
+	}
 
 	limit := operationRunsDefaultLimit
 	if raw, present := operationSingleQueryValue(values, "limit"); present {
@@ -316,19 +402,23 @@ func parseOperationRunsQuery(r *http.Request, archiveUID string) (operationRunsQ
 	}
 
 	query := operations.Query{
-		Kinds:  operationFilterKinds(filter),
-		States: operationFilterStates(filter),
-		Limit:  limit,
+		Kinds:         operationFilterKinds(filter),
+		States:        operationFilterStates(filter),
+		StartedFrom:   cloneOperationTime(filter.StartedFrom),
+		StartedBefore: cloneOperationTime(filter.StartedBefore),
+		Limit:         limit,
 	}
+	var cursor *operationCursorBinding
 	if raw, present := operationSingleQueryValue(values, "cursor"); present {
 		if raw == "" {
 			return operationRunsQuery{}, invalidOperationCursor(errors.New("cursor is empty"))
 		}
-		position, decodeErr := decodeOperationCursor(raw, filter, archiveUID)
+		binding, decodeErr := codec.decodeCursor(r.Context(), raw, filter, archiveUID)
 		if decodeErr != nil {
 			return operationRunsQuery{}, decodeErr
 		}
-		query.Position = &position
+		cursor = &binding
+		query.Position = &binding.Position
 	}
 	if err := query.Validate(); err != nil {
 		if query.Position != nil {
@@ -336,7 +426,24 @@ func parseOperationRunsQuery(r *http.Request, archiveUID string) (operationRunsQ
 		}
 		return operationRunsQuery{}, newParamError("query", err.Error())
 	}
-	return operationRunsQuery{Query: query, filter: filter}, nil
+	return operationRunsQuery{Query: query, filter: filter, cursor: cursor}, nil
+}
+
+func parseCanonicalOperationTime(name, raw string) (*time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil || parsed.Location() != time.UTC || parsed.Format(time.RFC3339Nano) != raw {
+		return nil, newParamError(name,
+			fmt.Sprintf("query parameter %q must be canonical UTC RFC 3339", name))
+	}
+	return &parsed, nil
+}
+
+func cloneOperationTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func operationSingleQueryValue(values url.Values, name string) (string, bool) {
@@ -366,6 +473,15 @@ func (filter operationHistoryFilter) validate() error {
 	if filter.Kind != "" && filter.Lane != "" && !operationKindUsesLane(filter.Kind, filter.Lane) {
 		return fmt.Errorf("operation kind %q does not belong to lane %q", filter.Kind, filter.Lane)
 	}
+	if filter.StartedFrom != nil && (filter.StartedFrom.IsZero() || filter.StartedFrom.Location() != time.UTC) {
+		return errors.New("operation history lower date bound must be normalized to UTC")
+	}
+	if filter.StartedBefore != nil && (filter.StartedBefore.IsZero() || filter.StartedBefore.Location() != time.UTC) {
+		return errors.New("operation history upper date bound must be normalized to UTC")
+	}
+	if filter.StartedFrom != nil && filter.StartedBefore != nil && !filter.StartedFrom.Before(*filter.StartedBefore) {
+		return errors.New("operation history lower date bound must precede upper date bound")
+	}
 	return nil
 }
 
@@ -377,9 +493,18 @@ func (filter operationHistoryFilter) allows(kind operations.Kind) bool {
 }
 
 func operationFilterFingerprint(filter operationHistoryFilter) string {
-	canonical := fmt.Sprintf("kind=%s\nlane=%s\nstate=%s\n", filter.Kind, filter.Lane, filter.State)
+	canonical := fmt.Sprintf("kind=%s\nlane=%s\nstate=%s\nstarted_from=%s\nstarted_before=%s\n",
+		filter.Kind, filter.Lane, filter.State,
+		formatOperationFilterTime(filter.StartedFrom), formatOperationFilterTime(filter.StartedBefore))
 	digest := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(digest[:])
+}
+
+func formatOperationFilterTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func operationFilterKinds(filter operationHistoryFilter) []operations.Kind {
@@ -391,8 +516,7 @@ func operationFilterKinds(filter operationHistoryFilter) []operations.Kind {
 	}
 	kinds := make([]operations.Kind, 0)
 	for _, definition := range operations.LaneRegistry() {
-		if definition.Lane == filter.Lane &&
-			definition.HistoryAvailability == operations.HistoryAvailable {
+		if definition.Lane == filter.Lane {
 			kinds = append(kinds, definition.Kind)
 		}
 	}
@@ -459,7 +583,11 @@ func (s *Server) handleOperationRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, err := parseOperationRunsQuery(r, archiveUID)
+	codec, ok := s.operationHistoryTokenCodec(w)
+	if !ok {
+		return
+	}
+	parsed, err := parseOperationRunsQuery(r, codec, archiveUID)
 	if err != nil {
 		if errors.Is(err, errInvalidOperationCursor) {
 			writeError(w, http.StatusBadRequest, "invalid_cursor", "Operation history cursor is invalid")
@@ -468,35 +596,36 @@ func (s *Server) handleOperationRuns(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	if parsed.filter.Kind != "" && operationKindUnavailable(parsed.filter.Kind) {
-		writeOperationHistoryUnavailable(w)
-		return
-	}
-	if parsed.filter.Lane != "" && len(parsed.Query.Kinds) == 0 {
-		writeOperationHistoryUnavailable(w)
-		return
-	}
-
-	runs, err := s.operationHistoryReader.ListRuns(r.Context(), parsed.Query)
+	snapshot, err := s.operationHistoryReader.ListRuns(r.Context(), parsed.Query)
 	if err != nil {
 		s.writeOperationHistoryReaderError(w, err)
 		return
 	}
-	if len(runs) > parsed.Query.Limit+1 {
+	if err := validateOperationHistorySnapshot(snapshot, parsed.Query, parsed.filter); err != nil {
 		writeError(w, http.StatusInternalServerError, "operation_history_failed",
 			"Operation history could not be read")
 		return
 	}
-	hasMore := len(runs) > parsed.Query.Limit
-	if hasMore {
+	if parsed.cursor != nil && !operationCursorMatchesSnapshot(*parsed.cursor, snapshot) {
+		writeError(w, http.StatusConflict, "operation_history_conflict",
+			"Operation history changed while it was being read")
+		return
+	}
+	if parsed.filter.Kind != "" && slices.Contains(snapshot.UnavailableKinds, parsed.filter.Kind) {
+		writeOperationHistoryUnavailable(w)
+		return
+	}
+	runs := snapshot.Runs
+	if snapshot.Position != nil {
 		runs = runs[:parsed.Query.Limit]
 	}
 	response := OperationRunsResponse{
-		Runs:             make([]OperationRunSummary, 0, len(runs)),
-		UnavailableKinds: unavailableOperationKinds(parsed.filter),
+		Runs:               make([]OperationRunSummary, 0, len(runs)),
+		MembershipRevision: snapshot.MembershipRevision,
+		UnavailableKinds:   unavailableOperationKinds(snapshot.UnavailableKinds),
 	}
 	for _, run := range runs {
-		summary, projectErr := operationRunSummary(run, archiveUID)
+		summary, projectErr := operationRunSummary(r.Context(), codec, run, archiveUID)
 		if projectErr != nil {
 			writeError(w, http.StatusInternalServerError, "operation_history_failed",
 				"Operation history could not be read")
@@ -504,10 +633,13 @@ func (s *Server) handleOperationRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Runs = append(response.Runs, summary)
 	}
-	if hasMore && len(runs) > 0 {
-		last := runs[len(runs)-1]
-		response.NextCursor, err = encodeOperationCursor(
-			operations.Position{StartedAt: last.StartedAt, ID: last.ID}, parsed.filter, archiveUID)
+	if snapshot.Position != nil {
+		response.NextCursor, err = codec.encodeCursor(r.Context(), operationCursorBinding{
+			Position:           *snapshot.Position,
+			MembershipRevision: snapshot.MembershipRevision,
+			AvailableKinds:     snapshot.AvailableKinds,
+			UnavailableKinds:   snapshot.UnavailableKinds,
+		}, parsed.filter, archiveUID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "operation_history_failed",
 				"Operation history could not be read")
@@ -515,6 +647,61 @@ func (s *Server) handleOperationRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func validateOperationHistorySnapshot(
+	snapshot operations.HistorySnapshot, query operations.Query, filter operationHistoryFilter,
+) error {
+	if snapshot.MembershipRevision < 0 {
+		return errors.New("operation history membership revision is negative")
+	}
+	if err := validateOperationCursorKinds(snapshot.AvailableKinds); err != nil {
+		return fmt.Errorf("validate available operation history kinds: %w", err)
+	}
+	if err := validateOperationCursorKinds(snapshot.UnavailableKinds); err != nil {
+		return fmt.Errorf("validate unavailable operation history kinds: %w", err)
+	}
+	for _, kind := range snapshot.AvailableKinds {
+		if slices.Contains(snapshot.UnavailableKinds, kind) || !filter.allows(kind) {
+			return errors.New("operation history availability set is inconsistent")
+		}
+	}
+	for _, kind := range snapshot.UnavailableKinds {
+		if !filter.allows(kind) {
+			return errors.New("operation history unavailable set is outside the filter")
+		}
+	}
+	if len(snapshot.Runs) > query.Limit+1 {
+		return errors.New("operation history returned too many runs")
+	}
+	for _, run := range snapshot.Runs {
+		if err := run.Validate(); err != nil || !slices.Contains(snapshot.AvailableKinds, run.ID.Kind()) {
+			return errors.New("operation history returned an invalid or unavailable run")
+		}
+	}
+	if snapshot.Position == nil {
+		if len(snapshot.Runs) > query.Limit {
+			return errors.New("operation history continuation position is missing")
+		}
+		return nil
+	}
+	if len(snapshot.Runs) != query.Limit+1 {
+		return errors.New("operation history continuation was not proven")
+	}
+	want := operations.Position{
+		StartedAt: snapshot.Runs[query.Limit-1].StartedAt,
+		ID:        snapshot.Runs[query.Limit-1].ID,
+	}
+	if *snapshot.Position != want {
+		return errors.New("operation history continuation position is inconsistent")
+	}
+	return nil
+}
+
+func operationCursorMatchesSnapshot(cursor operationCursorBinding, snapshot operations.HistorySnapshot) bool {
+	return cursor.MembershipRevision == snapshot.MembershipRevision &&
+		slices.Equal(cursor.AvailableKinds, snapshot.AvailableKinds) &&
+		slices.Equal(cursor.UnavailableKinds, snapshot.UnavailableKinds)
 }
 
 func (s *Server) handleOperationStatus(w http.ResponseWriter, r *http.Request) {
@@ -526,24 +713,12 @@ func (s *Server) handleOperationStatus(w http.ResponseWriter, r *http.Request) {
 		lane := OperationLaneStatus{
 			Kind: definition.Kind, Lane: definition.Lane,
 			Configured:          s.operationLaneConfigured(r.Context(), definition.Kind, visualConfigured),
-			HistoryAvailability: definition.HistoryAvailability,
-			UnavailableCode:     definition.UnavailableCode,
+			HistoryAvailability: operations.HistoryAvailable,
 			RelatedStatus:       operationRelatedStatus(definition.Kind),
-			SupportedActions:    make([]operations.ActionID, 0),
 		}
-		switch definition.Kind {
-		case operations.KindCardDAVSync:
-			if lane.Configured {
-				lane.SupportedActions = append(lane.SupportedActions, operations.ActionCardDAVSync)
-			}
-		case operations.KindVisualEmbedding:
-			lane.SupportedActions = append(lane.SupportedActions, visualActions...)
-		default:
-			// The remaining registered lanes do not expose direct actions here.
-		}
-		if definition.HistoryAvailability == operations.HistoryAvailable {
-			s.projectOperationLaneHistory(r.Context(), &lane)
-		}
+		s.projectOperationLaneHistory(r.Context(), &lane)
+		lane.SupportedActions = operationSupportedActions(
+			definition.Kind, lane.Configured, lane.HistoryAvailability, lane.Active != nil, visualActions)
 		response.Lanes = append(response.Lanes, lane)
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -574,23 +749,42 @@ func (s *Server) projectOperationLaneHistory(ctx context.Context, lane *Operatio
 		degradeOperationLaneHistory(lane)
 		return
 	}
-	lane.Active, err = operationRunSummaryPointer(status.Active, archiveUID)
+	keyring, ok := s.store.(operationTokenKeyring)
+	if !ok {
+		degradeOperationLaneHistory(lane)
+		return
+	}
+	codec := newOperationTokenCodec(keyring)
+	lane.Active, err = operationRunSummaryPointer(ctx, codec, status.Active, archiveUID)
 	if err == nil {
-		lane.Latest, err = operationRunSummaryPointer(status.Latest, archiveUID)
+		lane.Latest, err = operationRunSummaryPointer(ctx, codec, status.Latest, archiveUID)
+		if err == nil && status.Active != nil && status.Latest != nil && status.Active.ID == status.Latest.ID {
+			lane.Latest.ID = lane.Active.ID
+		}
 	}
 	if err == nil {
-		lane.LatestSuccessful, err = operationRunSummaryPointer(status.LatestSuccessful, archiveUID)
+		lane.LatestSuccessful, err = operationRunSummaryPointer(ctx, codec, status.LatestSuccessful, archiveUID)
+		if err == nil && status.LatestSuccessful != nil {
+			switch {
+			case status.Active != nil && status.LatestSuccessful.ID == status.Active.ID:
+				lane.LatestSuccessful.ID = lane.Active.ID
+			case status.Latest != nil && status.LatestSuccessful.ID == status.Latest.ID:
+				lane.LatestSuccessful.ID = lane.Latest.ID
+			}
+		}
 	}
 	if err != nil {
 		degradeOperationLaneHistory(lane)
 	}
 }
 
-func operationRunSummaryPointer(run *operations.Run, archiveUID string) (*OperationRunSummary, error) {
+func operationRunSummaryPointer(
+	ctx context.Context, codec operationTokenCodec, run *operations.Run, archiveUID string,
+) (*OperationRunSummary, error) {
 	if run == nil {
 		return nil, nil //nolint:nilnil // An absent lane run is a valid optional projection.
 	}
-	summary, err := operationRunSummary(*run, archiveUID)
+	summary, err := operationRunSummary(ctx, codec, *run, archiveUID)
 	if err != nil {
 		return nil, err
 	}
@@ -625,13 +819,23 @@ func (s *Server) operationLaneConfigured(
 	case operations.KindDocumentEmbedding:
 		return s.cfg.Vector.Enabled && s.cfg.Attachments.Documents.Index.Embeddings.Enabled
 	case operations.KindDocumentExtraction:
-		return s.cfg.Attachments.Documents.Enabled
+		if !s.cfg.Attachments.Documents.Enabled {
+			return false
+		}
+		_, err := s.currentDocumentIndexStatusRequest(ctx)
+		return !errors.Is(err, store.ErrDocumentIndexStatusScopeUnavailable)
 	case operations.KindMessageEmbedding:
 		return s.cfg.Vector.Enabled
 	case operations.KindPersonEmbedding:
 		return s.cfg.Vector.Enabled && s.cfg.Vector.People.Enabled
 	case operations.KindPersonEnrichment:
-		return false
+		if !s.cfg.People.Enrichment.Enabled || s.scheduler == nil ||
+			!s.scheduler.IsJobScheduled(operationPersonEnrichmentJob) {
+			return false
+		}
+		return slices.ContainsFunc(s.cfg.People.Enrichment.Providers, func(provider personenrichment.ProviderConfig) bool {
+			return provider.Enabled
+		})
 	case operations.KindPersonSweep:
 		return s.cfg.People.Sweep.Enabled
 	case operations.KindSourceSync:
@@ -698,6 +902,27 @@ func operationRelatedStatus(kind operations.Kind) *operations.RelatedStatusID {
 	return &related
 }
 
+func operationSupportedActions(
+	kind operations.Kind,
+	configured bool,
+	historyAvailability operations.HistoryAvailability,
+	hasActive bool,
+	visualActions []operations.ActionID,
+) []operations.ActionID {
+	actions := make([]operations.ActionID, 0)
+	switch kind {
+	case operations.KindCardDAVSync:
+		if configured && historyAvailability == operations.HistoryAvailable && !hasActive {
+			actions = append(actions, operations.ActionCardDAVSync)
+		}
+	case operations.KindVisualEmbedding:
+		actions = append(actions, visualActions...)
+	default:
+		// The closed operation registry exposes no direct action for this kind.
+	}
+	return actions
+}
+
 func (s *Server) handleOperationRunDetail(w http.ResponseWriter, r *http.Request) {
 	if s.operationHistoryReader == nil {
 		writeOperationHistoryUnavailable(w)
@@ -707,7 +932,11 @@ func (s *Server) handleOperationRunDetail(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	id, err := decodeOperationRunReference(r.PathValue("id"), archiveUID)
+	codec, ok := s.operationHistoryTokenCodec(w)
+	if !ok {
+		return
+	}
+	id, err := codec.decodeRunReference(r.Context(), r.PathValue("id"), archiveUID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_operation_run_id",
 			"Operation run ID is invalid")
@@ -725,13 +954,46 @@ func (s *Server) handleOperationRunDetail(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	summary, err := operationRunSummary(run, archiveUID)
+	summary, err := operationRunSummary(r.Context(), codec, run, archiveUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "operation_history_failed",
 			"Operation history could not be read")
 		return
 	}
-	writeJSON(w, http.StatusOK, OperationRunDetail{OperationRunSummary: summary})
+	summary.ID = r.PathValue("id")
+	detail := OperationRunDetail{
+		OperationRunSummary: summary,
+		RelatedStatus:       operationRelatedStatus(run.ID.Kind()),
+	}
+	configured := false
+	historyAvailability := operations.HistoryUnavailable
+	hasActive := false
+	visualActions := make([]operations.ActionID, 0)
+	switch run.ID.Kind() {
+	case operations.KindCardDAVSync:
+		status, statusErr := s.operationHistoryReader.LaneStatus(r.Context(), run.ID.Kind())
+		if statusErr == nil && status.Validate() == nil {
+			historyAvailability = status.HistoryAvailability
+			hasActive = status.Active != nil
+		}
+		configured = s.operationLaneConfigured(r.Context(), run.ID.Kind(), false)
+	case operations.KindVisualEmbedding:
+		configured, visualActions = s.operationVisualAdvertisement(r.Context())
+	default:
+		// The remaining kinds have no direct action inputs.
+	}
+	detail.SupportedActions = operationSupportedActions(
+		run.ID.Kind(), configured, historyAvailability, hasActive, visualActions)
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) operationHistoryTokenCodec(w http.ResponseWriter) (operationTokenCodec, bool) {
+	keyring, ok := s.store.(operationTokenKeyring)
+	if !ok {
+		writeOperationHistoryUnavailable(w)
+		return operationTokenCodec{}, false
+	}
+	return newOperationTokenCodec(keyring), true
 }
 
 func (s *Server) operationHistoryArchiveUID(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -763,11 +1025,13 @@ func writeOperationHistoryUnavailable(w http.ResponseWriter) {
 		"Operation history is unavailable")
 }
 
-func operationRunSummary(run operations.Run, archiveUID string) (OperationRunSummary, error) {
+func operationRunSummary(
+	ctx context.Context, codec operationTokenCodec, run operations.Run, archiveUID string,
+) (OperationRunSummary, error) {
 	if err := run.Validate(); err != nil {
 		return OperationRunSummary{}, fmt.Errorf("project operation run: %w", err)
 	}
-	ref, err := encodeOperationRunReference(run.ID, archiveUID)
+	ref, err := codec.encodeRunReference(ctx, run.ID, archiveUID)
 	if err != nil {
 		return OperationRunSummary{}, err
 	}
@@ -787,30 +1051,19 @@ func operationRunSummary(run operations.Run, archiveUID string) (OperationRunSum
 	return summary, nil
 }
 
-func operationKindUnavailable(kind operations.Kind) bool {
-	for _, definition := range operations.LaneRegistry() {
-		if definition.Kind == kind {
-			return definition.HistoryAvailability == operations.HistoryUnavailable
+func unavailableOperationKinds(kinds []operations.Kind) []OperationUnavailableKind {
+	result := make([]OperationUnavailableKind, 0, len(kinds))
+	for _, kind := range kinds {
+		for _, definition := range operations.LaneRegistry() {
+			if definition.Kind != kind {
+				continue
+			}
+			result = append(result, OperationUnavailableKind{
+				Kind: kind, Lane: definition.Lane,
+				UnavailableCode: string(kind) + "_history_unavailable",
+			})
+			break
 		}
-	}
-	return true
-}
-
-func unavailableOperationKinds(filter operationHistoryFilter) []OperationUnavailableKind {
-	result := make([]OperationUnavailableKind, 0)
-	if filter.Kind != "" {
-		return result
-	}
-	for _, definition := range operations.LaneRegistry() {
-		if definition.HistoryAvailability != operations.HistoryUnavailable {
-			continue
-		}
-		if filter.Lane != "" && definition.Lane != filter.Lane {
-			continue
-		}
-		result = append(result, OperationUnavailableKind{
-			Kind: definition.Kind, Lane: definition.Lane, UnavailableCode: definition.UnavailableCode,
-		})
 	}
 	return result
 }
@@ -842,33 +1095,6 @@ func operationStableID(
 	default:
 		return operations.StableID{}, errors.New("operation token has an unsupported ID type")
 	}
-}
-
-func encodeOperationToken(payload any) (string, error) {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("encode operation token: %w", err)
-	}
-	if len(encoded) > maxOperationTokenPayloadBytes {
-		return "", errors.New("encode operation token: payload is too large")
-	}
-	return operationTokenVersion + "." + base64.RawURLEncoding.EncodeToString(encoded), nil
-}
-
-func decodeOperationToken(raw string) ([]byte, error) {
-	prefix, encoded, found := strings.Cut(raw, ".")
-	if !found || prefix != operationTokenVersion || encoded == "" ||
-		len(encoded) > base64.RawURLEncoding.EncodedLen(maxOperationTokenPayloadBytes) {
-		return nil, errors.New("operation token has an invalid envelope")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || len(decoded) == 0 || len(decoded) > maxOperationTokenPayloadBytes {
-		return nil, errors.New("operation token payload is invalid")
-	}
-	if base64.RawURLEncoding.EncodeToString(decoded) != encoded {
-		return nil, errors.New("operation token payload encoding is noncanonical")
-	}
-	return decoded, nil
 }
 
 // decodeStrictOperationObject rejects duplicate and unknown fields and
@@ -931,7 +1157,7 @@ func decodeStrictOperationObject(
 
 func operationRunReferenceFieldAllowed(name string) bool {
 	switch name {
-	case "kind", "id_type", "int_id", "string_id", "archive_uid":
+	case "kind", "id_type", "int_id", "string_id":
 		return true
 	default:
 		return false
@@ -940,7 +1166,7 @@ func operationRunReferenceFieldAllowed(name string) bool {
 
 func operationCursorFieldAllowed(name string) bool {
 	switch name {
-	case "t", "k", "it", "i", "s", "f", "a":
+	case "t", "k", "it", "i", "s", "f", "r", "ak", "uk":
 		return true
 	default:
 		return false

@@ -19,13 +19,21 @@ export type ListOperationRunsParams = {
    */
   state?: ListOperationRunsState;
   /**
+   * Inclusive canonical UTC RFC3339 lower bound
+   */
+  started_from?: string;
+  /**
+   * Exclusive canonical UTC RFC3339 upper bound
+   */
+  started_before?: string;
+  /**
    * Maximum runs to return (default 25, max 100)
    * @minimum 1
    * @maximum 100
    */
   limit?: number;
   /**
-   * Opaque cursor bound to this archive and the exact kind, lane, and state filters
+   * Opaque cursor bound to this archive and the complete normalized filter set
    */
   cursor?: string;
 };

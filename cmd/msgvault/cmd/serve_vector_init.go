@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -167,34 +168,41 @@ func startVectorInit(
 			} else {
 				apiServer.SetVisualSearch(searchService)
 			}
-			build := func(runCtx context.Context) error {
-				if err := vf.Visual.Archive.ConsentVisualGeneration(
-					runCtx, vf.Visual.Generation.ID, vf.Visual.PolicyFingerprint); err != nil {
-					return err
-				}
-				return runVisualOnce(runCtx, vf.Visual)
-			}
-			resume := func(runCtx context.Context) error {
-				if err := requireVisualConsent(runCtx, vf.Visual); err != nil {
-					return err
-				}
-				return runVisualOnce(runCtx, vf.Visual)
-			}
-			apiServer.SetVisualOperations(build, resume, func(runCtx context.Context, messageID int64, hash string) error {
-				if err := requireVisualConsent(runCtx, vf.Visual); err != nil {
-					return err
-				}
-				if vf.Visual.ScopeCheck != nil {
-					if err := vf.Visual.ScopeCheck(runCtx); err != nil {
-						return err
+			build := func(runCtx context.Context, scope operations.PassScope) error {
+				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+					if err := vf.Visual.Archive.ConsentVisualGeneration(
+						ctx, vf.Visual.Generation.ID, vf.Visual.PolicyFingerprint); err != nil {
+						return visual.WorkerResult{}, err
 					}
-				}
-				result, err := vf.Visual.Reconciler.RetryOwner(runCtx, messageID, hash)
-				if err != nil || len(result.Work) == 0 {
-					return err
-				}
-				_, err = vf.Visual.Worker.Run(runCtx, result.Work)
-				return err
+					return runVisualOnce(ctx, vf.Visual)
+				})
+			}
+			resume := func(runCtx context.Context, scope operations.PassScope) error {
+				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
+						return visual.WorkerResult{}, err
+					}
+					return runVisualOnce(ctx, vf.Visual)
+				})
+			}
+			apiServer.SetVisualOperations(build, resume, func(
+				runCtx context.Context, scope operations.PassScope, messageID int64, hash string,
+			) error {
+				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
+						return visual.WorkerResult{}, err
+					}
+					if vf.Visual.ScopeCheck != nil {
+						if err := vf.Visual.ScopeCheck(ctx); err != nil {
+							return visual.WorkerResult{}, err
+						}
+					}
+					result, err := vf.Visual.Reconciler.RetryOwner(ctx, messageID, hash)
+					if err != nil || len(result.Work) == 0 {
+						return visual.WorkerResult{}, err
+					}
+					return vf.Visual.Worker.Run(ctx, result.Work)
+				})
 			}, func(statusCtx context.Context, includeCoverage bool) (visual.Status, error) {
 				return vf.Visual.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false, includeCoverage)
 			}, func(retireCtx context.Context) error {
@@ -249,42 +257,79 @@ func requireVisualConsent(ctx context.Context, vf *visualFeatures) error {
 	return nil
 }
 
-func runVisualOnce(ctx context.Context, vf *visualFeatures) error {
-	passErr := runVisualPass(ctx, vf)
+func runVisualOperation(
+	ctx context.Context,
+	vf *visualFeatures,
+	scope operations.PassScope,
+	execute func(context.Context) (visual.WorkerResult, error),
+) (runErr error) {
+	pass, terminal, err := beginCommandOperationPass(
+		ctx, vf.Archive, operations.KindVisualEmbedding, scope,
+	)
+	if err != nil {
+		return err
+	}
+	if terminal != nil {
+		return operations.TerminalReplayOutcome(terminal)
+	}
+	var result visual.WorkerResult
+	defer func() {
+		counters := visualEmbeddingCounters(result)
+		pass.checkpoint(ctx, counters)
+		pass.finish(ctx, counters, runErr)
+	}()
+	result, runErr = execute(ctx)
+	return runErr
+}
+
+func visualEmbeddingCounters(result visual.WorkerResult) operations.InvocationCounters {
+	return operations.InvocationCounters{
+		Attempted: result.Attempted, Succeeded: result.Succeeded,
+		Failed: result.Failed, Skipped: result.Skipped,
+	}
+}
+
+func runVisualPass(ctx context.Context, vf *visualFeatures, scope operations.PassScope) error {
+	return runVisualOperation(ctx, vf, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+		return runVisualOnce(ctx, vf)
+	})
+}
+
+func runVisualOnce(ctx context.Context, vf *visualFeatures) (visual.WorkerResult, error) {
+	result, passErr := executeVisualPass(ctx, vf)
 	// The pass's own worker mutations (commit replacements, drift discards)
 	// park obsolete tokens after the opening sweep already ran; drain them
 	// now so an unscheduled installation's final pass does not leave
 	// unreachable backend vectors behind. Best-effort on a failed pass.
 	if cleanupErr := cleanupObsoleteVisualVectors(ctx, vf); cleanupErr != nil && passErr == nil {
-		return cleanupErr
+		return result, cleanupErr
 	}
-	return passErr
+	return result, passErr
 }
 
-func runVisualPass(ctx context.Context, vf *visualFeatures) error {
+func executeVisualPass(ctx context.Context, vf *visualFeatures) (visual.WorkerResult, error) {
 	if vf.ScopeCheck != nil {
 		if err := vf.ScopeCheck(ctx); err != nil {
-			return err
+			return visual.WorkerResult{}, err
 		}
 	}
 	if err := cleanupObsoleteVisualVectors(ctx, vf); err != nil {
-		return err
+		return visual.WorkerResult{}, err
 	}
 	if err := cleanupRetiredVisualGenerations(ctx, vf); err != nil {
-		return err
+		return visual.WorkerResult{}, err
 	}
 	needsFull, err := vf.Reconciler.NeedsFullReconcile(ctx)
 	if err != nil {
-		return err
+		return visual.WorkerResult{}, err
 	}
 	if needsFull {
 		result, reconcileErr := vf.Reconciler.FullReconcile(ctx)
 		if reconcileErr != nil {
-			return reconcileErr
+			return visual.WorkerResult{}, reconcileErr
 		}
 		if len(result.Work) > 0 {
-			_, err = vf.Worker.Run(ctx, result.Work)
-			return err
+			return vf.Worker.Run(ctx, result.Work)
 		}
 		// A page-bounded pass can find no work without reaching the end of
 		// the archive. Replay rejects consumers whose baseline is still
@@ -292,32 +337,31 @@ func runVisualPass(ctx context.Context, vf *visualFeatures) error {
 		// pass continue the scan.
 		stillNeedsFull, err := vf.Reconciler.NeedsFullReconcile(ctx)
 		if err != nil {
-			return err
+			return visual.WorkerResult{}, err
 		}
 		if stillNeedsFull {
-			return nil
+			return visual.WorkerResult{}, nil
 		}
 	}
 	result, err := vf.Reconciler.Replay(ctx)
 	if err != nil {
-		return err
+		return visual.WorkerResult{}, err
 	}
 	if len(result.Work) > 0 {
-		_, err = vf.Worker.Run(ctx, result.Work)
-		return err
+		return vf.Worker.Run(ctx, result.Work)
 	}
 	status, err := vf.Reconciler.Status(ctx, visual.ProviderUsage{}, false, false)
 	if err != nil {
-		return err
+		return visual.WorkerResult{}, err
 	}
 	if status.ReconciliationComplete && status.JournalLag == 0 && status.ActiveLeases == 0 &&
 		status.Stale == 0 && status.Retryable == 0 && status.Converged == status.ConvergenceTotal {
 		if _, err := vf.Reconciler.Activate(ctx); err != nil {
-			return err
+			return visual.WorkerResult{}, err
 		}
-		return cleanupRetiredVisualGenerations(ctx, vf)
+		return visual.WorkerResult{}, cleanupRetiredVisualGenerations(ctx, vf)
 	}
-	return nil
+	return visual.WorkerResult{}, nil
 }
 
 // cleanupRetiredVisualGenerations deletes retired generations' backend
@@ -398,7 +442,8 @@ func registerVisualJob(sched *scheduler.Scheduler, vf *visualFeatures) error {
 		if consentErr := requireVisualConsent(ctx, vf); consentErr != nil {
 			return nil //nolint:nilerr // missing consent is an expected idle state, not a job failure
 		}
-		return runVisualOnce(ctx, vf)
+		return runVisualPass(ctx, vf,
+			newOperationPassScope("scheduled:visual", operations.TriggerScheduled))
 	}
 	if cfg.Vector.Multimodal.Schedule.RunAfterSync {
 		sched.SetVisualPostSyncJob(runScheduled)

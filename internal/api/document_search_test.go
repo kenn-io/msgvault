@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -148,6 +150,64 @@ func TestDocumentSearchHTTPRejectsCrossOriginKeylessRequest(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 	assert.Equal(t, 0, calls)
 	assert.Contains(t, response.Body.String(), "cross_origin_loopback")
+}
+
+func TestDocumentStatusHTTPExplicitAndCurrentRoutesRejectCrossOriginKeylessRequests(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/documents/status?profile_id=profile&input_key=original&media_type=application%2Fpdf",
+		"/api/v1/documents/status/current",
+	} {
+		t.Run(path, func(t *testing.T) {
+			server, catalog := newTestServerWithMockStore(t)
+			calls := 0
+			catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
+				calls++
+				return "private-profile", []string{"application/pdf"}, nil
+			}
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.RemoteAddr = "127.0.0.1:1234"
+			request.Header.Set("Origin", "https://cross-origin.example")
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+			assert.Zero(t, calls)
+			assert.Contains(t, response.Body.String(), "cross_origin_loopback")
+		})
+	}
+}
+
+func TestDocumentStatusHTTPExplicitAndCurrentRoutesRequireConfiguredAPIKey(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/documents/status?profile_id=profile&input_key=original&media_type=application%2Fpdf",
+		"/api/v1/documents/status/current",
+	} {
+		t.Run(path, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server, catalog := newTestServerWithMockStore(t)
+			server.cfg.Server.APIKey = "synthetic-document-status-key"
+			resolverCalls := 0
+			catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
+				resolverCalls++
+				return "private-profile", []string{"application/pdf"}, nil
+			}
+
+			unauthenticated := httptest.NewRecorder()
+			server.Router().ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(http.StatusUnauthorized, unauthenticated.Code, unauthenticated.Body.String())
+			assert.Zero(resolverCalls)
+
+			authenticatedRequest := httptest.NewRequest(http.MethodGet, path, nil)
+			authenticatedRequest.Header.Set("X-Api-Key", "synthetic-document-status-key")
+			authenticated := httptest.NewRecorder()
+			server.Router().ServeHTTP(authenticated, authenticatedRequest)
+			require.Equal(http.StatusOK, authenticated.Code, authenticated.Body.String())
+			if path == "/api/v1/documents/status/current" {
+				assert.Equal(1, resolverCalls)
+			}
+			assert.NotContains(authenticated.Body.String(), "private-profile")
+		})
+	}
 }
 
 func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
@@ -338,18 +398,133 @@ func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
 	assert.Equal(int64(2), body.ActiveRebuild.RemainingOwners)
 }
 
+func TestDocumentStatusHTTPResolvesCurrentDurableScopeWithoutPublishingIdentifiers(t *testing.T) {
+	assertions := assert.New(t)
+	server, catalog := newTestServerWithMockStore(t)
+	server.cfg.Attachments.Documents.Scope.MessageTypes = []string{"email", "mms"}
+	privateProfileID := "private-current-document-profile"
+	catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
+		return privateProfileID, []string{"application/pdf", "application/epub+zip"}, nil
+	}
+	catalog.documentStatusFunc = func(
+		_ context.Context, profileID, inputKey string, mediaTypes, messageTypes []string,
+	) (store.DocumentIndexStatus, error) {
+		assertions.Equal(privateProfileID, profileID)
+		assertions.Equal("original", inputKey)
+		assertions.Equal([]string{"application/pdf", "application/epub+zip"}, mediaTypes)
+		assertions.Equal([]string{"email", "mms"}, messageTypes)
+		return store.DocumentIndexStatus{ProfileExists: true, ProfileEnabled: true, ReadyOwners: 4}, nil
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/status/current", nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), `"ready_owners":4`)
+	assertions.NotContains(response.Body.String(), privateProfileID)
+}
+
+func TestDocumentStatusHTTPRejectsPartialScopeAndFixesUnavailableCurrentScope(t *testing.T) {
+	assert := assert.New(t)
+	server, catalog := newTestServerWithMockStore(t)
+	catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
+		return "", nil, store.ErrDocumentIndexStatusScopeUnavailable
+	}
+
+	partial := httptest.NewRecorder()
+	server.Router().ServeHTTP(partial, httptest.NewRequest(
+		http.MethodGet, "/api/v1/documents/status?profile_id=private-profile", nil,
+	))
+	assert.Equal(http.StatusBadRequest, partial.Code)
+	assert.NotContains(partial.Body.String(), "private-profile")
+
+	missingExplicit := httptest.NewRecorder()
+	server.Router().ServeHTTP(missingExplicit, httptest.NewRequest(http.MethodGet, "/api/v1/documents/status", nil))
+	assert.Equal(http.StatusBadRequest, missingExplicit.Code)
+
+	unavailableServer, unavailableCatalog := newTestServerWithMockStore(t)
+	unavailableCatalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
+		return "", nil, store.ErrDocumentIndexStatusScopeUnavailable
+	}
+	unavailable := httptest.NewRecorder()
+	unavailableServer.Router().ServeHTTP(unavailable, httptest.NewRequest(http.MethodGet, "/api/v1/documents/status/current", nil))
+	assert.Equal(http.StatusServiceUnavailable, unavailable.Code)
+	assert.Contains(unavailable.Body.String(), "document_status_scope_unavailable")
+	assert.NotContains(unavailable.Body.String(), "target_profile_id")
+}
+
+func TestDocumentStatusHTTPCorruptDurableScopeRemainsRetryableAndPrivate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := storetest.New(t)
+	profileID := "private-corrupt-selected-profile"
+	profile := store.DocumentExtractionProfile{
+		ID: profileID, Fingerprint: strings.Repeat("c", 64),
+		Provider: "test", Endpoint: "https://example.invalid/documents",
+		Region: "test", Model: "test-model",
+		RetentionPosture: "standard", TrainingPosture: "opted-out",
+		AllowedMediaTypes: []string{"application/pdf"},
+		PolicyJSON:        []byte(`{"normalization":1,"chunking":1}`),
+	}
+	_, err := fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+	requirements.NoError(err)
+	requirements.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+	const corruptScopeRecord = "corrupt-current-scope-record"
+	// Valid JSON with the wrong shape exercises scope decoding on both the
+	// SQLite text column and PostgreSQL JSONB column.
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(
+		`UPDATE document_extraction_profiles SET allowed_media_types = ? WHERE id = ?`,
+	), `{"media_type":"`+corruptScopeRecord+`"}`, profile.ID)
+	requirements.NoError(err)
+
+	cfg := config.NewDefaultConfig()
+	cfg.Attachments.Documents.Enabled = true
+	server := NewServerWithOptions(ServerOptions{
+		Config: cfg, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler),
+	})
+
+	current := doGet(server, "/api/v1/documents/status/current")
+	requirements.Equal(http.StatusServiceUnavailable, current.Code, current.Body.String())
+	assertions.Contains(current.Body.String(), "document_status_scope_unavailable")
+	assertions.NotContains(current.Body.String(), profileID)
+	assertions.NotContains(current.Body.String(), corruptScopeRecord)
+	assertions.NotContains(current.Body.String(), "current document index status scope is invalid")
+
+	operationsStatus := doGet(server, "/api/v1/operations/status")
+	requirements.Equal(http.StatusOK, operationsStatus.Code, operationsStatus.Body.String())
+	var status OperationStatusResponse
+	requirements.NoError(json.Unmarshal(operationsStatus.Body.Bytes(), &status))
+	for _, lane := range status.Lanes {
+		if lane.Kind == operations.KindDocumentExtraction {
+			assertions.True(lane.Configured)
+			return
+		}
+	}
+	requirements.Fail("document extraction lane was not returned")
+}
+
 func TestOpenAPIDocumentStatusParameters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	document := OpenAPIDocument()
 	operation := document.Paths["/api/v1/documents/status"].Get
-	require.NotNil(t, operation)
+	require.NotNil(operation)
 	names := make([]string, 0, len(operation.Parameters))
 	for _, parameter := range operation.Parameters {
 		names = append(names, parameter.Name)
 	}
-	assert.ElementsMatch(t, []string{"profile_id", "input_key", "media_type", "message_type"}, names)
+	assert.ElementsMatch([]string{"profile_id", "input_key", "media_type", "message_type"}, names)
+	required := map[string]bool{"profile_id": true, "input_key": true, "media_type": true}
 	for _, parameter := range operation.Parameters {
-		if parameter.Name == "media_type" {
-			assert.True(t, parameter.Required)
-		}
+		assert.Equal(required[parameter.Name], parameter.Required, parameter.Name)
 	}
+	currentPath := document.Paths["/api/v1/documents/status/current"]
+	require.NotNil(currentPath)
+	current := currentPath.Get
+	require.NotNil(current)
+	assert.Empty(current.Parameters)
 }
