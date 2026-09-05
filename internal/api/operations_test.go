@@ -622,6 +622,53 @@ func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
 	assert.Equal(body.MembershipRevision, next.MembershipRevision)
 }
 
+func TestOperationRunsPaginatesSQLiteEnrichmentAtNanosecondPrecision(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	startedAt := time.Date(2026, 9, 5, 12, 0, 0, 123456789, time.UTC)
+	var ids []int64
+	for _, seed := range []struct {
+		key string
+		at  time.Time
+	}{
+		{"first", startedAt},
+		{"newest", startedAt.Add(time.Nanosecond)},
+		{"tied", startedAt},
+	} {
+		run, created, err := st.StartRun(t.Context(), personenrichment.RunStart{
+			Kind: "manual", RequestedBy: seed.key, RequestedAt: seed.at,
+		})
+		require.NoError(err)
+		require.True(created)
+		ids = append(ids, run.ID)
+	}
+	archive := &operationArchiveRealStore{Store: st, uid: operationTestArchiveUID}
+	srv := newOperationTestServer(st, archive)
+	codec := newOperationTokenCodec(st)
+	cursor := ""
+	// Timestamp order wins over ID order; equal timestamps use descending IDs.
+	for index, wantID := range []int64{ids[1], ids[2], ids[0]} {
+		target := "/api/v1/operations/runs?kind=person_enrichment&limit=1"
+		if cursor != "" {
+			target += "&cursor=" + cursor
+		}
+		response := doGet(srv, target)
+		require.Equal(http.StatusOK, response.Code, response.Body.String())
+		var page OperationRunsResponse
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &page))
+		require.Len(page.Runs, 1)
+		id, err := codec.decodeRunReference(t.Context(), page.Runs[0].ID, operationTestArchiveUID)
+		require.NoError(err)
+		require.Equal(mustOperationIntID(t, operations.KindPersonEnrichment, wantID), id)
+		if index < len(ids)-1 {
+			require.NotEmpty(page.NextCursor)
+		} else {
+			require.Empty(page.NextCursor, "pagination must end after exposing every run once")
+		}
+		cursor = page.NextCursor
+	}
+}
+
 func TestOperationRunsRejectsInvalidQueriesAndUnavailableKinds(t *testing.T) {
 	srv := newOperationTestServer(&operationHistoryStub{}, &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
 	tests := []struct {

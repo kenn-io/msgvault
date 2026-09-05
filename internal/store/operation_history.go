@@ -228,8 +228,10 @@ func (s *Store) listPersonEnrichmentOperationRunsFrom(
 		args = append(args, query.StartedBefore.UTC())
 	}
 	if query.Position != nil {
+		// These timestamps are bound as time.Time, retaining nanoseconds on
+		// SQLite. Keep the ID tie-breaker even for sub-millisecond cursors.
 		condition, positionArgs, err := s.numericOperationPositionConditionWithTimestamp(
-			operations.KindPersonEnrichment, *query.Position, time.Millisecond,
+			operations.KindPersonEnrichment, *query.Position, time.Nanosecond,
 			query.Position.StartedAt.UTC())
 		if err != nil {
 			return nil, fmt.Errorf("list operation runs: %w", err)
