@@ -25,6 +25,7 @@
     "shiki": "4.3.1"
   },
   "devDependencies": {
+    "@orval/core": "8.26.0",
     "@axe-core/playwright": "4.10.2",
     "@playwright/test": "1.61.1",
     "@sveltejs/vite-plugin-svelte": "7.1.2",

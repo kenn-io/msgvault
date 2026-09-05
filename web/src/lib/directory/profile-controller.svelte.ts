@@ -384,17 +384,10 @@ export class DirectoryProfileController {
         onResponse: (response) => {
           if (!this.disposed && response.ok) this.definitionCreationCommit = { kind: 'unknown' };
         },
-        parseAs: 'text',
       });
       if (response.response.ok) {
         this.definitionCreationCommit = { kind: 'unknown' };
-        let parsed: unknown;
-        try {
-          parsed = response.data ? JSON.parse(response.data as unknown as string) : undefined;
-        } catch {
-          this.captureMutationFailure(new Error(unknownCreatedDefinitionMessage), 502, draftGeneration);
-          return;
-        }
+        const parsed: unknown = response.data;
         if (!isRecord(parsed)) {
           this.captureMutationFailure(new Error(unknownCreatedDefinitionMessage), 502, draftGeneration);
           return;

@@ -440,7 +440,7 @@
     try {
       const { data, response } = await generatedGetCLIMessageRaw(
         { id: String(target.message_id) },
-        { ...client, parseAs: 'blob' },
+        client,
       );
       if (!response.ok || !(data instanceof Blob))
         throw new Error('The authorized raw message export is no longer available.');

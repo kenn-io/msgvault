@@ -3,34 +3,24 @@
  */
 import type { VisualRetireRequest } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getRetireVisualAttachmentGenerationUrl = () => {
-  return `/api/v1/multimodal/retire`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Retire the visual attachment generation
  */
-export const retireVisualAttachmentGeneration = async (
+export const retireVisualAttachmentGeneration = (
   visualRetireRequest: VisualRetireRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<void>(getRetireVisualAttachmentGenerationUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/multimodal/retire`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: visualRetireRequest,
     },
-    body: JSON.stringify(visualRetireRequest),
-  });
+    options,
+  );
 };

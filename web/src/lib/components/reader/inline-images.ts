@@ -118,7 +118,6 @@ async function fetchInlineImage(
     {
       ...client,
       signal,
-      parseAs: 'stream',
     },
   );
   if (signal.aborted) {

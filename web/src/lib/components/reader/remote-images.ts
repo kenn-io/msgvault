@@ -46,7 +46,6 @@ async function fetchRemoteImage(
     {
       ...client,
       signal,
-      parseAs: 'stream',
     },
   );
   if (signal.aborted) {

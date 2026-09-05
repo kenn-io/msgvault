@@ -3,66 +3,43 @@
  */
 import type { SessionLoginRequest, SessionStatus } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getLogoutSessionUrl = () => {
-  return `/api/session`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Delete the current browser session
  */
-export const logoutSession = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getLogoutSessionUrl(), {
-    ...options,
-    method: "DELETE",
-  });
+export const logoutSession = (
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>({ url: `/api/session`, method: "DELETE" }, options);
 };
-
-export const getGetSessionUrl = () => {
-  return `/api/session`;
-};
-
 /**
  * @summary Get browser authentication status
  */
-export const getSession = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SessionStatus>> => {
-  return orvalFetch<SessionStatus>(getGetSessionUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getSession = (
+  options?: SecondParameter<typeof orvalFetch<SessionStatus>>,
+) => {
+  return orvalFetch<SessionStatus>(
+    { url: `/api/session`, method: "GET" },
+    options,
+  );
 };
-
-export const getLoginSessionUrl = () => {
-  return `/api/session/login`;
-};
-
 /**
  * @summary Create an in-memory browser session
  */
-export const loginSession = async (
+export const loginSession = (
   sessionLoginRequest: SessionLoginRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SessionStatus>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SessionStatus>(getLoginSessionUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SessionStatus>>,
+) => {
+  return orvalFetch<SessionStatus>(
+    {
+      url: `/api/session/login`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: sessionLoginRequest,
     },
-    body: JSON.stringify(sessionLoginRequest),
-  });
+    options,
+  );
 };

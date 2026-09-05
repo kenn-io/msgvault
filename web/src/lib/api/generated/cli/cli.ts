@@ -26,367 +26,206 @@ import type {
   UpdateResult,
 } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getUpdateCLIAccountUrl = () => {
-  return `/api/v1/cli/account`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Update an account for CLI use
  */
-export const updateCLIAccount = async (
+export const updateCLIAccount = (
   updateRequest: UpdateRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<UpdateResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<UpdateResult>(getUpdateCLIAccountUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<UpdateResult>>,
+) => {
+  return orvalFetch<UpdateResult>(
+    {
+      url: `/api/v1/cli/account`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: updateRequest,
     },
-    body: JSON.stringify(updateRequest),
-  });
+    options,
+  );
 };
-
-export const getCreateCLICollectionUrl = () => {
-  return `/api/v1/cli/collections`;
-};
-
 /**
  * @summary Create a collection for CLI use
  */
-export const createCLICollection = async (
+export const createCLICollection = (
   createRequest: CreateRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MutationResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<MutationResult>(getCreateCLICollectionUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<MutationResult>>,
+) => {
+  return orvalFetch<MutationResult>(
+    {
+      url: `/api/v1/cli/collections`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createRequest,
     },
-    body: JSON.stringify(createRequest),
-  });
+    options,
+  );
 };
-
-export const getDeleteCLICollectionUrl = ({
-  name,
-}: DeleteCLICollectionPathParameters) => {
-  return `/api/v1/cli/collections/${encodeURIComponent(String(name))}`;
-};
-
 /**
  * @summary Delete a CLI collection
  */
-export const deleteCLICollection = async (
+export const deleteCLICollection = (
   { name }: DeleteCLICollectionPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MutationResult>> => {
-  return orvalFetch<MutationResult>(getDeleteCLICollectionUrl({ name }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<MutationResult>>,
+) => {
+  return orvalFetch<MutationResult>(
+    {
+      url: `/api/v1/cli/collections/${encodeURIComponent(String(name))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getRemoveCLICollectionSourcesUrl = ({
-  name,
-}: RemoveCLICollectionSourcesPathParameters) => {
-  return `/api/v1/cli/collections/${encodeURIComponent(String(name))}/sources`;
-};
-
 /**
  * @summary Remove accounts from a CLI collection
  */
-export const removeCLICollectionSources = async (
+export const removeCLICollectionSources = (
   { name }: RemoveCLICollectionSourcesPathParameters,
   sourcesRequest: SourcesRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MutationResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<MutationResult>>,
+) => {
   return orvalFetch<MutationResult>(
-    getRemoveCLICollectionSourcesUrl({ name }),
     {
-      ...options,
+      url: `/api/v1/cli/collections/${encodeURIComponent(String(name))}/sources`,
       method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(sourcesRequest),
+      headers: { "Content-Type": "application/json" },
+      data: sourcesRequest,
     },
+    options,
   );
 };
-
-export const getAddCLICollectionSourcesUrl = ({
-  name,
-}: AddCLICollectionSourcesPathParameters) => {
-  return `/api/v1/cli/collections/${encodeURIComponent(String(name))}/sources`;
-};
-
 /**
  * @summary Add accounts to a CLI collection
  */
-export const addCLICollectionSources = async (
+export const addCLICollectionSources = (
   { name }: AddCLICollectionSourcesPathParameters,
   sourcesRequest: SourcesRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MutationResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<MutationResult>(getAddCLICollectionSourcesUrl({ name }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<MutationResult>>,
+) => {
+  return orvalFetch<MutationResult>(
+    {
+      url: `/api/v1/cli/collections/${encodeURIComponent(String(name))}/sources`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: sourcesRequest,
     },
-    body: JSON.stringify(sourcesRequest),
-  });
+    options,
+  );
 };
-
-export const getPlanCLIDeduplicateUrl = () => {
-  return `/api/v1/cli/deduplicate/plan`;
-};
-
 /**
  * @summary Plan interactive deduplication for CLI use
  */
-export const planCLIDeduplicate = async (
+export const planCLIDeduplicate = (
   cLIDeduplicatePlanRequest: CLIDeduplicatePlanRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CLIDeduplicatePlanResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CLIDeduplicatePlanResponse>(getPlanCLIDeduplicateUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CLIDeduplicatePlanResponse>>,
+) => {
+  return orvalFetch<CLIDeduplicatePlanResponse>(
+    {
+      url: `/api/v1/cli/deduplicate/plan`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIDeduplicatePlanRequest,
     },
-    body: JSON.stringify(cLIDeduplicatePlanRequest),
-  });
+    options,
+  );
 };
-
-export const getExecuteCLIDeleteDedupedUrl = () => {
-  return `/api/v1/cli/delete-deduped`;
-};
-
 /**
  * @summary Delete dedup-hidden messages for CLI use
  */
-export const executeCLIDeleteDeduped = async (
+export const executeCLIDeleteDeduped = (
   cliDeleteDedupedExecuteRequest: CliDeleteDedupedExecuteRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliDeleteDedupedExecuteResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<CliDeleteDedupedExecuteResponse>>,
+) => {
   return orvalFetch<CliDeleteDedupedExecuteResponse>(
-    getExecuteCLIDeleteDedupedUrl(),
     {
-      ...options,
+      url: `/api/v1/cli/delete-deduped`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(cliDeleteDedupedExecuteRequest),
+      headers: { "Content-Type": "application/json" },
+      data: cliDeleteDedupedExecuteRequest,
     },
+    options,
   );
 };
-
-export const getPlanCLIDeleteDedupedUrl = () => {
-  return `/api/v1/cli/delete-deduped/plan`;
-};
-
 /**
  * @summary Plan deletion of dedup-hidden messages for CLI use
  */
-export const planCLIDeleteDeduped = async (
+export const planCLIDeleteDeduped = (
   cliDeleteDedupedPlanRequest: CliDeleteDedupedPlanRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliDeleteDedupedPlanResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<CliDeleteDedupedPlanResponse>>,
+) => {
   return orvalFetch<CliDeleteDedupedPlanResponse>(
-    getPlanCLIDeleteDedupedUrl(),
     {
-      ...options,
+      url: `/api/v1/cli/delete-deduped/plan`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(cliDeleteDedupedPlanRequest),
+      headers: { "Content-Type": "application/json" },
+      data: cliDeleteDedupedPlanRequest,
     },
+    options,
   );
 };
-
-export const getRemoveCLIIdentityUrl = () => {
-  return `/api/v1/cli/identities`;
-};
-
 /**
  * @summary Remove a confirmed identifier from an account identity
  */
-export const removeCLIIdentity = async (
+export const removeCLIIdentity = (
   removeRequest: RemoveRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RemoveResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<RemoveResult>(getRemoveCLIIdentityUrl(), {
-    ...options,
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<RemoveResult>>,
+) => {
+  return orvalFetch<RemoveResult>(
+    {
+      url: `/api/v1/cli/identities`,
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      data: removeRequest,
     },
-    body: JSON.stringify(removeRequest),
-  });
+    options,
+  );
 };
-
-export const getListCLIIdentitiesUrl = (params?: ListCLIIdentitiesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/identities?${stringifiedParams}`
-    : `/api/v1/cli/identities`;
-};
-
 /**
  * @summary List confirmed account identities
  */
-export const listCLIIdentities = async (
+export const listCLIIdentities = (
   params?: ListCLIIdentitiesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliIdentitiesResponse>> => {
-  return orvalFetch<CliIdentitiesResponse>(getListCLIIdentitiesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CliIdentitiesResponse>>,
+) => {
+  return orvalFetch<CliIdentitiesResponse>(
+    { url: `/api/v1/cli/identities`, method: "GET", params },
+    options,
+  );
 };
-
-export const getAddCLIIdentityUrl = () => {
-  return `/api/v1/cli/identities`;
-};
-
 /**
  * @summary Add a confirmed identifier to an account identity
  */
-export const addCLIIdentity = async (
+export const addCLIIdentity = (
   addRequest: AddRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AddResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<AddResult>(getAddCLIIdentityUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<AddResult>>,
+) => {
+  return orvalFetch<AddResult>(
+    {
+      url: `/api/v1/cli/identities`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: addRequest,
     },
-    body: JSON.stringify(addRequest),
-  });
+    options,
+  );
 };
-
-export const getImportCLIIdentitiesUrl = () => {
-  return `/api/v1/cli/identities/import`;
-};
-
 /**
  * @summary Preview or apply parsed source-scoped identities
  */
-export const importCLIIdentities = async (
+export const importCLIIdentities = (
   importRequest: ImportRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ImportResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ImportResult>(getImportCLIIdentitiesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ImportResult>>,
+) => {
+  return orvalFetch<ImportResult>(
+    {
+      url: `/api/v1/cli/identities/import`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: importRequest,
     },
-    body: JSON.stringify(importRequest),
-  });
+    options,
+  );
 };

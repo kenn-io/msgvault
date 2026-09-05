@@ -3,36 +3,23 @@
  */
 import type { HealthResponse } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getHealthUrl = () => {
-  return `/health`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Health check
  */
-export const health = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<HealthResponse>> => {
-  return orvalFetch<HealthResponse>(getHealthUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const health = (
+  options?: SecondParameter<typeof orvalFetch<HealthResponse>>,
+) => {
+  return orvalFetch<HealthResponse>({ url: `/health`, method: "GET" }, options);
 };
-
-export const getHeadHealthUrl = () => {
-  return `/health`;
-};
-
 /**
  * @summary Health check
  */
-export const headHealth = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getHeadHealthUrl(), {
-    ...options,
-    method: "HEAD",
-  });
+export const headHealth = (
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>({ url: `/health`, method: "HEAD" }, options);
 };

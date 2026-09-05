@@ -118,7 +118,6 @@
       {
         ...client,
         signal,
-        parseAs: 'stream',
       },
     );
     if (!response.ok || !(data instanceof ReadableStream)) throw new Error('Archived content could not be loaded.');

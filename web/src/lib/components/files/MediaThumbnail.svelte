@@ -83,7 +83,7 @@
   });
 
   async function loadImage(id: number, mimeType: string, signal: AbortSignal): Promise<string> {
-    const { data, response } = await generatedGetFileContent({ id }, { ...client, signal, parseAs: 'stream' });
+    const { data, response } = await generatedGetFileContent({ id }, { ...client, signal });
     if (!response.ok || !(data instanceof ReadableStream)) {
       throw new Error('Archived thumbnail content could not be loaded.');
     }

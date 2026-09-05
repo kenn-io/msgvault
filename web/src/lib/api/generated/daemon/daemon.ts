@@ -3,20 +3,15 @@
  */
 import type { PingInfo } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getDaemonPingUrl = () => {
-  return `/api/ping`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Daemon discovery ping
  */
-export const daemonPing = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PingInfo>> => {
-  return orvalFetch<PingInfo>(getDaemonPingUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const daemonPing = (
+  options?: SecondParameter<typeof orvalFetch<PingInfo>>,
+) => {
+  return orvalFetch<PingInfo>({ url: `/api/ping`, method: "GET" }, options);
 };

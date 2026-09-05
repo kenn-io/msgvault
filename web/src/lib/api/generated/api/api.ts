@@ -18,13 +18,19 @@ import type {
   BuildCLICacheParams,
   CLIAddCalendarPlanRequest,
   CLIAddCalendarPlanResponse,
+  CLICacheBuildEvent,
   CLIDeleteStagedPlanRequest,
   CLIDeleteStagedPlanResponse,
   CLIDeletionManifestResponse,
   CLIEmbeddingsPlanRequest,
   CLIEmbeddingsPlanResponse,
+  CLIRepairEncodingEvent,
+  CLIRepairMessageEvent,
   CLIRepairMessageRequest,
+  CLIRunEvent,
   CLIRunRequest,
+  CLISyncEvent,
+  CLIVerifyEvent,
   CacheStats,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
@@ -52,6 +58,7 @@ import type {
   CliCollectionsResponse,
   CliInitDBResponse,
   CliMessageResponse,
+  CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
   CommunicationService,
@@ -86,6 +93,7 @@ import type {
   DeleteSettingsProviderCredentialPathParameters,
   DeletionManifestDetail,
   DirectoryPeopleResponse,
+  DiscoverEvent,
   DiscoverRequest,
   DocumentIndexStatusResponse,
   DocumentSearchResponse,
@@ -343,5295 +351,2891 @@ import type {
   VisualRetryRequest,
 } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
+import { orvalText } from "../../runtime";
+import { orvalStream } from "../../runtime";
 
-export const getListAccountsUrl = () => {
-  return `/api/v1/accounts`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources
  */
-export const listAccounts = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AccountListResponse>> => {
-  return orvalFetch<AccountListResponse>(getListAccountsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listAccounts = (
+  options?: SecondParameter<typeof orvalFetch<AccountListResponse>>,
+) => {
+  return orvalFetch<AccountListResponse>(
+    { url: `/api/v1/accounts`, method: "GET" },
+    options,
+  );
 };
-
-export const getAddAccountUrl = () => {
-  return `/api/v1/accounts`;
-};
-
 /**
  * @summary Add an account
  */
-export const addAccount = async (
+export const addAccount = (
   addAccountRequest: AddAccountRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StatusMessageResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<StatusMessageResponse>(getAddAccountUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<StatusMessageResponse>>,
+) => {
+  return orvalFetch<StatusMessageResponse>(
+    {
+      url: `/api/v1/accounts`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: addAccountRequest,
     },
-    body: JSON.stringify(addAccountRequest),
-  });
+    options,
+  );
 };
-
-export const getGetAggregatesUrl = (params?: GetAggregatesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/aggregates?${stringifiedParams}`
-    : `/api/v1/aggregates`;
-};
-
 /**
  * @summary Get aggregate rows
  */
-export const getAggregates = async (
+export const getAggregates = (
   params?: GetAggregatesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AggregateResponse>> => {
-  return orvalFetch<AggregateResponse>(getGetAggregatesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<AggregateResponse>>,
+) => {
+  return orvalFetch<AggregateResponse>(
+    { url: `/api/v1/aggregates`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetSubAggregatesUrl = (params: GetSubAggregatesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/aggregates/sub?${stringifiedParams}`
-    : `/api/v1/aggregates/sub`;
-};
-
 /**
  * @summary Get nested aggregate rows
  */
-export const getSubAggregates = async (
+export const getSubAggregates = (
   params: GetSubAggregatesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AggregateResponse>> => {
-  return orvalFetch<AggregateResponse>(getGetSubAggregatesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<AggregateResponse>>,
+) => {
+  return orvalFetch<AggregateResponse>(
+    { url: `/api/v1/aggregates/sub`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetAttachmentContentUrl = ({
-  hash,
-}: GetAttachmentContentPathParameters) => {
-  return `/api/v1/attachments/${encodeURIComponent(String(hash))}/content`;
-};
-
 /**
  * @summary Download attachment content by SHA-256 hash
  */
-export const getAttachmentContent = async (
+export const getAttachmentContent = (
   { hash }: GetAttachmentContentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetAttachmentContentUrl({ hash }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/attachments/${encodeURIComponent(String(hash))}/content`,
+      method: "GET",
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
-export const getGetAttachmentUrl = ({ id }: GetAttachmentPathParameters) => {
-  return `/api/v1/attachments/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get attachment metadata
  */
-export const getAttachment = async (
+export const getAttachment = (
   { id }: GetAttachmentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AttachmentInfo>> => {
-  return orvalFetch<AttachmentInfo>(getGetAttachmentUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListAttributeDefinitionsUrl = (
-  params?: ListAttributeDefinitionsParams,
+  options?: SecondParameter<typeof orvalFetch<AttachmentInfo>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/attribute-definitions?${stringifiedParams}`
-    : `/api/v1/attribute-definitions`;
+  return orvalFetch<AttachmentInfo>(
+    {
+      url: `/api/v1/attachments/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
 /**
  * @summary List portable attribute definitions
  */
-export const listAttributeDefinitions = async (
+export const listAttributeDefinitions = (
   params?: ListAttributeDefinitionsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AttributeDefinitionsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<AttributeDefinitionsResponse>>,
+) => {
   return orvalFetch<AttributeDefinitionsResponse>(
-    getListAttributeDefinitionsUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/attribute-definitions`, method: "GET", params },
+    options,
   );
 };
-
-export const getCreateAttributeDefinitionUrl = () => {
-  return `/api/v1/attribute-definitions`;
-};
-
 /**
  * @summary Create a user attribute definition
  */
-export const createAttributeDefinition = async (
+export const createAttributeDefinition = (
   createAttributeDefinitionRequest: CreateAttributeDefinitionRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AttributeDefinition>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<AttributeDefinition>(getCreateAttributeDefinitionUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<AttributeDefinition>>,
+) => {
+  return orvalFetch<AttributeDefinition>(
+    {
+      url: `/api/v1/attribute-definitions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createAttributeDefinitionRequest,
     },
-    body: JSON.stringify(createAttributeDefinitionRequest),
-  });
+    options,
+  );
 };
-
-export const getDeleteAttributeDefinitionUrl = ({
-  id,
-}: DeleteAttributeDefinitionPathParameters) => {
-  return `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete a user attribute definition
  */
-export const deleteAttributeDefinition = async (
+export const deleteAttributeDefinition = (
   { id }: DeleteAttributeDefinitionPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteAttributeDefinitionUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetAttributeDefinitionUrl = ({
-  id,
-}: GetAttributeDefinitionPathParameters) => {
-  return `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get one attribute definition
  */
-export const getAttributeDefinition = async (
+export const getAttributeDefinition = (
   { id }: GetAttributeDefinitionPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AttributeDefinition>> => {
-  return orvalFetch<AttributeDefinition>(getGetAttributeDefinitionUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<AttributeDefinition>>,
+) => {
+  return orvalFetch<AttributeDefinition>(
+    {
+      url: `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchAttributeDefinitionUrl = ({
-  id,
-}: PatchAttributeDefinitionPathParameters) => {
-  return `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Update mutable attribute definition fields
  */
-export const patchAttributeDefinition = async (
+export const patchAttributeDefinition = (
   { id }: PatchAttributeDefinitionPathParameters,
   patchAttributeDefinitionRequest: PatchAttributeDefinitionRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AttributeDefinition>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<AttributeDefinition>>,
+) => {
   return orvalFetch<AttributeDefinition>(
-    getPatchAttributeDefinitionUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/attribute-definitions/${encodeURIComponent(String(id))}`,
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(patchAttributeDefinitionRequest),
+      headers: { "Content-Type": "application/json" },
+      data: patchAttributeDefinitionRequest,
     },
+    options,
   );
 };
-
-export const getUploadTokenUrl = ({ email }: UploadTokenPathParameters) => {
-  return `/api/v1/auth/token/${encodeURIComponent(String(email))}`;
-};
-
 /**
  * @summary Upload an OAuth token
  */
-export const uploadToken = async (
+export const uploadToken = (
   { email }: UploadTokenPathParameters,
   tokenUploadRequest: TokenUploadRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StatusMessageResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<StatusMessageResponse>(getUploadTokenUrl({ email }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<StatusMessageResponse>>,
+) => {
+  return orvalFetch<StatusMessageResponse>(
+    {
+      url: `/api/v1/auth/token/${encodeURIComponent(String(email))}`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: tokenUploadRequest,
     },
-    body: JSON.stringify(tokenUploadRequest),
-  });
+    options,
+  );
 };
-
-export const getBeginBackupFreezeUrl = () => {
-  return `/api/v1/backup/freeze/begin`;
-};
-
 /**
  * @summary Begin a backup freeze window
  */
-export const beginBackupFreeze = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<BackupFreezeBeginResponse>> => {
-  return orvalFetch<BackupFreezeBeginResponse>(getBeginBackupFreezeUrl(), {
-    ...options,
-    method: "POST",
-  });
+export const beginBackupFreeze = (
+  options?: SecondParameter<typeof orvalFetch<BackupFreezeBeginResponse>>,
+) => {
+  return orvalFetch<BackupFreezeBeginResponse>(
+    { url: `/api/v1/backup/freeze/begin`, method: "POST" },
+    options,
+  );
 };
-
-export const getEndBackupFreezeUrl = () => {
-  return `/api/v1/backup/freeze/end`;
-};
-
 /**
  * @summary End a backup freeze window
  */
-export const endBackupFreeze = async (
+export const endBackupFreeze = (
   backupFreezeEndRequest: BackupFreezeEndRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<BackupFreezeEndResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<BackupFreezeEndResponse>(getEndBackupFreezeUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<BackupFreezeEndResponse>>,
+) => {
+  return orvalFetch<BackupFreezeEndResponse>(
+    {
+      url: `/api/v1/backup/freeze/end`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: backupFreezeEndRequest,
     },
-    body: JSON.stringify(backupFreezeEndRequest),
-  });
+    options,
+  );
 };
-
-export const getSaveCardDAVAccountUrl = () => {
-  return `/api/v1/carddav/account`;
-};
-
 /**
  * @summary Discover and save a CardDAV account
  */
-export const saveCardDAVAccount = async (
+export const saveCardDAVAccount = (
   cardDAVAccountRequest: CardDAVAccountRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVAccountResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CardDAVAccountResponse>(getSaveCardDAVAccountUrl(), {
-    ...options,
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CardDAVAccountResponse>>,
+) => {
+  return orvalFetch<CardDAVAccountResponse>(
+    {
+      url: `/api/v1/carddav/account`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVAccountRequest,
     },
-    body: JSON.stringify(cardDAVAccountRequest),
-  });
+    options,
+  );
 };
-
-export const getTestCardDAVAccountUrl = () => {
-  return `/api/v1/carddav/account/test`;
-};
-
 /**
  * @summary Test a CardDAV account
  */
-export const testCardDAVAccount = async (
+export const testCardDAVAccount = (
   cardDAVAccountRequest: CardDAVAccountRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVAccountResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CardDAVAccountResponse>(getTestCardDAVAccountUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CardDAVAccountResponse>>,
+) => {
+  return orvalFetch<CardDAVAccountResponse>(
+    {
+      url: `/api/v1/carddav/account/test`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVAccountRequest,
     },
-    body: JSON.stringify(cardDAVAccountRequest),
-  });
+    options,
+  );
 };
-
-export const getListCardDAVBooksUrl = () => {
-  return `/api/v1/carddav/books`;
-};
-
 /**
  * @summary List CardDAV address books
  */
-export const listCardDAVBooks = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVBooksResponse>> => {
-  return orvalFetch<CardDAVBooksResponse>(getListCardDAVBooksUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listCardDAVBooks = (
+  options?: SecondParameter<typeof orvalFetch<CardDAVBooksResponse>>,
+) => {
+  return orvalFetch<CardDAVBooksResponse>(
+    { url: `/api/v1/carddav/books`, method: "GET" },
+    options,
+  );
 };
-
-export const getUpdateCardDAVBookRolesUrl = ({
-  id,
-}: UpdateCardDAVBookRolesPathParameters) => {
-  return `/api/v1/carddav/books/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Update CardDAV address book roles
  */
-export const updateCardDAVBookRoles = async (
+export const updateCardDAVBookRoles = (
   { id }: UpdateCardDAVBookRolesPathParameters,
   cardDAVBookRolesRequest: CardDAVBookRolesRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVBookResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CardDAVBookResponse>(getUpdateCardDAVBookRolesUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CardDAVBookResponse>>,
+) => {
+  return orvalFetch<CardDAVBookResponse>(
+    {
+      url: `/api/v1/carddav/books/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVBookRolesRequest,
     },
-    body: JSON.stringify(cardDAVBookRolesRequest),
-  });
+    options,
+  );
 };
-
-export const getListCardDAVConflictsUrl = () => {
-  return `/api/v1/carddav/conflicts`;
-};
-
 /**
  * @summary List unresolved CardDAV conflicts
  */
-export const listCardDAVConflicts = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVConflictsResponse>> => {
-  return orvalFetch<CardDAVConflictsResponse>(getListCardDAVConflictsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listCardDAVConflicts = (
+  options?: SecondParameter<typeof orvalFetch<CardDAVConflictsResponse>>,
+) => {
+  return orvalFetch<CardDAVConflictsResponse>(
+    { url: `/api/v1/carddav/conflicts`, method: "GET" },
+    options,
+  );
 };
-
-export const getGetCardDAVConflictUrl = ({
-  id,
-}: GetCardDAVConflictPathParameters) => {
-  return `/api/v1/carddav/conflicts/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Inspect a CardDAV conflict
  */
-export const getCardDAVConflict = async (
+export const getCardDAVConflict = (
   { id }: GetCardDAVConflictPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVConflictDetailResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<CardDAVConflictDetailResponse>>,
+) => {
   return orvalFetch<CardDAVConflictDetailResponse>(
-    getGetCardDAVConflictUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/carddav/conflicts/${encodeURIComponent(String(id))}`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getResolveCardDAVConflictUrl = ({
-  id,
-}: ResolveCardDAVConflictPathParameters) => {
-  return `/api/v1/carddav/conflicts/${encodeURIComponent(String(id))}/resolve`;
-};
-
 /**
  * @summary Resolve a CardDAV conflict
  */
-export const resolveCardDAVConflict = async (
+export const resolveCardDAVConflict = (
   { id }: ResolveCardDAVConflictPathParameters,
   cardDAVResolveRequest: CardDAVResolveRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVConflictResolutionResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVConflictResolutionResponse>
+  >,
+) => {
   return orvalFetch<CardDAVConflictResolutionResponse>(
-    getResolveCardDAVConflictUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/carddav/conflicts/${encodeURIComponent(String(id))}/resolve`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(cardDAVResolveRequest),
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVResolveRequest,
     },
+    options,
   );
 };
-
-export const getUnpublishCardDAVPersonUrl = ({
-  personId,
-}: UnpublishCardDAVPersonPathParameters) => {
-  return `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`;
-};
-
 /**
  * @summary Unpublish a person from CardDAV
  */
-export const unpublishCardDAVPerson = async (
+export const unpublishCardDAVPerson = (
   { personId }: UnpublishCardDAVPersonPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVPublicationResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<CardDAVPublicationResponse>>,
+) => {
   return orvalFetch<CardDAVPublicationResponse>(
-    getUnpublishCardDAVPersonUrl({ personId }),
     {
-      ...options,
+      url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`,
       method: "DELETE",
     },
+    options,
   );
 };
-
-export const getGetCardDAVPublicationUrl = ({
-  personId,
-}: GetCardDAVPublicationPathParameters) => {
-  return `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`;
-};
-
 /**
  * @summary Get CardDAV publication state
  */
-export const getCardDAVPublication = async (
+export const getCardDAVPublication = (
   { personId }: GetCardDAVPublicationPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVPublicationResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<CardDAVPublicationResponse>>,
+) => {
   return orvalFetch<CardDAVPublicationResponse>(
-    getGetCardDAVPublicationUrl({ personId }),
     {
-      ...options,
+      url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getPublishCardDAVPersonUrl = ({
-  personId,
-}: PublishCardDAVPersonPathParameters) => {
-  return `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`;
-};
-
 /**
  * @summary Publish a person to CardDAV
  */
-export const publishCardDAVPerson = async (
+export const publishCardDAVPerson = (
   { personId }: PublishCardDAVPersonPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVPublicationResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<CardDAVPublicationResponse>>,
+) => {
   return orvalFetch<CardDAVPublicationResponse>(
-    getPublishCardDAVPersonUrl({ personId }),
     {
-      ...options,
+      url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`,
       method: "POST",
     },
+    options,
   );
 };
-
-export const getListCardDAVRunsUrl = (params?: ListCardDAVRunsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/carddav/runs?${stringifiedParams}`
-    : `/api/v1/carddav/runs`;
-};
-
 /**
  * @summary List CardDAV synchronization runs
  */
-export const listCardDAVRuns = async (
+export const listCardDAVRuns = (
   params?: ListCardDAVRunsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVRunsResponse>> => {
-  return orvalFetch<CardDAVRunsResponse>(getListCardDAVRunsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CardDAVRunsResponse>>,
+) => {
+  return orvalFetch<CardDAVRunsResponse>(
+    { url: `/api/v1/carddav/runs`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetCardDAVStatusUrl = () => {
-  return `/api/v1/carddav/status`;
-};
-
 /**
  * @summary Get CardDAV synchronization status
  */
-export const getCardDAVStatus = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CardDAVStatusResponse>> => {
-  return orvalFetch<CardDAVStatusResponse>(getGetCardDAVStatusUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getCardDAVStatus = (
+  options?: SecondParameter<typeof orvalFetch<CardDAVStatusResponse>>,
+) => {
+  return orvalFetch<CardDAVStatusResponse>(
+    { url: `/api/v1/carddav/status`, method: "GET" },
+    options,
+  );
 };
-
-export const getSyncCardDAVUrl = () => {
-  return `/api/v1/carddav/sync`;
-};
-
 /**
  * @summary Trigger CardDAV synchronization
  */
-export const syncCardDAV = async (
+export const syncCardDAV = (
   cardDAVSyncRequest: CardDAVSyncRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SyncResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SyncResult>(getSyncCardDAVUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SyncResult>>,
+) => {
+  return orvalFetch<SyncResult>(
+    {
+      url: `/api/v1/carddav/sync`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVSyncRequest,
     },
-    body: JSON.stringify(cardDAVSyncRequest),
-  });
+    options,
+  );
 };
-
-export const getListCLIAccountsUrl = () => {
-  return `/api/v1/cli/accounts`;
-};
-
 /**
  * @summary List accounts for CLI output
  */
-export const listCLIAccounts = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliAccountsResponse>> => {
-  return orvalFetch<CliAccountsResponse>(getListCLIAccountsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listCLIAccounts = (
+  options?: SecondParameter<typeof orvalFetch<CliAccountsResponse>>,
+) => {
+  return orvalFetch<CliAccountsResponse>(
+    { url: `/api/v1/cli/accounts`, method: "GET" },
+    options,
+  );
 };
-
-export const getPlanCLIAddCalendarUrl = () => {
-  return `/api/v1/cli/add-calendar/plan`;
-};
-
 /**
  * @summary Plan CLI Calendar account setup
  */
-export const planCLIAddCalendar = async (
+export const planCLIAddCalendar = (
   cLIAddCalendarPlanRequest: CLIAddCalendarPlanRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CLIAddCalendarPlanResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CLIAddCalendarPlanResponse>(getPlanCLIAddCalendarUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CLIAddCalendarPlanResponse>>,
+) => {
+  return orvalFetch<CLIAddCalendarPlanResponse>(
+    {
+      url: `/api/v1/cli/add-calendar/plan`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIAddCalendarPlanRequest,
     },
-    body: JSON.stringify(cLIAddCalendarPlanRequest),
-  });
+    options,
+  );
 };
-
-export const getGetCLIAttachmentUrl = (params: GetCLIAttachmentParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/attachment?${stringifiedParams}`
-    : `/api/v1/cli/attachment`;
-};
-
 /**
  * @summary Get one attachment for CLI export
  */
-export const getCLIAttachment = async (
+export const getCLIAttachment = (
   params: GetCLIAttachmentParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetCLIAttachmentUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/cli/attachment`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
-export const getBuildCLICacheUrl = (params?: BuildCLICacheParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/build-cache?${stringifiedParams}`
-    : `/api/v1/cli/build-cache`;
-};
-
 /**
  * @summary Build the CLI analytics cache
  */
-export const buildCLICache = async (
+export const buildCLICache = (
   params?: BuildCLICacheParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getBuildCLICacheUrl(params), {
-    ...options,
-    method: "POST",
-  });
+  options?: SecondParameter<typeof orvalText<CLICacheBuildEvent>>,
+) => {
+  return orvalText<CLICacheBuildEvent>(
+    { url: `/api/v1/cli/build-cache`, method: "POST", params },
+    options,
+  );
 };
-
-export const getGetCLICacheStatsUrl = () => {
-  return `/api/v1/cli/cache-stats`;
-};
-
 /**
  * @summary Get CLI-compatible analytics cache statistics
  */
-export const getCLICacheStats = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CacheStats>> => {
-  return orvalFetch<CacheStats>(getGetCLICacheStatsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getCLICacheStats = (
+  options?: SecondParameter<typeof orvalFetch<CacheStats>>,
+) => {
+  return orvalFetch<CacheStats>(
+    { url: `/api/v1/cli/cache-stats`, method: "GET" },
+    options,
+  );
 };
-
-export const getGetCLICollectionUrl = (params: GetCLICollectionParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/collection?${stringifiedParams}`
-    : `/api/v1/cli/collection`;
-};
-
 /**
  * @summary Get one collection for CLI output
  */
-export const getCLICollection = async (
+export const getCLICollection = (
   params: GetCLICollectionParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliCollectionEnvelope>> => {
-  return orvalFetch<CliCollectionEnvelope>(getGetCLICollectionUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CliCollectionEnvelope>>,
+) => {
+  return orvalFetch<CliCollectionEnvelope>(
+    { url: `/api/v1/cli/collection`, method: "GET", params },
+    options,
+  );
 };
-
-export const getListCLICollectionsUrl = () => {
-  return `/api/v1/cli/collections`;
-};
-
 /**
  * @summary List collections for CLI output
  */
-export const listCLICollections = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliCollectionsResponse>> => {
-  return orvalFetch<CliCollectionsResponse>(getListCLICollectionsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listCLICollections = (
+  options?: SecondParameter<typeof orvalFetch<CliCollectionsResponse>>,
+) => {
+  return orvalFetch<CliCollectionsResponse>(
+    { url: `/api/v1/cli/collections`, method: "GET" },
+    options,
+  );
 };
-
-export const getPlanCLIDeleteStagedUrl = () => {
-  return `/api/v1/cli/delete-staged/plan`;
-};
-
 /**
  * @summary Plan CLI staged deletion execution
  */
-export const planCLIDeleteStaged = async (
+export const planCLIDeleteStaged = (
   cLIDeleteStagedPlanRequest: CLIDeleteStagedPlanRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CLIDeleteStagedPlanResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CLIDeleteStagedPlanResponse>(getPlanCLIDeleteStagedUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CLIDeleteStagedPlanResponse>>,
+) => {
+  return orvalFetch<CLIDeleteStagedPlanResponse>(
+    {
+      url: `/api/v1/cli/delete-staged/plan`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIDeleteStagedPlanRequest,
     },
-    body: JSON.stringify(cLIDeleteStagedPlanRequest),
-  });
+    options,
+  );
 };
-
-export const getCreateCLIDeletionManifestUrl = () => {
-  return `/api/v1/cli/deletion-manifests`;
-};
-
 /**
  * @summary Create a staged deletion manifest
  */
-export const createCLIDeletionManifest = async (
+export const createCLIDeletionManifest = (
   manifest: Manifest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CLIDeletionManifestResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<CLIDeletionManifestResponse>>,
+) => {
   return orvalFetch<CLIDeletionManifestResponse>(
-    getCreateCLIDeletionManifestUrl(),
     {
-      ...options,
+      url: `/api/v1/cli/deletion-manifests`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(manifest),
+      headers: { "Content-Type": "application/json" },
+      data: manifest,
     },
+    options,
   );
 };
-
-export const getPlanCLIEmbeddingsUrl = () => {
-  return `/api/v1/cli/embeddings/plan`;
-};
-
 /**
  * @summary Plan CLI embeddings management
  */
-export const planCLIEmbeddings = async (
+export const planCLIEmbeddings = (
   cLIEmbeddingsPlanRequest: CLIEmbeddingsPlanRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CLIEmbeddingsPlanResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CLIEmbeddingsPlanResponse>(getPlanCLIEmbeddingsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CLIEmbeddingsPlanResponse>>,
+) => {
+  return orvalFetch<CLIEmbeddingsPlanResponse>(
+    {
+      url: `/api/v1/cli/embeddings/plan`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIEmbeddingsPlanRequest,
     },
-    body: JSON.stringify(cLIEmbeddingsPlanRequest),
-  });
+    options,
+  );
 };
-
-export const getDiscoverCLIIdentitiesUrl = () => {
-  return `/api/v1/cli/identities/discover`;
-};
-
 /**
  * @summary Discover source-scoped account identities
  */
-export const discoverCLIIdentities = async (
+export const discoverCLIIdentities = (
   discoverRequest: DiscoverRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Response>(getDiscoverCLIIdentitiesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<DiscoverEvent>>,
+) => {
+  return orvalFetch<DiscoverEvent>(
+    {
+      url: `/api/v1/cli/identities/discover`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: discoverRequest,
     },
-    body: JSON.stringify(discoverRequest),
-  });
+    options,
+  );
 };
-
-export const getInitCLIArchiveUrl = () => {
-  return `/api/v1/cli/init-db`;
-};
-
 /**
  * @summary Initialize the archive for CLI use
  */
-export const initCLIArchive = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliInitDBResponse>> => {
-  return orvalFetch<CliInitDBResponse>(getInitCLIArchiveUrl(), {
-    ...options,
-    method: "POST",
-  });
+export const initCLIArchive = (
+  options?: SecondParameter<typeof orvalFetch<CliInitDBResponse>>,
+) => {
+  return orvalFetch<CliInitDBResponse>(
+    { url: `/api/v1/cli/init-db`, method: "POST" },
+    options,
+  );
 };
-
-export const getGetCLIMessageUrl = (params: GetCLIMessageParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/message?${stringifiedParams}`
-    : `/api/v1/cli/message`;
-};
-
 /**
  * @summary Get one message for CLI output
  */
-export const getCLIMessage = async (
+export const getCLIMessage = (
   params: GetCLIMessageParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliMessageResponse>> => {
-  return orvalFetch<CliMessageResponse>(getGetCLIMessageUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CliMessageResponse>>,
+) => {
+  return orvalFetch<CliMessageResponse>(
+    { url: `/api/v1/cli/message`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetCLIMessageRawUrl = (params: GetCLIMessageRawParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/message/raw?${stringifiedParams}`
-    : `/api/v1/cli/message/raw`;
-};
-
 /**
  * @summary Get one raw message for CLI export
  */
-export const getCLIMessageRaw = async (
+export const getCLIMessageRaw = (
   params: GetCLIMessageRawParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetCLIMessageRawUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/cli/message/raw`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
-export const getRebuildCLIFTSUrl = () => {
-  return `/api/v1/cli/rebuild-fts`;
-};
-
 /**
  * @summary Rebuild the CLI full-text search index
  */
-export const rebuildCLIFTS = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getRebuildCLIFTSUrl(), {
-    ...options,
-    method: "POST",
-  });
+export const rebuildCLIFTS = (
+  options?: SecondParameter<typeof orvalText<CliRebuildFTSEvent>>,
+) => {
+  return orvalText<CliRebuildFTSEvent>(
+    { url: `/api/v1/cli/rebuild-fts`, method: "POST" },
+    options,
+  );
 };
-
-export const getRepairEncodingCLIUrl = () => {
-  return `/api/v1/cli/repair-encoding`;
-};
-
 /**
  * @summary Repair CLI archive encoding
  */
-export const repairEncodingCLI = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getRepairEncodingCLIUrl(), {
-    ...options,
-    method: "POST",
-  });
+export const repairEncodingCLI = (
+  options?: SecondParameter<typeof orvalText<CLIRepairEncodingEvent>>,
+) => {
+  return orvalText<CLIRepairEncodingEvent>(
+    { url: `/api/v1/cli/repair-encoding`, method: "POST" },
+    options,
+  );
 };
-
-export const getRepairMessageCLIUrl = () => {
-  return `/api/v1/cli/repair-message`;
-};
-
 /**
  * @summary Repair or audit Gmail message snapshots
  */
-export const repairMessageCLI = async (
+export const repairMessageCLI = (
   cLIRepairMessageRequest: CLIRepairMessageRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Response>(getRepairMessageCLIUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalText<CLIRepairMessageEvent>>,
+) => {
+  return orvalText<CLIRepairMessageEvent>(
+    {
+      url: `/api/v1/cli/repair-message`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIRepairMessageRequest,
     },
-    body: JSON.stringify(cLIRepairMessageRequest),
-  });
+    options,
+  );
 };
-
-export const getRunCLIUrl = () => {
-  return `/api/v1/cli/run`;
-};
-
 /**
  * @summary Run an allowlisted CLI command
  */
-export const runCLI = async (
+export const runCLI = (
   cLIRunRequest: CLIRunRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Response>(getRunCLIUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalText<CLIRunEvent>>,
+) => {
+  return orvalText<CLIRunEvent>(
+    {
+      url: `/api/v1/cli/run`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cLIRunRequest,
     },
-    body: JSON.stringify(cLIRunRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchCLIUrl = (params: SearchCLIParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/search?${stringifiedParams}`
-    : `/api/v1/cli/search`;
-};
-
 /**
  * @summary Search messages for CLI output
  */
-export const searchCLI = async (
+export const searchCLI = (
   params: SearchCLIParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliSearchResponse>> => {
-  return orvalFetch<CliSearchResponse>(getSearchCLIUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CliSearchResponse>>,
+) => {
+  return orvalFetch<CliSearchResponse>(
+    { url: `/api/v1/cli/search`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetCLIStatsUrl = (params?: GetCLIStatsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/stats?${stringifiedParams}`
-    : `/api/v1/cli/stats`;
-};
-
 /**
  * @summary Get CLI-compatible archive statistics
  */
-export const getCLIStats = async (
+export const getCLIStats = (
   params?: GetCLIStatsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CliStatsResponse>> => {
-  return orvalFetch<CliStatsResponse>(getGetCLIStatsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<CliStatsResponse>>,
+) => {
+  return orvalFetch<CliStatsResponse>(
+    { url: `/api/v1/cli/stats`, method: "GET", params },
+    options,
+  );
 };
-
-export const getSyncCLIUrl = (params?: SyncCLIParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["folder", "skip-folder"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/sync?${stringifiedParams}`
-    : `/api/v1/cli/sync`;
-};
-
 /**
  * @summary Run CLI incremental sync
  */
-export const syncCLI = async (
+export const syncCLI = (
   params?: SyncCLIParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getSyncCLIUrl(params), {
-    ...options,
-    method: "POST",
-  });
+  options?: SecondParameter<typeof orvalText<CLISyncEvent>>,
+) => {
+  return orvalText<CLISyncEvent>(
+    { url: `/api/v1/cli/sync`, method: "POST", params },
+    options,
+  );
 };
-
-export const getSyncFullCLIUrl = (params?: SyncFullCLIParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["folder", "skip-folder"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/sync-full?${stringifiedParams}`
-    : `/api/v1/cli/sync-full`;
-};
-
 /**
  * @summary Run CLI full sync
  */
-export const syncFullCLI = async (
+export const syncFullCLI = (
   params?: SyncFullCLIParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getSyncFullCLIUrl(params), {
-    ...options,
-    method: "POST",
-  });
+  options?: SecondParameter<typeof orvalText<CLISyncEvent>>,
+) => {
+  return orvalText<CLISyncEvent>(
+    { url: `/api/v1/cli/sync-full`, method: "POST", params },
+    options,
+  );
 };
-
-export const getVerifyCLIUrl = (params: VerifyCLIParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/cli/verify?${stringifiedParams}`
-    : `/api/v1/cli/verify`;
-};
-
 /**
  * @summary Verify the CLI archive against Gmail
  */
-export const verifyCLI = async (
+export const verifyCLI = (
   params: VerifyCLIParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Response>> => {
-  return orvalFetch<Response>(getVerifyCLIUrl(params), {
-    ...options,
-    method: "POST",
-  });
-};
-
-export const getListCommunicationServicesUrl = (
-  params?: ListCommunicationServicesParams,
+  options?: SecondParameter<typeof orvalText<CLIVerifyEvent>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/communication-services?${stringifiedParams}`
-    : `/api/v1/communication-services`;
+  return orvalText<CLIVerifyEvent>(
+    { url: `/api/v1/cli/verify`, method: "POST", params },
+    options,
+  );
 };
-
 /**
  * Lists the small open service catalog without pagination, including aliases and normalization policy.
  * @summary List communication services
  */
-export const listCommunicationServices = async (
+export const listCommunicationServices = (
   params?: ListCommunicationServicesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CommunicationServicesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<CommunicationServicesResponse>>,
+) => {
   return orvalFetch<CommunicationServicesResponse>(
-    getListCommunicationServicesUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/communication-services`, method: "GET", params },
+    options,
   );
 };
-
-export const getCreateCommunicationServiceUrl = () => {
-  return `/api/v1/communication-services`;
-};
-
 /**
  * Registers an unknown or custom service without a schema migration. Re-registering a slug is idempotent.
  * @summary Register a communication service
  */
-export const createCommunicationService = async (
+export const createCommunicationService = (
   createCommunicationServiceRequest: CreateCommunicationServiceRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CommunicationService>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<CommunicationService>(getCreateCommunicationServiceUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<CommunicationService>>,
+) => {
+  return orvalFetch<CommunicationService>(
+    {
+      url: `/api/v1/communication-services`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createCommunicationServiceRequest,
     },
-    body: JSON.stringify(createCommunicationServiceRequest),
-  });
+    options,
+  );
 };
-
-export const getGetRemoteImageUrl = () => {
-  return `/api/v1/content/remote-image`;
-};
-
 /**
  * @summary Fetch a consented remote mail image through the SSRF-hardened daemon proxy
  */
-export const getRemoteImage = async (
+export const getRemoteImage = (
   remoteImageRequest: RemoteImageRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Blob>(getGetRemoteImageUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(remoteImageRequest),
-  });
-};
-
-export const getGetConversationUrl = (
-  { id }: GetConversationPathParameters,
-  params: GetConversationParams,
+  options?: SecondParameter<typeof orvalStream<Blob>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/conversations/${encodeURIComponent(String(id))}?${stringifiedParams}`
-    : `/api/v1/conversations/${encodeURIComponent(String(id))}`;
+  return orvalStream<Blob>(
+    {
+      url: `/api/v1/content/remote-image`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: remoteImageRequest,
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
 /**
  * @summary Get a bounded containing conversation
  */
-export const getConversation = async (
+export const getConversation = (
   { id }: GetConversationPathParameters,
   params: GetConversationParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ConversationResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<ConversationResponse>>,
+) => {
   return orvalFetch<ConversationResponse>(
-    getGetConversationUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/conversations/${encodeURIComponent(String(id))}`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getDeleteDayEntryUrl = ({ id }: DeleteDayEntryPathParameters) => {
-  return `/api/v1/days/entries/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete an authored daily entry
  */
-export const deleteDayEntry = async (
+export const deleteDayEntry = (
   { id }: DeleteDayEntryPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteDayEntryUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
-};
-
-export const getGetActivityDayUrl = (
-  { date }: GetActivityDayPathParameters,
-  params?: GetActivityDayParams,
+  options?: SecondParameter<typeof orvalFetch<void>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/days/${encodeURIComponent(String(date))}?${stringifiedParams}`
-    : `/api/v1/days/${encodeURIComponent(String(date))}`;
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/days/entries/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
 /**
  * @summary Get people, activity, and notes for a day
  */
-export const getActivityDay = async (
+export const getActivityDay = (
   { date }: GetActivityDayPathParameters,
   params?: GetActivityDayParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DayPage>> => {
-  return orvalFetch<DayPage>(getGetActivityDayUrl({ date }, params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListDayEntriesUrl = (
-  { date }: ListDayEntriesPathParameters,
-  params?: ListDayEntriesParams,
+  options?: SecondParameter<typeof orvalFetch<DayPage>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/days/${encodeURIComponent(String(date))}/entries?${stringifiedParams}`
-    : `/api/v1/days/${encodeURIComponent(String(date))}/entries`;
+  return orvalFetch<DayPage>(
+    {
+      url: `/api/v1/days/${encodeURIComponent(String(date))}`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
 };
-
 /**
  * @summary List authored entries for a day
  */
-export const listDayEntries = async (
+export const listDayEntries = (
   { date }: ListDayEntriesPathParameters,
   params?: ListDayEntriesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DailyNoteEntriesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<DailyNoteEntriesResponse>>,
+) => {
   return orvalFetch<DailyNoteEntriesResponse>(
-    getListDayEntriesUrl({ date }, params),
     {
-      ...options,
+      url: `/api/v1/days/${encodeURIComponent(String(date))}/entries`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getCreateDayEntryUrl = ({
-  date,
-}: CreateDayEntryPathParameters) => {
-  return `/api/v1/days/${encodeURIComponent(String(date))}/entries`;
-};
-
 /**
  * @summary Create an authored entry for a day
  */
-export const createDayEntry = async (
+export const createDayEntry = (
   { date }: CreateDayEntryPathParameters,
   createDailyNoteEntryRequest: CreateDailyNoteEntryRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DailyNoteEntry>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<DailyNoteEntry>(getCreateDayEntryUrl({ date }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<DailyNoteEntry>>,
+) => {
+  return orvalFetch<DailyNoteEntry>(
+    {
+      url: `/api/v1/days/${encodeURIComponent(String(date))}/entries`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createDailyNoteEntryRequest,
     },
-    body: JSON.stringify(createDailyNoteEntryRequest),
-  });
+    options,
+  );
 };
-
-export const getListDeletionsUrl = (params?: ListDeletionsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/deletions?${stringifiedParams}`
-    : `/api/v1/deletions`;
-};
-
 /**
  * @summary List staged deletion manifests
  */
-export const listDeletions = async (
+export const listDeletions = (
   params?: ListDeletionsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ListDeletionsResponse>> => {
-  return orvalFetch<ListDeletionsResponse>(getListDeletionsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<ListDeletionsResponse>>,
+) => {
+  return orvalFetch<ListDeletionsResponse>(
+    { url: `/api/v1/deletions`, method: "GET", params },
+    options,
+  );
 };
-
-export const getStageDeletionUrl = () => {
-  return `/api/v1/deletions`;
-};
-
 /**
  * @summary Stage messages for deletion
  */
-export const stageDeletion = async (
+export const stageDeletion = (
   stageDeletionRequest: StageDeletionRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StageDeletionResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<StageDeletionResponse>(getStageDeletionUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<StageDeletionResponse>>,
+) => {
+  return orvalFetch<StageDeletionResponse>(
+    {
+      url: `/api/v1/deletions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: stageDeletionRequest,
     },
-    body: JSON.stringify(stageDeletionRequest),
-  });
+    options,
+  );
 };
-
-export const getCancelDeletionUrl = ({ id }: CancelDeletionPathParameters) => {
-  return `/api/v1/deletions/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Cancel a staged deletion manifest
  */
-export const cancelDeletion = async (
+export const cancelDeletion = (
   { id }: CancelDeletionPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<CancelDeletionResponse>> => {
-  return orvalFetch<CancelDeletionResponse>(getCancelDeletionUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<CancelDeletionResponse>>,
+) => {
+  return orvalFetch<CancelDeletionResponse>(
+    {
+      url: `/api/v1/deletions/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetDeletionUrl = ({ id }: GetDeletionPathParameters) => {
-  return `/api/v1/deletions/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Inspect a staged deletion manifest
  */
-export const getDeletion = async (
+export const getDeletion = (
   { id }: GetDeletionPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DeletionManifestDetail>> => {
-  return orvalFetch<DeletionManifestDetail>(getGetDeletionUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<DeletionManifestDetail>>,
+) => {
+  return orvalFetch<DeletionManifestDetail>(
+    {
+      url: `/api/v1/deletions/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getSearchDocumentsUrl = (params: SearchDocumentsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["source_id", "message_type", "direction"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/documents/search?${stringifiedParams}`
-    : `/api/v1/documents/search`;
-};
-
 /**
  * @summary Search extracted document attachments
  */
-export const searchDocuments = async (
+export const searchDocuments = (
   params: SearchDocumentsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DocumentSearchResponse>> => {
-  return orvalFetch<DocumentSearchResponse>(getSearchDocumentsUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetDocumentIndexStatusUrl = (
-  params: GetDocumentIndexStatusParams,
+  options?: SecondParameter<typeof orvalFetch<DocumentSearchResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["media_type", "message_type"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/documents/status?${stringifiedParams}`
-    : `/api/v1/documents/status`;
+  return orvalFetch<DocumentSearchResponse>(
+    { url: `/api/v1/documents/search`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary Get extracted document index status
  */
-export const getDocumentIndexStatus = async (
+export const getDocumentIndexStatus = (
   params: GetDocumentIndexStatusParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DocumentIndexStatusResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
+) => {
   return orvalFetch<DocumentIndexStatusResponse>(
-    getGetDocumentIndexStatusUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/documents/status`, method: "GET", params },
+    options,
   );
 };
-
-export const getGetDocumentVectorStatusUrl = (
-  params?: GetDocumentVectorStatusParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/documents/vectors/status?${stringifiedParams}`
-    : `/api/v1/documents/vectors/status`;
-};
-
 /**
  * @summary Get document vector generation, consent, usage, and failure status
  */
-export const getDocumentVectorStatus = async (
+export const getDocumentVectorStatus = (
   params?: GetDocumentVectorStatusParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DocumentVectorOperationsResponse>> => {
+  options?: SecondParameter<
+    typeof orvalFetch<DocumentVectorOperationsResponse>
+  >,
+) => {
   return orvalFetch<DocumentVectorOperationsResponse>(
-    getGetDocumentVectorStatusUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/documents/vectors/status`, method: "GET", params },
+    options,
   );
 };
-
-export const getGetDomainUrl = ({ domain }: GetDomainPathParameters) => {
-  return `/api/v1/domains/${encodeURIComponent(String(domain))}`;
-};
-
 /**
  * @summary Get one analytical domain
  */
-export const getDomain = async (
+export const getDomain = (
   { domain }: GetDomainPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DomainSummary>> => {
-  return orvalFetch<DomainSummary>(getGetDomainUrl({ domain }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<DomainSummary>>,
+) => {
+  return orvalFetch<DomainSummary>(
+    {
+      url: `/api/v1/domains/${encodeURIComponent(String(domain))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getCreateEmploymentUrl = () => {
-  return `/api/v1/employments`;
-};
-
 /**
  * @summary Create an employment record
  */
-export const createEmployment = async (
+export const createEmployment = (
   employmentBody: EmploymentBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Employment>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Employment>(getCreateEmploymentUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Employment>>,
+) => {
+  return orvalFetch<Employment>(
+    {
+      url: `/api/v1/employments`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: employmentBody,
     },
-    body: JSON.stringify(employmentBody),
-  });
+    options,
+  );
 };
-
-export const getDeleteEmploymentUrl = ({
-  id,
-}: DeleteEmploymentPathParameters) => {
-  return `/api/v1/employments/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete an employment record
  */
-export const deleteEmployment = async (
+export const deleteEmployment = (
   { id }: DeleteEmploymentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteEmploymentUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/employments/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetEmploymentUrl = ({ id }: GetEmploymentPathParameters) => {
-  return `/api/v1/employments/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get an employment record
  */
-export const getEmployment = async (
+export const getEmployment = (
   { id }: GetEmploymentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Employment>> => {
-  return orvalFetch<Employment>(getGetEmploymentUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Employment>>,
+) => {
+  return orvalFetch<Employment>(
+    {
+      url: `/api/v1/employments/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchEmploymentUrl = ({
-  id,
-}: PatchEmploymentPathParameters) => {
-  return `/api/v1/employments/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Replace an employment record's mutable fields
  */
-export const patchEmployment = async (
+export const patchEmployment = (
   { id }: PatchEmploymentPathParameters,
   employmentBody: EmploymentBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Employment>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Employment>(getPatchEmploymentUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Employment>>,
+) => {
+  return orvalFetch<Employment>(
+    {
+      url: `/api/v1/employments/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: employmentBody,
     },
-    body: JSON.stringify(employmentBody),
-  });
+    options,
+  );
 };
-
-export const getEndEmploymentUrl = ({ id }: EndEmploymentPathParameters) => {
-  return `/api/v1/employments/${encodeURIComponent(String(id))}/end`;
-};
-
 /**
  * @summary End an employment record
  */
-export const endEmployment = async (
+export const endEmployment = (
   { id }: EndEmploymentPathParameters,
   endEmploymentBody: EndEmploymentBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Employment>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Employment>(getEndEmploymentUrl({ id }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Employment>>,
+) => {
+  return orvalFetch<Employment>(
+    {
+      url: `/api/v1/employments/${encodeURIComponent(String(id))}/end`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: endEmploymentBody,
     },
-    body: JSON.stringify(endEmploymentBody),
-  });
+    options,
+  );
 };
-
-export const getSetPrimaryEmploymentUrl = ({
-  id,
-}: SetPrimaryEmploymentPathParameters) => {
-  return `/api/v1/employments/${encodeURIComponent(String(id))}/primary`;
-};
-
 /**
  * @summary Set the primary current employment
  */
-export const setPrimaryEmployment = async (
+export const setPrimaryEmployment = (
   { id }: SetPrimaryEmploymentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Employment>> => {
-  return orvalFetch<Employment>(getSetPrimaryEmploymentUrl({ id }), {
-    ...options,
-    method: "POST",
-  });
+  options?: SecondParameter<typeof orvalFetch<Employment>>,
+) => {
+  return orvalFetch<Employment>(
+    {
+      url: `/api/v1/employments/${encodeURIComponent(String(id))}/primary`,
+      method: "POST",
+    },
+    options,
+  );
 };
-
-export const getGetFileUrl = ({ id }: GetFilePathParameters) => {
-  return `/api/v1/files/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get authoritative file metadata
  */
-export const getFile = async (
+export const getFile = (
   { id }: GetFilePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FileMetadataResponse>> => {
-  return orvalFetch<FileMetadataResponse>(getGetFileUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<FileMetadataResponse>>,
+) => {
+  return orvalFetch<FileMetadataResponse>(
+    { url: `/api/v1/files/${encodeURIComponent(String(id))}`, method: "GET" },
+    options,
+  );
 };
-
-export const getGetFileContentUrl = ({ id }: GetFileContentPathParameters) => {
-  return `/api/v1/files/${encodeURIComponent(String(id))}/content`;
-};
-
 /**
  * @summary Download content for one authoritative file row
  */
-export const getFileContent = async (
+export const getFileContent = (
   { id }: GetFileContentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetFileContentUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalStream<Blob>>,
+) => {
+  return orvalStream<Blob>(
+    {
+      url: `/api/v1/files/${encodeURIComponent(String(id))}/content`,
+      method: "GET",
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
-export const getGetHealthUrl = () => {
-  return `/api/v1/health`;
-};
-
 /**
  * @summary Get authenticated health details
  */
-export const getHealth = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<HealthResponse>> => {
-  return orvalFetch<HealthResponse>(getGetHealthUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getHealth = (
+  options?: SecondParameter<typeof orvalFetch<HealthResponse>>,
+) => {
+  return orvalFetch<HealthResponse>(
+    { url: `/api/v1/health`, method: "GET" },
+    options,
+  );
 };
-
-export const getLinkIdentityParticipantsUrl = () => {
-  return `/api/v1/identity/links`;
-};
-
 /**
  * @summary Assert two participants are the same person
  */
-export const linkIdentityParticipants = async (
+export const linkIdentityParticipants = (
   identityLinkRequest: IdentityLinkRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<IdentityLinkResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<IdentityLinkResponse>(getLinkIdentityParticipantsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(identityLinkRequest),
-  });
-};
-
-export const getListIdentityMatchCandidatesUrl = (
-  params?: ListIdentityMatchCandidatesParams,
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/identity/match-candidates?${stringifiedParams}`
-    : `/api/v1/identity/match-candidates`;
+  return orvalFetch<IdentityLinkResponse>(
+    {
+      url: `/api/v1/identity/links`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityLinkRequest,
+    },
+    options,
+  );
 };
-
 /**
  * Candidates are evidence-backed suggestions, never applied links. Only a repeated stable provider or Beeper user ID is confirmed automatically; a username, phone, email, display name, or shared conversation is evidence and waits for an explicit decision.
  * @summary List reviewable identity match candidates
  */
-export const listIdentityMatchCandidates = async (
+export const listIdentityMatchCandidates = (
   params?: ListIdentityMatchCandidatesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<IdentityMatchCandidatesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchCandidatesResponse>>,
+) => {
   return orvalFetch<IdentityMatchCandidatesResponse>(
-    getListIdentityMatchCandidatesUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/identity/match-candidates`, method: "GET", params },
+    options,
   );
 };
-
-export const getAcceptIdentityMatchCandidateUrl = ({
-  id,
-}: AcceptIdentityMatchCandidatePathParameters) => {
-  return `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/accept`;
-};
-
 /**
  * Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
  * @summary Accept an identity match candidate
  */
-export const acceptIdentityMatchCandidate = async (
+export const acceptIdentityMatchCandidate = (
   { id }: AcceptIdentityMatchCandidatePathParameters,
   decideIdentityMatchRequest?: DecideIdentityMatchRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<IdentityMatchAcceptResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchAcceptResponse>>,
+) => {
   return orvalFetch<IdentityMatchAcceptResponse>(
-    getAcceptIdentityMatchCandidateUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/accept`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(decideIdentityMatchRequest),
+      headers: { "Content-Type": "application/json" },
+      data: decideIdentityMatchRequest,
     },
+    options,
   );
 };
-
-export const getRejectIdentityMatchCandidateUrl = ({
-  id,
-}: RejectIdentityMatchCandidatePathParameters) => {
-  return `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/reject`;
-};
-
 /**
  * A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
  * @summary Reject an identity match candidate
  */
-export const rejectIdentityMatchCandidate = async (
+export const rejectIdentityMatchCandidate = (
   { id }: RejectIdentityMatchCandidatePathParameters,
   decideIdentityMatchRequest?: DecideIdentityMatchRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<IdentityMatchRejectResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchRejectResponse>>,
+) => {
   return orvalFetch<IdentityMatchRejectResponse>(
-    getRejectIdentityMatchCandidateUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/reject`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(decideIdentityMatchRequest),
+      headers: { "Content-Type": "application/json" },
+      data: decideIdentityMatchRequest,
     },
+    options,
   );
 };
-
-export const getUnlinkIdentityParticipantsUrl = () => {
-  return `/api/v1/identity/unlinks`;
-};
-
 /**
  * @summary Remove a link edge between two participants
  */
-export const unlinkIdentityParticipants = async (
+export const unlinkIdentityParticipants = (
   identityLinkRequest: IdentityLinkRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<IdentityLinkResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<IdentityLinkResponse>(getUnlinkIdentityParticipantsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
+) => {
+  return orvalFetch<IdentityLinkResponse>(
+    {
+      url: `/api/v1/identity/unlinks`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityLinkRequest,
     },
-    body: JSON.stringify(identityLinkRequest),
-  });
+    options,
+  );
 };
-
-export const getImportMeetingUrl = () => {
-  return `/api/v1/import/meeting`;
-};
-
 /**
  * @summary Import one meeting
  */
-export const importMeeting = async (
+export const importMeeting = (
   meetingImportRequest: MeetingImportRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MeetingImportResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<MeetingImportResponse>(getImportMeetingUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<MeetingImportResponse>>,
+) => {
+  return orvalFetch<MeetingImportResponse>(
+    {
+      url: `/api/v1/import/meeting`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: meetingImportRequest,
     },
-    body: JSON.stringify(meetingImportRequest),
-  });
+    options,
+  );
 };
-
-export const getCreateImportJobUrl = () => {
-  return `/api/v1/imports`;
-};
-
 /**
  * @summary Start a bounded historical import
  */
-export const createImportJob = async (
+export const createImportJob = (
   importJobRequest: ImportJobRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ImportJobResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ImportJobResponse>(getCreateImportJobUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ImportJobResponse>>,
+) => {
+  return orvalFetch<ImportJobResponse>(
+    {
+      url: `/api/v1/imports`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: importJobRequest,
     },
-    body: JSON.stringify(importJobRequest),
-  });
+    options,
+  );
 };
-
-export const getGetImportJobUrl = ({ jobId }: GetImportJobPathParameters) => {
-  return `/api/v1/imports/${encodeURIComponent(String(jobId))}`;
-};
-
 /**
  * @summary Get historical import status
  */
-export const getImportJob = async (
+export const getImportJob = (
   { jobId }: GetImportJobPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ImportJobResponse>> => {
-  return orvalFetch<ImportJobResponse>(getGetImportJobUrl({ jobId }), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getSearchIntegrationTasksUrl = (
-  params: SearchIntegrationTasksParams,
+  options?: SecondParameter<typeof orvalFetch<ImportJobResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/integrations/tasks/search?${stringifiedParams}`
-    : `/api/v1/integrations/tasks/search`;
+  return orvalFetch<ImportJobResponse>(
+    {
+      url: `/api/v1/imports/${encodeURIComponent(String(jobId))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
 /**
  * @summary Search tasks in the configured project
  */
-export const searchIntegrationTasks = async (
+export const searchIntegrationTasks = (
   params: SearchIntegrationTasksParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskSearchResponse>> => {
-  return orvalFetch<TaskSearchResponse>(getSearchIntegrationTasksUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
+) => {
+  return orvalFetch<TaskSearchResponse>(
+    { url: `/api/v1/integrations/tasks/search`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetTaskIntegrationStatusUrl = () => {
-  return `/api/v1/integrations/tasks/status`;
-};
-
 /**
  * @summary Get task integration capability status
  */
-export const getTaskIntegrationStatus = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskIntegrationStatusResponse>> => {
+export const getTaskIntegrationStatus = (
+  options?: SecondParameter<typeof orvalFetch<TaskIntegrationStatusResponse>>,
+) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
-    getGetTaskIntegrationStatusUrl(),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/integrations/tasks/status`, method: "GET" },
+    options,
   );
 };
-
-export const getTestTaskIntegrationUrl = () => {
-  return `/api/v1/integrations/tasks/test`;
-};
-
 /**
  * @summary Test task integration discovery, authentication, capabilities, and project
  */
-export const testTaskIntegration = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskIntegrationStatusResponse>> => {
+export const testTaskIntegration = (
+  options?: SecondParameter<typeof orvalFetch<TaskIntegrationStatusResponse>>,
+) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
-    getTestTaskIntegrationUrl(),
-    {
-      ...options,
-      method: "POST",
-    },
+    { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
   );
 };
-
-export const getListMessagesUrl = (params?: ListMessagesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/messages?${stringifiedParams}`
-    : `/api/v1/messages`;
-};
-
 /**
  * @summary List messages
  */
-export const listMessages = async (
+export const listMessages = (
   params?: ListMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MessageListResponse>> => {
-  return orvalFetch<MessageListResponse>(getListMessagesUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListChangedMessagesUrl = (
-  params?: ListChangedMessagesParams,
+  options?: SecondParameter<typeof orvalFetch<MessageListResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/messages/changes?${stringifiedParams}`
-    : `/api/v1/messages/changes`;
+  return orvalFetch<MessageListResponse>(
+    { url: `/api/v1/messages`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary List messages whose content changed since a cursor
  */
-export const listChangedMessages = async (
+export const listChangedMessages = (
   params?: ListChangedMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ChangesResponse>> => {
-  return orvalFetch<ChangesResponse>(getListChangedMessagesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<ChangesResponse>>,
+) => {
+  return orvalFetch<ChangesResponse>(
+    { url: `/api/v1/messages/changes`, method: "GET", params },
+    options,
+  );
 };
-
-export const getFilterMessagesUrl = (params?: FilterMessagesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/messages/filter?${stringifiedParams}`
-    : `/api/v1/messages/filter`;
-};
-
 /**
  * @summary List filtered messages
  */
-export const filterMessages = async (
+export const filterMessages = (
   params?: FilterMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FilteredMessagesResponse>> => {
-  return orvalFetch<FilteredMessagesResponse>(getFilterMessagesUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetGmailIDsByFilterUrl = (
-  params?: GetGmailIDsByFilterParams,
+  options?: SecondParameter<typeof orvalFetch<FilteredMessagesResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/messages/gmail-ids?${stringifiedParams}`
-    : `/api/v1/messages/gmail-ids`;
+  return orvalFetch<FilteredMessagesResponse>(
+    { url: `/api/v1/messages/filter`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary List Gmail message IDs matching a filter
  */
-export const getGmailIDsByFilter = async (
+export const getGmailIDsByFilter = (
   params?: GetGmailIDsByFilterParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<GmailIDsResponse>> => {
-  return orvalFetch<GmailIDsResponse>(getGetGmailIDsByFilterUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<GmailIDsResponse>>,
+) => {
+  return orvalFetch<GmailIDsResponse>(
+    { url: `/api/v1/messages/gmail-ids`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetMessageUrl = ({ id }: GetMessagePathParameters) => {
-  return `/api/v1/messages/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get one message
  */
-export const getMessage = async (
+export const getMessage = (
   { id }: GetMessagePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<MessageDetail>> => {
-  return orvalFetch<MessageDetail>(getGetMessageUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetMessageInlinePartUrl = (
-  { id }: GetMessageInlinePartPathParameters,
-  params: GetMessageInlinePartParams,
+  options?: SecondParameter<typeof orvalFetch<MessageDetail>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/messages/${encodeURIComponent(String(id))}/inline?${stringifiedParams}`
-    : `/api/v1/messages/${encodeURIComponent(String(id))}/inline`;
+  return orvalFetch<MessageDetail>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
 /**
  * @summary Get an inline MIME part
  */
-export const getMessageInlinePart = async (
+export const getMessageInlinePart = (
   { id }: GetMessageInlinePartPathParameters,
   params: GetMessageInlinePartParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetMessageInlinePartUrl({ id }, params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalStream<Blob>>,
+) => {
+  return orvalStream<Blob>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/inline`,
+      method: "GET",
+      params,
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
-export const getListMessageTasksUrl = ({
-  id,
-}: ListMessageTasksPathParameters) => {
-  return `/api/v1/messages/${encodeURIComponent(String(id))}/tasks`;
-};
-
 /**
  * @summary List tasks linked to an archived email
  */
-export const listMessageTasks = async (
+export const listMessageTasks = (
   { id }: ListMessageTasksPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskLinkLookupResponse>> => {
-  return orvalFetch<TaskLinkLookupResponse>(getListMessageTasksUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<TaskLinkLookupResponse>>,
+) => {
+  return orvalFetch<TaskLinkLookupResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tasks`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getCreateOrLinkMessageTaskUrl = ({
-  id,
-}: CreateOrLinkMessageTaskPathParameters) => {
-  return `/api/v1/messages/${encodeURIComponent(String(id))}/tasks`;
-};
-
 /**
  * @summary Create or link a task for an archived email
  */
-export const createOrLinkMessageTask = async (
+export const createOrLinkMessageTask = (
   { id }: CreateOrLinkMessageTaskPathParameters,
   taskLinkMutationRequest: TaskLinkMutationRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskLinkMutationResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<TaskLinkMutationResponse>>,
+) => {
   return orvalFetch<TaskLinkMutationResponse>(
-    getCreateOrLinkMessageTaskUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tasks`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(taskLinkMutationRequest),
+      headers: { "Content-Type": "application/json" },
+      data: taskLinkMutationRequest,
     },
+    options,
   );
 };
-
-export const getUnlinkMessageTaskUrl = ({
-  id,
-  taskId,
-}: UnlinkMessageTaskPathParameters) => {
-  return `/api/v1/messages/${encodeURIComponent(String(id))}/tasks/${encodeURIComponent(String(taskId))}`;
-};
-
 /**
  * @summary Unlink a task from an archived email
  */
-export const unlinkMessageTask = async (
+export const unlinkMessageTask = (
   { id, taskId }: UnlinkMessageTaskPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TaskLinkMutationResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<TaskLinkMutationResponse>>,
+) => {
   return orvalFetch<TaskLinkMutationResponse>(
-    getUnlinkMessageTaskUrl({ id, taskId }),
     {
-      ...options,
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tasks/${encodeURIComponent(String(taskId))}`,
       method: "DELETE",
     },
+    options,
   );
 };
-
-export const getStartVisualAttachmentBuildUrl = () => {
-  return `/api/v1/multimodal/build`;
-};
-
 /**
  * @summary Consent and run one bounded visual attachment embedding pass
  */
-export const startVisualAttachmentBuild = async (
+export const startVisualAttachmentBuild = (
   visualBuildRequest: VisualBuildRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Status>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Status>(getStartVisualAttachmentBuildUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Status>>,
+) => {
+  return orvalFetch<Status>(
+    {
+      url: `/api/v1/multimodal/build`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: visualBuildRequest,
     },
-    body: JSON.stringify(visualBuildRequest),
-  });
+    options,
+  );
 };
-
-export const getRetryVisualAttachmentOwnerUrl = () => {
-  return `/api/v1/multimodal/retry`;
-};
-
 /**
  * @summary Retry one visual attachment owner
  */
-export const retryVisualAttachmentOwner = async (
+export const retryVisualAttachmentOwner = (
   visualRetryRequest: VisualRetryRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Status>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Status>(getRetryVisualAttachmentOwnerUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Status>>,
+) => {
+  return orvalFetch<Status>(
+    {
+      url: `/api/v1/multimodal/retry`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: visualRetryRequest,
     },
-    body: JSON.stringify(visualRetryRequest),
-  });
+    options,
+  );
 };
-
-export const getResumeVisualAttachmentBuildUrl = () => {
-  return `/api/v1/multimodal/run`;
-};
-
 /**
  * @summary Resume one bounded visual attachment embedding pass
  */
-export const resumeVisualAttachmentBuild = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Status>> => {
-  return orvalFetch<Status>(getResumeVisualAttachmentBuildUrl(), {
-    ...options,
-    method: "POST",
-  });
+export const resumeVisualAttachmentBuild = (
+  options?: SecondParameter<typeof orvalFetch<Status>>,
+) => {
+  return orvalFetch<Status>(
+    { url: `/api/v1/multimodal/run`, method: "POST" },
+    options,
+  );
 };
-
-export const getGetVisualAttachmentStatusUrl = () => {
-  return `/api/v1/multimodal/status`;
-};
-
 /**
  * @summary Get visual attachment embedding status
  */
-export const getVisualAttachmentStatus = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Status>> => {
-  return orvalFetch<Status>(getGetVisualAttachmentStatusUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getVisualAttachmentStatus = (
+  options?: SecondParameter<typeof orvalFetch<Status>>,
+) => {
+  return orvalFetch<Status>(
+    { url: `/api/v1/multimodal/status`, method: "GET" },
+    options,
+  );
 };
-
-export const getListOperationRunsUrl = (params?: ListOperationRunsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/operations/runs?${stringifiedParams}`
-    : `/api/v1/operations/runs`;
-};
-
 /**
  * @summary List normalized operation history
  */
-export const listOperationRuns = async (
+export const listOperationRuns = (
   params?: ListOperationRunsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OperationRunsResponse>> => {
-  return orvalFetch<OperationRunsResponse>(getListOperationRunsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<OperationRunsResponse>>,
+) => {
+  return orvalFetch<OperationRunsResponse>(
+    { url: `/api/v1/operations/runs`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetOperationRunUrl = ({
-  id,
-}: GetOperationRunPathParameters) => {
-  return `/api/v1/operations/runs/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get one normalized operation run
  */
-export const getOperationRun = async (
+export const getOperationRun = (
   { id }: GetOperationRunPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OperationRunDetail>> => {
-  return orvalFetch<OperationRunDetail>(getGetOperationRunUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<OperationRunDetail>>,
+) => {
+  return orvalFetch<OperationRunDetail>(
+    {
+      url: `/api/v1/operations/runs/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getGetOperationStatusUrl = () => {
-  return `/api/v1/operations/status`;
-};
-
 /**
  * @summary Get normalized operation lane status
  */
-export const getOperationStatus = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OperationStatusResponse>> => {
-  return orvalFetch<OperationStatusResponse>(getGetOperationStatusUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getOperationStatus = (
+  options?: SecondParameter<typeof orvalFetch<OperationStatusResponse>>,
+) => {
+  return orvalFetch<OperationStatusResponse>(
+    { url: `/api/v1/operations/status`, method: "GET" },
+    options,
+  );
 };
-
-export const getListOrganizationsUrl = (params?: ListOrganizationsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/organizations?${stringifiedParams}`
-    : `/api/v1/organizations`;
-};
-
 /**
  * @summary List organizations
  */
-export const listOrganizations = async (
+export const listOrganizations = (
   params?: ListOrganizationsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationsResponse>> => {
-  return orvalFetch<OrganizationsResponse>(getListOrganizationsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<OrganizationsResponse>>,
+) => {
+  return orvalFetch<OrganizationsResponse>(
+    { url: `/api/v1/organizations`, method: "GET", params },
+    options,
+  );
 };
-
-export const getCreateOrganizationUrl = () => {
-  return `/api/v1/organizations`;
-};
-
 /**
  * @summary Create an organization
  */
-export const createOrganization = async (
+export const createOrganization = (
   organizationCreateBody: OrganizationCreateBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Organization>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Organization>(getCreateOrganizationUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Organization>>,
+) => {
+  return orvalFetch<Organization>(
+    {
+      url: `/api/v1/organizations`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: organizationCreateBody,
     },
-    body: JSON.stringify(organizationCreateBody),
-  });
+    options,
+  );
 };
-
-export const getDeleteOrganizationUrl = ({
-  id,
-}: DeleteOrganizationPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete an organization without employment records
  */
-export const deleteOrganization = async (
+export const deleteOrganization = (
   { id }: DeleteOrganizationPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteOrganizationUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetOrganizationUrl = ({
-  id,
-}: GetOrganizationPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get an organization
  */
-export const getOrganization = async (
+export const getOrganization = (
   { id }: GetOrganizationPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationProfile>> => {
-  return orvalFetch<OrganizationProfile>(getGetOrganizationUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<OrganizationProfile>>,
+) => {
+  return orvalFetch<OrganizationProfile>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchOrganizationUrl = ({
-  id,
-}: PatchOrganizationPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Replace an organization's mutable fields
  */
-export const patchOrganization = async (
+export const patchOrganization = (
   { id }: PatchOrganizationPathParameters,
   organizationBody: OrganizationBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Organization>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Organization>(getPatchOrganizationUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(organizationBody),
-  });
-};
-
-export const getListOrganizationAttributesUrl = (
-  { id }: ListOrganizationAttributesPathParameters,
-  params?: ListOrganizationAttributesParams,
+  options?: SecondParameter<typeof orvalFetch<Organization>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes?${stringifiedParams}`
-    : `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes`;
+  return orvalFetch<Organization>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: organizationBody,
+    },
+    options,
+  );
 };
-
 /**
  * @summary List organization typed attributes
  */
-export const listOrganizationAttributes = async (
+export const listOrganizationAttributes = (
   { id }: ListOrganizationAttributesPathParameters,
   params?: ListOrganizationAttributesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationAttributesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<OrganizationAttributesResponse>>,
+) => {
   return orvalFetch<OrganizationAttributesResponse>(
-    getListOrganizationAttributesUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getSetOrganizationAttributeUrl = ({
-  id,
-}: SetOrganizationAttributePathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes`;
-};
-
 /**
  * @summary Set an organization typed attribute
  */
-export const setOrganizationAttribute = async (
+export const setOrganizationAttribute = (
   { id }: SetOrganizationAttributePathParameters,
   setOrganizationAttributeBody: SetOrganizationAttributeBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationAttributeWrite>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<OrganizationAttributeWrite>>,
+) => {
   return orvalFetch<OrganizationAttributeWrite>(
-    getSetOrganizationAttributeUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(setOrganizationAttributeBody),
+      headers: { "Content-Type": "application/json" },
+      data: setOrganizationAttributeBody,
     },
+    options,
   );
 };
-
-export const getClearOrganizationAttributeUrl = (
-  { id, slug }: ClearOrganizationAttributePathParameters,
-  params?: ClearOrganizationAttributeParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}?${stringifiedParams}`
-    : `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`;
-};
-
 /**
  * @summary Supersede an organization typed attribute
  */
-export const clearOrganizationAttribute = async (
+export const clearOrganizationAttribute = (
   { id, slug }: ClearOrganizationAttributePathParameters,
   params?: ClearOrganizationAttributeParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationAttributeWrite>> => {
+  options?: SecondParameter<typeof orvalFetch<OrganizationAttributeWrite>>,
+) => {
   return orvalFetch<OrganizationAttributeWrite>(
-    getClearOrganizationAttributeUrl({ id, slug }, params),
     {
-      ...options,
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`,
       method: "DELETE",
+      params,
     },
+    options,
   );
 };
-
-export const getListOrganizationEmploymentsUrl = (
-  { id }: ListOrganizationEmploymentsPathParameters,
-  params?: ListOrganizationEmploymentsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/organizations/${encodeURIComponent(String(id))}/employments?${stringifiedParams}`
-    : `/api/v1/organizations/${encodeURIComponent(String(id))}/employments`;
-};
-
 /**
  * @summary List an organization's employment records
  */
-export const listOrganizationEmployments = async (
+export const listOrganizationEmployments = (
   { id }: ListOrganizationEmploymentsPathParameters,
   params?: ListOrganizationEmploymentsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<EmploymentsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<EmploymentsResponse>>,
+) => {
   return orvalFetch<EmploymentsResponse>(
-    getListOrganizationEmploymentsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/employments`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getGetOrganizationHistoryUrl = ({
-  id,
-}: GetOrganizationHistoryPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}/history`;
-};
-
 /**
  * @summary Get organization profile history
  */
-export const getOrganizationHistory = async (
+export const getOrganizationHistory = (
   { id }: GetOrganizationHistoryPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationProfile>> => {
-  return orvalFetch<OrganizationProfile>(getGetOrganizationHistoryUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<OrganizationProfile>>,
+) => {
+  return orvalFetch<OrganizationProfile>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/history`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getMergeOrganizationUrl = ({
-  id,
-}: MergeOrganizationPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}/merge`;
-};
-
 /**
  * @summary Merge another organization into this organization
  */
-export const mergeOrganization = async (
+export const mergeOrganization = (
   { id }: MergeOrganizationPathParameters,
   mergeOrganizationBody: MergeOrganizationBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Organization>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Organization>(getMergeOrganizationUrl({ id }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<Organization>>,
+) => {
+  return orvalFetch<Organization>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/merge`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mergeOrganizationBody,
     },
-    body: JSON.stringify(mergeOrganizationBody),
-  });
+    options,
+  );
 };
-
-export const getPutOrganizationProfileUrl = ({
-  id,
-}: PutOrganizationProfilePathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}/profile`;
-};
-
 /**
  * Replaces all structured organization profile collections with at most 200 total values.
  * @summary Replace organization profile collections
  */
-export const putOrganizationProfile = async (
+export const putOrganizationProfile = (
   { id }: PutOrganizationProfilePathParameters,
   organizationProfileBody: OrganizationProfileBody,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<OrganizationProfile>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<OrganizationProfile>(getPutOrganizationProfileUrl({ id }), {
-    ...options,
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<OrganizationProfile>>,
+) => {
+  return orvalFetch<OrganizationProfile>(
+    {
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/profile`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: organizationProfileBody,
     },
-    body: JSON.stringify(organizationProfileBody),
-  });
+    options,
+  );
 };
-
-export const getGetOrganizationProfileMediaContentUrl = ({
-  id,
-  mediaId,
-}: GetOrganizationProfileMediaContentPathParameters) => {
-  return `/api/v1/organizations/${encodeURIComponent(String(id))}/profile/media/${encodeURIComponent(String(mediaId))}/content`;
-};
-
 /**
  * Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
  * @summary Download stored inline content for one organization profile media value
  */
-export const getOrganizationProfileMediaContent = async (
+export const getOrganizationProfileMediaContent = (
   { id, mediaId }: GetOrganizationProfileMediaContentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
   return orvalFetch<Blob>(
-    getGetOrganizationProfileMediaContentUrl({ id, mediaId }),
     {
-      ...options,
+      url: `/api/v1/organizations/${encodeURIComponent(String(id))}/profile/media/${encodeURIComponent(String(mediaId))}/content`,
       method: "GET",
+      responseType: "blob",
     },
+    options,
   );
 };
-
-export const getCompleteParticipantsUrl = () => {
-  return `/api/v1/participants/completions`;
-};
-
 /**
  * Returns a bounded, typed completion set from the committed observed-person index and current curated profile primitives. The private query stays in the JSON body.
  * @summary Complete observed people by typed contact primitives
  */
-export const completeParticipants = async (
+export const completeParticipants = (
   participantCompletionHTTPRequest: ParticipantCompletionHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ParticipantCompletionHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<ParticipantCompletionHTTPResponse>
+  >,
+) => {
   return orvalFetch<ParticipantCompletionHTTPResponse>(
-    getCompleteParticipantsUrl(),
     {
-      ...options,
+      url: `/api/v1/participants/completions`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(participantCompletionHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: participantCompletionHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetParticipantUrl = ({ id }: GetParticipantPathParameters) => {
-  return `/api/v1/participants/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get one observed participant cluster
  */
-export const getParticipant = async (
+export const getParticipant = (
   { id }: GetParticipantPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonSummary>> => {
-  return orvalFetch<PersonSummary>(getGetParticipantUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonSummary>>,
+) => {
+  return orvalFetch<PersonSummary>(
+    {
+      url: `/api/v1/participants/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getListParticipantInboxesUrl = ({
-  id,
-}: ListParticipantInboxesPathParameters) => {
-  return `/api/v1/participants/${encodeURIComponent(String(id))}/inboxes`;
-};
-
 /**
  * @summary List one participant cluster's messaging inboxes
  */
-export const listParticipantInboxes = async (
+export const listParticipantInboxes = (
   { id }: ListParticipantInboxesPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonInboxResponse>> => {
-  return orvalFetch<PersonInboxResponse>(getListParticipantInboxesUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonInboxResponse>>,
+) => {
+  return orvalFetch<PersonInboxResponse>(
+    {
+      url: `/api/v1/participants/${encodeURIComponent(String(id))}/inboxes`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getListPeopleUrl = () => {
-  return `/api/v1/people`;
-};
-
 /**
  * Durable people are curated profiles; /api/v1/participants exposes observed analytical groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small.
  * @summary List durable person profiles
  */
-export const listPeople = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PeopleResponse>> => {
-  return orvalFetch<PeopleResponse>(getListPeopleUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listPeople = (
+  options?: SecondParameter<typeof orvalFetch<PeopleResponse>>,
+) => {
+  return orvalFetch<PeopleResponse>(
+    { url: `/api/v1/people`, method: "GET" },
+    options,
+  );
 };
-
-export const getCreatePersonUrl = () => {
-  return `/api/v1/people`;
-};
-
 /**
  * Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
  * @summary Promote a participant cluster to a durable person
  */
-export const createPerson = async (
+export const createPerson = (
   createPersonRequest: CreatePersonRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Person>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Person>(getCreatePersonUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(createPersonRequest),
-  });
-};
-
-export const getListDirectoryPeopleUrl = (
-  params?: ListDirectoryPeopleParams,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/directory?${stringifiedParams}`
-    : `/api/v1/people/directory`;
+  return orvalFetch<Person>(
+    {
+      url: `/api/v1/people`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createPersonRequest,
+    },
+    options,
+  );
 };
-
 /**
  * Returns one stable, non-sensitive page of promoted durable people.
  * @summary Query durable people for the Directory
  */
-export const listDirectoryPeople = async (
+export const listDirectoryPeople = (
   params?: ListDirectoryPeopleParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DirectoryPeopleResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<DirectoryPeopleResponse>>,
+) => {
   return orvalFetch<DirectoryPeopleResponse>(
-    getListDirectoryPeopleUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/people/directory`, method: "GET", params },
+    options,
   );
 };
-
-export const getSearchPeopleUrl = () => {
-  return `/api/v1/people/search`;
-};
-
 /**
  * Searches only the curated person vector corpus and returns durable person roots in relevance order.
  * @summary Search durable people semantically
  */
-export const searchPeople = async (
+export const searchPeople = (
   personSearchRequest: PersonSearchRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonSearchResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonSearchResponse>(getSearchPeopleUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<PersonSearchResponse>>,
+) => {
+  return orvalFetch<PersonSearchResponse>(
+    {
+      url: `/api/v1/people/search`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personSearchRequest,
     },
-    body: JSON.stringify(personSearchRequest),
-  });
+    options,
+  );
 };
-
-export const getDeletePersonUrl = ({ id }: DeletePersonPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID.
  * @summary Delete a durable person profile
  */
-export const deletePerson = async (
+export const deletePerson = (
   { id }: DeletePersonPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeletePersonUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetPersonProfileUrl = ({
-  id,
-}: GetPersonProfilePathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get a durable person profile
  */
-export const getPersonProfile = async (
+export const getPersonProfile = (
   { id }: GetPersonProfilePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Person>> => {
-  return orvalFetch<Person>(getGetPersonProfileUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    { url: `/api/v1/people/${encodeURIComponent(String(id))}`, method: "GET" },
+    options,
+  );
 };
-
-export const getPatchPersonUrl = ({ id }: PatchPersonPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Update a durable person's display name
  */
-export const patchPerson = async (
+export const patchPerson = (
   { id }: PatchPersonPathParameters,
   patchPersonRequest: PatchPersonRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Person>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<Person>(getPatchPersonUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(patchPersonRequest),
-  });
-};
-
-export const getListPersonAttributesUrl = (
-  { id }: ListPersonAttributesPathParameters,
-  params?: ListPersonAttributesParams,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/attributes?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/attributes`;
+  return orvalFetch<Person>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: patchPersonRequest,
+    },
+    options,
+  );
 };
-
 /**
  * @summary List a person's typed attributes
  */
-export const listPersonAttributes = async (
+export const listPersonAttributes = (
   { id }: ListPersonAttributesPathParameters,
   params?: ListPersonAttributesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonAttributesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonAttributesResponse>>,
+) => {
   return orvalFetch<PersonAttributesResponse>(
-    getListPersonAttributesUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/attributes`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getClearPersonAttributeUrl = (
-  { id, slug }: ClearPersonAttributePathParameters,
-  params?: ClearPersonAttributeParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`;
-};
-
 /**
  * @summary Supersede a person's attribute value
  */
-export const clearPersonAttribute = async (
+export const clearPersonAttribute = (
   { id, slug }: ClearPersonAttributePathParameters,
   params?: ClearPersonAttributeParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonAttributeWrite>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonAttributeWrite>>,
+) => {
   return orvalFetch<PersonAttributeWrite>(
-    getClearPersonAttributeUrl({ id, slug }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`,
       method: "DELETE",
+      params,
     },
+    options,
   );
 };
-
-export const getSetPersonAttributeUrl = (
-  { id, slug }: SetPersonAttributePathParameters,
-  params?: SetPersonAttributeParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`;
-};
-
 /**
  * @summary Set a person's attribute value
  */
-export const setPersonAttribute = async (
+export const setPersonAttribute = (
   { id, slug }: SetPersonAttributePathParameters,
   setPersonAttributeRequest: SetPersonAttributeRequest,
   params?: SetPersonAttributeParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonAttributeWrite>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonAttributeWrite>>,
+) => {
   return orvalFetch<PersonAttributeWrite>(
-    getSetPersonAttributeUrl({ id, slug }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/attributes/${encodeURIComponent(String(slug))}`,
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(setPersonAttributeRequest),
+      headers: { "Content-Type": "application/json" },
+      data: setPersonAttributeRequest,
+      params,
     },
+    options,
   );
 };
-
-export const getGetPersonContactStateUrl = ({
-  id,
-}: GetPersonContactStatePathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/contact-state`;
-};
-
 /**
  * @summary Get computed contact state for a person
  */
-export const getPersonContactState = async (
+export const getPersonContactState = (
   { id }: GetPersonContactStatePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ContactState>> => {
-  return orvalFetch<ContactState>(getGetPersonContactStateUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListPersonActivityDaysUrl = (
-  { id }: ListPersonActivityDaysPathParameters,
-  params?: ListPersonActivityDaysParams,
+  options?: SecondParameter<typeof orvalFetch<ContactState>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/days?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/days`;
+  return orvalFetch<ContactState>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/contact-state`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
 /**
  * @summary List calendar days intersecting a person
  */
-export const listPersonActivityDays = async (
+export const listPersonActivityDays = (
   { id }: ListPersonActivityDaysPathParameters,
   params?: ListPersonActivityDaysParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonDaysPage>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonDaysPage>>,
+) => {
   return orvalFetch<PersonDaysPage>(
-    getListPersonActivityDaysUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/days`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getGetPersonActivityDayUrl = (
-  { id, date }: GetPersonActivityDayPathParameters,
-  params?: GetPersonActivityDayParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/days/${encodeURIComponent(String(date))}?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/days/${encodeURIComponent(String(date))}`;
-};
-
 /**
  * @summary Get one person's activity and notes for a day
  */
-export const getPersonActivityDay = async (
+export const getPersonActivityDay = (
   { id, date }: GetPersonActivityDayPathParameters,
   params?: GetPersonActivityDayParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonDayPage>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonDayPage>>,
+) => {
   return orvalFetch<PersonDayPage>(
-    getGetPersonActivityDayUrl({ id, date }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/days/${encodeURIComponent(String(date))}`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonEmploymentsUrl = (
-  { id }: ListPersonEmploymentsPathParameters,
-  params?: ListPersonEmploymentsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/employments?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/employments`;
-};
-
 /**
  * @summary List a person's employment history
  */
-export const listPersonEmployments = async (
+export const listPersonEmployments = (
   { id }: ListPersonEmploymentsPathParameters,
   params?: ListPersonEmploymentsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<EmploymentsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<EmploymentsResponse>>,
+) => {
   return orvalFetch<EmploymentsResponse>(
-    getListPersonEmploymentsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/employments`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonFactClaimsUrl = (
-  { id }: ListPersonFactClaimsPathParameters,
-  params?: ListPersonFactClaimsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/fact-claims?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/fact-claims`;
-};
-
 /**
  * @summary List immutable person fact claims
  */
-export const listPersonFactClaims = async (
+export const listPersonFactClaims = (
   { id }: ListPersonFactClaimsPathParameters,
   params?: ListPersonFactClaimsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactClaimsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonFactClaimsResponse>>,
+) => {
   return orvalFetch<PersonFactClaimsResponse>(
-    getListPersonFactClaimsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-claims`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonFactDecisionsUrl = (
-  { id }: ListPersonFactDecisionsPathParameters,
-  params?: ListPersonFactDecisionsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/fact-decisions?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/fact-decisions`;
-};
-
 /**
  * @summary List immutable person fact decisions
  */
-export const listPersonFactDecisions = async (
+export const listPersonFactDecisions = (
   { id }: ListPersonFactDecisionsPathParameters,
   params?: ListPersonFactDecisionsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactDecisionsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonFactDecisionsResponse>>,
+) => {
   return orvalFetch<PersonFactDecisionsResponse>(
-    getListPersonFactDecisionsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-decisions`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonFactEvidenceUrl = (
-  { id }: ListPersonFactEvidencePathParameters,
-  params?: ListPersonFactEvidenceParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence`;
-};
-
 /**
  * @summary List immutable person fact evidence
  */
-export const listPersonFactEvidence = async (
+export const listPersonFactEvidence = (
   { id }: ListPersonFactEvidencePathParameters,
   params?: ListPersonFactEvidenceParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactEvidenceResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonFactEvidenceResponse>>,
+) => {
   return orvalFetch<PersonFactEvidenceResponse>(
-    getListPersonFactEvidenceUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonFactEvidenceStatusEventsUrl = (
-  { id }: ListPersonFactEvidenceStatusEventsPathParameters,
-  params?: ListPersonFactEvidenceStatusEventsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence-status-events?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence-status-events`;
-};
-
 /**
  * @summary List person fact evidence status history
  */
-export const listPersonFactEvidenceStatusEvents = async (
+export const listPersonFactEvidenceStatusEvents = (
   { id }: ListPersonFactEvidenceStatusEventsPathParameters,
   params?: ListPersonFactEvidenceStatusEventsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactEvidenceStatusEventsResponse>> => {
+  options?: SecondParameter<
+    typeof orvalFetch<PersonFactEvidenceStatusEventsResponse>
+  >,
+) => {
   return orvalFetch<PersonFactEvidenceStatusEventsResponse>(
-    getListPersonFactEvidenceStatusEventsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-evidence-status-events`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getListPersonFactPinsUrl = ({
-  id,
-}: ListPersonFactPinsPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/fact-pins`;
-};
-
 /**
  * @summary List effective person fact pins
  */
-export const listPersonFactPins = async (
+export const listPersonFactPins = (
   { id }: ListPersonFactPinsPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactPinsResponse>> => {
-  return orvalFetch<PersonFactPinsResponse>(getListPersonFactPinsUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonFactPinsResponse>>,
+) => {
+  return orvalFetch<PersonFactPinsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-pins`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getSetPersonFactPinUrl = ({
-  id,
-  kind,
-  key,
-}: SetPersonFactPinPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/fact-pins/${encodeURIComponent(String(kind))}/${encodeURIComponent(String(key))}`;
-};
-
 /**
  * @summary Replace an effective person fact pin
  */
-export const setPersonFactPin = async (
+export const setPersonFactPin = (
   { id, kind, key }: SetPersonFactPinPathParameters,
   setPersonFactPinRequest: SetPersonFactPinRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFactPinWrite>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonFactPinWrite>>,
+) => {
   return orvalFetch<PersonFactPinWrite>(
-    getSetPersonFactPinUrl({ id, kind, key }),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-pins/${encodeURIComponent(String(kind))}/${encodeURIComponent(String(key))}`,
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(setPersonFactPinRequest),
+      headers: { "Content-Type": "application/json" },
+      data: setPersonFactPinRequest,
     },
+    options,
   );
 };
-
-export const getMergePersonsUrl = ({ id }: MergePersonsPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/merge`;
-};
-
 /**
  * @summary Merge one durable person profile into another
  */
-export const mergePersons = async (
+export const mergePersons = (
   { id }: MergePersonsPathParameters,
   mergePersonRequest: MergePersonRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonMergeResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonMergeResult>(getMergePersonsUrl({ id }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(mergePersonRequest),
-  });
-};
-
-export const getListPersonMergesUrl = (
-  { id }: ListPersonMergesPathParameters,
-  params?: ListPersonMergesParams,
+  options?: SecondParameter<typeof orvalFetch<PersonMergeResult>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/merges?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/merges`;
+  return orvalFetch<PersonMergeResult>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/merge`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mergePersonRequest,
+    },
+    options,
+  );
 };
-
 /**
  * @summary List merge history for a durable person
  */
-export const listPersonMerges = async (
+export const listPersonMerges = (
   { id }: ListPersonMergesPathParameters,
   params?: ListPersonMergesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonMergesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonMergesResponse>>,
+) => {
   return orvalFetch<PersonMergesResponse>(
-    getListPersonMergesUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/merges`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getGetPersonNetworkUrl = (
-  { id }: GetPersonNetworkPathParameters,
-  params?: GetPersonNetworkParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/network?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/network`;
-};
-
 /**
  * Returns declared person relationships and employments only; archive-derived associations are excluded.
  * @summary Get a bounded curated person network
  */
-export const getPersonNetwork = async (
+export const getPersonNetwork = (
   { id }: GetPersonNetworkPathParameters,
   params?: GetPersonNetworkParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonNetwork>> => {
-  return orvalFetch<PersonNetwork>(getGetPersonNetworkUrl({ id }, params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getAppendPersonNoteUrl = (
-  { id }: AppendPersonNotePathParameters,
-  params?: AppendPersonNoteParams,
+  options?: SecondParameter<typeof orvalFetch<PersonNetwork>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/notes/append?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/notes/append`;
+  return orvalFetch<PersonNetwork>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/network`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
 };
-
 /**
  * @summary Append to a person's notes
  */
-export const appendPersonNote = async (
+export const appendPersonNote = (
   { id }: AppendPersonNotePathParameters,
   appendPersonNoteRequest: AppendPersonNoteRequest,
   params?: AppendPersonNoteParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonAttributeWrite>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonAttributeWrite>>,
+) => {
   return orvalFetch<PersonAttributeWrite>(
-    getAppendPersonNoteUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/notes/append`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(appendPersonNoteRequest),
+      headers: { "Content-Type": "application/json" },
+      data: appendPersonNoteRequest,
+      params,
     },
+    options,
   );
 };
-
-export const getGetPersonStructuredProfileUrl = ({
-  id,
-}: GetPersonStructuredProfilePathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/profile`;
-};
-
 /**
  * Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
  * @summary Get a person's current structured profile
  */
-export const getPersonStructuredProfile = async (
+export const getPersonStructuredProfile = (
   { id }: GetPersonStructuredProfilePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StructuredPersonProfile>> => {
+  options?: SecondParameter<typeof orvalFetch<StructuredPersonProfile>>,
+) => {
   return orvalFetch<StructuredPersonProfile>(
-    getGetPersonStructuredProfileUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/profile`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getPatchPersonStructuredProfileUrl = ({
-  id,
-}: PatchPersonStructuredProfilePathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/profile`;
-};
-
 /**
  * Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
  * @summary Atomically patch a person's structured profile
  */
-export const patchPersonStructuredProfile = async (
+export const patchPersonStructuredProfile = (
   { id }: PatchPersonStructuredProfilePathParameters,
   personProfilePatchRequest: PersonProfilePatchRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StructuredPersonProfile>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<StructuredPersonProfile>>,
+) => {
   return orvalFetch<StructuredPersonProfile>(
-    getPatchPersonStructuredProfileUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/profile`,
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(personProfilePatchRequest),
+      headers: { "Content-Type": "application/json" },
+      data: personProfilePatchRequest,
     },
+    options,
   );
 };
-
-export const getGetPersonProfileHistoryUrl = ({
-  id,
-}: GetPersonProfileHistoryPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/profile/history`;
-};
-
 /**
  * Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
  * @summary Get a person's structured profile history
  */
-export const getPersonProfileHistory = async (
+export const getPersonProfileHistory = (
   { id }: GetPersonProfileHistoryPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonProfileHistory>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonProfileHistory>>,
+) => {
   return orvalFetch<PersonProfileHistory>(
-    getGetPersonProfileHistoryUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/profile/history`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getGetPersonProfileMediaContentUrl = ({
-  id,
-  mediaId,
-}: GetPersonProfileMediaContentPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/profile/media/${encodeURIComponent(String(mediaId))}/content`;
-};
-
 /**
  * Returns the exact inline bytes stored for one media value. URI-only values have no local content and return 404.
  * @summary Download stored inline content for one person profile media value
  */
-export const getPersonProfileMediaContent = async (
+export const getPersonProfileMediaContent = (
   { id, mediaId }: GetPersonProfileMediaContentPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Blob>> => {
-  return orvalFetch<Blob>(getGetPersonProfileMediaContentUrl({ id, mediaId }), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListPersonRelationshipsUrl = (
-  { id }: ListPersonRelationshipsPathParameters,
-  params?: ListPersonRelationshipsParams,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/people/${encodeURIComponent(String(id))}/relationships?${stringifiedParams}`
-    : `/api/v1/people/${encodeURIComponent(String(id))}/relationships`;
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/profile/media/${encodeURIComponent(String(mediaId))}/content`,
+      method: "GET",
+      responseType: "blob",
+    },
+    options,
+  );
 };
-
 /**
  * @summary List one person's relationships
  */
-export const listPersonRelationships = async (
+export const listPersonRelationships = (
   { id }: ListPersonRelationshipsPathParameters,
   params?: ListPersonRelationshipsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonRelationshipsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonRelationshipsResponse>>,
+) => {
   return orvalFetch<PersonRelationshipsResponse>(
-    getListPersonRelationshipsUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/relationships`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getSplitPersonMergeUrl = ({
-  id,
-}: SplitPersonMergePathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/split`;
-};
-
 /**
  * @summary Split absorbed participant lineage into a new person
  */
-export const splitPersonMerge = async (
+export const splitPersonMerge = (
   { id }: SplitPersonMergePathParameters,
   splitPersonRequest: SplitPersonRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonSplitResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonSplitResult>(getSplitPersonMergeUrl({ id }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<PersonSplitResult>>,
+) => {
+  return orvalFetch<PersonSplitResult>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/split`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: splitPersonRequest,
     },
-    body: JSON.stringify(splitPersonRequest),
-  });
+    options,
+  );
 };
-
-export const getGetPersonTrackingUrl = ({
-  id,
-}: GetPersonTrackingPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/tracking`;
-};
-
 /**
  * @summary Get a person's tracking state
  */
-export const getPersonTracking = async (
+export const getPersonTracking = (
   { id }: GetPersonTrackingPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonTracking>> => {
-  return orvalFetch<PersonTracking>(getGetPersonTrackingUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonTracking>>,
+) => {
+  return orvalFetch<PersonTracking>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/tracking`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getSetPersonTrackingUrl = ({
-  id,
-}: SetPersonTrackingPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/tracking`;
-};
-
 /**
  * @summary Replace a person's tracking state
  */
-export const setPersonTracking = async (
+export const setPersonTracking = (
   { id }: SetPersonTrackingPathParameters,
   putPersonTrackingRequest: PutPersonTrackingRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonTracking>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonTracking>(getSetPersonTrackingUrl({ id }), {
-    ...options,
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(putPersonTrackingRequest),
-  });
-};
-
-export const getListPersonFactTargetsUrl = (
-  params?: ListPersonFactTargetsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonTracking>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/person-fact-targets?${stringifiedParams}`
-    : `/api/v1/person-fact-targets`;
+  return orvalFetch<PersonTracking>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/tracking`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: putPersonTrackingRequest,
+    },
+    options,
+  );
 };
-
 /**
  * @summary List eligible automatic person fact targets
  */
-export const listPersonFactTargets = async (
+export const listPersonFactTargets = (
   params?: ListPersonFactTargetsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<Catalog>> => {
-  return orvalFetch<Catalog>(getListPersonFactTargetsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<Catalog>>,
+) => {
+  return orvalFetch<Catalog>(
+    { url: `/api/v1/person-fact-targets`, method: "GET", params },
+    options,
+  );
 };
-
-export const getDecidePersonMergeCandidateUrl = ({
-  candidateId,
-}: DecidePersonMergeCandidatePathParameters) => {
-  return `/api/v1/person-merge-candidates/${encodeURIComponent(String(candidateId))}/decision`;
-};
-
 /**
  * @summary Accept or reject a person merge attribute candidate
  */
-export const decidePersonMergeCandidate = async (
+export const decidePersonMergeCandidate = (
   { candidateId }: DecidePersonMergeCandidatePathParameters,
   decidePersonMergeCandidateRequest: DecidePersonMergeCandidateRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonMergeReviewCandidate>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonMergeReviewCandidate>>,
+) => {
   return orvalFetch<PersonMergeReviewCandidate>(
-    getDecidePersonMergeCandidateUrl({ candidateId }),
     {
-      ...options,
+      url: `/api/v1/person-merge-candidates/${encodeURIComponent(String(candidateId))}/decision`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(decidePersonMergeCandidateRequest),
+      headers: { "Content-Type": "application/json" },
+      data: decidePersonMergeCandidateRequest,
     },
+    options,
   );
 };
-
-export const getGetPersonMergeUrl = ({
-  mergeId,
-}: GetPersonMergePathParameters) => {
-  return `/api/v1/person-merges/${encodeURIComponent(String(mergeId))}`;
-};
-
 /**
  * @summary Inspect one durable person merge
  */
-export const getPersonMerge = async (
+export const getPersonMerge = (
   { mergeId }: GetPersonMergePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonMergeDetail>> => {
-  return orvalFetch<PersonMergeDetail>(getGetPersonMergeUrl({ mergeId }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonMergeDetail>>,
+) => {
+  return orvalFetch<PersonMergeDetail>(
+    {
+      url: `/api/v1/person-merges/${encodeURIComponent(String(mergeId))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getGetPersonMergeSnapshotUrl = ({
-  mergeId,
-}: GetPersonMergeSnapshotPathParameters) => {
-  return `/api/v1/person-merges/${encodeURIComponent(String(mergeId))}/snapshot`;
-};
-
 /**
  * @summary Read and verify one person merge snapshot
  */
-export const getPersonMergeSnapshot = async (
+export const getPersonMergeSnapshot = (
   { mergeId }: GetPersonMergeSnapshotPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonMergeSnapshotResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<PersonMergeSnapshotResponse>>,
+) => {
   return orvalFetch<PersonMergeSnapshotResponse>(
-    getGetPersonMergeSnapshotUrl({ mergeId }),
     {
-      ...options,
+      url: `/api/v1/person-merges/${encodeURIComponent(String(mergeId))}/snapshot`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getListPersonRelationshipReviewsUrl = (
-  params?: ListPersonRelationshipReviewsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/person-relationship-reviews?${stringifiedParams}`
-    : `/api/v1/person-relationship-reviews`;
-};
-
 /**
  * @summary List imported RELATED values awaiting review
  */
-export const listPersonRelationshipReviews = async (
+export const listPersonRelationshipReviews = (
   params?: ListPersonRelationshipReviewsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipReviewsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<RelationshipReviewsResponse>>,
+) => {
   return orvalFetch<RelationshipReviewsResponse>(
-    getListPersonRelationshipReviewsUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/person-relationship-reviews`, method: "GET", params },
+    options,
   );
 };
-
-export const getCreatePersonRelationshipUrl = () => {
-  return `/api/v1/person-relationships`;
-};
-
 /**
  * @summary Declare a relationship between two persons
  */
-export const createPersonRelationship = async (
+export const createPersonRelationship = (
   createPersonRelationshipRequest: CreatePersonRelationshipRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonRelationship>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonRelationship>(getCreatePersonRelationshipUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<PersonRelationship>>,
+) => {
+  return orvalFetch<PersonRelationship>(
+    {
+      url: `/api/v1/person-relationships`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createPersonRelationshipRequest,
     },
-    body: JSON.stringify(createPersonRelationshipRequest),
-  });
+    options,
+  );
 };
-
-export const getDeletePersonRelationshipUrl = ({
-  id,
-}: DeletePersonRelationshipPathParameters) => {
-  return `/api/v1/person-relationships/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete a person relationship
  */
-export const deletePersonRelationship = async (
+export const deletePersonRelationship = (
   { id }: DeletePersonRelationshipPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeletePersonRelationshipUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/person-relationships/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetPersonRelationshipUrl = ({
-  id,
-}: GetPersonRelationshipPathParameters) => {
-  return `/api/v1/person-relationships/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get one person relationship
  */
-export const getPersonRelationship = async (
+export const getPersonRelationship = (
   { id }: GetPersonRelationshipPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonRelationship>> => {
-  return orvalFetch<PersonRelationship>(getGetPersonRelationshipUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<PersonRelationship>>,
+) => {
+  return orvalFetch<PersonRelationship>(
+    {
+      url: `/api/v1/person-relationships/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchPersonRelationshipUrl = ({
-  id,
-}: PatchPersonRelationshipPathParameters) => {
-  return `/api/v1/person-relationships/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary End a relationship or replace its notes
  */
-export const patchPersonRelationship = async (
+export const patchPersonRelationship = (
   { id }: PatchPersonRelationshipPathParameters,
   patchPersonRelationshipRequest: PatchPersonRelationshipRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonRelationship>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<PersonRelationship>(getPatchPersonRelationshipUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<PersonRelationship>>,
+) => {
+  return orvalFetch<PersonRelationship>(
+    {
+      url: `/api/v1/person-relationships/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: patchPersonRelationshipRequest,
     },
-    body: JSON.stringify(patchPersonRelationshipRequest),
-  });
+    options,
+  );
 };
-
-export const getRunQueryUrl = () => {
-  return `/api/v1/query`;
-};
-
 /**
  * @summary Run an aggregate query
  */
-export const runQuery = async (
+export const runQuery = (
   queryRequest: QueryRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<QueryResult>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<QueryResult>(getRunQueryUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<QueryResult>>,
+) => {
+  return orvalFetch<QueryResult>(
+    {
+      url: `/api/v1/query`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: queryRequest,
     },
-    body: JSON.stringify(queryRequest),
-  });
+    options,
+  );
 };
-
-export const getListRelationshipTypesUrl = () => {
-  return `/api/v1/relationship-types`;
-};
-
 /**
  * @summary List person relationship types
  */
-export const listRelationshipTypes = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipTypesResponse>> => {
-  return orvalFetch<RelationshipTypesResponse>(getListRelationshipTypesUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listRelationshipTypes = (
+  options?: SecondParameter<typeof orvalFetch<RelationshipTypesResponse>>,
+) => {
+  return orvalFetch<RelationshipTypesResponse>(
+    { url: `/api/v1/relationship-types`, method: "GET" },
+    options,
+  );
 };
-
-export const getCreateRelationshipTypeUrl = () => {
-  return `/api/v1/relationship-types`;
-};
-
 /**
  * @summary Create a user-owned relationship type
  */
-export const createRelationshipType = async (
+export const createRelationshipType = (
   createRelationshipTypeRequest: CreateRelationshipTypeRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipType>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<RelationshipType>(getCreateRelationshipTypeUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<RelationshipType>>,
+) => {
+  return orvalFetch<RelationshipType>(
+    {
+      url: `/api/v1/relationship-types`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createRelationshipTypeRequest,
     },
-    body: JSON.stringify(createRelationshipTypeRequest),
-  });
+    options,
+  );
 };
-
-export const getDeleteRelationshipTypeUrl = ({
-  id,
-}: DeleteRelationshipTypePathParameters) => {
-  return `/api/v1/relationship-types/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete an unused relationship type
  */
-export const deleteRelationshipType = async (
+export const deleteRelationshipType = (
   { id }: DeleteRelationshipTypePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteRelationshipTypeUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/relationship-types/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetRelationshipTypeUrl = ({
-  id,
-}: GetRelationshipTypePathParameters) => {
-  return `/api/v1/relationship-types/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get a relationship type
  */
-export const getRelationshipType = async (
+export const getRelationshipType = (
   { id }: GetRelationshipTypePathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipType>> => {
-  return orvalFetch<RelationshipType>(getGetRelationshipTypeUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<RelationshipType>>,
+) => {
+  return orvalFetch<RelationshipType>(
+    {
+      url: `/api/v1/relationship-types/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchRelationshipTypeUrl = ({
-  id,
-}: PatchRelationshipTypePathParameters) => {
-  return `/api/v1/relationship-types/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Update a relationship type
  */
-export const patchRelationshipType = async (
+export const patchRelationshipType = (
   { id }: PatchRelationshipTypePathParameters,
   patchRelationshipTypeRequest: PatchRelationshipTypeRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipType>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<RelationshipType>(getPatchRelationshipTypeUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<RelationshipType>>,
+) => {
+  return orvalFetch<RelationshipType>(
+    {
+      url: `/api/v1/relationship-types/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: patchRelationshipTypeRequest,
     },
-    body: JSON.stringify(patchRelationshipTypeRequest),
-  });
+    options,
+  );
 };
-
-export const getListSavedViewsUrl = () => {
-  return `/api/v1/saved-views`;
-};
-
 /**
  * @summary List shared analytical Saved Views
  */
-export const listSavedViews = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SavedViewsResponse>> => {
-  return orvalFetch<SavedViewsResponse>(getListSavedViewsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const listSavedViews = (
+  options?: SecondParameter<typeof orvalFetch<SavedViewsResponse>>,
+) => {
+  return orvalFetch<SavedViewsResponse>(
+    { url: `/api/v1/saved-views`, method: "GET" },
+    options,
+  );
 };
-
-export const getCreateSavedViewUrl = () => {
-  return `/api/v1/saved-views`;
-};
-
 /**
  * @summary Create a shared analytical Saved View
  */
-export const createSavedView = async (
+export const createSavedView = (
   createSavedViewRequest: CreateSavedViewRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SavedView>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SavedView>(getCreateSavedViewUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SavedView>>,
+) => {
+  return orvalFetch<SavedView>(
+    {
+      url: `/api/v1/saved-views`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: createSavedViewRequest,
     },
-    body: JSON.stringify(createSavedViewRequest),
-  });
+    options,
+  );
 };
-
-export const getDeleteSavedViewUrl = ({
-  id,
-}: DeleteSavedViewPathParameters) => {
-  return `/api/v1/saved-views/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Delete a shared analytical Saved View
  */
-export const deleteSavedView = async (
+export const deleteSavedView = (
   { id }: DeleteSavedViewPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<void>> => {
-  return orvalFetch<void>(getDeleteSavedViewUrl({ id }), {
-    ...options,
-    method: "DELETE",
-  });
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/saved-views/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
 };
-
-export const getGetSavedViewUrl = ({ id }: GetSavedViewPathParameters) => {
-  return `/api/v1/saved-views/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Get a shared analytical Saved View
  */
-export const getSavedView = async (
+export const getSavedView = (
   { id }: GetSavedViewPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SavedView>> => {
-  return orvalFetch<SavedView>(getGetSavedViewUrl({ id }), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<SavedView>>,
+) => {
+  return orvalFetch<SavedView>(
+    {
+      url: `/api/v1/saved-views/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
 };
-
-export const getPatchSavedViewUrl = ({ id }: PatchSavedViewPathParameters) => {
-  return `/api/v1/saved-views/${encodeURIComponent(String(id))}`;
-};
-
 /**
  * @summary Update a shared analytical Saved View
  */
-export const patchSavedView = async (
+export const patchSavedView = (
   { id }: PatchSavedViewPathParameters,
   patchSavedViewRequest: PatchSavedViewRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SavedView>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SavedView>(getPatchSavedViewUrl({ id }), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SavedView>>,
+) => {
+  return orvalFetch<SavedView>(
+    {
+      url: `/api/v1/saved-views/${encodeURIComponent(String(id))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: patchSavedViewRequest,
     },
-    body: JSON.stringify(patchSavedViewRequest),
-  });
+    options,
+  );
 };
-
-export const getGetSchedulerStatusUrl = () => {
-  return `/api/v1/scheduler/status`;
-};
-
 /**
  * @summary Get scheduler status
  */
-export const getSchedulerStatus = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SchedulerStatusResponse>> => {
-  return orvalFetch<SchedulerStatusResponse>(getGetSchedulerStatusUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getSchedulerStatus = (
+  options?: SecondParameter<typeof orvalFetch<SchedulerStatusResponse>>,
+) => {
+  return orvalFetch<SchedulerStatusResponse>(
+    { url: `/api/v1/scheduler/status`, method: "GET" },
+    options,
+  );
 };
-
-export const getSearchMessagesUrl = (params: SearchMessagesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/search?${stringifiedParams}`
-    : `/api/v1/search`;
-};
-
 /**
  * @summary Search messages
  */
-export const searchMessages = async (
+export const searchMessages = (
   params: SearchMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SearchResult | HybridSearchResponse>> => {
+  options?: SecondParameter<
+    typeof orvalFetch<SearchResult | HybridSearchResponse>
+  >,
+) => {
   return orvalFetch<SearchResult | HybridSearchResponse>(
-    getSearchMessagesUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/search`, method: "GET", params },
+    options,
   );
 };
-
-export const getDeepSearchUrl = (params: DeepSearchParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/search/deep?${stringifiedParams}`
-    : `/api/v1/search/deep`;
-};
-
 /**
  * @summary Run full-text message search
  */
-export const deepSearch = async (
+export const deepSearch = (
   params: DeepSearchParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DeepSearchResponse>> => {
-  return orvalFetch<DeepSearchResponse>(getDeepSearchUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getSearchMessagesByDomainsUrl = (
-  params: SearchMessagesByDomainsParams,
+  options?: SecondParameter<typeof orvalFetch<DeepSearchResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/search/domains?${stringifiedParams}`
-    : `/api/v1/search/domains`;
+  return orvalFetch<DeepSearchResponse>(
+    { url: `/api/v1/search/deep`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary Search messages by participant domains
  */
-export const searchMessagesByDomains = async (
+export const searchMessagesByDomains = (
   params: SearchMessagesByDomainsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FilteredMessagesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<FilteredMessagesResponse>>,
+) => {
   return orvalFetch<FilteredMessagesResponse>(
-    getSearchMessagesByDomainsUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/search/domains`, method: "GET", params },
+    options,
   );
 };
-
-export const getFastSearchUrl = (params: FastSearchParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["source_ids"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/search/fast?${stringifiedParams}`
-    : `/api/v1/search/fast`;
-};
-
 /**
  * @summary Run fast aggregate search
  */
-export const fastSearch = async (
+export const fastSearch = (
   params: FastSearchParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SearchFastResponse>> => {
-  return orvalFetch<SearchFastResponse>(getFastSearchUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getFindSimilarMessagesUrl = (
-  params: FindSimilarMessagesParams,
+  options?: SecondParameter<typeof orvalFetch<SearchFastResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/search/similar?${stringifiedParams}`
-    : `/api/v1/search/similar`;
+  return orvalFetch<SearchFastResponse>(
+    { url: `/api/v1/search/fast`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary Find messages similar to a seed message
  */
-export const findSimilarMessages = async (
+export const findSimilarMessages = (
   params: FindSimilarMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SimilarSearchResponse>> => {
-  return orvalFetch<SimilarSearchResponse>(getFindSimilarMessagesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<SimilarSearchResponse>>,
+) => {
+  return orvalFetch<SimilarSearchResponse>(
+    { url: `/api/v1/search/similar`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetSettingsUrl = () => {
-  return `/api/v1/settings`;
-};
-
 /**
  * @summary Get browser-managed settings
  */
-export const getSettings = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SettingsResponse>> => {
-  return orvalFetch<SettingsResponse>(getGetSettingsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getSettings = (
+  options?: SecondParameter<typeof orvalFetch<SettingsResponse>>,
+) => {
+  return orvalFetch<SettingsResponse>(
+    { url: `/api/v1/settings`, method: "GET" },
+    options,
+  );
 };
-
-export const getPatchSettingsUrl = () => {
-  return `/api/v1/settings`;
-};
-
 /**
  * @summary Update browser-managed settings
  */
-export const patchSettings = async (
+export const patchSettings = (
   settingsPatchRequest: SettingsPatchRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SettingsResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SettingsResponse>(getPatchSettingsUrl(), {
-    ...options,
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SettingsResponse>>,
+) => {
+  return orvalFetch<SettingsResponse>(
+    {
+      url: `/api/v1/settings`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: settingsPatchRequest,
     },
-    body: JSON.stringify(settingsPatchRequest),
-  });
+    options,
+  );
 };
-
-export const getPutSettingsPersonEnrichmentProviderUrl = ({
-  name,
-}: PutSettingsPersonEnrichmentProviderPathParameters) => {
-  return `/api/v1/settings/person-enrichment/providers/${encodeURIComponent(String(name))}`;
-};
-
 /**
  * @summary Create or update one named person-enrichment provider
  */
-export const putSettingsPersonEnrichmentProvider = async (
+export const putSettingsPersonEnrichmentProvider = (
   { name }: PutSettingsPersonEnrichmentProviderPathParameters,
   personEnrichmentProviderUpdate: PersonEnrichmentProviderUpdate,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SettingsResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<SettingsResponse>>,
+) => {
   return orvalFetch<SettingsResponse>(
-    getPutSettingsPersonEnrichmentProviderUrl({ name }),
     {
-      ...options,
+      url: `/api/v1/settings/person-enrichment/providers/${encodeURIComponent(String(name))}`,
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(personEnrichmentProviderUpdate),
+      headers: { "Content-Type": "application/json" },
+      data: personEnrichmentProviderUpdate,
     },
+    options,
   );
 };
-
-export const getDeleteSettingsProviderCredentialUrl = ({
-  credentialId,
-}: DeleteSettingsProviderCredentialPathParameters) => {
-  return `/api/v1/settings/provider-credentials/${encodeURIComponent(String(credentialId))}`;
-};
-
 /**
  * @summary Clear a stored provider credential
  */
-export const deleteSettingsProviderCredential = async (
+export const deleteSettingsProviderCredential = (
   { credentialId }: DeleteSettingsProviderCredentialPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ProviderCredentialResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<ProviderCredentialResponse>>,
+) => {
   return orvalFetch<ProviderCredentialResponse>(
-    getDeleteSettingsProviderCredentialUrl({ credentialId }),
     {
-      ...options,
+      url: `/api/v1/settings/provider-credentials/${encodeURIComponent(String(credentialId))}`,
       method: "DELETE",
     },
+    options,
   );
 };
-
-export const getPutSettingsProviderCredentialUrl = ({
-  credentialId,
-}: PutSettingsProviderCredentialPathParameters) => {
-  return `/api/v1/settings/provider-credentials/${encodeURIComponent(String(credentialId))}`;
-};
-
 /**
  * @summary Set a write-only provider credential
  */
-export const putSettingsProviderCredential = async (
+export const putSettingsProviderCredential = (
   { credentialId }: PutSettingsProviderCredentialPathParameters,
   providerCredentialWriteRequest: ProviderCredentialWriteRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ProviderCredentialResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<ProviderCredentialResponse>>,
+) => {
   return orvalFetch<ProviderCredentialResponse>(
-    getPutSettingsProviderCredentialUrl({ credentialId }),
     {
-      ...options,
+      url: `/api/v1/settings/provider-credentials/${encodeURIComponent(String(credentialId))}`,
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(providerCredentialWriteRequest),
+      headers: { "Content-Type": "application/json" },
+      data: providerCredentialWriteRequest,
     },
+    options,
   );
 };
-
-export const getListSourceStatusUrl = (params?: ListSourceStatusParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/sources/status?${stringifiedParams}`
-    : `/api/v1/sources/status`;
-};
-
 /**
  * @summary List source sync status
  */
-export const listSourceStatus = async (
+export const listSourceStatus = (
   params?: ListSourceStatusParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SourceStatusResponse>> => {
-  return orvalFetch<SourceStatusResponse>(getListSourceStatusUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<SourceStatusResponse>>,
+) => {
+  return orvalFetch<SourceStatusResponse>(
+    { url: `/api/v1/sources/status`, method: "GET", params },
+    options,
+  );
 };
-
-export const getListSourceIdentitiesUrl = ({
-  sourceId,
-}: ListSourceIdentitiesPathParameters) => {
-  return `/api/v1/sources/${encodeURIComponent(String(sourceId))}/identities`;
-};
-
 /**
  * @summary List confirmed identities for one source
  */
-export const listSourceIdentities = async (
+export const listSourceIdentities = (
   { sourceId }: ListSourceIdentitiesPathParameters,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SourceIdentitiesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<SourceIdentitiesResponse>>,
+) => {
   return orvalFetch<SourceIdentitiesResponse>(
-    getListSourceIdentitiesUrl({ sourceId }),
     {
-      ...options,
+      url: `/api/v1/sources/${encodeURIComponent(String(sourceId))}/identities`,
       method: "GET",
     },
+    options,
   );
 };
-
-export const getGetStatsUrl = () => {
-  return `/api/v1/stats`;
-};
-
 /**
  * @summary Get archive statistics
  */
-export const getStats = async (
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StatsResponse>> => {
-  return orvalFetch<StatsResponse>(getGetStatsUrl(), {
-    ...options,
-    method: "GET",
-  });
+export const getStats = (
+  options?: SecondParameter<typeof orvalFetch<StatsResponse>>,
+) => {
+  return orvalFetch<StatsResponse>(
+    { url: `/api/v1/stats`, method: "GET" },
+    options,
+  );
 };
-
-export const getGetTotalStatsUrl = (params?: GetTotalStatsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["source_ids"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/stats/total?${stringifiedParams}`
-    : `/api/v1/stats/total`;
-};
-
 /**
  * @summary Get aggregate totals
  */
-export const getTotalStats = async (
+export const getTotalStats = (
   params?: GetTotalStatsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TotalStatsResponse>> => {
-  return orvalFetch<TotalStatsResponse>(getGetTotalStatsUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getTriggerSyncUrl = (
-  { account }: TriggerSyncPathParameters,
-  params?: TriggerSyncParams,
+  options?: SecondParameter<typeof orvalFetch<TotalStatsResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/sync/${encodeURIComponent(String(account))}?${stringifiedParams}`
-    : `/api/v1/sync/${encodeURIComponent(String(account))}`;
+  return orvalFetch<TotalStatsResponse>(
+    { url: `/api/v1/stats/total`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary Trigger account sync
  */
-export const triggerSync = async (
+export const triggerSync = (
   { account }: TriggerSyncPathParameters,
   params?: TriggerSyncParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<StatusMessageResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<StatusMessageResponse>>,
+) => {
   return orvalFetch<StatusMessageResponse>(
-    getTriggerSyncUrl({ account }, params),
     {
-      ...options,
+      url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
+      params,
     },
+    options,
   );
 };
-
-export const getGetTextAggregatesUrl = (params?: GetTextAggregatesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/text/aggregates?${stringifiedParams}`
-    : `/api/v1/text/aggregates`;
-};
-
 /**
  * @summary Get text aggregate rows
  */
-export const getTextAggregates = async (
+export const getTextAggregates = (
   params?: GetTextAggregatesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<AggregateResponse>> => {
-  return orvalFetch<AggregateResponse>(getGetTextAggregatesUrl(params), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getListTextConversationsUrl = (
-  params?: ListTextConversationsParams,
+  options?: SecondParameter<typeof orvalFetch<AggregateResponse>>,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["participant_id"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/text/conversations?${stringifiedParams}`
-    : `/api/v1/text/conversations`;
+  return orvalFetch<AggregateResponse>(
+    { url: `/api/v1/text/aggregates`, method: "GET", params },
+    options,
+  );
 };
-
 /**
  * @summary List text conversations
  */
-export const listTextConversations = async (
+export const listTextConversations = (
   params?: ListTextConversationsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TextConversationsResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<TextConversationsResponse>>,
+) => {
   return orvalFetch<TextConversationsResponse>(
-    getListTextConversationsUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
+    { url: `/api/v1/text/conversations`, method: "GET", params },
+    options,
   );
 };
-
-export const getListTextConversationMessagesUrl = (
-  { id }: ListTextConversationMessagesPathParameters,
-  params?: ListTextConversationMessagesParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["participant_id"];
-
-    if (Array.isArray(value) && explodeParameters.includes(key)) {
-      value.forEach((v) => {
-        normalizedParams.append(key, v === null ? "null" : String(v));
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/text/conversations/${encodeURIComponent(String(id))}/messages?${stringifiedParams}`
-    : `/api/v1/text/conversations/${encodeURIComponent(String(id))}/messages`;
-};
-
 /**
  * @summary List messages in a text conversation
  */
-export const listTextConversationMessages = async (
+export const listTextConversationMessages = (
   { id }: ListTextConversationMessagesPathParameters,
   params?: ListTextConversationMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TextMessagesResponse>> => {
+  options?: SecondParameter<typeof orvalFetch<TextMessagesResponse>>,
+) => {
   return orvalFetch<TextMessagesResponse>(
-    getListTextConversationMessagesUrl({ id }, params),
     {
-      ...options,
+      url: `/api/v1/text/conversations/${encodeURIComponent(String(id))}/messages`,
       method: "GET",
+      params,
     },
+    options,
   );
 };
-
-export const getSearchTextMessagesUrl = (params: SearchTextMessagesParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/text/search?${stringifiedParams}`
-    : `/api/v1/text/search`;
-};
-
 /**
  * @summary Search text messages
  */
-export const searchTextMessages = async (
+export const searchTextMessages = (
   params: SearchTextMessagesParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TextSearchResponse>> => {
-  return orvalFetch<TextSearchResponse>(getSearchTextMessagesUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<TextSearchResponse>>,
+) => {
+  return orvalFetch<TextSearchResponse>(
+    { url: `/api/v1/text/search`, method: "GET", params },
+    options,
+  );
 };
-
-export const getGetTextStatsUrl = (params?: GetTextStatsParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/text/stats?${stringifiedParams}`
-    : `/api/v1/text/stats`;
-};
-
 /**
  * @summary Get text message totals
  */
-export const getTextStats = async (
+export const getTextStats = (
   params?: GetTextStatsParams,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<TotalStatsResponse>> => {
-  return orvalFetch<TotalStatsResponse>(getGetTextStatsUrl(params), {
-    ...options,
-    method: "GET",
-  });
+  options?: SecondParameter<typeof orvalFetch<TotalStatsResponse>>,
+) => {
+  return orvalFetch<TotalStatsResponse>(
+    { url: `/api/v1/text/stats`, method: "GET", params },
+    options,
+  );
 };

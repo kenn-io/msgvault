@@ -260,11 +260,10 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
         {
           ...client,
           signal,
-          parseAs: 'text',
         },
       );
       if (!response.ok) throw new Error(messageFor(error, response.status));
-      requireCompletedCLIRun((data as unknown as string | undefined) ?? '');
+      requireCompletedCLIRun(data ?? '');
     },
   };
 }

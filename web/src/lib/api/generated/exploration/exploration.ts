@@ -45,675 +45,382 @@ import type {
   VisualTextSearchRequest,
 } from "../models";
 
-import { orvalFetch, type APIResponse } from "../../runtime";
+import { orvalFetch } from "../../runtime";
 
-export const getSearchDomainsUrl = () => {
-  return `/api/v1/domains/search`;
-};
+type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
  * @summary Search analytical domains
  */
-export const searchDomains = async (
+export const searchDomains = (
   identitySearchHTTPRequest: IdentitySearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DomainSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<DomainSearchHTTPResponse>(getSearchDomainsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<DomainSearchHTTPResponse>>,
+) => {
+  return orvalFetch<DomainSearchHTTPResponse>(
+    {
+      url: `/api/v1/domains/search`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identitySearchHTTPRequest,
     },
-    body: JSON.stringify(identitySearchHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchDomainFilesUrl = ({
-  domain,
-}: SearchDomainFilesPathParameters) => {
-  return `/api/v1/domains/${encodeURIComponent(String(domain))}/files/search`;
-};
-
 /**
  * @summary Search one domain's analytical files
  */
-export const searchDomainFiles = async (
+export const searchDomainFiles = (
   { domain }: SearchDomainFilesPathParameters,
   fileSearchHTTPRequest: FileSearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FileSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<FileSearchHTTPResponse>>,
+) => {
   return orvalFetch<FileSearchHTTPResponse>(
-    getSearchDomainFilesUrl({ domain }),
     {
-      ...options,
+      url: `/api/v1/domains/${encodeURIComponent(String(domain))}/files/search`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(fileSearchHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: fileSearchHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetDomainContextSummaryUrl = ({
-  domain,
-}: GetDomainContextSummaryPathParameters) => {
-  return `/api/v1/domains/${encodeURIComponent(String(domain))}/summary`;
-};
-
 /**
  * @summary Get one domain's contextual analytical summary
  */
-export const getDomainContextSummary = async (
+export const getDomainContextSummary = (
   { domain }: GetDomainContextSummaryPathParameters,
   exploreHTTPRequest: ExploreHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<DomainContextSummaryHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<DomainContextSummaryHTTPResponse>
+  >,
+) => {
   return orvalFetch<DomainContextSummaryHTTPResponse>(
-    getGetDomainContextSummaryUrl({ domain }),
     {
-      ...options,
+      url: `/api/v1/domains/${encodeURIComponent(String(domain))}/summary`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(exploreHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: exploreHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetDomainTimelineUrl = ({
-  domain,
-}: GetDomainTimelinePathParameters) => {
-  return `/api/v1/domains/${encodeURIComponent(String(domain))}/timeline`;
-};
-
 /**
  * @summary Get one domain's canonical activity timeline
  */
-export const getDomainTimeline = async (
+export const getDomainTimeline = (
   { domain }: GetDomainTimelinePathParameters,
   exploreHTTPRequest: ExploreHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreHTTPResponse>(getGetDomainTimelineUrl({ domain }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreHTTPResponse>>,
+) => {
+  return orvalFetch<ExploreHTTPResponse>(
+    {
+      url: `/api/v1/domains/${encodeURIComponent(String(domain))}/timeline`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreHTTPRequest,
     },
-    body: JSON.stringify(exploreHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getExploreUrl = () => {
-  return `/api/v1/explore`;
-};
-
 /**
  * @summary Explore canonical archive entries
  */
-export const explore = async (
+export const explore = (
   exploreHTTPRequest: ExploreHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreHTTPResponse>(getExploreUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreHTTPResponse>>,
+) => {
+  return orvalFetch<ExploreHTTPResponse>(
+    {
+      url: `/api/v1/explore`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreHTTPRequest,
     },
-    body: JSON.stringify(exploreHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getListExploreFilesUrl = () => {
-  return `/api/v1/explore/files`;
-};
-
 /**
  * @summary List bounded chronological attachment facts
  */
-export const listExploreFiles = async (
+export const listExploreFiles = (
   exploreFilesHTTPRequest: ExploreFilesHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreFilesHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreFilesHTTPResponse>(getListExploreFilesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreFilesHTTPResponse>>,
+) => {
+  return orvalFetch<ExploreFilesHTTPResponse>(
+    {
+      url: `/api/v1/explore/files`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreFilesHTTPRequest,
     },
-    body: JSON.stringify(exploreFilesHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getExploreGroupsUrl = () => {
-  return `/api/v1/explore/groups`;
-};
-
 /**
  * @summary Group canonical archive entries
  */
-export const exploreGroups = async (
+export const exploreGroups = (
   exploreGroupsHTTPRequest: ExploreGroupsHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreGroupsHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreGroupsHTTPResponse>(getExploreGroupsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreGroupsHTTPResponse>>,
+) => {
+  return orvalFetch<ExploreGroupsHTTPResponse>(
+    {
+      url: `/api/v1/explore/groups`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreGroupsHTTPRequest,
     },
-    body: JSON.stringify(exploreGroupsHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getCountExploreMatchesUrl = () => {
-  return `/api/v1/explore/match-counts`;
-};
-
 /**
  * @summary Count exact lexical matches in visible rows
  */
-export const countExploreMatches = async (
+export const countExploreMatches = (
   exploreMatchCountsRequest: ExploreMatchCountsRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreMatchCountsResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreMatchCountsResponse>(getCountExploreMatchesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreMatchCountsResponse>>,
+) => {
+  return orvalFetch<ExploreMatchCountsResponse>(
+    {
+      url: `/api/v1/explore/match-counts`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreMatchCountsRequest,
     },
-    body: JSON.stringify(exploreMatchCountsRequest),
-  });
+    options,
+  );
 };
-
-export const getPreflightExploreSelectionUrl = () => {
-  return `/api/v1/explore/preflight`;
-};
-
 /**
  * @summary Preflight a revision-pinned analytical selection
  */
-export const preflightExploreSelection = async (
+export const preflightExploreSelection = (
   explorePreflightRequest: ExplorePreflightRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExplorePreflightResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<ExplorePreflightResponse>>,
+) => {
   return orvalFetch<ExplorePreflightResponse>(
-    getPreflightExploreSelectionUrl(),
     {
-      ...options,
+      url: `/api/v1/explore/preflight`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(explorePreflightRequest),
+      headers: { "Content-Type": "application/json" },
+      data: explorePreflightRequest,
     },
+    options,
   );
 };
-
-export const getGroupFilesUrl = () => {
-  return `/api/v1/files/groups`;
-};
-
 /**
  * @summary Group analytical files
  */
-export const groupFiles = async (
+export const groupFiles = (
   fileGroupsHTTPRequest: FileGroupsHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FileGroupsHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<FileGroupsHTTPResponse>(getGroupFilesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<FileGroupsHTTPResponse>>,
+) => {
+  return orvalFetch<FileGroupsHTTPResponse>(
+    {
+      url: `/api/v1/files/groups`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: fileGroupsHTTPRequest,
     },
-    body: JSON.stringify(fileGroupsHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchFilesUrl = () => {
-  return `/api/v1/files/search`;
-};
-
 /**
  * @summary Search analytical files
  */
-export const searchFiles = async (
+export const searchFiles = (
   fileSearchHTTPRequest: FileSearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<FileSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<FileSearchHTTPResponse>(getSearchFilesUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<FileSearchHTTPResponse>>,
+) => {
+  return orvalFetch<FileSearchHTTPResponse>(
+    {
+      url: `/api/v1/files/search`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: fileSearchHTTPRequest,
     },
-    body: JSON.stringify(fileSearchHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchParticipantsUrl = () => {
-  return `/api/v1/participants/search`;
-};
-
 /**
  * @summary Search observed participant clusters
  */
-export const searchParticipants = async (
+export const searchParticipants = (
   identitySearchHTTPRequest: IdentitySearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ParticipantSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ParticipantSearchHTTPResponse>(getSearchParticipantsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ParticipantSearchHTTPResponse>>,
+) => {
+  return orvalFetch<ParticipantSearchHTTPResponse>(
+    {
+      url: `/api/v1/participants/search`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identitySearchHTTPRequest,
     },
-    body: JSON.stringify(identitySearchHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchParticipantFilesUrl = ({
-  id,
-}: SearchParticipantFilesPathParameters) => {
-  return `/api/v1/participants/${encodeURIComponent(String(id))}/files/search`;
-};
-
 /**
  * @summary Search one participant cluster's analytical files
  */
-export const searchParticipantFiles = async (
+export const searchParticipantFiles = (
   { id }: SearchParticipantFilesPathParameters,
   personFileSearchHTTPRequest: PersonFileSearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFileSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonFileSearchHTTPResponse>>,
+) => {
   return orvalFetch<PersonFileSearchHTTPResponse>(
-    getSearchParticipantFilesUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/participants/${encodeURIComponent(String(id))}/files/search`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(personFileSearchHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: personFileSearchHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetParticipantContextSummaryUrl = ({
-  id,
-}: GetParticipantContextSummaryPathParameters) => {
-  return `/api/v1/participants/${encodeURIComponent(String(id))}/summary`;
-};
-
 /**
  * @summary Get one participant cluster's contextual analytical summary
  */
-export const getParticipantContextSummary = async (
+export const getParticipantContextSummary = (
   { id }: GetParticipantContextSummaryPathParameters,
   exploreHTTPRequest: ExploreHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ParticipantContextSummaryHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<ParticipantContextSummaryHTTPResponse>
+  >,
+) => {
   return orvalFetch<ParticipantContextSummaryHTTPResponse>(
-    getGetParticipantContextSummaryUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/participants/${encodeURIComponent(String(id))}/summary`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(exploreHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: exploreHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetParticipantTimelineUrl = ({
-  id,
-}: GetParticipantTimelinePathParameters) => {
-  return `/api/v1/participants/${encodeURIComponent(String(id))}/timeline`;
-};
-
 /**
  * @summary Get one participant cluster's canonical activity timeline
  */
-export const getParticipantTimeline = async (
+export const getParticipantTimeline = (
   { id }: GetParticipantTimelinePathParameters,
   exploreHTTPRequest: ExploreHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<ExploreHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<ExploreHTTPResponse>(getGetParticipantTimelineUrl({ id }), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<ExploreHTTPResponse>>,
+) => {
+  return orvalFetch<ExploreHTTPResponse>(
+    {
+      url: `/api/v1/participants/${encodeURIComponent(String(id))}/timeline`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: exploreHTTPRequest,
     },
-    body: JSON.stringify(exploreHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getSearchPersonFilesUrl = ({
-  id,
-}: SearchPersonFilesPathParameters) => {
-  return `/api/v1/people/${encodeURIComponent(String(id))}/files/search`;
-};
-
 /**
  * @summary Search one durable person's analytical files
  */
-export const searchPersonFiles = async (
+export const searchPersonFiles = (
   { id }: SearchPersonFilesPathParameters,
   personFileSearchHTTPRequest: PersonFileSearchHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<PersonFileSearchHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<typeof orvalFetch<PersonFileSearchHTTPResponse>>,
+) => {
   return orvalFetch<PersonFileSearchHTTPResponse>(
-    getSearchPersonFilesUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/files/search`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(personFileSearchHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: personFileSearchHTTPRequest,
     },
+    options,
   );
 };
-
-export const getListRelationshipsUrl = () => {
-  return `/api/v1/relationships`;
-};
-
 /**
  * @summary Rank counterparts by reciprocity-weighted interaction
  */
-export const listRelationships = async (
+export const listRelationships = (
   relationshipsHTTPRequest: RelationshipsHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipsHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<RelationshipsHTTPResponse>(getListRelationshipsUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<RelationshipsHTTPResponse>>,
+) => {
+  return orvalFetch<RelationshipsHTTPResponse>(
+    {
+      url: `/api/v1/relationships`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: relationshipsHTTPRequest,
     },
-    body: JSON.stringify(relationshipsHTTPRequest),
-  });
+    options,
+  );
 };
-
-export const getGetRelationshipCalendarUrl = ({
-  id,
-}: GetRelationshipCalendarPathParameters) => {
-  return `/api/v1/relationships/${encodeURIComponent(String(id))}/calendar`;
-};
-
 /**
  * @summary Get one counterpart's timezone-aware relationship calendar
  */
-export const getRelationshipCalendar = async (
+export const getRelationshipCalendar = (
   { id }: GetRelationshipCalendarPathParameters,
   relationshipCalendarHTTPRequest: RelationshipCalendarHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipCalendarHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<RelationshipCalendarHTTPResponse>
+  >,
+) => {
   return orvalFetch<RelationshipCalendarHTTPResponse>(
-    getGetRelationshipCalendarUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/relationships/${encodeURIComponent(String(id))}/calendar`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(relationshipCalendarHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: relationshipCalendarHTTPRequest,
     },
+    options,
   );
 };
-
-export const getGetRelationshipTimelineUrl = ({
-  id,
-}: GetRelationshipTimelinePathParameters) => {
-  return `/api/v1/relationships/${encodeURIComponent(String(id))}/timeline`;
-};
-
 /**
  * @summary Get one counterpart's interaction timeline, with chat grouped into local-day bursts
  */
-export const getRelationshipTimeline = async (
+export const getRelationshipTimeline = (
   { id }: GetRelationshipTimelinePathParameters,
   relationshipTimelineHTTPRequest: RelationshipTimelineHTTPRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<RelationshipTimelineHTTPResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
+  options?: SecondParameter<
+    typeof orvalFetch<RelationshipTimelineHTTPResponse>
+  >,
+) => {
   return orvalFetch<RelationshipTimelineHTTPResponse>(
-    getGetRelationshipTimelineUrl({ id }),
     {
-      ...options,
+      url: `/api/v1/relationships/${encodeURIComponent(String(id))}/timeline`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(relationshipTimelineHTTPRequest),
+      headers: { "Content-Type": "application/json" },
+      data: relationshipTimelineHTTPRequest,
     },
+    options,
   );
 };
-
-export const getSearchVisualAttachmentsUrl = () => {
-  return `/api/v1/search/attachments/visual`;
-};
-
 /**
  * @summary Search visual attachment content
  */
-export const searchVisualAttachments = async (
+export const searchVisualAttachments = (
   searchVisualAttachmentsBody:
     | VisualTextSearchRequest
     | SearchVisualAttachmentsBodyTwo,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SearchResponse>> => {
-  return orvalFetch<SearchResponse>(getSearchVisualAttachmentsUrl(), {
-    ...options,
-    method: "POST",
-    body: JSON.stringify(searchVisualAttachmentsBody),
-  });
+  options?: SecondParameter<typeof orvalFetch<SearchResponse>>,
+) => {
+  return orvalFetch<SearchResponse>(
+    {
+      url: `/api/v1/search/attachments/visual`,
+      method: "POST",
+      data: searchVisualAttachmentsBody,
+    },
+    options,
+  );
 };
-
-export const getGetSearchCoverageUrl = () => {
-  return `/api/v1/search/coverage`;
-};
-
 /**
  * @summary Get semantic index coverage for an analytical context
  */
-export const getSearchCoverage = async (
+export const getSearchCoverage = (
   searchCoverageRequest: SearchCoverageRequest,
-  options?: Parameters<typeof orvalFetch>[1],
-): Promise<APIResponse<SearchCoverageResponse>> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Array.isArray(h)) return Object.fromEntries(h);
-    return h;
-  };
-  return orvalFetch<SearchCoverageResponse>(getGetSearchCoverageUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
+  options?: SecondParameter<typeof orvalFetch<SearchCoverageResponse>>,
+) => {
+  return orvalFetch<SearchCoverageResponse>(
+    {
+      url: `/api/v1/search/coverage`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: searchCoverageRequest,
     },
-    body: JSON.stringify(searchCoverageRequest),
-  });
+    options,
+  );
 };
