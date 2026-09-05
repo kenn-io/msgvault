@@ -9,7 +9,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -47,14 +47,16 @@ const (
 
 // setupProvidersOptions are the command flags.
 type setupProvidersOptions struct {
-	yes               bool
-	dryRun            bool
-	jsonOutput        bool
-	allowSensitive    bool
-	documentRetention string
-	documentTraining  string
-	retentionPosture  string
-	trainingPosture   string
+	yes                    bool
+	dryRun                 bool
+	jsonOutput             bool
+	allowSensitive         bool
+	documentRetention      string
+	documentTraining       string
+	retentionPosture       string
+	trainingPosture        string
+	personRetentionPosture string
+	personTrainingPosture  string
 }
 
 // ollamaProbeResult is what a local Ollama server reports about itself.
@@ -238,10 +240,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		server := strings.TrimRight(strings.TrimSpace(loaded.Chat.Server), "/")
 		detection.ollama = deps.probeOllama(ctx, server)
 		detection.ollamaEndpoint = server + "/v1"
-		if parsed, err := url.Parse(server); err == nil {
-			host := parsed.Hostname()
-			detection.ollamaLoopback = strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
-		}
+		detection.ollamaLoopback = embeddingProviderName(server) == "local"
 	}
 	return detection
 }
@@ -517,6 +516,9 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
 		lane.Reason = "requires the text-search lane"
+	case textLaneProvider(plan) == "custom":
+		lane.Action = planActionSkip
+		lane.Reason = "custom hosted provider: configure [vector.people] and its postures explicitly, then run `msgvault person provider consent --semantic-embeddings --yes`"
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
@@ -524,7 +526,7 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 		lane.edits = []config.TableEdit{{
 			Path: []string{tomlTableVector, "people"},
 			Values: map[string]any{
-				"enabled": true, "retention_posture": options.retentionPosture, "training_posture": options.trainingPosture,
+				"enabled": true, "retention_posture": options.personRetentionPosture, "training_posture": options.personTrainingPosture,
 			},
 		}}
 		lane.next = []string{"msgvault person provider consent --semantic-embeddings --yes"}
@@ -614,14 +616,17 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
 		lane.Reason = "requires the text-search lane"
+	case textLaneProvider(plan) == "custom":
+		lane.Action = planActionSkip
+		lane.Reason = "custom hosted provider: configure [attachments.documents.index.embeddings] explicitly and consent separately to document and query text"
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "extracted document chunks are embedded with the text-search profile after `documents vectors consent`"
+		lane.Reason = "document chunks and search query text are sent to the text-search provider after separate document and query consents"
 		lane.edits = []config.TableEdit{{
 			Path: []string{"attachments", "documents", "index", "embeddings"}, Values: map[string]any{"enabled": true},
 		}}
-		lane.next = []string{"msgvault documents vectors consent --yes"}
+		lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes"}
 	}
 	return lane
 }
@@ -724,7 +729,8 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 			lines = append(lines, "  - eligible image and video attachment bytes with bounded message context, after `msgvault multimodal build --yes`")
 		}
 		if plan.laneOn(laneDocumentVectors) && textLaneProvider(plan) == "voyage" {
-			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`")
+			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`",
+				"  - document search query text, after `msgvault documents vectors consent --purpose queries --yes`")
 		}
 	case gateMistral:
 		lines = append(lines,
@@ -740,7 +746,8 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 			lines = append(lines, "  - one curated, non-sensitive attribute document per person")
 		}
 		if plan.laneOn(laneDocumentVectors) && textLaneProvider(plan) == "openai" {
-			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`")
+			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`",
+				"  - document search query text, after `msgvault documents vectors consent --purpose queries --yes`")
 		}
 		if plan.inference != nil && plan.inference.gate == gateOpenAI {
 			lines = append(lines, "  - bounded evidence packets of "+
@@ -861,6 +868,17 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if err != nil {
 		return err
 	}
+	// Read saved assertions before config defaults turn an absent document
+	// posture into "unknown". Only the corresponding explicit flag replaces
+	// an existing assertion; inference still uses its own command defaults.
+	var saved config.Config
+	if _, err := toml.Decode(string(before.Content), &saved); err != nil {
+		return fmt.Errorf("read saved provider postures: %w", err)
+	}
+	options.personRetentionPosture = setupPosture(saved.Vector.People.RetentionPosture, options.retentionPosture, command.Flags().Changed("retention-posture"))
+	options.personTrainingPosture = setupPosture(saved.Vector.People.TrainingPosture, options.trainingPosture, command.Flags().Changed("training-posture"))
+	options.documentRetention = setupPosture(saved.Attachments.Documents.RetentionPosture, options.documentRetention, command.Flags().Changed("document-retention"))
+	options.documentTraining = setupPosture(saved.Attachments.Documents.TrainingPosture, options.documentTraining, command.Flags().Changed("document-training"))
 	now := time.Now()
 	if deps.now != nil {
 		now = deps.now()
@@ -919,6 +937,13 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		return err
 	}
 	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
+}
+
+func setupPosture(saved, proposed string, override bool) string {
+	if saved != "" && !override {
+		return saved
+	}
+	return proposed
 }
 
 // The people-provider commands need a published profile for daemon-owned

@@ -1923,6 +1923,13 @@ and inferring sensitive personal attributes. `--yes` alone does not grant
 this permission. Vector lanes also stay pending when the binary lacks the
 backend required by the configured database; setup prints rebuild guidance.
 
+Saved retention and training postures on disabled lanes are preserved unless
+their corresponding posture flags are explicitly supplied. Custom hosted
+text endpoints require explicit configuration of dependent lanes. Document
+semantic search requires both `documents vectors consent --yes` and
+`documents vectors consent --purpose queries --yes`; the latter authorizes
+query-text uploads. The status report tracks the two purposes separately.
+
 ```bash
 msgvault setup providers --dry-run
 msgvault setup providers

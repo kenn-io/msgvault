@@ -177,6 +177,82 @@ const setupProvidersMinimalConfig = `# operator comment survives setup
 data_dir = "{{DIR}}/data"
 `
 
+func TestSetupProvidersPreservesPosturesUnlessFlagsOverride(t *testing.T) {
+	for name, override := range map[string]bool{"preserve": false, "override": true} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector.people]
+retention_posture = "zero_data_retention"
+training_posture = "no_training"
+[attachments.documents]
+retention_posture = "zdr"
+training_posture = "opted-out"
+`)
+			fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+			args := []string{"providers", "--yes"}
+			peopleRetention, documentTraining := "zero_data_retention", "opted-out"
+			if override {
+				args = append(args, "--retention-posture", setupPostureDeclared, "--document-training", documentindex.TrainingDefaultOptOut)
+				peopleRetention, documentTraining = setupPostureDeclared, documentindex.TrainingDefaultOptOut
+			}
+			output, err := fixture.run(t, args...)
+			require.NoError(t, err, output)
+			loaded := fixture.load(t)
+			assert.Equal(peopleRetention, loaded.Vector.People.RetentionPosture)
+			assert.Equal("no_training", loaded.Vector.People.TrainingPosture)
+			assert.Equal("zdr", loaded.Attachments.Documents.RetentionPosture)
+			assert.Equal(documentTraining, loaded.Attachments.Documents.TrainingPosture)
+			assert.Contains(output, "retention=zdr, training="+documentTraining)
+		})
+	}
+}
+
+func TestSetupProvidersCustomHostedEndpointNeedsExplicitConfiguration(t *testing.T) {
+	for _, endpoint := range []string{"https://api.openai.com.example.test/v1", "https://localhost.example.test/v1", "https://embeddings.example.test/v1"} {
+		t.Run(endpoint, func(t *testing.T) {
+			assert := assert.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
+[vector]
+enabled = true
+[vector.embeddings]
+endpoint = %q
+model = "embedding-test"
+dimension = 768
+[attachments.documents]
+enabled = true
+retention_posture = "zdr"
+training_posture = "opted-out"
+`, endpoint))
+			before := fixture.readConfig(t)
+			output, err := fixture.run(t, "providers", "--yes")
+			require.NoError(t, err, output)
+			assert.Equal(before, fixture.readConfig(t))
+			assert.False(fixture.load(t).Vector.People.Enabled)
+			assert.False(fixture.load(t).Attachments.Documents.Index.Embeddings.Enabled)
+			assert.Contains(output, "custom hosted provider")
+		})
+	}
+}
+
+func TestEmbeddingProviderNameUsesURLHost(t *testing.T) {
+	for endpoint, want := range map[string]string{
+		setupOpenAIEndpoint: "openai", setupVoyageEndpoint: "voyage",
+		"https://API.OPENAI.COM:443/v1":  "openai",
+		"http://api.openai.com/v1":       "custom",
+		"https://api.openai.com:8443/v1": "custom",
+		"http://localhost:11434/v1":      "local", "http://127.0.0.2:11434/v1": "local",
+		"http://[::1]:11434/v1":                            "local",
+		"https://localhost.example.test/v1":                "custom",
+		"https://example.test/voyageai.com?host=127.0.0.1": "custom",
+		"https://api.openai.com@example.test/v1":           "custom",
+		"not a URL":                                        "custom", "": "",
+	} {
+		t.Run(endpoint, func(t *testing.T) { assert.Equal(t, want, embeddingProviderName(endpoint)) })
+	}
+}
+
 func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

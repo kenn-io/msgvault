@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -15,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
 // Lane and consent states shared by `setup providers` and `setup status`.
@@ -65,15 +70,16 @@ const (
 // laneStatus is one row of the provider report. It answers, for one lane:
 // which provider and model, whether it is on, why not, and what to run next.
 type laneStatus struct {
-	Lane     string   `json:"lane"`
-	Label    string   `json:"label"`
-	State    string   `json:"state"`
-	Provider string   `json:"provider,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	Schedule string   `json:"schedule,omitempty"`
-	Consent  string   `json:"consent,omitempty"`
-	Reason   string   `json:"reason,omitempty"`
-	Next     []string `json:"next,omitempty"`
+	Lane            string            `json:"lane"`
+	Label           string            `json:"label"`
+	State           string            `json:"state"`
+	Provider        string            `json:"provider,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	Schedule        string            `json:"schedule,omitempty"`
+	Consent         string            `json:"consent,omitempty"`
+	ConsentPurposes map[string]string `json:"consent_purposes,omitempty"`
+	Reason          string            `json:"reason,omitempty"`
+	Next            []string          `json:"next,omitempty"`
 }
 
 // laneReport is the complete report printed by both setup subcommands.
@@ -88,10 +94,12 @@ type laneReport struct {
 // incompatibility, PostgreSQL unreachable) and every consent is reported as
 // unknown rather than missing.
 type setupConsentState struct {
-	Documents       bool
-	Visual          bool
-	PersonInference bool
-	PersonSemantic  bool
+	Documents         bool
+	Visual            bool
+	PersonInference   bool
+	PersonSemantic    bool
+	DocumentEmbedding bool
+	QueryEmbedding    bool
 }
 
 // setupEnvironment is what the report needs beyond the loaded config: the
@@ -171,6 +179,18 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
+	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
+		if target, err := st.GetDocumentVectorTargetProfileID(ctx); err == nil {
+			if fingerprint, err := vectordocument.EgressFingerprint(target, cfg.Vector); err == nil {
+				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
+				state.DocumentEmbedding = err == nil && consent != nil && consent.Purpose == "document_embedding"
+			}
+			if fingerprint, err := vectordocument.QueryEgressFingerprint(target, cfg.Vector); err == nil {
+				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
+				state.QueryEmbedding = err == nil && consent != nil && consent.Purpose == "query_embedding"
+			}
+		}
+	}
 	if consented, err := st.HasActiveDocumentProviderConsent(ctx); err == nil {
 		state.Documents = consented
 	}
@@ -198,19 +218,27 @@ func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.St
 
 // embeddingProviderName names the embedding destination for the report.
 func embeddingProviderName(endpoint string) string {
-	lower := strings.ToLower(endpoint)
-	switch {
-	case strings.Contains(lower, "voyageai.com"):
-		return "voyage"
-	case strings.Contains(lower, "openai.com"):
-		return "openai"
-	case strings.Contains(lower, "localhost") || strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "::1"):
-		return "local"
-	case endpoint == "":
+	if endpoint == "" {
 		return ""
-	default:
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "custom"
 	}
+	host := strings.ToLower(parsed.Hostname())
+	address, _ := netip.ParseAddr(host)
+	if host == "localhost" || address.Unmap().IsLoopback() {
+		return "local"
+	}
+	if parsed.Scheme == "https" && (parsed.Port() == "" || parsed.Port() == "443") {
+		switch host {
+		case "api.voyageai.com":
+			return "voyage"
+		case "api.openai.com":
+			return "openai"
+		}
+	}
+	return "custom"
 }
 
 func embedScheduleSummary(schedule vector.EmbedScheduleConfig) string {
@@ -236,7 +264,7 @@ func buildLaneReport(cfg *config.Config, env setupEnvironment) laneReport {
 		personSearchLane(cfg, env),
 		visualSearchLane(cfg, env),
 		documentsLane(cfg, env),
-		documentVectorsLane(cfg),
+		documentVectorsLane(cfg, env),
 		peopleInferenceLane(cfg, env),
 		activityLane(cfg),
 		mediaPolicyLane(cfg),
@@ -381,7 +409,7 @@ func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	return lane
 }
 
-func documentVectorsLane(cfg *config.Config) laneStatus {
+func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	lane := laneStatus{Lane: laneDocumentVectors, Label: "Document semantic search"}
 	documents := cfg.Attachments.Documents
 	switch {
@@ -390,8 +418,18 @@ func documentVectorsLane(cfg *config.Config) laneStatus {
 		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
-		lane.Reason = "document chunks are embedded with the text-search profile after a separate consent"
-		lane.Next = []string{"msgvault documents vectors consent --yes"}
+		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
+		lane.ConsentPurposes = map[string]string{
+			"document_embedding": env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding }),
+			"query_embedding":    env.consentState(func(s setupConsentState) bool { return s.QueryEmbedding }),
+		}
+		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding && s.QueryEmbedding })
+		if lane.ConsentPurposes["document_embedding"] != consentActive {
+			lane.Next = append(lane.Next, "msgvault documents vectors consent --yes")
+		}
+		if lane.ConsentPurposes["query_embedding"] != consentActive {
+			lane.Next = append(lane.Next, "msgvault documents vectors consent --purpose queries --yes")
+		}
 	case documents.Enabled && !cfg.Vector.Enabled:
 		lane.State = laneStateOff
 		lane.Reason = "requires the text-search lane"
@@ -513,6 +551,9 @@ func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "%s: %s\n", lane.Label, lane.Reason)
+		for _, purpose := range slices.Sorted(maps.Keys(lane.ConsentPurposes)) {
+			_, _ = fmt.Fprintf(w, "  %s consent: %s\n", purpose, lane.ConsentPurposes[purpose])
+		}
 		for _, next := range lane.Next {
 			_, _ = fmt.Fprintf(w, "  next: %s\n", next)
 		}

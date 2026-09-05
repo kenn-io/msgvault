@@ -32,6 +32,17 @@ adding a key upgrades only the lanes that are still unset; a configured lane
 keeps its model, because switching the embedding policy invalidates the
 index and is your call.
 
+When enabling a disabled lane, setup preserves saved retention and training
+postures. Defaults fill only unset values. Pass `--retention-posture` or
+`--training-posture` to replace the corresponding people-search posture,
+or `--document-retention` or `--document-training` for document extraction.
+Already enabled lanes remain unchanged.
+
+For existing text endpoints, setup recognizes the exact OpenAI and Voyage
+API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
+configure their people-search and document-vector lanes explicitly, then
+review the separate consent commands for the new data they will receive.
+
 The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
 The flag permits sending sensitive archive excerpts to the inference provider
 and inferring sensitive personal attributes. The plan describes this policy
@@ -166,7 +177,13 @@ msgvault documents probe-mistral --fixtures <private-fixture-dir> > ~/.msgvault/
 msgvault documents consent-mistral --capabilities ~/.msgvault/mistral-capabilities.json --yes
 msgvault documents build --capabilities ~/.msgvault/mistral-capabilities.json --yes
 msgvault documents vectors consent --yes     # when document vectors are enabled
+msgvault documents vectors consent --purpose queries --yes
 ```
+
+Document-vector consent covers document text. Query consent separately
+permits sending semantic and hybrid document search query text to the
+embedding provider. `setup status` reports `document_embedding` and
+`query_embedding` consent separately and lists each missing consent command.
 
 ### `[people.sweep]`
 

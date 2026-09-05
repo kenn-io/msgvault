@@ -119,6 +119,39 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Zero(runtimeCalls)
 }
 
+func TestSetupStatusTracksBothDocumentVectorConsentPurposes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture, _ := documentVectorCommandFixture(t)
+	cfg.Attachments.Documents.Enabled = true
+	deps := documentsCommandDeps{
+		openStore: func() (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+	}
+	lane := documentVectorsLane(cfg, setupEnvironment{consent: setupConsentFromStore(t.Context(), cfg, fixture.Store)})
+	assert.Equal(map[string]string{"document_embedding": consentMissing, "query_embedding": consentMissing}, lane.ConsentPurposes)
+	assert.ElementsMatch([]string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes"}, lane.Next)
+	for _, purpose := range []string{"documents", "queries"} {
+		command := newDocumentsCmd(deps)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetArgs([]string{"vectors", "consent", "--purpose", purpose, "--yes"})
+		require.NoError(command.ExecuteContext(t.Context()), output.String())
+		lane = documentVectorsLane(cfg, setupEnvironment{consent: setupConsentFromStore(t.Context(), cfg, fixture.Store)})
+		assert.Equal(consentActive, lane.ConsentPurposes["document_embedding"])
+		if purpose == "documents" {
+			assert.Equal(consentMissing, lane.ConsentPurposes["query_embedding"])
+			assert.Equal([]string{"msgvault documents vectors consent --purpose queries --yes"}, lane.Next)
+		} else {
+			assert.Equal(consentActive, lane.ConsentPurposes["query_embedding"])
+			assert.Equal(consentActive, lane.Consent)
+			assert.Empty(lane.Next)
+		}
+	}
+	cfg.Vector.Embeddings.Endpoint = "https://changed.example.test/v1"
+	lane = documentVectorsLane(cfg, setupEnvironment{consent: setupConsentFromStore(t.Context(), cfg, fixture.Store)})
+	assert.Equal(map[string]string{"document_embedding": consentMissing, "query_embedding": consentMissing}, lane.ConsentPurposes)
+}
+
 func TestDocumentVectorStatusWorksWhenEmbeddingsAreDisabled(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 	previous := cfg
