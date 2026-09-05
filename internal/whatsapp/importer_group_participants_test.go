@@ -15,6 +15,7 @@ import (
 
 type importProgressRecorder struct {
 	NullProgress
+
 	errors []string
 }
 
@@ -88,7 +89,7 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 	assert.Equal(int64(2), summary.MessagesAdded)
 
 	var messageCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, summary.SourceID).Scan(&messageCount)
+	err = st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), summary.SourceID).Scan(&messageCount)
 	require.NoError(err)
 	assert.Equal(2, messageCount)
 
@@ -101,21 +102,21 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 	} {
 		var messageID int64
 		err = st.DB().QueryRow(
-			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+			st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			summary.SourceID, message.keyID,
 		).Scan(&messageID)
 		require.NoError(err)
 
 		var body string
 		err = st.DB().QueryRow(
-			`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID,
+			st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), messageID,
 		).Scan(&body)
 		require.NoError(err)
 		assert.Equal(message.body, body)
 	}
 
 	var participantCount int
-	err = st.DB().QueryRow(`
+	err = st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*)
 		FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
@@ -123,7 +124,7 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 		WHERE c.source_id = ?
 		  AND c.source_conversation_id = ?
 		  AND p.phone_number IN (?, ?)
-	`, summary.SourceID, "120255501234567-987654321@g.us", "+12025550124", "+12025550123").Scan(&participantCount)
+	`), summary.SourceID, "120255501234567-987654321@g.us", "+12025550124", "+12025550123").Scan(&participantCount)
 	require.NoError(err)
 	assert.Equal(2, participantCount)
 }
@@ -150,7 +151,7 @@ func TestImportGroupChatWithPopulatedGroupParticipants(t *testing.T) {
 	assert.Equal(int64(0), summary.Errors)
 
 	var adminRole string
-	err = st.DB().QueryRow(`
+	err = st.DB().QueryRow(st.Rebind(`
 		SELECT cp.role
 		FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
@@ -158,7 +159,7 @@ func TestImportGroupChatWithPopulatedGroupParticipants(t *testing.T) {
 		WHERE c.source_id = ?
 		  AND c.source_conversation_id = ?
 		  AND p.phone_number = ?
-	`, summary.SourceID, "120255501234567-987654321@g.us", "+12025550125").Scan(&adminRole)
+	`), summary.SourceID, "120255501234567-987654321@g.us", "+12025550125").Scan(&adminRole)
 	require.NoError(err)
 	assert.Equal("admin", adminRole)
 }

@@ -364,8 +364,8 @@ func TestFetchGroupParticipantsOtherErrorPropagates(t *testing.T) {
 			members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
 			assert.Nil(members)
 			require.Error(err)
-			assert.ErrorContains(err, "fetch group participants")
-			assert.ErrorContains(err, tt.wantErrMsg)
+			require.ErrorContains(err, "fetch group participants")
+			require.ErrorContains(err, tt.wantErrMsg)
 		})
 	}
 }
