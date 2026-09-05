@@ -32,6 +32,20 @@ All notable changes to msgvault, grouped by release.
   In the TUI, press `a` to filter by account before staging again; MCP callers
   should pass `account` or stage each source separately.
 
+**Upgrade notes**
+
+- Archives with existing embeddings are migrated to generation-based coverage
+  tracking on the first writable open. Active vectors are preserved with no
+  expected data loss: msgvault adds and stamps `messages.embed_gen`, backfills
+  coverage from the active generation so already-embedded messages are marked
+  covered, leaves messages with a pending re-embed against the active generation
+  uncovered so they are re-embedded, then drops the legacy `pending_embeddings`
+  table. The corpus is not re-queued just from upgrading. Finish any remaining coverage with
+  `msgvault embeddings resume --backstop`; if the active generation's
+  fingerprint no longer matches your embedding config, vector search reports
+  the index stale until you run `msgvault embeddings build --full-rebuild`. See
+  [Vector Search: Upgrading an existing archive](/usage/vector-search/#upgrading-an-existing-archive).
+
 **Features**
 
 - Web Directory workspace: browse and search promoted durable people, filter

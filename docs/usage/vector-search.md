@@ -343,6 +343,60 @@ self-recovers: the next edit to that message bumps `last_modified` (and
 (`embeddings build --full-rebuild`) or the periodic full-scan backstop
 re-embeds it regardless.
 
+## Upgrading an existing archive
+
+Archives that already had embeddings before the generation-based coverage
+tracking landed are migrated in place on the first writable open. There is no
+expected data loss: existing active vectors are preserved and keep serving
+vector and hybrid search.
+
+The migration runs the first time you start a writable daemon or run an
+embeddings command against an older database. It:
+
+- adds and stamps `messages.embed_gen`, then backfills coverage from the
+  active vector generation, so messages that already have active embeddings are
+  marked covered. The whole corpus is not re-queued just because you upgraded.
+- leaves messages that had a pending re-embed against the active generation
+  uncovered rather than marking them covered, so they stay missing and the
+  scan-based worker re-embeds them on the next `msgvault embeddings build` or
+  `resume`. The legacy `pending_embeddings` table is consulted for this, then
+  dropped once the migration completes.
+
+After the upgrade, coverage is tracked entirely through `messages.embed_gen`:
+a new or changed message becomes "missing" by clearing its `embed_gen` rather
+than by being queued in a separate table. The scan-and-fill worker finds those
+rows and tops up the active generation.
+
+To finish coverage for any stragglers left after the migration, run:
+
+```bash
+msgvault embeddings resume --backstop
+```
+
+`--backstop` runs a full-scan pass that ignores the per-generation watermark, so
+it catches below-watermark rows a normal incremental resume would skip, then
+activates the generation once coverage reaches zero.
+
+### When a full rebuild is required
+
+If the active generation's fingerprint no longer matches your current embedding
+policy and configuration (model, dimension, prefixes, preprocessing,
+`max_input_chars`, policy, or scope), vector and hybrid search report the index
+as stale (`index_stale`) instead of serving from a mismatched generation. Build
+a fresh generation:
+
+```bash
+msgvault embeddings build --full-rebuild
+```
+
+While that rebuild is in flight, the building generation is the worker's target.
+A same-fingerprint rebuild keeps serving the previous active generation in the
+meantime, but that generation is effectively frozen until the new one activates,
+so messages that are new or changed after the rebuild starts may not appear in
+vector or hybrid results until the rebuilt generation activates. Any rebuild that
+changes the fingerprint (model, dimension, prefixes, preprocessing,
+`max_input_chars`, policy, or scope) returns `index_stale` until activation.
+
 ## Scoped Generations
 
 Large mixed archives can build a vector index for only selected message types:
