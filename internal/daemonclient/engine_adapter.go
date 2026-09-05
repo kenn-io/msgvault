@@ -1168,6 +1168,9 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	filter query.MessageFilter,
 	mode query.DeletionSearchMode,
 ) ([]query.DeletionTarget, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.DeletionTarget{}, nil
+	}
 	if err := validateParsedSearchQuery(searchQuery); err != nil {
 		return nil, err
 	}
@@ -1208,6 +1211,9 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	groupBy query.ViewType,
 	key string,
 ) ([]query.DeletionTarget, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.DeletionTarget{}, nil
+	}
 	parsed := search.Parse(searchQuery)
 	if err := validateParsedSearchQuery(parsed); err != nil {
 		return nil, err
@@ -1414,15 +1420,18 @@ func (e *Engine) GetTextStats(ctx context.Context, opts query.TextStatsOptions) 
 
 // GetTotalStats returns overall database statistics.
 func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*query.TotalStats, error) {
-	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
-		return &query.TotalStats{}, nil
-	}
-	if opts.SourceIDs == nil && opts.Filter != nil && opts.Filter.SourceIDs != nil && len(opts.Filter.SourceIDs) == 0 {
-		return &query.TotalStats{}, nil
-	}
 	var filter query.MessageFilter
 	if opts.Filter != nil {
 		filter = opts.Filter.Clone()
+	}
+	sourceID, sourceIDs := opts.SourceID, opts.SourceIDs
+	if opts.SourceIDs == nil && opts.SourceID == nil && opts.Filter != nil {
+		sourceID, sourceIDs = filter.SourceID, filter.SourceIDs
+	}
+	if sourceIDs != nil && len(sourceIDs) == 0 {
+		return &query.TotalStats{}, nil
+	}
+	if opts.Filter != nil {
 		compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
 		if err != nil {
 			return nil, fmt.Errorf("check filtered-stats capability: %w", err)
@@ -1435,8 +1444,8 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 		return nil, err
 	}
 	params := &generated.GetTotalStatsQuery{
-		SourceID:        sourceIDForSourceIDs(opts.SourceID, opts.SourceIDs),
-		SourceIds:       copyInt64sPreserveNil(opts.SourceIDs),
+		SourceID:        sourceIDForSourceIDs(sourceID, sourceIDs),
+		SourceIds:       copyInt64sPreserveNil(sourceIDs),
 		AttachmentsOnly: optionalBool(opts.WithAttachmentsOnly),
 		HideDeleted:     optionalBool(opts.HideDeletedFromSource),
 		SearchQuery:     optionalString(opts.SearchQuery),
@@ -1459,12 +1468,8 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 		params.After = fields.After
 		params.Before = fields.Before
 		params.EmptyTargets = fields.EmptyTargets
-		if opts.SourceIDs == nil && opts.SourceID == nil && filter.SourceIDs != nil {
-			params.SourceIds = append([]int64(nil), filter.SourceIDs...)
-		}
-		if opts.SourceIDs == nil && params.SourceID == nil {
-			params.SourceID = fields.SourceID
-		}
+		params.SourceID = sourceIDForSourceIDs(sourceID, sourceIDs)
+		params.SourceIds = copyInt64sPreserveNil(sourceIDs)
 		params.AttachmentsOnly = optionalBool(opts.WithAttachmentsOnly || filter.WithAttachmentsOnly)
 		params.HideDeleted = optionalBool(opts.HideDeletedFromSource || filter.HideDeletedFromSource)
 	}
@@ -1479,7 +1484,7 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	if opts.SearchScope && (resp.JSON200.AppliedSearchScope == nil || !*resp.JSON200.AppliedSearchScope) {
 		return nil, errors.New("daemon did not confirm total-stats search scope; upgrade the daemon to API schema 1.5.0 or newer")
 	}
-	if err := requireAppliedSourceIDs(opts.SourceIDs, resp.JSON200.AppliedSourceIds, "total-stats"); err != nil {
+	if err := requireAppliedSourceIDs(sourceIDs, resp.JSON200.AppliedSourceIds, "total-stats"); err != nil {
 		return nil, err
 	}
 	return totalStatsFromGenerated(resp.JSON200), nil
@@ -1499,7 +1504,7 @@ func normalizedSourceIDs(ids []int64) []int64 {
 	if ids == nil {
 		return nil
 	}
-	normalized := append([]int64(nil), ids...)
+	normalized := append(make([]int64, 0, len(ids)), ids...)
 	slices.Sort(normalized)
 	return slices.Compact(normalized)
 }
@@ -1521,6 +1526,9 @@ func sourceIDForSourceIDs(sourceID *int64, sourceIDs []int64) *int64 {
 func requireAppliedSourceIDs(requested, applied []int64, surface string) error {
 	if requested == nil {
 		return nil
+	}
+	if applied == nil {
+		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)
 	}
 	if !slices.Equal(normalizedSourceIDs(requested), normalizedSourceIDs(applied)) {
 		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)

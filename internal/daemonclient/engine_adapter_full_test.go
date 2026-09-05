@@ -1123,6 +1123,25 @@ func TestEngineGetDeletionTargetsBySearchTreatsCanonicalEmptyAsFilter(t *testing
 	}}, targets)
 }
 
+func TestEngineDeletionSearchExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
+	called := false
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	})
+	engine := NewEngineAdapter(store)
+	filter := query.MessageFilter{SourceIDs: []int64{}}
+
+	searchTargets, err := engine.GetDeletionTargetsBySearch(t.Context(), search.Parse("invoice"), filter, query.DeletionSearchDeep)
+	require.NoError(t, err)
+	assert.Empty(t, searchTargets)
+
+	aggregateTargets, err := engine.GetDeletionTargetsByAggregateSearch(t.Context(), "invoice", filter, query.ViewSenders, "alice@example.com")
+	require.NoError(t, err)
+	assert.Empty(t, aggregateTargets)
+	assert.False(t, called, "explicit empty source scope must skip deletion HTTP requests")
+}
+
 func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1502,6 +1521,62 @@ func TestEngineGetTotalStatsForwardsSourceIDs(t *testing.T) {
 	assert.Equal(int64(2), stats.MessageCount)
 }
 
+func TestEngineGetTotalStatsUsesFilterSourceIDsAndRequiresEcho(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.16.0"})
+			return
+		}
+		assert.Equal(t, []string{"7", "8"}, r.URL.Query()["source_ids"])
+		writeJSONResponse(t, w, map[string]any{
+			"message_count":      2,
+			"applied_source_ids": []int64{8, 7},
+		})
+	})
+
+	stats, err := NewEngineAdapter(store).GetTotalStats(t.Context(), query.StatsOptions{
+		Filter: &query.MessageFilter{SourceIDs: []int64{7, 8}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), stats.MessageCount)
+
+	store = newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.16.0"})
+			return
+		}
+		writeJSONResponse(t, w, map[string]any{"message_count": 2})
+	})
+	stats, err = NewEngineAdapter(store).GetTotalStats(t.Context(), query.StatsOptions{
+		Filter: &query.MessageFilter{SourceIDs: []int64{7, 8}},
+	})
+	require.ErrorContains(t, err, "total-stats source IDs")
+	assert.Nil(t, stats)
+}
+
+func TestEngineGetTotalStatsTopLevelSourceIDOverridesFilterSourceIDs(t *testing.T) {
+	sourceID := int64(9)
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "2.16.0"})
+			return
+		}
+		assert.Equal(t, "9", r.URL.Query().Get("source_id"))
+		assert.Empty(t, r.URL.Query()["source_ids"])
+		writeJSONResponse(t, w, map[string]any{
+			"message_count":      1,
+			"applied_source_ids": []int64{9},
+		})
+	})
+
+	stats, err := NewEngineAdapter(store).GetTotalStats(t.Context(), query.StatsOptions{
+		Filter:   &query.MessageFilter{SourceIDs: []int64{7, 8}},
+		SourceID: &sourceID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), stats.MessageCount)
+}
+
 func TestEngineGetTotalStatsRequiresCapabilityEchoes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1575,6 +1650,12 @@ func TestEngineGetTotalStatsExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
 	require.NotNil(stats, "stats")
 	assert.Zero(stats.MessageCount, "explicit empty source scope")
 	assert.False(called, "explicit empty source scope must skip HTTP")
+}
+
+func TestRequireAppliedSourceIDsPreservesExplicitEmptyScope(t *testing.T) {
+	require.NoError(t, requireAppliedSourceIDs([]int64{}, []int64{}, "test"))
+	require.Error(t, requireAppliedSourceIDs([]int64{}, nil, "test"))
+	require.NoError(t, requireAppliedSourceIDs(nil, nil, "test"))
 }
 
 func TestEngineGetMessageCarriesAttachmentContentHash(t *testing.T) {
