@@ -193,6 +193,8 @@ func forcePersonSweepReclaimLockCycle(
 	blocker, err := f.store.DB().BeginTx(ctx, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = blocker.Rollback() })
+	_, err = blocker.ExecContext(ctx, `SET LOCAL deadlock_timeout = '1h'`)
+	requirements.NoError(err)
 	var lockedPerson int64
 	requirements.NoError(blocker.QueryRowContext(ctx,
 		`SELECT person_id FROM person_sweep_work WHERE person_id = $1 FOR UPDATE`,
@@ -204,7 +206,6 @@ func forcePersonSweepReclaimLockCycle(
 	requirements.Eventually(func() bool {
 		return postgreSQLWaitingLockCount(t, f.store) >= 1
 	}, 5*time.Second, 10*time.Millisecond, "the mark did not park behind the work row lock")
-	time.Sleep(250 * time.Millisecond)
 
 	blockerDone := make(chan error, 1)
 	go func() {
