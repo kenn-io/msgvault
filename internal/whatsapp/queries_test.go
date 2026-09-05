@@ -248,3 +248,124 @@ func TestFetchLidMapMissingTable(t *testing.T) {
 	require.NoError(t, err, "expected no error for missing table")
 	assert.Empty(t, lidMap, "expected empty map")
 }
+
+func TestFetchGroupParticipantsMissingTable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec(`
+		CREATE TABLE jid (
+			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
+		);
+	`)
+	require.NoError(err)
+
+	members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+	require.NoError(err)
+	assert.Empty(members)
+}
+
+func TestFetchGroupParticipantsPresent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(err)
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec(`
+		CREATE TABLE jid (
+			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
+		);
+		CREATE TABLE group_participants (
+			gjid TEXT, jid TEXT, admin INTEGER
+		);
+		INSERT INTO jid VALUES
+			(1, '12025550124', 's.whatsapp.net', '12025550124@s.whatsapp.net'),
+			(2, '12025550125', 's.whatsapp.net', '12025550125@s.whatsapp.net');
+		INSERT INTO group_participants VALUES
+			('120255501234567-987654321@g.us', '12025550124@s.whatsapp.net', 2),
+			('120255501234567-987654321@g.us', '12025550125@s.whatsapp.net', NULL),
+			('120255501234567-111111111@g.us', '12025550124@s.whatsapp.net', 1);
+	`)
+	require.NoError(err)
+
+	members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+	require.NoError(err)
+	require.Len(members, 2)
+	assert.Equal(waGroupMember{
+		GroupJID:     "120255501234567-987654321@g.us",
+		MemberJID:    "12025550124@s.whatsapp.net",
+		MemberUser:   "12025550124",
+		MemberServer: "s.whatsapp.net",
+		Admin:        2,
+	}, members[0])
+	assert.Equal(waGroupMember{
+		GroupJID:     "120255501234567-987654321@g.us",
+		MemberJID:    "12025550125@s.whatsapp.net",
+		MemberUser:   "12025550125",
+		MemberServer: "s.whatsapp.net",
+		Admin:        0,
+	}, members[1])
+
+	empty, err := fetchGroupParticipants(db, "120255501234567-222222222@g.us")
+	require.NoError(err)
+	assert.Empty(empty)
+}
+
+func TestFetchGroupParticipantsOtherErrorPropagates(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      string
+		wantErrMsg string
+	}{
+		{
+			name: "missing admin column",
+			setup: `
+				CREATE TABLE jid (
+					_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
+				);
+				CREATE TABLE group_participants (gjid TEXT, jid TEXT);
+			`,
+			wantErrMsg: "no such column: gp.admin",
+		},
+		{
+			name: "missing required jid table",
+			setup: `
+				CREATE TABLE group_participants (
+					gjid TEXT, jid TEXT, admin INTEGER
+				);
+			`,
+			wantErrMsg: "no such table: jid",
+		},
+		{
+			name: "missing roster dependency",
+			setup: `
+				CREATE VIEW group_participants AS
+				SELECT gjid, jid, admin FROM group_participants_shadow;
+			`,
+			wantErrMsg: "no such table: main.group_participants_shadow",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			db, err := sql.Open("sqlite3", ":memory:")
+			require.NoError(err)
+			defer func() { _ = db.Close() }()
+
+			_, err = db.Exec(tt.setup)
+			require.NoError(err)
+
+			members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+			assert.Nil(members)
+			require.Error(err)
+			assert.ErrorContains(err, "fetch group participants")
+			assert.ErrorContains(err, tt.wantErrMsg)
+		})
+	}
+}
