@@ -372,6 +372,30 @@ func TestTextAccountSelectionKeepsEmailScopeInSync(t *testing.T) {
 	})
 }
 
+func TestTextDetailAccountSelectionLeavesNoIndefiniteLoading(t *testing.T) {
+	firstID := int64(1)
+	secondID := int64(2)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedMessageID = 0
+	model.messageDetail = nil
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+
+	assert.Nil(t, cmd)
+	assert.False(t, got.loading)
+}
+
 func TestStageForDeletionUsesEmailScopeAuthority(t *testing.T) {
 	accountID := int64(7)
 	var captured query.MessageFilter
