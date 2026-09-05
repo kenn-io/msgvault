@@ -308,6 +308,26 @@ msgvault stats
 See [Web UI](/docs/web-ui/), [Searching](/docs/usage/searching/), and [Interactive
 TUI](/docs/usage/tui/) for more.
 
+## Optional: Turn On Search and People Lanes
+
+Semantic search, visual and document attachment search, and the people sweep
+are opt-in. Put the API keys you have in the environment and let setup choose
+the rest:
+
+```bash
+export VOYAGE_API_KEY="..."     # text, people, and visual search
+export MISTRAL_API_KEY="..."    # document attachments
+export OPENAI_API_KEY="..."     # people sweep (and text search without a Voyage key)
+msgvault setup providers        # one consent per provider, then config.toml is written
+msgvault setup status           # what is on, what is off, and why
+```
+
+The people sweep additionally requires `msgvault setup providers --allow-sensitive`
+to permit sensitive archive excerpts and sensitive personal inferences.
+
+See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
+values it writes and the probe steps the hosted lanes still need.
+
 ## Optional: Sync Google Calendar
 
 To archive Calendar events alongside email, authorize Calendar access and run a

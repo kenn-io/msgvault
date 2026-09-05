@@ -26,12 +26,18 @@ This command helps you:
   2. Create the config.toml file
   3. Optionally configure a remote NAS server for token export
 
-Run this once after installing msgvault to get started quickly.`,
+Run this once after installing msgvault to get started quickly. Then run
+"msgvault setup providers" to turn on search, attachment, and people lanes
+from the API keys you have, and "msgvault setup status" to see what is on.`,
 	Args: cobra.NoArgs,
 	RunE: runSetup,
 }
 
 func init() {
+	setupCmd.AddCommand(
+		newSetupProvidersCommand(defaultSetupProvidersDeps()),
+		newSetupStatusCommand(defaultSetupStatusDeps()),
+	)
 	rootCmd.AddCommand(setupCmd)
 }
 
