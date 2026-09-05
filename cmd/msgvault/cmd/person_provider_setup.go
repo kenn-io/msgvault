@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -506,10 +507,8 @@ func personProviderCatalogAuth(
 	if explicit == "" {
 		return capability.CatalogDefaultAuth, nil
 	}
-	for _, supported := range capability.CatalogAuthSchemes {
-		if explicit == supported {
-			return explicit, nil
-		}
+	if slices.Contains(capability.CatalogAuthSchemes, explicit) {
+		return explicit, nil
 	}
 	return "", fmt.Errorf("models.dev catalog protocol %q does not support auth %q", protocol, explicit)
 }

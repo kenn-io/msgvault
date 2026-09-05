@@ -116,7 +116,7 @@ func TestProtocolCapabilityRegistrationPairsHTTPDriversAndExcludesCodex(t *testi
 		assert.Equal(protocol, registration.capability.Protocol)
 		assert.NotNil(registration.driver)
 		_, err := registry.capabilityDriver(protocol)
-		assert.NoError(err)
+		require.NoError(err)
 	}
 	_, err = registry.capabilityDriver(ProtocolCodexAppServer)
 	assert.Error(err)
