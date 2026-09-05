@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -430,7 +429,7 @@ func TestConnectRetry_TransportErrorTypes(t *testing.T) {
 		{name: "unexpected eof", err: io.ErrUnexpectedEOF, want: true},
 		{name: "temporary network error", err: retryTemporaryError{}, want: true},
 		{name: "timeout network error", err: retryTimeoutError{}, want: true},
-		{name: "broken pipe", err: fmt.Errorf("write: %w", syscall.EPIPE), want: true},
+		{name: "platform transport errno", err: fmt.Errorf("write: %w", transportErrnos[0]), want: true},
 		{name: "context canceled", err: context.Canceled, want: false},
 		{name: "tls record", err: tls.RecordHeaderError{}, want: false},
 		{name: "tls alert", err: tls.AlertError(40), want: false},
