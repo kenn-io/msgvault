@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // stageDeletionSampleSize caps the dry-run Gmail-ID preview.
@@ -99,9 +100,14 @@ type StageDeletionRequest struct {
 }
 
 // StageDeletionResponse covers both dry-run (200) and create (201).
+// MessageCount is the staged subset. MatchedCount and SkippedCount are
+// reported for reviewed selections, where the match set may contain items
+// no source supports deleting.
 type StageDeletionResponse struct {
 	DryRun         bool                      `json:"dry_run"`
 	MessageCount   int                       `json:"message_count"`
+	MatchedCount   int                       `json:"matched_count,omitempty"`
+	SkippedCount   int                       `json:"skipped_count,omitempty"`
 	Account        string                    `json:"account,omitempty"`
 	SampleGmailIDs []string                  `json:"sample_gmail_ids,omitempty"`
 	ID             string                    `json:"id,omitempty"`
@@ -187,9 +193,10 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 
 	var targets []query.DeletionTarget
 	var claim *deletionOperationClaim
+	var matched int
 	if req.Selection != nil {
 		var ok bool
-		targets, claim, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken)
+		targets, claim, matched, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken)
 		if !ok {
 			return
 		}
@@ -222,6 +229,8 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, StageDeletionResponse{
 			DryRun:         true,
 			MessageCount:   len(gmailIDs),
+			MatchedCount:   matched,
+			SkippedCount:   max(matched-len(gmailIDs), 0),
 			Account:        account,
 			Source:         source,
 			SampleGmailIDs: sample,
@@ -272,6 +281,8 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, StageDeletionResponse{
 		MessageCount: len(gmailIDs),
+		MatchedCount: matched,
+		SkippedCount: max(matched-len(gmailIDs), 0),
 		Account:      account,
 		ID:           manifest.ID,
 		Status:       string(manifest.Status),
@@ -319,42 +330,48 @@ func (c *deletionOperationClaim) rollback() { c.state.rollbackOperation(c.token)
 // resolveAuthorizedDeletionSelection validates the reviewed selection
 // against the preflight grant without consuming it; the returned claim
 // lets the caller reserve/commit/rollback the token around manifest
-// persistence.
+// persistence. The returned targets are the deletable subset of the
+// reviewed match set, and the returned count is the full match set so the
+// caller can report what was left out.
 func (s *Server) resolveAuthorizedDeletionSelection(
 	w http.ResponseWriter,
 	r *http.Request,
 	selection ExploreSelection,
 	token string,
-) ([]query.DeletionTarget, *deletionOperationClaim, bool) {
+) ([]query.DeletionTarget, *deletionOperationClaim, int, bool) {
 	if token == "" {
 		writeError(w, http.StatusPreconditionRequired, "preflight_required",
 			"operation_token from deletion preflight is required")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	if selection.Mode != "explicit" && selection.Mode != "all_matching" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "selection mode must be explicit or all_matching")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), selection.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
-		return nil, nil, false
+		return nil, nil, 0, false
+	}
+	if httpErr := validateSelectionAddressFilters(predicate.request.Query); httpErr != nil {
+		writeAPIHTTPError(w, httpErr)
+		return nil, nil, 0, false
 	}
 	if selection.CacheRevision == "" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	if predicate.request.SearchMode == exploreSearchModeSemantic || predicate.request.SearchMode == exploreSearchModeHybrid {
 		if selection.CandidateSnapshotID == "" {
 			writeError(w, http.StatusBadRequest, "candidate_snapshot_required",
 				"Semantic and hybrid deletion staging require the server-issued candidate snapshot")
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 		predicate.request.CandidateSnapshotID = selection.CandidateSnapshotID
 	}
 	searchSpec, _, resolved := s.resolveExploreSearch(r.Context(), w, predicate.request)
 	if !resolved || !requireCompleteCandidatePool(w, searchSpec) {
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	predicate.query.Search = searchSpec
 	selectionRequest := query.ExploreSelectionRequest{
@@ -363,7 +380,7 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	if selection.Mode == "explicit" {
 		if selection.RowKeys == nil {
 			writeError(w, http.StatusBadRequest, "invalid_selection", "explicit selection requires row_keys")
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 		selectionRequest.IncludedKeys = selection.RowKeys
 	}
@@ -371,60 +388,85 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	analyzer, ok := engine.(query.Explorer)
 	if !ok {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	if selection.CacheRevision != stats.CacheRevision {
 		writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; run preflight again")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	if searchSpec.Mode != query.SearchNone && !sameSearchProvenance(selection.SearchProvenance, stats.SearchProvenance) {
 		writeError(w, http.StatusConflict, "search_revision_changed", "The search index revision changed; run preflight again")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	selectionHash := hashCanonicalValue(&selection, false)
 	state := s.exploreState
 	if state == nil {
 		writeError(w, http.StatusConflict, "operation_token_invalid", "Deletion preflight expired; run preflight again")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	grant, authorized := state.operation(token, selectionHash)
 	if !authorized || grant.Revision != stats.CacheRevision || grant.Count != stats.Count {
 		writeError(w, http.StatusConflict, "operation_token_invalid", "Deletion preflight expired or no longer matches; run preflight again")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	if stats.Count == 0 {
 		writeError(w, http.StatusBadRequest, "no_messages_matched", "No messages matched the reviewed selection")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
-	if stats.DeletableCount != stats.Count {
+	// A mixed selection stages its deletable subset instead of failing as a
+	// whole. Only a selection with nothing deletable is a dead end.
+	if stats.DeletableCount == 0 {
 		writeError(w, http.StatusConflict, "selection_not_deletable",
-			"The reviewed selection contains items that cannot be deleted from their source")
-		return nil, nil, false
+			"No item in the reviewed selection can be deleted from its source")
+		return nil, nil, 0, false
 	}
 	resolver, ok := engine.(deletionMessageIDResolver)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable",
 			"selection deletion staging is not supported by this query engine")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	targets, err := resolver.GetDeletionTargetsByMessageIDs(r.Context(), stats.DeletableMessageIDs)
 	if err != nil {
 		s.logger.Error("stage deletion selection resolution failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
-	if int64(len(targets)) != stats.Count {
+	if int64(len(targets)) != stats.DeletableCount {
 		writeError(w, http.StatusConflict, "selection_changed",
 			"The reviewed selection changed before staging; run preflight again")
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	claim := &deletionOperationClaim{state: state, token: token, selectionHash: selectionHash}
-	return targets, claim, true
+	return targets, claim, int(stats.Count), true
+}
+
+// validateSelectionAddressFilters rejects address operators whose value is
+// empty or whitespace-only. The store renders those as LIKE '%%', which
+// widens a deletion selection to the whole archive instead of narrowing it.
+func validateSelectionAddressFilters(queryText string) *apiHTTPError {
+	if strings.TrimSpace(queryText) == "" {
+		return nil
+	}
+	// A query that fails to parse carries its own error from the search
+	// resolver, so only a parsed query is worth inspecting here.
+	parsed := search.Parse(queryText)
+	if parsed.Err() == nil {
+		for _, values := range [][]string{parsed.FromAddrs, parsed.ToAddrs, parsed.CcAddrs, parsed.BccAddrs} {
+			for _, value := range values {
+				if strings.TrimSpace(value) == "" {
+					return newAPIHTTPError(http.StatusBadRequest, "invalid_selection_predicate",
+						"address filters (from, to, cc, bcc) require a non-empty value")
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // resolveStageDeletionTargets unions filter-resolved and explicitly selected

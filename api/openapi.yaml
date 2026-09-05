@@ -10719,6 +10719,9 @@ components:
           type: boolean
         id:
           type: string
+        matched_count:
+          format: int64
+          type: integer
         message_count:
           format: int64
           type: integer
@@ -10726,6 +10729,9 @@ components:
           items:
             type: string
           type: array
+        skipped_count:
+          format: int64
+          type: integer
         source:
           $ref: "#/components/schemas/SourceReference"
         status:

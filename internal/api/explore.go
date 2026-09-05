@@ -540,6 +540,10 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return
 	}
+	if httpErr := validateSelectionAddressFilters(predicate.request.Query); httpErr != nil {
+		writeAPIHTTPError(w, httpErr)
+		return
+	}
 	if selection.CacheRevision == "" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
 		return
@@ -592,7 +596,9 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 	token := state.issueOperation(selectionHash, stats.Count, stats.CacheRevision)
 	unavailableActions := make([]ExploreUnavailableAction, 0, 4)
 	actionTargets := make([]ExploreActionTarget, 0, 1)
-	if stats.DeletableCount != stats.Count {
+	// Staging takes the deletable subset of a mixed selection, so only a
+	// selection with nothing deletable makes the action unavailable.
+	if stats.DeletableCount == 0 {
 		unavailableActions = append(unavailableActions, ExploreUnavailableAction{
 			Action: "stage_deletion", Reason: "selection_contains_items_that_cannot_be_deleted_from_source",
 		})

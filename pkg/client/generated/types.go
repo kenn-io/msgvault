@@ -10153,8 +10153,10 @@ type StageDeletionResponse struct {
 	Account        *string          `json:"account,omitempty"`
 	DryRun         bool             `json:"dry_run"`
 	ID             *string          `json:"id,omitempty"`
+	MatchedCount   *int64           `json:"matched_count,omitempty"`
 	MessageCount   int64            `json:"message_count"`
 	SampleGmailIds []string         `json:"sample_gmail_ids,omitempty"`
+	SkippedCount   *int64           `json:"skipped_count,omitempty"`
 	Source         *SourceReference `json:"source,omitempty"`
 	Status         *string          `json:"status,omitempty"`
 }
