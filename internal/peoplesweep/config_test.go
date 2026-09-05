@@ -398,21 +398,24 @@ func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 }
 
 func TestProviderProfileProjectionRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	t.Setenv("TEST_KEY", "credential-value-must-not-persist")
 	profile, err := validConfig().Profile()
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var decoded peoplesweep.ProviderProfile
-	require.NoError(t, json.Unmarshal(profile.PolicyJSON, &decoded))
+	require.NoError(json.Unmarshal(profile.PolicyJSON, &decoded))
 	decoded.Fingerprint = profile.Fingerprint
 	decoded.PolicyJSON = append(json.RawMessage(nil), profile.PolicyJSON...)
-	assert.Equal(t, profile, decoded)
-	assert.NotContains(t, string(profile.PolicyJSON), "credential-value-must-not-persist")
-	assert.NotContains(t, string(profile.PolicyJSON), "request_timeout")
-	assert.NoError(t, profile.Validate())
+	assert.Equal(profile, decoded)
+	assert.NotContains(string(profile.PolicyJSON), "credential-value-must-not-persist")
+	assert.NotContains(string(profile.PolicyJSON), "request_timeout")
+	assert.NoError(profile.Validate())
 }
 
 func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
+	assert := assert.New(t)
 	provider := validConfig().Providers["default"]
 	provider.AllowedSources = []peoplesweep.SourceClass{
 		peoplesweep.SourceMeetingText,
@@ -420,9 +423,9 @@ func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
 	}
 	values := peoplesweep.ProviderTOMLValues(provider)
 
-	assert.Equal(t, []string{"conversation_text", "meeting_text"}, values["allowed_sources"])
-	assert.Equal(t, provider.RequestTimeout, values["request_timeout"])
-	assert.Equal(t, provider.Endpoint, values["endpoint"])
+	assert.Equal([]string{"conversation_text", "meeting_text"}, values["allowed_sources"])
+	assert.Equal(provider.RequestTimeout, values["request_timeout"])
+	assert.Equal(provider.Endpoint, values["endpoint"])
 
 	provider.Endpoint = ""
 	provider.CredentialEnv = ""
@@ -437,7 +440,7 @@ func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
 		"endpoint", "credential_env", "token_limit_parameter", "reasoning_effort",
 		"reasoning_mode", "executable", "execution_boundary", "source_until",
 	} {
-		assert.NotContains(t, values, key)
+		assert.NotContains(values, key)
 	}
 }
 
