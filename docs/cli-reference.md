@@ -1981,37 +1981,51 @@ analytics cache is rebuilt automatically.
 
 ## stage-delete
 
-Stage all active messages matching Gmail-like search criteria as a pending deletion
-batch. The command uses the daemon's search and preflight checks before staging,
-and it does not delete messages from a provider. If the search matches more than
-one source, run the command once for each source with its exact numeric ID.
+Stage active messages as a pending deletion batch using exactly one selector:
+Gmail-like search criteria or a comma-separated list of explicit internal message
+IDs. The query form uses the daemon's search and preflight checks before staging;
+the ID form sends the existing `message_ids` field directly to the daemon. The
+command does not delete messages from a provider.
 
-Staging is refused while the daemon is still verifying or rebuilding its
-full-text search index, or while its analytical cache is unavailable, because an
+In query mode, staging is refused while the daemon is still verifying or
+rebuilding its full-text search index, or while its analytical cache is unavailable, because an
 incomplete index could silently omit matching messages. Both states resolve in
-the background; retry when they finish.
+the background; retry when they finish. These search-index and analytical-cache
+requirements apply to query mode.
 
-Like deletion staging in the TUI and Web UI, the selection is resolved against
-the committed analytical snapshot, so messages synced after the most recent
+In query mode, like deletion staging in the TUI and Web UI, the selection is
+resolved against the committed analytical snapshot, so messages synced after the most recent
 cache build are not included until the daemon refreshes the cache (it does so
 automatically after each sync). Re-run the command after a refresh to stage
 newly synced matches.
 
 ```bash
 msgvault stage-delete <query>
+msgvault stage-delete --ids 123,456,789
 ```
+
+Exactly one of `<query>` and `--ids IDS` is required. The selectors are mutually
+exclusive, and `--ids` is also mutually exclusive with `--source-id`.
 
 | Flag | Description |
 |---|---|
 | `--dry-run` | Show the match count without creating a deletion batch |
 | `--source-id ID` | Restrict staging to one exact source ID |
+| `--ids IDS` | Stage positive, unique, comma-separated internal message IDs instead of a query |
 
 Deletion staging covers Gmail-source email only. The daemon rejects a selection
 that includes anything else — chats, meetings, calendar entries, or mail from
 non-Gmail sources such as Apple Mail imports — rather than staging a subset of
 what matched. Narrow the search until it matches only deletable mail, for
 example with `message_type:email` in the query and `--source-id` for the Gmail
-source.
+source. This query narrowing guidance applies to query mode. In ID mode, the
+daemon resolves live Gmail targets and source boundaries for the requested IDs;
+IDs that do not resolve to live deletable Gmail messages with provider message
+IDs are omitted, so the
+reported count is the number of targets resolved by the daemon; the CLI does
+not search, probe FTS readiness, call Explore or preflight, or require
+analytical-cache readiness. A newly started local daemon may initialize its
+cache in the background for later query consumers.
 
 For a query that resolves to one source, the source selector is optional. For a
 multi-source query, provide `--source-id` for each source:

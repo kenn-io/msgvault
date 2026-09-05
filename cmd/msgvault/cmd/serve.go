@@ -669,17 +669,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
 				ctx, cfg, s, startupCacheIntent, apiServer, ownership,
-				combineWorkTrackers(
-					idleTracker,
-					labelWorkTracker(operationGate, "analytics cache initialization"),
-				),
+				daemonAnalyticsCacheWorkTracker(idleTracker),
 			)
 		} else {
 			analyticsInit = completedDaemonAnalyticsInitHandle()
 		}
-		// Analytics must acquire the serial mutation gate before vector
-		// initialization can compete for it. This keeps an explicit cache
-		// request from waiting behind a long vector migration or backfill.
+		// Wait for the initializer to publish its startup barrier before vector
+		// initialization can compete for shared archive resources.
 		_ = analyticsInit.WaitStarted(ctx)
 		if idleTracker != nil {
 			idleTracker.Touch()

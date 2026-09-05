@@ -2513,8 +2513,8 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		       msg.source_message_id, msg.sent_at
 		FROM msg
 		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
-		WHERE %s AND msg.id IN (%s)
-	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
+		       WHERE %s AND %s AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
+	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get deletion targets by message ids: %w", err)

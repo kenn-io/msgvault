@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -4332,6 +4333,27 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
 		assert.Equal("test@gmail.com", targets[0].SourceIdentifier)
 		assert.Equal("msg1", targets[0].SourceMessageID)
 	}
+}
+
+func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProviderID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	typedEmailID := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: "email"})
+	legacyEmailID := b.AddMessage(MessageOpt{Subject: "legacy email", LegacyEmptyMessageType: true})
+	chatID := b.AddMessage(MessageOpt{Subject: "Google Chat", MessageType: store.MessageTypeGoogleChat})
+	emptyProviderID := b.AddMessage(MessageOpt{Subject: "missing provider ID"})
+	b.messages[len(b.messages)-1].SourceMessageID = ""
+	engine := b.BuildEngine()
+
+	targets, err := engine.GetDeletionTargetsByMessageIDs(context.Background(), []int64{typedEmailID, legacyEmailID, chatID, emptyProviderID})
+
+	require.NoError(err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(err)
+	assert.ElementsMatch([]string{fmt.Sprintf("msg%d", typedEmailID), fmt.Sprintf("msg%d", legacyEmailID)}, ids,
+		"Gmail Chat and provider-ID-less messages must be dropped")
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDs_ChunkedLargeSelection(t *testing.T) {

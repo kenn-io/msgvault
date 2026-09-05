@@ -61,6 +61,9 @@ Web dashboards and automation scripts can stage deletion manifests through the
 themselves. `POST /api/v1/deletions` accepts structured filters and/or
 internal message IDs, resolves the Gmail IDs on the server, and supports
 `"dry_run": true` to preview the count and a sample before writing anything.
+IDs that do not resolve to live deletable Gmail messages with provider message
+IDs are omitted, and the
+reported count is the number of targets resolved by the daemon.
 
 Actually staging depends on the request shape. An explicit `message_ids` list
 stages directly. Filter-based staging requires a preflighted selection: run

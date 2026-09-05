@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -14,6 +16,30 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+//go:embed testdata/issue-769.json
+var issue769Artifact []byte
+
+func issue769CommandArgs(t *testing.T, dryRun bool) []string {
+	t.Helper()
+	var issue struct {
+		Body string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(issue769Artifact, &issue))
+	for line := range strings.SplitSeq(issue.Body, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 4 || fields[0] != "msgvault" ||
+			fields[1] != "stage-delete" || fields[2] != "--ids" {
+			continue
+		}
+		lineIsDryRun := len(fields) == 5 && fields[4] == "--dry-run"
+		if (dryRun && lineIsDryRun) || (!dryRun && len(fields) == 4) {
+			return fields[1:]
+		}
+	}
+	require.FailNow(t, "issue 769 reproduction command not found", dryRun)
+	return nil
+}
 
 func newRegisteredStageDeleteTestRoot(t *testing.T) *cobra.Command {
 	t.Helper()
@@ -25,6 +51,8 @@ func newRegisteredStageDeleteTestRoot(t *testing.T) *cobra.Command {
 	require.NoError(t, registered.Flags().Set("dry-run", "false"))
 	require.NoError(t, registered.Flags().Set("source-id", "0"))
 	registered.Flags().Lookup("source-id").Changed = false
+	require.NoError(t, registered.Flags().Set("ids", ""))
+	registered.Flags().Lookup("ids").Changed = false
 	root := &cobra.Command{Use: "msgvault"}
 	root.AddCommand(registered)
 	return root
@@ -555,5 +583,183 @@ func TestStageDeleteCommandRegistration(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(command)
 	assert.Equal("stage-delete", command.Name())
-	assert.Equal("stage-delete <query>", command.Use)
+	assert.Equal("stage-delete [query]", command.Use)
+	assert.NotNil(command.Flags().Lookup("ids"))
+}
+
+func TestStageDeleteCommandByIDs(t *testing.T) {
+	t.Run("reproduction_create", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var routes []string
+		var request generated.StageDeletionRequest
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			routes = append(routes, r.URL.Path)
+			assert.Equal(http.MethodPost, r.Method)
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+				http.Error(w, "malformed stage deletion request", http.StatusBadRequest)
+				return
+			}
+			writeStageDeleteJSON(t, w, http.StatusCreated, map[string]any{
+				"dry_run":       false,
+				"message_count": 3,
+				"id":            "batch-769",
+				"status":        "pending",
+			})
+		}))
+		defer server.Close()
+		withStoreResolverConfig(t, &config.Config{
+			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+		})
+
+		var stdout bytes.Buffer
+		root := newRegisteredStageDeleteTestRoot(t)
+		root.SetOut(&stdout)
+		root.SetArgs(issue769CommandArgs(t, false))
+
+		require.NoError(root.Execute())
+		assert.Equal([]int64{123, 456, 789}, request.MessageIds)
+		assert.Equal("staged from CLI message IDs", *request.Description)
+		assert.False(*request.DryRun)
+		assert.Nil(request.Filter)
+		assert.Nil(request.OperationToken)
+		assert.Nil(request.Selection)
+		assert.Equal([]string{"/api/v1/deletions"}, routes)
+		assert.Equal("Staged 3 message(s) for deletion in batch batch-769.\nReview with 'msgvault show-deletion batch-769', then execute with 'msgvault delete-staged batch-769'.\n", stdout.String())
+	})
+
+	t.Run("reproduction_dry_run", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var routes []string
+		var request generated.StageDeletionRequest
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			routes = append(routes, r.URL.Path)
+			assert.Equal(http.MethodPost, r.Method)
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+				http.Error(w, "malformed stage deletion request", http.StatusBadRequest)
+				return
+			}
+			writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
+				"dry_run":       true,
+				"message_count": 3,
+			})
+		}))
+		defer server.Close()
+		withStoreResolverConfig(t, &config.Config{
+			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+		})
+
+		var stdout bytes.Buffer
+		root := newRegisteredStageDeleteTestRoot(t)
+		root.SetOut(&stdout)
+		root.SetArgs(issue769CommandArgs(t, true))
+
+		require.NoError(root.Execute())
+		assert.Equal([]int64{123, 456, 789}, request.MessageIds)
+		assert.Equal("staged from CLI message IDs", *request.Description)
+		assert.True(*request.DryRun)
+		assert.Nil(request.Filter)
+		assert.Nil(request.OperationToken)
+		assert.Nil(request.Selection)
+		assert.Equal([]string{"/api/v1/deletions"}, routes)
+		assert.Equal("Dry run: 3 message(s) match the requested IDs; no deletion batch was created.\n", stdout.String())
+	})
+
+	t.Run("multi_source", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var routes []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			routes = append(routes, r.URL.Path)
+			writeStageDeleteJSON(t, w, http.StatusConflict, map[string]any{
+				"error":   "multi_account_selection",
+				"message": "the requested IDs span multiple sources",
+			})
+		}))
+		defer server.Close()
+		withStoreResolverConfig(t, &config.Config{
+			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+		})
+
+		root := newRegisteredStageDeleteTestRoot(t)
+		root.SetArgs([]string{"stage-delete", "--ids", "123,456"})
+		err := root.Execute()
+
+		require.ErrorContains(err, "the requested IDs span multiple sources")
+		require.ErrorContains(err, "stage IDs from one source per invocation")
+		assert.NotContains(err.Error(), "--source-id")
+		assert.Equal([]string{"/api/v1/deletions"}, routes)
+	})
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "empty", args: []string{"--ids", ""}, want: "--ids must not contain empty message IDs"},
+		{name: "malformed", args: []string{"--ids", "abc"}, want: `message ID "abc" must be a positive integer`},
+		{name: "overflowed", args: []string{"--ids", "9223372036854775808"}, want: `message ID "9223372036854775808" must be a positive integer`},
+		{name: "decimal", args: []string{"--ids", "0.0"}, want: `message ID "0.0" must be a positive integer`},
+		{name: "zero", args: []string{"--ids", "0"}, want: `message ID "0" must be a positive integer`},
+		{name: "negative", args: []string{"--ids", "-5"}, want: `message ID "-5" must be a positive integer`},
+		{name: "empty_entry", args: []string{"--ids", "123,,456"}, want: "--ids must not contain empty message IDs"},
+		{name: "duplicate", args: []string{"--ids", "7,7"}, want: "duplicate message ID 7"},
+		{name: "query_plus_ids", args: []string{"subject:test", "--ids", "7"}, want: "--ids cannot be combined with a search query"},
+		{name: "ids_plus_source_id", args: []string{"--ids", "7", "--source-id", "42"}, want: "if any flags in the group [ids source-id] are set"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests++
+			}))
+			defer server.Close()
+			withStoreResolverConfig(t, &config.Config{
+				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+			})
+
+			root := newRegisteredStageDeleteTestRoot(t)
+			root.SetArgs(append([]string{"stage-delete"}, tt.args...))
+			err := root.Execute()
+
+			require.ErrorContains(err, tt.want)
+			assert.Zero(requests, "invalid input must not make an HTTP request")
+		})
+	}
+}
+
+func TestParseStageDeleteMessageIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    []int64
+		wantErr string
+	}{
+		{name: "trims_and_preserves_order", raw: " 123, 456 ,+789 ", want: []int64{123, 456, 789}},
+		{name: "empty", raw: "", wantErr: "--ids must not contain empty message IDs"},
+		{name: "empty_entry", raw: "123,,456", wantErr: "--ids must not contain empty message IDs"},
+		{name: "malformed", raw: "abc", wantErr: `message ID "abc" must be a positive integer`},
+		{name: "overflowed", raw: "9223372036854775808", wantErr: `message ID "9223372036854775808" must be a positive integer`},
+		{name: "decimal", raw: "0.0", wantErr: `message ID "0.0" must be a positive integer`},
+		{name: "zero", raw: "0", wantErr: `message ID "0" must be a positive integer`},
+		{name: "negative", raw: "-5", wantErr: `message ID "-5" must be a positive integer`},
+		{name: "duplicate", raw: "7,+7", wantErr: "duplicate message ID 7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := parseStageDeleteMessageIDs(tt.raw)
+			if tt.wantErr != "" {
+				require.EqualError(err, tt.wantErr)
+				assert.Nil(got)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(tt.want, got)
+		})
+	}
 }

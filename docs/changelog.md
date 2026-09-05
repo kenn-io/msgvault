@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-03
+last_edited: 2026-09-04
 title: Changelog
 description: Release history for msgvault
 ---
@@ -69,9 +69,12 @@ All notable changes to msgvault, grouped by release.
   `media_max_participants`, `max_media_mb`, and `accounts_config` keys are now
   documented for every chat provider.
 
-- Add `msgvault stage-delete <query>` to stage active messages matching search
-  criteria, with optional exact-source narrowing and `--dry-run` support for
-  reviewing the match count first.
+- Add `msgvault stage-delete <query>` or `msgvault stage-delete --ids 123,456,789`
+  to stage active messages, with optional exact-source narrowing and `--dry-run`
+  support for reviewing the match count first. The ID form uses the existing
+  message-ID resolver directly, without search or waiting for analytical-cache
+  readiness. A newly started local daemon may initialize its cache in the
+  background for later query consumers.
 
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with

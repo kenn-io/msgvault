@@ -3,10 +3,16 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -33,6 +39,63 @@ func TestPrepareDaemonAnalyticsEngineAutoStartsWithSQLFallback(t *testing.T) {
 	assert.Equal(api.AnalyticsModeSQLFallback, mode)
 	assert.Equal(startupCacheBuildOutcomeNone, outcome)
 	assert.IsType(&query.SQLiteEngine{}, engine)
+}
+
+func TestRunServeAllowsDeletionIDsWhileAnalyticsBuildBlocked(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	c.Vector.Enabled = false
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	buildStarted := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+		close(buildStarted)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+
+	select {
+	case <-buildStarted:
+	case err := <-errCh:
+		require.NoError(err, "runServe exited before analytics build was blocked")
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("analytics cache build did not start")
+	}
+	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
+
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Post(
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/deletions", c.Server.APIPort),
+		"application/json", strings.NewReader(`{"message_ids":[999999],"dry_run":true}`),
+	)
+	require.NoError(err, "ID deletion request while cache build is blocked")
+	body, readErr := io.ReadAll(resp.Body)
+	require.NoError(resp.Body.Close())
+	require.NoError(readErr)
+	assert.Equal(http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(string(body), "no_messages_matched")
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(10 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
 }
 
 func TestPrepareDaemonAnalyticsEngineDuckDBKeepsGeneralSQLiteQueries(t *testing.T) {
