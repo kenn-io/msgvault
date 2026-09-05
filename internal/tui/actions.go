@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -370,12 +371,7 @@ func deletionSearchModeName(mode searchModeKind) string {
 
 func deletionSourceAllowed(sourceID int64, dctx DeletionContext) bool {
 	if dctx.SourceIDs != nil {
-		for _, allowedID := range dctx.SourceIDs {
-			if sourceID == allowedID {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(dctx.SourceIDs, sourceID)
 	}
 	return dctx.AccountFilter == nil || sourceID == *dctx.AccountFilter
 }

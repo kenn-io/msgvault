@@ -140,7 +140,7 @@ func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
 		presentationGeneration: 20,
 	}
 	updated, _ := model.handleStatsLoaded(stale)
-	got := updated.(Model)
+	got := asModel(t, updated)
 	assert.Nil(t, got.stats)
 
 	current := statsLoadedMsg{
@@ -149,7 +149,7 @@ func TestCollectionScopeStatsRejectStaleResponses(t *testing.T) {
 		presentationGeneration: got.presentationGeneration,
 	}
 	updated, _ = got.handleStatsLoaded(current)
-	assert.Equal(t, int64(2), updated.(Model).stats.MessageCount)
+	assert.Equal(t, int64(2), asModel(t, updated).stats.MessageCount)
 }
 
 func TestStatsResponseSurvivesAggregateOnlyRefresh(t *testing.T) {
@@ -408,10 +408,10 @@ func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
 		{ID: secondID, Identifier: "second@example.invalid"},
 	}
 	model.mode = modeEmail
-	model.messageReaderState.messageDetail = &query.MessageDetail{ID: 1}
+	model.messageDetail = &query.MessageDetail{ID: 1}
 	model.switchMessageReaderState(modeTexts)
 	model.mode = modeTexts
-	model.messageReaderState.messageDetail = &query.MessageDetail{ID: 2}
+	model.messageDetail = &query.MessageDetail{ID: 2}
 	model.accountFilter = &firstID
 	model.sourceScope = accountSourceScope(&firstID)
 	model.sourceScopeExplicit = true
