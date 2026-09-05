@@ -18,9 +18,8 @@ type postgreSQLRowLock struct {
 // forcePostgreSQLDeadlock closes a lock cycle around write. A blocker
 // transaction holds the held row; write is started and parked behind it; then
 // the blocker asks for the cycle row, which write is expected to hold by then,
-// so PostgreSQL's detector has to abort one side. The write is parked well
-// before the blocker closes the cycle so that its deadlock_timeout expires
-// first and it, not the blocker, is the victim. The blocker must release
+// so PostgreSQL's detector has to abort one side. The blocker defers its
+// deadlock detector so the write is the victim. The blocker must release
 // cleanly; the write's own outcome is returned for the caller to judge.
 func forcePostgreSQLDeadlock(
 	ctx context.Context, t *testing.T, st *store.Store,
@@ -31,6 +30,8 @@ func forcePostgreSQLDeadlock(
 	blocker, err := st.DB().BeginTx(ctx, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = blocker.Rollback() })
+	_, err = blocker.ExecContext(ctx, `SET LOCAL deadlock_timeout = '1h'`)
+	require.NoError(err)
 	var lockedID int64
 	require.NoError(blocker.QueryRowContext(ctx,
 		`SELECT id FROM `+held.table+` WHERE id = $1 FOR UPDATE`, held.id).Scan(&lockedID))
@@ -41,7 +42,6 @@ func forcePostgreSQLDeadlock(
 	require.Eventually(func() bool {
 		return postgreSQLWaitingLockCount(t, st) >= 1
 	}, 5*time.Second, 10*time.Millisecond, "write did not reach the held row lock")
-	time.Sleep(250 * time.Millisecond)
 
 	blockerDone := make(chan error, 1)
 	go func() {
