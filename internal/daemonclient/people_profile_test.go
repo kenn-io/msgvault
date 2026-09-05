@@ -187,6 +187,34 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 	assert.Nil(profile.Categories)
 }
 
+func TestPeopleBrowserGetPersonProfileUncomputedContactState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/people/51":
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{
+				"id":51,"participant_ids":[],"vcard_uid":"person-51","revision":1,
+				"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"
+			}`)
+		case "/api/v1/people/51/contact-state":
+			// The daemon returns HTTP 200 with zero ComputedAt when no
+			// activity projection has been computed for this person.
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{
+				"person_id":51,"interaction_count":0,"cadence_status":"unknown",
+				"stale":true,"computed_at":"0001-01-01T00:00:00Z"
+			}`)
+		default:
+			writePeopleBrowserJSON(t, w, http.StatusNotFound, `{"error":"not_found","message":"resource not found"}`)
+		}
+	}))
+
+	profile, err := engine.GetPersonProfile(t.Context(), 51)
+	require.NoError(err)
+	require.NotNil(profile)
+	assert.Nil(profile.ContactState, "an uncomputed projection must remain absent")
+}
+
 func TestPeopleBrowserGetPersonProfilePropagatesPersonNotFound(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
