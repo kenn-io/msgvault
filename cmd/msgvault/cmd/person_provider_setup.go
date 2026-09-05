@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -408,12 +409,12 @@ func personProviderCandidate(options personProviderAddOptions) (peoplesweep.Prov
 	} else {
 		candidate.Credential = peoplesweep.CredentialStored
 	}
-	if candidate.Protocol == peoplesweep.ProtocolOpenAIChat {
-		candidate.OutputMode = peoplesweep.OutputModeNativeJSONSchema
-		candidate.TokenLimitParameter = "max_completion_tokens"
-	} else {
-		candidate.OutputMode = peoplesweep.OutputModeNativeJSONSchema
+	capability, ok := peoplesweep.ProtocolCapabilityFor(candidate.Protocol)
+	if !ok || len(capability.OutputModes) == 0 || len(capability.TokenParameters) == 0 {
+		return peoplesweep.ProviderConfig{}, fmt.Errorf("unsupported people inference protocol %q", candidate.Protocol)
 	}
+	candidate.OutputMode = capability.OutputModes[0]
+	candidate.TokenLimitParameter = capability.TokenParameters[0]
 	return candidate, nil
 }
 
@@ -545,25 +546,15 @@ func personProviderCatalogAuth(
 	protocol peoplesweep.Protocol,
 	explicit peoplesweep.AuthScheme,
 ) (peoplesweep.AuthScheme, error) {
-	var defaultAuth peoplesweep.AuthScheme
-	switch protocol {
-	case peoplesweep.ProtocolOpenAIChat, peoplesweep.ProtocolOpenAIResponses:
-		defaultAuth = peoplesweep.AuthBearer
-		if explicit == "" || explicit == peoplesweep.AuthBearer || explicit == peoplesweep.AuthXAPIKey {
-			if explicit != "" {
-				return explicit, nil
-			}
-			return defaultAuth, nil
-		}
-	case peoplesweep.ProtocolAnthropicMessages:
-		defaultAuth = peoplesweep.AuthXAPIKey
-	case peoplesweep.ProtocolGoogleGenerateContent:
-		defaultAuth = peoplesweep.AuthGoogleAPIKey
-	default:
+	capability, ok := peoplesweep.ProtocolCapabilityFor(protocol)
+	if !ok || capability.CatalogDefaultAuth == "" {
 		return "", fmt.Errorf("models.dev catalog selected unsupported protocol %q", protocol)
 	}
-	if explicit == "" || explicit == defaultAuth {
-		return defaultAuth, nil
+	if explicit == "" {
+		return capability.CatalogDefaultAuth, nil
+	}
+	if slices.Contains(capability.CatalogAuthSchemes, explicit) {
+		return explicit, nil
 	}
 	return "", fmt.Errorf("models.dev catalog protocol %q does not support auth %q", protocol, explicit)
 }

@@ -439,6 +439,69 @@ func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrS
 	assert.Contains(string(content), `[people.sweep.providers.catalog-provider]`)
 }
 
+func TestPersonProviderCatalogAuthUsesProtocolCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol peoplesweep.Protocol
+		explicit peoplesweep.AuthScheme
+		want     peoplesweep.AuthScheme
+		wantErr  string
+	}{
+		{name: "openai chat default", protocol: peoplesweep.ProtocolOpenAIChat, want: peoplesweep.AuthBearer},
+		{name: "openai chat x api key", protocol: peoplesweep.ProtocolOpenAIChat, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "openai responses default", protocol: peoplesweep.ProtocolOpenAIResponses, want: peoplesweep.AuthBearer},
+		{name: "openai responses x api key", protocol: peoplesweep.ProtocolOpenAIResponses, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "anthropic default", protocol: peoplesweep.ProtocolAnthropicMessages, want: peoplesweep.AuthXAPIKey},
+		{name: "google default", protocol: peoplesweep.ProtocolGoogleGenerateContent, want: peoplesweep.AuthGoogleAPIKey},
+		{name: "anthropic bearer rejected", protocol: peoplesweep.ProtocolAnthropicMessages, explicit: peoplesweep.AuthBearer, wantErr: "does not support auth"},
+		{name: "google x api key rejected", protocol: peoplesweep.ProtocolGoogleGenerateContent, explicit: peoplesweep.AuthXAPIKey, wantErr: "does not support auth"},
+		{name: "codex rejected", protocol: peoplesweep.ProtocolCodexAppServer, wantErr: "unsupported protocol"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := personProviderCatalogAuth(test.protocol, test.explicit)
+			if test.wantErr != "" {
+				require.ErrorContains(err, test.wantErr)
+				assert.Empty(got)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(test.want, got)
+		})
+	}
+}
+
+func TestPersonProviderCandidateUsesProtocolCapabilityDefaults(t *testing.T) {
+	for _, test := range []struct {
+		protocol peoplesweep.Protocol
+		auth     peoplesweep.AuthScheme
+		output   peoplesweep.OutputMode
+		token    string
+	}{
+		{protocol: peoplesweep.ProtocolOpenAIChat, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema, token: "max_completion_tokens"},
+		{protocol: peoplesweep.ProtocolOpenAIResponses, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolAnthropicMessages, auth: peoplesweep.AuthXAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolGoogleGenerateContent, auth: peoplesweep.AuthGoogleAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+	} {
+		t.Run(string(test.protocol), func(t *testing.T) {
+			candidate, err := personProviderCandidate(personProviderAddOptions{
+				protocol: string(test.protocol), endpoint: "https://example.test",
+				model: "test-model", auth: string(test.auth), retentionPosture: "zero",
+				trainingPosture: "none", allowedSources: []string{"conversation_text"},
+				sourceSince: "2025-01-01",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.output, candidate.OutputMode)
+			assert.Equal(t, test.token, candidate.TokenLimitParameter)
+		})
+	}
+}
+
 // TestPersonProviderAddNeverSendsCredentialToCatalogEndpoint catches
 // onboarding reading a credential or negotiating capabilities against an
 // endpoint chosen by the models.dev catalog: a compromised catalog must not
