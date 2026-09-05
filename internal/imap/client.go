@@ -1,7 +1,6 @@
 package imap
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -203,183 +202,92 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-type preGreetingConn struct {
+// transportProbe records the first zero-byte transport error seen on the
+// connection. The pinned IMAP client reports a clean close before the
+// greeting as a plain "connection closed" error without the socket cause, so
+// the retry decision reads the cause from here instead.
+type transportProbe struct {
 	net.Conn
 
-	mu         sync.Mutex
-	progressed bool
-	zeroErr    error
+	mu  sync.Mutex
+	err error
 }
 
-func (c *preGreetingConn) Read(p []byte) (int, error) {
+func (c *transportProbe) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	c.record(n, err, true)
+	c.record(n, err)
 	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
 }
 
-func (c *preGreetingConn) Write(p []byte) (int, error) {
+func (c *transportProbe) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	c.record(n, err, false)
+	c.record(n, err)
 	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
 }
 
-func (c *preGreetingConn) record(n int, err error, inbound bool) {
+func (c *transportProbe) record(n int, err error) {
+	if n > 0 || err == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if inbound && n > 0 {
-		c.progressed = true
-	}
-	if n == 0 && err != nil && c.zeroErr == nil {
-		c.zeroErr = err
+	if c.err == nil {
+		c.err = err
 	}
 }
 
-func (c *preGreetingConn) hasProgress() bool {
+func (c *transportProbe) transportError() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.progressed
+	return c.err
 }
 
-func (c *preGreetingConn) transportError() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.zeroErr
-}
-
-type startTLSPhase uint8
-
-const (
-	startTLSCommandNotWritten startTLSPhase = iota
-	startTLSCommandWritten
-	startTLSResponseObserved
-	startTLSHandshakeStarted
-)
-
-type startTLSPhaseConn struct {
-	net.Conn
-
-	mu                    sync.Mutex
-	phase                 startTLSPhase
-	commandWriteInProcess bool
-	responseObserved      bool
-	responseData          []byte
-}
-
-func (c *startTLSPhaseConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
-	if n > 0 {
-		c.mu.Lock()
-		if c.observeResponse(p[:n]) {
-			if c.commandWriteInProcess {
-				c.responseObserved = true
-			} else if c.phase == startTLSCommandWritten {
-				c.responseObserved = true
-				c.phase = startTLSResponseObserved
-			}
-		}
-		c.mu.Unlock()
-	}
-	return n, err //nolint:wrapcheck // the phase wrapper preserves the socket's typed transport cause
-}
-
-func (c *startTLSPhaseConn) observeResponse(p []byte) bool {
-	if c.responseObserved {
+// isProtocolFailure reports whether the server answered and refused: an IMAP
+// status response, a TLS alert, or a certificate the client rejected. These
+// never get a retry, whatever the socket did afterwards.
+func isProtocolFailure(err error) bool {
+	if _, ok := errors.AsType[*imap.Error](err); ok {
 		return true
 	}
-	c.responseData = append(c.responseData, p...)
-	for {
-		lineEnd := bytes.IndexByte(c.responseData, '\n')
-		if lineEnd < 0 {
-			return false
-		}
-		line := bytes.TrimSuffix(c.responseData[:lineEnd], []byte{'\r'})
-		c.responseData = c.responseData[lineEnd+1:]
-		fields := bytes.Fields(line)
-		if len(fields) < 2 || fields[0][0] == '*' || fields[0][0] == '+' {
-			continue
-		}
-		return bytes.EqualFold(fields[1], []byte("OK")) ||
-			bytes.EqualFold(fields[1], []byte("NO")) ||
-			bytes.EqualFold(fields[1], []byte("BAD"))
+	if _, ok := errors.AsType[tls.AlertError](err); ok {
+		return true
 	}
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+		return true
+	}
+	return false
 }
 
-// A ClientHello begins with a TLS handshake record, unlike an IMAP command.
-func isTLSHandshakeRecord(p []byte) bool {
-	return len(p) >= 3 && p[0] == 0x16 && p[1] == 0x03
-}
-
-func (c *startTLSPhaseConn) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	phase := c.phase
-	commandWrite := false
-	switch phase {
-	case startTLSResponseObserved:
-		c.phase = startTLSHandshakeStarted
-	case startTLSCommandNotWritten:
-		if c.commandWriteInProcess && c.responseObserved && isTLSHandshakeRecord(p) {
-			c.phase = startTLSHandshakeStarted
-		} else if !c.commandWriteInProcess {
-			c.commandWriteInProcess = true
-			commandWrite = true
-		}
-	case startTLSCommandWritten, startTLSHandshakeStarted:
+// retryableConnect decides whether a failed connection attempt gets a retry.
+// The returned error usually carries the transport cause; the probe covers
+// the case where the IMAP client dropped it.
+func retryableConnect(err error, probe *transportProbe) bool {
+	if isProtocolFailure(err) {
+		return false
 	}
-	c.mu.Unlock()
-
-	n, err := c.Conn.Write(p)
-	if commandWrite {
-		c.mu.Lock()
-		c.commandWriteInProcess = false
-		if n == len(p) && c.phase == startTLSCommandNotWritten {
-			if c.responseObserved {
-				c.phase = startTLSResponseObserved
-			} else {
-				c.phase = startTLSCommandWritten
-			}
-		}
-		c.mu.Unlock()
+	if isRetryableTransportError(err) {
+		return true
 	}
-	return n, err //nolint:wrapcheck // the phase wrapper preserves the socket's typed transport cause
-}
-
-func (c *startTLSPhaseConn) handshakeStarted() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.phase == startTLSHandshakeStarted
+	return probe != nil && isRetryableTransportError(probe.transportError())
 }
 
 func isRetryableTransportError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if _, ok := errors.AsType[tls.AlertError](err); ok {
-		return false
-	}
-	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
-		return false
-	}
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) { //nolint:staticcheck // legacy net.Error implementations can mark transient transport failures.
 		return true
 	}
-	for _, errno := range []syscall.Errno{
-		syscall.ECONNRESET,
-		syscall.ECONNABORTED,
-		syscall.EPIPE,
-		64, 109, 10053, 10054,
-	} {
-		if errors.Is(err, errno) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(transportErrnos, func(errno syscall.Errno) bool {
+		return errors.Is(err, errno)
+	})
 }
 
 // connect establishes and authenticates the IMAP connection. Caller must hold mu.
@@ -387,9 +295,6 @@ func (c *Client) connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-
-	addr := c.config.Addr()
-	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
 
 	conn, err := c.connectTransport(ctx)
 	if err != nil {
@@ -441,7 +346,7 @@ func (c *Client) connectTransport(ctx context.Context) (*imapclient.Client, erro
 		if err == nil {
 			return conn, nil
 		}
-		if !retry || attempt == len(connectRetryDelays) {
+		if !retry || ctx.Err() != nil || attempt == len(connectRetryDelays) {
 			return nil, err
 		}
 
@@ -473,38 +378,32 @@ func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, 
 		return nil, isRetryableTransportError(err), fmt.Errorf("dial IMAP %s: %w", addr, err)
 	}
 
+	if c.config.STARTTLS {
+		probe := &transportProbe{Conn: rawConn}
+		startTLSOpts := *imapOpts
+		startTLSOpts.TLSConfig = c.newTLSConfig(false)
+		conn, err := newStartTLSContext(ctx, probe, &startTLSOpts)
+		if err != nil {
+			_ = rawConn.Close()
+			return nil, retryableConnect(err, probe), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
+		}
+		return conn, false, nil
+	}
+
+	greetingConn := rawConn
 	if c.config.TLS {
 		tlsConn := tls.Client(rawConn, c.newTLSConfig(true))
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = rawConn.Close()
-			return nil, isRetryableTransportError(err), fmt.Errorf("TLS handshake with %s: %w", addr, err)
+			return nil, retryableConnect(err, nil), fmt.Errorf("TLS handshake with %s: %w", addr, err)
 		}
-		probe := &preGreetingConn{Conn: tlsConn}
-		conn := imapclient.New(probe, imapOpts)
-		if err := waitGreetingContext(ctx, conn); err != nil {
-			_ = conn.Close()
-			return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
-		}
-		return conn, false, nil
+		greetingConn = tlsConn
 	}
-
-	probe := &preGreetingConn{Conn: rawConn}
-	if c.config.STARTTLS {
-		phaseProbe := &startTLSPhaseConn{Conn: probe}
-		startTLSOpts := *imapOpts
-		startTLSOpts.TLSConfig = c.newTLSConfig(false)
-		conn, err := newStartTLSContext(ctx, phaseProbe, &startTLSOpts)
-		if err != nil {
-			_ = probe.Close()
-			return nil, ctx.Err() == nil && retryableSTARTTLS(probe, phaseProbe, err), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
-		}
-		return conn, false, nil
-	}
-
+	probe := &transportProbe{Conn: greetingConn}
 	conn := imapclient.New(probe, imapOpts)
 	if err := waitGreetingContext(ctx, conn); err != nil {
 		_ = conn.Close()
-		return nil, ctx.Err() == nil && retryableGreeting(probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		return nil, retryableConnect(err, probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
 	}
 	return conn, false, nil
 }
@@ -523,20 +422,6 @@ func (c *Client) newTLSConfig(implicit bool) *tls.Config {
 		config.NextProtos = []string{"imap"}
 	}
 	return config
-}
-
-func retryableGreeting(probe *preGreetingConn) bool {
-	if probe == nil || probe.hasProgress() {
-		return false
-	}
-	return isRetryableTransportError(probe.transportError())
-}
-
-func retryableSTARTTLS(preGreetingProbe *preGreetingConn, phaseProbe *startTLSPhaseConn, err error) bool {
-	if phaseProbe != nil && phaseProbe.handshakeStarted() {
-		return isRetryableTransportError(err)
-	}
-	return retryableGreeting(preGreetingProbe)
 }
 
 func waitGreetingContext(ctx context.Context, conn *imapclient.Client) error {
