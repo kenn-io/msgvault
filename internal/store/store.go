@@ -1257,6 +1257,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("create fresh-schema canonical RFC822 Message-ID index: %w", err)
 		}
 	}
+	if err := s.ensureMigrationLedgerVersionColumn(ctx); err != nil {
+		return fmt.Errorf("ensure migration ledger version column: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonInferenceProviderV2, false,
 		s.migratePersonInferenceProviderV2,
@@ -1375,6 +1378,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// content_changed_at itself arrives on an upgraded archive.
 	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
+		if m.Desc == migrationLedgerVersionColumnDesc {
+			continue
+		}
 		if _, err := s.db.ExecContext(ctx, m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
@@ -1975,11 +1981,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	return nil
 }
 
-// runOnceMigration runs fn at most once per archive, gated on the
-// applied_migrations ledger: fn runs when the ledger has no entry for name (or
-// when force overrides that), and the entry is written only after fn returns
-// successfully, so a migration that failed or was cancelled runs again on the
-// next open.
+// runOnceMigration runs fn when the applied_migrations ledger has no entry for
+// name or records a version below the requested minimum (or when force
+// overrides that), and writes the entry only after fn returns successfully, so
+// a migration that failed or was cancelled runs again on the next open.
 //
 // It is the single owner of the ledger statements for every one-time step in
 // InitSchemaContext, and both of them carry ctx. That is not incidental. The
@@ -1991,8 +1996,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 // reintroducing a contextless pair.
 func (s *Store) runOnceMigration(
 	ctx context.Context, name string, force bool, fn func(ctx context.Context) error,
+	minimumVersion ...int,
 ) error {
-	applied, err := s.IsMigrationAppliedContext(ctx, name)
+	version, err := resolveMigrationVersion(minimumVersion)
+	if err != nil {
+		return err
+	}
+	applied, err := s.IsMigrationAppliedContext(ctx, name, version)
 	if err != nil {
 		return err
 	}
@@ -2002,7 +2012,7 @@ func (s *Store) runOnceMigration(
 	if err := fn(ctx); err != nil {
 		return err
 	}
-	return s.MarkMigrationAppliedContext(ctx, name)
+	return s.MarkMigrationAppliedContext(ctx, name, version)
 }
 
 // contentChangedBackfillBatchSize is how many ROWS one backfill batch stamps —

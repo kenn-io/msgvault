@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -60,18 +61,15 @@ func (s *Store) AdvanceDerivedDataRevision() error {
 // re-derivation and advances the cache-visible revision. The ledger can never
 // claim a repair is complete without also making an older analytics cache
 // stale.
-func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string) error {
+func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string, version ...int) error {
+	resolved, err := resolveMigrationVersion(version)
+	if err != nil {
+		return err
+	}
 	return s.withTx(func(tx *loggedTx) error {
 		if err := s.bumpDerivedDataRevision(tx); err != nil {
 			return err
 		}
-		_, err := tx.Exec(
-			s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO applied_migrations (name) VALUES (?)`),
-			name,
-		)
-		if err != nil {
-			return fmt.Errorf("mark migration %q applied: %w", name, err)
-		}
-		return nil
+		return s.markMigrationAppliedContext(context.Background(), tx, name, resolved)
 	})
 }

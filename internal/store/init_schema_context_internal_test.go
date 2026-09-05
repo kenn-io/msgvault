@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,116 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunOnceMigrationAtVersionRerunsReshapedMigration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := Open(filepath.Join(t.TempDir(), "versioned-migration.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "initialize schema")
+
+	const name = "reshaped_migration"
+	runs := 0
+	body := func(context.Context) error {
+		runs++
+		return nil
+	}
+	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 1))
+	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 2))
+	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 1))
+	require.NoError(st.runOnceMigration(context.Background(), name, true, body, 1))
+	assert.Equal(3, runs, "version 2 must rerun once and force must still run")
+
+	var version int
+	require.NoError(st.db.QueryRow(`SELECT version FROM applied_migrations WHERE name = ?`, name).Scan(&version))
+	assert.Equal(2, version, "forced lower version must not downgrade the ledger")
+}
+
+func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := Open(filepath.Join(t.TempDir(), "versioned-migration-failure.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "initialize schema")
+
+	const name = "retryable_migration"
+	require.NoError(st.MarkMigrationApplied(name, 1), "seed the prior migration version")
+	failure := errors.New("migration body failed")
+	err = st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
+		return failure
+	}, 2)
+	require.ErrorIs(err, failure)
+	applied, err := st.IsMigrationApplied(name, 2)
+	require.NoError(err)
+	assert.False(applied, "a failed body must not be marked")
+	applied, err = st.IsMigrationApplied(name, 1)
+	require.NoError(err)
+	assert.True(applied, "a failed higher-version body must preserve version 1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err = st.runOnceMigration(ctx, name, false, func(ctx context.Context) error {
+		cancel()
+		return ctx.Err()
+	}, 2)
+	cancel()
+	require.ErrorIs(err, context.Canceled)
+	applied, err = st.IsMigrationApplied(name, 2)
+	require.NoError(err)
+	assert.False(applied, "a cancelled body must not be marked")
+	applied, err = st.IsMigrationApplied(name, 1)
+	require.NoError(err)
+	assert.True(applied, "a cancelled higher-version body must preserve version 1")
+
+	require.NoError(st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
+		return nil
+	}, 2))
+	applied, err = st.IsMigrationApplied(name, 2)
+	require.NoError(err)
+	assert.True(applied, "a retry after failure or cancellation must run")
+}
+
+func TestInitSchemaAddsVersionToLegacyLedger(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := OpenForTest(filepath.Join(t.TempDir(), "legacy-ledger.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "initialize current schema")
+
+	const appliedAt = "2020-01-02 03:04:05"
+	_, err = st.db.Exec(`
+		CREATE TABLE applied_migrations_legacy (
+			name TEXT PRIMARY KEY,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`)
+	require.NoError(err, "create legacy ledger")
+	_, err = st.db.Exec(
+		`INSERT INTO applied_migrations_legacy (name, applied_at) VALUES (?, ?)`,
+		migrationPersonInferenceProviderV2, appliedAt)
+	require.NoError(err, "seed legacy ledger")
+	_, err = st.db.Exec(`INSERT INTO applied_migrations_legacy (name, applied_at)
+		SELECT name, applied_at FROM applied_migrations
+		WHERE name != ?`, migrationPersonInferenceProviderV2)
+	require.NoError(err, "copy legacy ledger rows")
+	_, err = st.db.Exec(`DROP TABLE applied_migrations`)
+	require.NoError(err, "replace current ledger")
+	_, err = st.db.Exec(`ALTER TABLE applied_migrations_legacy RENAME TO applied_migrations`)
+	require.NoError(err, "install legacy ledger")
+	var legacyAppliedAt string
+	require.NoError(st.db.QueryRow(`SELECT applied_at FROM applied_migrations WHERE name = ?`,
+		migrationPersonInferenceProviderV2).Scan(&legacyAppliedAt), "read legacy timestamp")
+
+	require.NoError(st.InitSchema(), "upgrade legacy ledger")
+	var version int
+	var gotAppliedAt string
+	require.NoError(st.db.QueryRow(`
+		SELECT version, applied_at FROM applied_migrations WHERE name = ?`,
+		migrationPersonInferenceProviderV2).Scan(&version, &gotAppliedAt))
+	assert.Equal(1, version, "legacy ledger rows must default to version 1")
+	assert.Equal(legacyAppliedAt, gotAppliedAt, "legacy applied timestamp must survive")
+}
 
 // cancelAtStatement cancels the initialisation the moment a chosen statement is
 // about to be issued, by intercepting the store's placeholder-rebind step —

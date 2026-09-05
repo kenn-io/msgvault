@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -565,17 +566,73 @@ func legacyCalendarOrganizerSelf(
 	return event.Organizer.Self, true
 }
 
-// IsMigrationApplied reports whether the named one-time data migration
-// has already run.
-func (s *Store) IsMigrationApplied(name string) (bool, error) {
-	return s.IsMigrationAppliedContext(context.Background(), name)
+const migrationLedgerVersionColumnDesc = "applied_migrations.version"
+
+func resolveMigrationVersion(versions []int) (int, error) {
+	if len(versions) > 1 {
+		return 0, errors.New("migration version must be omitted or specified once")
+	}
+	if len(versions) == 0 {
+		return 1, nil
+	}
+	if versions[0] < 1 {
+		return 0, fmt.Errorf("migration version must be positive, got %d", versions[0])
+	}
+	return versions[0], nil
+}
+
+// ensureMigrationLedgerVersionColumn adds the ledger version column before
+// InitSchemaContext issues its first version-aware ledger query.
+func (s *Store) ensureMigrationLedgerVersionColumn(ctx context.Context) error {
+	for _, migration := range s.dialect.LegacyColumnMigrations() {
+		if migration.Desc != migrationLedgerVersionColumnDesc {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, migration.SQL); err != nil &&
+			!s.dialect.IsDuplicateColumnError(err) {
+			return fmt.Errorf("migrate schema (%s): %w", migration.Desc, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("migration schema entry %q is missing", migrationLedgerVersionColumnDesc)
+}
+
+const markMigrationAppliedSQL = `
+	INSERT INTO applied_migrations (name, version) VALUES (?, ?)
+	ON CONFLICT (name) DO UPDATE SET
+		version = excluded.version,
+		applied_at = CURRENT_TIMESTAMP
+	WHERE applied_migrations.version < excluded.version`
+
+func (s *Store) markMigrationAppliedContext(
+	ctx context.Context, q contextStatementQuerier, name string, version int,
+) error {
+	_, err := q.ExecContext(ctx, markMigrationAppliedSQL, name, version)
+	if err != nil {
+		return fmt.Errorf("mark migration %q applied: %w", name, err)
+	}
+	return nil
+}
+
+// IsMigrationApplied reports whether the named one-time data migration has
+// reached the requested minimum implementation version. An omitted version
+// means version 1.
+func (s *Store) IsMigrationApplied(name string, minimumVersion ...int) (bool, error) {
+	return s.IsMigrationAppliedContext(context.Background(), name, minimumVersion...)
 }
 
 // IsMigrationAppliedContext is the request-aware form of IsMigrationApplied.
-func (s *Store) IsMigrationAppliedContext(ctx context.Context, name string) (bool, error) {
+func (s *Store) IsMigrationAppliedContext(
+	ctx context.Context, name string, minimumVersion ...int,
+) (bool, error) {
+	version, err := resolveMigrationVersion(minimumVersion)
+	if err != nil {
+		return false, err
+	}
 	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`, name,
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM applied_migrations WHERE name = ? AND version >= ?`,
+		name, version,
 	).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check migration %q: %w", name, err)
@@ -583,20 +640,20 @@ func (s *Store) IsMigrationAppliedContext(ctx context.Context, name string) (boo
 	return count > 0, nil
 }
 
-// MarkMigrationApplied records that a migration has run. Idempotent.
-func (s *Store) MarkMigrationApplied(name string) error {
-	return s.MarkMigrationAppliedContext(context.Background(), name)
+// MarkMigrationApplied records that a migration has run. It keeps the highest
+// recorded version. An omitted version means version 1.
+func (s *Store) MarkMigrationApplied(name string, version ...int) error {
+	return s.MarkMigrationAppliedContext(context.Background(), name, version...)
 }
 
 // MarkMigrationAppliedContext is the request-aware form of
 // MarkMigrationApplied.
-func (s *Store) MarkMigrationAppliedContext(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx,
-		s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO applied_migrations (name) VALUES (?)`),
-		name,
-	)
+func (s *Store) MarkMigrationAppliedContext(
+	ctx context.Context, name string, version ...int,
+) error {
+	resolved, err := resolveMigrationVersion(version)
 	if err != nil {
-		return fmt.Errorf("mark migration %q applied: %w", name, err)
+		return err
 	}
-	return nil
+	return s.markMigrationAppliedContext(ctx, s.db, name, resolved)
 }

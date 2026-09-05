@@ -2806,9 +2806,11 @@ CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_sources_source
 -- Marks one-time data migrations that have already run. Schema DDL is
 -- idempotent via IF NOT EXISTS; this table is for *data* migrations
 -- (e.g. moving legacy config into per-account records) that must run
--- exactly once.
+-- exactly once, recording the highest successfully applied implementation
+-- version for each name.
 CREATE TABLE IF NOT EXISTS applied_migrations (
     name       TEXT PRIMARY KEY,
+    version    INTEGER NOT NULL DEFAULT 1,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
