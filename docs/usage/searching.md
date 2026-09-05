@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-30"
 title: Searching
 description: Gmail-like search syntax with full-text search and JSON output.
 ---
@@ -133,6 +134,14 @@ applies to source deletion (`deleted_from_source_at`); rows hidden internally by
 deduplication are never returned. It is available only with `--mode fts` because
 the vector index intentionally covers active messages only. Vector and hybrid
 search reject non-active deletion scopes instead of returning incomplete results.
+
+Gmail incremental sync records History API deletion events. When the saved
+history cursor has expired, msgvault reconciles deletion metadata only after an
+unfiltered, unlimited snapshot of the complete mailbox succeeds. A regular
+`sync-full` result, including one narrowed by a query, limit, or date range, is
+not treated as proof that omitted messages were deleted. In either path, the
+archive retains the message and raw MIME data; only its source-presence metadata
+changes.
 
 HTTP clients can pass the same values as `deletion_scope` on
 `GET /api/v1/cli/search`.

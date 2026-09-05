@@ -55,6 +55,60 @@ func TestDuckDBSearchFast_AllFromParticipantsMetadata(t *testing.T) {
 	assert.Equal(int64(len(messages)), count, "result/count agreement")
 }
 
+func TestDuckDBSearchFast_DomainFilterTreatsWildcardsLiterally(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	wantedSenderID := b.AddParticipant("sender@team_ops.example", "team_ops.example", "Wanted Sender")
+	otherSenderID := b.AddParticipant("sender@teamXops.example", "teamXops.example", "Other Sender")
+	wantedMessageID := b.AddMessage(MessageOpt{Subject: "domain filter needle"})
+	otherMessageID := b.AddMessage(MessageOpt{Subject: "domain filter needle"})
+	secondaryMatchMessageID := b.AddMessage(MessageOpt{Subject: "domain filter needle"})
+	b.AddFrom(wantedMessageID, wantedSenderID, "Wanted Sender")
+	b.AddFrom(otherMessageID, otherSenderID, "Other Sender")
+	b.AddFrom(secondaryMatchMessageID, otherSenderID, "Other Sender")
+	b.AddFrom(secondaryMatchMessageID, wantedSenderID, "Wanted Sender")
+	engine := b.BuildEngine()
+
+	messages, err := engine.SearchFast(context.Background(), search.Parse("domain filter needle"), MessageFilter{
+		Domain: "team_ops.example",
+	}, 50, 0)
+	require.NoError(t, err)
+	gotIDs := make([]int64, len(messages))
+	for i := range messages {
+		gotIDs[i] = messages[i].ID
+	}
+	assert.ElementsMatch(t, []int64{wantedMessageID, secondaryMatchMessageID}, gotIDs)
+}
+
+func TestDuckDBSearchFast_AppliesCompleteViewFilter(t *testing.T) {
+	t.Run("sender name", func(t *testing.T) {
+		engine := newParquetEngine(t)
+		messages, err := engine.SearchFast(context.Background(), search.Parse("Preview"), MessageFilter{
+			SenderName: "Alice",
+		}, 50, 0)
+		require.NoError(t, err)
+		assertMessageIDs(t, messages, []int64{1, 2, 3})
+	})
+
+	t.Run("recipient name", func(t *testing.T) {
+		engine := newParquetEngine(t)
+		messages, err := engine.SearchFast(context.Background(), search.Parse("Preview"), MessageFilter{
+			RecipientName: "Bob",
+		}, 50, 0)
+		require.NoError(t, err)
+		assertMessageIDs(t, messages, []int64{1, 2, 3})
+	})
+
+	t.Run("empty sender", func(t *testing.T) {
+		engine := newEmptyBucketsEngine(t)
+		messages, err := engine.SearchFast(context.Background(), search.Parse("No"), MessageFilter{
+			EmptyValueTargets: map[ViewType]bool{ViewSenders: true},
+		}, 50, 0)
+		require.NoError(t, err)
+		assertMessageIDs(t, messages, []int64{3})
+	})
+}
+
 func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

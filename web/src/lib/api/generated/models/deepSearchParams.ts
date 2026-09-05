@@ -12,39 +12,39 @@ export type DeepSearchParams = {
    */
   scope?: string;
   /**
-   * Sender email/address filter
+   * Sender email/address filter; not supported when scope=body
    */
   sender?: string;
   /**
-   * Sender display-name filter; not supported by deep search
+   * Sender display-name filter; not supported when scope=body
    */
   sender_name?: string;
   /**
-   * Recipient email/address filter
+   * Recipient email/address filter; not supported when scope=body
    */
   recipient?: string;
   /**
-   * Recipient display-name filter; not supported by deep search
+   * Recipient display-name filter; not supported when scope=body
    */
   recipient_name?: string;
   /**
-   * Domain filter
+   * Domain filter; not supported when scope=body
    */
   domain?: string;
   /**
-   * Label filter
+   * Label filter; not supported when scope=body
    */
   label?: string;
   /**
-   * Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search
+   * Exact case-insensitive RFC 2919 List-Id filter; not supported when scope=body
    */
   list_id?: string;
   /**
-   * Message type filter; not supported by deep search
+   * Message type filter; not supported when scope=body
    */
   message_type?: string;
   /**
-   * Named time period; not supported by deep search
+   * Named time period; not supported when scope=body
    */
   time_period?: string;
   /**
@@ -52,7 +52,7 @@ export type DeepSearchParams = {
    */
   time_granularity?: string;
   /**
-   * Conversation ID; not supported by deep search
+   * Conversation ID; not supported when scope=body
    */
   conversation_id?: number;
   /**
@@ -76,7 +76,7 @@ export type DeepSearchParams = {
    */
   before?: string;
   /**
-   * Comma-separated aggregate view names to match empty values; not supported by deep search
+   * Comma-separated aggregate view names to match empty values; not supported when scope=body
    */
   empty_targets?: string;
   /**

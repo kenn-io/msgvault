@@ -550,6 +550,7 @@ type LogConfig struct {
 // DataConfig holds data storage configuration.
 type DataConfig struct {
 	DataDir          string `toml:"data_dir"`
+	ExportDir        string `toml:"export_dir"`
 	DatabaseURL      string `toml:"database_url"`
 	LooseAttachments bool   `toml:"loose_attachments"`
 }
@@ -822,6 +823,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
+	cfg.Data.ExportDir = expandPath(cfg.Data.ExportDir)
 	cfg.Log.Dir = expandPath(cfg.Log.Dir)
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
@@ -838,6 +840,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// directory so behavior doesn't depend on the working directory.
 	if explicit {
 		cfg.Data.DataDir = resolveRelative(cfg.Data.DataDir, cfg.HomeDir)
+		cfg.Data.ExportDir = resolveRelative(cfg.Data.ExportDir, cfg.HomeDir)
 		cfg.Log.Dir = resolveRelative(cfg.Log.Dir, cfg.HomeDir)
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
@@ -1090,6 +1093,14 @@ func (c *Config) DatabasePath() (string, error) {
 // AttachmentsDir returns the path to the attachments directory.
 func (c *Config) AttachmentsDir() string {
 	return filepath.Join(c.Data.DataDir, "attachments")
+}
+
+// ExportDir returns the directory used for user-requested file exports.
+func (c *Config) ExportDir() string {
+	if c.Data.ExportDir != "" {
+		return c.Data.ExportDir
+	}
+	return filepath.Join(c.Data.DataDir, "exports")
 }
 
 // TokensDir returns the path to the OAuth tokens directory.

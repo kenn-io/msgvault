@@ -515,6 +515,12 @@ func apiSchemaVersionAtLeast(version, minimum string) bool {
 	return true
 }
 
+// APISchemaVersionAtLeast reports whether version satisfies an additive API
+// contract minimum. Missing and malformed versions fail closed.
+func APISchemaVersionAtLeast(version, minimum string) bool {
+	return apiSchemaVersionAtLeast(version, minimum)
+}
+
 func (c *Client) RunCLIVerify(
 	ctx context.Context,
 	req CLIVerifyRequest,

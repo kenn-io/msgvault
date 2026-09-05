@@ -59,7 +59,8 @@ Navigation:
 Email selection:
   Space       Toggle selection
   x           Clear selection
-  d           Stage selected messages for deletion
+  d           Stage selected/current messages for deletion
+  D           Stage all current row/filter matches for deletion
 
 Meeting browsing is read-only; selection and deletion keys are disabled.
 Press '?' in any mode for its complete key reference, or 'q' to quit.
@@ -97,6 +98,7 @@ HTTP Mode:
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
 		model := tui.New(backend.engine, tui.Options{
 			DataDir:          cfg.Data.DataDir,
+			ExportDir:        cfg.ExportDir(),
 			Version:          Version,
 			TextEngine:       textEngine,
 			PeopleBackend:    peopleBackend,

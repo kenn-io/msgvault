@@ -101,12 +101,12 @@ func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
 	assertions.Fail("deletion_scope query parameter is not documented")
 }
 
-func TestOpenAPIDeepSearchDocumentsUnsupportedListIDParameter(t *testing.T) {
+func TestOpenAPIDeepSearchDocumentsBodyScopeListIDRestriction(t *testing.T) {
 	operation := OpenAPIDocument().Paths["/api/v1/search/deep"].Get
 	require.NotNil(t, operation)
 	for _, parameter := range operation.Parameters {
 		if parameter.Name == "list_id" {
-			assert.Contains(t, parameter.Description, "not supported by deep search")
+			assert.Contains(t, parameter.Description, "not supported when scope=body")
 			return
 		}
 	}
@@ -777,7 +777,8 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// calendars in 2.10.0, person fact diagnostics in 2.11.0, lexical deletion
 	// scope in 2.12.0, Directory people and deduplicate planning in 2.13.0,
 	// CardDAV status and run history plus List-ID filtering in 2.14.0, Gmail
-	// repair in 2.15.0, and historical import jobs in 2.16.0 did not touch it.
+	// repair in 2.15.0, and complete TUI search and statistics contracts plus
+	// historical import jobs in 2.16.0 did not touch it.
 	assert.Equal("2.16.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()

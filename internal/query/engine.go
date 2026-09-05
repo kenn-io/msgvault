@@ -62,6 +62,13 @@ type Engine interface {
 	// Search - full-text search using FTS5 (includes message body)
 	Search(ctx context.Context, query *search.Query, limit, offset int) ([]MessageSummary, error)
 
+	// SearchDeep runs body-aware search within a complete view filter.
+	SearchDeep(ctx context.Context, query *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error)
+
+	// SearchDeepWithStats returns deep-search messages, total count, and stats
+	// from the same complete view filter.
+	SearchDeepWithStats(ctx context.Context, query *search.Query, filter MessageFilter, limit, offset int) (*SearchFastResult, error)
+
 	// SearchFast searches message metadata only (no body text).
 	// This is much faster for large archives as it queries Parquet files directly.
 	// Free text searches subject, snippet, and sender/recipient metadata
@@ -100,6 +107,41 @@ type Engine interface {
 
 	// Close releases any resources held by the engine.
 	Close() error
+}
+
+// DeletionSearchMode selects the search predicate used while resolving an
+// exact, source-bound deletion target set.
+type DeletionSearchMode string
+
+const (
+	DeletionSearchFast      DeletionSearchMode = "fast"
+	DeletionSearchDeep      DeletionSearchMode = "deep"
+	DeletionSearchAggregate DeletionSearchMode = "aggregate"
+)
+
+// DeletionTargetSearchResolver resolves a filtered search and source deletion
+// eligibility in one backend query. Keeping this capability separate from
+// Engine lets callers fail closed when a backend cannot provide a stable
+// all-match snapshot.
+type DeletionTargetSearchResolver interface {
+	GetDeletionTargetsBySearch(
+		ctx context.Context,
+		searchQuery *search.Query,
+		filter MessageFilter,
+		mode DeletionSearchMode,
+	) ([]DeletionTarget, error)
+}
+
+// DeletionTargetAggregateSearchResolver resolves the exact message population
+// that contributed to one displayed aggregate row.
+type DeletionTargetAggregateSearchResolver interface {
+	GetDeletionTargetsByAggregateSearch(
+		ctx context.Context,
+		searchQuery string,
+		filter MessageFilter,
+		groupBy ViewType,
+		key string,
+	) ([]DeletionTarget, error)
 }
 
 // SemanticMessageSearcher is an optional engine capability for ranked

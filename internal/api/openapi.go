@@ -257,12 +257,17 @@ import (
 // infrastructure identifiers. That shape change lands inside the unreleased 2.x
 // line: nothing after the released 1.36.0 contract has shipped yet, so it does
 // not open a new major version.
+// Existing filtered target requests are unchanged.
 // 2.15.0 adds POST /api/v1/cli/repair-message with a dedicated request and
 // streaming event contract for Gmail snapshot repair and audit operations.
 // Additive (minor bump): existing CLI routes and clients remain unchanged.
-// 2.16.0 adds authenticated asynchronous historical import jobs at
+// 2.16.0 adds complete MessageFilter parameters to total statistics and adds
+// result totals and statistics to deep search. Search-aware deletion query
+// parameters introduced with these TUI contracts are also covered by 2.16.0.
+// It also adds authenticated asynchronous historical import jobs at
 // POST /api/v1/imports and GET /api/v1/imports/{job_id}. Existing synchronous
-// CLI sync routes and source-status responses are unchanged.
+// CLI sync routes, source-status responses, unfiltered statistics, search, and
+// deletion requests are unchanged.
 const APISchemaVersion = "2.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -674,6 +679,15 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			snapshot.Extensions["x-go-type"] = "json.RawMessage"
 			snapshot.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
+		}
+	}
+	if manifest := schemas["Manifest"]; manifest != nil {
+		if rawFilter := manifest.Properties["raw_filter"]; rawFilter != nil {
+			if rawFilter.Extensions == nil {
+				rawFilter.Extensions = map[string]any{}
+			}
+			rawFilter.Extensions["x-go-type"] = "json.RawMessage"
+			rawFilter.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
 		}
 	}
 	for schemaName, properties := range map[string][]string{

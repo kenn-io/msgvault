@@ -5117,6 +5117,67 @@ func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
 	assert.Equal([]string{"gm-1", "gm-2"}, resp.GmailIDs, "gmail_ids")
 }
 
+func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var calls int
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsBySearchFunc: func(_ context.Context, parsed *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+			calls++
+			assertions.Equal([]string{"invoice"}, parsed.TextTerms)
+			assertions.Equal("alice@example.com", filter.Sender)
+			assertions.Equal(query.DeletionSearchDeep, mode)
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 1, SourceType: "gmail",
+				SourceIdentifier: "user@example.com", SourceMessageID: "gm-1",
+			}}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?sender=alice@example.com&q=invoice&search_mode=deep", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp GmailIDsResponse
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assertions.Equal(1, calls)
+	assertions.Equal([]string{"gm-1"}, resp.GmailIDs)
+	assertions.Equal("invoice", resp.SearchQuery)
+	assertions.Equal("deep", resp.SearchMode)
+}
+
+func TestHandleGmailIDsByFilterResolvesDisplayedAggregateSearch(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsByAggregateSearchFunc: func(
+			_ context.Context, raw string, filter query.MessageFilter, view query.ViewType, key string,
+		) ([]query.DeletionTarget, error) {
+			assertions.Equal("invoice", raw)
+			assertions.Equal("alice@example.com", filter.Sender)
+			assertions.Equal(query.ViewSenders, view)
+			assertions.Equal("alice@example.com", key)
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 1, SourceType: "gmail",
+				SourceIdentifier: "user@example.com", SourceMessageID: "gm-1",
+			}}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/messages/gmail-ids?sender=alice@example.com&q=invoice&search_mode=aggregate&view_type=senders&aggregate_key=alice@example.com", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp GmailIDsResponse
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assertions.Equal([]string{"gm-1"}, resp.GmailIDs)
+	assertions.Equal("aggregate", resp.SearchMode)
+}
+
 func TestHandleGetAttachmentUsesQueryEngine(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -5358,7 +5419,7 @@ func TestHandleTotalStatsSearchScope(t *testing.T) {
 	}{
 		{
 			name:            "search scope enabled",
-			target:          "/api/v1/stats/total?search_query=meeting&search_scope=true&source_ids=8&source_ids=7&source_ids=8",
+			target:          "/api/v1/stats/total?search_query=meeting&search_scope=true&source_ids=8&source_ids=7&source_ids=8&sender_name=Alice&recipient_name=Bob&domain=example.com&label=Work&message_type=email&conversation_id=42&empty_targets=labels",
 			wantSearchScope: true,
 			wantSourceIDs:   []int64{7, 8},
 			wantEchoScope:   true,
@@ -5391,6 +5452,19 @@ func TestHandleTotalStatsSearchScope(t *testing.T) {
 			assert.Equal("meeting", gotOpts.SearchQuery, "search query")
 			assert.Equal(tt.wantSearchScope, gotOpts.SearchScope, "search scope")
 			assert.Equal(tt.wantSourceIDs, gotOpts.SourceIDs, "source IDs")
+			if tt.wantSearchScope {
+				require.NotNil(gotOpts.Filter)
+				assert.Equal("Alice", gotOpts.Filter.SenderName)
+				assert.Equal("Bob", gotOpts.Filter.RecipientName)
+				assert.Equal("example.com", gotOpts.Filter.Domain)
+				assert.Equal("Work", gotOpts.Filter.Label)
+				assert.Equal("email", gotOpts.Filter.MessageType)
+				require.NotNil(gotOpts.Filter.ConversationID)
+				assert.Equal(int64(42), *gotOpts.Filter.ConversationID)
+				assert.True(gotOpts.Filter.MatchesEmpty(query.ViewLabels))
+			} else {
+				assert.Nil(gotOpts.Filter)
+			}
 
 			var response map[string]any
 			require.NoError(json.NewDecoder(w.Body).Decode(&response), "decode response")
@@ -5511,20 +5585,48 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	assert.Equal(t, "invalid_view_type", errResp["error"], "error")
 }
 
-// TestSearchRejectsMessageTypeFilterParam guards against silently dropping
-// the message_type filter parameter. Fast/deep search support the parsed
-// message_type: operator, but parseMessageFilter's parameter form is still
-// list-search-only and must not be accepted as a no-op.
-func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
-	for _, path := range []string{
-		"/api/v1/search/fast?q=hello&message_type=sms",
-		"/api/v1/search/deep?q=hello&message_type=sms",
-	} {
-		t.Run(path, func(t *testing.T) {
-			engine := &querytest.MockEngine{}
-			srv := newTestServerWithEngine(t, engine)
+func TestFastSearchPreservesCompleteMessageFilter(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var gotFilter query.MessageFilter
+	engine := &querytest.MockEngine{
+		SearchFastWithStatsFunc: func(
+			_ context.Context, _ *search.Query, _ string, filter query.MessageFilter,
+			_ query.ViewType, _, _ int,
+		) (*query.SearchFastResult, error) {
+			gotFilter = filter
+			return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search/fast?q=hello&sender_name=Alice&recipient_name=Bob&message_type=email&empty_targets=labels", nil)
+	w := httptest.NewRecorder()
 
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertions.Equal("Alice", gotFilter.SenderName)
+	assertions.Equal("Bob", gotFilter.RecipientName)
+	assertions.Equal("email", gotFilter.MessageType)
+	assertions.True(gotFilter.MatchesEmpty(query.ViewLabels))
+}
+
+func TestDeepBodySearchRejectsUnsupportedFilterParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		param string
+	}{
+		{name: "recipient", param: "recipient=alice%40example.com"},
+		{name: "label", param: "label=Work"},
+		{name: "domain wildcard", param: "domain=exa%25mple.com"},
+		{name: "list ID", param: "list_id=%3Cdev%40example.test%3E"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/search/deep?q=hello&scope=body&"+tt.param, nil)
 			w := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(w, req)
@@ -5535,21 +5637,6 @@ func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
 			require.Equal(t, "unsupported_filter", errResp["error"], "error")
 		})
 	}
-}
-
-func TestDeepSearchRejectsListIDFilterParam(t *testing.T) {
-	engine := &querytest.MockEngine{}
-	srv := newTestServerWithEngine(t, engine)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=hello&list_id=%3Cdev%40example.test%3E", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
-	var errResp map[string]string
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode error")
-	require.Equal(t, "unsupported_filter", errResp["error"], "error")
 }
 
 func TestDaemonAdapterListIDScopeReachesServerQueryEngine(t *testing.T) {
@@ -5631,6 +5718,12 @@ func TestSearchConversationIDFilterParamReachesEngine(t *testing.T) {
 				},
 				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
 					gotConversationIDs = append([]int64(nil), q.ConversationIDs...)
+					return nil, nil
+				},
+				SearchDeepFunc: func(_ context.Context, _ *search.Query, filter query.MessageFilter, _, _ int) ([]query.MessageSummary, error) {
+					if filter.ConversationID != nil {
+						gotConversationIDs = []int64{*filter.ConversationID}
+					}
 					return nil, nil
 				},
 			}
@@ -5945,7 +6038,10 @@ func TestRemoteSearchParsedMessageTypeThroughAPI(t *testing.T) {
 }
 
 func TestHandleDeepSearch(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	engine := &querytest.MockEngine{
+		Stats: &query.TotalStats{MessageCount: 1, TotalSize: 250},
 		SearchResults: []query.MessageSummary{
 			{
 				ID:        1,
@@ -5962,12 +6058,38 @@ func TestHandleDeepSearch(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertions.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	assert.Equal(t, "agenda", resp["query"], "query")
+	assertions.Equal("agenda", resp["query"], "query")
+	assertions.InDelta(1, resp["total_count"], 0, "total count")
+	requirements.NotNil(resp["stats"], "stats")
+}
+
+func TestHandleDeepSearchPreservesCompleteViewFilter(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var gotFilter query.MessageFilter
+	engine := &querytest.MockEngine{
+		SearchDeepFunc: func(
+			_ context.Context, _ *search.Query, filter query.MessageFilter, _, _ int,
+		) ([]query.MessageSummary, error) {
+			gotFilter = filter
+			return nil, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/v1/search/deep?q=agenda&sender_name=Alice&recipient_name=Bob&message_type=email&empty_targets=labels", nil))
+
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal("Alice", gotFilter.SenderName)
+	assertions.Equal("Bob", gotFilter.RecipientName)
+	assertions.Equal("email", gotFilter.MessageType)
+	assertions.True(gotFilter.MatchesEmpty(query.ViewLabels))
 }
 
 func TestHandleDeepSearchPreservesHideDeletedCompatibility(t *testing.T) {
@@ -6065,6 +6187,23 @@ func TestHandleDeepSearchBodyScope(t *testing.T) {
 	assert.InDelta(float64(2), bodyContext["message_id"], 0, "body context message ID")
 	assert.Equal([]any{"exact body context"}, bodyContext["context_snippets"])
 	assert.Equal(true, bodyContext["context_snippets_truncated"])
+}
+
+func TestHandleDeepSearchBodyScopeEmptyPageHasUnknownTotal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/api/v1/search/deep?q=bodyneedle&scope=body&limit=10&offset=20", nil))
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body DeepSearchResponse
+	require.NoError(json.NewDecoder(response.Body).Decode(&body))
+	assert.Empty(body.Messages)
+	assert.False(body.HasMore)
+	assert.Equal(int64(-1), body.TotalCount)
 }
 
 func TestHandleDeepSearchScopeValidation(t *testing.T) {

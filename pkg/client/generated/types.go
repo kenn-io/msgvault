@@ -2216,6 +2216,8 @@ type DeepSearchResponse struct {
 	Offset       int64               `json:"offset"`
 	Query        string              `json:"query" validate:"required"`
 	Scope        *string             `json:"scope,omitempty"`
+	Stats        *TotalStatsResponse `json:"stats,omitempty"`
+	TotalCount   int64               `json:"total_count"`
 }
 
 func (d DeepSearchResponse) Validate() error {
@@ -2236,6 +2238,13 @@ func (d DeepSearchResponse) Validate() error {
 	}
 	if err := typesValidator.Var(d.Query, "required"); err != nil {
 		errors = errors.Append("Query", err)
+	}
+	if d.Stats != nil {
+		if v, ok := any(d.Stats).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Stats", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -4094,8 +4103,10 @@ func (g GenerationSummary) Validate() error {
 }
 
 type GmailIDsResponse struct {
-	GmailIds []string         `json:"gmail_ids" validate:"required"`
-	Targets  []DeletionTarget `json:"targets,omitempty"`
+	GmailIds    []string         `json:"gmail_ids" validate:"required"`
+	SearchMode  *string          `json:"search_mode,omitempty"`
+	SearchQuery *string          `json:"search_query,omitempty"`
+	Targets     []DeletionTarget `json:"targets,omitempty"`
 }
 
 func (g GmailIDsResponse) Validate() error {
@@ -4676,7 +4687,7 @@ type Manifest struct {
 	Filters     Filters          `json:"filters"`
 	GmailIds    []string         `json:"gmail_ids" validate:"required"`
 	ID          string           `json:"id" validate:"required"`
-	RawFilter   *struct{}        `json:"raw_filter,omitempty"`
+	RawFilter   *json.RawMessage `json:"raw_filter,omitempty"`
 	Source      *SourceReference `json:"source,omitempty"`
 	Status      string           `json:"status" validate:"required"`
 	Summary     *Summary         `json:"summary,omitempty"`
@@ -4711,6 +4722,13 @@ func (m Manifest) Validate() error {
 	}
 	if err := typesValidator.Var(m.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
+	}
+	if m.RawFilter != nil {
+		if v, ok := any(m.RawFilter).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RawFilter", err)
+			}
+		}
 	}
 	if m.Source != nil {
 		if v, ok := any(m.Source).(runtime.Validator); ok {

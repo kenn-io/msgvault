@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-30"
 title: Exporting Data
 description: Export bounded message windows, .eml files, and attachments.
 ---
@@ -68,22 +69,21 @@ Export a single message as a standard `.eml` file:
 
 ```bash
 # By internal message ID
-msgvault export-eml --message-id 12345 --output message.eml
+msgvault export-eml 12345 --output message.eml
 
-# By Gmail message ID
-msgvault export-eml --gmail-id 18abc123def --output message.eml
+# By source message ID
+msgvault export-eml 18abc123def --output message.eml
 
 # Output to stdout
-msgvault export-eml --gmail-id 18abc123def
+msgvault export-eml 18abc123def --output -
 ```
 
-| Flag | Description |
+| Argument or flag | Description |
 |---|---|
-| `--message-id` | Internal database message ID |
-| `--gmail-id` | Gmail message ID (hex string) |
-| `--output` | Output file path (default: stdout) |
+| `<id>` | Internal message ID or source message ID |
+| `-o`, `--output` | Output file path (default: `<source-message-id>.eml`; use `-` for stdout) |
 
-The exported `.eml` file contains the original raw MIME data, decompressed from the zlib-compressed storage in the database.
+The exported `.eml` contains the original raw MIME bytes preserved during sync.
 
 ---
 

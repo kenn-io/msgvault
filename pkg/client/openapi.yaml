@@ -2476,10 +2476,16 @@ components:
           type: string
         scope:
           type: string
+        stats:
+          $ref: "#/components/schemas/TotalStatsResponse"
+        total_count:
+          format: int64
+          type: integer
       required:
         - query
         - messages
         - count
+        - total_count
         - has_more
         - offset
         - limit
@@ -4523,6 +4529,10 @@ components:
           items:
             type: string
           type: array
+        search_mode:
+          type: string
+        search_query:
+          type: string
         targets:
           items:
             $ref: "#/components/schemas/DeletionTarget"
@@ -5102,7 +5112,10 @@ components:
           type: array
         id:
           type: string
-        raw_filter: {}
+        raw_filter:
+          x-go-type: json.RawMessage
+          x-go-type-import:
+            path: encoding/json
         source:
           $ref: "#/components/schemas/SourceReference"
         status:
@@ -17209,6 +17222,26 @@ paths:
           name: direction
           schema:
             type: string
+        - description: Structured search query
+          in: query
+          name: q
+          schema:
+            type: string
+        - description: "Search mode: fast, deep, or aggregate; required with q"
+          in: query
+          name: search_mode
+          schema:
+            type: string
+        - description: Aggregate view type; required for aggregate search
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: Displayed aggregate row key; required for aggregate search
+          in: query
+          name: aggregate_key
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -22576,47 +22609,47 @@ paths:
           name: scope
           schema:
             type: string
-        - description: Sender email/address filter
+        - description: Sender email/address filter; not supported when scope=body
           in: query
           name: sender
           schema:
             type: string
-        - description: Sender display-name filter; not supported by deep search
+        - description: Sender display-name filter; not supported when scope=body
           in: query
           name: sender_name
           schema:
             type: string
-        - description: Recipient email/address filter
+        - description: Recipient email/address filter; not supported when scope=body
           in: query
           name: recipient
           schema:
             type: string
-        - description: Recipient display-name filter; not supported by deep search
+        - description: Recipient display-name filter; not supported when scope=body
           in: query
           name: recipient_name
           schema:
             type: string
-        - description: Domain filter
+        - description: Domain filter; not supported when scope=body
           in: query
           name: domain
           schema:
             type: string
-        - description: Label filter
+        - description: Label filter; not supported when scope=body
           in: query
           name: label
           schema:
             type: string
-        - description: Exact case-insensitive RFC 2919 List-Id filter; not supported by deep search
+        - description: Exact case-insensitive RFC 2919 List-Id filter; not supported when scope=body
           in: query
           name: list_id
           schema:
             type: string
-        - description: Message type filter; not supported by deep search
+        - description: Message type filter; not supported when scope=body
           in: query
           name: message_type
           schema:
             type: string
-        - description: Named time period; not supported by deep search
+        - description: Named time period; not supported when scope=body
           in: query
           name: time_period
           schema:
@@ -22626,7 +22659,7 @@ paths:
           name: time_granularity
           schema:
             type: string
-        - description: Conversation ID; not supported by deep search
+        - description: Conversation ID; not supported when scope=body
           in: query
           name: conversation_id
           schema:
@@ -22658,7 +22691,7 @@ paths:
           name: before
           schema:
             type: string
-        - description: Comma-separated aggregate view names to match empty values; not supported by deep search
+        - description: Comma-separated aggregate view names to match empty values; not supported when scope=body
           in: query
           name: empty_targets
           schema:
@@ -23367,12 +23400,6 @@ paths:
     get:
       operationId: getTotalStats
       parameters:
-        - description: Source ID
-          in: query
-          name: source_id
-          schema:
-            format: int64
-            type: integer
         - description: Source IDs; repeat the parameter for multiple sources
           in: query
           name: source_ids
@@ -23381,16 +23408,6 @@ paths:
               format: int64
               type: integer
             type: array
-        - description: Only include messages with attachments
-          in: query
-          name: attachments_only
-          schema:
-            type: boolean
-        - description: Exclude deleted messages
-          in: query
-          name: hide_deleted
-          schema:
-            type: boolean
         - description: Search query
           in: query
           name: search_query
@@ -23404,6 +23421,93 @@ paths:
         - description: Aggregate view type for grouping
           in: query
           name: group_by
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Exact case-insensitive RFC 2919 List-Id filter
+          in: query
+          name: list_id
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
           schema:
             type: string
       responses:

@@ -234,8 +234,10 @@ type FilteredMessagesResponse struct {
 }
 
 type GmailIDsResponse struct {
-	GmailIDs []string               `json:"gmail_ids"`
-	Targets  []query.DeletionTarget `json:"targets,omitempty"`
+	GmailIDs    []string               `json:"gmail_ids"`
+	Targets     []query.DeletionTarget `json:"targets,omitempty"`
+	SearchQuery string                 `json:"search_query,omitempty"`
+	SearchMode  string                 `json:"search_mode,omitempty"`
 }
 
 type DeepSearchResponse struct {
@@ -244,6 +246,8 @@ type DeepSearchResponse struct {
 	Messages     []MessageSummary    `json:"messages"`
 	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
 	Count        int                 `json:"count"`
+	TotalCount   int64               `json:"total_count"`
+	Stats        *TotalStatsResponse `json:"stats,omitempty"`
 	HasMore      bool                `json:"has_more"`
 	Offset       int                 `json:"offset"`
 	Limit        int                 `json:"limit"`
@@ -3163,8 +3167,58 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		s.rejectBadParam(w, err)
 		return
 	}
-	targets, err := engine.GetDeletionTargetsByFilter(r.Context(), filter)
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	searchMode := strings.TrimSpace(r.URL.Query().Get("search_mode"))
+	var targets []query.DeletionTarget
+	if searchQuery == "" {
+		if searchMode != "" {
+			writeError(w, http.StatusBadRequest, "invalid_search", "search_mode requires q")
+			return
+		}
+		targets, err = engine.GetDeletionTargetsByFilter(r.Context(), filter)
+	} else {
+		parsed := search.Parse(searchQuery)
+		if parseErr := parsed.Err(); parseErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_search", parseErr.Error())
+			return
+		}
+		switch searchMode {
+		case string(query.DeletionSearchFast), string(query.DeletionSearchDeep):
+			resolver, ok := engine.(query.DeletionTargetSearchResolver)
+			if !ok {
+				writeError(w, http.StatusServiceUnavailable, "search_unavailable", "Search-aware deletion resolution is not available")
+				return
+			}
+			targets, err = resolver.GetDeletionTargetsBySearch(
+				r.Context(), parsed, filter, query.DeletionSearchMode(searchMode),
+			)
+		case string(query.DeletionSearchAggregate):
+			viewType, ok := parseViewType(r.URL.Query().Get("view_type"))
+			if !ok {
+				writeError(w, http.StatusBadRequest, "invalid_view_type", "aggregate search requires a valid view_type")
+				return
+			}
+			if !r.URL.Query().Has("aggregate_key") {
+				writeError(w, http.StatusBadRequest, "missing_aggregate_key", "aggregate search requires aggregate_key")
+				return
+			}
+			resolver, ok := engine.(query.DeletionTargetAggregateSearchResolver)
+			if !ok {
+				writeError(w, http.StatusServiceUnavailable, "search_unavailable", "Aggregate search deletion resolution is not available")
+				return
+			}
+			targets, err = resolver.GetDeletionTargetsByAggregateSearch(
+				r.Context(), searchQuery, filter, viewType, r.URL.Query().Get("aggregate_key"),
+			)
+		default:
+			writeError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be fast, deep, or aggregate")
+			return
+		}
+	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		s.logger.Error("gmail id filter query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
 		return
@@ -3174,6 +3228,7 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, GmailIDsResponse{
 		GmailIDs: deletion.SourceMessageIDs(targets), Targets: targets,
+		SearchQuery: searchQuery, SearchMode: searchMode,
 	})
 }
 
@@ -3472,7 +3527,21 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	var opts query.StatsOptions
+	for _, name := range []string{
+		"sender", "sender_name", recipientParam, "recipient_name", "domain", "label", "list_id",
+		"message_type", "time_period", "time_granularity", "conversation_id", "after", "before", "empty_targets",
+	} {
+		if _, present := r.URL.Query()[name]; present {
+			opts.Filter = &filter
+			break
+		}
+	}
 
 	if id, ok, err := queryInt64(r, "source_id"); err != nil {
 		s.rejectBadParam(w, err)
@@ -3584,19 +3653,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject filter fields that the search engines cannot honor.
-	// SenderName/RecipientName use display names that aren't indexed
-	// for search, and EmptyValueTargets is an aggregate-only concept. The parsed
-	// message_type: operator is honored by the query engine; the
-	// filter parameter form is still list-search-only.
-	if filter.SenderName != "" || filter.RecipientName != "" ||
-		filter.HasEmptyTargets() || filter.MessageType != "" {
-		writeError(w, http.StatusBadRequest, "unsupported_filter",
-			"Fast search does not support sender_name, recipient_name, "+
-				"empty_targets, or message_type filters")
-		return
-	}
-
 	// Get view type for stats grouping (optional, defaults to senders)
 	var statsGroupBy query.ViewType
 	if v := r.URL.Query().Get("view_type"); v != "" {
@@ -3679,17 +3735,18 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject filter fields that this deep-search engine path cannot
-	// honor. Without this check the parameters parse
-	// successfully but silently do nothing, letting deep search
-	// escape the current drill-down scope.
-	if filter.SenderName != "" || filter.RecipientName != "" ||
+	// Exact body-only search rejects view filters whose exact MessageFilter
+	// semantics cannot be preserved through search.Query. Generic Deep search
+	// below keeps the complete filter independent from user-entered operators.
+	if scope == "body" && (filter.Sender != "" || filter.SenderName != "" ||
+		filter.Recipient != "" || filter.RecipientName != "" ||
+		filter.Domain != "" || filter.Label != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
-		filter.MessageType != "" || filter.ListID != "" {
+		filter.MessageType != "" || filter.ListID != "") {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
-			"Deep search does not support sender_name, recipient_name, "+
-				"time_period, empty_targets, message_type, "+
-				"or list_id filters")
+			"Body search does not support sender, sender_name, recipient, "+
+				"recipient_name, domain, label, time_period, empty_targets, "+
+				"message_type, or list_id filters")
 		return
 	}
 
@@ -3704,18 +3761,19 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	merged := query.MergeFilterIntoQuery(q, filter)
-	if filter.HideDeletedFromSource {
-		merged.DeletionScope = search.DeletionScopeActive
-	} else {
-		// Preserve the pre-2.12 deep-search contract: omitted or false
-		// hide_deleted includes retained source-deleted messages.
-		merged.DeletionScope = search.DeletionScopeAny
-	}
-
 	// Fetch one extra row to determine has_more accurately.
 	var messages []query.MessageSummary
+	var totalCount int64
+	var stats *query.TotalStats
 	if scope == "body" {
+		merged := query.MergeFilterIntoQuery(q, filter)
+		if filter.HideDeletedFromSource {
+			merged.DeletionScope = search.DeletionScopeActive
+		} else {
+			// Preserve the pre-2.12 deep-search contract: omitted or false
+			// hide_deleted includes retained source-deleted messages.
+			merged.DeletionScope = search.DeletionScopeAny
+		}
 		bodySearcher, ok := engine.(query.MessageBodySearcher)
 		if !ok {
 			writeError(w, http.StatusNotImplemented, "body_search_unavailable",
@@ -3724,7 +3782,21 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		messages, err = bodySearcher.SearchMessageBodies(r.Context(), merged, limit+1, offset)
 	} else {
-		messages, err = engine.Search(r.Context(), merged, limit+1, offset)
+		searchScope := *q
+		if filter.HideDeletedFromSource {
+			searchScope.DeletionScope = search.DeletionScopeActive
+		} else {
+			// Preserve the pre-2.12 deep-search contract: omitted or false
+			// hide_deleted includes retained source-deleted messages.
+			searchScope.DeletionScope = search.DeletionScopeAny
+		}
+		var result *query.SearchFastResult
+		result, err = engine.SearchDeepWithStats(r.Context(), &searchScope, filter, limit+1, offset)
+		if err == nil {
+			messages = result.Messages
+			totalCount = result.TotalCount
+			stats = result.Stats
+		}
 	}
 	if err != nil {
 		if s.writeIfContextError(w, err) {
@@ -3748,6 +3820,15 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		messages = messages[:limit]
 	}
+	if scope == "body" {
+		if hasMore || (offset > 0 && len(messages) == 0) {
+			totalCount = -1
+		} else {
+			totalCount = int64(offset + len(messages))
+		}
+	} else if totalCount >= 0 {
+		hasMore = totalCount > int64(offset+len(messages))
+	}
 
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
@@ -3767,6 +3848,8 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		Messages:     summaries,
 		BodyContexts: bodyContexts,
 		Count:        len(summaries),
+		TotalCount:   totalCount,
+		Stats:        toTotalStatsResponse(stats),
 		HasMore:      hasMore,
 		Offset:       offset,
 		Limit:        limit,

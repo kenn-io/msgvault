@@ -43,8 +43,9 @@ const defaultThreadMessageLimit = 1000
 
 // Options configuration for TUI.
 type Options struct {
-	DataDir string
-	Version string
+	DataDir   string
+	ExportDir string
+	Version   string
 
 	// AggregateLimit overrides the maximum number of aggregate rows to load.
 	// Zero uses the default (50,000).
@@ -224,16 +225,19 @@ type Model struct {
 	height int
 
 	// Loading state
-	loading       bool
-	err           error
-	spinnerFrame  int  // Current frame index into spinnerFrames
-	spinnerActive bool // True when spinner tick is running
+	loading         bool
+	deletionLoading bool // True while resolving every message matching the current filter
+	deletionCancel  context.CancelFunc
+	err             error
+	spinnerFrame    int  // Current frame index into spinnerFrames
+	spinnerActive   bool // True when spinner tick is running
 
 	// Request tracking to ignore stale async results
 	aggregateRequestID     uint64 // Current request ID for aggregate data
 	loadRequestID          uint64 // Current request ID for message list
 	detailRequestID        uint64 // Current request ID for message detail
 	searchRequestID        uint64 // Current request ID for search results
+	deletionRequestID      uint64 // Current request ID for bulk deletion target resolution
 	presentationGeneration uint64 // Mode activation owning shared presentation
 	textRequestID          uint64 // Latest Text navigation/data request
 
@@ -252,6 +256,10 @@ type Model struct {
 	inlineSearchActive   bool   // True when inline search bar is active
 	inlineSearchDebounce uint64 // Increment to cancel pending debounce timers
 	inlineSearchLoading  bool   // True when a debounced search query is in-flight
+	inlineSearchError    string // Non-modal validation feedback for incomplete/invalid input
+	searchHistory        []string
+	searchHistoryIndex   int
+	searchHistoryDraft   string
 
 	// Pre-search snapshot: cached message list state before search began,
 	// so Esc can restore instantly without re-querying.
@@ -327,9 +335,10 @@ func New(engine query.Engine, opts Options) Model {
 		settingsBackend: opts.SettingsBackend,
 		settings:        newSettingsState(),
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
-			DataDir:          opts.DataDir,
-			ManifestSaver:    opts.ManifestSaver,
-			AttachmentReader: opts.AttachmentReader,
+			DataDir:             opts.DataDir,
+			AttachmentOutputDir: opts.ExportDir,
+			ManifestSaver:       opts.ManifestSaver,
+			AttachmentReader:    opts.AttachmentReader,
 		}),
 		semanticSearch:     opts.SemanticSearch,
 		version:            opts.Version,
@@ -497,10 +506,12 @@ func (m Model) loadData() tea.Cmd {
 					filteredStats = &query.TotalStats{}
 				} else {
 					statsOpts := query.StatsOptions{
+						Filter:                &aggregateFilter,
 						SourceID:              m.accountFilter,
 						WithAttachmentsOnly:   m.filters.attachmentsOnly,
 						HideDeletedFromSource: m.filters.hideDeletedFromSource,
 						SearchQuery:           scopedQuery,
+						SearchScope:           true,
 						GroupBy:               m.viewType,
 					}
 					filteredStats, _ = m.engine.GetTotalStats(ctx, statsOpts)
@@ -588,6 +599,14 @@ type searchResultsMsg struct {
 	presentationGeneration uint64
 }
 
+// deletionPreparedMsg is sent when asynchronous bulk deletion target
+// resolution has built a manifest or failed.
+type deletionPreparedMsg struct {
+	manifest  *deletion.Manifest
+	err       error
+	requestID uint64
+}
+
 // threadMessagesLoadedMsg is sent when thread messages are loaded.
 type threadMessagesLoadedMsg struct {
 	messages               []query.MessageSummary
@@ -616,6 +635,9 @@ type exportResultMsg = ExportResultMsg
 
 // inlineSearchDebounceDelay is the delay before executing inline search (fast mode).
 const inlineSearchDebounceDelay = 100 * time.Millisecond
+
+// inlineSearchHistoryLimit bounds session-only search history.
+const inlineSearchHistoryLimit = 100
 
 // deepSearchDebounceDelay is the delay before executing inline search (deep FTS mode).
 const deepSearchDebounceDelay = 500 * time.Millisecond
@@ -697,7 +719,6 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 					"duration_ms", time.Since(start).Milliseconds(),
 				)
 			}()
-
 			switch m.searchMode {
 			case searchModeFast:
 				// Fast search: single-scan with temp table materialization
@@ -711,47 +732,15 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 				}
 				err = fastErr
 			case searchModeDeep:
-				// A list drill is exact equality, while the list: search operator
-				// is intentionally a substring filter. Route this unsupported deep
-				// scope through Fast rather than widening its result set.
-				if searchFilter.ListID != "" {
-					result, fastErr := m.engine.SearchFastWithStats(ctx, q, queryStr, searchFilter, m.viewType, searchPageSize, offset)
-					if fastErr == nil {
-						results = result.Messages
-						totalCount = result.TotalCount
-						if !appendResults {
-							stats = result.Stats
-						}
-					}
-					err = fastErr
-					break
-				}
-				// Deep search: FTS5 body search
-				// Merge context filter into query to honor drill-down context
-				mergedQuery := query.MergeFilterIntoQuery(q, searchFilter)
-				results, err = m.engine.Search(ctx, mergedQuery, searchPageSize, offset)
-				// For deep search, estimate total from result count (no separate count query)
-				if err == nil && offset == 0 {
-					totalCount = int64(len(results))
-					if len(results) == searchPageSize {
-						totalCount = -1 // Indicate more results available
-					}
-				}
-
-				// Fetch aggregate stats (size, attachments) for the search results
-				// on the initial page load so the header metrics are accurate.
-				if err == nil && !appendResults {
-					statsOpts, noMatches := deepSearchStatsOptions(mergedQuery, m.viewType)
-					if noMatches {
-						stats = &query.TotalStats{}
-					} else {
-						var statsErr error
-						stats, statsErr = m.engine.GetTotalStats(ctx, statsOpts)
-						if statsErr != nil {
-							slog.Warn("tui deep search stats failed",
-								"query_len", len(queryStr),
-								"error", statsErr.Error(),
-							)
+				// Deep search returns results and header metrics from one complete
+				// view filter so names, conversations, and empty buckets stay scoped.
+				result, deepErr := m.engine.SearchDeepWithStats(ctx, q, searchFilter, searchPageSize, offset)
+				if deepErr == nil {
+					results = result.Messages
+					totalCount = result.TotalCount
+					if !appendResults {
+						stats = result.Stats
+						if stats == nil {
 							fallbackCount := totalCount
 							if fallbackCount < 0 {
 								fallbackCount = int64(len(results))
@@ -760,6 +749,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 						}
 					}
 				}
+				err = deepErr
 			case searchModeSemantic:
 				if m.semanticSearch == nil {
 					err = errors.New("semantic search is not enabled")
@@ -806,35 +796,6 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 			}
 		},
 	)
-}
-
-// deepSearchStatsOptions derives stats from the already-merged query used for
-// deep results. Search.Query cannot represent SenderName, RecipientName,
-// ConversationID, or empty aggregate buckets; MergeFilterIntoQuery deliberately
-// leaves those unsupported contexts out of both paths. A non-nil empty account
-// scope is the shared match-nothing signal for conflicting message types or an
-// explicitly empty collection.
-func deepSearchStatsOptions(merged *search.Query, groupBy query.ViewType) (query.StatsOptions, bool) {
-	opts := query.StatsOptions{
-		SearchQuery: search.Format(merged),
-		SearchScope: true,
-		GroupBy:     groupBy,
-	}
-	if merged == nil {
-		return opts, false
-	}
-	if merged.AccountIDs != nil && len(merged.AccountIDs) == 0 {
-		return opts, true
-	}
-	if len(merged.AccountIDs) == 1 {
-		sourceID := merged.AccountIDs[0]
-		opts.SourceID = &sourceID
-	} else if len(merged.AccountIDs) > 1 {
-		opts.SourceIDs = append([]int64(nil), merged.AccountIDs...)
-	}
-	opts.WithAttachmentsOnly = merged.HasAttachment != nil && *merged.HasAttachment
-	opts.HideDeletedFromSource = merged.HideDeleted
-	return opts, false
 }
 
 // buildMessageFilter constructs a MessageFilter from the current model state.
@@ -1160,6 +1121,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleThreadMessagesLoaded(msg)
 	case searchResultsMsg:
 		return m.handleSearchResults(msg)
+	case deletionPreparedMsg:
+		return m.handleDeletionPrepared(msg)
 	case flashClearMsg:
 		return m.handleFlashClear()
 	case searchDebounceMsg:
@@ -1658,6 +1621,14 @@ func (m Model) handleSearchDebounce(msg searchDebounceMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 
+	if err := m.searchInputValidationError(msg.query); err != nil {
+		m.invalidateInlineSearchRequests()
+		m.inlineSearchLoading = false
+		m.inlineSearchError = err.Error()
+		return m, nil
+	}
+
+	m.inlineSearchError = ""
 	m.searchQuery = msg.query
 	if m.searchQuery == "" {
 		m.contextStats = nil
@@ -1668,8 +1639,7 @@ func (m Model) handleSearchDebounce(msg searchDebounceMsg) (tea.Model, tea.Cmd) 
 	if m.level == levelMessageList {
 		// Message list: use search engine for live results
 		m.syncSearchScope()
-		m.searchRequestID++
-		m.loadRequestID++ // Invalidate any in-flight loadMessages to prevent overwriting search results
+		m.invalidateInlineSearchRequests()
 		if msg.query == "" {
 			// Empty query: reload unfiltered messages
 			return m, tea.Batch(spinCmd, m.loadMessages())
@@ -1685,7 +1655,7 @@ func (m Model) handleSearchDebounce(msg searchDebounceMsg) (tea.Model, tea.Cmd) 
 // handleSpinnerTick processes spinner animation ticks.
 func (m Model) handleSpinnerTick() (tea.Model, tea.Cmd) {
 	// Only advance if still loading (any loading state)
-	if m.loading || m.inlineSearchLoading || m.searchLoadingMore {
+	if m.isLoading() {
 		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 		return m, spinnerTick()
 	}
@@ -1715,6 +1685,21 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle modal first (error modals must dismiss even during search)
 	if m.modal != modalNone {
 		return m.handleModalKeys(msg)
+	}
+
+	// Resolving every deletion match is view-independent. Keep the current
+	// scope stable until it finishes, while still allowing cancellation and
+	// the normal quit flow from aggregate and message-list views alike.
+	if m.deletionLoading {
+		switch msg.String() {
+		case keyNameEsc:
+			m.cancelDeletionResolution()
+			return m.showFlash("Deletion match resolution canceled")
+		case "q", keyNameCtrlC:
+			m.cancelDeletionResolution()
+		default:
+			return m, nil
+		}
 	}
 
 	// Handle inline search (takes priority over view)
@@ -1850,12 +1835,50 @@ func (m *Model) updateDetailLineCount() {
 
 // stageForDeletion prepares messages for deletion via the ActionController.
 func (m Model) stageForDeletion() (tea.Model, tea.Cmd) {
+	return m.stageForDeletionContext(false)
+}
+
+func (m Model) stageAllMatchesForDeletion() (tea.Model, tea.Cmd) {
+	return m.stageAllMatchesForDeletionContext(m.deletionContext(true))
+}
+
+func (m Model) stageAllMatchesForDeletionContext(ctx DeletionContext) (tea.Model, tea.Cmd) {
+	if m.deletionLoading {
+		return m, nil
+	}
+
+	m.deletionRequestID++
+	requestID := m.deletionRequestID
+	m.deletionLoading = true
+	resolveContext, cancel := context.WithCancel(context.Background())
+	m.deletionCancel = cancel
+	spinCmd := m.startSpinner()
+	resolveCmd := safeCmdWithPanic(
+		func() tea.Msg {
+			manifest, err := m.actions.StageForDeletionContext(resolveContext, ctx)
+			return deletionPreparedMsg{manifest: manifest, err: err, requestID: requestID}
+		},
+		func(r any) tea.Msg {
+			return deletionPreparedMsg{
+				err: fmt.Errorf("bulk deletion target resolution panic: %v", r), requestID: requestID,
+			}
+		},
+	)
+	return m, tea.Batch(spinCmd, resolveCmd)
+}
+
+func (m Model) stageForDeletionContext(allMatches bool) (tea.Model, tea.Cmd) {
+	manifest, err := m.actions.StageForDeletion(m.deletionContext(allMatches))
+	return m.applyPreparedDeletion(manifest, err)
+}
+
+func (m Model) deletionContext(allMatches bool) DeletionContext {
 	var drillFilter *query.MessageFilter
 	if m.hasDrillFilter() {
 		f := m.drillFilter
 		drillFilter = &f
 	}
-	manifest, err := m.actions.StageForDeletion(DeletionContext{
+	dctx := DeletionContext{
 		AggregateSelection: m.selection.aggregateKeys,
 		MessageSelection:   m.selection.messageIDs,
 		AggregateViewType:  m.selection.aggregateViewType,
@@ -1864,7 +1887,45 @@ func (m Model) stageForDeletion() (tea.Model, tea.Cmd) {
 		TimeGranularity:    m.timeGranularity,
 		Messages:           m.messages,
 		DrillFilter:        drillFilter,
-	})
+		AllMatches:         allMatches,
+		SearchQuery:        m.searchQuery,
+		SearchMode:         m.searchMode,
+		MatchFilter:        m.currentSearchFilter(),
+	}
+	if allMatches {
+		// Space selections are a different command scope. Keep them out of both
+		// resolution and the manifest audit record for uppercase D.
+		dctx.AggregateSelection = nil
+		dctx.MessageSelection = nil
+	}
+	return dctx
+}
+
+func (m Model) handleDeletionPrepared(msg deletionPreparedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.deletionRequestID {
+		return m, nil
+	}
+	m.finishDeletionResolution()
+	return m.applyPreparedDeletion(msg.manifest, msg.err)
+}
+
+func (m *Model) finishDeletionResolution() {
+	if m.deletionCancel != nil {
+		m.deletionCancel()
+		m.deletionCancel = nil
+	}
+	m.deletionLoading = false
+}
+
+func (m *Model) cancelDeletionResolution() {
+	if !m.deletionLoading {
+		return
+	}
+	m.deletionRequestID++
+	m.finishDeletionResolution()
+}
+
+func (m Model) applyPreparedDeletion(manifest *deletion.Manifest, err error) (tea.Model, tea.Cmd) {
 	if err != nil {
 		m.modal = modalDeleteResult
 		m.modalResult = err.Error()

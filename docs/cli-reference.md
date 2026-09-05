@@ -223,6 +223,12 @@ and streams the daemon's stdout/stderr back to the terminal. This keeps local
 and remote full sync behavior aligned and avoids running a separate direct
 SQLite writer beside `msgvault serve`.
 
+`sync-full` does not infer source deletion from messages absent from its result
+set. This is especially important with `--query`, `--limit`, or date filters,
+where the listing is intentionally incomplete. Gmail source-deletion
+reconciliation happens only during the complete mailbox recovery described
+under [`sync`](#sync).
+
 ---
 
 ## sync
@@ -245,6 +251,19 @@ daemon serializes this work with other archive mutations.
 
 Folder filters are applied only to IMAP accounts. See
 [IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
+
+For Gmail, normal incremental sync consumes History API deletion events and
+marks those messages as deleted from the source. If Gmail says the saved history
+cursor has expired, msgvault recovers with an unfiltered, unlimited snapshot of
+the complete mailbox, then consumes changes made while that snapshot was in
+progress. Only a successfully completed snapshot is used to mark missing
+messages as source-deleted; interrupted or partial listings do not reconcile
+absence.
+
+Source deletion updates archive metadata rather than deleting local message or
+raw MIME data. Search excludes source-deleted messages by default; use
+`msgvault search ... --deletion-scope deleted` or `--deletion-scope any` to find
+retained history. See [Source-Deleted Messages](/docs/usage/searching/#source-deleted-messages).
 
 ---
 

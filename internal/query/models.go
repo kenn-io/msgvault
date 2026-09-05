@@ -311,7 +311,8 @@ func (f *MessageFilter) Clone() MessageFilter {
 		maps.Copy(clone.EmptyValueTargets, f.EmptyValueTargets)
 	}
 	if f.SourceIDs != nil {
-		clone.SourceIDs = append([]int64(nil), f.SourceIDs...)
+		clone.SourceIDs = make([]int64, len(f.SourceIDs))
+		copy(clone.SourceIDs, f.SourceIDs)
 	}
 	return clone
 }
@@ -364,11 +365,12 @@ type AccountInfo struct {
 
 // StatsOptions configures a stats query.
 type StatsOptions struct {
-	SourceID              *int64   // nil means all accounts
-	SourceIDs             []int64  // multi-source filter (collections)
-	WithAttachmentsOnly   bool     // only count messages with attachments
-	HideDeletedFromSource bool     // exclude messages where deleted_from_source_at IS NOT NULL
-	SearchQuery           string   // when set, stats reflect only messages matching this search
-	SearchScope           bool     // include all message types when SearchQuery has no explicit message_type
-	GroupBy               ViewType // when set, search filters on this view's key columns instead of subject+sender
+	Filter                *MessageFilter // complete message scope; nil preserves legacy top-level filtering
+	SourceID              *int64         // nil means all accounts
+	SourceIDs             []int64        // multi-source filter (collections)
+	WithAttachmentsOnly   bool           // only count messages with attachments
+	HideDeletedFromSource bool           // exclude messages where deleted_from_source_at IS NOT NULL
+	SearchQuery           string         // when set, stats reflect only messages matching this search
+	SearchScope           bool           // include all message types when SearchQuery has no explicit message_type
+	GroupBy               ViewType       // when set, search filters on this view's key columns instead of subject+sender
 }

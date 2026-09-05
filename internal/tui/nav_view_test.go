@@ -998,8 +998,17 @@ func TestLoadDataSetsGroupByInStatsOpts(t *testing.T) {
 	tracker.install(engine)
 
 	model := New(engine, Options{DataDir: "/tmp/test", Version: "test123"})
+	conversationID := int64(42)
 	model.viewType = query.ViewRecipients
 	model.searchQuery = "bob"
+	model.drillFilter = query.MessageFilter{
+		SenderName:        "Alice",
+		RecipientName:     "Bob",
+		Domain:            "example.com",
+		Label:             "Work",
+		ConversationID:    &conversationID,
+		EmptyValueTargets: map[query.ViewType]bool{query.ViewLists: true},
+	}
 	model.level = levelAggregates
 	model.width = 100
 	model.height = 20
@@ -1012,6 +1021,9 @@ func TestLoadDataSetsGroupByInStatsOpts(t *testing.T) {
 	// The command should have called GetTotalStats with GroupBy=ViewRecipients
 	require.NotZero(tracker.callCount, "expected GetTotalStats to be called during loadData with search active")
 	assert.Equal(query.ViewRecipients, tracker.lastOpts.GroupBy)
+	require.NotNil(tracker.lastOpts.Filter)
+	wantFilter := emailScopedMessageFilter(model.drillFilter)
+	assert.Equal(wantFilter, *tracker.lastOpts.Filter)
 	scopedSearch := search.Parse(tracker.lastOpts.SearchQuery)
 	assert.Equal([]string{"bob"}, scopedSearch.TextTerms)
 	assert.Equal([]string{emailMessageType}, scopedSearch.MessageTypes)

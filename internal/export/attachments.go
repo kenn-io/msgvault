@@ -109,8 +109,10 @@ func AttachmentsWithOpener(zipFilename string, attachments []query.AttachmentInf
 		return stats
 	}
 
-	cwd, _ := os.Getwd()
-	stats.ZipPath = filepath.Join(cwd, zipFilename)
+	stats.ZipPath = zipFilename
+	if absolutePath, err := filepath.Abs(zipFilename); err == nil {
+		stats.ZipPath = absolutePath
+	}
 	return stats
 }
 

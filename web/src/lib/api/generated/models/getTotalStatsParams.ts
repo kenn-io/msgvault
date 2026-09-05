@@ -4,21 +4,9 @@
 
 export type GetTotalStatsParams = {
   /**
-   * Source ID
-   */
-  source_id?: number;
-  /**
    * Source IDs; repeat the parameter for multiple sources
    */
   source_ids?: number[];
-  /**
-   * Only include messages with attachments
-   */
-  attachments_only?: boolean;
-  /**
-   * Exclude deleted messages
-   */
-  hide_deleted?: boolean;
   /**
    * Search query
    */
@@ -31,4 +19,72 @@ export type GetTotalStatsParams = {
    * Aggregate view type for grouping
    */
   group_by?: string;
+  /**
+   * Sender email/address filter
+   */
+  sender?: string;
+  /**
+   * Sender display-name filter
+   */
+  sender_name?: string;
+  /**
+   * Recipient email/address filter
+   */
+  recipient?: string;
+  /**
+   * Recipient display-name filter
+   */
+  recipient_name?: string;
+  /**
+   * Domain filter
+   */
+  domain?: string;
+  /**
+   * Label filter
+   */
+  label?: string;
+  /**
+   * Exact case-insensitive RFC 2919 List-Id filter
+   */
+  list_id?: string;
+  /**
+   * Message type filter
+   */
+  message_type?: string;
+  /**
+   * Named time period
+   */
+  time_period?: string;
+  /**
+   * Time bucket granularity
+   */
+  time_granularity?: string;
+  /**
+   * Conversation ID
+   */
+  conversation_id?: number;
+  /**
+   * Source ID
+   */
+  source_id?: number;
+  /**
+   * Only include messages with attachments
+   */
+  attachments_only?: boolean;
+  /**
+   * Exclude deleted messages
+   */
+  hide_deleted?: boolean;
+  /**
+   * Lower date/time bound (RFC3339 or YYYY-MM-DD)
+   */
+  after?: string;
+  /**
+   * Upper date/time bound (RFC3339 or YYYY-MM-DD)
+   */
+  before?: string;
+  /**
+   * Comma-separated aggregate view names to match empty values
+   */
+  empty_targets?: string;
 };
