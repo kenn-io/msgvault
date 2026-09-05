@@ -1439,6 +1439,40 @@ shipped definitions and complete workflow.
 
 ---
 
+## person provider set
+
+Update the mutable policy fields of an existing named people inference provider
+profile in place. The protocol, endpoint, auth scheme, credential source,
+executable, execution boundary, selection, and enablement stay unchanged.
+
+```bash
+msgvault person provider set <name> --model <model> [flags]
+```
+
+The command reruns the exact synthetic provider check and revokes consent for
+the previous fingerprint. Grant fresh consent with
+`msgvault person provider consent <name> --yes` after reviewing the updated
+policy. A running local daemon requires `msgvault daemon restart` before its
+scheduled sweeps observe the change. Configured remote daemons refuse this
+mutation; run it on the daemon host or pass `--local`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model` | unchanged | Provider model identifier |
+| `--retention-posture` | unchanged | Provider retention assertion |
+| `--training-posture` | unchanged | Provider training assertion |
+| `--source` | unchanged | Allowed source class; repeatable, replaces the existing list |
+| `--source-since` | unchanged | Earliest disclosed source date |
+| `--source-until` | unchanged | Latest disclosed source date |
+| `--allow-sensitive` | unchanged | Allow sensitive text in provider packets |
+| `--reasoning-effort` | unchanged | Explicit reasoning effort |
+| `--reasoning-mode` | unchanged | Explicit reasoning mode |
+| `--request-timeout` | unchanged | Provider request timeout |
+| `--yes` | `false` | Confirm the final provider and privacy values; required |
+| `--json` | `false` | Output structured JSON |
+
+---
+
 ## attribute-definition
 
 Manage portable field metadata. Definitions add no runtime database columns;

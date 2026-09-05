@@ -60,6 +60,21 @@ type personProviderAddOptions struct {
 	jsonOutput          bool
 }
 
+type personProviderSetOptions struct {
+	model            string
+	retentionPosture string
+	trainingPosture  string
+	allowedSources   []string
+	sourceSince      string
+	sourceUntil      string
+	allowSensitive   bool
+	reasoningEffort  string
+	reasoningMode    string
+	requestTimeout   time.Duration
+	confirmed        bool
+	jsonOutput       bool
+}
+
 type personProviderAddOutput struct {
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint"`
@@ -153,6 +168,37 @@ func newPersonProviderAddCommand(deps personProviderCommandDeps) *cobra.Command 
 	flags.BoolVar(&options.confirmed, "yes", false, "Confirm the final provider and privacy values")
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
+}
+
+func newPersonProviderSetCommand(deps personProviderCommandDeps) *cobra.Command {
+	var options personProviderSetOptions
+	command := &cobra.Command{
+		Use:   "set <name>",
+		Short: "Update and check a named people inference provider profile",
+		Args:  exactPersonProviderNameArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			return runPersonProviderSet(command, deps, args[0], options)
+		},
+	}
+	flags := command.Flags()
+	flags.StringVar(&options.model, "model", "", "Provider model identifier")
+	flags.StringVar(&options.retentionPosture, "retention-posture", "", "Provider retention assertion")
+	flags.StringVar(&options.trainingPosture, "training-posture", "", "Provider training assertion")
+	flags.StringSliceVar(&options.allowedSources, "source", nil, "Allowed source class (repeatable)")
+	flags.StringVar(&options.sourceSince, "source-since", "", "Earliest disclosed source date")
+	flags.StringVar(&options.sourceUntil, "source-until", "", "Latest disclosed source date")
+	flags.BoolVar(&options.allowSensitive, "allow-sensitive", false, "Allow sensitive text in provider packets")
+	flags.StringVar(&options.reasoningEffort, "reasoning-effort", "", "Explicit reasoning effort")
+	flags.StringVar(&options.reasoningMode, "reasoning-mode", "", "Explicit reasoning mode")
+	flags.DurationVar(&options.requestTimeout, "request-timeout", time.Minute, "Provider request timeout")
+	flags.BoolVar(&options.confirmed, "yes", false, "Confirm the final provider and privacy values")
+	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
+}
+
+var personProviderSetMutableFlags = []string{
+	"model", "retention-posture", "training-posture", "source", "source-since", "source-until",
+	"allow-sensitive", "reasoning-effort", "reasoning-mode", "request-timeout",
 }
 
 func runPersonProviderAdd(
@@ -306,7 +352,7 @@ func runPersonProviderAdd(
 	if err == nil {
 		checkedDeps := deps
 		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
-		err = executeSavedPersonProviderCheck(command, checkedDeps, name, checkOutput)
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, "", checkOutput)
 	}
 	if err != nil {
 		rollbackErr := rollbackPersonProviderAdd(deps, before, after, credentialStore, name, credentialCleanup)
@@ -535,6 +581,67 @@ func personProviderConfigFromSnapshot(
 		return peoplesweep.Config{}, err
 	}
 	return loaded.People.Sweep, nil
+}
+
+func applyPersonProviderSetOptions(
+	command *cobra.Command,
+	provider *peoplesweep.ProviderConfig,
+	options personProviderSetOptions,
+) {
+	flags := command.Flags()
+	if flags.Changed("model") {
+		provider.Model = options.model
+	}
+	if flags.Changed("retention-posture") {
+		provider.RetentionPosture = options.retentionPosture
+	}
+	if flags.Changed("training-posture") {
+		provider.TrainingPosture = options.trainingPosture
+	}
+	if flags.Changed("source") {
+		provider.AllowedSources = make([]peoplesweep.SourceClass, len(options.allowedSources))
+		for index, source := range options.allowedSources {
+			provider.AllowedSources[index] = peoplesweep.SourceClass(source)
+		}
+	}
+	if flags.Changed("source-since") {
+		provider.SourceSince = options.sourceSince
+	}
+	if flags.Changed("source-until") {
+		provider.SourceUntil = options.sourceUntil
+	}
+	if flags.Changed("allow-sensitive") {
+		provider.AllowSensitive = options.allowSensitive
+	}
+	if flags.Changed("reasoning-effort") {
+		provider.ReasoningEffort = options.reasoningEffort
+	}
+	if flags.Changed("reasoning-mode") {
+		provider.ReasoningMode = options.reasoningMode
+	}
+	if flags.Changed("request-timeout") {
+		provider.RequestTimeout = options.requestTimeout
+	}
+}
+
+func readExistingPersonProviderCredential(
+	setup personProviderSetupDeps,
+	name string,
+	profile peoplesweep.ProviderProfile,
+) (peoplesweep.Credential, error) {
+	var credentials peoplesweep.CredentialStore
+	if profile.Credential == peoplesweep.CredentialStored {
+		var err error
+		credentials, err = setup.resolveCredentialStore()
+		if err != nil {
+			return peoplesweep.Credential{}, err
+		}
+	}
+	credential, err := peoplesweep.NewCredentialResolver(credentials, setup.lookupEnv).Resolve(name, profile)
+	if err != nil {
+		return peoplesweep.Credential{}, fmt.Errorf("resolve existing people provider credential: %w", err)
+	}
+	return credential, nil
 }
 
 func readPersonProviderCredential(
@@ -768,6 +875,13 @@ func personProviderProfileEdit(name string, provider peoplesweep.ProviderConfig)
 	}
 }
 
+func personProviderProfileUpdateEdit(name string, provider peoplesweep.ProviderConfig) config.TableEdit {
+	return config.TableEdit{
+		Path:   []string{"people", "sweep", "providers", name},
+		Values: personProviderTableUpdateValues(provider),
+	}
+}
+
 func personProviderBudgetEdit(prices *peoplesweep.BudgetConfig) config.TableEdit {
 	return config.TableEdit{
 		Path: []string{"people", "sweep", "budgets"},
@@ -818,6 +932,17 @@ func personProviderTableValues(provider peoplesweep.ProviderConfig) map[string]a
 	}
 	if provider.ReasoningMode != "" {
 		values["reasoning_mode"] = provider.ReasoningMode
+	}
+	return values
+}
+
+func personProviderTableUpdateValues(provider peoplesweep.ProviderConfig) map[string]any {
+	values := personProviderTableValues(provider)
+	values["source_until"] = provider.SourceUntil
+	values["reasoning_effort"] = provider.ReasoningEffort
+	values["reasoning_mode"] = provider.ReasoningMode
+	if provider.Protocol == peoplesweep.ProtocolOpenAIChat {
+		values["token_limit_parameter"] = provider.TokenLimitParameter
 	}
 	return values
 }
@@ -877,6 +1002,7 @@ func executeSavedPersonProviderCheck(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	ifFingerprint string,
 	out io.Writer,
 ) error {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
@@ -891,13 +1017,41 @@ func executeSavedPersonProviderCheck(
 		directStore = !owned
 	}
 	if directStore {
+		if err := verifyPersonProviderFingerprint(deps, name, ifFingerprint); err != nil {
+			return err
+		}
 		output, err := checkPersonProvider(command, deps, name)
 		if err != nil {
 			return err
 		}
 		return writePersonProviderCheckOutput(out, output, false)
 	}
-	return proxySavedPersonProviderOperation(command, deps, "check", name, "", out)
+	return proxySavedPersonProviderOperation(command, deps, "check", name, ifFingerprint, out)
+}
+
+func verifyPersonProviderFingerprint(
+	deps personProviderCommandDeps,
+	name, expected string,
+) error {
+	if expected == "" {
+		return nil
+	}
+	if err := validatePersonProviderFingerprint(expected); err != nil {
+		return err
+	}
+	current, err := selectPersonProviderConfig(deps.config(), name)
+	if err != nil {
+		return err
+	}
+	current.Enabled = true
+	profile, err := current.Profile()
+	if err != nil {
+		return err
+	}
+	if profile.Fingerprint != expected {
+		return errors.New("people provider profile changed before checking")
+	}
+	return nil
 }
 
 func proxySavedPersonProviderRevoke(
@@ -909,11 +1063,36 @@ func proxySavedPersonProviderRevoke(
 	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, command.OutOrStdout())
 }
 
+func proxySavedPersonProviderRevokeFingerprint(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name string,
+	fingerprint string,
+) error {
+	return proxySavedPersonProviderOperationWithFlag(
+		command, deps, "revoke", name, "fingerprint", fingerprint, io.Discard,
+	)
+}
+
 func proxySavedPersonProviderOperation(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	operation string,
 	name string,
+	fingerprint string,
+	out io.Writer,
+) error {
+	return proxySavedPersonProviderOperationWithFlag(
+		command, deps, operation, name, personProviderIfFingerprintFlag, fingerprint, out,
+	)
+}
+
+func proxySavedPersonProviderOperationWithFlag(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	operation string,
+	name string,
+	flag string,
 	fingerprint string,
 	out io.Writer,
 ) error {
@@ -928,14 +1107,14 @@ func proxySavedPersonProviderOperation(
 	provider := &cobra.Command{Use: "provider"}
 	leaf := &cobra.Command{Use: operation}
 	if fingerprint != "" {
-		if operation != "revoke" {
+		if flag != "fingerprint" && operation != "revoke" && operation != "check" {
 			return errors.New("people provider fingerprint guard is unavailable for this operation")
 		}
 		if err := validatePersonProviderFingerprint(fingerprint); err != nil {
 			return err
 		}
-		leaf.Flags().String(personProviderIfFingerprintFlag, "", "")
-		if err := leaf.Flags().Set(personProviderIfFingerprintFlag, fingerprint); err != nil {
+		leaf.Flags().String(flag, "", "")
+		if err := leaf.Flags().Set(flag, fingerprint); err != nil {
 			return fmt.Errorf("set person provider fingerprint guard: %w", err)
 		}
 	}
