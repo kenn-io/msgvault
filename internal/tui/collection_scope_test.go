@@ -496,7 +496,7 @@ func TestStaleTextDetailCompletionRejectedAfterAccountChange(t *testing.T) {
 	got = asModel(t, updated)
 
 	assertions.Same(oldDetail, got.messageDetail)
-	assertions.ErrorIs(got.err, oldErr)
+	require.ErrorIs(t, got.err, oldErr)
 	assertions.Equal(uint64(11), got.textRequestID)
 	assertions.Equal(uint64(20), got.presentationGeneration)
 }
@@ -703,7 +703,7 @@ func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
 	assertions.Nil(model.parkedMessageReaders[modeEmail].messageDetail)
 	assertions.Equal(int64(2), model.messageDetail.ID)
 	assertions.Equal(secondID, *model.currentSourceScope().accountID)
-	assertions.Greater(model.textRequestID, uint64(0))
+	assertions.Positive(model.textRequestID)
 	assertions.Equal(uint64(0), model.presentationGeneration)
 }
 
