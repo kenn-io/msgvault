@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -131,25 +132,52 @@ type BudgetConfig struct {
 // that must be consented before use.
 type ProviderConfig struct {
 	Protocol            Protocol         `toml:"protocol"`
-	Endpoint            string           `toml:"endpoint"`
+	Endpoint            string           `toml:"endpoint,omitempty"`
 	Model               string           `toml:"model"`
 	Auth                AuthScheme       `toml:"auth"`
 	Credential          CredentialSource `toml:"credential"`
-	CredentialEnv       string           `toml:"credential_env"`
+	CredentialEnv       string           `toml:"credential_env,omitempty"`
 	OutputMode          OutputMode       `toml:"output_mode"`
-	TokenLimitParameter string           `toml:"token_limit_parameter"`
-	ReasoningEffort     string           `toml:"reasoning_effort"`
-	ReasoningMode       string           `toml:"reasoning_mode"`
+	TokenLimitParameter string           `toml:"token_limit_parameter,omitempty"`
+	ReasoningEffort     string           `toml:"reasoning_effort,omitempty"`
+	ReasoningMode       string           `toml:"reasoning_mode,omitempty"`
 	DriverVersion       string           `toml:"-"`
 	RetentionPosture    string           `toml:"retention_posture"`
 	TrainingPosture     string           `toml:"training_posture"`
 	AllowedSources      []SourceClass    `toml:"allowed_sources"`
 	SourceSince         string           `toml:"source_since"`
-	SourceUntil         string           `toml:"source_until"`
+	SourceUntil         string           `toml:"source_until,omitempty"`
 	AllowSensitive      bool             `toml:"allow_sensitive"`
-	Executable          string           `toml:"executable"`
-	ExecutionBoundary   string           `toml:"execution_boundary"`
+	Executable          string           `toml:"executable,omitempty"`
+	ExecutionBoundary   string           `toml:"execution_boundary,omitempty"`
 	RequestTimeout      time.Duration    `toml:"request_timeout"`
+}
+
+// ProviderTOMLValues derives the editable provider table from ProviderConfig's tags.
+func ProviderTOMLValues(provider ProviderConfig) map[string]any {
+	values := make(map[string]any)
+	value := reflect.ValueOf(provider)
+	typeOfProvider := value.Type()
+	for index := range value.NumField() {
+		field := typeOfProvider.Field(index)
+		tag := field.Tag.Get("toml")
+		name, options, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" || (options == "omitempty" && value.Field(index).IsZero()) {
+			continue
+		}
+		fieldValue := value.Field(index).Interface()
+		if sources, ok := fieldValue.([]SourceClass); ok {
+			sorted := slices.Clone(sources)
+			slices.Sort(sorted)
+			encoded := make([]string, len(sorted))
+			for sourceIndex, source := range sorted {
+				encoded[sourceIndex] = string(source)
+			}
+			fieldValue = encoded
+		}
+		values[name] = fieldValue
+	}
+	return values
 }
 
 // ProviderProfile is one immutable, fingerprinted egress policy. PolicyJSON is
@@ -179,30 +207,6 @@ type ProviderProfile struct {
 	ProgramFingerprint    string           `json:"program_fingerprint"`
 	DisclosedPacketFields []string         `json:"disclosed_packet_fields"`
 	PolicyJSON            json.RawMessage  `json:"-"`
-}
-
-type providerPolicy struct {
-	Protocol              Protocol         `json:"protocol"`
-	Endpoint              string           `json:"endpoint"`
-	Model                 string           `json:"model"`
-	Auth                  AuthScheme       `json:"auth"`
-	Credential            CredentialSource `json:"credential"`
-	CredentialRef         string           `json:"credential_ref"`
-	OutputMode            OutputMode       `json:"output_mode"`
-	TokenLimitParameter   string           `json:"token_limit_parameter"`
-	ReasoningEffort       string           `json:"reasoning_effort"`
-	ReasoningMode         string           `json:"reasoning_mode"`
-	DriverVersion         string           `json:"driver_version"`
-	RetentionPosture      string           `json:"retention_posture"`
-	TrainingPosture       string           `json:"training_posture"`
-	AllowedSources        []SourceClass    `json:"allowed_sources"`
-	SourceSince           string           `json:"source_since"`
-	SourceUntil           string           `json:"source_until"`
-	AllowSensitive        bool             `json:"allow_sensitive"`
-	ExecutionBoundary     string           `json:"execution_boundary"`
-	PacketRendererPolicy  string           `json:"packet_renderer_policy"`
-	ProgramFingerprint    string           `json:"program_fingerprint"`
-	DisclosedPacketFields []string         `json:"disclosed_packet_fields"`
 }
 
 // ApplyDefaults fills operational defaults without enabling inference.
@@ -538,7 +542,7 @@ func (c Config) Profile() (ProviderProfile, error) {
 	}
 	sources := slices.Clone(provider.AllowedSources)
 	slices.Sort(sources)
-	policy := providerPolicy{
+	profile := ProviderProfile{
 		Protocol: provider.Protocol, Model: strings.TrimSpace(provider.Model),
 		Auth: provider.Auth, Credential: provider.Credential, CredentialRef: credentialRef,
 		OutputMode: provider.OutputMode, TokenLimitParameter: provider.TokenLimitParameter,
@@ -551,31 +555,43 @@ func (c Config) Profile() (ProviderProfile, error) {
 		DisclosedPacketFields: slices.Clone(disclosedPacketFieldsV1),
 	}
 	if endpoint != nil {
-		policy.Endpoint = canonicalEndpoint(endpoint)
+		profile.Endpoint = canonicalEndpoint(endpoint)
 	}
-	policyJSON, err := json.Marshal(policy)
+	policyJSON, err := policyJSONForProviderProfile(profile)
 	if err != nil {
 		return ProviderProfile{}, fmt.Errorf("encode people inference provider policy: %w", err)
 	}
 	digest := sha256.Sum256(policyJSON)
-	return ProviderProfile{
-		Fingerprint: hex.EncodeToString(digest[:]), Protocol: policy.Protocol,
-		Endpoint: policy.Endpoint, Model: policy.Model, Auth: policy.Auth,
-		Credential: policy.Credential, CredentialRef: policy.CredentialRef,
-		OutputMode: policy.OutputMode, TokenLimitParameter: policy.TokenLimitParameter,
-		ReasoningEffort: policy.ReasoningEffort, ReasoningMode: policy.ReasoningMode,
-		DriverVersion: policy.DriverVersion, RetentionPosture: policy.RetentionPosture,
-		TrainingPosture: policy.TrainingPosture, AllowedSources: slices.Clone(policy.AllowedSources),
-		SourceSince: policy.SourceSince, SourceUntil: policy.SourceUntil,
-		AllowSensitive: policy.AllowSensitive, ExecutionBoundary: policy.ExecutionBoundary,
-		PacketRendererPolicy: policy.PacketRendererPolicy, ProgramFingerprint: policy.ProgramFingerprint,
-		DisclosedPacketFields: slices.Clone(policy.DisclosedPacketFields), PolicyJSON: policyJSON,
-	}, nil
+	profile.Fingerprint = hex.EncodeToString(digest[:])
+	profile.PolicyJSON = policyJSON
+	return profile, nil
 }
 
 // Validate proves the profile fields, canonical policy bytes, and fingerprint
 // still describe exactly the same policy.
 func (p ProviderProfile) Validate() error {
+	want, err := CanonicalProviderProfile(p)
+	if err != nil {
+		return err
+	}
+	if p.Fingerprint != want.Fingerprint {
+		return errors.New("people inference provider profile fingerprint does not match policy")
+	}
+	if !bytes.Equal(p.PolicyJSON, want.PolicyJSON) {
+		return errors.New("people inference provider profile policy is not canonical")
+	}
+	canonicalJSON, err := policyJSONForProviderProfile(p)
+	if err != nil {
+		return fmt.Errorf("encode people inference provider policy: %w", err)
+	}
+	if !bytes.Equal(canonicalJSON, want.PolicyJSON) {
+		return errors.New("people inference provider profile fields are not canonical")
+	}
+	return nil
+}
+
+// CanonicalProviderProfile rebuilds a profile through the validated config path.
+func CanonicalProviderProfile(p ProviderProfile) (ProviderProfile, error) {
 	name := "profile"
 	provider := ProviderConfig{
 		Protocol: p.Protocol, Endpoint: p.Endpoint, Model: p.Model, Auth: p.Auth,
@@ -600,30 +616,28 @@ func (p ProviderProfile) Validate() error {
 		Providers: map[string]ProviderConfig{name: provider},
 	}
 	config.ApplyDefaults()
-	want, err := config.Profile()
-	if err != nil {
-		return err
+	return config.Profile()
+}
+
+func policyJSONForProviderProfile(profile ProviderProfile) ([]byte, error) {
+	typeOfProfile := reflect.TypeOf(profile)
+	value := reflect.ValueOf(profile)
+	fields := make([]reflect.StructField, 0, value.NumField()-2)
+	values := make([]reflect.Value, 0, value.NumField()-2)
+	for index := range value.NumField() {
+		field := typeOfProfile.Field(index)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "fingerprint" || name == "" || name == "-" {
+			continue
+		}
+		fields = append(fields, field)
+		values = append(values, value.Field(index))
 	}
-	if p.Fingerprint != want.Fingerprint {
-		return errors.New("people inference provider profile fingerprint does not match policy")
+	policy := reflect.New(reflect.StructOf(fields)).Elem()
+	for index, fieldValue := range values {
+		policy.Field(index).Set(fieldValue)
 	}
-	if !bytes.Equal(p.PolicyJSON, want.PolicyJSON) {
-		return errors.New("people inference provider profile policy is not canonical")
-	}
-	if p.Protocol != want.Protocol || p.Endpoint != want.Endpoint || p.Model != want.Model ||
-		p.Auth != want.Auth || p.Credential != want.Credential || p.CredentialRef != want.CredentialRef ||
-		p.OutputMode != want.OutputMode || p.TokenLimitParameter != want.TokenLimitParameter ||
-		p.ReasoningEffort != want.ReasoningEffort || p.ReasoningMode != want.ReasoningMode ||
-		p.DriverVersion != want.DriverVersion || p.RetentionPosture != want.RetentionPosture ||
-		p.TrainingPosture != want.TrainingPosture || !slices.Equal(p.AllowedSources, want.AllowedSources) ||
-		p.SourceSince != want.SourceSince || p.SourceUntil != want.SourceUntil ||
-		p.AllowSensitive != want.AllowSensitive || p.ExecutionBoundary != want.ExecutionBoundary ||
-		p.PacketRendererPolicy != want.PacketRendererPolicy ||
-		p.ProgramFingerprint != want.ProgramFingerprint ||
-		!slices.Equal(p.DisclosedPacketFields, want.DisclosedPacketFields) {
-		return errors.New("people inference provider profile fields are not canonical")
-	}
-	return nil
+	return json.Marshal(policy.Interface())
 }
 
 func setDefaultString(target *string, value string) {

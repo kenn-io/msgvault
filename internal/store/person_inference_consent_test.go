@@ -44,6 +44,25 @@ func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 	return profile
 }
 
+func TestPersonInferenceProfileNormalizesNullAndEmptySourceUntil(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	profile := inferenceTestProfile(t)
+	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE person_inference_profiles SET source_until = '' WHERE fingerprint = ?`),
+		profile.Fingerprint)
+	require.NoError(err)
+
+	profiles, err := st.ListPersonInferenceProfiles(t.Context())
+	require.NoError(err)
+	require.Len(profiles, 1)
+	assert.Equal(profile.Fingerprint, profiles[0].Fingerprint)
+}
+
 func TestPersonInferenceConsentLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -181,6 +200,21 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
+}
+
+func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	profile := inferenceTestProfile(t)
+	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE person_inference_profiles SET model = ? WHERE fingerprint = ?`),
+		"changed-model", profile.Fingerprint)
+	require.NoError(err)
+
+	_, err = st.ListPersonInferenceProfiles(t.Context())
+	require.ErrorContains(err, "does not match its immutable policy")
 }
 
 func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {

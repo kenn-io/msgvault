@@ -2,6 +2,7 @@ package peoplesweep_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -394,6 +395,53 @@ func TestProviderProfileHasStableCanonicalPolicy(t *testing.T) {
 	}`, "PROGRAM_FINGERPRINT", peoplesweep.ProgramFingerprint()), string(profile.PolicyJSON))
 	assert.Contains(string(profile.PolicyJSON), peoplesweep.ProgramFingerprint())
 	assert.NoError(profile.Validate())
+}
+
+func TestProviderProfileProjectionRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Setenv("TEST_KEY", "credential-value-must-not-persist")
+	profile, err := validConfig().Profile()
+	require.NoError(err)
+
+	var decoded peoplesweep.ProviderProfile
+	require.NoError(json.Unmarshal(profile.PolicyJSON, &decoded))
+	decoded.Fingerprint = profile.Fingerprint
+	decoded.PolicyJSON = append(json.RawMessage(nil), profile.PolicyJSON...)
+	assert.Equal(profile, decoded)
+	assert.NotContains(string(profile.PolicyJSON), "credential-value-must-not-persist")
+	assert.NotContains(string(profile.PolicyJSON), "request_timeout")
+	assert.NoError(profile.Validate())
+}
+
+func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {
+	assert := assert.New(t)
+	provider := validConfig().Providers["default"]
+	provider.AllowedSources = []peoplesweep.SourceClass{
+		peoplesweep.SourceMeetingText,
+		peoplesweep.SourceConversationText,
+	}
+	values := peoplesweep.ProviderTOMLValues(provider)
+
+	assert.Equal([]string{"conversation_text", "meeting_text"}, values["allowed_sources"])
+	assert.Equal(provider.RequestTimeout, values["request_timeout"])
+	assert.Equal(provider.Endpoint, values["endpoint"])
+
+	provider.Endpoint = ""
+	provider.CredentialEnv = ""
+	provider.TokenLimitParameter = ""
+	provider.ReasoningEffort = ""
+	provider.ReasoningMode = ""
+	provider.Executable = ""
+	provider.ExecutionBoundary = ""
+	provider.SourceUntil = ""
+	values = peoplesweep.ProviderTOMLValues(provider)
+	for _, key := range []string{
+		"endpoint", "credential_env", "token_limit_parameter", "reasoning_effort",
+		"reasoning_mode", "executable", "execution_boundary", "source_until",
+	} {
+		assert.NotContains(values, key)
+	}
 }
 
 func TestProviderProfileFingerprintCoversConsentPolicy(t *testing.T) {

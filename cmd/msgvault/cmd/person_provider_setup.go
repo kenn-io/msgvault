@@ -893,47 +893,7 @@ func personProviderBudgetEdit(prices *peoplesweep.BudgetConfig) config.TableEdit
 }
 
 func personProviderTableValues(provider peoplesweep.ProviderConfig) map[string]any {
-	sources := make([]string, len(provider.AllowedSources))
-	for index, source := range provider.AllowedSources {
-		sources[index] = string(source)
-	}
-	values := map[string]any{
-		"protocol": provider.Protocol, "model": provider.Model,
-		"auth": provider.Auth, "credential": provider.Credential,
-		"output_mode":       provider.OutputMode,
-		"retention_posture": provider.RetentionPosture, "training_posture": provider.TrainingPosture,
-		"allowed_sources": sources, "source_since": provider.SourceSince,
-		"allow_sensitive": provider.AllowSensitive, "request_timeout": provider.RequestTimeout,
-	}
-	// Protocol-optional fields stay absent when unconfigured: endpoint and the
-	// Codex isolation fields keep codex_app_server profiles in their
-	// documented endpoint-free shape, and token_limit_parameter belongs to
-	// openai_chat profiles only.
-	if provider.Endpoint != "" {
-		values["endpoint"] = provider.Endpoint
-	}
-	if provider.TokenLimitParameter != "" {
-		values["token_limit_parameter"] = provider.TokenLimitParameter
-	}
-	if provider.Executable != "" {
-		values["executable"] = provider.Executable
-	}
-	if provider.ExecutionBoundary != "" {
-		values["execution_boundary"] = provider.ExecutionBoundary
-	}
-	if provider.CredentialEnv != "" {
-		values["credential_env"] = provider.CredentialEnv
-	}
-	if provider.SourceUntil != "" {
-		values["source_until"] = provider.SourceUntil
-	}
-	if provider.ReasoningEffort != "" {
-		values["reasoning_effort"] = provider.ReasoningEffort
-	}
-	if provider.ReasoningMode != "" {
-		values["reasoning_mode"] = provider.ReasoningMode
-	}
-	return values
+	return peoplesweep.ProviderTOMLValues(provider)
 }
 
 func personProviderTableUpdateValues(provider peoplesweep.ProviderConfig) map[string]any {
