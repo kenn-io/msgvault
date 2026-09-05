@@ -316,6 +316,7 @@ func scanReactionChunk(rows *sql.Rows, result map[int64][]waReaction) error {
 
 // fetchGroupParticipants returns all participants of a group chat.
 // The group_participants table is optional in newer WhatsApp Android schemas.
+// When absent, it returns an empty result without an error.
 // In the WhatsApp schema, group_participants.gjid and .jid are TEXT fields
 // containing raw JID strings (e.g., "447700900000@s.whatsapp.net"),
 // not integer row IDs.

@@ -52,7 +52,8 @@ func createGroupParticipantsImportFixture(t *testing.T, setup func(*sql.DB)) str
 			(1, '120255501234567-987654321', 'g.us', '120255501234567-987654321@g.us'),
 			(2, '120255501234567-123456789', 'g.us', '120255501234567-123456789@g.us'),
 			(3, '12025550124', 's.whatsapp.net', '12025550124@s.whatsapp.net'),
-			(4, '12025550125', 's.whatsapp.net', '12025550125@s.whatsapp.net');
+			(4, '12025550125', 's.whatsapp.net', '12025550125@s.whatsapp.net'),
+			(5, '12025550123', 's.whatsapp.net', '12025550123@s.whatsapp.net');
 		INSERT INTO chat VALUES
 			(10, 1, 0, 'Example Group One', 2000),
 			(20, 2, 0, 'Example Group Two', 1000);
