@@ -191,7 +191,7 @@ func (p *personInferenceProfileProjection) insertValues() []any {
 	for valueIndex, fieldIndex := range indexes {
 		field := value.Field(fieldIndex)
 		if field.Type() == reflect.TypeFor[sql.NullString]() {
-			sourceUntil, ok := field.Interface().(sql.NullString)
+			sourceUntil, ok := reflect.TypeAssert[sql.NullString](field)
 			if !ok {
 				values[valueIndex] = field.Interface()
 				continue
