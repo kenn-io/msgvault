@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"sort"
@@ -387,6 +388,18 @@ func StartIMAPMemServer(t *testing.T, messagesPerMailbox map[string]int) (string
 	return startIMAPMemServer(t, messagesPerMailbox, nil, "", 0, "", nil)
 }
 
+// ServeIMAPMemServer serves an in-memory IMAP server on the caller-supplied
+// listener and returns the user handle for later mutation.
+func ServeIMAPMemServer(
+	t *testing.T,
+	ln net.Listener,
+	messagesPerMailbox map[string]int,
+	startTLSConfig *tls.Config,
+) *imapmemserver.User {
+	t.Helper()
+	return serveIMAPMemServer(t, ln, messagesPerMailbox, nil, "", 0, "", nil, startTLSConfig)
+}
+
 // StartIMAPMemServerWithSpecialUse runs an in-memory IMAP server whose LIST
 // responses advertise the supplied special-use attributes.
 func StartIMAPMemServerWithSpecialUse(
@@ -447,6 +460,26 @@ func startIMAPMemServer(
 	missingUID *missingUIDConfig,
 ) (string, *imapmemserver.User) {
 	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	user := serveIMAPMemServer(
+		t, ln, messagesPerMailbox, specialUse, selectErrorMailbox,
+		selectErrorCount, statusErrorMailbox, missingUID, nil)
+	return ln.Addr().String(), user
+}
+
+func serveIMAPMemServer(
+	t *testing.T,
+	ln net.Listener,
+	messagesPerMailbox map[string]int,
+	specialUse map[string][]imap.MailboxAttr,
+	selectErrorMailbox string,
+	selectErrorCount int,
+	statusErrorMailbox string,
+	missingUID *missingUIDConfig,
+	startTLSConfig *tls.Config,
+) *imapmemserver.User {
+	t.Helper()
 	user := imapmemserver.NewUser(IMAPTestUsername, IMAPTestPassword)
 	mailboxes := make([]string, 0, len(messagesPerMailbox))
 	for mailbox, count := range messagesPerMailbox {
@@ -490,14 +523,13 @@ func startIMAPMemServer(
 			return session, nil, nil
 		},
 		InsecureAuth: true,
+		TLSConfig:    startTLSConfig,
 	})
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
 	go func() { _ = server.Serve(ln) }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	return ln.Addr().String(), user
+	return user
 }
 
 // ExpungeIMAPMessage permanently removes one UID from a mailbox on a server
