@@ -73,6 +73,21 @@ All notable changes to msgvault, grouped by release.
   criteria, with optional exact-source narrowing and `--dry-run` support for
   reviewing the match count first.
 
+- `msgvault setup providers` turns on the retrieval and people lanes the
+  available API keys support, with recommended defaults: a Voyage key
+  configures contextual text search (`voyage-context-4`), semantic people
+  search, and the visual lane once its probe manifest exists; a Mistral key
+  configures document extraction and, with a text lane, document vectors; an
+  OpenAI key onboards the people sweep on `gpt-5.6-luna` (and the
+  OpenAI-compatible text lane when no Voyage key is present); with no hosted
+  key a reachable local Ollama server is used. Setup asks once per hosted
+  provider, never turns a hosted lane on from a key alone, leaves configured
+  lanes untouched, and prints the next commands. `msgvault setup status`
+  reports every lane with provider, model, consent state, schedule, and the
+  reason it is off. The `api_format`, `[vector.people]`,
+  `[vector.multimodal]`, and `[activity]` sections are now documented, and a
+  Recommended Configuration page lists the file setup writes.
+
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with
   `[deletion] remote_enabled = true`; `MSGVAULT_ENABLE_REMOTE_DELETE=1`

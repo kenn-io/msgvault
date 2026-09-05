@@ -1905,6 +1905,51 @@ If configured for a remote server, this command generates `<MSGVAULT_HOME>/nas-b
 
 The wizard also stores remote URL/API key in `remote` config block so `export-token` can use it without extra flags.
 
+### setup providers
+
+Turn on the retrieval and people lanes the available API keys support, with
+recommended defaults. Reads `VOYAGE_API_KEY`, `MISTRAL_API_KEY`, and
+`OPENAI_API_KEY` (and probes a local Ollama server at `[chat].server` when no
+hosted key is present), prints a plan, asks once per hosted provider, writes
+the recommended sections to `config.toml`, onboards the people-sweep
+provider through the same check and consent gates as `person provider`, and
+prints the lane report with the next commands. Lanes that are already
+configured are left alone. See
+[Recommended Configuration](/usage/recommended-configuration/).
+
+```bash
+msgvault setup providers --dry-run
+msgvault setup providers
+msgvault setup providers --yes --document-retention zdr --document-training opted-out
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--yes` | `false` | Accept every provider disclosure without prompting (required when stdin is not a terminal) |
+| `--dry-run` | `false` | Print the plan, the disclosures, and the current lane report without writing |
+| `--document-retention` | `standard` | Mistral retention posture to record: `standard` or `zdr` |
+| `--document-training` | `default-opt-out` | Mistral training posture to record: `default-opt-out` or `opted-out` |
+| `--retention-posture` | `provider-declared` | Retention assertion recorded for embedding and inference providers |
+| `--training-posture` | `provider-declared` | Training assertion recorded for embedding and inference providers |
+| `--json` | `false` | Output the plan, applied flag, follow-ups, and report as JSON |
+
+The command edits the config file on this machine and refuses to run against
+a configured remote daemon; run it on the daemon host or pass `--local`.
+
+### setup status
+
+Report every lane (text search, semantic people search, visual attachments,
+documents, document vectors, people sweep, activity projection, media
+policy): state, provider, model, recorded consent, schedule, the reason a
+lane is off, and the command that turns it on. Reads `config.toml`, the
+environment, and the local archive's consent records; never contacts a
+provider.
+
+```bash
+msgvault setup status
+msgvault setup status --json
+```
+
 ---
 
 ## show-message
