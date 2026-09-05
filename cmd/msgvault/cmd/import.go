@@ -120,7 +120,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
-	if !noDefaultIdentityImportWhatsApp && summary.Errors == 0 && summary.SourceID != 0 {
+	if !noDefaultIdentityImportWhatsApp && summary.SourceID != 0 {
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164")
 	}
 
