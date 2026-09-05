@@ -76,6 +76,11 @@ const (
 	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
+	// The partial unique index on account_identities(source_id, address_key)
+	// is DDL that runs once per archive; the key backfill itself is not
+	// ledgered because previous-release writers can reintroduce unkeyed rows
+	// at any time (see ensureAccountIdentityAddressKeys).
+	migrationAccountIdentityAddressKeyIndex = "account_identities_address_key_index_v1"
 )
 
 func (s *Store) backfillSyncRunResumeMetadata(

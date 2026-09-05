@@ -150,46 +150,23 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 			for _, addr := range normalized {
 				// Comparison rule (email-shaped → case-insensitive;
 				// everything else → case-sensitive) is shared with
-				// AddAccountIdentity via identifierMatch — see
-				// identifier_match.go.
-				match := newIdentifierMatch(addr)
-				var existing string
-				qerr := tx.QueryRowContext(ctx,
-					`SELECT source_signal FROM account_identities
-					 WHERE source_id = ? AND `+match.WhereClause("address"),
-					src.ID, match.BindValue(),
-				).Scan(&existing)
-				switch {
-				case errors.Is(qerr, sql.ErrNoRows):
-					_, txErr := tx.ExecContext(ctx,
-						`INSERT INTO account_identities (source_id, address, source_signal)
-						 VALUES (?, ?, ?)`,
-						src.ID, addr, "config_migration",
-					)
-					if txErr != nil {
-						return fmt.Errorf("insert identity (source=%d, addr=%s): %w", src.ID, addr, txErr)
-					}
-					// A brand new (source_id, address) pair changes
-					// owner_participants and the is_from_me derivation for
-					// this source, exactly like AddAccountIdentity's insert
-					// branch — see the matching comment there.
+				// AddAccountIdentity via the row-level merge helper,
+				// which keys on the persisted address_key — see
+				// mergeAccountIdentitySignalsTxWith.
+				inserted, merr := s.mergeAccountIdentitySignalsTx(
+					ctx, tx, src.ID, addr,
+					[]string{"config_migration"}, newIdentifierMatch(addr),
+				)
+				if merr != nil {
+					return fmt.Errorf("merge identity (source=%d, addr=%s): %w", src.ID, addr, merr)
+				}
+				if inserted {
+					// A brand new identity row changes owner_participants
+					// and the is_from_me derivation for this source,
+					// exactly like AddAccountIdentity's insert branch —
+					// see the matching comment there.
 					insertedAny = true
 					insertedForSource = true
-				case qerr != nil:
-					return fmt.Errorf("read existing identity (source=%d, addr=%s): %w", src.ID, addr, qerr)
-				default:
-					merged := mergeSignalSet(existing, "config_migration")
-					if merged != existing {
-						_, uerr := tx.ExecContext(ctx,
-							`UPDATE account_identities
-							 SET source_signal = ?
-							 WHERE source_id = ? AND `+match.WhereClause("address"),
-							merged, src.ID, match.BindValue(),
-						)
-						if uerr != nil {
-							return fmt.Errorf("update identity (source=%d, addr=%s): %w", src.ID, addr, uerr)
-						}
-					}
 				}
 			}
 			if insertedForSource {

@@ -1630,6 +1630,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Runs after the legacy-column loop (upgraded archives need the
+	// address_key column before it is read, backfilled, and uniquely
+	// indexed) and after the attribution-provenance migration above: a
+	// duplicate collapse refreshes message attribution, and that refresh
+	// folds identity matches into is_from_me. On a pre-provenance archive
+	// the backfill would then read those identity-derived values as
+	// source-native, permanently mislabeling ownership provenance.
+	if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
+		return fmt.Errorf("ensure account identity address keys: %w", err)
+	}
+
 	// Identity discovery scans one source in message-ID order. On SQLite the
 	// plain idx_messages_source index already orders ties by rowid, so no
 	// separate composite index is needed there (see schema.sql). PostgreSQL
