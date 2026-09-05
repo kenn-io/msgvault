@@ -14,11 +14,13 @@
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
     ExploreSelection as GeneratedExploreSelection,
+    StageDeletionResponse as GeneratedStageDeletionResponse,
   } from '../../api/generated/models';
   type ExploreSelection = GeneratedExploreSelection;
   type Preflight = GeneratedExplorePreflightResponse;
   type ManifestSummary = GeneratedDeletionManifestSummary;
   type ManifestDetail = GeneratedDeletionManifestDetail;
+  type StageDeletionResponse = GeneratedStageDeletionResponse;
   let {
     client,
     selection = undefined,
@@ -37,7 +39,7 @@
   let loading = $state(true);
   let pending = $state(false);
   let error = $state('');
-  let preview = $state('');
+  let preview = $state<StageDeletionResponse>();
   let confirmStage = $state<'explicit' | 'all_matching'>();
   let confirmCancel = $state<ManifestSummary>();
   let listController: AbortController | undefined;
@@ -76,7 +78,7 @@
   function reviewedIsCurrent(): boolean {
     if (!reviewed || reviewedFingerprint !== fingerprint(selection)) {
       reviewed = undefined;
-      preview = '';
+      preview = undefined;
       error = 'The selection changed. Review it again before continuing.';
       return false;
     }
@@ -108,7 +110,7 @@
     if (!selection || pending) return;
     pending = true;
     error = '';
-    preview = '';
+    preview = undefined;
     const candidate = selection;
     const candidateFingerprint = fingerprint(candidate);
     try {
@@ -143,8 +145,9 @@
         client,
       );
       if (!data) throw new Error(messageFor(responseError, 'Unable to run the deletion preview.'));
-      preview = `Dry run: ${data.message_count.toLocaleString()} ${data.message_count === 1 ? 'item' : 'items'} in ${data.account ?? 'the reviewed source'}`;
+      preview = data;
     } catch (cause) {
+      preview = undefined;
       error = cause instanceof Error ? cause.message : 'Unable to run the deletion preview.';
     } finally {
       pending = false;
@@ -173,10 +176,11 @@
       if (!data || response.status !== 201)
         throw new Error(messageFor(responseError, 'Unable to stage this deletion.'));
       reviewed = undefined;
-      preview = '';
+      preview = data;
       confirmStage = undefined;
       await loadManifests();
     } catch (cause) {
+      preview = undefined;
       error = cause instanceof Error ? cause.message : 'Unable to stage this deletion.';
     } finally {
       pending = false;
@@ -214,13 +218,31 @@
       pending = false;
     }
   }
-  function selectionDescription(): string {
-    if (!selection || !reviewed) return '';
-    if (selection.mode === 'all_matching') {
-      const excluded = selection.exclusions?.length ?? 0;
-      return `${reviewed.count.toLocaleString()} matching items minus ${excluded.toLocaleString()} ${excluded === 1 ? 'exclusion' : 'exclusions'}`;
+  function stageCounts(value: StageDeletionResponse): { matched: number; staged: number; skipped: number } {
+    const staged = value.message_count;
+    const skipped = value.skipped_count ?? Math.max((value.matched_count ?? staged) - staged, 0);
+    const matched = value.matched_count ?? staged + skipped;
+    return { matched, staged, skipped };
+  }
+  function resultSummary(value: StageDeletionResponse): string {
+    const { matched, staged, skipped } = stageCounts(value);
+    const prefix = value.dry_run ? 'Dry run' : 'Staged';
+    const account = value.account ? ` in ${value.account}` : '';
+    return `${prefix}: Matched: ${matched.toLocaleString()} · Staged: ${staged.toLocaleString()} · Skipped: ${skipped.toLocaleString()}${account}`;
+  }
+  function partialWarning(value: StageDeletionResponse): string {
+    const { staged, skipped } = stageCounts(value);
+    if (value.dry_run) {
+      return `Partial staging: only the deletable Gmail subset (${staged.toLocaleString()}) will be staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match may be' : 'matches may be'} skipped.`;
     }
-    return `${reviewed.count.toLocaleString()} selected ${reviewed.count === 1 ? 'item' : 'items'}`;
+    return `Partial staging: only the deletable Gmail subset (${staged.toLocaleString()}) was staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match was' : 'matches were'} skipped.`;
+  }
+  function confirmationDescription(): string {
+    if (preview?.dry_run) {
+      const partial = stageCounts(preview).skipped > 0;
+      return `${resultSummary(preview)} ${partial ? 'Only the deletable Gmail subset will be staged.' : 'These reviewed matches will be staged.'} This creates a staged manifest; it does not execute deletion.`;
+    }
+    return 'The server stages only deletable Gmail matches and may skip unsupported matches. This creates a staged manifest; it does not execute deletion.';
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
@@ -282,7 +304,10 @@
           />
         </div>
       {/if}
-      {#if preview}<p class="preview" role="status">{preview}</p>{/if}
+      {#if preview}
+        <p class="preview" role="status">{resultSummary(preview)}</p>
+        {#if stageCounts(preview).skipped > 0}<p class="notice" role="alert">{partialWarning(preview)}</p>{/if}
+      {/if}
     </section>
   </Card>
 
@@ -338,7 +363,7 @@
       confirmStage = undefined;
     }}
   >
-    <p>{selectionDescription()}. This creates a staged manifest; it does not execute deletion.</p>
+    <p>{confirmationDescription()}</p>
     {#snippet footer()}
       <Button
         surface="soft"
