@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -396,6 +397,260 @@ func TestTextDetailAccountSelectionLeavesNoIndefiniteLoading(t *testing.T) {
 	assert.False(t, got.loading)
 }
 
+func TestTextDetailAccountSelectionReloadsMissingDetail(t *testing.T) {
+	assertions := assert.New(t)
+	firstID := int64(1)
+	secondID := int64(2)
+	engine := newMockEngine(MockConfig{})
+	engine.GetMessageFunc = func(_ context.Context, id int64) (*query.MessageDetail, error) {
+		return &query.MessageDetail{ID: id, ConversationID: 7}, nil
+	}
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedConvID = 7
+	model.textState.selectedMessageID = 42
+	model.messageDetail = nil
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+
+	assertions.NotNil(cmd)
+	assertions.True(got.loading)
+	got = deliverTextCommand(t, got, cmd)
+	assertions.Equal(int64(42), got.messageDetail.ID)
+	assertions.False(got.loading)
+}
+
+func TestTextDetailAccountSelectionPreservesLoadedDetail(t *testing.T) {
+	assertions := assert.New(t)
+	firstID := int64(1)
+	secondID := int64(2)
+	detail := &query.MessageDetail{ID: 42, ConversationID: 7}
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedConvID = 7
+	model.textState.selectedMessageID = detail.ID
+	model.messageDetail = detail
+	model.textRequestID = 10
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+
+	assertions.Nil(cmd)
+	assertions.False(got.loading)
+	assertions.Same(detail, got.messageDetail)
+	assertions.Equal(uint64(11), got.textRequestID)
+}
+
+func TestStaleTextDetailCompletionRejectedAfterAccountChange(t *testing.T) {
+	assertions := assert.New(t)
+	firstID := int64(1)
+	secondID := int64(2)
+	oldDetail := &query.MessageDetail{ID: 42, ConversationID: 7}
+	oldErr := errors.New("old detail error")
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedConvID = 7
+	model.textState.selectedMessageID = oldDetail.ID
+	model.messageDetail = oldDetail
+	model.err = oldErr
+	model.textRequestID = 10
+	model.presentationGeneration = 20
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, _ := sendKey(t, model, keyEnter())
+	updated, _ := got.handleTextMessageLoaded(textMessageLoadedMsg{
+		detail:                 &query.MessageDetail{ID: 42, ConversationID: 7},
+		requestID:              10,
+		conversationID:         7,
+		messageID:              42,
+		presentationGeneration: 20,
+	})
+	got = asModel(t, updated)
+
+	assertions.Same(oldDetail, got.messageDetail)
+	assertions.ErrorIs(got.err, oldErr)
+	assertions.Equal(uint64(11), got.textRequestID)
+	assertions.Equal(uint64(20), got.presentationGeneration)
+}
+
+func TestTextConversationAccountSelectionStillReloads(t *testing.T) {
+	firstID := int64(1)
+	secondID := int64(2)
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelConversations
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+
+	assert.NotNil(t, cmd)
+	assert.True(t, got.loading)
+	assert.Equal(t, secondID, *got.textState.filter.SourceID)
+}
+
+func TestTextGlobalSearchTimelinePreservedOnAccountSelection(t *testing.T) {
+	assertions := assert.New(t)
+	firstID := int64(1)
+	secondID := int64(2)
+	messages := []query.MessageSummary{{ID: 42}}
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelTimeline
+	model.textState.globalSearchTimeline = true
+	model.textState.messages = messages
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+
+	assertions.Nil(cmd)
+	assertions.False(got.loading)
+	assertions.True(got.textState.globalSearchTimeline)
+	assertions.Equal(messages, got.textState.messages)
+}
+
+func TestTextModeSwitchActivationUnchangedByExtraction(t *testing.T) {
+	tests := []struct {
+		name           string
+		level          textViewLevel
+		selectedID     int64
+		detail         *query.MessageDetail
+		globalTimeline bool
+		wantCmd        bool
+		wantLoading    bool
+	}{
+		{name: "loaded detail", level: textLevelDetail, selectedID: 42, detail: &query.MessageDetail{ID: 42}, wantCmd: false, wantLoading: false},
+		{name: "missing detail", level: textLevelDetail, selectedID: 42, wantCmd: true, wantLoading: true},
+		{name: "global timeline", level: textLevelTimeline, globalTimeline: true, wantCmd: false, wantLoading: false},
+		{name: "aggregate", level: textLevelAggregate, wantCmd: true, wantLoading: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			engine := newMockEngine(MockConfig{})
+			engine.GetMessageFunc = func(_ context.Context, id int64) (*query.MessageDetail, error) {
+				return &query.MessageDetail{ID: id}, nil
+			}
+			model := New(engine, Options{DataDir: t.TempDir(), Version: "test", TextEngine: meetingModeTextEngine{}})
+			model.mode = modeEmail
+			model.textState.level = tt.level
+			model.textState.selectedConvID = 7
+			model.textState.selectedMessageID = tt.selectedID
+			model.textState.globalSearchTimeline = tt.globalTimeline
+			model.parkedMessageReaders[modeTexts].messageDetail = tt.detail
+
+			got, cmd, handled := model.handleGlobalKeys(key('m'))
+
+			assertions.True(handled)
+			assertions.Equal(modeTexts, got.mode)
+			assertions.Equal(tt.wantCmd, cmd != nil)
+			assertions.Equal(tt.wantLoading, got.loading)
+		})
+	}
+}
+
+func TestTextDetailReloadErrorSettlesLoading(t *testing.T) {
+	firstID := int64(1)
+	secondID := int64(2)
+	engine := newMockEngine(MockConfig{})
+	engine.GetMessageFunc = func(_ context.Context, _ int64) (*query.MessageDetail, error) {
+		return nil, errors.New("detail unavailable")
+	}
+	model := New(engine, Options{DataDir: t.TempDir(), Version: "test"})
+	model.accounts = []query.AccountInfo{
+		{ID: firstID, Identifier: "first@example.invalid"},
+		{ID: secondID, Identifier: "second@example.invalid"},
+	}
+	model.mode = modeTexts
+	model.textState.level = textLevelDetail
+	model.textState.selectedConvID = 7
+	model.textState.selectedMessageID = 42
+	model.accountFilter = &firstID
+	model.sourceScope = accountSourceScope(&firstID)
+	model.sourceScopeExplicit = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	got, cmd := sendKey(t, model, keyEnter())
+	got = deliverTextCommand(t, got, cmd)
+
+	assert.False(t, got.loading)
+	assert.Equal(t, modalError, got.modal)
+	assert.NotEmpty(t, got.modalResult)
+}
+
+func TestTextActivationSpinnerIsIdempotent(t *testing.T) {
+	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
+	model.mode = modeTexts
+	model.textState.level = textLevelConversations
+	model.spinnerActive = true
+
+	cmd := model.activateTextPresentation()
+
+	assert.NotNil(t, cmd)
+	assert.True(t, model.spinnerActive)
+}
+
+func deliverTextCommand(t *testing.T, model Model, cmd tea.Cmd) Model {
+	t.Helper()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			childMsg := child()
+			if _, ok := childMsg.(textMessageLoadedMsg); ok {
+				model = sendMsg(t, model, childMsg)
+			}
+		}
+		return model
+	}
+	return sendMsg(t, model, msg)
+}
+
 func TestStageForDeletionUsesEmailScopeAuthority(t *testing.T) {
 	accountID := int64(7)
 	var captured query.MessageFilter
@@ -424,6 +679,7 @@ func TestStageForDeletionUsesEmailScopeAuthority(t *testing.T) {
 }
 
 func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
+	assertions := assert.New(t)
 	firstID := int64(1)
 	secondID := int64(2)
 	model := New(newMockEngine(MockConfig{}), Options{DataDir: t.TempDir(), Version: "test"})
@@ -444,9 +700,11 @@ func TestTextAccountSelectionInvalidatesParkedEmailReader(t *testing.T) {
 
 	model, _ = sendKey(t, model, keyEnter())
 
-	assert.Nil(t, model.parkedMessageReaders[modeEmail].messageDetail)
-	assert.Equal(t, int64(2), model.messageDetail.ID)
-	assert.Equal(t, secondID, *model.currentSourceScope().accountID)
+	assertions.Nil(model.parkedMessageReaders[modeEmail].messageDetail)
+	assertions.Equal(int64(2), model.messageDetail.ID)
+	assertions.Equal(secondID, *model.currentSourceScope().accountID)
+	assertions.Greater(model.textRequestID, uint64(0))
+	assertions.Equal(uint64(0), model.presentationGeneration)
 }
 
 func TestCollectionRowsStayEmailOnly(t *testing.T) {

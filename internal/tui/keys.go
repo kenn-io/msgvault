@@ -252,22 +252,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.searchLoadingMore = false
 		switch m.mode {
 		case modeTexts:
-			m.textState.filter.SourceID = m.accountFilter
-			var loadCmd tea.Cmd
-			if m.textState.level == textLevelDetail {
-				if m.messageDetail == nil && m.textState.selectedMessageID > 0 {
-					loadCmd = m.loadTextMessage(m.textState.selectedMessageID)
-				}
-			} else if m.textState.level != textLevelTimeline || !m.textState.globalSearchTimeline {
-				loadCmd = m.loadTextData()
-			}
-			if loadCmd == nil {
-				m.loading = false
-				return m, nil, true
-			}
-			m.loading = true
-			spinCmd := m.startSpinner()
-			return m, tea.Batch(spinCmd, loadCmd), true
+			return m, m.activateTextPresentation(), true
 		case modeMeetings:
 			m.meetingState.listLoading = false
 			m.meetingState.searchLoading = false
@@ -366,6 +351,17 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 	}
 	return m, nil, false
+}
+
+func (m *Model) activateTextPresentation() tea.Cmd {
+	m.textState.filter.SourceID = m.accountFilter
+	loadCmd := m.textPresentationLoadCmd()
+	if loadCmd == nil {
+		m.loading = false
+		return nil
+	}
+	m.loading = true
+	return tea.Batch(m.startSpinner(), loadCmd)
 }
 
 // handleAggregateKeys handles keys in the aggregate and sub-aggregate views.
@@ -1329,9 +1325,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			return m, m.loadMeetingMessages()
 		}
 		if m.mode == modeTexts {
-			m.textState.filter.SourceID = m.accountFilter
-			cmd := m.loadTextData()
-			return m, cmd
+			return m, m.activateTextPresentation()
 		}
 		m.aggregateRequestID++
 		m.statsRequestID++
@@ -1670,7 +1664,11 @@ func (m *Model) invalidateSourceScope() {
 	m.loadRequestID++
 	m.detailRequestID++
 	m.searchRequestID++
-	m.presentationGeneration++
+	if m.mode == modeTexts {
+		m.nextTextRequestID()
+	} else {
+		m.presentationGeneration++
+	}
 	m.invalidatePreSearchSnapshot()
 	m.searchFilter = query.MessageFilter{}
 	m.level = levelAggregates
