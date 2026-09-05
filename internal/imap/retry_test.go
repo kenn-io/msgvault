@@ -312,6 +312,8 @@ func TestConnectRetry_PartialGreetingRetries(t *testing.T) {
 		{name: "STARTTLS", mode: "starttls", startTLSConfig: newIMAPServerTLSConfig(t)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			addr, accepted := startRetryMemServer(t, tt.mode, func(conn net.Conn, count int64) net.Conn {
 				if count == 1 {
 					return &retryShortWriteConn{Conn: conn, limit: 6}
@@ -326,17 +328,19 @@ func TestConnectRetry_PartialGreetingRetries(t *testing.T) {
 			}
 
 			response, err := client.ListMessages(t.Context(), "", "")
-			require.NoError(t, err)
-			require.Len(t, response.Messages, 1)
-			assert.Equal(t, connectRetryDelays[:1], delays)
-			assert.Equal(t, int64(2), accepted.accepted.Load())
+			require.NoError(err)
+			require.Len(response.Messages, 1)
+			assert.Equal(connectRetryDelays[:1], delays)
+			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
 }
 
 func TestConnectRetry_ByeGreetingIsTerminal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = listener.Close() })
 	counted := &retryCountingListener{Listener: listener}
 	go func() {
@@ -358,9 +362,9 @@ func TestConnectRetry_ByeGreetingIsTerminal(t *testing.T) {
 	}
 
 	err = connectRetryClient(t.Context(), t, client)
-	require.Error(t, err)
-	assert.False(t, sleepCalled)
-	assert.Equal(t, int64(1), counted.accepted.Load())
+	require.Error(err)
+	assert.False(sleepCalled)
+	assert.Equal(int64(1), counted.accepted.Load())
 }
 
 func TestConnectRetry_ImplicitTLSHandshakeFailureRetries(t *testing.T) {
