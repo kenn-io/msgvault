@@ -181,8 +181,7 @@ func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) 
 // person_sweep_work row first, exactly like the claim's fenced lease transfer;
 // once the mark parks behind that row while holding the attempt row, the
 // blocker asks for the attempt row, so PostgreSQL's deadlock detector has to
-// abort one side. The mark is parked well before the blocker closes the cycle,
-// so its deadlock timer expires first and it, not the blocker, is the victim.
+// abort one side. The blocker defers its detector, so the mark is the victim.
 // The blocker releases cleanly; the mark's own outcome is returned for the
 // caller to judge.
 func forcePersonSweepReclaimLockCycle(
