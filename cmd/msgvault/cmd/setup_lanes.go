@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // Lane and consent states shared by `setup providers` and `setup status`.
@@ -145,6 +147,21 @@ func (e setupEnvironment) consentState(read func(setupConsentState) bool) string
 func defaultFileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// Like daemon startup, select the concrete backend from the archive DSN,
+// not the declarative vector.backend marker.
+func setupVectorBackend(cfg *config.Config) (backend, unavailable string) {
+	if store.IsPostgresURL(cfg.DatabaseDSN()) {
+		if !pgvector.Available() {
+			return "pgvector", "pgvector support is not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec pgvector\" ./cmd/msgvault`, then re-run setup"
+		}
+		return "pgvector", ""
+	}
+	if !sqlitevec.Available() {
+		return "sqlite-vec", "sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup"
+	}
+	return "sqlite-vec", ""
 }
 
 // setupVoyageManifestPath is the path setup recommends for the Voyage
@@ -286,6 +303,10 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		} else {
 			lane.Reason = "per-message vectors; no conversation-window context (Voyage contextual only)"
 		}
+		if _, unavailable := setupVectorBackend(cfg); unavailable != "" {
+			lane.State = laneStatePending
+			lane.Reason += "; " + unavailable
+		}
 		env.reportMissingCredential(&lane, embeddings.APIKeyEnv)
 		return lane
 	}
@@ -340,6 +361,11 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Model = multimodal.Model
 		lane.Schedule = embedScheduleSummary(multimodal.Schedule)
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Visual })
+		if _, unavailable := setupVectorBackend(cfg); unavailable != "" {
+			lane.State, lane.Reason = laneStatePending, unavailable
+			env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
+			return lane
+		}
 		if !env.exists(multimodal.CapabilitiesFile) {
 			lane.State = laneStatePending
 			lane.Reason = "capabilities_file is missing; the daemon refuses every vector lane until it exists"

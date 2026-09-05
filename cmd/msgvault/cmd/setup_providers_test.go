@@ -277,6 +277,40 @@ func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 	}
 }
 
+func TestSetupStatusConfiguredVectorLanesRequireCompiledBackend(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	output, err := fixture.run(t, "providers", "--yes")
+	require.NoError(t, err, output)
+	loaded := fixture.load(t)
+	previous := cfg
+	cfg = loaded
+	t.Cleanup(func() { cfg = previous })
+	for _, dsn := range []string{"", "postgres://localhost/setup_test"} {
+		t.Run(dsn, func(t *testing.T) {
+			assert := assert.New(t)
+			loaded.Data.DatabaseURL = dsn
+			report := buildLaneReport(loaded, setupEnvironment{
+				lookupEnv: fixture.lookupEnv, fileExists: func(path string) bool { return fixture.files[path] },
+				consent: &setupConsentState{Documents: true, Visual: true, PersonSemantic: true, DocumentEmbedding: true, QueryEmbedding: true},
+			})
+			startupErr := precheckVectorFeatures(loaded.DatabaseDSN())
+			for _, name := range []string{laneTextSearch, lanePersonSearch, laneVisualSearch, laneDocumentVectors} {
+				lane := findLane(t, report, name)
+				if startupErr != nil {
+					assert.Equal(laneStatePending, lane.State, name)
+					assert.Contains(lane.Reason, "not compiled in", name)
+					assert.Contains(lane.Reason, "rebuild", name)
+				} else {
+					assert.Equal(laneStateOn, lane.State, name)
+				}
+			}
+		})
+	}
+}
+
 func TestSetupProvidersRequiresSensitiveOptIn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -507,6 +541,14 @@ func TestSetupProvidersMistralEnablesDocumentsAndVectors(t *testing.T) {
 	assert.Contains(output, "documents consent-mistral --capabilities "+manifest+" --yes")
 	assert.Contains(output, "msgvault documents vectors consent --yes")
 	assert.Contains(output, "retention=zdr, training=opted-out")
+	// The follow-ups must include actual indexing after both consent steps.
+	build := strings.LastIndex(output, "msgvault documents vectors build")
+	require.NotEqual(-1, build)
+	for _, consent := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes"} {
+		position := strings.LastIndex(output, consent)
+		require.NotEqual(-1, position)
+		assert.Less(position, build)
+	}
 }
 
 func TestSetupProvidersRejectsUnknownDocumentPostures(t *testing.T) {

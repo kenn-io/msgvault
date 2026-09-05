@@ -44,6 +44,9 @@ Only absent keys receive schedule defaults. Missing embedding credentials
 leave text search and its dependent people-search and document-vector lanes
 pending in the status report.
 
+Configured vector lanes also stay pending when the binary lacks the backend
+required by the archive database. Status includes the rebuild command.
+
 Consent-gated lanes also remain pending until their required consents are
 active, including when the consent records cannot be read. Local Ollama
 setup clears any old `api_key_env` setting because its selected loopback
@@ -189,6 +192,7 @@ msgvault documents consent-mistral --capabilities ~/.msgvault/mistral-capabiliti
 msgvault documents build --capabilities ~/.msgvault/mistral-capabilities.json --yes
 msgvault documents vectors consent --yes     # when document vectors are enabled
 msgvault documents vectors consent --purpose queries --yes
+msgvault documents vectors build
 ```
 
 Document-vector consent covers document text. Query consent separately

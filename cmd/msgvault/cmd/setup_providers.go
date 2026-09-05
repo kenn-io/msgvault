@@ -22,9 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/vector/pgvector"
-	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 const (
@@ -213,17 +210,9 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		voyageKey:     env.hasEnv(setupVoyageKeyEnv),
 		mistralKeyEnv: loaded.Attachments.Documents.APIKeyEnv,
 		openAIKey:     env.hasEnv(setupOpenAIKeyEnv),
-		backend:       "sqlite-vec",
 	}
 	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
-	if store.IsPostgresURL(loaded.DatabaseDSN()) {
-		detection.backend = "pgvector"
-		if !pgvector.Available() {
-			detection.backendUnavailable = "pgvector support is not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"`, then re-run setup"
-		}
-	} else if !sqlitevec.Available() {
-		detection.backendUnavailable = "sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup"
-	}
+	detection.backend, detection.backendUnavailable = setupVectorBackend(loaded)
 	if path := loaded.Vector.Multimodal.CapabilitiesFile; path != "" && env.exists(path) {
 		detection.voyageManifest = path
 	} else if path := setupVoyageManifestPath(loaded); env.exists(path) {
@@ -628,7 +617,11 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 		lane.edits = []config.TableEdit{{
 			Path: []string{"attachments", "documents", "index", "embeddings"}, Values: map[string]any{"enabled": true},
 		}}
-		lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes"}
+		lane.next = []string{
+			"msgvault documents vectors consent --yes",
+			"msgvault documents vectors consent --purpose queries --yes",
+			"msgvault documents vectors build",
+		}
 	}
 	return lane
 }
