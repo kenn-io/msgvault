@@ -149,7 +149,7 @@ capabilities_file = "{{DIR}}/custom-voyage.json"
 	output, err := fixture.run(t, "providers", "--yes")
 	require.NoError(t, err, output)
 	loaded := fixture.load(t)
-	custom := filepath.Join(fixture.dir, "custom-voyage.json")
+	custom := filepath.ToSlash(filepath.Join(fixture.dir, "custom-voyage.json"))
 	assert.False(loaded.Vector.Multimodal.Enabled)
 	assert.Equal(custom, loaded.Vector.Multimodal.CapabilitiesFile)
 	assert.Contains(output, "--out "+custom+" --yes")
