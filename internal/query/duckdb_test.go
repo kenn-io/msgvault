@@ -762,6 +762,30 @@ func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
 	}
 }
 
+func TestDuckDBEngine_SubAggregateSourceIDsTakePrecedence(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	sourceOne := b.AddSource("one@example.com")
+	sourceTwo := b.AddSource("two@example.com")
+	aliceID := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+
+	messageOne := b.AddMessage(MessageOpt{SourceID: sourceOne, SenderID: &aliceID})
+	b.AddFrom(messageOne, aliceID, "Alice")
+	messageTwo := b.AddMessage(MessageOpt{SourceID: sourceTwo, SenderID: &bobID})
+	b.AddFrom(messageTwo, bobID, "Bob")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	selectedSource := sourceOne
+	opts := DefaultAggregateOptions()
+	opts.SourceID = &selectedSource
+	opts.SourceIDs = []int64{sourceTwo}
+	results, err := engine.SubAggregate(context.Background(), MessageFilter{}, ViewSenders, opts)
+	require.NoError(t, err, "SubAggregate")
+
+	assertAggregateCounts(t, results, map[string]int64{"bob@example.com": 1})
+}
+
 func TestDuckDBEngine_ListMessages_SenderNameFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()

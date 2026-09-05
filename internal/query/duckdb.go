@@ -1578,10 +1578,10 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		where += " AND " + emailOnlyFilterMsg
 	}
 
-	// Add opts-based conditions (source_id, date range, attachment filter)
-	if opts.SourceID != nil {
-		where += " AND msg.source_id = ?"
-		args = append(args, *opts.SourceID)
+	// Add opts-based conditions (source IDs, date range, attachment filter).
+	whereParts, args := appendSourceFilter(nil, args, "msg.", opts.SourceID, opts.SourceIDs)
+	if len(whereParts) > 0 {
+		where += " AND " + strings.Join(whereParts, " AND ")
 	}
 	if opts.After != nil {
 		where += " AND msg.sent_at >= CAST(? AS TIMESTAMP)"
