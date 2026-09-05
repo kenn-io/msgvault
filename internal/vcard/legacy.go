@@ -22,8 +22,21 @@ type Contact struct {
 	Emails   []string // lowercased
 }
 
+// ParseFileOptions controls optional vCard projection behavior.
+// NormalizePhone receives the decoded phone candidate after tel URI and
+// phone-context assembly. A nil callback uses the package normalizer.
+type ParseFileOptions struct {
+	NormalizePhone func(string) string
+}
+
 // ParseFile reads a vCard file and projects its contact identity fields.
 func ParseFile(path string) ([]Contact, error) {
+	return ParseFileWithOptions(path, ParseFileOptions{})
+}
+
+// ParseFileWithOptions reads a vCard file and projects its contact identity
+// fields with optional phone normalization.
+func ParseFileWithOptions(path string, options ParseFileOptions) ([]Contact, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open vCard %q: %w", path, err)
@@ -33,6 +46,11 @@ func ParseFile(path string) ([]Contact, error) {
 	document, err := Decode(file)
 	if err != nil {
 		return nil, fmt.Errorf("decode vCard %q: %w", path, err)
+	}
+
+	normalize := options.NormalizePhone
+	if normalize == nil {
+		normalize = normalizePhone
 	}
 
 	contacts := make([]Contact, 0, len(document.Cards))
@@ -54,7 +72,7 @@ func ParseFile(path string) ([]Contact, error) {
 				if decodeErr != nil {
 					return nil, fmt.Errorf("decode TEL in %q: %w", path, decodeErr)
 				}
-				if normalized := normalizeLegacyPhone(strings.TrimSpace(phone)); normalized != "" {
+				if normalized := normalizeLegacyPhone(strings.TrimSpace(phone), normalize); normalized != "" {
 					contact.Phones = append(contact.Phones, normalized)
 				}
 			case strings.EqualFold(property.Name, "EMAIL"):
@@ -193,9 +211,9 @@ func normalizePhone(raw string) string {
 	return normalized
 }
 
-func normalizeLegacyPhone(raw string) string {
+func normalizeLegacyPhone(raw string, normalize func(string) string) string {
 	if len(raw) < len("tel:") || !strings.EqualFold(raw[:len("tel:")], "tel:") {
-		return normalizePhone(raw)
+		return normalize(raw)
 	}
 
 	parts := strings.Split(raw[len("tel:"):], ";")
@@ -204,7 +222,7 @@ func normalizeLegacyPhone(raw string) string {
 		return ""
 	}
 	if strings.HasPrefix(subscriber, "+") {
-		return normalizePhone(subscriber)
+		return normalize(subscriber)
 	}
 
 	for _, part := range parts[1:] {
@@ -216,7 +234,7 @@ func normalizeLegacyPhone(raw string) string {
 		if err != nil || !strings.HasPrefix(context, "+") {
 			return ""
 		}
-		return normalizePhone(context + subscriber)
+		return normalize(context + subscriber)
 	}
-	return normalizePhone(subscriber)
+	return normalize(subscriber)
 }

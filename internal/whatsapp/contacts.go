@@ -2,8 +2,11 @@ package whatsapp
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textimport"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
@@ -12,7 +15,9 @@ import (
 // Only updates existing participants — does not create new ones.
 // Returns the number of existing participants whose names were updated.
 func ImportContacts(s *store.Store, vcfPath string) (matched, total int, err error) {
-	contacts, err := vcard.ParseFile(vcfPath)
+	contacts, err := vcard.ParseFileWithOptions(vcfPath, vcard.ParseFileOptions{
+		NormalizePhone: normalizeWhatsAppVCardPhone,
+	})
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse vcard: %w", err)
 	}
@@ -43,4 +48,28 @@ func ImportContacts(s *store.Store, vcfPath string) (matched, total int, err err
 	}
 
 	return matched, total, nil
+}
+
+func normalizeWhatsAppVCardPhone(raw string) string {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "(0)", ""))
+	if raw == "" {
+		return ""
+	}
+
+	var digits strings.Builder
+	for _, r := range raw {
+		if unicode.IsDigit(r) {
+			digits.WriteRune(r)
+		}
+	}
+	if digits.Len() == 0 ||
+		(!strings.HasPrefix(raw, "+") && !strings.HasPrefix(digits.String(), "00")) {
+		return ""
+	}
+
+	normalized, err := textimport.NormalizePhone(raw)
+	if err != nil {
+		return ""
+	}
+	return normalized
 }

@@ -155,6 +155,8 @@ All notable changes to msgvault, grouped by release.
 - Everything and Files now page narrow analytical metadata before enriching
   participant details, preventing default listings on multi-million-message
   archives from exhausting the interactive DuckDB memory budget.
+- WhatsApp vCard imports skip phone values without explicit international `+`
+  or `00` provenance.
 
 ---
 
