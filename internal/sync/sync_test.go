@@ -219,6 +219,7 @@ func seedReplaySource(t *testing.T, env *TestEnv, messageID string) *store.Sourc
 
 type craftedBatchAPI struct {
 	*gmail.MockAPI
+
 	results []gmail.RawMessageBatchResult
 }
 
@@ -255,7 +256,7 @@ func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
 		{ID: "not-a-mismatch"},
 		{ID: "b-nil", Err: errors.New("temporary transport failure")},
 		{ID: "c-ingest", Message: &gmail.RawMessage{ID: "c-ingest", ThreadID: "thread-c"}},
-		{ID: "e-payload", Message: &gmail.RawMessage{ID: "not-e-payload", ThreadID: "thread-e", Raw: []byte(testMIME())}},
+		{ID: "e-payload", Message: &gmail.RawMessage{ID: "not-e-payload", ThreadID: "thread-e", Raw: testMIME()}},
 	}}, env.Store, nil)
 
 	summary, err := env.Syncer.Incremental(env.Context, source)
