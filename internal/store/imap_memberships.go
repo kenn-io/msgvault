@@ -297,13 +297,13 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
-			mailboxes, err := imapMembershipMailboxes(tx, sourceID, messageID)
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
 			labelIDs := make([]int64, 0, len(mailboxes))
 			for _, mailbox := range mailboxes {
-				labelID, err := ensureIMAPMailboxLabel(tx, sourceID, mailbox)
+				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
 				if err != nil {
 					return err
 				}
@@ -685,9 +685,9 @@ func imapRFC822MessageIDCandidates(messageID string) []string {
 }
 
 func imapMembershipMailboxes(
-	tx *loggedTx, sourceID, messageID int64,
+	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
 ) ([]string, error) {
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT mailbox FROM imap_message_memberships
 		WHERE source_id = ? AND message_id = ?
 		GROUP BY mailbox
@@ -711,9 +711,9 @@ func imapMembershipMailboxes(
 	return mailboxes, nil
 }
 
-func ensureIMAPMailboxLabel(tx *loggedTx, sourceID int64, mailbox string) (int64, error) {
+func ensureIMAPMailboxLabel(ctx context.Context, tx *loggedTx, sourceID int64, mailbox string) (int64, error) {
 	var labelID int64
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 		SELECT id FROM labels WHERE source_id = ? AND source_label_id = ?
 	`, sourceID, mailbox).Scan(&labelID)
 	if err == nil {
@@ -722,7 +722,13 @@ func ensureIMAPMailboxLabel(tx *loggedTx, sourceID int64, mailbox string) (int64
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("find label for IMAP mailbox %q: %w", mailbox, err)
 	}
-	labelID, err = ensureLabelWith(tx, sourceID, mailbox, mailbox, "user", nil)
+	// ensureLabelWith is shared with EnsureLabel and EnsureLabelsBatch, which
+	// have no ctx of their own, so it takes a querier rather than a context.
+	// boundQuerier carries ctx to its statements without changing that
+	// signature or any other caller.
+	labelID, err = ensureLabelWith(
+		boundQuerier{ctx: ctx, q: tx}, sourceID, mailbox, mailbox, "user", nil,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("ensure label for IMAP mailbox %q: %w", mailbox, err)
 	}
@@ -736,4 +742,130 @@ func sortedIMAPMessageIDs(ids map[int64]struct{}) []int64 {
 	}
 	slices.Sort(sorted)
 	return sorted
+}
+
+// IMAPLabelRepairSummary reports what RepairIMAPSourceLabels found and, when
+// applying, changed.
+type IMAPLabelRepairSummary struct {
+	// Scanned counts messages with at least one imap_message_memberships row.
+	Scanned int
+	// Changed counts messages whose message_labels did not already match
+	// their stored memberships.
+	Changed int
+}
+
+var errIMAPLabelRepairDryRun = errors.New("imap label repair dry run rollback")
+
+// RepairIMAPSourceLabels rebuilds message_labels for every message that has
+// an imap_message_memberships row in sourceID, from those membership rows —
+// the same rebuild ApplyIMAPMailboxDeltas performs for its affected set, run
+// here over the whole source on demand. It exists because an add-only label
+// merge (ReconcileMessageLabels with replace=false) can leave a stray label
+// that no later Reset ever revisits, when the message's membership rows
+// never change again.
+//
+// It does not touch deleted_from_source_at: a message with no membership
+// rows never appears in the set this repairs, so there is nothing to
+// tombstone from this data. Tombstone reconciliation stays a Reset-only
+// concern.
+//
+// With apply false, every write happens inside the same transaction and is
+// then rolled back, so Changed still reports what would happen.
+func (s *Store) RepairIMAPSourceLabels(
+	ctx context.Context, sourceID int64, apply bool,
+) (IMAPLabelRepairSummary, error) {
+	var summary IMAPLabelRepairSummary
+	txErr := s.withTxContext(ctx, func(tx *loggedTx) error {
+		messageIDs, err := distinctIMAPMembershipMessageIDs(ctx, tx, sourceID)
+		if err != nil {
+			return err
+		}
+		for _, messageID := range messageIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if s.imapLabelRepairPerMessageHook != nil {
+				s.imapLabelRepairPerMessageHook(messageID)
+			}
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
+			if err != nil {
+				return err
+			}
+			labelIDs := make([]int64, 0, len(mailboxes))
+			for _, mailbox := range mailboxes {
+				labelID, err := ensureIMAPMailboxLabel(ctx, tx, sourceID, mailbox)
+				if err != nil {
+					return err
+				}
+				labelIDs = append(labelIDs, labelID)
+			}
+			changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true)
+			if err != nil {
+				return fmt.Errorf("reconcile labels for IMAP message %d: %w", messageID, err)
+			}
+			summary.Scanned++
+			if changed {
+				summary.Changed++
+			}
+		}
+		// Checked once more here, not just per-message above: without this,
+		// a cancellation landing exactly after the last message would fall
+		// through to the dry-run branch below and get reported as a normal
+		// completion instead of surfaced as a cancellation error.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if summary.Changed > 0 {
+			// message_labels is exported into the analytics cache; bumping
+			// the revision is what tells that cache the export is stale, the
+			// same signal RepairListIDs and AddMessageLabels give it.
+			if err := s.bumpDerivedDataRevision(tx); err != nil {
+				return err
+			}
+		}
+		if !apply {
+			return errIMAPLabelRepairDryRun
+		}
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, errIMAPLabelRepairDryRun) {
+			return summary, nil
+		}
+		// database/sql rolls back a transaction in a background goroutine as
+		// soon as its context is cancelled, racing the ctx.Err() checks
+		// above — the query in flight when that goroutine wins can surface
+		// a raw driver error ("transaction has already been committed or
+		// rolled back") instead. Normalize: whenever the context is
+		// actually done, report that instead of whatever the race produced.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return IMAPLabelRepairSummary{}, ctxErr
+		}
+		return IMAPLabelRepairSummary{}, txErr
+	}
+	return summary, nil
+}
+
+func distinctIMAPMembershipMessageIDs(ctx context.Context, tx *loggedTx, sourceID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT message_id FROM imap_message_memberships
+		WHERE source_id = ?
+		ORDER BY message_id
+	`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("query IMAP membership message IDs for source %d: %w", sourceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var messageIDs []int64
+	for rows.Next() {
+		var messageID int64
+		if err := rows.Scan(&messageID); err != nil {
+			return nil, fmt.Errorf("scan IMAP membership message ID: %w", err)
+		}
+		messageIDs = append(messageIDs, messageID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate IMAP membership message IDs: %w", err)
+	}
+	return messageIDs, nil
 }
