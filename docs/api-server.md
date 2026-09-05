@@ -1503,6 +1503,10 @@ the IDs are already an explicit, reviewed list:
 }
 ```
 
+IDs that do not resolve to live deletable Gmail messages with provider message
+IDs are omitted, and the
+response `message_count` reports the number of targets resolved by the daemon.
+
 A pending manifest is written and `201` returned:
 
 ```json

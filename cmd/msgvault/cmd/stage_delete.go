@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -22,23 +23,38 @@ const (
 
 func newStageDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "stage-delete <query>",
-		Short: "Stage active messages matching search criteria for deletion",
+		Use:   "stage-delete [query]",
+		Short: "Stage active messages matching search criteria or explicit IDs for deletion",
 		Long: `Stage every active message matching a search query for deletion.
 
 The daemon resolves and preflights the search before creating a pending
 deletion batch. Use --dry-run to report the match count without creating one.
+Alternatively, pass a comma-separated --ids list to stage explicit internal
+message IDs; this form bypasses search and analytical-cache readiness.
 Review a created batch with show-deletion before running delete-staged.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: runStageDelete,
 	}
 	cmd.Flags().BoolVar(&stageDeleteDryRun, "dry-run", false, "Show the match count without creating a deletion batch")
 	cmd.Flags().Int64("source-id", 0, "Restrict staging to one exact source ID")
+	cmd.Flags().String("ids", "", "Stage these comma-separated internal message IDs instead of a query")
+	cmd.MarkFlagsMutuallyExclusive("ids", "source-id")
 	return cmd
 }
 
 func runStageDelete(cmd *cobra.Command, args []string) error {
 	queryText := strings.TrimSpace(strings.Join(args, " "))
+	idsChanged := cmd.Flags().Changed("ids")
+	if idsChanged && queryText != "" {
+		return usageErr(cmd, errors.New("--ids cannot be combined with a search query"))
+	}
+	if idsChanged {
+		return runStageDeleteFromIDs(cmd)
+	}
+	return runStageDeleteFromQuery(cmd, queryText)
+}
+
+func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 	parsed := search.Parse(queryText)
 	if err := parsed.Err(); err != nil {
 		return usageErr(cmd, err)
@@ -180,9 +196,91 @@ func runStageDelete(cmd *cobra.Command, args []string) error {
 		return errors.New("stage deletion returned no response body")
 	}
 
-	w := cmd.OutOrStdout()
+	return writeStageDeleteOutcome(cmd.OutOrStdout(), result, "the search")
+}
+
+func runStageDeleteFromIDs(cmd *cobra.Command) error {
+	rawIDs, err := cmd.Flags().GetString("ids")
+	if err != nil {
+		return usageErr(cmd, fmt.Errorf("invalid --ids: %w", err))
+	}
+	messageIDs, err := parseStageDeleteMessageIDs(rawIDs)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
+
+	store, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	description := "staged from CLI message IDs"
+	stageResp, err := daemonclient.APIResponseWithStatuses(store, []int{200, 201}, func(client *apiclient.Client) (*generated.StageDeletionResp, error) {
+		return client.StageDeletionWithResponse(cmd.Context(), &generated.StageDeletionRequestOptions{
+			Body: &generated.StageDeletionBody{
+				Description: &description,
+				DryRun:      &stageDeleteDryRun,
+				MessageIds:  messageIDs,
+			},
+		})
+	})
+	if err != nil {
+		return stageDeleteMessageIDsDaemonErr(err)
+	}
+	if stageResp == nil {
+		return errors.New("stage deletion returned no response")
+	}
+
+	var result *generated.StageDeletionResponse
+	switch {
+	case stageResp.JSON200 != nil:
+		result = stageResp.JSON200
+	case stageResp.JSON201 != nil:
+		result = stageResp.JSON201
+	default:
+		return errors.New("stage deletion returned no response body")
+	}
+	if result == nil {
+		return errors.New("stage deletion returned no response body")
+	}
+
+	return writeStageDeleteOutcome(cmd.OutOrStdout(), result, "the requested IDs")
+}
+
+func parseStageDeleteMessageIDs(raw string) ([]int64, error) {
+	parts := strings.Split(raw, ",")
+	messageIDs := make([]int64, 0, len(parts))
+	seen := make(map[int64]struct{}, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			return nil, errors.New("--ids must not contain empty message IDs")
+		}
+		messageID, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || messageID <= 0 {
+			return nil, fmt.Errorf("message ID %q must be a positive integer", value)
+		}
+		if _, ok := seen[messageID]; ok {
+			return nil, fmt.Errorf("duplicate message ID %d", messageID)
+		}
+		seen[messageID] = struct{}{}
+		messageIDs = append(messageIDs, messageID)
+	}
+	return messageIDs, nil
+}
+
+func stageDeleteMessageIDsDaemonErr(err error) error {
+	var apiErr *daemonclient.APIError
+	if errors.As(err, &apiErr) && apiErr.APIErrorCode() == "multi_account_selection" {
+		return fmt.Errorf("stage deletion: %s; stage IDs from one source per invocation", apiErr.Message)
+	}
+	return stageDeleteDaemonErr("stage deletion", err)
+}
+
+func writeStageDeleteOutcome(w io.Writer, result *generated.StageDeletionResponse, criterion string) error {
 	if result.DryRun {
-		if _, err = fmt.Fprintf(w, "Dry run: %d message(s) match the search; no deletion batch was created.\n", result.MessageCount); err != nil {
+		if _, err := fmt.Fprintf(w, "Dry run: %d message(s) match %s; no deletion batch was created.\n", result.MessageCount, criterion); err != nil {
 			return fmt.Errorf("write dry-run summary: %w", err)
 		}
 		return nil
@@ -190,10 +288,10 @@ func runStageDelete(cmd *cobra.Command, args []string) error {
 	if result.ID == nil || strings.TrimSpace(*result.ID) == "" {
 		return errors.New("stage deletion response did not include a batch ID")
 	}
-	if _, err = fmt.Fprintf(w, "Staged %d message(s) for deletion in batch %s.\n", result.MessageCount, *result.ID); err != nil {
+	if _, err := fmt.Fprintf(w, "Staged %d message(s) for deletion in batch %s.\n", result.MessageCount, *result.ID); err != nil {
 		return fmt.Errorf("write staging summary: %w", err)
 	}
-	if _, err = fmt.Fprintf(w, "Review with 'msgvault show-deletion %s', then execute with 'msgvault delete-staged %s'.\n", *result.ID, *result.ID); err != nil {
+	if _, err := fmt.Fprintf(w, "Review with 'msgvault show-deletion %s', then execute with 'msgvault delete-staged %s'.\n", *result.ID, *result.ID); err != nil {
 		return fmt.Errorf("write staging summary: %w", err)
 	}
 	return nil

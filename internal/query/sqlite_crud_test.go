@@ -1922,12 +1922,14 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require.NoError(err, "insert source-deleted message")
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
 	require.NoError(err, "insert dedup-deleted message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (904, 1, 1, '', 'email', '2024-01-04')`)
+	require.NoError(err, "insert message without provider ID")
 
-	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904})
 	require.NoError(err, "resolve mixed ids")
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
 	require.NoError(err)
-	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
+	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
 }
 
 func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {

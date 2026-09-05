@@ -4334,6 +4334,21 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
 	}
 }
 
+func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesEmptyProviderID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	messageID := b.AddMessage(MessageOpt{})
+	b.messages[len(b.messages)-1].SourceMessageID = ""
+	engine := b.BuildEngine()
+
+	targets, err := engine.GetDeletionTargetsByMessageIDs(context.Background(), []int64{messageID})
+
+	require.NoError(err)
+	assert.Empty(targets)
+}
+
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDs_ChunkedLargeSelection(t *testing.T) {
 	ctx := context.Background()
 	parquet := newParquetEngine(t)

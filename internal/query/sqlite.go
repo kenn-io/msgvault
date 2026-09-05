@@ -1521,7 +1521,7 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		       m.source_message_id, m.sent_at
 		FROM messages m
 		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
-		WHERE %s AND m.id IN (%s)
+		       WHERE %s AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
