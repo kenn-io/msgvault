@@ -3,7 +3,7 @@ export type GeneratedRequestOptions = RequestInit & {
   onResponse?: (response: Response) => void;
 };
 
-type GeneratedRequest = {
+export type GeneratedRequest = {
   url: string;
   method: string;
   headers?: HeadersInit;
@@ -32,7 +32,10 @@ async function request<T>(
   const { fetch: fetchFn = fetch, onResponse, ...requestInit } = options;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(config.params ?? {})) {
-    if (value !== undefined) params.append(key, value === null ? 'null' : String(value));
+    if (value === undefined) continue;
+    for (const item of Array.isArray(value) ? value : [value]) {
+      params.append(key, item === null ? 'null' : String(item));
+    }
   }
   const query = params.toString();
   const headers = new Headers(config.headers);

@@ -46,6 +46,7 @@ import type {
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
+import { orvalVisualSearch } from "../../visual-search";
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
@@ -396,9 +397,9 @@ export const searchVisualAttachments = (
   searchVisualAttachmentsBody:
     | VisualTextSearchRequest
     | SearchVisualAttachmentsBodyTwo,
-  options?: SecondParameter<typeof orvalFetch<SearchResponse>>,
+  options?: SecondParameter<typeof orvalVisualSearch<SearchResponse>>,
 ) => {
-  return orvalFetch<SearchResponse>(
+  return orvalVisualSearch<SearchResponse>(
     {
       url: `/api/v1/search/attachments/visual`,
       method: "POST",

@@ -74,6 +74,12 @@ try {
             name: 'orvalFetch'
           },
           operations: {
+            searchVisualAttachments: {
+              mutator: {
+                path: join(webDirectory, 'src/lib/api/visual-search.ts'),
+                name: 'orvalVisualSearch'
+              }
+            },
             ...Object.fromEntries(
               ['getFileContent', 'getRemoteImage', 'getMessageInlinePart'].map((operation) => [
                 operation,
