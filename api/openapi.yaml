@@ -5555,6 +5555,16 @@ components:
         - label
         - hop
       type: object
+    OperationErrorResponse:
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
     OperationHealth:
       additionalProperties: true
       properties:
@@ -5569,7 +5579,7 @@ components:
         - busy
       type: object
     OperationLaneStatus:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         active:
           $ref: "#/components/schemas/OperationRunSummary"
@@ -5630,29 +5640,38 @@ components:
         - supported_actions
       type: object
     OperationPublicCounter:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         name:
           enum:
-            - processed
             - added
-            - updated
-            - item_errors
             - attempted
-            - succeeded
-            - failed
-            - projected_writes
             - books
             - created
+            - failed
+            - identity_rejected
+            - item_errors
+            - processed
+            - projected_writes
             - removed
+            - requested
+            - skipped
+            - started
+            - succeeded
+            - suppressed
+            - truncated
+            - updated
           type: string
         unit:
           enum:
+            - attachments
+            - books
+            - chunks
+            - contacts
+            - documents
             - messages
             - people
             - writes
-            - books
-            - contacts
           type: string
         value:
           format: int64
@@ -5663,30 +5682,41 @@ components:
         - value
       type: object
     OperationPublicError:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         code:
           enum:
-            - source_sync_failed
+            - archive_gap
+            - authentication_failed
+            - budget
+            - cancelled
+            - carddav_sync_failed
+            - daemon_restarted
+            - internal
+            - invalid_output
+            - invocation_archive_drift
+            - invocation_authentication_failed
+            - invocation_cancelled
+            - invocation_daemon_restarted
+            - invocation_internal
+            - invocation_invalid_output
+            - invocation_rate_limited
+            - invocation_safety_limit
+            - invocation_timeout
+            - invocation_unsafe_error_redacted
+            - invocation_upstream_failed
+            - lease_lost
             - person_sweep_failed
             - policy
-            - budget
-            - lease_lost
-            - rate_limited
-            - timeout
             - provider_http
-            - invalid_output
-            - archive_gap
-            - internal
-            - cancelled
+            - rate_limited
             - retry_after
-            - authentication_failed
-            - upstream_failed
             - safety_limit
+            - source_sync_failed
             - sync_failed
+            - timeout
             - unsafe_error_redacted
-            - daemon_restarted
-            - carddav_sync_failed
+            - upstream_failed
           type: string
         message:
           type: string
@@ -5695,7 +5725,7 @@ components:
         - message
       type: object
     OperationRunDetail:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         counters:
           items:
@@ -5728,6 +5758,14 @@ components:
             - person_facts
             - visual_attachments
           type: string
+        related_status:
+          enum:
+            - listSourceStatus
+            - getDocumentIndexStatus
+            - getDocumentVectorStatus
+            - getVisualAttachmentStatus
+            - getCardDAVStatus
+          type: string
         started_at:
           format: date-time
           type: string
@@ -5740,12 +5778,21 @@ components:
             - running
             - succeeded
           type: string
+        supported_actions:
+          items:
+            enum:
+              - carddav_sync
+              - visual_build
+              - visual_resume
+            type: string
+          type: array
         trigger:
           enum:
             - manual
             - scheduled
           type: string
       required:
+        - supported_actions
         - id
         - kind
         - lane
@@ -5754,7 +5801,7 @@ components:
         - counters
       type: object
     OperationRunSummary:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         counters:
           items:
@@ -5813,8 +5860,12 @@ components:
         - counters
       type: object
     OperationRunsResponse:
-      additionalProperties: true
+      additionalProperties: false
       properties:
+        membership_revision:
+          format: int64
+          minimum: 0
+          type: integer
         next_cursor:
           type: string
         runs:
@@ -5827,10 +5878,11 @@ components:
           type: array
       required:
         - runs
+        - membership_revision
         - unavailable_kinds
       type: object
     OperationStatusResponse:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         lanes:
           items:
@@ -5840,7 +5892,7 @@ components:
         - lanes
       type: object
     OperationUnavailableKind:
-      additionalProperties: true
+      additionalProperties: false
       properties:
         kind:
           enum:
@@ -15642,6 +15694,51 @@ paths:
       summary: Get extracted document index status
       tags:
         - API
+  /api/v1/documents/status/current:
+    get:
+      operationId: getCurrentDocumentIndexStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentIndexStatusResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get extracted document index status for the selected durable profile
+      tags:
+        - API
   /api/v1/documents/vectors/status:
     get:
       operationId: getDocumentVectorStatus
@@ -17965,6 +18062,18 @@ paths:
               - running
               - succeeded
             type: string
+        - description: Inclusive canonical UTC RFC3339 lower bound
+          in: query
+          name: started_from
+          schema:
+            format: date-time
+            type: string
+        - description: Exclusive canonical UTC RFC3339 upper bound
+          in: query
+          name: started_before
+          schema:
+            format: date-time
+            type: string
         - description: Maximum runs to return (default 25, max 100)
           in: query
           name: limit
@@ -17973,7 +18082,7 @@ paths:
             maximum: 100
             minimum: 1
             type: integer
-        - description: Opaque cursor bound to this archive and the exact kind, lane, and state filters
+        - description: Opaque cursor bound to this archive and the complete normalized filter set
           in: query
           name: cursor
           schema:
@@ -17989,25 +18098,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         "503":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         default:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
       security:
         - apiKey: []
@@ -18035,31 +18150,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         "503":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
         default:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
       security:
         - apiKey: []
@@ -18080,7 +18195,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/OperationErrorResponse"
           description: Error
       security:
         - apiKey: []

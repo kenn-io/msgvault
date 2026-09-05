@@ -5,5 +5,4 @@ import type { OperationLaneStatus } from "./operationLaneStatus";
 
 export interface OperationStatusResponse {
   lanes: OperationLaneStatus[];
-  [key: string]: unknown;
 }

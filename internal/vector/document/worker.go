@@ -70,6 +70,10 @@ type WorkerDeps struct {
 // RunResult reports only locally observable accounting. Provider token usage
 // is deliberately absent because EmbedDocuments does not report it.
 type RunResult struct {
+	Attempted int `json:"attempted"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+
 	Claimed       int `json:"claimed"`
 	Embedded      int `json:"embedded"`
 	Published     int `json:"published"`
@@ -225,8 +229,8 @@ func NewWorker(deps WorkerDeps) *Worker {
 	}
 }
 
-func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) (RunResult, error) {
-	var result RunResult
+func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) (result RunResult, runErr error) {
+	defer result.finalizeOutcomes()
 	if limit < 1 || limit > maxWorkerRunLimit {
 		return result, fmt.Errorf("document vector worker limit must be between 1 and %d", maxWorkerRunLimit)
 	}
@@ -254,7 +258,6 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	defer heartbeat.stop()
 	preparedTexts := make(map[string]string, len(claims))
 	preparedClaims := make([]*store.DocumentVectorChunkClaim, 0, len(claims))
-	var runErr error
 	for _, claimGroup := range groupWorkerClaimsByExtraction(claims) {
 		groupTexts, prepareErr := w.deps.prepareInputs(
 			heartbeat.context(), w.deps.Ledger, w.deps.Recipe, claimGroup,
@@ -356,6 +359,16 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	runErr = errors.Join(runErr, responseErr)
 	runErr = errors.Join(runErr, heartbeat.err())
 	return result, runErr
+}
+
+// finalizeOutcomes derives public pass accounting only from durable chunk
+// decisions. Claims released or lost before a publication/failure transition
+// do not count as attempts, and provider retry mechanics cannot multiply one
+// chunk into several public failures.
+func (r *RunResult) finalizeOutcomes() {
+	r.Succeeded = r.Published
+	r.Failed = r.Retry + r.Terminal + r.SourceChanged
+	r.Attempted = r.Succeeded + r.Failed
 }
 
 func (w *Worker) validate(generationID GenerationID) error {

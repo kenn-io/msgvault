@@ -137,6 +137,9 @@ func TestWorkerRunPreservesExactTextAndExtractionBoundaries(t *testing.T) {
 	assertions.Equal(3, result.Claimed)
 	assertions.Equal(3, result.Embedded)
 	assertions.Equal(3, result.Published)
+	assertions.Equal(3, result.Attempted)
+	assertions.Equal(3, result.Succeeded)
+	assertions.Zero(result.Failed)
 	assertions.Equal(1, result.ProviderCalls)
 	assertions.Equal(2, result.ProviderDocuments)
 	assertions.Equal(3, result.ProviderChunks)
@@ -362,6 +365,10 @@ func TestWorkerRunPublishesCompletedProviderPrefixAndRetriesOnlySuffix(t *testin
 	assertions.Equal(1, result.Published)
 	assertions.Equal(1, result.Retry)
 	assertions.Zero(result.Terminal)
+	assertions.Equal(2, result.Attempted)
+	assertions.Equal(1, result.Succeeded)
+	assertions.Equal(1, result.Failed,
+		"a retryable transition is one final chunk failure, not a retry-attempt count")
 	assertions.Equal([]string{"token-a"}, ledger.committed)
 	requirements.Len(ledger.failures, 1)
 	assertions.Equal("token-b", ledger.failures[0].token)
@@ -593,6 +600,10 @@ func TestWorkerRunDeletesOnlySourceChangedTokens(t *testing.T) {
 	requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
 	assertions.Zero(result.Published)
 	assertions.Equal(1, result.SourceChanged)
+	assertions.Equal(1, result.Attempted)
+	assertions.Zero(result.Succeeded)
+	assertions.Equal(1, result.Failed,
+		"the claim-lost chunk had no durable final decision and must not inflate attempted")
 	assertions.Equal([][]string{{"token-source"}}, backend.deletes)
 	assertions.NotContains(backend.deletes[0], "token-lost")
 }

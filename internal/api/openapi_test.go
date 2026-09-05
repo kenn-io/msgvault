@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/explorecatalog"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -1106,6 +1107,24 @@ func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing
 	}, schema.Properties["source"].Extensions["x-enum-names"])
 }
 
+func TestOpenAPIClientOperationCounterUnitNamesCannotCollideWithExistingExports(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["OperationPublicCounter"]
+	requirements.NotNil(schema)
+	requirements.NotNil(schema.Properties["unit"])
+	assertions.Equal([]any{
+		"OperationPublicCounterUnitAttachments",
+		"OperationPublicCounterUnitBooks",
+		"OperationPublicCounterUnitChunks",
+		"OperationPublicCounterUnitContacts",
+		"OperationPublicCounterUnitDocuments",
+		"OperationPublicCounterUnitMessages",
+		"OperationPublicCounterUnitPeople",
+		"OperationPublicCounterUnitWrites",
+	}, schema.Properties["unit"].Extensions["x-enum-names"])
+}
+
 func TestOpenAPIClientCardDAVEnumsDoNotRenameExistingConstants(t *testing.T) {
 	schemas := openAPIClientDocument().Components.Schemas.Map()
 	tests := []struct {
@@ -1408,7 +1427,7 @@ func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
 			for _, status := range []string{"200", "400", "500", "503", "default"} {
 				assert.Contains(list.Get.Responses, status)
 			}
-			require.Len(list.Get.Parameters, 5)
+			require.Len(list.Get.Parameters, 7)
 			parameters := make(map[string]*huma.Param, len(list.Get.Parameters))
 			for _, parameter := range list.Get.Parameters {
 				parameters[parameter.Name] = parameter
@@ -1423,7 +1442,14 @@ func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
 			assert.Contains(parameters["limit"].Description, "default 25")
 			assert.Contains(parameters["cursor"].Description, "Opaque")
 			assert.Contains(parameters["cursor"].Description, "archive")
-			assert.Contains(parameters["cursor"].Description, "exact kind, lane, and state filters")
+			assert.Contains(parameters["cursor"].Description, "complete normalized filter set")
+			for _, name := range []string{"started_from", "started_before"} {
+				require.NotNil(parameters[name], name)
+				assert.Equal("date-time", parameters[name].Schema.Format, name)
+				assert.Contains(parameters[name].Description, "canonical UTC RFC3339", name)
+			}
+			assert.Contains(strings.ToLower(parameters["started_from"].Description), "inclusive")
+			assert.Contains(strings.ToLower(parameters["started_before"].Description), "exclusive")
 
 			detail := document.Paths["/api/v1/operations/runs/{id}"]
 			require.NotNil(detail)
@@ -1447,25 +1473,73 @@ func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
 	}
 }
 
+func TestOpenAPIOperationErrorsAreClosedAndRouteScoped(t *testing.T) {
+	for documentName, document := range map[string]*huma.OpenAPI{
+		"server": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(documentName, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			schema := document.Components.Schemas.Map()["OperationErrorResponse"]
+			require.NotNil(schema)
+			assert.ElementsMatch([]string{"error", "message"}, operationSchemaPropertyNames(schema.Properties))
+			assert.Contains(schema.Required, "error")
+			assert.NotContains(schema.Required, "message")
+			assert.Equal(false, schema.AdditionalProperties)
+
+			for _, path := range []string{
+				"/api/v1/operations/runs",
+				"/api/v1/operations/runs/{id}",
+				"/api/v1/operations/status",
+			} {
+				operation := pathOperation(document.Paths[path], http.MethodGet)
+				require.NotNil(operation, path)
+				for status, response := range operation.Responses {
+					if status == "200" {
+						continue
+					}
+					media := response.Content[applicationJSONMediaType]
+					require.NotNil(media, path+" "+status)
+					assert.Equal("#/components/schemas/OperationErrorResponse", media.Schema.Ref,
+						path+" "+status)
+				}
+			}
+
+			unrelated := pathOperation(document.Paths["/api/v1/messages/changes"], http.MethodGet)
+			require.NotNil(unrelated)
+			media := unrelated.Responses["default"].Content[applicationJSONMediaType]
+			require.NotNil(media)
+			assert.Equal("#/components/schemas/ErrorResponse", media.Schema.Ref)
+		})
+	}
+}
+
 func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 	enums := map[string]map[string][]string{
 		"OperationPublicCounter": {
-			"name": {"processed", "added", "updated", "item_errors", "attempted", "succeeded", "failed", "projected_writes", "books", "created", "removed"},
-			"unit": {"messages", "people", "writes", "books", "contacts"},
+			"name": operationCounterNameValues(),
+			"unit": operationCounterUnitValues(),
 		},
 		"OperationPublicError": {
-			"code": {
-				"source_sync_failed", "person_sweep_failed", "policy", "budget", "lease_lost",
-				"rate_limited", "timeout", "provider_http", "invalid_output", "archive_gap",
-				"internal", "cancelled", "retry_after", "authentication_failed", "upstream_failed",
-				"safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted", "carddav_sync_failed",
-			},
+			"code": operationPublicErrorCodeValues(),
 		},
 		"OperationRunSummary": {
 			"kind":    operationKindValues(),
 			"lane":    operationLaneValues(),
 			"state":   operationStateValues(),
 			"trigger": {"manual", "scheduled"},
+		},
+		"OperationRunDetail": {
+			"kind":    operationKindValues(),
+			"lane":    operationLaneValues(),
+			"state":   operationStateValues(),
+			"trigger": {"manual", "scheduled"},
+			"related_status": {
+				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"getVisualAttachmentStatus", "getCardDAVStatus",
+			},
+			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},
 		},
 		"OperationUnavailableKind": {
 			"kind": operationKindValues(),
@@ -1484,8 +1558,8 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 	}
 	collections := map[string][]string{
 		"OperationRunSummary":     {"counters"},
-		"OperationRunDetail":      {"counters"},
-		"OperationRunsResponse":   {"runs", "unavailable_kinds"},
+		"OperationRunDetail":      {"counters", "supported_actions"},
+		"OperationRunsResponse":   {"runs", "membership_revision", "unavailable_kinds"},
 		"OperationLaneStatus":     {"supported_actions"},
 		"OperationStatusResponse": {"lanes"},
 	}
@@ -1524,6 +1598,33 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 	}
 }
 
+func operationCounterNameValues() []string {
+	values := operations.CounterNames()
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = string(value)
+	}
+	return result
+}
+
+func operationCounterUnitValues() []string {
+	values := operations.CounterUnits()
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = string(value)
+	}
+	return result
+}
+
+func operationPublicErrorCodeValues() []string {
+	values := operations.PublicErrorCodes()
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = string(value)
+	}
+	return result
+}
+
 func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1533,9 +1634,9 @@ func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 		"OperationPublicCounter":   {"name", "unit", "value"},
 		"OperationPublicError":     {"code", "message"},
 		"OperationRunSummary":      {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error"},
-		"OperationRunDetail":       {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error"},
+		"OperationRunDetail":       {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error", "related_status", "supported_actions"},
 		"OperationUnavailableKind": {"kind", "lane", "unavailable_code"},
-		"OperationRunsResponse":    {"runs", "next_cursor", "unavailable_kinds"},
+		"OperationRunsResponse":    {"runs", "next_cursor", "membership_revision", "unavailable_kinds"},
 		"OperationLaneStatus": {
 			"kind", "lane", "configured", "history_availability", "unavailable_code",
 			"active", "latest", "latest_successful", "related_status", "supported_actions",
@@ -1548,6 +1649,33 @@ func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 		assert.ElementsMatch(want, operationSchemaPropertyNames(server[schemaName].Properties), "server "+schemaName)
 		assert.ElementsMatch(want, operationSchemaPropertyNames(client[schemaName].Properties), "client "+schemaName)
 		assert.ElementsMatch(server[schemaName].Required, client[schemaName].Required, schemaName)
+		assert.Equal(false, server[schemaName].AdditionalProperties, "server "+schemaName)
+		assert.Equal(false, client[schemaName].AdditionalProperties, "client "+schemaName)
+	}
+}
+
+func TestOpenAPIOperationActionsUseOnlyExistingProtectedMutations(t *testing.T) {
+	for documentName, document := range map[string]*huma.OpenAPI{
+		"server": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(documentName, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			for path, operationID := range map[string]string{
+				"/api/v1/carddav/sync":     "syncCardDAV",
+				"/api/v1/multimodal/build": "startVisualAttachmentBuild",
+				"/api/v1/multimodal/run":   "resumeVisualAttachmentBuild",
+			} {
+				operation := pathOperation(document.Paths[path], http.MethodPost)
+				require.NotNil(operation, path)
+				assert.Equal(operationID, operation.OperationID, path)
+				require.NotEmpty(operation.Security, path)
+				assert.Contains(operation.Security[0], "apiKey", path)
+			}
+			assert.Nil(document.Paths["/api/v1/operations/runs/{id}/retry"])
+			assert.Nil(document.Paths["/api/v1/operations/document_embedding"])
+		})
 	}
 }
 

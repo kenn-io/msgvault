@@ -2,10 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -15,6 +20,44 @@ const (
 	visualCoverageScansPerSecond = 1.0 / 15
 	visualCoverageScanBurst      = 1
 )
+
+type visualOperationAction string
+
+const (
+	visualOperationBuild  visualOperationAction = "build"
+	visualOperationResume visualOperationAction = "resume"
+	visualOperationRetry  visualOperationAction = "retry"
+)
+
+func visualOperationPassScope(
+	ctx context.Context, action visualOperationAction, target *visualRetryRequest, startedAt time.Time,
+) (operations.PassScope, error) {
+	switch action {
+	case visualOperationBuild, visualOperationResume, visualOperationRetry:
+	default:
+		return operations.PassScope{}, errors.New("visual operation action is invalid")
+	}
+	requestID := requestIDFromContext(ctx)
+	if requestID == "" {
+		return operations.PassScope{}, errors.New("visual operation request ID is required")
+	}
+	identity := "msgvault:visual-operation:v1\x00" + string(action) + "\x00" + requestID
+	if action == visualOperationRetry {
+		if target == nil {
+			return operations.PassScope{}, errors.New("visual retry target is required")
+		}
+		identity += fmt.Sprintf("\x00%d\x00%s", target.MessageID, target.BlobHash)
+	}
+	digest := sha256.Sum256([]byte(identity))
+	scope := operations.PassScope{
+		Key:     fmt.Sprintf("http:visual:%s:%x", action, digest),
+		Trigger: operations.TriggerManual, StartedAt: startedAt.UTC(),
+	}
+	if err := scope.Validate(); err != nil {
+		return operations.PassScope{}, err
+	}
+	return scope, nil
+}
 
 type visualBuildRequest struct {
 	Consent bool `json:"consent"`
@@ -74,7 +117,7 @@ func (s *Server) handleVisualRun(w http.ResponseWriter, r *http.Request) {
 	s.vectorMu.RLock()
 	run, statusFn := s.visualRun, s.visualStatus
 	s.vectorMu.RUnlock()
-	s.runVisualOperation(w, r, run, statusFn, "visual_resume_failed")
+	s.runVisualOperation(w, r, run, statusFn, visualOperationResume, nil, "visual_resume_failed")
 }
 
 func (s *Server) handleVisualBuild(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +130,7 @@ func (s *Server) handleVisualBuild(w http.ResponseWriter, r *http.Request) {
 	s.vectorMu.RLock()
 	build, statusFn := s.visualBuild, s.visualStatus
 	s.vectorMu.RUnlock()
-	s.runVisualOperation(w, r, build, statusFn, "visual_build_failed")
+	s.runVisualOperation(w, r, build, statusFn, visualOperationBuild, nil, "visual_build_failed")
 }
 
 func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +140,8 @@ func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_visual_owner", "message_id and blob_hash are required")
 		return
 	}
+	// Match RetryOwner's canonical target before deriving the invocation key.
+	request.BlobHash = strings.ToLower(strings.TrimSpace(request.BlobHash))
 	s.vectorMu.RLock()
 	retry, statusFn := s.visualRetry, s.visualStatus
 	s.vectorMu.RUnlock()
@@ -104,23 +149,30 @@ func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", "Visual attachment search is not initialized")
 		return
 	}
-	s.runVisualOperation(w, r, func(ctx context.Context) error {
-		return retry(ctx, request.MessageID, request.BlobHash)
-	}, statusFn, "visual_retry_failed")
+	s.runVisualOperation(w, r, func(ctx context.Context, scope operations.PassScope) error {
+		return retry(ctx, scope, request.MessageID, request.BlobHash)
+	}, statusFn, visualOperationRetry, &request, "visual_retry_failed")
 }
 
 func (s *Server) runVisualOperation(
 	w http.ResponseWriter,
 	r *http.Request,
-	run func(context.Context) error,
+	run func(context.Context, operations.PassScope) error,
 	statusFn func(context.Context, bool) (visual.Status, error),
+	action visualOperationAction,
+	target *visualRetryRequest,
 	errorCode string,
 ) {
 	if run == nil || statusFn == nil {
 		writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", "Visual attachment search is not initialized")
 		return
 	}
-	if err := run(r.Context()); err != nil {
+	scope, err := visualOperationPassScope(r.Context(), action, target, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visual_operation_scope_failed", "Visual operation request identity is unavailable")
+		return
+	}
+	if err := run(r.Context(), scope); err != nil {
 		writeError(w, http.StatusBadGateway, errorCode, err.Error())
 		return
 	}

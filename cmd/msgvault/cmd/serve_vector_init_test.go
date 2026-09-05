@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -36,6 +40,12 @@ type fakeCmdVectorBackend struct {
 
 	active    *vector.Generation
 	activeErr error
+}
+
+type vectorInitVisualOpener struct{}
+
+func (vectorInitVisualOpener) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
+	return nil, 0, visual.ErrContentUnavailable
 }
 
 type vectorInitPersonBackend struct {
@@ -490,12 +500,16 @@ type registeredContextRunner struct {
 
 func (r *registeredContextRunner) ReclaimStale(context.Context) (int, error) { return 0, nil }
 
-func (r *registeredContextRunner) RunOnce(_ context.Context, gen vector.GenerationID) (embed.RunResult, error) {
+func (r *registeredContextRunner) RunOnce(
+	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+) (embed.RunResult, error) {
 	r.runs = append(r.runs, gen)
 	return embed.RunResult{}, nil
 }
 
-func (r *registeredContextRunner) RunBackstop(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (r *registeredContextRunner) RunBackstop(
+	context.Context, vector.GenerationID, operations.PassScope,
+) (embed.RunResult, error) {
 	return embed.RunResult{}, nil
 }
 
@@ -672,4 +686,381 @@ func TestRequireVisualConsentRejectsRetiredGeneration(t *testing.T) {
 	err = requireVisualConsent(t.Context(), vf)
 	require.Error(err)
 	require.Contains(err.Error(), "retired")
+}
+
+func TestVisualOperationRecordsOnePartialPassAndReusesTerminalRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	vf := &visualFeatures{Archive: st}
+	scope := testOperationPassScope("visual:http-resume")
+	wantErr := errors.New("provider failed after one durable publication")
+	executions := 0
+	execute := func(context.Context) (visual.WorkerResult, error) {
+		executions++
+		return visual.WorkerResult{Attempted: 2, Succeeded: 1, Failed: 1}, wantErr
+	}
+
+	err := runVisualOperation(t.Context(), vf, scope, execute)
+	require.ErrorIs(err, wantErr)
+	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	require.Len(runs, 1)
+	assert.Equal(operations.StatePartial, runs[0].State)
+	assert.Equal([]operations.PublicCounter{
+		{Name: operations.CounterAttempted, Unit: operations.CounterUnitAttachments, Value: 2},
+		{Name: operations.CounterSucceeded, Unit: operations.CounterUnitAttachments, Value: 1},
+		{Name: operations.CounterFailed, Unit: operations.CounterUnitAttachments, Value: 1},
+	}, runs[0].Counters)
+
+	require.NoError(runVisualOperation(t.Context(), vf, scope, execute),
+		"partial replay intentionally reports the useful completed outcome")
+	assert.Equal(1, executions, "a terminal request-owned invocation must not execute again")
+	assert.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1)
+}
+
+func TestVisualOperationTerminalReplayPreservesFixedNonSuccess(t *testing.T) {
+	tests := []struct {
+		name    string
+		runErr  error
+		wantIs  error
+		message string
+	}{
+		{name: "failed", runErr: errors.New("private provider response"), message: "Upstream operation failed."},
+		{name: "cancelled", runErr: context.Canceled, wantIs: context.Canceled, message: "Operation was cancelled."},
+		{name: "timed out", runErr: context.DeadlineExceeded, wantIs: context.DeadlineExceeded, message: "Operation timed out."},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			vf := &visualFeatures{Archive: st}
+			scope := testOperationPassScope("visual:terminal-replay:" + test.name)
+			executions := 0
+			execute := func(context.Context) (visual.WorkerResult, error) {
+				executions++
+				return visual.WorkerResult{}, test.runErr
+			}
+
+			require.ErrorIs(runVisualOperation(t.Context(), vf, scope, execute), test.runErr)
+			replayErr := runVisualOperation(t.Context(), vf, scope, execute)
+			require.Error(replayErr)
+			assert.Equal(test.message, replayErr.Error())
+			assert.NotContains(replayErr.Error(), "private provider response")
+			if test.wantIs != nil {
+				require.ErrorIs(replayErr, test.wantIs)
+			}
+			assert.Equal(1, executions, "terminal replay must not re-execute the visual pass")
+		})
+	}
+}
+
+func TestVisualOperationRequiresRecorderBeforeExecution(t *testing.T) {
+	executed := false
+	err := runVisualOperation(t.Context(), &visualFeatures{}, testOperationPassScope("visual:missing-recorder"),
+		func(context.Context) (visual.WorkerResult, error) {
+			executed = true
+			return visual.WorkerResult{}, nil
+		})
+
+	require.ErrorContains(t, err, "operation recorder is required")
+	assert.False(t, executed)
+}
+
+func TestScheduledVisualPassRecordsPreflightFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "scheduled-visual-pass", Model: "visual-test", Dimension: 1024,
+	})
+	require.NoError(err)
+	reconciler, err := visual.NewReconciler(st, vectorInitVisualOpener{}, visual.ReconcileConfig{
+		GenerationID: generation.ID, ConsumerKey: "visual-test/scheduled-operation-pass",
+		LeaseOwner: "scheduled-operation-pass", LeaseDuration: time.Minute,
+	})
+	require.NoError(err)
+	wantErr := errors.New("scheduled visual scope drift")
+	vf := &visualFeatures{
+		Archive: st, Reconciler: reconciler, Generation: generation,
+		ScopeCheck: func(context.Context) error {
+			return wantErr
+		},
+	}
+	scope := operations.PassScope{
+		Key: "scheduled:visual:test-pass", Trigger: operations.TriggerScheduled,
+		StartedAt: time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC),
+	}
+
+	err = runVisualPass(t.Context(), vf, scope)
+	require.ErrorIs(err, wantErr)
+	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	require.Len(runs, 1)
+	assert.Equal(operations.StateFailed, runs[0].State)
+	require.NotNil(runs[0].Trigger)
+	assert.Equal(operations.TriggerScheduled, *runs[0].Trigger)
+}
+
+func TestVisualHTTPProductionRegistrationRecordsBuildResumeAndRetryPasses(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = false
+	c.Vector.Multimodal.Enabled = true
+	c.Vector.Multimodal.Schedule.Cron = ""
+	c.Vector.Multimodal.Schedule.RunAfterSync = false
+	withTestConfig(t, c)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "visual-http-production-registration", Model: "visual-test", Dimension: 1024,
+	})
+	require.NoError(err)
+	reconciler := newVectorInitVisualReconciler(
+		t, st, generation.ID, "visual-test/http-production-registration",
+	)
+	scopeChecks := 0
+	visualRuntime := &visualFeatures{
+		Archive: st, Reconciler: reconciler, Generation: generation,
+		PolicyFingerprint: "private-policy-fingerprint",
+		ScopeCheck: func(context.Context) error {
+			scopeChecks++
+			return nil
+		},
+	}
+	overrideSetupVectorFeatures(t, func(context.Context, *store.Store, string, bool) (*vectorFeatures, error) {
+		return &vectorFeatures{Cfg: c.Vector, Visual: visualRuntime, Close: func() error { return nil }}, nil
+	})
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: c, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler),
+		VectorStatus: api.VectorStatusInitializing,
+	})
+	handle := startVectorInit(t.Context(), st, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
+	require.True(handle.WaitTimeout(5 * time.Second))
+	t.Cleanup(handle.CloseFeatures)
+	router := srv.Router()
+	privateRequestID := "private-http-operation-request-owner"
+	privateBlobHash := strings.Repeat("ab", 32)
+	privateMessageID := "9000000000000000001"
+
+	response := serveVisualOperationRequest(t, router, "/api/v1/multimodal/build",
+		`{"consent":true}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1)
+	assert.Equal(1, scopeChecks)
+
+	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/build",
+		`{"consent":true}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 1,
+		"terminal replay of the same request/action must reuse the existing row")
+	assert.Equal(1, scopeChecks, "terminal replay must not re-execute the visual pass")
+
+	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/run", "")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.Len(operationRunsForKind(t, st, operations.KindVisualEmbedding), 2)
+
+	response = serveVisualOperationRequest(t, router, "/api/v1/multimodal/retry",
+		`{"message_id":`+privateMessageID+`,"blob_hash":"`+privateBlobHash+`"}`)
+	require.Equal(http.StatusBadGateway, response.Code, response.Body.String())
+	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	require.Len(runs, 3, "build, resume, and retry own distinct action-scoped rows")
+	assert.Equal(3, scopeChecks)
+	assert.ElementsMatch([]operations.State{
+		operations.StateSucceeded, operations.StateSucceeded, operations.StateFailed,
+	}, []operations.State{runs[0].State, runs[1].State, runs[2].State})
+	for _, run := range runs {
+		require.NotNil(run.Trigger)
+		assert.Equal(operations.TriggerManual, *run.Trigger)
+	}
+	keys := visualInvocationKeys(t, st)
+	require.Len(keys, 3)
+	assert.Contains(keys[0], "http:visual:build:")
+	assert.Contains(keys[1], "http:visual:resume:")
+	assert.Contains(keys[2], "http:visual:retry:")
+	for _, privateValue := range []string{privateRequestID, privateBlobHash, privateMessageID} {
+		assert.NotContains(fmt.Sprint(runs), privateValue)
+		assert.NotContains(strings.Join(keys, "\n"), privateValue)
+	}
+}
+
+func TestRegisterVisualJobSkipsUnconsentedScheduledPassWithoutRow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c := config.NewDefaultConfig()
+	c.Vector.Multimodal.Schedule.Cron = "0 0 1 1 *"
+	c.Vector.Multimodal.Schedule.RunAfterSync = false
+	withTestConfig(t, c)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "visual-scheduled-unconsented", Model: "visual-test", Dimension: 1024,
+	})
+	require.NoError(err)
+	vf := &visualFeatures{
+		Archive: st, Generation: generation, PolicyFingerprint: "private-policy-fingerprint",
+		Reconciler: newVectorInitVisualReconciler(t, st, generation.ID, "visual-test/scheduled-unconsented"),
+	}
+	sched := scheduler.New(nil)
+	require.NoError(registerVisualJob(sched, vf))
+
+	require.NoError(sched.TriggerJob("multimodal-attachments"))
+	assert.Empty(operationRunsForKind(t, st, operations.KindVisualEmbedding),
+		"the outer consent gate skips before runVisualPass owns a row")
+	_, err = st.GetAttachmentChangeConsumer(t.Context(), "visual-test/scheduled-unconsented")
+	assert.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing,
+		"the skipped callback must not enter reconciliation")
+}
+
+func TestRegisterVisualJobGenerationStateGateSkipsBeforePass(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		prepare        func(*testing.T, *store.Store, store.VisualGeneration) int64
+		wantMissing    bool
+		wantTriggerErr bool
+	}{
+		{
+			name: "retired",
+			prepare: func(t *testing.T, st *store.Store, generation store.VisualGeneration) int64 {
+				t.Helper()
+				require.NoError(t, st.ConsentVisualGeneration(
+					t.Context(), generation.ID, "private-policy-fingerprint",
+				))
+				require.NoError(t, st.RetireVisualGeneration(t.Context(), generation.ID))
+				return generation.ID
+			},
+		},
+		{
+			name: "missing",
+			prepare: func(_ *testing.T, _ *store.Store, generation store.VisualGeneration) int64 {
+				return generation.ID + 10_000
+			},
+			wantMissing: true, wantTriggerErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			c := config.NewDefaultConfig()
+			c.Vector.Multimodal.Schedule.Cron = "0 0 1 1 *"
+			c.Vector.Multimodal.Schedule.RunAfterSync = false
+			withTestConfig(t, c)
+			st := testutil.NewSQLiteTestStore(t)
+			generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+				Fingerprint: "visual-scheduled-state-gate-" + test.name,
+				Model:       "visual-test", Dimension: 1024,
+			})
+			require.NoError(err)
+			generationID := test.prepare(t, st, generation)
+			consumerKey := "visual-test/scheduled-state-gate-" + test.name
+			vf := &visualFeatures{
+				Archive: st, Generation: store.VisualGeneration{ID: generationID},
+				PolicyFingerprint: "private-policy-fingerprint",
+				Reconciler:        newVectorInitVisualReconciler(t, st, generationID, consumerKey),
+			}
+			sched := scheduler.New(nil)
+			require.NoError(registerVisualJob(sched, vf))
+
+			triggerErr := sched.TriggerJob("multimodal-attachments")
+			if test.wantTriggerErr {
+				require.ErrorIs(triggerErr, sql.ErrNoRows)
+			} else {
+				require.NoError(triggerErr)
+			}
+			assert.Empty(operationRunsForKind(t, st, operations.KindVisualEmbedding),
+				"an unavailable generation must return before runVisualPass owns a row")
+			_, err = st.GetAttachmentChangeConsumer(t.Context(), consumerKey)
+			require.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing,
+				"the generation state gate must not enter reconciliation")
+			if test.wantMissing {
+				_, err = st.GetVisualGeneration(t.Context(), generationID)
+				assert.ErrorIs(err, sql.ErrNoRows)
+			}
+		})
+	}
+}
+
+func TestRegisterVisualJobRecordsLaterPostActivationMaintenancePass(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c := config.NewDefaultConfig()
+	c.Vector.Multimodal.Schedule.Cron = "0 0 1 1 *"
+	c.Vector.Multimodal.Schedule.RunAfterSync = false
+	withTestConfig(t, c)
+	st := testutil.NewSQLiteTestStore(t)
+	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{
+		Fingerprint: "visual-scheduled-post-activation", Model: "visual-test", Dimension: 1024,
+	})
+	require.NoError(err)
+	require.NoError(st.ConsentVisualGeneration(t.Context(), generation.ID, "private-policy-fingerprint"))
+	vf := &visualFeatures{
+		Archive: st, Generation: generation, PolicyFingerprint: "private-policy-fingerprint",
+		Reconciler: newVectorInitVisualReconciler(t, st, generation.ID, "visual-test/post-activation"),
+	}
+	sched := scheduler.New(nil)
+	require.NoError(registerVisualJob(sched, vf))
+
+	require.NoError(sched.TriggerJob("multimodal-attachments"))
+	activated, err := st.GetVisualGeneration(t.Context(), generation.ID)
+	require.NoError(err)
+	require.Equal(store.VisualGenerationActive, activated.State)
+	firstRuns := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	require.Len(firstRuns, 1)
+
+	require.NoError(sched.TriggerJob("multimodal-attachments"))
+	afterMaintenance, err := st.GetVisualGeneration(t.Context(), generation.ID)
+	require.NoError(err)
+	assert.Equal(store.VisualGenerationActive, afterMaintenance.State,
+		"post-activation maintenance must preserve the active generation")
+	runs := operationRunsForKind(t, st, operations.KindVisualEmbedding)
+	require.Len(runs, 2, "a later maintenance callback owns a fresh scheduled row")
+	assert.NotEqual(runs[0].ID, runs[1].ID)
+	for _, run := range runs {
+		require.NotNil(run.Trigger)
+		assert.Equal(operations.TriggerScheduled, *run.Trigger)
+		assert.Equal(operations.StateSucceeded, run.State)
+	}
+	keys := visualInvocationKeys(t, st)
+	require.Len(keys, 2)
+	assert.NotEqual(keys[0], keys[1])
+}
+
+func newVectorInitVisualReconciler(
+	t *testing.T, st *store.Store, generationID int64, consumerKey string,
+) *visual.Reconciler {
+	t.Helper()
+	reconciler, err := visual.NewReconciler(st, vectorInitVisualOpener{}, visual.ReconcileConfig{
+		GenerationID: generationID, ConsumerKey: consumerKey,
+		LeaseOwner: consumerKey, LeaseDuration: time.Minute,
+	})
+	require.NoError(t, err)
+	return reconciler
+}
+
+func serveVisualOperationRequest(
+	t *testing.T, handler http.Handler, path, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set("X-Request-Id", "private-http-operation-request-owner")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func visualInvocationKeys(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	rows, err := st.DB().QueryContext(t.Context(),
+		`SELECT invocation_key FROM visual_embedding_runs ORDER BY id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var keys []string
+	for rows.Next() {
+		var key string
+		require.NoError(t, rows.Scan(&key))
+		keys = append(keys, key)
+	}
+	require.NoError(t, rows.Err())
+	return keys
 }

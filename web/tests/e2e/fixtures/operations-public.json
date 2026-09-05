@@ -1,0 +1,62 @@
+{
+  "runs": [
+    {
+      "id": "op2.11111111111111111111111111111111.JCQkJCQkJCQkJCQkbrOvKIei5AQEm03fz1H2-R-CXROUh3IE1Pu4IyagxSkgYj_xS3CIMPcv3sMNx8awgog3Ye0ZXRwiVZPN6onG8oNHpL6c",
+      "kind": "source_sync",
+      "lane": "messages",
+      "state": "succeeded",
+      "started_at": "2026-08-30T12:00:00Z",
+      "finished_at": "2026-08-30T12:01:05Z",
+      "counters": [{ "name": "processed", "unit": "messages", "value": 24 }]
+    },
+    {
+      "id": "op2.11111111111111111111111111111111.JCQkJCQkJCQkJCQkbrOvKIei5AQEi0PY2Vby0DOISh7ViXxP2cCTLi-1gjE4KTjrCXKePvlk2dkm8cv2moM2YKKAxCDpP1VNilPPm8_xmMSp-g",
+      "kind": "carddav_sync",
+      "lane": "contacts",
+      "state": "failed",
+      "trigger": "manual",
+      "started_at": "2026-08-30T11:00:00Z",
+      "finished_at": "2026-08-30T11:00:04Z",
+      "counters": [{ "name": "books", "unit": "books", "value": 1 }],
+      "error": { "code": "carddav_sync_failed", "message": "CardDAV sync failed." }
+    },
+    {
+      "id": "op2.11111111111111111111111111111111.JCQkJCQkJCQkJCQkbrOvKIei5AQEjE3JyF_2yBikVgjC2TEOxM2jNHTpxXpmVCX8DSGIJvcv3sNkmoC-mtBpJM-U-QiCBiRKTZqMM2Qgig98JDOtSDRP5ZE",
+      "kind": "document_extraction",
+      "lane": "documents",
+      "state": "partial",
+      "trigger": "scheduled",
+      "started_at": "2026-08-29T10:00:00Z",
+      "finished_at": "2026-08-29T10:00:08Z",
+      "counters": [
+        { "name": "attempted", "unit": "documents", "value": 5 },
+        { "name": "succeeded", "unit": "documents", "value": 4 },
+        { "name": "failed", "unit": "documents", "value": 1 }
+      ],
+      "error": { "code": "invocation_archive_drift", "message": "Operation archive input changed." }
+    },
+    {
+      "id": "op2.11111111111111111111111111111111.JCQkJCQkJCQkJCQkbrOvKIei5AQEnkvZyFP_-QmWURXSzzkD14bgeD-huGd7ezSnR2bDcqFwhJV-jMv8zOZuNLLHrBqMSsVYdjUProyYffIlXqV_DRA",
+      "kind": "visual_embedding",
+      "lane": "visual_attachments",
+      "state": "running",
+      "trigger": "manual",
+      "started_at": "2026-08-28T09:00:00Z",
+      "counters": [{ "name": "attempted", "unit": "attachments", "value": 3 }]
+    },
+    {
+      "id": "op2.11111111111111111111111111111111.JCQkJCQkJCQkJCQkbrOvKIei5AQEmEfYzl39-R-MVhXGiXxP2cCTLi-1gjE4KSXgBTCIMPc1xMU7wMXN0d0larKf70XPRHELHTeE5TsXVibZQpDNUM0S8d0XmW6w7FyKkj0vwEV_sA",
+      "kind": "person_sweep",
+      "lane": "person_facts",
+      "state": "succeeded",
+      "trigger": "manual",
+      "started_at": "2026-08-27T08:00:00Z",
+      "finished_at": "2026-08-27T08:00:02Z",
+      "counters": [{ "name": "projected_writes", "unit": "writes", "value": 2 }]
+    }
+  ],
+  "membership_revision": 41,
+  "unavailable_kinds": [
+    { "kind": "person_embedding", "lane": "person_facts", "unavailable_code": "adapter_unavailable" }
+  ]
+}

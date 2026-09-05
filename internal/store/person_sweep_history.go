@@ -13,6 +13,84 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
+// RecoverPersonSweepRunsContext reclaims daemon-owned sweep leases through
+// the same fence and abandoned-attempt finalizer used by ordinary lease
+// takeover. It leaves dirty work available for a fresh claim.
+func (s *Store) RecoverPersonSweepRunsContext(ctx context.Context) (int64, error) {
+	var recovered int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var runningBefore int64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_sweep_runs
+			WHERE status = 'running'`).Scan(&runningBefore); err != nil {
+			return fmt.Errorf("count running person sweep runs before recovery: %w", err)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT person_id, lease_fence
+			FROM person_sweep_work WHERE COALESCE(lease_owner, '') <> '' ORDER BY person_id`)
+		if err != nil {
+			return fmt.Errorf("list person sweep leases for recovery: %w", err)
+		}
+		type staleLease struct{ personID, fence int64 }
+		leases := make([]staleLease, 0)
+		for rows.Next() {
+			var lease staleLease
+			if err := rows.Scan(&lease.personID, &lease.fence); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan person sweep lease for recovery: %w", err)
+			}
+			leases = append(leases, lease)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate person sweep leases for recovery: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close person sweep leases for recovery: %w", err)
+		}
+		for _, lease := range leases {
+			currentFence := lease.fence + 1
+			result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_sweep_work SET
+				lease_fence = ?, updated_at = %s
+				WHERE person_id = ? AND lease_fence = ? AND COALESCE(lease_owner, '') <> ''`,
+				s.dialect.Now()), currentFence, lease.personID, lease.fence)
+			if err != nil {
+				return fmt.Errorf("fence person sweep lease for recovery: %w", err)
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count fenced person sweep lease: %w", err)
+			}
+			if changed == 0 {
+				continue
+			}
+			if err := s.finalizeReclaimedPersonSweepAttempts(ctx, tx, lease.personID, currentFence); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_sweep_work SET
+				lease_owner = '', lease_until = NULL, updated_at = %s WHERE person_id = ?`,
+				s.dialect.Now()), lease.personID); err != nil {
+				return fmt.Errorf("release recovered person sweep lease: %w", err)
+			}
+		}
+		_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_sweep_runs SET
+			status = CASE WHEN success_count > 0 THEN 'partial' ELSE 'failed' END,
+			completed_at = %s
+			WHERE status = 'running' AND NOT EXISTS (
+				SELECT 1 FROM person_sweep_attempts a
+				WHERE a.run_id = person_sweep_runs.id AND a.status = 'running')`, s.dialect.Now()))
+		if err != nil {
+			return fmt.Errorf("finish orphaned person sweep runs: %w", err)
+		}
+		var runningAfter int64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_sweep_runs
+			WHERE status = 'running'`).Scan(&runningAfter); err != nil {
+			return fmt.Errorf("count running person sweep runs after recovery: %w", err)
+		}
+		recovered = runningBefore - runningAfter
+		return nil
+	})
+	return recovered, err
+}
+
 func (s *Store) ListPersonSweepRuns(
 	ctx context.Context, filter peoplesweep.RunFilter,
 ) ([]peoplesweep.RunSummary, error) {

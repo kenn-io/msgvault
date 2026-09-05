@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -59,6 +61,8 @@ type ContextWorkerDeps struct {
 	MaxRunUTF8Bytes         int
 	DocumentPrefixUTF8Bytes int
 	Hooks                   ContextWorkerHooks
+	Recorder                operations.Recorder
+	Log                     *slog.Logger
 }
 
 // ContextConvergence is the durable state Task 10 can use for activation and
@@ -91,6 +95,9 @@ func NewContextWorker(d ContextWorkerDeps) *ContextWorker {
 		d.MaxRunUTF8Bytes = defaultContextRunUTF8Bytes
 	}
 	d.BuildScope = vector.NewBuildScope(d.BuildScope.MessageTypes, d.BuildScope.SourceIDs)
+	if d.Log == nil {
+		d.Log = slog.Default()
+	}
 	source, _ := d.Store.(*store.Store)
 	return &ContextWorker{deps: d, source: source}
 }
@@ -101,13 +108,45 @@ func (w *ContextWorker) ReclaimStale(context.Context) (int, error) { return 0, n
 
 // RunOnce drains the journal, preserves ordinary missing-row discovery, and
 // completes or resumes reconciliation.
-func (w *ContextWorker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
-	return w.run(ctx, gen)
+func (w *ContextWorker) RunOnce(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (RunResult, error) {
+	return w.runOperationPass(ctx, gen, scope, false)
 }
 
 // RunBackstop restarts only reconciliation. It never rewinds the consumed
 // mutation sequence.
-func (w *ContextWorker) RunBackstop(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
+func (w *ContextWorker) RunBackstop(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (RunResult, error) {
+	return w.runOperationPass(ctx, gen, scope, true)
+}
+
+func (w *ContextWorker) runOperationPass(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
+) (result RunResult, retErr error) {
+	pass, terminal, err := beginOperationPass(
+		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
+	)
+	if err != nil {
+		return result, err
+	}
+	if terminal != nil {
+		return runResultFromOperationRun(terminal)
+	}
+	defer func() {
+		counters := finalRunCounters(result)
+		pass.checkpoint(ctx, counters)
+		pass.finish(ctx, counters, retErr)
+	}()
+	runCtx := contextWithOperationPass(ctx, pass)
+	if !backstop {
+		return w.run(runCtx, gen)
+	}
+	return w.runBackstop(runCtx, gen)
+}
+
+func (w *ContextWorker) runBackstop(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
 	if err := w.validate(); err != nil {
 		return RunResult{Contextual: &ContextConvergence{}}, err
 	}
@@ -961,6 +1000,7 @@ func (w *ContextWorker) coverPreparedScopePlan(ctx context.Context, gen vector.G
 		}
 		res.Succeeded += len(doc.Versions)
 	}
+	checkpointContextOperationPass(ctx, *res)
 	return nil
 }
 

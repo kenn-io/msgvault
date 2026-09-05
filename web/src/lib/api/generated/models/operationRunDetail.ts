@@ -5,7 +5,9 @@ import type { OperationPublicCounter } from "./operationPublicCounter";
 import type { OperationPublicError } from "./operationPublicError";
 import type { OperationRunDetailKind } from "./operationRunDetailKind";
 import type { OperationRunDetailLane } from "./operationRunDetailLane";
+import type { OperationRunDetailRelatedStatus } from "./operationRunDetailRelatedStatus";
 import type { OperationRunDetailState } from "./operationRunDetailState";
+import type { OperationRunDetailSupportedActionsItem } from "./operationRunDetailSupportedActionsItem";
 import type { OperationRunDetailTrigger } from "./operationRunDetailTrigger";
 
 export interface OperationRunDetail {
@@ -15,8 +17,9 @@ export interface OperationRunDetail {
   id: string;
   kind: OperationRunDetailKind;
   lane: OperationRunDetailLane;
+  related_status?: OperationRunDetailRelatedStatus;
   started_at: string;
   state: OperationRunDetailState;
+  supported_actions: OperationRunDetailSupportedActionsItem[];
   trigger?: OperationRunDetailTrigger;
-  [key: string]: unknown;
 }

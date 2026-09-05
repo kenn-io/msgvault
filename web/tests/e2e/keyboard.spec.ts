@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
+import { installOperations } from './fixtures/operations';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen = new Set<string>();
@@ -16,6 +17,32 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   }
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
+
+test('operations filters, selection, advertised action, and close work without a pointer', async ({ page }) => {
+  const fixture = await installOperations(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+
+  await tabTo(page, 'Lane:');
+  await page.keyboard.press('Enter');
+  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
+
+  await tabTo(page, 'Lane:', 120, 'Shift+Tab');
+  await page.keyboard.press('Enter');
+  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBeNull();
+
+  await tabTo(page, 'Open CardDAV sync run');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
+  await tabTo(page, 'Start CardDAV sync');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Open CardDAV sync run' })).toBeFocused();
+});
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
   const fixture = await loadMixedArchive();

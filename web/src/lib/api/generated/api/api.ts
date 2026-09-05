@@ -1289,6 +1289,17 @@ export const getDocumentIndexStatus = (
   );
 };
 /**
+ * @summary Get extracted document index status for the selected durable profile
+ */
+export const getCurrentDocumentIndexStatus = (
+  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
+) => {
+  return orvalFetch<DocumentIndexStatusResponse>(
+    { url: `/api/v1/documents/status/current`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Get document vector generation, consent, usage, and failure status
  */
 export const getDocumentVectorStatus = (

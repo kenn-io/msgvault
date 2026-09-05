@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -28,6 +30,8 @@ type PersonWorkerDeps struct {
 	Gate          vector.SemanticPersonEmbeddingGate
 	BatchSize     int
 	MaxInputChars int
+	Recorder      operations.Recorder
+	Log           *slog.Logger
 }
 
 // PersonWorker reconciles one generation to the complete current curated
@@ -53,13 +57,37 @@ func NewPersonWorker(deps PersonWorkerDeps) *PersonWorker {
 	if deps.MaxInputChars <= 0 {
 		deps.MaxInputChars = store.MaxPersonSemanticDocumentBytes
 	}
+	if deps.Log == nil {
+		deps.Log = slog.Default()
+	}
 	return &PersonWorker{deps: deps}
 }
 
 // RunOnce embeds missing or changed person documents, fences each provider
 // response against a fresh source read, and removes vectors whose source
 // person no longer exists.
-func (w *PersonWorker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
+func (w *PersonWorker) RunOnce(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (result RunResult, retErr error) {
+	if w == nil {
+		return result, errors.New("person worker is required")
+	}
+	pass, terminal, err := beginOperationPass(
+		ctx, w.deps.Recorder, operations.KindPersonEmbedding, scope, w.deps.Log,
+	)
+	if err != nil {
+		return result, err
+	}
+	if terminal != nil {
+		return runResultFromOperationRun(terminal)
+	}
+	defer func() { pass.finish(ctx, finalRunCounters(result), retErr) }()
+	return w.runOnce(ctx, gen, pass)
+}
+
+func (w *PersonWorker) runOnce(
+	ctx context.Context, gen vector.GenerationID, pass *operationPass,
+) (RunResult, error) {
 	var result RunResult
 	if w == nil || w.deps.Store == nil || w.deps.Backend == nil ||
 		w.deps.Client == nil || w.deps.Gate == nil {
@@ -138,6 +166,7 @@ func (w *PersonWorker) RunOnce(ctx context.Context, gen vector.GenerationID) (Ru
 				))
 			}
 		}
+		pass.checkpoint(ctx, checkpointRunCounters(result))
 	}
 
 	current := documents
@@ -158,6 +187,7 @@ func (w *PersonWorker) RunOnce(ctx context.Context, gen vector.GenerationID) (Ru
 	} else if err != nil {
 		return result, fmt.Errorf("reconcile deleted person vectors for generation %d: %w", gen, err)
 	}
+	pass.checkpoint(ctx, checkpointRunCounters(result))
 	return result, runErr
 }
 
@@ -301,8 +331,8 @@ func capPersonProviderInput(text string, maxRunes int) string {
 // reconciliation. It deliberately matches scheduler.EmbedRunner without an
 // embed-to-scheduler package cycle.
 type GenerationRunner interface {
-	RunOnce(ctx context.Context, gen vector.GenerationID) (RunResult, error)
-	RunBackstop(ctx context.Context, gen vector.GenerationID) (RunResult, error)
+	RunOnce(ctx context.Context, gen vector.GenerationID, scope operations.PassScope) (RunResult, error)
+	RunBackstop(ctx context.Context, gen vector.GenerationID, scope operations.PassScope) (RunResult, error)
 	ReclaimStale(ctx context.Context) (int, error)
 }
 
@@ -357,11 +387,17 @@ func (w *GenerationWorker) ReclaimStale(ctx context.Context) (int, error) {
 
 // RunOnce maintains both corpora even when one side returns an error, so a
 // transient message failure cannot indefinitely starve active-person upkeep.
-func (w *GenerationWorker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
+func (w *GenerationWorker) RunOnce(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (RunResult, error) {
 	if w == nil || w.messages == nil || w.persons == nil {
 		return RunResult{}, errors.New("generation worker: message and person workers are required")
 	}
-	messageResult, messageErr := w.messages.RunOnce(ctx, gen)
+	messageScope, err := scope.ForKind(operations.KindMessageEmbedding)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("message embedding pass scope: %w", err)
+	}
+	messageResult, messageErr := w.messages.RunOnce(ctx, gen, messageScope)
 	var personResult RunResult
 	var personErr error
 	if w.personScanned == nil {
@@ -378,7 +414,12 @@ func (w *GenerationWorker) RunOnce(ctx context.Context, gen vector.GenerationID)
 	}
 	if !building || messageResult.Contextual == nil ||
 		messageResult.Contextual.Converged || !w.personScanned[gen] {
-		personResult, personErr = w.persons.RunOnce(ctx, gen)
+		personScope, scopeErr := scope.ForKind(operations.KindPersonEmbedding)
+		if scopeErr != nil {
+			personErr = fmt.Errorf("person embedding pass scope: %w", scopeErr)
+		} else {
+			personResult, personErr = w.persons.RunOnce(ctx, gen, personScope)
+		}
 		w.personScanned[gen] = true
 	}
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
@@ -388,22 +429,36 @@ func (w *GenerationWorker) RunOnce(ctx context.Context, gen vector.GenerationID)
 // uses it to maintain the compatible active generation independently while a
 // message rebuild drains into another generation.
 func (w *GenerationWorker) RunPersonsOnce(
-	ctx context.Context, gen vector.GenerationID,
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
 ) (RunResult, error) {
 	if w == nil || w.persons == nil {
 		return RunResult{}, errors.New("generation worker: person worker is required")
 	}
-	return w.persons.RunOnce(ctx, gen)
+	personScope, err := scope.ForKind(operations.KindPersonEmbedding)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("person embedding pass scope: %w", err)
+	}
+	return w.persons.RunOnce(ctx, gen, personScope)
 }
 
 // RunBackstop preserves the message runner's watermark-ignoring behavior and
 // performs the same idempotent person full scan used by ordinary ticks.
-func (w *GenerationWorker) RunBackstop(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
+func (w *GenerationWorker) RunBackstop(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (RunResult, error) {
 	if w == nil || w.messages == nil || w.persons == nil {
 		return RunResult{}, errors.New("generation worker: message and person workers are required")
 	}
-	messageResult, messageErr := w.messages.RunBackstop(ctx, gen)
-	personResult, personErr := w.persons.RunOnce(ctx, gen)
+	messageScope, err := scope.ForKind(operations.KindMessageEmbedding)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("message embedding backstop scope: %w", err)
+	}
+	personScope, err := scope.ForKind(operations.KindPersonEmbedding)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("person embedding backstop scope: %w", err)
+	}
+	messageResult, messageErr := w.messages.RunBackstop(ctx, gen, messageScope)
+	personResult, personErr := w.persons.RunOnce(ctx, gen, personScope)
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }
 

@@ -276,11 +276,13 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			Rebind: deps.Rebind, LastModifiedExpr: deps.LastModifiedExpr,
 			TotalPending: deps.TotalPending, Progress: deps.Progress, Log: deps.Log,
+			Recorder: deps.Store,
 		})
 		personWorker := embed.NewPersonWorker(embed.PersonWorkerDeps{
 			Store: deps.Store, Backend: personBackend, Client: personClient,
 			Gate:      personGate,
 			BatchSize: vectorCfg.Embeddings.BatchSize, MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
+			Recorder: deps.Store, Log: deps.Log,
 		})
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{
@@ -331,11 +333,13 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			ChangeBatchSize:         vectorCfg.Embeddings.BatchSize,
 			ReconcileBatchSize:      vectorCfg.Embeddings.BatchSize,
 			DocumentPrefixUTF8Bytes: len(vectorCfg.Embeddings.DocumentPrefix),
+			Recorder:                deps.Store, Log: deps.Log,
 		})
 		personWorker := embed.NewPersonWorker(embed.PersonWorkerDeps{
 			Store: deps.Store, Backend: personBackend, Client: personClient,
 			Gate:      personGate,
 			BatchSize: vectorCfg.Embeddings.BatchSize, MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
+			Recorder: deps.Store, Log: deps.Log,
 		})
 		worker := embed.NewGenerationWorker(messageWorker, personWorker)
 		return &embeddingRuntime{

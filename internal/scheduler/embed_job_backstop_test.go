@@ -14,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -206,11 +208,15 @@ END;`)
 		Backend: backend, VectorsDB: vecDB, MainDB: mainDB,
 		Store: ws, Client: &e2eClient{dim: 4}, BatchSize: 8,
 		LastModifiedExpr: "CAST(m.last_modified AS TEXT)",
+		Recorder:         testutil.NewTestStore(t),
 	})
 
 	// Drain the corpus fully via the worker so every message is embedded +
 	// stamped and the per-gen watermark advances to the max id.
-	_, err = worker.RunOnce(ctx, gen)
+	_, err = worker.RunOnce(ctx, gen, operations.PassScope{
+		Key: "test:scheduler:backstop:seed", Trigger: operations.TriggerScheduled,
+		StartedAt: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
+	})
 	require.NoError(
 		err, "initial drain")
 

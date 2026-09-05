@@ -134,6 +134,116 @@ CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
     ON carddav_sync_runs(started_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS message_embedding_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    started_at TIMESTAMPTZ NOT NULL,
+    finished_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('invocation_cancelled', 'invocation_timeout', 'invocation_rate_limited', 'invocation_authentication_failed', 'invocation_upstream_failed', 'invocation_invalid_output', 'invocation_safety_limit', 'invocation_archive_drift', 'invocation_daemon_restarted', 'invocation_internal', 'invocation_unsafe_error_redacted')),
+    attempted BIGINT NOT NULL DEFAULT 0 CHECK (attempted >= 0),
+    succeeded BIGINT NOT NULL DEFAULT 0 CHECK (succeeded >= 0),
+    failed BIGINT NOT NULL DEFAULT 0 CHECK (failed >= 0),
+    truncated BIGINT NOT NULL DEFAULT 0 CHECK (truncated >= 0),
+    CHECK ((state = 'running' AND finished_at IS NULL AND error_code IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_message_embedding_runs_operations_order ON message_embedding_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_message_embedding_runs_active ON message_embedding_runs(state, id) WHERE state = 'running';
+
+CREATE TABLE IF NOT EXISTS person_embedding_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('invocation_cancelled', 'invocation_timeout', 'invocation_rate_limited', 'invocation_authentication_failed', 'invocation_upstream_failed', 'invocation_invalid_output', 'invocation_safety_limit', 'invocation_archive_drift', 'invocation_daemon_restarted', 'invocation_internal', 'invocation_unsafe_error_redacted')),
+    attempted BIGINT NOT NULL DEFAULT 0 CHECK (attempted >= 0),
+    succeeded BIGINT NOT NULL DEFAULT 0 CHECK (succeeded >= 0),
+    failed BIGINT NOT NULL DEFAULT 0 CHECK (failed >= 0),
+    truncated BIGINT NOT NULL DEFAULT 0 CHECK (truncated >= 0),
+    CHECK ((state = 'running' AND finished_at IS NULL AND error_code IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_person_embedding_runs_operations_order ON person_embedding_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_person_embedding_runs_active ON person_embedding_runs(state, id) WHERE state = 'running';
+
+CREATE TABLE IF NOT EXISTS document_extraction_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('invocation_cancelled', 'invocation_timeout', 'invocation_rate_limited', 'invocation_authentication_failed', 'invocation_upstream_failed', 'invocation_invalid_output', 'invocation_safety_limit', 'invocation_archive_drift', 'invocation_daemon_restarted', 'invocation_internal', 'invocation_unsafe_error_redacted')),
+    attempted BIGINT NOT NULL DEFAULT 0 CHECK (attempted >= 0),
+    succeeded BIGINT NOT NULL DEFAULT 0 CHECK (succeeded >= 0),
+    failed BIGINT NOT NULL DEFAULT 0 CHECK (failed >= 0),
+    CHECK ((state = 'running' AND finished_at IS NULL AND error_code IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_document_extraction_runs_operations_order ON document_extraction_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_document_extraction_runs_active ON document_extraction_runs(state, id) WHERE state = 'running';
+
+CREATE TABLE IF NOT EXISTS document_embedding_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('invocation_cancelled', 'invocation_timeout', 'invocation_rate_limited', 'invocation_authentication_failed', 'invocation_upstream_failed', 'invocation_invalid_output', 'invocation_safety_limit', 'invocation_archive_drift', 'invocation_daemon_restarted', 'invocation_internal', 'invocation_unsafe_error_redacted')),
+    attempted BIGINT NOT NULL DEFAULT 0 CHECK (attempted >= 0),
+    succeeded BIGINT NOT NULL DEFAULT 0 CHECK (succeeded >= 0),
+    failed BIGINT NOT NULL DEFAULT 0 CHECK (failed >= 0),
+    CHECK ((state = 'running' AND finished_at IS NULL AND error_code IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_document_embedding_runs_operations_order ON document_embedding_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_document_embedding_runs_active ON document_embedding_runs(state, id) WHERE state = 'running';
+
+CREATE TABLE IF NOT EXISTS visual_embedding_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),
+    trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+    state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
+    started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('invocation_cancelled', 'invocation_timeout', 'invocation_rate_limited', 'invocation_authentication_failed', 'invocation_upstream_failed', 'invocation_invalid_output', 'invocation_safety_limit', 'invocation_archive_drift', 'invocation_daemon_restarted', 'invocation_internal', 'invocation_unsafe_error_redacted')),
+    attempted BIGINT NOT NULL DEFAULT 0 CHECK (attempted >= 0),
+    succeeded BIGINT NOT NULL DEFAULT 0 CHECK (succeeded >= 0),
+    failed BIGINT NOT NULL DEFAULT 0 CHECK (failed >= 0),
+    skipped BIGINT NOT NULL DEFAULT 0 CHECK (skipped >= 0),
+    CHECK ((state = 'running' AND finished_at IS NULL AND error_code IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_visual_embedding_runs_operations_order ON visual_embedding_runs(started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_visual_embedding_runs_active ON visual_embedding_runs(state, id) WHERE state = 'running';
+
+CREATE OR REPLACE FUNCTION reject_terminal_operation_invocation_update()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.state <> 'running' AND to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW) THEN
+        RAISE EXCEPTION 'terminal operation invocation is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_message_embedding_runs_terminal_immutable ON message_embedding_runs;
+CREATE TRIGGER trg_message_embedding_runs_terminal_immutable BEFORE UPDATE ON message_embedding_runs FOR EACH ROW EXECUTE FUNCTION reject_terminal_operation_invocation_update();
+DROP TRIGGER IF EXISTS trg_person_embedding_runs_terminal_immutable ON person_embedding_runs;
+CREATE TRIGGER trg_person_embedding_runs_terminal_immutable BEFORE UPDATE ON person_embedding_runs FOR EACH ROW EXECUTE FUNCTION reject_terminal_operation_invocation_update();
+DROP TRIGGER IF EXISTS trg_document_extraction_runs_terminal_immutable ON document_extraction_runs;
+CREATE TRIGGER trg_document_extraction_runs_terminal_immutable BEFORE UPDATE ON document_extraction_runs FOR EACH ROW EXECUTE FUNCTION reject_terminal_operation_invocation_update();
+DROP TRIGGER IF EXISTS trg_document_embedding_runs_terminal_immutable ON document_embedding_runs;
+CREATE TRIGGER trg_document_embedding_runs_terminal_immutable BEFORE UPDATE ON document_embedding_runs FOR EACH ROW EXECUTE FUNCTION reject_terminal_operation_invocation_update();
+DROP TRIGGER IF EXISTS trg_visual_embedding_runs_terminal_immutable ON visual_embedding_runs;
+CREATE TRIGGER trg_visual_embedding_runs_terminal_immutable BEFORE UPDATE ON visual_embedding_runs FOR EACH ROW EXECUTE FUNCTION reject_terminal_operation_invocation_update();
+
+CREATE TABLE IF NOT EXISTS operation_token_keys (
+    key_id TEXT PRIMARY KEY CHECK (key_id ~ '^[a-f0-9]{32}$'),
+    key_bytes BYTEA NOT NULL CHECK (octet_length(key_bytes) = 32),
+    state TEXT NOT NULL CHECK (state IN ('active', 'decrypt_only')),
+    created_at TIMESTAMPTZ NOT NULL,
+    retired_at TIMESTAMPTZ,
+    CHECK ((state = 'active' AND retired_at IS NULL) OR (state = 'decrypt_only' AND retired_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operation_token_keys_one_active
+    ON operation_token_keys(state) WHERE state = 'active';
+
 CREATE TABLE IF NOT EXISTS carddav_accounts (
     id                    SMALLINT PRIMARY KEY CHECK (id = 1),
     base_url              TEXT NOT NULL,
@@ -3412,6 +3522,131 @@ CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_running
     ON sync_runs(started_at DESC, id DESC) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_succeeded
     ON sync_runs(started_at DESC, id DESC) WHERE status = 'completed' AND errors_count = 0;
+
+-- A cursor page binds the exact membership/order view across every operation
+-- ledger. Aggregate counter checkpoints do not affect this revision.
+CREATE TABLE IF NOT EXISTS operation_history_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    membership_revision BIGINT NOT NULL DEFAULT 0 CHECK (membership_revision >= 0)
+);
+INSERT INTO operation_history_state(singleton, membership_revision) VALUES (1, 0)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION advance_operation_history_membership_revision()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE operation_history_state
+    SET membership_revision = membership_revision + 1
+    WHERE singleton = 1;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_operation_history_carddav_insert ON carddav_sync_runs;
+CREATE TRIGGER trg_operation_history_carddav_insert AFTER INSERT ON carddav_sync_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_carddav_delete ON carddav_sync_runs;
+CREATE TRIGGER trg_operation_history_carddav_delete AFTER DELETE ON carddav_sync_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_carddav_update ON carddav_sync_runs;
+CREATE TRIGGER trg_operation_history_carddav_update AFTER UPDATE ON carddav_sync_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_message_embedding_insert ON message_embedding_runs;
+CREATE TRIGGER trg_operation_history_message_embedding_insert AFTER INSERT ON message_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_message_embedding_delete ON message_embedding_runs;
+CREATE TRIGGER trg_operation_history_message_embedding_delete AFTER DELETE ON message_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_message_embedding_update ON message_embedding_runs;
+CREATE TRIGGER trg_operation_history_message_embedding_update AFTER UPDATE ON message_embedding_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_person_embedding_insert ON person_embedding_runs;
+CREATE TRIGGER trg_operation_history_person_embedding_insert AFTER INSERT ON person_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_embedding_delete ON person_embedding_runs;
+CREATE TRIGGER trg_operation_history_person_embedding_delete AFTER DELETE ON person_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_embedding_update ON person_embedding_runs;
+CREATE TRIGGER trg_operation_history_person_embedding_update AFTER UPDATE ON person_embedding_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_document_extraction_insert ON document_extraction_runs;
+CREATE TRIGGER trg_operation_history_document_extraction_insert AFTER INSERT ON document_extraction_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_document_extraction_delete ON document_extraction_runs;
+CREATE TRIGGER trg_operation_history_document_extraction_delete AFTER DELETE ON document_extraction_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_document_extraction_update ON document_extraction_runs;
+CREATE TRIGGER trg_operation_history_document_extraction_update AFTER UPDATE ON document_extraction_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_document_embedding_insert ON document_embedding_runs;
+CREATE TRIGGER trg_operation_history_document_embedding_insert AFTER INSERT ON document_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_document_embedding_delete ON document_embedding_runs;
+CREATE TRIGGER trg_operation_history_document_embedding_delete AFTER DELETE ON document_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_document_embedding_update ON document_embedding_runs;
+CREATE TRIGGER trg_operation_history_document_embedding_update AFTER UPDATE ON document_embedding_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_visual_embedding_insert ON visual_embedding_runs;
+CREATE TRIGGER trg_operation_history_visual_embedding_insert AFTER INSERT ON visual_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_visual_embedding_delete ON visual_embedding_runs;
+CREATE TRIGGER trg_operation_history_visual_embedding_delete AFTER DELETE ON visual_embedding_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_visual_embedding_update ON visual_embedding_runs;
+CREATE TRIGGER trg_operation_history_visual_embedding_update AFTER UPDATE ON visual_embedding_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_person_enrichment_insert ON person_enrichment_runs;
+CREATE TRIGGER trg_operation_history_person_enrichment_insert AFTER INSERT ON person_enrichment_runs
+FOR EACH ROW WHEN (NEW.started_at IS NOT NULL)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_enrichment_delete ON person_enrichment_runs;
+CREATE TRIGGER trg_operation_history_person_enrichment_delete AFTER DELETE ON person_enrichment_runs
+FOR EACH ROW WHEN (OLD.started_at IS NOT NULL)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_enrichment_update ON person_enrichment_runs;
+CREATE TRIGGER trg_operation_history_person_enrichment_update AFTER UPDATE ON person_enrichment_runs
+FOR EACH ROW WHEN (
+    (OLD.started_at IS NULL) IS DISTINCT FROM (NEW.started_at IS NULL)
+    OR (NEW.started_at IS NOT NULL AND
+        (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.state IS DISTINCT FROM NEW.state))
+)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_person_sweep_insert ON person_sweep_runs;
+CREATE TRIGGER trg_operation_history_person_sweep_insert AFTER INSERT ON person_sweep_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_sweep_delete ON person_sweep_runs;
+CREATE TRIGGER trg_operation_history_person_sweep_delete AFTER DELETE ON person_sweep_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_person_sweep_update ON person_sweep_runs;
+CREATE TRIGGER trg_operation_history_person_sweep_update AFTER UPDATE ON person_sweep_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
+DROP TRIGGER IF EXISTS trg_operation_history_source_insert ON sync_runs;
+CREATE TRIGGER trg_operation_history_source_insert AFTER INSERT ON sync_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_source_delete ON sync_runs;
+CREATE TRIGGER trg_operation_history_source_delete AFTER DELETE ON sync_runs
+FOR EACH ROW EXECUTE FUNCTION advance_operation_history_membership_revision();
+DROP TRIGGER IF EXISTS trg_operation_history_source_update ON sync_runs;
+CREATE TRIGGER trg_operation_history_source_update AFTER UPDATE ON sync_runs
+FOR EACH ROW WHEN (OLD.started_at IS DISTINCT FROM NEW.started_at OR OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION advance_operation_history_membership_revision();
+
 CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
     ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider

@@ -37,7 +37,7 @@ func TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset(t *testing.T) {
 	// 1..5, embeds them, and advances the watermark to 5 (batchMax).
 	f := newWorkerFixture(t, 5)
 	w := newTestWorker(f, 5)
-	res, err := w.RunOnce(ctx, f.BuildingGen)
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "initial RunOnce")
 	require.Equal(5, res.Succeeded, "all 5 embedded")
 	require.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "no missing after initial drain")
@@ -66,7 +66,7 @@ func TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset(t *testing.T) {
 	// watermark (5) and scans only id > 5, so it never re-finds message 2. The
 	// gap the fix targets.
 	gapWorker := newTestWorker(f, 5)
-	gapRes, err := gapWorker.RunOnce(ctx, f.BuildingGen)
+	gapRes, err := gapWorker.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "incremental RunOnce before watermark reset")
 	assert.Equal(0, gapRes.Succeeded, "without the fix, the below-watermark repaired message is NOT re-found")
 	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)),
@@ -81,7 +81,7 @@ func TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset(t *testing.T) {
 		"watermark lowered to just below the repaired id")
 
 	fixWorker := newTestWorker(f, 5)
-	fixRes, err := fixWorker.RunOnce(ctx, f.BuildingGen)
+	fixRes, err := fixWorker.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "incremental RunOnce after watermark reset")
 	assert.GreaterOrEqual(fixRes.Succeeded, 1, "the repaired message is re-embedded after the watermark reset")
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)),

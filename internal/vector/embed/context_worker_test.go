@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -220,6 +221,7 @@ func newContextWorkerFixture(t *testing.T, mutate func(*ContextWorkerDeps)) *con
 			Chat:   ChatWindowAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 200, ChatGap: 30 * time.Minute}},
 		},
 		Client: client, ChangeBatchSize: 2, ReconcileBatchSize: 2,
+		Recorder: newTestOperationRecorder(),
 	}
 	if mutate != nil {
 		mutate(&deps)
@@ -250,7 +252,7 @@ func (f *contextWorkerFixture) seedForSource(sourceID int64, kind string, conver
 }
 
 func (f *contextWorkerFixture) run() (RunResult, error) {
-	return f.worker.RunOnce(context.Background(), f.gen)
+	return f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
 }
 
 func (f *contextWorkerFixture) restartWorker() {
@@ -298,6 +300,50 @@ func TestContextWorker_NewChatTailRepublishesOnlyOpenWindow(t *testing.T) {
 	assert.Zero(t, f.missing())
 }
 
+func TestContextWorkerOperationPassRecordsOneTerminalMessageRun(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	f.deps.Recorder = f.store
+	f.restartWorker()
+	f.seed("beeper", f.chatID, time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC), "record me")
+	scope := operations.PassScope{
+		Key: "manual:context:terminal-ledger", Trigger: operations.TriggerManual,
+		StartedAt: time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC),
+	}
+
+	result, err := f.worker.RunOnce(t.Context(), f.gen, scope)
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	runs := messageEmbeddingOperationRuns(t, f.store)
+	require.Len(t, runs, 1)
+	assert.Equal(t, operations.StateSucceeded, runs[0].State)
+	attempted := operationCounter(runs[0], operations.CounterAttempted)
+	assert.Positive(t, attempted)
+	assert.Equal(t, attempted, operationCounter(runs[0], operations.CounterSucceeded))
+}
+
+func TestContextWorkerCheckpointDetachesFromCancelledCaller(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		deps.Hooks.AfterCoverage = func() error {
+			cancel()
+			return nil
+		}
+	})
+	t.Cleanup(cancel)
+	f.seed("beeper", f.chatID, time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC), "cancel after coverage")
+
+	_, _ = f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	recorder, ok := f.deps.Recorder.(*testOperationRecorder)
+	require.True(t, ok)
+	contexts := recorder.contexts()
+	require.NotEmpty(t, contexts, "durable coverage must attempt a checkpoint")
+	for _, observed := range contexts {
+		require.NoError(t, observed.err, "checkpoint context must survive caller cancellation")
+		assert.True(t, observed.hasDeadline, "checkpoint context must remain bounded")
+	}
+}
+
 func TestContextWorker_BackstopTimestampOnlyChatChangeDoesNotCallProvider(t *testing.T) {
 	assert := assert.New(t)
 	f := newContextWorkerFixture(t, nil)
@@ -315,7 +361,7 @@ func TestContextWorker_BackstopTimestampOnlyChatChangeDoesNotCallProvider(t *tes
 	_, err = f.store.DB().Exec(
 		`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, messageID)
 	require.NoError(t, err)
-	result, err = f.worker.RunBackstop(t.Context(), f.gen)
+	result, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(result.Contextual.Converged)
 	assert.Equal(beforeCalls, f.client.Calls(),
@@ -1048,7 +1094,7 @@ func TestContextWorker_MetadataFanoutEmbedsOnlyNewestStableChatBlock(t *testing.
 	require.Len(t, recentAfter, 1)
 	assert.NotEqual(t, recentBefore[0].PublishedRevision, recentAfter[0].PublishedRevision)
 	beforeBackstop := f.client.Documents()
-	backstop, err := f.worker.RunBackstop(t.Context(), f.gen)
+	backstop, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.NotNil(t, backstop.Contextual)
 	assert.True(t, backstop.Contextual.Converged)
@@ -1069,7 +1115,7 @@ func TestContextWorker_MetadataFanoutEmbedsOnlyNewestStableChatBlock(t *testing.
 	assert.True(t, result.Contextual.Converged)
 	assert.Equal(t, 1, f.client.Documents()-beforeMembership)
 	beforeMembershipBackstop := f.client.Documents()
-	backstop, err = f.worker.RunBackstop(t.Context(), f.gen)
+	backstop, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.NotNil(t, backstop.Contextual)
 	assert.True(t, backstop.Contextual.Converged)
@@ -1150,7 +1196,7 @@ func TestContextWorker_ReconcileAssemblesChatDayOnceAcrossSourcePages(t *testing
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 
-	result, err := f.worker.RunBackstop(context.Background(), f.gen)
+	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(err)
 	require.NotNil(result.Contextual)
 	assert.True(result.Contextual.Converged)
@@ -2071,7 +2117,7 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	assert.Equal(t, 1, f.missing())
 
 	f.client.rejectText = ""
-	result, err = f.worker.RunBackstop(context.Background(), f.gen)
+	result, err = f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.NotNil(t, result.Contextual)
 	assert.True(t, result.Contextual.Converged)
@@ -2320,7 +2366,7 @@ func TestContextWorker_BackstopReconcilesBelowWatermarkAndOrphanWithBoundedCurso
 	require.NoError(t, f.backend.PublishScope(context.Background(), f.gen, "message:999999", orphanSequence,
 		[]vector.DocumentPublication{{Key: "message:999999", Kind: "ordinary-message", Revision: "orphan", SourceSequence: orphanSequence, Members: []int64{999999}}},
 		[]vector.Chunk{{MessageID: 999999, Vector: []float32{1, 2, 3, 4}}}))
-	result, err := f.worker.RunBackstop(context.Background(), f.gen)
+	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	assert.Zero(t, f.missing())
@@ -2348,7 +2394,7 @@ func TestContextWorker_ReconcileSourceUsesBoundedRowPagesDespiteCurrentCoverage(
 	require.NoError(t, err)
 	pageRows = nil
 
-	result, err := f.worker.RunBackstop(context.Background(), f.gen)
+	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	require.GreaterOrEqual(t, len(pageRows), 3)
@@ -2382,7 +2428,7 @@ func TestContextWorker_BackstopPreservesIncompleteReconciliationCursor(t *testin
 	require.NoError(t, f.backend.SetDocumentReconcileCursor(t.Context(), f.gen,
 		"source:"+strconv.FormatInt(ids[0], 10)))
 
-	result, err := f.worker.RunBackstop(t.Context(), f.gen)
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
@@ -2408,7 +2454,7 @@ func TestContextWorker_PrunesJournalThroughMinimumLiveContextCursor(t *testing.T
 		sql.NullString{String: "updated body", Valid: true}, sql.NullString{}))
 	latest := latestContextSequence(t, f.store)
 
-	_, err = f.worker.RunOnce(t.Context(), f.gen)
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	changes, err := f.store.ScanEmbeddingChanges(t.Context(), 0, 100)
 	require.NoError(t, err)
@@ -2416,7 +2462,7 @@ func TestContextWorker_PrunesJournalThroughMinimumLiveContextCursor(t *testing.T
 	assert.Greater(t, changes[0].Sequence, floor)
 
 	require.NoError(t, f.backend.AdvanceDocumentChangeWatermark(t.Context(), building, latest))
-	_, err = f.worker.RunOnce(t.Context(), f.gen)
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	changes, err = f.store.ScanEmbeddingChanges(t.Context(), 0, 100)
 	require.NoError(t, err)
@@ -2436,10 +2482,10 @@ func TestContextWorker_ReconcileSourceResumesInsideBudgetLimitedPage(t *testing.
 	require.NoError(t, err)
 	f.worker.deps.MaxRunUTF8Bytes = 1
 
-	result, err := f.worker.RunBackstop(t.Context(), f.gen)
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	for run := 0; run < 8 && !result.Contextual.Converged; run++ {
-		result, err = f.worker.RunOnce(t.Context(), f.gen)
+		result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 		require.NoError(t, err)
 	}
 	assert.True(t, result.Contextual.Converged, "the source cursor must resume after the processed prefix")
@@ -2465,10 +2511,10 @@ func TestContextWorker_ReconcileOrphansResumeInsideBudgetLimitedPage(t *testing.
 	}
 	f.worker.deps.MaxRunUTF8Bytes = 1
 
-	result, err := f.worker.RunBackstop(t.Context(), f.gen)
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	for run := 0; run < 10 && !result.Contextual.Converged; run++ {
-		result, err = f.worker.RunOnce(t.Context(), f.gen)
+		result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 		require.NoError(t, err)
 	}
 	assert.True(t, result.Contextual.Converged, "the orphan cursor must resume after the processed prefix")
@@ -2507,10 +2553,10 @@ func TestContextWorker_ReconcileOrphansDoesNotSkipPulledForwardScopeWhenOrdersDi
 	}
 	f.worker.deps.MaxRunUTF8Bytes = 1
 
-	result, err := f.worker.RunBackstop(t.Context(), f.gen)
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	for run := 0; run < 10 && !result.Contextual.Converged; run++ {
-		result, err = f.worker.RunOnce(t.Context(), f.gen)
+		result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 		require.NoError(t, err)
 	}
 	require.True(t, result.Contextual.Converged)
@@ -2563,7 +2609,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 			mutation.mutate(t, f, key)
 			assert.Zero(t, f.missing(), "embed_gen stays current before reconciliation")
 
-			result, err := f.worker.RunBackstop(context.Background(), f.gen)
+			result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
 			require.NoError(t, err)
 			assert.True(t, result.Contextual.Converged)
 			record, err := f.backend.GetDocument(context.Background(), f.gen, key)

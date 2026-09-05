@@ -75,7 +75,7 @@ func TestWorker_CASRepairRace(t *testing.T) {
 	}
 
 	w := newTestWorker(f, 1)
-	res, err := w.RunOnce(ctx, f.BuildingGen)
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 
@@ -99,7 +99,7 @@ func TestWorker_CASRepairRace(t *testing.T) {
 	// Recovery: clear the preReturn race, then a backstop pass (scans from 0,
 	// ignoring the watermark) re-embeds the row with the corrected content.
 	f.FakeClient.preReturn = nil
-	res, err = w.RunBackstop(ctx, f.BuildingGen)
+	res, err = w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunBackstop recovery")
 
@@ -167,7 +167,7 @@ func TestWorker_CASNormalPath(t *testing.T) {
 	f := newWorkerFixture(t, 3)
 
 	w := newTestWorker(f, 3)
-	res, err := w.RunOnce(ctx, f.BuildingGen)
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(3, res.Succeeded, "all embedded")
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)),
@@ -223,8 +223,9 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 		Client:    f.FakeClient,
 		BatchSize: 2,
 		Log:       logger,
+		Recorder:  f.Recorder,
 	})
-	res, err := w.RunOnce(ctx, f.BuildingGen)
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 
@@ -252,7 +253,7 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 	// (d) A backstop pass (scans from 0, ignoring the watermark) recovers the
 	// CAS-missed row with its corrected content.
 	f.FakeClient.preReturn = nil
-	bres, err := w.RunBackstop(ctx, f.BuildingGen)
+	bres, err := w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunBackstop recovery")
 
@@ -342,6 +343,7 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 		Client:                 f.FakeClient,
 		BatchSize:              2,
 		MaxConsecutiveFailures: 1, // abort after the single all-drop failure (no busy re-scan)
+		Recorder:               f.Recorder,
 		beforeSkipStamp: func(ctx context.Context, ids []int64) {
 			if !missOnce {
 				return
@@ -361,7 +363,7 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 
 	// The drain is an all-drop (embeddedOK==0): RunOnce returns the wrapped
 	// ErrPermanent4xx without advancing past the unstamped rows.
-	_, err = w.RunOnce(ctx, f.BuildingGen)
+	_, err = w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err, "all-drop drain surfaces an error")
 	assert. // THE INVARIANT: the watermark must NOT skip past the CAS-missed empty
 		// singleton (id 1). Pre-fix it advanced to 1 (stranding the row); post-fix
@@ -380,7 +382,7 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 	// pre-fix the watermark sat at 1 and a normal RunOnce scanned id > 1 only,
 	// so msg 1 was reachable solely via the backstop.
 	f.FakeClient.OnEmbed = nil
-	_, err = w.RunOnce(ctx, f.BuildingGen)
+	_, err = w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "follow-up normal RunOnce")
 
@@ -458,12 +460,13 @@ func TestWorker_Downshift_CASMissNotAllDrop(t *testing.T) {
 		BatchSize:              2,
 		MaxConsecutiveFailures: 2,
 		Log:                    logger,
+		Recorder:               f.Recorder,
 	})
 
 	// (a)+(b): RunOnce must NOT abort — the genuine 4xx is a message-specific
 	// drop, not an endpoint-wide all-drop, and the failure cap is reset because
 	// the endpoint embedded something (embeddedOK > 0).
-	_, err := w.RunOnce(ctx, f.BuildingGen)
+	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce must not abort (healthy endpoint, not an all-drop)")
 
@@ -487,7 +490,7 @@ func TestWorker_Downshift_CASMissNotAllDrop(t *testing.T) {
 	// Recovery: the backstop (full scan from 0, ignoring the watermark)
 	// re-embeds the CAS-missed row with its corrected content.
 	f.FakeClient.OnEmbed = nil
-	bres, err := w.RunBackstop(ctx, f.BuildingGen)
+	bres, err := w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunBackstop recovery")
 

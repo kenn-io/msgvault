@@ -324,7 +324,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		features.Cfg.Embeddings.Dimension, features.Cfg.GenerationFingerprint(),
 	)
 	requirements.NoError(err)
-	result, err := features.Runner.RunOnce(t.Context(), generation)
+	result, err := features.Runner.RunOnce(t.Context(), generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Equal(1, result.Succeeded, "message embedding must continue while people are disabled")
 	convergence, err := features.Convergence.CheckConvergence(t.Context(), generation)
@@ -350,7 +350,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 	}
 	requirements.NoError(configured.Save())
-	result, err = features.Runner.RunOnce(t.Context(), generation)
+	result, err = features.Runner.RunOnce(t.Context(), generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Zero(result.Succeeded, "unconsented people must be skipped without blocking messages")
 	_, err = features.PersonSearchEngine.Search(t.Context(), "synthetic person", 5)
@@ -368,7 +368,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		t.Context(), semanticProfile.Fingerprint, "test",
 	)
 	requirements.NoError(err)
-	result, err = features.Runner.RunOnce(t.Context(), generation)
+	result, err = features.Runner.RunOnce(t.Context(), generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Equal(1, result.Succeeded, "consented exact policy must run the person worker")
 	results, err := features.PersonSearchEngine.Search(t.Context(), "synthetic person", 5)
@@ -388,7 +388,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		t.Context(), person.ID, person.Revision, &updatedName,
 	)
 	requirements.NoError(err)
-	_, err = features.Runner.RunOnce(t.Context(), generation)
+	_, err = features.Runner.RunOnce(t.Context(), generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	_, err = features.PersonSearchEngine.Search(t.Context(), "updated person", 5)
 	requirements.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
@@ -707,7 +707,7 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 		"an unindexed upgraded person corpus must not incur a query provider call")
 	providerMu.Unlock()
 
-	result, err := features.Runner.RunOnce(t.Context(), generation)
+	result, err := features.Runner.RunOnce(t.Context(), generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Equal(1, result.Succeeded, "one curated person document embedded")
 

@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -335,9 +336,9 @@ type Server struct {
 	backend            vector.Backend
 	personSearchEngine PersonSearchEngine
 	visualSearch       *visual.SearchService
-	visualBuild        func(context.Context) error
-	visualRun          func(context.Context) error
-	visualRetry        func(context.Context, int64, string) error
+	visualBuild        func(context.Context, operations.PassScope) error
+	visualRun          func(context.Context, operations.PassScope) error
+	visualRetry        func(context.Context, operations.PassScope, int64, string) error
 	visualStatus       func(context.Context, bool) (visual.Status, error)
 	// visualCoverageScan serializes the archive-wide coverage scan behind
 	// GET /multimodal/status?coverage=1.
@@ -1231,13 +1232,13 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 
 type requestIDKey struct{}
 
-var nextRequestID atomic.Uint64
-
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
 		if id == "" {
-			id = fmt.Sprintf("msgvault-%d", nextRequestID.Add(1))
+			// Request IDs also own durable operation invocations, so they
+			// must stay distinct across daemon restarts.
+			id = "msgvault-" + rand.Text()
 		}
 		w.Header().Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), requestIDKey{}, id)

@@ -623,10 +623,16 @@ type ListOperationRunsQuery struct {
 	// State Exact operation state
 	State *ListOperationRunsQueryState `json:"state,omitempty"`
 
+	// StartedFrom Inclusive canonical UTC RFC3339 lower bound
+	StartedFrom *time.Time `json:"started_from,omitempty"`
+
+	// StartedBefore Exclusive canonical UTC RFC3339 upper bound
+	StartedBefore *time.Time `json:"started_before,omitempty"`
+
 	// Limit Maximum runs to return (default 25, max 100)
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
 
-	// Cursor Opaque cursor bound to this archive and the exact kind, lane, and state filters
+	// Cursor Opaque cursor bound to this archive and the complete normalized filter set
 	Cursor *string `json:"cursor,omitempty"`
 }
 

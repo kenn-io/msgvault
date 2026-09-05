@@ -17,8 +17,10 @@ var (
 )
 
 const (
-	personEnrichmentStateRunning   = "running"
-	personEnrichmentStateSucceeded = "succeeded"
+	personEnrichmentStateRunning       = "running"
+	personEnrichmentStateSucceeded     = "succeeded"
+	personEnrichmentStateFailed        = "failed"
+	personEnrichmentRestartedSafeError = "daemon_restarted"
 )
 
 // PersonEnrichmentRun is one bounded, idempotent execution scope with counts
@@ -36,6 +38,41 @@ type PersonEnrichmentRun struct {
 	IdentityRejectedCount int64      `json:"identity_rejected_count"`
 	FailureClass          *string    `json:"failure_class,omitempty"`
 	SafeError             *string    `json:"safe_error,omitempty"`
+}
+
+type personEnrichmentRunOutcome struct {
+	requested, started, succeeded, failed, suppressed, rejected int64
+}
+
+func (o personEnrichmentRunOutcome) state() string {
+	switch {
+	case o.failed == 0:
+		return "succeeded"
+	case o.started > 0 && o.failed == o.started:
+		return personEnrichmentStateFailed
+	default:
+		return "partial"
+	}
+}
+
+func derivePersonEnrichmentRunOutcomeTx(
+	ctx context.Context, tx *loggedTx, runID int64,
+) (personEnrichmentRunOutcome, error) {
+	var outcome personEnrichmentRunOutcome
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*), COUNT(*),
+		       COALESCE(SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN state IN ('terminal','uncertain_start')
+		                         AND COALESCE(failure_class, '') <> 'policy' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN state = 'suppressed' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN state = 'identity_rejected' THEN 1 ELSE 0 END), 0)
+		FROM person_enrichment_attempts WHERE run_id = ?`, runID).Scan(
+		&outcome.requested, &outcome.started, &outcome.succeeded, &outcome.failed,
+		&outcome.suppressed, &outcome.rejected)
+	if err != nil {
+		return personEnrichmentRunOutcome{}, fmt.Errorf("derive person enrichment run counts: %w", err)
+	}
+	return outcome, nil
 }
 
 func (s *Store) StartRun(
@@ -291,6 +328,211 @@ func (s *Store) ListRunningRuns(
 	return runs, nil
 }
 
+func (s *Store) ListQueuedPersonEnrichmentRunsContext(
+	ctx context.Context, limit int,
+) ([]personenrichment.DurableRun, error) {
+	if limit < 1 || limit > 200 {
+		return nil, errors.New("queued person enrichment run limit must be 1-200")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, requested_by, state, requested_at
+		FROM person_enrichment_runs
+		WHERE state = 'queued' AND started_at IS NOT NULL
+		ORDER BY started_at ASC, id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list queued person enrichment runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	runs := make([]personenrichment.DurableRun, 0, limit)
+	for rows.Next() {
+		run, err := scanDurableRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan queued person enrichment run: %w", err)
+		}
+		runs = append(runs, *run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued person enrichment runs: %w", err)
+	}
+	return runs, nil
+}
+
+func (s *Store) ClaimQueuedPersonEnrichmentRunContext(
+	ctx context.Context, runID int64,
+) (*personenrichment.DurableRun, bool, error) {
+	if runID <= 0 {
+		return nil, false, errors.New("queued person enrichment run ID must be positive")
+	}
+	var run *personenrichment.DurableRun
+	claimed := false
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		run, err = scanDurableRun(tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE person_enrichment_runs
+			SET state = 'running', started_at = COALESCE(started_at, %s)
+			WHERE id = ? AND state = 'queued'
+			RETURNING id, kind, requested_by, state, requested_at`, s.dialect.Now()), runID))
+		if errors.Is(err, sql.ErrNoRows) {
+			run = nil
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("claim queued person enrichment run: %w", err)
+		}
+		claimed = true
+		return nil
+	})
+	return run, claimed, err
+}
+
+// RecoverPersonEnrichmentRunsContext queues only runs whose resumable attempt
+// and work pointers agree. Any ambiguous request ownership is terminalized
+// conservatively from durable outcomes.
+func (s *Store) RecoverPersonEnrichmentRunsContext(ctx context.Context, recoveredAt time.Time) (int64, error) {
+	if recoveredAt.IsZero() {
+		return 0, errors.New("person enrichment recovery time is required")
+	}
+	recoveredAt = recoveredAt.UTC()
+	var recovered int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM person_enrichment_runs
+			WHERE state = 'running' ORDER BY id`)
+		if err != nil {
+			return fmt.Errorf("list person enrichment runs for recovery: %w", err)
+		}
+		ids := make([]int64, 0)
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan person enrichment run for recovery: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate person enrichment runs for recovery: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close person enrichment runs for recovery: %w", err)
+		}
+		for _, runID := range ids {
+			var resumable, invalid int64
+			err := tx.QueryRowContext(ctx, `SELECT
+				COALESCE(SUM(CASE WHEN a.state IN ('pending','retry_wait')
+					AND EXISTS (SELECT 1 FROM person_enrichment_work w
+						WHERE w.run_id = a.run_id AND w.active_attempt_id = a.id
+						  AND w.person_id = a.person_id
+						  AND w.profile_fingerprint = a.profile_fingerprint)
+					THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN a.state IN ('queued','starting','pending','retry_wait')
+					AND NOT (a.state IN ('pending','retry_wait')
+					AND EXISTS (SELECT 1 FROM person_enrichment_work w
+						WHERE w.run_id = a.run_id AND w.active_attempt_id = a.id
+						  AND w.person_id = a.person_id
+						  AND w.profile_fingerprint = a.profile_fingerprint))
+					THEN 1 ELSE 0 END), 0)
+			FROM person_enrichment_attempts a WHERE a.run_id = ?`, runID).
+				Scan(&resumable, &invalid)
+			if err != nil {
+				return fmt.Errorf("validate person enrichment run recovery: %w", err)
+			}
+			// ClaimWork binds the run before BeginAttempt creates its attempt.
+			// Check ownership from the work side too: an absent or mismatched
+			// pointer must not turn unfinished work into a successful empty run.
+			var unaccountedWork int64
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_enrichment_work w
+				WHERE w.run_id = ? AND NOT EXISTS (
+					SELECT 1 FROM person_enrichment_attempts a
+					WHERE a.id = w.active_attempt_id AND a.run_id = w.run_id
+					  AND a.person_id = w.person_id
+					  AND a.profile_fingerprint = w.profile_fingerprint)`, runID).Scan(&unaccountedWork); err != nil {
+				return fmt.Errorf("validate person enrichment work recovery: %w", err)
+			}
+			invalid += unaccountedWork
+			if resumable > 0 && invalid == 0 {
+				if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work
+					SET lease_owner = NULL, lease_until = NULL WHERE run_id = ?`, runID); err != nil {
+					return fmt.Errorf("release resumable person enrichment work: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+					SET lease_owner = NULL, lease_until = NULL WHERE run_id = ?
+					  AND state IN ('pending','retry_wait')`, runID); err != nil {
+					return fmt.Errorf("release resumable person enrichment attempts: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_runs
+					SET state = 'queued' WHERE id = ? AND state = 'running'`, runID); err != nil {
+					return fmt.Errorf("queue resumable person enrichment run: %w", err)
+				}
+				recovered++
+				continue
+			}
+			attemptRows, err := tx.QueryContext(ctx, `SELECT id FROM person_enrichment_attempts
+				WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait') ORDER BY id`, runID)
+			if err != nil {
+				return fmt.Errorf("list invalid person enrichment attempt costs: %w", err)
+			}
+			attemptIDs := make([]int64, 0)
+			for attemptRows.Next() {
+				var attemptID int64
+				if err := attemptRows.Scan(&attemptID); err != nil {
+					_ = attemptRows.Close()
+					return fmt.Errorf("scan invalid person enrichment attempt cost: %w", err)
+				}
+				attemptIDs = append(attemptIDs, attemptID)
+			}
+			if err := attemptRows.Err(); err != nil {
+				_ = attemptRows.Close()
+				return fmt.Errorf("iterate invalid person enrichment attempt costs: %w", err)
+			}
+			if err := attemptRows.Close(); err != nil {
+				return fmt.Errorf("close invalid person enrichment attempt costs: %w", err)
+			}
+			for _, attemptID := range attemptIDs {
+				if _, err := reconcilePersonEnrichmentCostTx(ctx, tx, s.dialect, attemptID,
+					personenrichment.Cost{}, true, recoveredAt); err != nil {
+					return fmt.Errorf("reconcile invalid person enrichment attempt cost: %w", err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_attempts
+				SET state = 'uncertain_start', failure_class = 'uncertain_start',
+					completed_at = ?, lease_owner = NULL, lease_until = NULL
+				WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait')`,
+				recoveredAt, runID); err != nil {
+				return fmt.Errorf("terminalize invalid person enrichment attempts: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work
+				SET run_id = NULL, active_attempt_id = NULL, lease_owner = NULL, lease_until = NULL
+				WHERE run_id = ?`, runID); err != nil {
+				return fmt.Errorf("release invalid person enrichment work: %w", err)
+			}
+			outcome, err := derivePersonEnrichmentRunOutcomeTx(ctx, tx, runID)
+			if err != nil {
+				return err
+			}
+			state := outcome.state()
+			if unaccountedWork > 0 {
+				state = personEnrichmentStateFailed
+				if outcome.started > outcome.failed {
+					state = "partial"
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_runs SET
+				state = ?,
+				completed_at = ?,
+				requested_count = ?, started_count = ?, succeeded_count = ?, failed_count = ?,
+				suppressed_count = ?, identity_rejected_count = ?,
+				failure_class = 'uncertain_start', safe_error = ?
+				WHERE id = ? AND state = 'running'`, state, recoveredAt,
+				outcome.requested, outcome.started, outcome.succeeded, outcome.failed,
+				outcome.suppressed, outcome.rejected, personEnrichmentRestartedSafeError, runID); err != nil {
+				return fmt.Errorf("finish invalid person enrichment run: %w", err)
+			}
+			recovered++
+		}
+		return nil
+	})
+	return recovered, err
+}
+
 func (s *Store) GetPersonEnrichmentRunContext(
 	ctx context.Context, runID int64,
 ) (*PersonEnrichmentRun, error) {
@@ -375,30 +617,15 @@ func (s *Store) CompleteRun(
 		if nonterminal != 0 {
 			return ErrRunNotTerminal
 		}
-		var requested, started, succeeded, failed, suppressed, rejected int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*), COUNT(*),
-			       COALESCE(SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END), 0),
-			       COALESCE(SUM(CASE WHEN state IN ('terminal','uncertain_start')
-			                         AND COALESCE(failure_class, '') <> 'policy' THEN 1 ELSE 0 END), 0),
-			       COALESCE(SUM(CASE WHEN state = 'suppressed' THEN 1 ELSE 0 END), 0),
-			       COALESCE(SUM(CASE WHEN state = 'identity_rejected' THEN 1 ELSE 0 END), 0)
-			FROM person_enrichment_attempts WHERE run_id = ?`, runID).Scan(
-			&requested, &started, &succeeded, &failed, &suppressed, &rejected); err != nil {
-			return fmt.Errorf("derive person enrichment run counts: %w", err)
+		outcome, err := derivePersonEnrichmentRunOutcomeTx(ctx, tx, runID)
+		if err != nil {
+			return err
 		}
 		if completion.State == "" {
 			// Truthful terminal state: every started attempt failed -> failed;
 			// failures mixed with any other terminal outcome -> partial;
 			// otherwise (successes and/or policy outcomes only) -> succeeded.
-			switch {
-			case failed == 0:
-				completion.State = personEnrichmentStateSucceeded
-			case started > 0 && failed == started:
-				completion.State = "failed"
-			default:
-				completion.State = "partial"
-			}
+			completion.State = outcome.state()
 		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE person_enrichment_runs
@@ -406,7 +633,8 @@ func (s *Store) CompleteRun(
 			    succeeded_count = ?, failed_count = ?, suppressed_count = ?,
 			    identity_rejected_count = ?, failure_class = ?, safe_error = ?
 			WHERE id = ? AND state = 'running'`, completion.State, completion.CompletedAt.UTC(),
-			requested, started, succeeded, failed, suppressed, rejected,
+			outcome.requested, outcome.started, outcome.succeeded, outcome.failed,
+			outcome.suppressed, outcome.rejected,
 			failureClass, safeMessage, runID)
 		if err != nil {
 			return fmt.Errorf("complete person enrichment run: %w", err)

@@ -8,5 +8,4 @@ export interface OperationPublicCounter {
   name: OperationPublicCounterName;
   unit: OperationPublicCounterUnit;
   value: number;
-  [key: string]: unknown;
 }

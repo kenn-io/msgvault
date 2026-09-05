@@ -115,6 +115,7 @@ func newPGContextWorkerFixture(t *testing.T, mutate func(*ContextWorkerDeps)) *p
 		Assembler:          CompositeAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 100}, Chat: ChatWindowAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 100, ChatGap: 30 * time.Minute}}},
 		ChangeBatchSize:    1,
 		ReconcileBatchSize: 1,
+		Recorder:           newTestOperationRecorder(),
 	}
 	if mutate != nil {
 		mutate(&deps)
@@ -145,7 +146,7 @@ func (f *pgContextWorkerFixture) seed(t *testing.T, sourceMessageID string) int6
 func TestContextWorker_PostgreSQLParity(t *testing.T) {
 	f := newPGContextWorkerFixture(t, nil)
 	messageID := f.seed(t, "pg-chat-1")
-	result, err := f.worker.RunOnce(context.Background(), f.gen)
+	result, err := f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
@@ -158,7 +159,7 @@ func TestContextWorker_PostgreSQLBackstopTimestampOnlyChatChangeDoesNotCallProvi
 	assert := assert.New(t)
 	f := newPGContextWorkerFixture(t, nil)
 	messageID := f.seed(t, "pg-chat-timestamp-only")
-	result, err := f.worker.RunOnce(t.Context(), f.gen)
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.True(t, result.Contextual.Converged)
 	documents, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
@@ -171,7 +172,7 @@ func TestContextWorker_PostgreSQLBackstopTimestampOnlyChatChangeDoesNotCallProvi
 	_, err = f.store.DB().Exec(
 		`UPDATE messages SET last_modified = '2099-01-01 00:00:00+00' WHERE id = $1`, messageID)
 	require.NoError(t, err)
-	result, err = f.worker.RunBackstop(t.Context(), f.gen)
+	result, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(result.Contextual.Converged)
 	assert.Equal(beforeDocuments, f.client.docs,
@@ -197,7 +198,7 @@ func TestContextWorker_PostgreSQLLaterPackedFailureRetainsSuccessfulDocumentWith
 		time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC), secondID)
 	require.NoError(t, err)
 
-	_, err = f.worker.RunOnce(t.Context(), f.gen)
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.Error(t, err)
 	documents, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
 		fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
@@ -209,7 +210,7 @@ func TestContextWorker_PostgreSQLLaterPackedFailureRetainsSuccessfulDocumentWith
 		firstID, secondID, int64(f.gen)).Scan(&covered))
 	assert.Zero(covered, "an incomplete atomic scope must remain uncovered")
 
-	result, err := f.worker.RunOnce(t.Context(), f.gen)
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(result.Contextual.Converged)
 	require.Len(t, client.calls, 2)
@@ -229,7 +230,7 @@ func TestContextWorker_PostgreSQLLaterPackedReplacementFailurePreservesUnresolve
 	_, err := f.store.DB().Exec(`UPDATE messages SET sent_at = $1 WHERE id = $2`,
 		time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC), secondID)
 	require.NoError(t, err)
-	result, err := f.worker.RunOnce(t.Context(), f.gen)
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.True(t, result.Contextual.Converged)
 	scopeKey := fmt.Sprintf("chat:%d:2026-08-08", f.conversation)
@@ -249,13 +250,14 @@ func TestContextWorker_PostgreSQLLaterPackedReplacementFailurePreservesUnresolve
 			Chat:   ChatWindowAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 200, ChatGap: 30 * time.Minute}},
 		},
 		Client: client, ChangeBatchSize: 2, ReconcileBatchSize: 2,
+		Recorder: newTestOperationRecorder(),
 	})
 	require.NoError(t, f.store.UpsertMessageBody(firstID,
 		sql.NullString{String: "first PostgreSQL replacement", Valid: true}, sql.NullString{}))
 	require.NoError(t, f.store.UpsertMessageBody(secondID,
 		sql.NullString{String: "second PostgreSQL replacement", Valid: true}, sql.NullString{}))
 
-	_, err = f.worker.RunOnce(t.Context(), f.gen)
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.Error(t, err)
 	afterPartial, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, scopeKey)
 	require.NoError(t, err)
@@ -277,14 +279,14 @@ func TestContextWorker_PostgreSQLLaterPackedReplacementFailurePreservesUnresolve
 func TestContextWorker_PostgreSQLRejectedReplacementClearsCoverage(t *testing.T) {
 	f := newPGContextWorkerFixture(t, nil)
 	messageID := f.seed(t, "pg-chat-rejected-replacement")
-	result, err := f.worker.RunOnce(t.Context(), f.gen)
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.True(t, result.Contextual.Converged)
 
 	f.client.rejectText = "hello from PostgreSQL"
 	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = $1`, f.conversation)
 	require.NoError(t, err)
-	result, err = f.worker.RunOnce(t.Context(), f.gen)
+	result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.NotNil(t, result.Contextual)
 	assert.False(t, result.Contextual.Converged)
@@ -327,7 +329,7 @@ func TestContextWorker_PostgreSQLRejectedDiscoveryDoesNotStarveLaterMessages(t *
 
 	var result RunResult
 	for range 3 {
-		result, err = f.worker.RunOnce(t.Context(), f.gen)
+		result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 		require.NoError(t, err)
 	}
 	good, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", goodID))
@@ -337,7 +339,7 @@ func TestContextWorker_PostgreSQLRejectedDiscoveryDoesNotStarveLaterMessages(t *
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), missing)
 	for attempt := 0; attempt < 10 && !result.Contextual.Converged; attempt++ {
-		result, err = f.worker.RunOnce(t.Context(), f.gen)
+		result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 		require.NoError(t, err)
 	}
 	assert.True(t, result.Contextual.Converged,
@@ -360,13 +362,13 @@ func TestContextWorker_PostgreSQLReplaysAfterIndexCommit(t *testing.T) {
 	id := f.seed(t, "pg-replay")
 	pinnedSequence, err := f.store.LatestEmbeddingChangeSequence(t.Context())
 	require.NoError(err)
-	_, err = f.worker.RunOnce(context.Background(), f.gen)
+	_, err = f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
 	require.Error(err)
 	progress, err := f.backend.GetDocumentProgress(context.Background(), f.gen)
 	require.NoError(err)
 	assert.Equal(pinnedSequence, progress.ChangeSequence)
 
-	result, err := f.worker.RunOnce(context.Background(), f.gen)
+	result, err := f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
 	require.NoError(err)
 	assert.True(result.Contextual.Converged)
 	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
@@ -388,7 +390,7 @@ func TestContextWorker_PostgreSQLGroupCASMissHoldsWatermark(t *testing.T) {
 		require.NoError(err)
 	}
 
-	_, err = f.worker.RunOnce(context.Background(), f.gen)
+	_, err = f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
 	require.Error(err)
 	assert.Contains(err.Error(), "coverage CAS")
 	progress, err := f.backend.GetDocumentProgress(context.Background(), f.gen)

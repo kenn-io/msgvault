@@ -19,6 +19,10 @@ import type {
   FileSearchHTTPResponse as GeneratedFileSearchHTTPResponse,
   FileSearchRow as GeneratedFileSearchRow,
   IdentitySearchSort as GeneratedIdentitySearchSort,
+  OperationRunDetailRelatedStatus as GeneratedOperationRunDetailRelatedStatus,
+  OperationRunSummaryKind as GeneratedOperationKind,
+  OperationRunSummaryLane as GeneratedOperationLane,
+  OperationRunSummaryState as GeneratedOperationState,
   ParticipantContextSummaryHTTPResponse as GeneratedParticipantContextSummaryHTTPResponse,
   PersonCluster as GeneratedPersonCluster,
   PersonClusterEdge as GeneratedPersonClusterEdge,
@@ -32,6 +36,7 @@ import type {
   SourceIdentitiesResponse as GeneratedSourceIdentitiesResponse,
   SourceIdentityResponse as GeneratedSourceIdentityResponse,
 } from '../api/generated/models';
+import type { SettingsNavigationAuthority } from '../carddav/navigation';
 
 export type EntryRow = GeneratedEntryRow;
 export type ExploreCacheUnavailable = GeneratedExploreCacheUnavailableResponse;
@@ -74,6 +79,10 @@ export type ExplorePredicate = GeneratedExploreHTTPRequest;
 export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key'>;
 export type ExploreResponse = GeneratedExploreHTTPResponse;
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
+export type OperationStatusAuthority = Exclude<
+  GeneratedOperationRunDetailRelatedStatus,
+  'listSourceStatus' | 'getCardDAVStatus'
+>;
 export type ExploreSort = GeneratedExploreSort;
 export type SearchProvenance = GeneratedSearchProvenance;
 export type SourceIdentitiesResponse = GeneratedSourceIdentitiesResponse;
@@ -93,11 +102,15 @@ export type ExploreWorkspace =
   | 'directory'
   | 'directory_review'
   | 'files'
+  | 'operations'
   | 'relationships'
   | 'saved_views'
   | 'sources'
   | 'deletions'
   | 'settings';
+export type OperationKind = GeneratedOperationKind;
+export type OperationLane = GeneratedOperationLane;
+export type OperationState = GeneratedOperationState;
 export type DirectoryReviewKind = 'identity' | 'fact' | 'relationship';
 export type IdentityReviewState = 'candidate' | 'conflict' | 'accepted' | 'rejected';
 export type RelationshipReviewState = 'pending' | 'accepted' | 'rejected';
@@ -146,6 +159,14 @@ export interface ExploreURLState {
   relationshipTarget: string | null;
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
+  operationLane: '' | OperationLane;
+  operationKind: '' | OperationKind;
+  operationState: '' | OperationState;
+  operationStartedFrom: string;
+  operationStartedBefore: string;
+  operationRunID: string | null;
+  operationStatus: '' | OperationStatusAuthority;
+  settingsAuthority: '' | SettingsNavigationAuthority;
   columns: ExploreColumn[];
   columnWidths: Partial<Record<ExploreColumn, number>>;
   activeRow: string | null;
