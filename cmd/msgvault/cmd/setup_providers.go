@@ -493,7 +493,8 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			Path: []string{tomlTableVector, "embeddings"},
 			Values: map[string]any{
 				"api_format": "openai", "endpoint": detection.ollamaEndpoint,
-				"model": setupOllamaTextModel, "dimension": setupOllamaTextDim,
+				"api_key_env": "",
+				"model":       setupOllamaTextModel, "dimension": setupOllamaTextDim,
 				"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
 				"max_input_chars": setupOllamaMaxInput,
 			},

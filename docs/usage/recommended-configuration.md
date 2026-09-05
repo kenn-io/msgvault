@@ -44,6 +44,11 @@ Only absent keys receive schedule defaults. Missing embedding credentials
 leave text search and its dependent people-search and document-vector lanes
 pending in the status report.
 
+Consent-gated lanes also remain pending until their required consents are
+active, including when the consent records cannot be read. Local Ollama
+setup clears any old `api_key_env` setting because its selected loopback
+endpoint does not require authentication.
+
 For existing text endpoints, setup recognizes the exact OpenAI and Voyage
 API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
 configure their people-search and document-vector lanes explicitly, then

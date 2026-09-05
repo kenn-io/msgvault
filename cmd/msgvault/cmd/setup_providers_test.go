@@ -328,7 +328,52 @@ func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
 		output, err = fixture.run(t, "status", "--json")
 		require.NoError(err, output)
 		require.NoError(json.Unmarshal([]byte(output), &report))
-		assert.Equal(laneStateOn, findLane(t, report, lane).State)
+		restored := findLane(t, report, lane)
+		assert.NotContains(restored.Reason, "not set")
+		wantState := laneStateOn
+		if restored.Consent == consentMissing || restored.Consent == consentUnknown {
+			wantState = laneStatePending
+		}
+		assert.Equal(wantState, restored.State)
+	}
+}
+
+func TestSetupStatusConsentGatedLanesRequireActiveConsent(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
+		fixture.env[key] = setupProvidersTestKey
+	}
+	fixture.files[filepath.Join(fixture.dir, setupVoyageManifestName)] = true
+	output, err := fixture.run(t, "providers", "--yes", "--allow-sensitive")
+	require.NoError(t, err, output)
+	loaded := fixture.load(t)
+	for _, test := range []struct {
+		consent                *setupConsentState
+		wantConsent, wantState string
+	}{
+		{wantConsent: consentUnknown, wantState: laneStatePending},
+		{consent: &setupConsentState{}, wantConsent: consentMissing, wantState: laneStatePending},
+		{consent: &setupConsentState{
+			Documents: true, Visual: true, PersonInference: true, PersonSemantic: true,
+			DocumentEmbedding: true, QueryEmbedding: true,
+		}, wantConsent: consentActive, wantState: laneStateOn},
+	} {
+		t.Run(test.wantConsent, func(t *testing.T) {
+			assert := assert.New(t)
+			report := buildLaneReport(loaded, setupEnvironment{
+				lookupEnv: fixture.lookupEnv, fileExists: func(path string) bool { return fixture.files[path] },
+				consent: test.consent,
+			})
+			for _, name := range []string{lanePersonSearch, laneVisualSearch, laneDocuments, laneDocumentVectors, lanePeopleInference} {
+				lane := findLane(t, report, name)
+				assert.Equal(test.wantConsent, lane.Consent, name)
+				assert.Equal(test.wantState, lane.State, name)
+				if test.wantState == laneStatePending {
+					assert.NotEmpty(lane.Next, name)
+				}
+			}
+			assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
+		})
 	}
 }
 
@@ -533,7 +578,10 @@ func TestSetupProvidersOpenAIFallbackOnboardsInference(t *testing.T) {
 func TestSetupProvidersLocalOllamaFallback(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector.embeddings]
+api_key_env = "STALE_PROVIDER_KEY"
+`)
 	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:latest"}}
 
 	output, err := fixture.run(t, "providers", "--allow-sensitive")
@@ -558,6 +606,11 @@ func TestSetupProvidersLocalOllamaFallback(t *testing.T) {
 	assert.Equal(peoplesweep.CredentialNone, profile.Credential)
 	assert.Equal("http://localhost:11434/v1", profile.Endpoint)
 	assert.Contains(output, "stays on this machine")
+	output, err = fixture.run(t, "status", "--json")
+	require.NoError(err, output)
+	var report laneReport
+	require.NoError(json.Unmarshal([]byte(output), &report))
+	assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
 }
 
 func TestSetupProvidersSkipsRemoteOllama(t *testing.T) {

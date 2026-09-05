@@ -318,6 +318,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.Reason += "; text search is not ready: " + text.Reason
 		}
 		if lane.Consent != consentActive {
+			lane.State = laneStatePending
 			lane.Next = []string{"msgvault person provider consent --semantic-embeddings --yes"}
 		}
 	case cfg.Vector.Enabled:
@@ -348,6 +349,7 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		}
 		lane.Reason = "eligible images and short videos are embedded with bounded message context"
 		if lane.Consent != consentActive {
+			lane.State = laneStatePending
 			lane.Next = []string{"msgvault multimodal build --yes"}
 		}
 		env.reportMissingCredential(&lane, multimodal.APIKeyEnv)
@@ -385,6 +387,7 @@ func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Reason = fmt.Sprintf("region %s; retention=%s, training=%s; uploads are manual-only",
 			documents.Region, documents.RetentionPosture, documents.TrainingPosture)
 		if lane.Consent != consentActive {
+			lane.State = laneStatePending
 			if env.exists(manifest) {
 				lane.Next = []string{
 					"msgvault documents consent-mistral --capabilities " + manifest + " --yes",
@@ -430,6 +433,9 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			"query_embedding":    env.consentState(func(s setupConsentState) bool { return s.QueryEmbedding }),
 		}
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding && s.QueryEmbedding })
+		if lane.Consent != consentActive {
+			lane.State = laneStatePending
+		}
 		if lane.ConsentPurposes["document_embedding"] != consentActive {
 			lane.Next = append(lane.Next, "msgvault documents vectors consent --yes")
 		}
@@ -462,8 +468,11 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Schedule = "cron " + sweep.Schedule
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonInference })
 		lane.Reason = "runs for tracked people only; deterministic contact state refreshes for everyone through the activity job"
-		if lane.Consent != consentActive && name != "" {
-			lane.Next = []string{"msgvault person provider consent " + name + " --yes"}
+		if lane.Consent != consentActive {
+			lane.State = laneStatePending
+			if name != "" {
+				lane.Next = []string{"msgvault person provider consent " + name + " --yes"}
+			}
 		}
 		lane.Next = append(lane.Next, "msgvault person track <person-id>")
 		if err == nil && provider.Auth != peoplesweep.AuthNone && provider.Credential == peoplesweep.CredentialEnv {
