@@ -44,6 +44,13 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("invalid history ID %q: %w", source.SyncCursor.String, err)
 	}
 
+	// Read the prior run's fetch debt before a new run exists, so a ledger error
+	// cannot fail a run and the completed run stays visible for the next attempt.
+	pendingReplayIDs, err := s.pendingFetchReplayIDs(source.ID)
+	if err != nil {
+		return nil, fmt.Errorf("find pending fetch replays: %w", err)
+	}
+
 	// Start sync
 	syncID, err := s.startSync(ctx, execution, "incremental", "")
 	if err != nil {
@@ -87,7 +94,7 @@ func (s *Syncer) incremental(
 	// change while a mailbox is idle, so the post-completion hook still runs,
 	// flagged as a no-op so it only reaches for the provider when a refresh is
 	// owed (never succeeded, previously failed, or stale).
-	if startHistoryID >= profile.HistoryID {
+	if startHistoryID >= profile.HistoryID && len(pendingReplayIDs) == 0 {
 		s.logger.Info("already up to date")
 		if err := s.completeSyncWithoutHook(
 			ctx, syncID, source.ID, strconv.FormatUint(profile.HistoryID, 10), true,
@@ -108,10 +115,56 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
-	// Process history
 	checkpoint := &store.Checkpoint{}
-	pageToken := ""
 	var discoveryHealth pageDiscoveryHealth
+
+	// Retry the prior run's absent fetches inside this scoped run, before history
+	// selection, so an idle mailbox still works off its durable debt.
+	if len(pendingReplayIDs) > 0 {
+		replayedIDs, err := s.replayFetchFailures(
+			ctx, syncID, source.ID, pendingReplayIDs, labelMap, checkpoint, summary,
+		)
+		if err != nil {
+			if checkpointErr := s.store.UpdateSyncCheckpoint(syncID, checkpoint); checkpointErr != nil {
+				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
+			}
+			s.failStoppedSync(syncID, err)
+			return nil, err
+		}
+		if len(replayedIDs) > 0 {
+			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayedIDs))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err := fmt.Errorf("sync canceled during replay identity discovery: %w", ctxErr)
+				s.failStoppedSync(syncID, err)
+				return nil, err
+			}
+		}
+		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+			s.logger.Warn("failed to save replay checkpoint", "error", err)
+		}
+	}
+
+	if startHistoryID >= profile.HistoryID {
+		s.logger.Info("already up to date after replay")
+		if err := s.completeSyncAndRunHook(
+			ctx, syncID, strconv.FormatUint(profile.HistoryID, 10), source,
+		); err != nil {
+			return nil, err
+		}
+		summary.EndTime = time.Now()
+		summary.Duration = summary.EndTime.Sub(summary.StartTime)
+		summary.MessagesFound = checkpoint.MessagesProcessed
+		summary.MessagesAdded = checkpoint.MessagesAdded
+		summary.MessagesUpdated = checkpoint.MessagesUpdated
+		summary.Errors = checkpoint.ErrorsCount
+		summary.FinalHistoryID = profile.HistoryID
+		s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, summary.MessagesSkipped)
+		s.progress.OnComplete(summary)
+		return summary, nil
+	}
+
+	// Process history
+	pageToken := ""
 
 	for {
 		historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
@@ -296,6 +349,122 @@ func (s *Syncer) incremental(
 
 	s.progress.OnComplete(summary)
 	return summary, nil
+}
+
+// replayFetchFailures re-fetches the IDs a prior completed incremental run
+// failed to read, skipping any that already reached the archive. Reads and
+// local ingest only; a repeated failure becomes this run's fetch error and
+// carries the ID to the next run.
+func (s *Syncer) replayFetchFailures(
+	ctx context.Context,
+	syncID, sourceID int64,
+	messageIDs []string,
+	labelMap map[string]int64,
+	checkpoint *store.Checkpoint,
+	summary *gmail.SyncSummary,
+) ([]string, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+
+	existing, err := s.store.MessageExistsBatch(sourceID, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("check replay messages: %w", err)
+	}
+	fetchIDs := make([]string, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if _, ok := existing[messageID]; !ok {
+			fetchIDs = append(fetchIDs, messageID)
+		}
+	}
+	if len(fetchIDs) == 0 {
+		return nil, nil
+	}
+
+	batchSize := 10
+	if s.opts != nil && s.opts.BatchSize > 0 {
+		batchSize = s.opts.BatchSize
+	}
+	successfulIDs := make([]string, 0, len(fetchIDs))
+	for batchStart := 0; batchStart < len(fetchIDs); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(fetchIDs))
+		batchIDs := fetchIDs[batchStart:batchEnd]
+		checkpoint.MessagesProcessed += int64(len(batchIDs))
+		results, fetchErr := s.getMessagesRawBatchWithDiagnostics(ctx, batchIDs)
+		if fetchErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+				return nil, fetchErr
+			}
+			for _, messageID := range batchIDs {
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
+			}
+			checkpoint.ErrorsCount += int64(len(batchIDs))
+			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+				return nil, fmt.Errorf("checkpoint replay batch: %w", err)
+			}
+			continue
+		}
+		for i, messageID := range batchIDs {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			if i >= len(results) {
+				err := fmt.Errorf("missing raw batch result for %q", messageID)
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+
+			result := results[i]
+			if result.ID != messageID {
+				err := fmt.Errorf("raw batch result ID %q does not match requested ID %q", result.ID, messageID)
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			if result.Message == nil {
+				if kind, gone := messageGoneKind(result.Err); gone {
+					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, result.Err)
+					summary.MessagesSkipped++
+					continue
+				}
+				errMsg := syncItemErrorMessage(result.Err, errRawBatchMissing.Error())
+				err := errors.New(errMsg)
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			if result.Err != nil || result.Message.ID != messageID {
+				err := result.Err
+				if err == nil {
+					err = fmt.Errorf("raw message ID %q does not match requested ID %q", result.Message.ID, messageID)
+				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+
+			if _, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap); err != nil {
+				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
+					return nil, err
+				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			checkpoint.MessagesAdded++
+			summary.BytesDownloaded += int64(len(result.Message.Raw))
+			successfulIDs = append(successfulIDs, messageID)
+		}
+		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
+		}
+	}
+
+	return successfulIDs, nil
 }
 
 // processLabelChanges handles label additions and removals for messages.

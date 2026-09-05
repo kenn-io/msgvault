@@ -3,6 +3,8 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
@@ -20,6 +22,15 @@ const (
 	syncItemKindIngestError     = "ingest_error"
 	syncItemKindDeleteError     = "delete_error"
 )
+
+// isFetchReplayCandidate reports whether a durable run item names a raw fetch
+// that never reached the archive and still carries a usable Gmail ID.
+func isFetchReplayCandidate(item store.SyncRunItem) bool {
+	return item.Status == store.SyncRunItemStatusError &&
+		item.Phase == syncItemPhaseFetch &&
+		(item.ErrorKind == syncItemKindFetchError || item.ErrorKind == syncItemKindBatchFetchError) &&
+		item.SourceMessageID != "" && item.SourceMessageID != "(unknown)"
+}
 
 var errRawBatchMissing = errors.New("missing raw message in batch result")
 
@@ -52,6 +63,49 @@ func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, message
 		}
 	}
 	return results, nil
+}
+
+// pendingFetchReplayIDs returns the raw-fetch failures the latest completed
+// incremental run left behind. Only that one run is eligible: a filtered or
+// limited full run never establishes complete Gmail coverage, and a failed or
+// interrupted run stays with normal checkpoint and history recovery. Reading it
+// before a new run starts keeps a ledger error outside the new run and leaves
+// the prior completed run visible.
+func (s *Syncer) pendingFetchReplayIDs(sourceID int64) ([]string, error) {
+	run, err := s.store.GetLastSuccessfulSyncByType(sourceID, "incremental")
+	if errors.Is(err, store.ErrSyncRunNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest completed incremental sync: %w", err)
+	}
+
+	count, err := s.store.CountSyncRunItems(run.ID, store.SyncRunItemStatusError)
+	if err != nil {
+		return nil, fmt.Errorf("count sync %d errors: %w", run.ID, err)
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	items, err := s.store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, int(count))
+	if err != nil {
+		return nil, fmt.Errorf("list sync %d errors: %w", run.ID, err)
+	}
+
+	seen := make(map[string]struct{}, len(items))
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if !isFetchReplayCandidate(item) {
+			continue
+		}
+		if _, ok := seen[item.SourceMessageID]; ok {
+			continue
+		}
+		seen[item.SourceMessageID] = struct{}{}
+		ids = append(ids, item.SourceMessageID)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func isGmailNotFound(err error) bool {
