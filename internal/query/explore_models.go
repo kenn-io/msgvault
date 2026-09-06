@@ -29,7 +29,7 @@ type IdentityPredicate struct {
 	ParticipantIDs []int64
 	// EmailIdentifier carries the confirmed address when it is email-shaped.
 	// Non-empty, it switches recipient-row matching to the immutable
-	// envelope snapshot (message_recipients.email_address, compared
+	// envelope snapshot (message_recipients.envelope_address, compared
 	// case-insensitively like every email rule): participant merges repoint
 	// recipient rows onto a survivor that may carry several aliases, so a
 	// participant-only match would let one alias's filter select another

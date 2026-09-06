@@ -1113,15 +1113,21 @@ func buildCacheLocked(
 	// Junction rows are searchable exactly when their parent message is
 	// exportable. This includes calendar invitees and meeting attendees while
 	// excluding hidden rows and messages without a timestamp.
-	exportableJunctionWhere := fmt.Sprintf(
-		"TRY_CAST(message_id AS BIGINT) IN (SELECT CAST(m.id AS BIGINT) FROM sqlite_db.messages m WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d)",
-		exportableMessageWhere("m"), maxID,
-	)
-	junctionFilter := func(incremental string) string {
+	exportableJunctionWhereFor := func(messageIDColumn string) string {
+		return fmt.Sprintf(
+			"TRY_CAST(%s AS BIGINT) IN (SELECT CAST(m.id AS BIGINT) FROM sqlite_db.messages m WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d)",
+			messageIDColumn, exportableMessageWhere("m"), maxID,
+		)
+	}
+	junctionFilterFor := func(messageIDColumn, incremental string) string {
+		where := exportableJunctionWhereFor(messageIDColumn)
 		if incremental != "" {
-			return incremental + " AND " + exportableJunctionWhere
+			return incremental + " AND " + where
 		}
-		return " WHERE " + exportableJunctionWhere
+		return " WHERE " + where
+	}
+	junctionFilter := func(incremental string) string {
+		return junctionFilterFor("message_id", incremental)
 	}
 
 	junctionFile := "data.parquet"
@@ -1144,28 +1150,39 @@ func buildCacheLocked(
 	// 1. Export message_recipients (large junction table)
 	recipientsDir := filepath.Join(staging.root, "message_recipients")
 	escapedRecipientsDir := strings.ReplaceAll(recipientsDir, "'", "''")
+	// This export joins participants, so every column reference is alias
+	// qualified and the incremental predicate names mr.message_id rather
+	// than the bare column the shared junctionFilter helper produces.
 	recipientsFilter := ""
 	if !replaceAll && lastMessageID > 0 {
-		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
+		recipientsFilter = fmt.Sprintf(" WHERE mr.message_id > %d", lastMessageID)
 	}
-	recipientsFilter = junctionFilter(recipientsFilter)
-	// Databases from before the envelope snapshot column export '' so the
-	// dataset always carries email_address and identity filters degrade to
-	// participant matching for every legacy row.
-	recipientEnvelopeExpression := "'' as email_address"
+	recipientsFilter = junctionFilterFor("mr.message_id", recipientsFilter)
+	// Two address columns leave here. envelope_address is the header address
+	// exactly as the store recorded it (NULL when none was — chat, calendar,
+	// and mail ingested before the column existed); identity filters key on
+	// its presence. email_address is the resolved recipient address: the
+	// envelope when present, otherwise the participant's current address, so
+	// an address filter over this dataset finds pre-upgrade mail too. Only a
+	// participant with no email address at all (phone or handle only) leaves
+	// email_address NULL. Databases from before the envelope column export
+	// NULL envelopes for every row.
+	recipientEnvelopeExpression := "NULL::VARCHAR"
 	if sourceSnapshot.hasRecipientEnvelope {
-		recipientEnvelopeExpression = "COALESCE(TRY_CAST(email_address AS VARCHAR), '') as email_address"
+		recipientEnvelopeExpression = "NULLIF(TRY_CAST(mr.email_address AS VARCHAR), '')"
 	}
 	if err := runExport("message_recipients", fmt.Sprintf(`
 	COPY (
 		SELECT
-			message_id,
-			participant_id,
-			recipient_type,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name,
-			%s
-		FROM sqlite_db.message_recipients%s
-	) TO '%s/%s' (
+			mr.message_id,
+			mr.participant_id,
+			mr.recipient_type,
+			COALESCE(TRY_CAST(mr.display_name AS VARCHAR), '') as display_name,
+			COALESCE(%[1]s, NULLIF(TRY_CAST(p.email_address AS VARCHAR), '')) as email_address,
+			%[1]s as envelope_address
+		FROM sqlite_db.message_recipients mr
+		LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id%[2]s
+	) TO '%[3]s/%[4]s' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
@@ -1914,7 +1931,11 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	}
 	attachmentQuery := "SELECT id, message_id, size, filename, " + attachmentMIMEColumn +
 		", " + attachmentMetadataColumn + " FROM attachments"
-	recipientEnvelopeColumn := "'' AS email_address"
+	// This is the store's raw envelope column, which the export reads as
+	// mr.email_address to derive both cache columns. NULL travels through
+	// the CSV fallback as the \N sentinel, so a row with no recorded header
+	// address stays distinguishable from one carrying an empty value.
+	recipientEnvelopeColumn := "NULL AS email_address"
 	if s.hasRecipientEnvelope {
 		recipientEnvelopeColumn = "email_address"
 	}

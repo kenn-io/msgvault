@@ -179,8 +179,8 @@ func TestExploreIdentityFilterResolvesConfirmedEmailCaseInsensitively(t *testing
 // TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate
 // covers the merge edge where a confirmed email address no longer resolves to
 // any participant: the filter must still carry the envelope predicate (the
-// address may survive in message_recipients.email_address snapshots) instead
-// of short-circuiting to match-none.
+// address may survive in message_recipients.envelope_address, the raw header
+// snapshot) instead of short-circuiting to match-none.
 func TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

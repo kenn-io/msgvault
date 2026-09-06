@@ -152,8 +152,8 @@ func TestInspectCacheReadiness(t *testing.T) {
 	}
 }
 
-func TestCacheSchemaVersionIncludesListID(t *testing.T) {
-	assert.Equal(t, 25, CacheSchemaVersion)
+func TestCacheSchemaVersionIncludesRecipientAddressColumns(t *testing.T) {
+	assert.Equal(t, 26, CacheSchemaVersion)
 }
 
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {

@@ -92,9 +92,11 @@ type RecipientFixture struct {
 	ParticipantID int64
 	Type          string // "from", "to", "cc", "bcc"
 	DisplayName   string
-	// EmailAddress is the envelope address snapshot written at email
-	// ingest. Empty models rows without a snapshot (legacy ingests,
-	// non-email writers).
+	// EmailAddress is the header address recorded at email ingest. Empty
+	// models rows where none was recorded (legacy ingests, non-email
+	// writers): the shard then carries NULL in envelope_address and the
+	// participant's current address in email_address, matching what the
+	// exporter writes for cache schema v26.
 	EmailAddress string
 }
 
@@ -177,7 +179,7 @@ type TestDataBuilder struct {
 
 	emptyAttachments bool // if true, write empty attachments file
 	// legacyRecipientSchema writes message_recipients without the
-	// email_address envelope column, modeling a pre-v17 cache.
+	// email_address and envelope_address columns, modeling a pre-v17 cache.
 	legacyRecipientSchema bool
 }
 
@@ -593,9 +595,32 @@ func (b *TestDataBuilder) recipientsSQL() string {
 		})
 	}
 	return joinRows(b.recipients, func(r RecipientFixture) string {
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s)",
-			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName), sqlStr(r.EmailAddress))
+		// Mirror the exporter: envelope_address is the recorded header
+		// address or NULL, and email_address resolves to the envelope when
+		// present, else the participant's current address, else NULL.
+		envelope := "NULL::VARCHAR"
+		resolved := "NULL::VARCHAR"
+		if r.EmailAddress != "" {
+			envelope = sqlStr(r.EmailAddress)
+			resolved = envelope
+		} else if email := b.participantEmail(r.ParticipantID); email != "" {
+			resolved = sqlStr(email)
+		}
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s)",
+			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
+			resolved, envelope)
 	})
+}
+
+// participantEmail returns the fixture participant's current email address,
+// or an empty string when the participant is absent or carries none.
+func (b *TestDataBuilder) participantEmail(participantID int64) string {
+	for _, p := range b.participants {
+		if p.ID == participantID {
+			return p.Email
+		}
+	}
+	return ""
 }
 
 func (b *TestDataBuilder) labelsSQL() string {
@@ -654,10 +679,10 @@ const (
 	participantsCols           = "id, email_address, domain, display_name, phone_number"
 	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"
 	messageRecipientsCols      = "message_id, participant_id, recipient_type, display_name"
-	// messageRecipientsColsWithEnvelope adds the envelope address snapshot
-	// (cache schema v17). messageRecipientsCols stays for fixtures that
-	// model pre-v17 caches without the column.
-	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address"
+	// messageRecipientsColsWithEnvelope adds the resolved recipient address
+	// and the raw header address (cache schema v26). messageRecipientsCols
+	// stays for fixtures that model pre-v17 caches without either column.
+	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address"
 	labelsCols                        = "id, name"
 	messageLabelsCols                 = "message_id, label_id"
 	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
@@ -738,7 +763,7 @@ func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
 		return "(0::BIGINT, 0::BIGINT, '', '')"
 	}
-	return "(0::BIGINT, 0::BIGINT, '', '', '')"
+	return "(0::BIGINT, 0::BIGINT, '', '', '', '')"
 }
 
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.

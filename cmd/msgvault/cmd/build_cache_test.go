@@ -1006,41 +1006,94 @@ func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
 	assert.Equal(t, int64(9), count)
 }
 
-// TestBuildCache_ExportsRecipientEnvelopeAddress verifies the envelope
-// address snapshot reaches the message_recipients Parquet dataset (cache
-// schema v17): identity filters compare against it, so an export that drops
-// the column would silently degrade every filter to participant matching.
+// TestBuildCache_ExportsRecipientEnvelopeAddress verifies both address
+// columns of the message_recipients Parquet dataset (cache schema v26).
+// envelope_address is the header address exactly as the store recorded it and
+// stays NULL for rows that never recorded one: identity filters compare
+// against it, so an export that drops the column would silently degrade every
+// filter to participant matching, and one that coerces absence to an empty
+// string would make "no address recorded" indistinguishable from a recorded
+// but empty value. email_address is the resolved address, so a row without a
+// header address still carries its participant's current address and ad-hoc
+// address filters find pre-upgrade mail.
+// Both snapshot readers are covered because they build the address columns
+// from separate SQL: the sqlite_scanner path resolves them inside the Parquet
+// COPY and the CSV fallback carries the raw column through the \N null
+// sentinel first.
 func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
+	for _, tc := range []struct {
+		name     string
+		forceCSV bool
+	}{
+		{name: "sqlite scanner"},
+		{name: "CSV snapshot", forceCSV: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			if tc.forceCSV {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			}
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err)
+			_, err := buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
 
-	duckdb, err := sql.Open("duckdb", "")
-	require.NoError(err)
-	defer func() { _ = duckdb.Close() }()
-	glob := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
+			duckdb, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckdb.Close() }()
+			glob := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 
-	var envelope string
-	err = duckdb.QueryRow(
-		`SELECT email_address FROM read_parquet(?)
-		 WHERE message_id = 1 AND recipient_type = 'from'`, glob,
-	).Scan(&envelope)
-	require.NoError(err, "exported message_recipients must carry email_address")
-	assert.Equal("alice-envelope@example.com", envelope)
+			var envelope, resolved string
+			err = duckdb.QueryRow(
+				`SELECT envelope_address, email_address FROM read_parquet(?)
+				 WHERE message_id = 1 AND recipient_type = 'from'`, glob,
+			).Scan(&envelope, &resolved)
+			require.NoError(err, "exported message_recipients must carry both address columns")
+			assert.Equal("alice-envelope@example.com", envelope)
+			assert.Equal("alice-envelope@example.com", resolved,
+				"a recorded header address is also the resolved address")
 
-	var withoutSnapshot int64
-	err = duckdb.QueryRow(
-		`SELECT COUNT(*) FROM read_parquet(?)
-		 WHERE COALESCE(email_address, '') = ''`, glob,
-	).Scan(&withoutSnapshot)
-	require.NoError(err)
-	assert.Equal(int64(11), withoutSnapshot,
-		"rows without a snapshot export as empty, keeping the participant fallback")
+			var withoutSnapshot int64
+			err = duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?)
+				 WHERE envelope_address IS NULL`, glob,
+			).Scan(&withoutSnapshot)
+			require.NoError(err)
+			assert.Equal(int64(11), withoutSnapshot,
+				"rows without a snapshot export a NULL envelope so readers can tell absence from an empty value")
+
+			// Message 4's from row recorded no header address, so it resolves
+			// to the sending participant's current address.
+			var resolvedFallback string
+			err = duckdb.QueryRow(
+				`SELECT email_address FROM read_parquet(?)
+				 WHERE message_id = 4 AND recipient_type = 'from'`, glob,
+			).Scan(&resolvedFallback)
+			require.NoError(err)
+			assert.Equal("bob@company.org", resolvedFallback,
+				"a row without a header address resolves to its participant's address")
+
+			var unresolved int64
+			err = duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?)
+				 WHERE email_address IS NULL`, glob,
+			).Scan(&unresolved)
+			require.NoError(err)
+			assert.Equal(int64(0), unresolved,
+				"every fixture participant carries an email address, so every row resolves")
+
+			var emptyString int64
+			err = duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?)
+				 WHERE envelope_address = '' OR email_address = ''`, glob,
+			).Scan(&emptyString)
+			require.NoError(err)
+			assert.Equal(int64(0), emptyString, "no row exports an empty-string address")
+		})
+	}
 }
 
 // TestBuildCache_ExportsListID proves the cache retains the scalar List-Id
@@ -3595,7 +3648,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
-	require.Equal(25, cacheSchemaVersion, "List-ID requires cache v25")
+	require.Equal(26, cacheSchemaVersion, "the recipient address columns require cache v26")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")

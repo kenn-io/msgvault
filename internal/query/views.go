@@ -255,16 +255,29 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					"CAST(recipient_type AS VARCHAR) AS recipient_type",
 					"CAST(display_name AS VARCHAR) AS display_name",
 				},
-				optionalCols: []optionalCol{{
-					// Envelope address snapshot (cache schema v17). The ''
-					// default keeps pre-v17 caches readable: an empty
-					// envelope makes identity filters fall back to
-					// participant matching (see
-					// buildIdentityPredicateCondition).
-					name:        "email_address",
-					replaceExpr: "COALESCE(CAST(email_address AS VARCHAR), '') AS email_address",
-					defaultExpr: "'' AS email_address",
-				}},
+				optionalCols: []optionalCol{
+					{
+						// Resolved recipient address (cache schema v26): the
+						// header address when one was recorded, otherwise the
+						// participant's current address. NULL only for
+						// participants without an email address.
+						name:        "email_address",
+						replaceExpr: "CAST(email_address AS VARCHAR) AS email_address",
+						defaultExpr: "NULL::VARCHAR AS email_address",
+					},
+					{
+						// Header address exactly as recorded (cache schema
+						// v26); NULL when none was — chat, calendar, and mail
+						// ingested before the store column existed. Identity
+						// filters key on its presence (see
+						// buildIdentityPredicateCondition); a cache without
+						// the column reads as NULL and falls back to
+						// participant matching.
+						name:        "envelope_address",
+						replaceExpr: "CAST(envelope_address AS VARCHAR) AS envelope_address",
+						defaultExpr: "NULL::VARCHAR AS envelope_address",
+					},
+				},
 			},
 			probe: colsFor("message_recipients"),
 		},

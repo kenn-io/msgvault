@@ -459,10 +459,14 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 	}
 	// recipientRowMatch renders the identity comparison for one
 	// message_recipients row. For an email-shaped identity the envelope
-	// snapshot (message_recipients.email_address, written at email ingest)
-	// is authoritative: it is immutable under participant merges, so
-	// comparing it keeps one alias's filter from selecting mail sent
-	// through another alias that the merge survivor now also carries.
+	// snapshot (message_recipients.envelope_address, the header address
+	// written at email ingest) is authoritative: it is immutable under
+	// participant merges, so comparing it keeps one alias's filter from
+	// selecting mail sent through another alias that the merge survivor now
+	// also carries. The sibling email_address column must not be used here:
+	// it is the resolved address, falling back to the participant's current
+	// address, so it moves under merges and would defeat alias-precise
+	// matching.
 	// Rows without a snapshot (legacy ingests, non-email writers) fall
 	// back to the resolved participant IDs, and non-email identifier
 	// types (phone, matrix, handles) have no envelope column at all, so
@@ -482,11 +486,11 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			return participantMatch(alias + ".participant_id")
 		}
 		args = append(args, identity.EmailIdentifier)
-		envelope := "(COALESCE(" + alias + ".email_address, '') <> '' AND LOWER(" + alias + ".email_address) = LOWER(?))"
+		envelope := "(COALESCE(" + alias + ".envelope_address, '') <> '' AND LOWER(" + alias + ".envelope_address) = LOWER(?))"
 		if len(identity.ParticipantIDs) == 0 {
 			return envelope
 		}
-		return "(" + envelope + " OR (COALESCE(" + alias + ".email_address, '') = '' AND " +
+		return "(" + envelope + " OR (COALESCE(" + alias + ".envelope_address, '') = '' AND " +
 			participantMatch(alias+".participant_id") + fallbackGuard + "))"
 	}
 	senderCondition := func() string {
@@ -494,7 +498,7 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			SELECT 1 FROM message_recipients identity_mr_sender_envelope
 			WHERE identity_mr_sender_envelope.message_id = ` + outerPrefix + `message_id
 			  AND identity_mr_sender_envelope.recipient_type = 'from'
-			  AND COALESCE(identity_mr_sender_envelope.email_address, '') <> ''
+			  AND COALESCE(identity_mr_sender_envelope.envelope_address, '') <> ''
 		)`
 		explicitFrom := `EXISTS (
 			SELECT 1 FROM message_recipients identity_mr_sender

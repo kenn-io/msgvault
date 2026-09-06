@@ -44,12 +44,19 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 |---|---|
 | `messages` | id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, sender_id, message_type, year, month, deleted_from_source_at |
 | `participants` | id, email_address, domain, display_name, phone_number |
-| `message_recipients` | message_id, participant_id, recipient_type (from/to/cc/bcc), display_name |
+| `message_recipients` | message_id, participant_id, recipient_type (from/to/cc/bcc), display_name, email_address, envelope_address |
 | `labels` | id, name |
 | `message_labels` | message_id, label_id |
 | `attachments` | message_id, filename, size |
 | `conversations` | id, source_conversation_id, title, conversation_type |
 | `sources` | id, source_type |
+
+`message_recipients.email_address` is the recipient's address: the address
+written in the message header when one was recorded, otherwise the
+participant's current address. It is NULL only for participants without an
+email address, such as phone-number contacts. `envelope_address` is the header
+address exactly as written and is NULL when none was recorded, which covers
+chat and calendar rows and mail imported before v0.19.0.
 
 ### Convenience views
 

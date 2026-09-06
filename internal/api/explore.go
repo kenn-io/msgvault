@@ -835,9 +835,9 @@ func (s *Server) resolveExploreIdentityContext(
 	// An email-shaped identity carries its stored address into the predicate
 	// for envelope-first matching, and stays matchable even with zero
 	// resolved participants: the address may survive only in
-	// message_recipients.email_address snapshots after a participant merge.
-	// Identifier types without an envelope surface keep the match-none
-	// short-circuit when no participant carries them.
+	// message_recipients.envelope_address, the raw header snapshot, after a
+	// participant merge. Identifier types without an envelope surface keep
+	// the match-none short-circuit when no participant carries them.
 	emailIdentifier := ""
 	if resolved.IdentifierIsEmail {
 		emailIdentifier = resolved.Identifier

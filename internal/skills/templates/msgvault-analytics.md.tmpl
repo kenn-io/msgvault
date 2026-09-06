@@ -56,9 +56,11 @@ Default output is `--format json`:
   `participant_emails` (JSON array as string).
 
 Base views for joins: `messages`, `participants`, `message_recipients`
-(`recipient_type` ∈ from/to/cc/bcc), `labels`, `message_labels`,
-`attachments` (`message_id`, `filename`, `size`), `conversations`,
-`sources`.
+(`recipient_type` ∈ from/to/cc/bcc; `email_address` is the header address when
+one was recorded and otherwise the participant's current address, while
+`envelope_address` is the header address alone and is NULL when none was
+recorded), `labels`, `message_labels`, `attachments` (`message_id`,
+`filename`, `size`), `conversations`, `sources`.
 
 ### Notes
 

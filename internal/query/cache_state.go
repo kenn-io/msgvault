@@ -29,9 +29,13 @@ import (
 // explainable contact completion without reopening archive tables; version 24
 // adds graph-relative current and annual relationship temperature summaries to
 // the compact relationship people dataset; version 25 adds the scalar list_id
-// message dimension.
-// Schema bumps force a full rebuild before readers use an older publication.
-const CacheSchemaVersion = 25
+// message dimension; version 26 adds envelope_address (the header address as
+// recorded, NULL when absent) to message_recipients and makes email_address
+// the resolved recipient address (envelope, else participant), never an empty
+// string.
+// Schema bumps force a full rebuild before readers use an older publication,
+// so committed caches never mix shards of different shapes.
+const CacheSchemaVersion = 26
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
