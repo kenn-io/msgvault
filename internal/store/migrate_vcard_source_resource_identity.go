@@ -10,7 +10,7 @@ import (
 // schemas deliberately retain their pre-upgrade indexes because they execute
 // before legacy columns are added on an existing archive.
 func (s *Store) ensureVCardSourceResourceIdentityIndexes(ctx context.Context) error {
-	return s.runOnceMigration(ctx, migrationVCardSourceResourceIdentity, false,
+	return s.runOnceMigration(ctx, migrationVCardSourceResourceIdentity, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				for _, statement := range vCardSourceResourceIdentityIndexStatements {

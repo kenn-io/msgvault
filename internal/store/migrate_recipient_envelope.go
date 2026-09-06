@@ -47,7 +47,7 @@ func (c recipientOrphanCleanup) total() int64 {
 // only after success, so the next open retries.
 func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 	return s.runOnceMigration(
-		ctx, migrationRecipientEnvelopeUnique, false,
+		ctx, migrationRecipientEnvelopeUnique, 1, false,
 		func(ctx context.Context) error {
 			var (
 				cleanup recipientOrphanCleanup

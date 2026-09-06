@@ -26,10 +26,10 @@ func TestRunOnceMigrationAtVersionRerunsReshapedMigration(t *testing.T) {
 		runs++
 		return nil
 	}
-	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 1))
-	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 2))
-	require.NoError(st.runOnceMigration(context.Background(), name, false, body, 1))
-	require.NoError(st.runOnceMigration(context.Background(), name, true, body, 1))
+	require.NoError(st.runOnceMigration(context.Background(), name, 1, false, body))
+	require.NoError(st.runOnceMigration(context.Background(), name, 2, false, body))
+	require.NoError(st.runOnceMigration(context.Background(), name, 1, false, body))
+	require.NoError(st.runOnceMigration(context.Background(), name, 1, true, body))
 	assert.Equal(3, runs, "version 2 must rerun once and force must still run")
 
 	var version int
@@ -46,37 +46,37 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 	require.NoError(st.InitSchema(), "initialize schema")
 
 	const name = "retryable_migration"
-	require.NoError(st.MarkMigrationApplied(name, 1), "seed the prior migration version")
+	require.NoError(st.MarkMigrationApplied(name), "seed the prior migration version")
 	failure := errors.New("migration body failed")
-	err = st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
+	err = st.runOnceMigration(context.Background(), name, 2, false, func(context.Context) error {
 		return failure
-	}, 2)
+	})
 	require.ErrorIs(err, failure)
-	applied, err := st.IsMigrationApplied(name, 2)
+	applied, err := st.IsMigrationAppliedContext(context.Background(), name, 2)
 	require.NoError(err)
 	assert.False(applied, "a failed body must not be marked")
-	applied, err = st.IsMigrationApplied(name, 1)
+	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 1)
 	require.NoError(err)
 	assert.True(applied, "a failed higher-version body must preserve version 1")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	err = st.runOnceMigration(ctx, name, false, func(ctx context.Context) error {
+	err = st.runOnceMigration(ctx, name, 2, false, func(ctx context.Context) error {
 		cancel()
 		return ctx.Err()
-	}, 2)
+	})
 	cancel()
 	require.ErrorIs(err, context.Canceled)
-	applied, err = st.IsMigrationApplied(name, 2)
+	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 2)
 	require.NoError(err)
 	assert.False(applied, "a cancelled body must not be marked")
-	applied, err = st.IsMigrationApplied(name, 1)
+	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 1)
 	require.NoError(err)
 	assert.True(applied, "a cancelled higher-version body must preserve version 1")
 
-	require.NoError(st.runOnceMigration(context.Background(), name, false, func(context.Context) error {
+	require.NoError(st.runOnceMigration(context.Background(), name, 2, false, func(context.Context) error {
 		return nil
-	}, 2))
-	applied, err = st.IsMigrationApplied(name, 2)
+	}))
+	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 2)
 	require.NoError(err)
 	assert.True(applied, "a retry after failure or cancellation must run")
 }

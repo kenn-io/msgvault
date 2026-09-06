@@ -653,11 +653,11 @@ CREATE TABLE IF NOT EXISTS applied_migrations (
 DDL changes use `IF NOT EXISTS`. This table records *data*
 migrations by name and the highest successfully applied implementation
 version (e.g. `legacy_identity_to_per_account`). Existing rows upgraded
-from the legacy schema receive version 1. Callers that omit a version
-request version 1; a migration is applied when the recorded version is
-below the requested minimum, and successful runs advance the recorded
-version monotonically. A failed or cancelled run leaves the previous
-version unchanged.
+from the legacy schema receive version 1. Name-only methods request
+version 1; context-aware methods take an explicit positive version. A
+migration runs when the recorded version is below the requested minimum,
+and successful runs advance the recorded version monotonically. A failed
+or cancelled run leaves the previous version unchanged.
 
 ## CLI surface
 

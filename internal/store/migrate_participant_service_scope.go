@@ -32,11 +32,11 @@ func (s *Store) ensureParticipantIdentifierServiceScopeIndex(ctx context.Context
 }
 
 func (s *Store) ensureParticipantIdentifierServiceScope(ctx context.Context) error {
-	v1Applied, err := s.IsMigrationAppliedContext(ctx, migrationParticipantServiceScope)
+	v1Applied, err := s.IsMigrationAppliedContext(ctx, migrationParticipantServiceScope, 1)
 	if err != nil {
 		return err
 	}
-	v2Applied, err := s.IsMigrationAppliedContext(ctx, migrationParticipantServiceScopeV2)
+	v2Applied, err := s.IsMigrationAppliedContext(ctx, migrationParticipantServiceScopeV2, 1)
 	if err != nil {
 		return err
 	}
@@ -47,12 +47,12 @@ func (s *Store) ensureParticipantIdentifierServiceScope(ctx context.Context) err
 		return err
 	}
 	if !v1Applied {
-		if err := s.MarkMigrationAppliedContext(ctx, migrationParticipantServiceScope); err != nil {
+		if err := s.MarkMigrationAppliedContext(ctx, migrationParticipantServiceScope, 1); err != nil {
 			return err
 		}
 	}
 	if !v2Applied {
-		return s.MarkMigrationAppliedContext(ctx, migrationParticipantServiceScopeV2)
+		return s.MarkMigrationAppliedContext(ctx, migrationParticipantServiceScopeV2, 1)
 	}
 	return nil
 }

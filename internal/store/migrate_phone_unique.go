@@ -72,7 +72,7 @@ const (
 // conflicting lock on participants -- so on context.Background() it would
 // ignore SIGINT and SIGTERM for as long as that lock is held.
 func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
-	applied, err := s.IsMigrationAppliedContext(ctx, migrationPhoneUniqueIndex)
+	applied, err := s.IsMigrationAppliedContext(ctx, migrationPhoneUniqueIndex, 1)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
 		return err
 	}
 
-	return s.MarkMigrationAppliedContext(ctx, migrationPhoneUniqueIndex)
+	return s.MarkMigrationAppliedContext(ctx, migrationPhoneUniqueIndex, 1)
 }
 
 func (s *Store) ensureIdentityMatchCandidateMergeColumns(ctx context.Context) error {

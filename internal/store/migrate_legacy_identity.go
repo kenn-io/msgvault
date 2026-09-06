@@ -42,7 +42,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 	ctx context.Context,
 	addresses []string,
 ) (applied, deferred bool, sourceCount, addressCount int, err error) {
-	already, err := s.IsMigrationAppliedContext(ctx, migrationLegacyIdentity)
+	already, err := s.IsMigrationAppliedContext(ctx, migrationLegacyIdentity, 1)
 	if err != nil {
 		return false, false, 0, 0, err
 	}
@@ -71,7 +71,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 	}
 
 	if len(normalized) == 0 {
-		if err := s.MarkMigrationAppliedContext(ctx, migrationLegacyIdentity); err != nil {
+		if err := s.MarkMigrationAppliedContext(ctx, migrationLegacyIdentity, 1); err != nil {
 			return false, false, 0, 0, err
 		}
 		return false, false, 0, 0, nil

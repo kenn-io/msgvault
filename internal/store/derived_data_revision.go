@@ -61,15 +61,11 @@ func (s *Store) AdvanceDerivedDataRevision() error {
 // re-derivation and advances the cache-visible revision. The ledger can never
 // claim a repair is complete without also making an older analytics cache
 // stale.
-func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string, version ...int) error {
-	resolved, err := resolveMigrationVersion(version)
-	if err != nil {
-		return err
-	}
+func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string) error {
 	return s.withTx(func(tx *loggedTx) error {
 		if err := s.bumpDerivedDataRevision(tx); err != nil {
 			return err
 		}
-		return s.markMigrationAppliedContext(context.Background(), tx, name, resolved)
+		return s.markMigrationAppliedContext(context.Background(), tx, name, 1)
 	})
 }

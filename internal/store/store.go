@@ -1201,13 +1201,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure migration ledger version column: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationPersonInferenceProviderV2, false,
+		ctx, migrationPersonInferenceProviderV2, 1, false,
 		s.migratePersonInferenceProviderV2,
 	); err != nil {
 		return fmt.Errorf("migrate people inference provider profiles: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationPersonSweepCallsV2, false,
+		ctx, migrationPersonSweepCallsV2, 1, false,
 		s.migratePersonSweepCallsV2,
 	); err != nil {
 		return fmt.Errorf("migrate person sweep call journal: %w", err)
@@ -1226,7 +1226,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// so the index is built against the just-deduped table. No-op timeout
 	// reset on SQLite.
 	if err := s.runOnceMigration(
-		ctx, migrationAttachmentsContentHashUnique, false,
+		ctx, migrationAttachmentsContentHashUnique, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
@@ -1253,7 +1253,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("prepare identity match source support provenance: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationIdentityMatchSourceSupport, false,
+		ctx, migrationIdentityMatchSourceSupport, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.backfillLegacyIdentityMatchSourceSupport(ctx, tx)
@@ -1303,9 +1303,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// content_changed_at itself arrives on an upgraded archive.
 	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
-		if m.Desc == migrationLedgerVersionColumnDesc {
-			continue
-		}
 		if _, err := s.db.ExecContext(ctx, m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
@@ -1324,7 +1321,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
 	// references with persisted roots and identifiers.
 	if err := s.runOnceMigration(
-		ctx, migrationOrganizationDomainIDNA, false,
+		ctx, migrationOrganizationDomainIDNA, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.canonicalizeLegacyOrganizationDomains(ctx, tx)
@@ -1422,12 +1419,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("validate message watermarks: %w", err)
 	}
 	watermarkTriggersAlreadyApplied, err := s.IsMigrationAppliedContext(
-		ctx, migrationMessageWatermarkTriggers)
+		ctx, migrationMessageWatermarkTriggers, 1)
 	if err != nil {
 		return fmt.Errorf("check message watermark trigger migration: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationMessageWatermarkTriggers, false,
+		ctx, migrationMessageWatermarkTriggers, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
@@ -1437,7 +1434,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure message watermark triggers: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationEmbeddingChangeJournalTriggers, false,
+		ctx, migrationEmbeddingChangeJournalTriggers, 1, false,
 		func(ctx context.Context) error {
 			// A fresh archive (or a pre-watermark archive) just ran the current
 			// EnsureTriggers above, which already includes the journal definitions.
@@ -1454,7 +1451,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationPersonSweepChangeTriggers, false,
+		ctx, migrationPersonSweepChangeTriggers, 1, false,
 		func(ctx context.Context) error {
 			// Fresh archives installed the current definitions with the watermark
 			// triggers above. Existing archives and explicit repair runs need a
@@ -1470,7 +1467,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationActivityProjectionTriggers, false,
+		ctx, migrationActivityProjectionTriggers, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.dialect.EnsureActivityProjectionTriggers(
@@ -1488,7 +1485,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// after the message and activity triggers exist so reclassified rows
 	// invalidate analytical and relationship projections like a normal update.
 	if err := s.runOnceMigration(
-		ctx, migrationGmailChatClassification, false,
+		ctx, migrationGmailChatClassification, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.classifyLegacyGmailChats(ctx, tx)
@@ -1508,7 +1505,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// actually changes instead of rewriting an entire source to initialize NULL
 	// provenance.
 	if err := s.runOnceMigration(
-		ctx, migrationMessageAttributionProvenance, false,
+		ctx, migrationMessageAttributionProvenance, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(
 				ctx,
@@ -1736,7 +1733,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// full-table UPDATE on a large archive is not cut off by the pool-wide
 	// statement_timeout (no-op reset on SQLite).
 	if err := s.runOnceMigration(
-		ctx, migrationMessagesLastModifiedBackfill, lastModifiedColumnAdded,
+		ctx, migrationMessagesLastModifiedBackfill, 1, lastModifiedColumnAdded,
 		func(ctx context.Context) error {
 			if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				_, err := tx.ExecContext(ctx,
@@ -1760,7 +1757,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// after every batch has committed, so an interrupted upgrade re-enters the
 	// loop on the next open rather than declaring itself done.
 	if err := s.runOnceMigration(
-		ctx, migrationMessagesContentChangedAtBackfill, false,
+		ctx, migrationMessagesContentChangedAtBackfill, 1, false,
 		func(ctx context.Context) error {
 			if err := s.backfillContentChangedAt(ctx); err != nil {
 				return fmt.Errorf("backfill content_changed_at: %w", err)
@@ -1900,13 +1897,8 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 // one place is what stops the next migration added to InitSchemaContext from
 // reintroducing a contextless pair.
 func (s *Store) runOnceMigration(
-	ctx context.Context, name string, force bool, fn func(ctx context.Context) error,
-	minimumVersion ...int,
+	ctx context.Context, name string, version int, force bool, fn func(ctx context.Context) error,
 ) error {
-	version, err := resolveMigrationVersion(minimumVersion)
-	if err != nil {
-		return err
-	}
 	applied, err := s.IsMigrationAppliedContext(ctx, name, version)
 	if err != nil {
 		return err
@@ -1917,7 +1909,7 @@ func (s *Store) runOnceMigration(
 	if err := fn(ctx); err != nil {
 		return err
 	}
-	return s.MarkMigrationAppliedContext(ctx, name, version)
+	return s.markMigrationAppliedContext(ctx, s.db, name, version)
 }
 
 // contentChangedBackfillBatchSize is how many ROWS one backfill batch stamps —
@@ -2199,7 +2191,7 @@ func (s *Store) ensureAttachmentOccurrenceUniqueIndexes(ctx context.Context) err
 	return s.runOnceMigration(
 		ctx,
 		migrationAttachmentOccurrenceUnique,
-		false,
+		1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				if _, err := tx.ExecContext(ctx,
