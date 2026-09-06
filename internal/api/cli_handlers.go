@@ -3308,7 +3308,7 @@ func cliCollectionResponseFromStore(
 		Name:               coll.Name,
 		Description:        coll.Description,
 		CreatedAt:          coll.CreatedAt,
-		SourceIDs:          append([]int64(nil), coll.SourceIDs...),
+		SourceIDs:          append([]int64{}, coll.SourceIDs...),
 		MessageCount:       coll.MessageCount,
 		SourceDeletedCount: coll.SourceDeletedCount,
 		Sources:            make([]cliCollectionSourceResponse, 0, len(coll.SourceIDs)),

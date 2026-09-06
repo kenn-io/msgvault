@@ -166,7 +166,7 @@ func (m *Model) invalidateInlineSearchRequests() {
 
 func (m Model) currentSearchFilter() query.MessageFilter {
 	filter := m.drillFilter
-	filter.SourceID = m.accountFilter
+	m.applyEmailSourceScope(&filter)
 	filter.WithAttachmentsOnly = m.filters.attachmentsOnly
 	filter.HideDeletedFromSource = m.filters.hideDeletedFromSource
 	return filter
@@ -178,7 +178,8 @@ func (m Model) semanticSearchAvailable() bool {
 }
 
 func (m Model) deepSearchAvailable() bool {
-	return true
+	filter := m.currentSearchFilter()
+	return filter.SourceIDs == nil || len(filter.SourceIDs) == 1
 }
 
 func (m *Model) syncSearchScope() {
@@ -251,22 +252,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.searchLoadingMore = false
 		switch m.mode {
 		case modeTexts:
-			m.textState.filter.SourceID = m.accountFilter
-			var loadCmd tea.Cmd
-			if m.textState.level == textLevelDetail {
-				if m.messageDetail == nil && m.textState.selectedMessageID > 0 {
-					loadCmd = m.loadTextMessage(m.textState.selectedMessageID)
-				}
-			} else if m.textState.level != textLevelTimeline || !m.textState.globalSearchTimeline {
-				loadCmd = m.loadTextData()
-			}
-			if loadCmd == nil {
-				m.loading = false
-				return m, nil, true
-			}
-			m.loading = true
-			spinCmd := m.startSpinner()
-			return m, tea.Batch(spinCmd, loadCmd), true
+			return m, m.activateTextPresentation(), true
 		case modeMeetings:
 			m.meetingState.listLoading = false
 			m.meetingState.searchLoading = false
@@ -359,11 +345,23 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		default:
 			m.loading = true
 			m.aggregateRequestID++
+			m.statsRequestID++
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 		}
 	}
 	return m, nil, false
+}
+
+func (m *Model) activateTextPresentation() tea.Cmd {
+	m.textState.filter.SourceID = m.accountFilter
+	loadCmd := m.textPresentationLoadCmd()
+	if loadCmd == nil {
+		m.loading = false
+		return nil
+	}
+	m.loading = true
+	return tea.Batch(m.startSpinner(), loadCmd)
 }
 
 // handleAggregateKeys handles keys in the aggregate and sub-aggregate views.
@@ -1248,8 +1246,8 @@ func (m Model) handleQuitConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	accounts := m.selectableAccounts()
-	maxIdx := len(accounts) // 0 = All Accounts/Sources, then selectable sources
+	options := m.selectorOptions()
+	maxIdx := len(options) - 1
 	switch msg.String() {
 	case "up", "k", keyNameCtrlP:
 		if m.modalCursor > 0 {
@@ -1261,15 +1259,40 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		}
 	case keyNameEnter:
 		// Apply selection with bounds check
-		var selectedID *int64
-		if m.modalCursor > 0 && m.modalCursor <= len(accounts) {
-			accID := accounts[m.modalCursor-1].ID
-			selectedID = &accID
+		if m.modalCursor < 0 || m.modalCursor > maxIdx {
+			m.modalCursor = 0
 		}
+		selected := options[m.modalCursor]
 		if m.mode == modeMeetings {
-			m.meetingState.sourceID = selectedID
+			m.meetingState.sourceID = selected.accountID
 		} else {
-			m.accountFilter = selectedID
+			if m.mode == modeEmail {
+				previous := m.currentSourceScope()
+				m.sourceScopeExplicit = true
+				switch selected.kind {
+				case scopeOptionAll:
+					m.accountFilter = nil
+					m.sourceScope = allSourceScope()
+				case scopeOptionAccount:
+					m.accountFilter = selected.accountID
+					m.sourceScope = accountSourceScope(selected.accountID)
+				case scopeOptionCollection:
+					m.sourceScope = collectionSourceScope(selected.collection)
+				}
+				if !previous.matches(selected) {
+					m.invalidateSourceScope()
+				}
+			} else {
+				if m.mode == modeTexts && m.sourceScope.kind != sourceScopeCollection {
+					previous := m.currentSourceScope()
+					m.sourceScope = accountSourceScope(selected.accountID)
+					m.sourceScopeExplicit = true
+					if !previous.matches(selected) {
+						m.invalidateSourceScope()
+					}
+				}
+				m.accountFilter = selected.accountID
+			}
 		}
 		m.modal = modalNone
 		m.loading = true
@@ -1302,11 +1325,10 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			return m, m.loadMeetingMessages()
 		}
 		if m.mode == modeTexts {
-			m.textState.filter.SourceID = m.accountFilter
-			cmd := m.loadTextData()
-			return m, cmd
+			return m, m.activateTextPresentation()
 		}
 		m.aggregateRequestID++
+		m.statsRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
 	case keyNameEsc:
 		m.modal = modalNone
@@ -1358,12 +1380,15 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				m.loadRequestID++ // Invalidate normal list loads before replacing ranked results.
 				m.searchRequestID++
 				m.prepareSearchReplacement()
+				m.statsRequestID++
 				return m, tea.Batch(m.loadSearch(m.searchQuery), m.loadStats())
 			}
 			m.loadRequestID++
+			m.statsRequestID++
 			return m, tea.Batch(m.loadMessages(), m.loadStats())
 		}
 		m.aggregateRequestID++
+		m.statsRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
 	}
 	return m, nil
@@ -1556,11 +1581,11 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 		// Top-level: create fresh drill filter
 		m.drillViewType = m.viewType
 		m.drillFilter = query.MessageFilter{
-			SourceID:              m.accountFilter,
 			WithAttachmentsOnly:   m.filters.attachmentsOnly,
 			HideDeletedFromSource: m.filters.hideDeletedFromSource,
 			TimeRange:             query.TimeRange{Granularity: m.timeGranularity},
 		}
+		m.applyEmailSourceScope(&m.drillFilter)
 	}
 
 	// Set filter field on drillFilter (accumulates for sub-agg)
@@ -1603,23 +1628,72 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 func (m *Model) openAccountSelector() {
 	m.modal = modalAccountSelector
 	m.modalCursor = 0 // Default to "All Accounts" / "All Sources"
-	selectedID := m.accountFilter
-	if m.mode == modeMeetings {
-		selectedID = m.meetingState.sourceID
-	}
-	accounts := m.selectableAccounts()
-	if selectedID != nil {
-		for i, acc := range accounts {
-			if acc.ID == *selectedID {
-				m.modalCursor = i + 1 // +1 because 0 is "All Accounts"
+	options := m.selectorOptions()
+	for i, option := range options {
+		if m.mode == modeEmail {
+			if m.currentSourceScope().matches(option) {
+				m.modalCursor = i
+				break
+			}
+		} else if option.kind == scopeOptionAll && m.mode == modeMeetings && m.meetingState.sourceID == nil {
+			m.modalCursor = i
+		} else if option.kind == scopeOptionAll && m.mode == modeTexts && m.accountFilter == nil {
+			m.modalCursor = i
+		} else if option.accountID != nil {
+			selectedID := m.accountFilter
+			if m.mode == modeMeetings {
+				selectedID = m.meetingState.sourceID
+			}
+			if selectedID != nil && *selectedID == *option.accountID {
+				m.modalCursor = i
 				break
 			}
 		}
 	}
 	// Clamp to valid range in case accounts list changed
-	if m.modalCursor > len(accounts) {
+	if m.modalCursor >= len(options) {
 		m.modalCursor = 0
 	}
+}
+
+func (m *Model) invalidateSourceScope() {
+	m.deletionRequestID++
+	m.finishDeletionResolution()
+	m.aggregateRequestID++
+	m.statsRequestID++
+	m.loadRequestID++
+	m.detailRequestID++
+	m.searchRequestID++
+	if m.mode == modeTexts {
+		m.nextTextRequestID()
+	} else {
+		m.presentationGeneration++
+	}
+	m.invalidatePreSearchSnapshot()
+	m.searchFilter = query.MessageFilter{}
+	m.level = levelAggregates
+	m.filterKey = ""
+	m.allMessages = false
+	m.drillFilter = query.MessageFilter{}
+	m.drillViewType = 0
+	m.contextStats = nil
+	m.searchQuery = ""
+	m.breadcrumbs = nil
+	m.selection.aggregateKeys = make(map[string]bool)
+	m.selection.messageIDs = make(map[int64]bool)
+	m.messages = nil
+	m.rows = nil
+	m.stats = nil
+	if m.mode == modeEmail {
+		m.messageReaderState = messageReaderState{}
+	}
+	m.parkedMessageReaders[modeEmail] = messageReaderState{}
+	m.threadConversationID = 0
+	m.threadMessages = nil
+	m.threadCursor = 0
+	m.threadScrollOffset = 0
+	m.threadTruncated = false
+	m.restorePosition = false
 }
 
 func (m *Model) openFilterModal() {

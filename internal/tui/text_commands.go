@@ -257,3 +257,17 @@ func (m *Model) loadTextData() tea.Cmd {
 		return m.loadTextAggregate()
 	}
 }
+
+func (m *Model) textPresentationLoadCmd() tea.Cmd {
+	switch {
+	case m.textState.level == textLevelDetail:
+		if m.messageDetail == nil && m.textState.selectedMessageID > 0 {
+			return m.loadTextMessage(m.textState.selectedMessageID)
+		}
+		return nil
+	case m.textState.level == textLevelTimeline && m.textState.globalSearchTimeline:
+		return nil
+	default:
+		return m.loadTextData()
+	}
+}

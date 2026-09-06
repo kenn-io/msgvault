@@ -762,6 +762,99 @@ func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
 	}
 }
 
+func TestDuckDBEngine_SubAggregateSourceIDsTakePrecedence(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	sourceOne := b.AddSource("one@example.com")
+	sourceTwo := b.AddSource("two@example.com")
+	aliceID := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+
+	messageOne := b.AddMessage(MessageOpt{SourceID: sourceOne, SenderID: &aliceID})
+	b.AddFrom(messageOne, aliceID, "Alice")
+	messageTwo := b.AddMessage(MessageOpt{SourceID: sourceTwo, SenderID: &bobID})
+	b.AddFrom(messageTwo, bobID, "Bob")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	selectedSource := sourceOne
+	opts := DefaultAggregateOptions()
+	opts.SourceID = &selectedSource
+	opts.SourceIDs = []int64{sourceTwo}
+	results, err := engine.SubAggregate(context.Background(), MessageFilter{}, ViewSenders, opts)
+	require.NoError(t, err, "SubAggregate")
+
+	assertAggregateCounts(t, results, map[string]int64{"bob@example.com": 1})
+}
+
+func TestDuckDBEngine_SubAggregateSourceScopePrecedence(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	sourceOne := b.AddSource("one@example.com")
+	sourceTwo := b.AddSource("two@example.com")
+	senderID := b.AddParticipant("scope-sender@example.com", "example.com", "Scope Sender")
+	messageID := b.AddMessage(MessageOpt{SourceID: sourceTwo, SenderID: &senderID})
+	b.AddFrom(messageID, senderID, "Scope Sender")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	sourceTwoID := sourceTwo
+	cases := []struct {
+		name   string
+		filter MessageFilter
+		opts   AggregateOptions
+		want   map[string]int64
+	}{
+		{
+			name:   "option multi overrides filter single",
+			filter: MessageFilter{SourceID: &sourceOne, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceIDs: []int64{sourceTwo}},
+			want:   map[string]int64{"scope-sender@example.com": 1},
+		},
+		{
+			name:   "option single overrides filter multi",
+			filter: MessageFilter{SourceIDs: []int64{sourceOne}, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceID: &sourceTwoID},
+			want:   map[string]int64{"scope-sender@example.com": 1},
+		},
+		{
+			name:   "option single overrides empty filter",
+			filter: MessageFilter{SourceIDs: []int64{}, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceID: &sourceTwoID},
+			want:   map[string]int64{"scope-sender@example.com": 1},
+		},
+		{
+			name:   "explicit empty option overrides filter",
+			filter: MessageFilter{SourceID: &sourceTwo, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceIDs: []int64{}},
+			want:   map[string]int64{},
+		},
+		{
+			name:   "filter remains when options are nil",
+			filter: MessageFilter{SourceID: &sourceTwo, Sender: "scope-sender@example.com"},
+			opts:   DefaultAggregateOptions(),
+			want:   map[string]int64{"scope-sender@example.com": 1},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			filter := tc.filter
+			opts := DefaultAggregateOptions()
+			opts.SourceID = tc.opts.SourceID
+			opts.SourceIDs = tc.opts.SourceIDs
+			rows, err := engine.SubAggregate(context.Background(), filter, ViewSenders, opts)
+			require.NoError(err, "SubAggregate")
+			assertAggregateCounts(t, rows, tc.want)
+			if tc.filter.SourceID != nil {
+				require.NotNil(filter.SourceID)
+				assert.Equal(*tc.filter.SourceID, *filter.SourceID)
+			}
+			assert.Equal(tc.filter.SourceIDs, filter.SourceIDs)
+		})
+	}
+}
+
 func TestDuckDBEngine_ListMessages_SenderNameFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()

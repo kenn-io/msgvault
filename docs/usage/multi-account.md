@@ -160,7 +160,18 @@ Once several accounts hold overlapping copies of the same message, [deduplicatio
 
 ## TUI Filtering
 
-Press `A` (uppercase) inside the TUI to open the account selector modal. Pick a single account to scope every view, or pick "All Accounts" to clear the filter. The currently selected account is shown in the title bar.
+Press `A` (uppercase) inside the TUI to open the Email scope selector. Pick a
+single account, a named collection, or "All Accounts" to clear the filter. The
+title bar shows the selected account or `Collection: <name>`. A collection
+scope carries its exact member source IDs through Email aggregates, message
+lists, fast search, statistics, and deletion-target inspection. An empty
+collection matches nothing.
+
+Named collections require API schema `2.17.0` or newer. Older or unavailable
+daemons hide collection rows while preserving account browsing. Texts and
+Meetings keep their existing independent source selectors. Deletion staging
+continues to create a manifest only for one source; multi-source collection
+selections remain rejected by the existing safety rule.
 
 Meetings mode uses the same key for a separate source selector. It lists only
 configured Granola and Circleback sources, and changing it does not replace the

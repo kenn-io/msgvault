@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type DeletionContext struct {
 	MessageSelection   map[int64]bool
 	AggregateViewType  query.ViewType
 	AccountFilter      *int64
+	SourceIDs          []int64
 	Accounts           []query.AccountInfo
 	TimeGranularity    query.TimeGranularity
 	Messages           []query.MessageSummary
@@ -245,10 +247,12 @@ func manifestMatchFilter(filter query.MessageFilter) allMatchesManifestFilter {
 
 // resolveGmailIDs converts selections (aggregate keys and message IDs) into Gmail IDs.
 func (c *ActionController) resolveDeletionTargets(ctx context.Context, dctx DeletionContext) ([]query.DeletionTarget, error) {
+	if dctx.SourceIDs != nil && len(dctx.SourceIDs) == 0 {
+		return []query.DeletionTarget{}, nil
+	}
 	if dctx.AllMatches {
 		return c.resolveAllMatchingDeletionTargets(ctx, dctx)
 	}
-
 	targetsByMessageID := make(map[int64]query.DeletionTarget)
 
 	// From selected aggregates - resolve to Gmail IDs via query engine
@@ -285,7 +289,7 @@ func (c *ActionController) resolveDeletionTargets(ctx context.Context, dctx Dele
 			accounts[account.ID] = account
 		}
 		for _, msg := range dctx.Messages {
-			if dctx.MessageSelection[msg.ID] {
+			if dctx.MessageSelection[msg.ID] && deletionSourceAllowed(msg.SourceID, dctx) {
 				account, ok := accounts[msg.SourceID]
 				if !ok {
 					return nil, fmt.Errorf("selected message %d has no source metadata", msg.ID)
@@ -365,6 +369,13 @@ func deletionSearchModeName(mode searchModeKind) string {
 	}
 }
 
+func deletionSourceAllowed(sourceID int64, dctx DeletionContext) bool {
+	if dctx.SourceIDs != nil {
+		return slices.Contains(dctx.SourceIDs, sourceID)
+	}
+	return dctx.AccountFilter == nil || sourceID == *dctx.AccountFilter
+}
+
 // buildFilterForAggregate constructs a MessageFilter for a single aggregate key.
 func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionContext) query.MessageFilter {
 	var filter query.MessageFilter
@@ -378,7 +389,11 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 	}
 	filter.WithAttachmentsOnly = filter.WithAttachmentsOnly || dctx.MatchFilter.WithAttachmentsOnly
 	filter.HideDeletedFromSource = filter.HideDeletedFromSource || dctx.MatchFilter.HideDeletedFromSource
-	if dctx.AccountFilter != nil {
+	filter.SourceID = nil
+	filter.SourceIDs = nil
+	if dctx.SourceIDs != nil {
+		filter.SourceIDs = append(make([]int64, 0, len(dctx.SourceIDs)), dctx.SourceIDs...)
+	} else if dctx.AccountFilter != nil {
 		filter.SourceID = dctx.AccountFilter
 	}
 	// TUI deletion is an email/Gmail workflow. Keep aggregate resolution
@@ -467,6 +482,13 @@ func (c *ActionController) applyManifestFilters(m *deletion.Manifest, ctx Deleti
 		}
 	} else if len(ctx.Accounts) == 1 {
 		m.Filters.Account = ctx.Accounts[0].Identifier
+	} else if len(ctx.SourceIDs) == 1 {
+		for _, acc := range ctx.Accounts {
+			if acc.ID == ctx.SourceIDs[0] {
+				m.Filters.Account = acc.Identifier
+				break
+			}
+		}
 	}
 
 	if ctx.AllMatches {
