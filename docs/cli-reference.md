@@ -2028,16 +2028,21 @@ exclusive, and `--ids` is also mutually exclusive with `--source-id`.
 
 | Flag | Description |
 |---|---|
-| `--dry-run` | Show the match count without creating a deletion batch |
+| `--dry-run` | Show the staged subset and skipped counts without creating a deletion batch |
 | `--source-id ID` | Restrict staging to one exact source ID |
 | `--ids IDS` | Stage positive, unique, comma-separated internal message IDs instead of a query |
 
-Deletion staging covers Gmail-source email only. The daemon rejects a selection
-that includes anything else — chats, meetings, calendar entries, or mail from
-non-Gmail sources such as Apple Mail imports — rather than staging a subset of
-what matched. Narrow the search until it matches only deletable mail, for
-example with `message_type:email` in the query and `--source-id` for the Gmail
-source. This query narrowing guidance applies to query mode. In ID mode, the
+The query resolves with the same search semantics as `msgvault search`, and
+`--dry-run` prints the set that staging would create.
+
+Deletion staging covers Gmail-source email only. A search that also matches
+chats, meetings, calendar entries, or mail from non-Gmail sources such as Apple
+Mail imports stages the Gmail subset and reports how many items it skipped. Only
+a search with nothing deletable in it is refused. Legacy Gmail messages imported
+before message types existed carry a blank type and count as email, so
+`message_type:email` stages them too.
+
+In ID mode, the
 daemon resolves live Gmail targets and source boundaries for the requested IDs;
 IDs that do not resolve to live deletable Gmail messages with provider message
 IDs are omitted, so the

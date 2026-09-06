@@ -656,15 +656,35 @@ func (s *Store) searchMessagesQueryImpl(
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 
-	// message_type: / message_type= filter.
+	// message_type: / message_type= filter. An "email" value also matches an
+	// empty or NULL message_type. Rows imported before the column existed
+	// carry a blank value on current schemas and NULL on pre-constraint
+	// archives (see newLegacyNullableMessageTypeStore coverage); both count
+	// as email everywhere else (IsEmailMessageType, the analytical email
+	// filters), so a plain IN list would drop legacy mail from
+	// message_type:email searches.
 	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
+		var parts, exact []string
+		for _, typ := range q.MessageTypes {
+			if IsEmailMessageType(typ) {
+				continue
+			}
+			exact = append(exact, typ)
 		}
-		conditions = append(conditions,
-			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
+		if len(exact) < len(q.MessageTypes) {
+			parts = append(parts,
+				"(m.message_type = ? OR m.message_type = '' OR m.message_type IS NULL)")
+			args = append(args, MessageTypeEmail)
+		}
+		if len(exact) > 0 {
+			placeholders := make([]string, len(exact))
+			for i, typ := range exact {
+				placeholders[i] = "?"
+				args = append(args, typ)
+			}
+			parts = append(parts, "m.message_type IN ("+strings.Join(placeholders, ",")+")")
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 
 	// Account scoping (in: / API account/collection filter). The HTTP

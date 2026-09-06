@@ -25,17 +25,18 @@ func newStageDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stage-delete [query]",
 		Short: "Stage active messages matching search criteria or explicit IDs for deletion",
-		Long: `Stage every active message matching a search query for deletion.
+		Long: `Stage the deletable messages matching a search query for deletion.
 
-The daemon resolves and preflights the search before creating a pending
-deletion batch. Use --dry-run to report the match count without creating one.
-Alternatively, pass a comma-separated --ids list to stage explicit internal
+The search runs with the same semantics as msgvault search. Matches that no
+source supports deleting, such as chats, meetings, and non-Gmail mail, are
+reported and skipped rather than rejecting the whole search. Use --dry-run to
+see the same staged subset and counts without creating a batch. Alternatively, pass a comma-separated --ids list to stage explicit internal
 message IDs; this form bypasses search and analytical-cache readiness.
 Review a created batch with show-deletion before running delete-staged.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: runStageDelete,
 	}
-	cmd.Flags().BoolVar(&stageDeleteDryRun, "dry-run", false, "Show the match count without creating a deletion batch")
+	cmd.Flags().BoolVar(&stageDeleteDryRun, "dry-run", false, "Show the staged subset and skipped counts without creating a deletion batch")
 	cmd.Flags().Int64("source-id", 0, "Restrict staging to one exact source ID")
 	cmd.Flags().String("ids", "", "Stage these comma-separated internal message IDs instead of a query")
 	cmd.MarkFlagsMutuallyExclusive("ids", "source-id")
@@ -196,7 +197,7 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 		return errors.New("stage deletion returned no response body")
 	}
 
-	return writeStageDeleteOutcome(cmd.OutOrStdout(), result, "the search")
+	return writeStageDeleteOutcome(cmd.OutOrStdout(), result)
 }
 
 func runStageDeleteFromIDs(cmd *cobra.Command) error {
@@ -245,7 +246,7 @@ func runStageDeleteFromIDs(cmd *cobra.Command) error {
 		return errors.New("stage deletion returned no response body")
 	}
 
-	return writeStageDeleteOutcome(cmd.OutOrStdout(), result, "the requested IDs")
+	return writeStageDeleteOutcome(cmd.OutOrStdout(), result)
 }
 
 func parseStageDeleteMessageIDs(raw string) ([]int64, error) {
@@ -278,10 +279,13 @@ func stageDeleteMessageIDsDaemonErr(err error) error {
 	return stageDeleteDaemonErr("stage deletion", err)
 }
 
-func writeStageDeleteOutcome(w io.Writer, result *generated.StageDeletionResponse, criterion string) error {
+func writeStageDeleteOutcome(w io.Writer, result *generated.StageDeletionResponse) error {
 	if result.DryRun {
-		if _, err := fmt.Fprintf(w, "Dry run: %d message(s) match %s; no deletion batch was created.\n", result.MessageCount, criterion); err != nil {
+		if _, err := fmt.Fprintf(w, "Dry run: %d message(s) would be staged; no deletion batch was created.\n", result.MessageCount); err != nil {
 			return fmt.Errorf("write dry-run summary: %w", err)
+		}
+		if err := writeStageDeleteSkipped(w, result); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -291,8 +295,33 @@ func writeStageDeleteOutcome(w io.Writer, result *generated.StageDeletionRespons
 	if _, err := fmt.Fprintf(w, "Staged %d message(s) for deletion in batch %s.\n", result.MessageCount, *result.ID); err != nil {
 		return fmt.Errorf("write staging summary: %w", err)
 	}
+	if err := writeStageDeleteSkipped(w, result); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(w, "Review with 'msgvault show-deletion %s', then execute with 'msgvault delete-staged %s'.\n", *result.ID, *result.ID); err != nil {
 		return fmt.Errorf("write staging summary: %w", err)
+	}
+	return nil
+}
+
+// writeStageDeleteSkipped names the matches the daemon left out, so a
+// narrower staged count than the search reported is never silent.
+func writeStageDeleteSkipped(w io.Writer, result *generated.StageDeletionResponse) error {
+	skipped := int64(0)
+	if result.SkippedCount != nil {
+		skipped = *result.SkippedCount
+	}
+	if skipped <= 0 {
+		return nil
+	}
+	matched := skipped + result.MessageCount
+	if result.MatchedCount != nil {
+		matched = *result.MatchedCount
+	}
+	if _, err := fmt.Fprintf(w,
+		"%d of %d matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n",
+		skipped, matched); err != nil {
+		return fmt.Errorf("write skipped summary: %w", err)
 	}
 	return nil
 }
@@ -309,9 +338,9 @@ func stageDeleteDaemonErr(op string, err error) error {
 		return fmt.Errorf("%s: %s; retry shortly if the analytical cache is still building, "+
 			"or run 'msgvault build-cache' and rerun stage-delete", op, apiErr.Message)
 	case "selection_not_deletable":
-		return fmt.Errorf("%s: %s; the search matches items that cannot be deleted from "+
-			"their source, such as chats, meetings, or non-Gmail mail. Narrow the search, "+
-			"for example with message_type:email or --source-id <gmail-source-id>",
+		return fmt.Errorf("%s: %s; nothing the search matched can be deleted from its "+
+			"source. Deletion currently covers Gmail mail only, so widen or retarget the "+
+			"search, for example with --source-id <gmail-source-id>",
 			op, apiErr.Message)
 	case "multi_account_selection":
 		return fmt.Errorf("%s: %s; rerun stage-delete once per source with --source-id",

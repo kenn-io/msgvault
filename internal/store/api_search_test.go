@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -184,6 +185,91 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 	require.Len(msgs, 1, "messages")
 	assert.Equal("sms", msgs[0].MessageType, "MessageType")
 	assert.Equal(smsMsg, msgs[0].ID, "ID")
+}
+
+// TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows pins the
+// blank-type half of the email filter: Gmail messages imported before
+// message_type existed carry an empty value and must still answer
+// message_type:email, or narrowing a deletion search by type silently drops
+// exactly the oldest mail.
+func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	typed := f.NewMessage().
+		WithSourceMessageID("typed-email").
+		WithSubject("receipt for lunch").
+		WithSnippet("typed").
+		Create(t, f.Store)
+	legacyBlank := f.NewMessage().
+		WithSourceMessageID("legacy-blank-email").
+		WithSubject("receipt for lunch").
+		WithSnippet("legacy blank").
+		Create(t, f.Store)
+	sms := f.NewMessage().
+		WithSourceMessageID("typed-sms").
+		WithSubject("receipt for lunch").
+		WithSnippet("text message").
+		Create(t, f.Store)
+
+	for id, value := range map[int64]string{legacyBlank: "", sms: "sms"} {
+		_, err := f.Store.DB().Exec(
+			f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), value, id)
+		require.NoError(err, "set message_type for %d", id)
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	msgs, total, err := f.Store.SearchMessagesQuery(search.Parse("message_type:email receipt"), 0, 50)
+	require.NoError(err, "SearchMessagesQuery")
+	got := make([]int64, 0, len(msgs))
+	for _, msg := range msgs {
+		got = append(got, msg.ID)
+	}
+	assert.ElementsMatch([]int64{typed, legacyBlank}, got, "legacy blank-typed rows match message_type:email")
+	assert.Equal(int64(2), total, "total")
+	assert.NotContains(got, sms, "typed non-email rows stay excluded")
+}
+
+// TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows pins the
+// NULL half of the same legacy contract: archives written before the NOT
+// NULL constraint carry NULL message_type, and message_type:email must match
+// them exactly as the repair and analytical paths already do.
+func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+
+	typed, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversationID,
+		SourceMessageID: "typed-email-null-fixture",
+		Subject:         sql.NullString{String: "receipt for lunch", Valid: true},
+		Snippet:         sql.NullString{String: "typed", Valid: true}, MessageType: store.MessageTypeEmail,
+	})
+	require.NoError(err, "create typed email")
+	legacyNull, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversationID,
+		SourceMessageID: "legacy-null-email",
+		Subject:         sql.NullString{String: "receipt for lunch", Valid: true},
+		Snippet:         sql.NullString{String: "legacy null", Valid: true}, MessageType: store.MessageTypeEmail,
+	})
+	require.NoError(err, "create legacy email")
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE messages SET message_type = NULL WHERE id = ?`), legacyNull)
+	require.NoError(err, "clear legacy message type")
+	_, err = st.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	msgs, total, err := st.SearchMessagesQuery(search.Parse("message_type:email receipt"), 0, 50)
+	require.NoError(err, "SearchMessagesQuery")
+	got := make([]int64, 0, len(msgs))
+	for _, msg := range msgs {
+		got = append(got, msg.ID)
+	}
+	assert.ElementsMatch([]int64{typed, legacyNull}, got,
+		"legacy NULL-typed rows match message_type:email")
+	assert.Equal(int64(2), total, "total")
 }
 
 // TestSearchMessagesQuery_ListIDFilters catches Store searches that treat
