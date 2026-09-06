@@ -143,7 +143,19 @@ func (s *Store) repairAccountIdentityAddressKeys(ctx context.Context) error {
 		collapsedSources := make(map[int64]struct{})
 		for _, gk := range order {
 			group := groups[gk]
-			if len(group) == 1 && group[0].addressKey == gk.key {
+			if len(group) == 1 {
+				if group[0].addressKey == gk.key {
+					continue
+				}
+				// Key-only backfill: the row's other columns stay as the
+				// original writer left them.
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE account_identities SET address_key = ?
+					 WHERE source_id = ? AND address = ?`,
+					gk.key, group[0].sourceID, group[0].address,
+				); err != nil {
+					return fmt.Errorf("backfill account identity key: %w", err)
+				}
 				continue
 			}
 			survivor := pickAccountIdentitySurvivor(group, gk.key)
@@ -178,7 +190,7 @@ func (s *Store) repairAccountIdentityAddressKeys(ctx context.Context) error {
 				 WHERE source_id = ? AND address = ?`,
 				gk.key, mergedSignals, earliest, survivor.sourceID, survivor.address,
 			); err != nil {
-				return fmt.Errorf("backfill account identity key: %w", err)
+				return fmt.Errorf("collapse account identity group: %w", err)
 			}
 		}
 

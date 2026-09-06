@@ -213,3 +213,64 @@ func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T)
 	require.NoError(err, "GetMessageIsFromMe")
 	assert.True(isFromMe, "effective attribution comes from the identity match")
 }
+
+func TestAccountIdentityKeyOnlyBackfillLeavesOtherColumnsUntouched(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "key-only@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	// One row, no duplicate: the repair must only fill in the key. The
+	// stored confirmed_at text is compared verbatim because a round trip
+	// through a Go time value rewrites it in a different format.
+	_, err = st.DB().Exec(st.Rebind(
+		`INSERT INTO account_identities (source_id, address, source_signal)
+		 VALUES (?, ?, ?)`),
+		src.ID, "Erin@Example.com", "manual")
+	require.NoError(err, "seed legacy row")
+	var confirmedBefore string
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT CAST(confirmed_at AS TEXT) FROM account_identities WHERE source_id = ?`),
+		src.ID).Scan(&confirmedBefore))
+
+	require.NoError(st.InitSchema(), "reinit schema to run the key repair")
+
+	var key, signal, confirmedAfter string
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT address_key, source_signal, CAST(confirmed_at AS TEXT)
+		 FROM account_identities WHERE source_id = ?`),
+		src.ID).Scan(&key, &signal, &confirmedAfter))
+	assert.Equal("erin@example.com", key)
+	assert.Equal("manual", signal)
+	assert.Equal(confirmedBefore, confirmedAfter, "key-only backfill must not rewrite confirmed_at")
+}
+
+func TestAddAccountIdentityPromotesUnkeyedLegacyRowWithoutSignalChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "promote-legacy@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	// A previous-release writer left an unkeyed row in the same session.
+	_, err = st.DB().Exec(st.Rebind(
+		`INSERT INTO account_identities (source_id, address, source_signal)
+		 VALUES (?, ?, ?)`),
+		src.ID, "Frank@Example.com", "manual")
+	require.NoError(err, "seed legacy row")
+
+	// Same signal, so the signal set does not change; the keyed writer must
+	// still merge into the legacy row and key it rather than leave it for
+	// the next open.
+	require.NoError(st.AddAccountIdentity(src.ID, "frank@example.com", "manual"))
+
+	identities, err := st.ListAccountIdentities(src.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 1, "keyed writer must merge into the unkeyed legacy row")
+	var key string
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT address_key FROM account_identities WHERE source_id = ?`),
+		src.ID).Scan(&key))
+	assert.Equal("frank@example.com", key, "legacy row must be promoted to keyed")
+}

@@ -292,13 +292,13 @@ func (s *Store) mergeAccountIdentitySignalsTxWith(
 	allowInsert bool,
 ) (inserted, present bool, err error) {
 	key := NormalizeIdentifierForCompare(addr)
-	var existingAddr, existing string
-	selectSQL := `SELECT address, source_signal FROM account_identities
+	var existingAddr, existingKey, existing string
+	selectSQL := `SELECT address, address_key, source_signal FROM account_identities
 		WHERE source_id = ? AND (address_key = ?
 			OR (address_key = '' AND ` + match.WhereClause("address") + `))
 		ORDER BY address_key DESC LIMIT 1` + s.dialect.SelectForUpdate()
 	err = tx.QueryRowContext(ctx, selectSQL, sourceID, key, match.BindValue()).
-		Scan(&existingAddr, &existing)
+		Scan(&existingAddr, &existingKey, &existing)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if !allowInsert {
@@ -323,11 +323,12 @@ func (s *Store) mergeAccountIdentitySignalsTxWith(
 		for _, signal := range signals {
 			merged = mergeSignalSet(merged, signal)
 		}
-		if merged != existing {
+		wantKey := NormalizeIdentifierForCompare(existingAddr)
+		if merged != existing || existingKey != wantKey {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE account_identities SET source_signal = ?, address_key = ?
 					WHERE source_id = ? AND address = ?`,
-				merged, NormalizeIdentifierForCompare(existingAddr), sourceID, existingAddr,
+				merged, wantKey, sourceID, existingAddr,
 			); err != nil {
 				return false, true, fmt.Errorf("update source_signal: %w", err)
 			}
