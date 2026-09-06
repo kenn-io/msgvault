@@ -1,32 +1,33 @@
 <script lang="ts">
+  import {
+    createSavedView as generatedCreateSavedView,
+    deleteSavedView as generatedDeleteSavedView,
+    listSavedViews as generatedListSavedViews,
+    patchSavedView as generatedPatchSavedView,
+  } from '../../api/generated/api/api';
   import { Button, Card, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
-
   import type { APIClient } from '../../api/client';
-  import type { components } from '../../api/generated/schema';
-  import {
-    DEFAULT_EXPLORE_COLUMNS,
-    type ExploreColumn,
-    type ExploreURLState
-  } from '../../explore/models';
+  import type {
+    SavedView as GeneratedSavedView,
+    SavedViewStateEnvelope as GeneratedSavedViewStateEnvelope,
+  } from '../../api/generated/models';
+  import { DEFAULT_EXPLORE_COLUMNS, type ExploreColumn, type ExploreURLState } from '../../explore/models';
   import { isGroupingDimension } from '../../grouping/catalog';
-
-  type SavedView = components['schemas']['SavedView'];
-  type CanonicalState = components['schemas']['SavedViewStateEnvelope'];
+  type SavedView = GeneratedSavedView;
+  type CanonicalState = GeneratedSavedViewStateEnvelope;
   const CURRENT_SCHEMA_VERSION = 1;
-
   let {
     client,
     currentState,
     selection = undefined,
-    onOpen = () => undefined
+    onOpen = () => undefined,
   }: {
     client: APIClient;
     currentState: ExploreURLState;
     selection?: unknown;
     onOpen?: (state: Partial<ExploreURLState>) => void;
   } = $props();
-
   let views = $state<SavedView[]>([]);
   let loading = $state(true);
   let saving = $state(false);
@@ -37,14 +38,12 @@
   let editName = $state('');
   let editDescription = $state('');
   let deleting = $state<SavedView>();
-
   onMount(() => void load());
-
   async function load(): Promise<void> {
     loading = true;
     error = '';
     try {
-      const { data, error: responseError } = await client.GET('/api/v1/saved-views');
+      const { data, error: responseError } = await generatedListSavedViews(client);
       if (!data) throw new Error(messageFor(responseError, 'Unable to load Saved Views.'));
       views = data.saved_views ?? [];
     } catch (cause) {
@@ -53,34 +52,35 @@
       loading = false;
     }
   }
-
   function canonicalState(): CanonicalState {
     return {
       ...(currentState.query ? { query: currentState.query } : {}),
       search_mode: currentState.searchMode,
       filters: currentState.filters.map((filter) => ({
-        field: filter.dimension, operator: 'in', values: [...filter.values]
+        field: filter.dimension,
+        operator: 'in',
+        values: [...filter.values],
       })),
       grouping: [...currentState.groupingChain],
       presentation: currentState.presentation,
       sort: currentState.sort.map((sort) => ({ field: sort.field, direction: sort.direction })),
-      columns: [...currentState.columns]
+      columns: [...currentState.columns],
     };
   }
-
   async function createView(): Promise<void> {
     if (!name.trim()) return;
     saving = true;
     error = '';
     try {
-      const { data, error: responseError } = await client.POST('/api/v1/saved-views', {
-        body: {
+      const { data, error: responseError } = await generatedCreateSavedView(
+        {
           name: name.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
           canonical_state: canonicalState(),
-          schema_version: CURRENT_SCHEMA_VERSION
-        }
-      });
+          schema_version: CURRENT_SCHEMA_VERSION,
+        },
+        client,
+      );
       if (!data) throw new Error(messageFor(responseError, 'Unable to save this view.'));
       views = [...views, data].sort((left, right) => left.name.localeCompare(right.name));
       name = '';
@@ -91,34 +91,38 @@
       saving = false;
     }
   }
-
   function beginEdit(view: SavedView): void {
     editing = view;
     editName = view.name;
     editDescription = view.description ?? '';
   }
-
   async function saveEdit(): Promise<void> {
     if (!editing || !editName.trim()) return;
     saving = true;
     error = '';
     const target = editing;
     try {
-      const { data, error: responseError, response } = await client.PATCH('/api/v1/saved-views/{id}', {
-        params: {
-          path: { id: target.id },
-          header: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` }
-        },
-        body: {
+      const {
+        data,
+        error: responseError,
+        response,
+      } = await generatedPatchSavedView(
+        { id: target.id },
+        {
           name: editName.trim(),
-          description: editDescription.trim()
-        }
-      });
+          description: editDescription.trim(),
+        },
+        {
+          ...client,
+          headers: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` },
+        },
+      );
       if (!data) {
-        if (response.status === 409) throw new Error('This Saved View changed in another session. Reload and review the latest revision.');
+        if (response.status === 409)
+          throw new Error('This Saved View changed in another session. Reload and review the latest revision.');
         throw new Error(messageFor(responseError, 'Unable to update this view.'));
       }
-      views = views.map((view) => view.id === data.id ? data : view);
+      views = views.map((view) => (view.id === data.id ? data : view));
       editing = undefined;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to update this view.';
@@ -126,19 +130,19 @@
       saving = false;
     }
   }
-
   async function confirmDelete(): Promise<void> {
     if (!deleting) return;
     const target = deleting;
     saving = true;
     error = '';
     try {
-      const { response, error: responseError } = await client.DELETE('/api/v1/saved-views/{id}', {
-        params: {
-          path: { id: target.id },
-          header: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` }
-        }
-      });
+      const { response, error: responseError } = await generatedDeleteSavedView(
+        { id: target.id },
+        {
+          ...client,
+          headers: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` },
+        },
+      );
       if (!response.ok) throw new Error(messageFor(responseError, 'Unable to delete this view.'));
       views = views.filter((view) => view.id !== target.id);
       deleting = undefined;
@@ -148,25 +152,24 @@
       saving = false;
     }
   }
-
   function open(view: SavedView): void {
     const incompatibility = incompatibilityFor(view);
     if (incompatibility) return;
     const saved = view.canonical_state;
     const filters = (saved.filters ?? []).map((filter) => {
       const aliases: Record<string, ExploreURLState['filters'][number]['dimension']> = {
-        source_id: 'source', participant_id: 'participant'
+        source_id: 'source',
+        participant_id: 'participant',
       };
       return {
-        dimension: aliases[filter.field] ?? filter.field as ExploreURLState['filters'][number]['dimension'],
-        values: [...filter.values]
+        dimension: aliases[filter.field] ?? (filter.field as ExploreURLState['filters'][number]['dimension']),
+        values: [...filter.values],
       };
     });
     onOpen({
       workspace: 'everything',
       query: saved.query ?? '',
-      searchMode: saved.search_mode === 'semantic' || saved.search_mode === 'hybrid'
-        ? saved.search_mode : 'full_text',
+      searchMode: saved.search_mode === 'semantic' || saved.search_mode === 'hybrid' ? saved.search_mode : 'full_text',
       filters,
       groupingChain: [...(saved.grouping ?? [])] as ExploreURLState['groupingChain'],
       presentation: saved.presentation ?? 'table',
@@ -175,16 +178,23 @@
       activeRow: null,
       selectedRow: null,
       conversationAnchor: null,
-      scrollAnchor: null
+      scrollAnchor: null,
     });
   }
-
   function incompatibilityFor(view: SavedView): string {
     if (view.schema_version !== CURRENT_SCHEMA_VERSION) {
       return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
     }
     const saved = view.canonical_state;
-    const filterDimensions = new Set(['source', 'participant', 'domain', 'message_type', 'after', 'before', 'deletion']);
+    const filterDimensions = new Set([
+      'source',
+      'participant',
+      'domain',
+      'message_type',
+      'after',
+      'before',
+      'deletion',
+    ]);
     const filterAliases = new Set(['source_id', 'participant_id']);
     for (const filter of saved.filters ?? []) {
       if (!filterDimensions.has(filter.field) && !filterAliases.has(filter.field)) {
@@ -212,22 +222,39 @@
     }
     return '';
   }
-
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
-      ? value.message : fallback;
+      ? value.message
+      : fallback;
   }
 </script>
 
 <main class="saved-views" aria-label="Saved Views">
-  <header><div><p>Archive workspace</p><h1>Saved Views</h1></div></header>
+  <header>
+    <div>
+      <p>Archive workspace</p>
+      <h1>Saved Views</h1>
+    </div>
+  </header>
 
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
   <Card padding="sm" title="Save this view" meta="Shared across sessions">
-    <form class="create" onsubmit={(event) => { event.preventDefault(); void createView(); }}>
+    <form
+      class="create"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void createView();
+      }}
+    >
       <TextInput ariaLabel="Name" placeholder="View name" bind:value={name} autocomplete="off" block />
-      <TextInput ariaLabel="Description" placeholder="Description (optional)" bind:value={description} autocomplete="off" block />
+      <TextInput
+        ariaLabel="Description"
+        placeholder="Description (optional)"
+        bind:value={description}
+        autocomplete="off"
+        block
+      />
       <Button type="submit" tone="workflow" surface="solid" label="Save" disabled={saving || !name.trim()} />
     </form>
   </Card>
@@ -245,21 +272,61 @@
             <label>Edit name<TextInput ariaLabel="Edit name" bind:value={editName} /></label>
             <label>Edit description<TextInput ariaLabel="Edit description" bind:value={editDescription} /></label>
             <div class="actions">
-              <Button size="sm" tone="info" surface="solid" label="Save changes" onclick={() => void saveEdit()} disabled={saving} />
-              <Button size="sm" surface="soft" label="Cancel edit" onclick={() => { editing = undefined; }} />
+              <Button
+                size="sm"
+                tone="info"
+                surface="solid"
+                label="Save changes"
+                onclick={() => void saveEdit()}
+                disabled={saving}
+              />
+              <Button
+                size="sm"
+                surface="soft"
+                label="Cancel edit"
+                onclick={() => {
+                  editing = undefined;
+                }}
+              />
             </div>
           {:else}
-            <div class="view-copy"><h2>{view.name}</h2><p>{view.description ?? 'No description'}</p></div>
+            <div class="view-copy">
+              <h2>{view.name}</h2>
+              <p>{view.description ?? 'No description'}</p>
+            </div>
             {#if incompatibility}
               <p class="notice" role="alert">{incompatibility}</p>
             {/if}
             <div class="actions">
-              <Button size="sm" tone="info" surface="soft" label={`Open ${view.name}`} disabled={Boolean(incompatibility)} onclick={() => open(view)} />
+              <Button
+                size="sm"
+                tone="info"
+                surface="soft"
+                label={`Open ${view.name}`}
+                disabled={Boolean(incompatibility)}
+                onclick={() => open(view)}
+              />
               {#if !incompatibility}
                 <Button size="sm" surface="soft" label={`Edit ${view.name}`} onclick={() => beginEdit(view)} />
-                <Button size="sm" tone="danger" surface="soft" label={`Delete ${view.name}`} onclick={() => { deleting = view; }} />
+                <Button
+                  size="sm"
+                  tone="danger"
+                  surface="soft"
+                  label={`Delete ${view.name}`}
+                  onclick={() => {
+                    deleting = view;
+                  }}
+                />
               {:else}
-                <Button size="sm" tone="danger" surface="soft" label={`Remove incompatible ${view.name}`} onclick={() => { deleting = view; }} />
+                <Button
+                  size="sm"
+                  tone="danger"
+                  surface="soft"
+                  label={`Remove incompatible ${view.name}`}
+                  onclick={() => {
+                    deleting = view;
+                  }}
+                />
               {/if}
             </div>
           {/if}
@@ -270,30 +337,112 @@
 </main>
 
 {#if deleting}
-  <Modal title="Delete Saved View?" tone="danger" onclose={() => { deleting = undefined; }}>
+  <Modal
+    title="Delete Saved View?"
+    tone="danger"
+    onclose={() => {
+      deleting = undefined;
+    }}
+  >
     <p>Delete “{deleting.name}” from every authenticated browser session?</p>
     {#snippet footer()}
-      <Button surface="soft" label="Cancel" onclick={() => { deleting = undefined; }} />
-      <Button tone="danger" surface="solid" label="Confirm delete" disabled={saving} onclick={() => void confirmDelete()} />
+      <Button
+        surface="soft"
+        label="Cancel"
+        onclick={() => {
+          deleting = undefined;
+        }}
+      />
+      <Button
+        tone="danger"
+        surface="solid"
+        label="Confirm delete"
+        disabled={saving}
+        onclick={() => void confirmDelete()}
+      />
     {/snippet}
   </Modal>
 {/if}
 
 <style>
-  .saved-views { display: flex; width: 100%; max-width: 1080px; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); margin-inline: auto; padding: var(--space-5) var(--space-6); }
-  header, article, .actions { display: flex; align-items: center; gap: var(--space-3); }
-  header p, h1, h2, article p { margin: 0; }
-  header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  article p { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .create { display: grid; grid-template-columns: minmax(11rem, .8fr) minmax(15rem, 1.2fr) auto; align-items: center; gap: var(--space-2); }
-  label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .view-list { display: grid; gap: var(--space-2); }
-  article { justify-content: space-between; padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
-  .view-copy { display: grid; min-width: 12rem; gap: var(--space-1); }
-  .notice { padding: var(--space-2) var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); background: var(--bg-subtle); }
-  .notice--error { border-color: var(--accent-red); color: var(--text-danger); }
+  .saved-views {
+    display: flex;
+    width: 100%;
+    max-width: 1080px;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-inline: auto;
+    padding: var(--space-5) var(--space-6);
+  }
+  header,
+  article,
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  header p,
+  h1,
+  h2,
+  article p {
+    margin: 0;
+  }
+  header p {
+    color: var(--status-warning-ink);
+    font-size: var(--font-size-2xs);
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  article p {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .create {
+    display: grid;
+    grid-template-columns: minmax(11rem, 0.8fr) minmax(15rem, 1.2fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  label {
+    display: grid;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .view-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+  article {
+    justify-content: space-between;
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--border-muted);
+  }
+  .view-copy {
+    display: grid;
+    min-width: 12rem;
+    gap: var(--space-1);
+  }
+  .notice {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--accent-amber);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
+  }
+  .notice--error {
+    border-color: var(--accent-red);
+    color: var(--text-danger);
+  }
   @media (max-width: 760px) {
-    .create { grid-template-columns: 1fr; }
-    article { align-items: stretch; flex-direction: column; }
+    .create {
+      grid-template-columns: 1fr;
+    }
+    article {
+      align-items: stretch;
+      flex-direction: column;
+    }
   }
 </style>

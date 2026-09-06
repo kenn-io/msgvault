@@ -1,7 +1,10 @@
 package api
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	jsonv2 "encoding/json/v2"
+	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -27,7 +30,21 @@ const (
 	cliRouteTag          = "CLI"
 )
 
-var configureHumaErrorsOnce sync.Once
+var configureHumaOnce sync.Once
+
+// marshalAPIJSON preserves the API's established JSON v1 behavior except for
+// nil slices, which JSON v2 writes as empty arrays to match the OpenAPI schema.
+func marshalAPIJSON(w io.Writer, value any) error {
+	err := jsonv2.MarshalWrite(
+		w, value,
+		jsonv1.DefaultOptionsV1(),
+		jsonv2.FormatNilSliceAsNull(false),
+	)
+	if err != nil {
+		return fmt.Errorf("marshal API JSON: %w", err)
+	}
+	return nil
+}
 
 type apiHTTPError struct {
 	ErrorResponse
@@ -62,8 +79,11 @@ func newAPIHTTPError(status int, code string, message string) *apiHTTPError {
 	}
 }
 
-func setupHumaErrors() {
-	configureHumaErrorsOnce.Do(func() {
+func configureHuma() {
+	configureHumaOnce.Do(func() {
+		// The API uses encoding/json/v2, which encodes nil slices as empty
+		// arrays. Keep Huma's schemas aligned with that wire contract.
+		huma.DefaultArrayNullable = false
 		huma.NewError = func(status int, message string, _ ...error) huma.StatusError {
 			if message == "" {
 				message = http.StatusText(status)
@@ -108,9 +128,19 @@ func errorCodeForStatus(status int) string {
 }
 
 func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
-	setupHumaErrors()
+	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	jsonFormat := huma.Format{
+		Marshal: marshalAPIJSON,
+		Unmarshal: func(data []byte, value any) error {
+			return jsonv2.Unmarshal(data, value, jsonv1.DefaultOptionsV1())
+		},
+	}
+	config.Formats = map[string]huma.Format{
+		"application/json": jsonFormat,
+		"json":             jsonFormat,
+	}
 	// Disable huma's built-in /docs page: it loads Stoplight Elements from
 	// unpkg.com on the same origin as the browser session cookie, so a
 	// compromised CDN response could use the session to read archive data or
@@ -171,7 +201,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 func writeHumaError(ctx huma.Context, status int, code string, message string) {
 	ctx.SetHeader("Content-Type", applicationJSONMediaType)
 	ctx.SetStatus(status)
-	_ = json.NewEncoder(ctx.BodyWriter()).Encode(ErrorResponse{ //nolint:errchkjson // best-effort error response write
+	_ = marshalAPIJSON(ctx.BodyWriter(), ErrorResponse{
 		Error:   code,
 		Message: message,
 	})
@@ -224,6 +254,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	}, s.handleDaemonShutdown)
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
+	s.registerImportJobRoutes(apiV1)
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
@@ -231,6 +262,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonMergeRoutes(apiV1)
 	s.registerOrganizationRoutes(apiV1)
@@ -429,6 +461,21 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaJSONRouteWithErrors[OperationRunsResponse](
+		apiV1, "listOperationRuns", http.MethodGet, "/operations/runs",
+		"List normalized operation history", s.handleOperationRuns,
+		http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable,
+	)
+	registerAPIV1RawHumaJSONRoute[OperationStatusResponse](
+		apiV1, "getOperationStatus", http.MethodGet, "/operations/status",
+		"Get normalized operation lane status", s.handleOperationStatus,
+	)
+	registerAPIV1RawHumaJSONRouteWithErrors[OperationRunDetail](
+		apiV1, "getOperationRun", http.MethodGet, "/operations/runs/{id}",
+		"Get one normalized operation run", s.handleOperationRunDetail,
+		http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaJSONRoute[GmailIDsResponse](apiV1, "getGmailIDsByFilter", http.MethodGet, "/messages/gmail-ids", "List Gmail message IDs matching a filter", s.handleGmailIDsByFilter)
 	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTotalStats", http.MethodGet, "/stats/total", "Get aggregate totals", s.handleTotalStats)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "searchMessagesByDomains", http.MethodGet, "/search/domains", "Search messages by participant domains", s.handleSearchByDomains)
@@ -611,8 +658,29 @@ func rawAPIV1Operation(operationID, method, path, summary string) huma.Operation
 
 func rawRouteParameters(operationID string) []*huma.Param {
 	switch operationID {
+	case "listOperationRuns":
+		kind := queryStringParam("kind", "Exact operation kind", false)
+		kind.Schema.Enum = stringsToAny(operationKindValues())
+		lane := queryStringParam("lane", "Exact semantic operation lane", false)
+		lane.Schema.Enum = stringsToAny(operationLaneValues())
+		state := queryStringParam("state", "Exact operation state", false)
+		state.Schema.Enum = stringsToAny(operationStateValues())
+		limit := queryIntegerParam("limit", "Maximum runs to return (default 25, max 100)")
+		minimum, maximum := float64(1), float64(100)
+		limit.Schema.Minimum, limit.Schema.Maximum = &minimum, &maximum
+		return []*huma.Param{
+			kind,
+			lane,
+			state,
+			limit,
+			queryStringParam("cursor", "Opaque cursor bound to this archive and the exact kind, lane, and state filters", false),
+		}
+	case "getOperationRun":
+		return []*huma.Param{pathStringParam("id", "Opaque archive-bound operation run ID")}
 	case "getCLIStats":
 		return scopeParams()
+	case "getImportJob":
+		return []*huma.Param{pathStringParam("job_id", "Historical import job ID")}
 	case "searchCLI":
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
@@ -778,7 +846,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "listChangedMessages":
 		return changesParams()
 	case "getGmailIDsByFilter":
-		return messageFilterParams()
+		return append(messageFilterParams(),
+			queryStringParam("q", "Structured search query", false),
+			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate; required with q", false),
+			queryStringParam("view_type", "Aggregate view type; required for aggregate search", false),
+			queryStringParam("aggregate_key", "Displayed aggregate row key; required for aggregate search", false),
+		)
 	case "searchMessagesByDomains":
 		return []*huma.Param{
 			queryStringParam("domains", "Comma-separated participant domains", true),
@@ -798,15 +871,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryBooleanParam("has_attachment", "Only include messages with attachments"),
 		}
 	case "getTotalStats":
-		return []*huma.Param{
-			queryIntegerParam("source_id", "Source ID"),
+		return mergeParams([]*huma.Param{
 			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
-			queryBooleanParam("attachments_only", "Only include messages with attachments"),
-			queryBooleanParam("hide_deleted", "Exclude deleted messages"),
 			queryStringParam("search_query", "Search query", false),
 			queryBooleanParam("search_scope", "Include all message types when the search has no explicit message_type"),
 			queryStringParam("group_by", "Aggregate view type for grouping", false),
-		}
+		}, messageFilterScopeParams())
 	case "fastSearch":
 		params := append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
@@ -819,9 +889,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		filterParams := messageFilterParams()
 		for _, parameter := range filterParams {
 			switch parameter.Name {
-			case "sender_name", "recipient_name", "time_period", "conversation_id",
+			case "sender", "sender_name", recipientParam, "recipient_name", "domain", "label",
+				"time_period", "conversation_id",
 				"empty_targets", "message_type", "list_id":
-				parameter.Description += "; not supported by deep search"
+				parameter.Description += "; not supported when scope=body"
 			}
 		}
 		return append([]*huma.Param{
@@ -874,6 +945,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	}
 }
 
+func stringsToAny(values []string) []any {
+	result := make([]any, 0, len(values))
+	for _, value := range values {
+		result = append(result, value)
+	}
+	return result
+}
+
 func scopeParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("account", "Restrict to one account/source", false),
@@ -904,6 +983,15 @@ func aggregateOptionParams() []*huma.Param {
 }
 
 func messageFilterParams() []*huma.Param {
+	return append(messageFilterScopeParams(),
+		queryIntegerParam("offset", "Zero-based row offset"),
+		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
+		queryStringParam("sort", "Sort field: date, size, or subject", false),
+		queryStringParam("direction", "Sort direction: asc or desc", false),
+	)
+}
+
+func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
@@ -922,10 +1010,6 @@ func messageFilterParams() []*huma.Param {
 		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("empty_targets", "Comma-separated aggregate view names to match empty values", false),
-		queryIntegerParam("offset", "Zero-based row offset"),
-		queryIntegerParam(limitParam, "Maximum number of rows to return (default and max 500; larger values are clamped)"),
-		queryStringParam("sort", "Sort field: date, size, or subject", false),
-		queryStringParam("direction", "Sort direction: asc or desc", false),
 	}
 }
 

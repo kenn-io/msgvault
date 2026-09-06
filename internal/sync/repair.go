@@ -55,7 +55,7 @@ func (s *Syncer) RepairMessage(ctx context.Context, request RepairRequest) (_ *R
 		return nil, fmt.Errorf("repair message reference %q is ambiguous across %d archive rows", request.Reference, len(targets))
 	}
 	target := targets[0]
-	if target.SourceType != "gmail" {
+	if target.SourceType != sourceTypeGmail {
 		return nil, fmt.Errorf("repair message source %d is %s, not gmail", target.SourceID, target.SourceType)
 	}
 	profile, err := s.client.GetProfile(ctx)

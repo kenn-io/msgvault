@@ -23,6 +23,8 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -270,6 +272,12 @@ type Server struct {
 	visualCoverageRateLimiter *RateLimiter
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
+	operationHistoryReader    operations.HistoryReader
+	importContext             context.Context
+	cancelImports             context.CancelFunc
+	importMu                  sync.Mutex
+	importsClosed             bool
+	importWG                  sync.WaitGroup
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -304,6 +312,11 @@ type Server struct {
 	// settingsConfigEditor is the persisted config transaction boundary. Tests
 	// replace it to deterministically exercise post-publication error handling.
 	settingsConfigEditor func(string, string, []config.Edit) (config.ConfigFile, error)
+	// settingsCredentialDeleter is the independent credential-store transaction
+	// boundary used when a settings edit changes a provider origin.
+	settingsCredentialDeleter func(
+		string, providercredentials.Snapshot, []string,
+	) (providercredentials.Snapshot, error)
 	// activity reports request-scoped work that health should surface even
 	// though it runs outside (or with more detail than) the operation gate,
 	// e.g. the first-search FTS completeness probe and backfill progress.
@@ -458,6 +471,11 @@ type ServerOptions struct {
 	Logger        *slog.Logger
 	IdleTracker   *IdleTracker
 	OperationGate OperationGate
+	// OperationHistoryReader owns the normalized, privacy-bounded operation
+	// ledgers. It stays separate from MessageStore so unsupported stores can
+	// expose an explicit unavailable contract instead of implementing unrelated
+	// history methods.
+	OperationHistoryReader operations.HistoryReader
 	// BlobStore serves attachment bytes for /api/v1/cli/attachment through
 	// packed CAS storage with a loose-file fallback. Nil keeps the legacy
 	// loose-file-only read path.
@@ -518,6 +536,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	if fastmailInventoryFactory == nil {
 		fastmailInventoryFactory = provideridentity.NewFastmailInventory
 	}
+	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                      opts.Config,
 		store:                    opts.Store,
@@ -540,6 +559,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		daemonVersion:            opts.DaemonVersion,
 		idleTracker:              opts.IdleTracker,
 		operationGate:            opts.OperationGate,
+		operationHistoryReader:   opts.OperationHistoryReader,
+		importContext:            importContext,
+		cancelImports:            cancelImports,
 		blobStore:                opts.BlobStore,
 		remoteImages:             newRemoteImageFetcher(),
 		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
@@ -548,7 +570,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		exploreState:             newExploreServerState(time.Now),
 		exploreCursorKey:         newExploreCursorKey(),
 		trustedProxies:           trustedProxyPrefixes(opts.Config.Server.TrustedProxies),
-		settingsConfigEditor:     config.EditConfigFile,
+		settingsConfigEditor:     config.EditConfigFilePrivate,
 		taskIntegrationProbe:     taskProbe,
 		taskLinkOperations:       opts.TaskLinkOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,
@@ -777,6 +799,23 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.importMu.Lock()
+	s.importsClosed = true
+	if s.cancelImports != nil {
+		s.cancelImports()
+	}
+	s.importMu.Unlock()
+	importsDone := make(chan struct{})
+	go func() {
+		s.importWG.Wait()
+		close(importsDone)
+	}()
+	var importJobsErr error
+	select {
+	case <-importsDone:
+	case <-ctx.Done():
+		importJobsErr = ctx.Err()
+	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -796,10 +835,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	server := s.server
 	s.serverMu.RUnlock()
 	if server == nil {
-		return nil
+		return importJobsErr
 	}
 	s.logger.Info("shutting down API server")
-	return server.Shutdown(ctx)
+	return errors.Join(importJobsErr, server.Shutdown(ctx))
 }
 
 // Router returns the HTTP router for testing.
@@ -1088,6 +1127,7 @@ func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
 func isLongDaemonRequest(path string) bool {
 	switch path {
 	case "/api/v1/cli/build-cache",
+		importJobsEndpointPath,
 		"/api/v1/carddav/sync",
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,

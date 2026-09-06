@@ -91,8 +91,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	}
 }
 
-func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T) {
-	assert := assert.New(t)
+func TestRunServeStartsVectorWhileAnalyticsInitializationBlocked(t *testing.T) {
 	require := require.New(t)
 	oldCfg := cfg
 	dataDir := t.TempDir()
@@ -137,24 +136,15 @@ func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T
 		require.FailNow("analytics initialization did not start")
 	}
 	waitForServeHealth(t, c.Server.APIPort, errCh)
-	assert.Never(func() bool {
-		select {
-		case <-vectorStarted:
-			return true
-		default:
-			return false
-		}
-	}, 250*time.Millisecond, 10*time.Millisecond,
-		"vector initialization must wait while analytics holds the operation gate")
-
-	close(releaseAnalytics)
 	select {
 	case <-vectorStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before vector initialization")
 	case <-time.After(serveLifecycleTestTimeout):
-		require.FailNow("vector initialization did not start after analytics released the gate")
+		require.FailNow("vector initialization did not start while analytics initialization was blocked")
 	}
+
+	close(releaseAnalytics)
 	cancel()
 	select {
 	case err := <-errCh:

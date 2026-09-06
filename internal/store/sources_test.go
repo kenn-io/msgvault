@@ -47,6 +47,30 @@ func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
 	assert.Empty(t, sources)
 }
 
+func TestStore_GetSourcesByIdentifierOrDisplayNameIgnoresCase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "Archive@Example.com")
+	require.NoError(err)
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`),
+		"Primary Archive", source.ID,
+	)
+	require.NoError(err)
+
+	byIdentifier, err := st.GetSourcesByIdentifierOrDisplayName("archive@example.com")
+	require.NoError(err)
+	require.Len(byIdentifier, 1)
+	assert.Equal(source.ID, byIdentifier[0].ID)
+
+	byDisplayName, err := st.GetSourcesByIdentifierOrDisplayName("primary archive")
+	require.NoError(err)
+	require.Len(byDisplayName, 1)
+	assert.Equal(source.ID, byDisplayName[0].ID)
+}
+
 func TestStore_RemoveSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -869,6 +893,31 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be removed")
+}
+
+func TestStore_RemoveSourceSerialized_PreservesPendingOperation(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	fixture := storetest.New(t)
+	const operationID = "pending-operation"
+
+	_, err := fixture.Store.CreateSyncOperation(fixture.Source.ID, operationID)
+	requirements.NoError(err)
+
+	hadActiveSync, removed, err := fixture.Store.RemoveSourceSerialized(
+		t.Context(), fixture.Source.ID,
+	)
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	checks.True(hadActiveSync)
+	checks.Zero(removed)
+
+	source, err := fixture.Store.GetSourceByID(fixture.Source.ID)
+	requirements.NoError(err)
+	checks.Equal(fixture.Source.ID, source.ID)
+	operation, err := fixture.Store.GetSyncOperation(operationID)
+	requirements.NoError(err)
+	checks.Equal("pending", operation.Status)
+	requirements.NoError(fixture.Store.FinishSyncOperation(operationID, "failed"))
 }
 
 func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {

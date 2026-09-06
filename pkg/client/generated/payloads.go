@@ -102,6 +102,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
+type CreateImportJobBody = ImportJobRequest
+
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
 type StartVisualAttachmentBuildBody = VisualBuildRequest
@@ -175,3 +177,7 @@ type SearchVisualAttachmentsBody = VisualTextSearchRequest
 type GetSearchCoverageBody = SearchCoverageRequest
 
 type PatchSettingsBody = SettingsPatchRequest
+
+type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
+
+type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest

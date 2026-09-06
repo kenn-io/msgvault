@@ -39,7 +39,8 @@ func NewService(st *store.Store, client *Client) *Service {
 }
 
 type SyncOptions struct {
-	Full bool
+	Full    bool
+	Trigger store.CardDAVSyncTrigger
 }
 
 type SyncResult struct {
@@ -52,10 +53,43 @@ type SyncResult struct {
 // Sync fetches complete network plans before entering the store's fenced
 // apply transaction. A stale plan is re-fetched once; a second stale result is
 // returned rather than retried blindly.
-func (s *Service) Sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
+//
+// The run row is finished in a deferred call so that a panic escaping the
+// pull still records a terminal state. Otherwise the row would stay running
+// and every later sync would be refused as active until the daemon restarts.
+func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncResult, err error) {
 	if s == nil || s.store == nil || s.client == nil {
 		return SyncResult{}, errors.New("CardDAV service is not configured")
 	}
+	trigger := options.Trigger
+	if trigger == "" {
+		trigger = store.CardDAVSyncTriggerManual
+	}
+	run, err := s.store.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{
+		Trigger: trigger,
+		Full:    options.Full,
+	})
+	if err != nil {
+		return SyncResult{}, err
+	}
+	defer func() {
+		syncErr := err
+		recovered := recover()
+		if recovered != nil {
+			syncErr = fmt.Errorf("CardDAV sync panicked: %v", recovered)
+		}
+		_, finishErr := s.store.FinishCardDAVSyncRunContext(
+			context.WithoutCancel(ctx), run.ID, cardDAVSyncRunFinish(result, syncErr),
+		)
+		if recovered != nil {
+			panic(recovered)
+		}
+		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr)
+	}()
+	return s.sync(ctx, options)
+}
+
+func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
 	defer cancel()
 	if err := s.store.CheckCardDAVRetryAfterContext(operationCtx); err != nil {
@@ -106,6 +140,66 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (SyncResult, er
 		failures = append(failures, err)
 	}
 	return total, errors.Join(failures...)
+}
+
+type cardDAVSyncError struct {
+	cause   error
+	message string
+}
+
+func (e *cardDAVSyncError) Error() string { return e.message }
+func (e *cardDAVSyncError) Unwrap() error { return e.cause }
+
+func publicCardDAVSyncError(err error) error {
+	if err == nil {
+		return nil
+	}
+	_, message := cardDAVSyncPublicFailure(err)
+	return &cardDAVSyncError{cause: err, message: message}
+}
+
+func cardDAVSyncRunFinish(result SyncResult, err error) store.CardDAVSyncRunFinish {
+	finish := store.CardDAVSyncRunFinish{
+		State:   store.CardDAVSyncRunSucceeded,
+		Books:   int64(result.Books),
+		Created: int64(result.Created),
+		Updated: int64(result.Updated),
+		Removed: int64(result.Removed),
+	}
+	if err == nil {
+		return finish
+	}
+	finish.State = store.CardDAVSyncRunFailed
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		finish.State = store.CardDAVSyncRunCancelled
+	} else if result.Books > 0 || result.Created > 0 || result.Updated > 0 || result.Removed > 0 {
+		finish.State = store.CardDAVSyncRunPartial
+	}
+	finish.ErrorCode, finish.ErrorMessage = cardDAVSyncPublicFailure(err)
+	return finish
+}
+
+func cardDAVSyncPublicFailure(err error) (string, string) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "cancelled", "CardDAV sync was cancelled."
+	}
+	if errors.Is(err, store.ErrCardDAVRetryAfter) {
+		return "retry_after", "CardDAV sync is temporarily paused."
+	}
+	if status, ok := errors.AsType[*StatusError](err); ok {
+		switch status.StatusCode {
+		case http.StatusUnauthorized:
+			return "authentication_failed", "CardDAV authentication failed."
+		case http.StatusTooManyRequests:
+			return "retry_after", "CardDAV sync is temporarily paused."
+		default:
+			return "upstream_failed", "CardDAV server request failed."
+		}
+	}
+	if errors.Is(err, ErrOperationLimit) || errors.Is(err, ErrResponseLimit) {
+		return "safety_limit", "CardDAV sync exceeded its safety limits."
+	}
+	return "sync_failed", "CardDAV sync failed."
 }
 
 func isGlobalSyncFailure(ctx context.Context, err error) bool {

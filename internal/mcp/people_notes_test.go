@@ -109,7 +109,7 @@ func toolErrorTextFromResult(t *testing.T, result map[string]any) string {
 func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 	assert := assert.New(t)
 	withoutPeople := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, true))
-	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
+	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
 		assert.NotContains(withoutPeople, name)
 	}
 
@@ -117,6 +117,7 @@ func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 	readOnly := toolsByName(t, rawListTools(t, peopleToolOptions(backend), false))
 	assert.Contains(readOnly, ToolSearchPeople)
 	assert.Contains(readOnly, ToolGetPersonNotes)
+	assert.Contains(readOnly, ToolGetPersonProfile)
 	assert.Contains(readOnly, ToolGetPersonRelationship)
 	assert.NotContains(readOnly, ToolPromotePerson)
 	assert.NotContains(readOnly, ToolUpdatePersonNotes)
@@ -129,7 +130,7 @@ func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 	assert.NotContains(defaultWrites, ToolUpdatePersonNotes)
 
 	writable := toolsByName(t, rawListTools(t, peopleToolOptions(backend), true))
-	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
+	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
 		assert.Contains(writable, name)
 	}
 	assert.Equal([]string{"cursor", "limit", "query"}, toolPropertyNames(t, writable[ToolSearchPeople]))

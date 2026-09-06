@@ -63,7 +63,7 @@ func (s *Syncer) AuditGmailMessages(
 		if err != nil {
 			return err
 		}
-		if source.SourceType != "gmail" {
+		if source.SourceType != sourceTypeGmail {
 			return fmt.Errorf("audit source %d is %s, not gmail", sourceID, source.SourceType)
 		}
 	}

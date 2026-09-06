@@ -145,6 +145,17 @@ func TestSixtyfourAsyncLifecycleUsesExactWireAndSurvivesRestart(t *testing.T) {
 	checks.NotEqual(attempt.ProgramFingerprint, changedAttempt.ProgramFingerprint)
 }
 
+func TestSixtyfourProviderRejectsCredentialDestinationsOnDifferentOrigins(t *testing.T) {
+	config := sixtyfourConfig(
+		"https://start.example.test/people-intelligence-async",
+		"https://poll.example.test/job-status",
+	)
+
+	provider, err := personenrichment.NewSixtyfourProvider(config, "test-key", http.DefaultClient)
+	require.ErrorContains(t, err, "same origin")
+	assert.Nil(t, provider)
+}
+
 func TestSixtyfourRejectsUndocumentedRequestID(t *testing.T) {
 	t.Run("start", func(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

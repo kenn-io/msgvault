@@ -68,7 +68,7 @@ func ImportEMLDir(
 	st *store.Store,
 	root string,
 	opts EMLImportOptions,
-) (*EMLImportSummary, error) {
+) (retSummary *EMLImportSummary, retErr error) {
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
 	}
@@ -106,6 +106,14 @@ func ImportEMLDir(
 		return nil, fmt.Errorf("get or create EML source: %w", err)
 	}
 	summary.SourceID = source.ID
+	ownershipCtx := context.WithoutCancel(ctx)
+	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, source.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire sync execution: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, execution.Release())
+	}()
 
 	var (
 		syncID     int64
@@ -134,9 +142,6 @@ func ImportEMLDir(
 			if saved.MailboxPath != "" && mailboxes[saved.MailboxIndex].Path != saved.MailboxPath {
 				return nil, fmt.Errorf("EML mailbox tree changed at checkpoint index %d", saved.MailboxIndex)
 			}
-			if resumable.Status == store.SyncStatusRunning {
-				syncID = resumable.ID
-			}
 			checkpoint.MessagesProcessed = resumable.MessagesProcessed
 			checkpoint.MessagesAdded = resumable.MessagesAdded
 			checkpoint.MessagesUpdated = resumable.MessagesUpdated
@@ -148,11 +153,9 @@ func ImportEMLDir(
 			summary.WasResumed = true
 		}
 	}
-	if syncID == 0 {
-		syncID, err = st.StartSync(source.ID, "import-eml")
-		if err != nil {
-			return nil, fmt.Errorf("start EML import: %w", err)
-		}
+	syncID, err = execution.StartSyncContext(ownershipCtx, "import-eml", "")
+	if err != nil {
+		return nil, fmt.Errorf("start EML import: %w", err)
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 

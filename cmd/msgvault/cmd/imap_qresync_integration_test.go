@@ -1415,7 +1415,7 @@ func TestIMAPQresyncEndToEndGmailAllIncrementalUnidentifiedMembershipUsesDurable
 	})
 	second, _ := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	requirements.NoError(second.Close())
-	aliases, err := st.GetIMAPSourceMessageAliases(source.ID)
+	aliases, err := st.GetIMAPSourceMessageAliases(source.ID, "INBOX", []uint32{1})
 	requirements.NoError(err)
 	assertions.Equal("[Gmail]/All Mail|1", aliases["INBOX|1"])
 

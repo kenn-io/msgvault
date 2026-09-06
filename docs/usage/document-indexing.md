@@ -83,7 +83,7 @@ authenticated operation:
 export MISTRAL_API_KEY="..."
 ```
 
-See the [configuration reference](/configuration/#attachmentsdocuments) for
+See the [configuration reference](/docs/configuration/#attachmentsdocuments) for
 all policy and run limits.
 
 ## Build and validate the synthetic fixtures

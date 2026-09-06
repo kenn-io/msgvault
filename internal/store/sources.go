@@ -108,7 +108,7 @@ func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
 		       google_user_id, last_sync_at, sync_cursor, sync_config,
 		       oauth_app, created_at, updated_at
 		FROM sources
-		WHERE identifier = ? OR display_name = ?
+		WHERE LOWER(identifier) = LOWER(?) OR LOWER(display_name) = LOWER(?)
 		ORDER BY source_type
 	`, query, query)
 	if err != nil {
@@ -229,6 +229,8 @@ func (s *Store) RemoveSource(sourceID int64) error {
 // fail after we commit because the source is gone. Packed hashes that will
 // lose their last attachment reference are collected under the same lock so
 // their logical mappings can be deleted atomically with the source cascade.
+// A pending or running sync operation blocks removal so its durable status
+// remains available to the worker and API client.
 func (s *Store) RemoveSourceSerialized(
 	ctx context.Context, sourceID int64,
 ) (hadActiveSync bool, packedMappingsRemoved int64, err error) {
@@ -255,6 +257,12 @@ func (s *Store) RemoveSourceSerialized(
 		return false, 0, fmt.Errorf("check active syncs: %w", err)
 	}
 	hadActiveSync = count > 0
+	if err := s.rejectConflictingSyncOperation(ctx, conn, sourceID, ""); err != nil {
+		if errors.Is(err, ErrSyncAlreadyActive) {
+			return true, 0, err
+		}
+		return hadActiveSync, 0, err
+	}
 
 	uniquePackedHashes, err := func() ([]string, error) {
 		rows, err := conn.QueryContext(ctx,

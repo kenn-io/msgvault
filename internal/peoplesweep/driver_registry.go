@@ -34,13 +34,14 @@ func NewDriverRegistry(
 	commands CommandStarter,
 	isolation CodexIsolationGate,
 ) (*DriverRegistry, error) {
+	drivers := map[Protocol]StructuredDriver{
+		ProtocolOpenAIChat:            NewOpenAIChatDriver(httpClient),
+		ProtocolOpenAIResponses:       NewOpenAIResponsesDriver(httpClient),
+		ProtocolAnthropicMessages:     NewAnthropicMessagesDriver(httpClient),
+		ProtocolGoogleGenerateContent: NewGoogleGenerateContentDriver(httpClient),
+	}
 	return &DriverRegistry{
-		drivers: map[Protocol]StructuredDriver{
-			ProtocolOpenAIChat:            NewOpenAIChatDriver(httpClient),
-			ProtocolOpenAIResponses:       NewOpenAIResponsesDriver(httpClient),
-			ProtocolAnthropicMessages:     NewAnthropicMessagesDriver(httpClient),
-			ProtocolGoogleGenerateContent: NewGoogleGenerateContentDriver(httpClient),
-		},
+		drivers:  drivers,
 		commands: commands, isolation: isolation,
 	}, nil
 }
@@ -52,17 +53,12 @@ func (r *DriverRegistry) capabilityDriver(protocol Protocol) (StructuredDriver, 
 	if r == nil {
 		return nil, errors.New("people inference driver registry is required")
 	}
-	switch protocol {
-	case ProtocolOpenAIChat, ProtocolOpenAIResponses,
-		ProtocolAnthropicMessages, ProtocolGoogleGenerateContent:
-		driver, ok := r.drivers[protocol]
-		if !ok || driver == nil {
-			return nil, fmt.Errorf("unsupported people sweep protocol %q", protocol)
+	if _, declared := ProtocolCapabilityFor(protocol); declared {
+		if driver, ok := r.drivers[protocol]; ok && driver != nil {
+			return driver, nil
 		}
-		return driver, nil
-	default:
-		return nil, fmt.Errorf("unsupported people sweep capability protocol %q", protocol)
 	}
+	return nil, fmt.Errorf("unsupported people sweep capability protocol %q", protocol)
 }
 
 func (r *DriverRegistry) Driver(

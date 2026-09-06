@@ -391,6 +391,52 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineSQL
+	c.Vector.Enabled = false
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	st, err := store.Open(c.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "orphaned-import@example.com")
+	require.NoError(err)
+	_, err = st.CreateSyncOperation(source.ID, "orphaned-operation")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+	waitForServeHealth(t, c.Server.APIPort, errCh)
+
+	observer, err := store.Open(c.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(observer.Close()) })
+	op, err := observer.GetSyncOperation("orphaned-operation")
+	require.NoError(err)
+	assert.Equal("failed", op.Status)
+	assert.True(op.FinishedAt.Valid)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(5 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
+}
+
 func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 	require := require.New(t)
 	oldCfg := cfg
@@ -1468,8 +1514,10 @@ func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
 		cliSyncSubprocessArgs(api.CLISyncRequest{SourceID: 42, SourceIDSet: true}),
 	)
 	assert.Equal(t,
-		[]string{"sync-full", "--source-id", "42"},
-		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, SourceID: 42, SourceIDSet: true}),
+		[]string{"sync-full", "--source-id", "42", "--sync-operation-id", "operation-1"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Full: true, SourceID: 42, SourceIDSet: true, OperationID: "operation-1",
+		}),
 	)
 }
 
@@ -1572,6 +1620,61 @@ remote_enabled = true
 	assert.Equal(cliSubprocessExitSentinel, subprocessError)
 	assert.FileExists(filepath.Join(manager.PendingDir(), manifest.ID+".json"))
 	assert.NoFileExists(filepath.Join(manager.InProgressDir(), manifest.ID+".json"))
+}
+
+func TestStoreAPIAdapterCanceledSyncOperationIsFailed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	adapter := &storeAPIAdapter{store: f.Store}
+
+	err = adapter.runCLISyncOperationWithRunner(
+		ctx,
+		api.CLISyncRequest{Full: true, OperationID: "operation-1"},
+		nil,
+		func(context.Context, []string, func(string, string) error) error { return nil },
+	)
+
+	require.ErrorIs(err, context.Canceled)
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(err)
+	assert.Equal("failed", op.Status)
+	assert.False(op.StartedAt.Valid)
+	assert.True(op.FinishedAt.Valid)
+	assert.Empty(op.Runs)
+}
+
+func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(err)
+	adapter := &storeAPIAdapter{store: f.Store}
+
+	err = adapter.runCLISyncOperationWithRunner(
+		t.Context(),
+		api.CLISyncRequest{Full: true, OperationID: "operation-1"},
+		nil,
+		func(context.Context, []string, func(string, string) error) error {
+			runID, err := f.Store.StartSyncOperation(f.Source.ID, "operation-1")
+			require.NoError(err)
+			require.NoError(f.Store.CompleteSync(runID, "cursor"))
+			op, err := f.Store.GetSyncOperation("operation-1")
+			require.NoError(err)
+			assert.Equal("running", op.Status)
+			return nil
+		},
+	)
+
+	require.NoError(err)
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(err)
+	assert.Equal("done", op.Status)
 }
 
 func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {

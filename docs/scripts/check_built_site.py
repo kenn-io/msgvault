@@ -11,75 +11,90 @@ import urllib.parse
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
 
-ROUTES = [
+WEBSITE_ROUTES = [
     "/",
-    "/api-server/",
-    "/architecture/overview/",
-    "/architecture/postgresql/",
-    "/architecture/search-ranking/",
-    "/architecture/storage/",
-    "/changelog/",
-    "/cli-reference/",
-    "/configuration/",
-    "/development/",
-    "/faq/",
-    "/guides/oauth-setup/",
-    "/guides/remote-deployment/",
-    "/guides/verification/",
-    "/introduction/",
-    "/setup/",
-    "/troubleshooting/",
-    "/usage/analytics/",
-    "/usage/chat/",
-    "/usage/deduplication/",
-    "/usage/deletion/",
-    "/usage/exporting/",
-    "/usage/importing/",
-    "/usage/multi-account/",
-    "/usage/querying/",
-    "/usage/searching/",
-    "/usage/text-messages/",
-    "/usage/tui/",
-    "/usage/vector-search/",
-    "/web-ui/",
+    "/guide/",
+]
+
+WEBSITE_FILES = [
+    "index.md",
+    "guide.md",
+    "llms.txt",
+    "favicon.svg",
+    "styles/site.css",
+    "scripts/site.js",
+]
+
+DOCS_ROUTES = [
+    "/docs/",
+    "/docs/api-server/",
+    "/docs/architecture/overview/",
+    "/docs/architecture/postgresql/",
+    "/docs/architecture/search-ranking/",
+    "/docs/architecture/storage/",
+    "/docs/changelog/",
+    "/docs/cli-reference/",
+    "/docs/configuration/",
+    "/docs/development/",
+    "/docs/faq/",
+    "/docs/guides/oauth-setup/",
+    "/docs/guides/remote-deployment/",
+    "/docs/guides/verification/",
+    "/docs/introduction/",
+    "/docs/setup/",
+    "/docs/troubleshooting/",
+    "/docs/usage/analytics/",
+    "/docs/usage/chat/",
+    "/docs/usage/deduplication/",
+    "/docs/usage/deletion/",
+    "/docs/usage/exporting/",
+    "/docs/usage/importing/",
+    "/docs/usage/multi-account/",
+    "/docs/usage/querying/",
+    "/docs/usage/searching/",
+    "/docs/usage/text-messages/",
+    "/docs/usage/tui/",
+    "/docs/usage/vector-search/",
+    "/docs/web-ui/",
 ]
 
 REQUIRED_SITEMAP_URLS = [
     "https://msgvault.io/",
-    "https://msgvault.io/api-server/",
-    "https://msgvault.io/architecture/overview/",
-    "https://msgvault.io/architecture/postgresql/",
-    "https://msgvault.io/architecture/search-ranking/",
-    "https://msgvault.io/architecture/storage/",
-    "https://msgvault.io/changelog/",
-    "https://msgvault.io/cli-reference/",
-    "https://msgvault.io/configuration/",
-    "https://msgvault.io/development/",
-    "https://msgvault.io/faq/",
-    "https://msgvault.io/guides/oauth-setup/",
-    "https://msgvault.io/guides/remote-deployment/",
-    "https://msgvault.io/guides/verification/",
-    "https://msgvault.io/introduction/",
-    "https://msgvault.io/setup/",
-    "https://msgvault.io/troubleshooting/",
-    "https://msgvault.io/usage/analytics/",
-    "https://msgvault.io/usage/chat/",
-    "https://msgvault.io/usage/deduplication/",
-    "https://msgvault.io/usage/deletion/",
-    "https://msgvault.io/usage/exporting/",
-    "https://msgvault.io/usage/importing/",
-    "https://msgvault.io/usage/multi-account/",
-    "https://msgvault.io/usage/querying/",
-    "https://msgvault.io/usage/searching/",
-    "https://msgvault.io/usage/text-messages/",
-    "https://msgvault.io/usage/tui/",
-    "https://msgvault.io/usage/vector-search/",
-    "https://msgvault.io/web-ui/",
+    "https://msgvault.io/docs/",
+    "https://msgvault.io/docs/api-server/",
+    "https://msgvault.io/docs/architecture/overview/",
+    "https://msgvault.io/docs/architecture/postgresql/",
+    "https://msgvault.io/docs/architecture/search-ranking/",
+    "https://msgvault.io/docs/architecture/storage/",
+    "https://msgvault.io/docs/changelog/",
+    "https://msgvault.io/docs/cli-reference/",
+    "https://msgvault.io/docs/configuration/",
+    "https://msgvault.io/docs/development/",
+    "https://msgvault.io/docs/faq/",
+    "https://msgvault.io/docs/guides/oauth-setup/",
+    "https://msgvault.io/docs/guides/remote-deployment/",
+    "https://msgvault.io/docs/guides/verification/",
+    "https://msgvault.io/docs/introduction/",
+    "https://msgvault.io/docs/setup/",
+    "https://msgvault.io/docs/troubleshooting/",
+    "https://msgvault.io/docs/usage/analytics/",
+    "https://msgvault.io/docs/usage/chat/",
+    "https://msgvault.io/docs/usage/deduplication/",
+    "https://msgvault.io/docs/usage/deletion/",
+    "https://msgvault.io/docs/usage/exporting/",
+    "https://msgvault.io/docs/usage/importing/",
+    "https://msgvault.io/docs/usage/multi-account/",
+    "https://msgvault.io/docs/usage/querying/",
+    "https://msgvault.io/docs/usage/searching/",
+    "https://msgvault.io/docs/usage/text-messages/",
+    "https://msgvault.io/docs/usage/tui/",
+    "https://msgvault.io/docs/usage/vector-search/",
+    "https://msgvault.io/docs/web-ui/",
 ]
 
 REQUIRED_METADATA = [
-    '<meta property="og:image" content="https://msgvault.io/assets/static/og-image.png">',
-    '<meta name="twitter:image" content="https://msgvault.io/assets/static/og-image.png">',
+    '<meta property="og:image" content="https://msgvault.io/docs/assets/static/og-image.png">',
+    '<meta name="twitter:image" content="https://msgvault.io/docs/assets/static/og-image.png">',
     '<meta property="og:type" content="website">',
     '<meta property="og:site_name" content="msgvault">',
 ]
@@ -372,11 +387,11 @@ def fragment_id(fragment: str) -> str:
 
 def check_expected_asset_files() -> None:
     for asset in STATIC_ASSETS:
-        path = SITE / "assets" / "static" / asset
+        path = SITE / "docs" / "assets" / "static" / asset
         if not path.is_file():
             fail(f"missing built static asset {path.relative_to(SITE)}")
     for asset in GENERATED_ASSETS:
-        path = SITE / "assets" / "generated" / asset
+        path = SITE / "docs" / "assets" / "generated" / asset
         if not path.is_file():
             fail(f"missing built generated asset {path.relative_to(SITE)}")
         if path.suffix == ".svg":
@@ -417,15 +432,21 @@ def main() -> None:
 
     check_public_site_file_inventory()
 
-    for route in ROUTES:
+    for route in WEBSITE_ROUTES + DOCS_ROUTES:
         path = route_to_file(route)
         if not path.exists():
             fail(f"missing route {route}: {path}")
 
-    if not (SITE / "404.html").exists():
-        fail("missing 404.html")
+    for relative in WEBSITE_FILES:
+        if not (SITE / relative).is_file():
+            fail(f"missing website file {relative}")
+    if not any((SITE / "fonts").glob("*.woff2")):
+        fail("missing website fonts")
+
+    if not (SITE / "docs" / "404.html").exists():
+        fail("missing docs/404.html")
     if not (SITE / "sitemap.xml").exists():
-        fail("missing sitemap.xml")
+        fail("missing sitemap.xml at the site root")
     sitemap_text = (SITE / "sitemap.xml").read_text(encoding="utf-8", errors="ignore")
     for url in REQUIRED_SITEMAP_URLS:
         if f"<loc>{url}</loc>" not in sitemap_text:
@@ -434,8 +455,10 @@ def main() -> None:
     check_expected_asset_files()
 
     html_files = list(SITE.rglob("*.html"))
-    index_text = (SITE / "index.html").read_text(encoding="utf-8", errors="ignore")
-    if "msgvault-logo-text" in index_text:
+    docs_index_text = (SITE / "docs" / "index.html").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    if "msgvault-logo-text" in docs_index_text:
         fail("header logo must be icon-only; remove msgvault-logo-text")
 
     leaked_overrides = [path for path in html_files if "overrides" in path.relative_to(SITE).parts]
@@ -455,11 +478,11 @@ def main() -> None:
             fail(f"forbidden generated marker found: {pattern}")
 
     parsed_by_file = {path.resolve(): parse_html(path) for path in html_files}
-    index_parser = parsed_by_file[(SITE / "index.html").resolve()]
-    web_ui_route = route_to_file("/web-ui/").resolve()
+    docs_index = SITE / "docs" / "index.html"
+    index_parser = parsed_by_file[docs_index.resolve()]
+    web_ui_route = route_to_file("/docs/web-ui/").resolve()
     if not any(
-        (target_file(SITE / "index.html", href) or pathlib.Path()).resolve()
-        == web_ui_route
+        (target_file(docs_index, href) or pathlib.Path()).resolve() == web_ui_route
         for href in index_parser.nav_links
     ):
         fail("Web UI is missing from the rendered primary navigation")

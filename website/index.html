@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>msgvault — the system of record for your communications</title>
+    <meta name="description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
+    <link rel="canonical" href="https://msgvault.io/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="The system of record for your communications and relationships.">
+    <meta property="og:description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
+    <meta property="og:url" content="https://msgvault.io/">
+    <meta property="og:site_name" content="msgvault">
+    <meta property="og:image" content="https://msgvault.io/docs/assets/static/og-image.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="The system of record for your communications and relationships.">
+    <meta name="twitter:description" content="msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts — one AI-ready database with a durable people layer, owned by you.">
+    <meta name="twitter:image" content="https://msgvault.io/docs/assets/static/og-image.png">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/">
+        <img src="/favicon.svg" width="22" height="22" alt="">
+        msgvault
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a class="repo" href="https://github.com/kenn-io/msgvault">
+          <span class="sr-only">msgvault on GitHub:</span>
+          <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+              -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07
+              -.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2
+              -.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27
+              c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
+              3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0
+              .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <span class="repo-meta">
+            <span class="repo-name">kenn-io/msgvault</span>
+            <span class="facts" data-facts hidden>
+              <span class="fact" data-fact="version" hidden>
+                <span class="sr-only">latest release</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0
+                    .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426
+                    2.426 0 0 0 0-3.42z"/>
+                  <circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="stars" hidden>
+                <span class="sr-only">stars</span>
+                <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor">
+                  <path d="M8 .25a.75.75 0 0 1 .67.42l1.88 3.8 4.2.62a.75.75 0 0 1 .42
+                    1.28l-3.04 2.97.72 4.18a.75.75 0 0 1-1.09.8L8 12.35l-3.76
+                    1.97a.75.75 0 0 1-1.09-.79l.72-4.19L.83 6.37a.75.75 0 0 1
+                    .42-1.28l4.2-.61L7.33.67A.75.75 0 0 1 8 .25Z"/>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="forks" hidden>
+                <span class="sr-only">forks</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="18" r="3"></circle>
+                  <circle cx="6" cy="6" r="3"></circle>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9m6 3v3"></path>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+            </span>
+          </span>
+        </a>
+        <a class="icon-link" href="https://discord.gg/fDnmxB8Wkq" aria-label="msgvault Discord">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M20.32 4.37a19.8 19.8 0 0 0-4.89-1.52.07.07 0 0 0-.08.04c-.21.38-.44.87-.6
+              1.25a18.3 18.3 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.25.08.08 0 0 0-.08-.04
+              19.7 19.7 0 0 0-4.88 1.52.07.07 0 0 0-.04.03C.53 9.05-.32 13.58.1 18.06c0
+              .02.01.04.03.05a19.9 19.9 0 0 0 6 3.03.08.08 0 0 0 .08-.03c.46-.63.87-1.3
+              1.22-2a.08.08 0 0 0-.04-.11 13 13 0 0 1-1.87-.9.08.08 0 0 1-.01-.12l.37-.29
+              a.07.07 0 0 1 .08-.01 14.2 14.2 0 0 0 12.06 0 .07.07 0 0 1 .08 0l.37.3a.08.08
+              0 0 1 0 .12 12.3 12.3 0 0 1-1.88.89.08.08 0 0 0-.04.12c.36.7.77 1.36 1.22
+              1.99a.08.08 0 0 0 .08.03 19.8 19.8 0 0 0 6.03-3.03.08.08 0 0 0 .03-.05c.5
+              -5.18-.84-9.68-3.55-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.18 0-2.16-1.08
+              -2.16-2.42 0-1.33.96-2.42 2.16-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.34-.96 2.42
+              -2.16 2.42Zm7.97 0c-1.18 0-2.15-1.08-2.15-2.42 0-1.33.95-2.42 2.15-2.42 1.21
+              0 2.18 1.1 2.16 2.42 0 1.34-.95 2.42-2.16 2.42Z"/>
+          </svg>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero branded" aria-labelledby="hero-title">
+        <p class="hero-brand">
+          <img src="/favicon.svg" width="68" height="68" alt="">
+          msgvault
+        </p>
+        <h1 id="hero-title">The system of record for your communications and relationships.</h1>
+        <p class="lede">msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts. It keeps everything in one database on your own hardware, resolves the people behind decades of messages, and searches by keyword or by meaning.</p>
+        <div class="install-matrix">
+          <div class="install-row" data-install-command data-command="curl -fsSL https://msgvault.io/install.sh | bash">
+            <span class="install-label">macOS / Linux</span>
+            <code>curl -fsSL https://msgvault.io/install.sh | bash</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="brew install msgvault">
+            <span class="install-label">Homebrew</span>
+            <code>brew install msgvault</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="irm https://msgvault.io/install.ps1 | iex">
+            <span class="install-label">Windows</span>
+            <code class="ps">irm https://msgvault.io/install.ps1 | iex</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+        </div>
+        <p class="install-hint">Installers fetch the latest release and verify its SHA-256 checksum. Also on <a href="https://prefix.dev/channels/conda-forge/packages/msgvault">conda-forge</a>, or <a href="/docs/setup/">build from source</a>.<span data-install-status aria-live="polite"></span></p>
+        <div class="actions">
+          <a class="button primary" href="/guide/">See how it works</a>
+          <a class="button" href="/docs/">Read the docs</a>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="record-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 / Record</p>
+            <h2 id="record-title">Every channel. One archive.</h2>
+          </div>
+          <p>Twenty years of correspondence should not be scattered across a dozen walled gardens. msgvault syncs live sources and imports dead exports into one schema, keeping raw payloads and content-addressed attachments intact.</p>
+        </div>
+        <figure class="diagram pipeline">
+          <img src="/assets/sources-map.svg" alt="Mail, chat, meetings, calendar, contacts, and offline imports converging into one msgvault archive of SQLite, attachments, and Parquet">
+        </figure>
+        <ol class="ledger">
+          <li><strong>Mail</strong><span>Gmail, IMAP, and Microsoft 365 sync; MBOX, Apple Mail, PST, and EML imports.</span></li>
+          <li><strong>Chat</strong><span>Slack, Teams, Discord, and every network behind Beeper; WhatsApp, iMessage, Messenger, and SMS imports.</span></li>
+          <li><strong>Meetings</strong><span>Granola and Circleback notes and transcripts in the same searchable record.</span></li>
+          <li><strong>Calendar</strong><span>Google Calendar events, organizers, and attendees, read-only.</span></li>
+          <li><strong>Contacts</strong><span>Bidirectional CardDAV: pull address books, publish curated people back.</span></li>
+        </ol>
+      </section>
+
+      <section class="site-section" aria-labelledby="people-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">02 / People</p>
+            <h2 id="people-title">Messages come from addresses. Relationships come from people.</h2>
+          </div>
+          <p>The people layer resolves decades of addresses, handles, and phone numbers into the people behind them — with archive evidence and user curation kept strictly apart.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Observed, not guessed</p>
+            <h3>Cluster identities on evidence.</h3>
+            <p>Observed people are assembled from explicit archive links across sources. Equal display names alone never merge two people.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Durable profiles</p>
+            <h3>Promote the people who matter.</h3>
+            <p>A promoted profile gets a stable ID and vCard UID, so names, notes, and typed attributes survive later identity changes. Merges are atomic and reversible.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Fact ledger</p>
+            <h3>Curate facts with provenance.</h3>
+            <p>Organizations, employment history, typed relationships, and custom attributes rest on immutable evidence, deterministic decisions, and per-person pins.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Activity</p>
+            <h3>Watch each relationship over time.</h3>
+            <p>An activity calendar tracks interaction with each person across email, chat, calendar, and meetings, year by year, including current and peak relationship temperature.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="operation-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03 / Operation</p>
+            <h2 id="operation-title">Work the archive in the browser.</h2>
+          </div>
+          <p>The daemon serves a dense, keyboard-driven browser application: relationships, a unified Everything table, files, saved views, source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and Forward restore exact views.</p>
+        </div>
+        <figure class="capture">
+          <a href="/docs/assets/static/relationships-dark-comfortable-darwin.png" data-lightbox>
+            <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="msgvault Relationships workspace showing ranked people, a relationship activity calendar, and a message timeline over public research data">
+          </a>
+          <figcaption class="caption">The Relationships workspace over the public Enron research corpus. Select the image to inspect it at full size.</figcaption>
+        </figure>
+        <div class="placeholder-panel">
+          <p class="proof-tag">In development</p>
+          <h3>The Directory workspace</h3>
+          <p>An open pull request adds Directory and Reviews workspaces: durable-person search, profile maintenance and history, identity and merge review queues, the privacy-gated fact ledger, CardDAV publication, and a self-describing Settings surface with write-only credential management. Captures land here when it merges.</p>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="intelligence-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">04 / Intelligence</p>
+            <h2 id="intelligence-title">Semantic search and document understanding.</h2>
+          </div>
+          <p>Keyword search works offline, always. Semantic search, document extraction, and visual search are opt-in, with explicit consent recording exactly what leaves your machine and where it goes.</p>
+        </div>
+        <figure class="diagram pipeline">
+          <img src="/assets/intelligence-pipeline.svg" alt="The msgvault archive feeding an FTS5 keyword index, vector embeddings, and Docbank document extraction, fused by hybrid retrieval for the CLI, Web UI, TUI, and MCP agents">
+        </figure>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Hybrid search</p>
+            <h3>Fuse keywords and meaning.</h3>
+            <p>FTS5 with Gmail-style operators, pure semantic search, or hybrid BM25-plus-vector fusion via reciprocal rank fusion, with an explain mode that shows why each result ranked.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Local models</p>
+            <h3>Point at any embedding server.</h3>
+            <p>Any OpenAI-compatible endpoint works: Ollama, llama.cpp, LM Studio, or Apple's on-device model. Embedding scope is a privacy boundary; out-of-scope accounts are never sent anywhere.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Attachments</p>
+            <h3>Read the attachments too.</h3>
+            <p>The embedded <a href="https://github.com/kenn-io/docbank">Docbank</a> document engine handles OCR extraction, normalized chunks, lexical and semantic document search, and visual search over images. Consent-gated and fail-closed.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Agents</p>
+            <h3>Give your AI the whole archive.</h3>
+            <p>An MCP server exposes search, people, files, and analytics tools to Claude Desktop and other agents; bundled agent skills install into Claude Code and Codex. Profile writes stay behind explicit flags.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="interfaces-title">
+        <div class="interface-layout">
+          <div>
+            <p class="section-index">05 / Interfaces</p>
+            <h2 id="interfaces-title">One archive across every surface.</h2>
+            <p class="lede">The daemon owns all writes and serializes every mutation. People, scripts, and agents work through the interface suited to the task, against the same record.</p>
+            <ul class="interface-list">
+              <li><strong>CLI</strong><span>Scriptable sync, search, and repair.</span></li>
+              <li><strong>Web</strong><span>Analytical workspaces in the browser.</span></li>
+              <li><strong>TUI</strong><span>Keyboard drill-down analytics.</span></li>
+              <li><strong>HTTP</strong><span>An authenticated, versioned API.</span></li>
+              <li><strong>MCP</strong><span>Archive tools for AI assistants.</span></li>
+              <li><strong>Skills</strong><span>Workflows for Claude Code and Codex.</span></li>
+            </ul>
+            <div class="actions">
+              <a class="button" href="/docs/usage/chat/">Connect an agent</a>
+              <a class="button" href="/docs/api-server/">Inspect the API</a>
+            </div>
+          </div>
+          <figure class="diagram">
+            <img src="/assets/interface-map.svg" alt="CLI, Web UI, TUI, HTTP API, MCP server, and agent skills sharing one msgvault archive">
+          </figure>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="ownership-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">06 / Ownership</p>
+            <h2 id="ownership-title">Archive everything. Then delete upstream.</h2>
+          </div>
+          <p>Once the archive is complete and verified, you can start deleting from the provider. Every step is explicit and reviewed, and nothing is irreversible until the last one.</p>
+        </div>
+        <div class="choice-grid">
+          <article class="choice">
+            <p class="choice-label">Verify</p>
+            <h3>Prove the copy is complete.</h3>
+            <p>Integrity verification checks the archive against the mailbox before you trust it with anything irreversible.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">Stage</p>
+            <h3>Review before anything moves.</h3>
+            <p>Deletions are staged into manifests from the Web UI, TUI, or MCP — inspected, counted, and cancellable. No surface executes them.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">Execute</p>
+            <h3>Delete upstream, keep the record.</h3>
+            <p>Execution is a separate CLI step behind an explicit environment gate, defaulting to recoverable trash. The local archive is never modified.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">Restore</p>
+            <h3>Back up the vault itself.</h3>
+            <p>Append-only, verifiable backup snapshots cover the database and attachments, with restore paths that need no provider at all.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="boundary-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">07 / Boundary</p>
+            <h2 id="boundary-title">Not a mail client. Not a takeout file.</h2>
+          </div>
+          <p>msgvault is a data warehouse for your communications: a system of record you operate, query, and extend. Not a viewport, and not cold storage.</p>
+        </div>
+        <div class="boundary-grid">
+          <article class="boundary">
+            <p class="choice-label">Mail client</p>
+            <h3>The provider is the record.</h3>
+            <p>A client renders whatever the server still holds. Identity, search, and history live and die with the account.</p>
+          </article>
+          <article class="boundary">
+            <p class="choice-label">Export archive</p>
+            <h3>The zip is a snapshot.</h3>
+            <p>A takeout captures one moment in one format. It does not sync, resolve people, answer questions, or talk to agents.</p>
+          </article>
+          <article class="boundary">
+            <p class="choice-label">msgvault</p>
+            <h3>The archive is the record.</h3>
+            <p>Providers become replaceable feeds around a database you own — continuously synced, people-resolved, searchable by meaning, and open to your tools.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="start-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">08 / Start</p>
+            <h2 id="start-title">Follow one archive through the system.</h2>
+          </div>
+          <div>
+            <p>The guide walks the archive lifecycle from capture to ownership. The documentation carries setup, exact command behavior, configuration, and architecture.</p>
+            <div class="actions">
+              <a class="button primary" href="/guide/">Read the lifecycle guide</a>
+              <a class="button" href="/docs/">Open the documentation</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Copyright 2026 Kenn Software LLC. Open source under MIT. Alpha software — back up your data.</p>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="/index.md">Markdown</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://github.com/kenn-io/msgvault/blob/main/LICENSE">License</a>
+      </nav>
+    </footer>
+
+    <dialog data-lightbox-dialog aria-labelledby="lightbox-title">
+      <div class="dialog-header">
+        <p id="lightbox-title" data-lightbox-title>Documentation capture</p>
+        <button class="dialog-close" type="button" data-lightbox-close aria-label="Close image">Close</button>
+      </div>
+      <img alt="Expanded documentation capture">
+    </dialog>
+    <script type="module" src="/scripts/site.js"></script>
+  </body>
+</html>

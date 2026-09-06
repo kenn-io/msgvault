@@ -51,6 +51,10 @@
      * Everything. Not part of the frozen Task 4 Props contract — AppShell
      * (Task 6) wires it to its own workspace-change callback. */
     onOpenEverything?: () => void;
+    /** Opens Directory with the currently loaded, API-validated participant. */
+    onOpenDirectory?: (participantID: number) => void;
+    onOpenDirectoryPerson?: (personID: number) => void;
+    onAnnounce?: (message: string) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
      * EntryRow into — AppShell wires these to the same openFileItem/
@@ -79,6 +83,9 @@
     onPersonFilePresentationChange = undefined,
     onPersonFileDirectionsChange = undefined,
     onOpenEverything = undefined,
+    onOpenDirectory = undefined,
+    onOpenDirectoryPerson = undefined,
+    onAnnounce = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
   }: Props = $props();
@@ -370,6 +377,11 @@
                 {filesOpen}
                 {onFilesToggle}
                 {client}
+                {onOpenDirectory}
+                {onOpenDirectoryPerson}
+                {onAnnounce}
+                capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
+                onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
                 onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                 onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
               />

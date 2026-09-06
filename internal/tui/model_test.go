@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -40,6 +39,81 @@ func TestModelUpdateAnalyticsNotice(t *testing.T) {
 	assert.Empty(t, asModel(t, updated).analyticsNotice)
 }
 
+func TestDebouncedMalformedSearchStaysInlineAndDoesNotReplaceActiveQuery(t *testing.T) {
+	assertions := assert.New(t)
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model.inlineSearchActive = true
+	model.searchMode = searchModeFast
+	model.searchQuery = "working query"
+	model.searchRequestID = 4
+	model.loadRequestID = 6
+	model.inlineSearchDebounce = 7
+	model.searchInput.SetValue("before:not-a-date")
+	model.searchInput.Focus()
+
+	updated, cmd := model.handleSearchDebounce(searchDebounceMsg{query: model.searchInput.Value(), debounceID: 7})
+	model = asModel(t, updated)
+
+	assertions.Nil(cmd)
+	assertions.Equal(modalNone, model.modal)
+	assertions.True(model.inlineSearchActive)
+	assertions.Equal("working query", model.searchQuery)
+	assertions.Contains(model.inlineSearchError, "invalid value")
+	assertions.Contains(model.View().Content, "invalid value")
+	assertions.Equal(uint64(5), model.searchRequestID)
+	assertions.Equal(uint64(7), model.loadRequestID)
+
+	updated, _ = model.handleSearchResults(searchResultsMsg{
+		messages:  []query.MessageSummary{{ID: 99, Subject: "stale"}},
+		requestID: 4,
+	})
+	model = asModel(t, updated)
+	assertions.Empty(model.messages, "results started before validation feedback must be ignored")
+	assertions.Contains(model.inlineSearchError, "invalid value")
+
+	model, _ = applyInlineSearchKey(t, model, key('x'))
+	assertions.Contains(model.searchInput.Value(), "x", "validation feedback must not swallow the next typed character")
+}
+
+func TestChangedInlineSearchInputImmediatelyInvalidatesInFlightResults(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model.inlineSearchActive = true
+	model.searchQuery = "old query"
+	model.searchInput.SetValue("old query")
+	model.searchInput.Focus()
+	model.searchRequestID = 8
+	model.loadRequestID = 10
+
+	model, _ = applyInlineSearchKey(t, model, key('!'))
+	assert.Equal(t, uint64(9), model.searchRequestID)
+	assert.Equal(t, uint64(11), model.loadRequestID)
+
+	updated, _ := model.handleSearchResults(searchResultsMsg{
+		messages:  []query.MessageSummary{{ID: 99, Subject: "stale"}},
+		requestID: 8,
+	})
+	model = asModel(t, updated)
+	assert.Empty(t, model.messages)
+}
+
+func TestDebouncedSemanticOperatorOnlySearchStaysInline(t *testing.T) {
+	assertions := assert.New(t)
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model.inlineSearchActive = true
+	model.searchMode = searchModeSemantic
+	model.searchQuery = "working query"
+	model.inlineSearchDebounce = 8
+	model.searchInput.SetValue("message_type:email")
+
+	updated, cmd := model.handleSearchDebounce(searchDebounceMsg{query: model.searchInput.Value(), debounceID: 8})
+	model = asModel(t, updated)
+
+	assertions.Nil(cmd)
+	assertions.Equal(modalNone, model.modal)
+	assertions.Equal("working query", model.searchQuery)
+	assertions.Contains(model.inlineSearchError, "semantic search requires free text")
+}
+
 // =============================================================================
 // New (Constructor) Tests
 // =============================================================================
@@ -72,73 +146,17 @@ func TestNew_OverridesLimits(t *testing.T) {
 	assert.Equal(t, 50, model.threadMessageLimit)
 }
 
-func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
-	t.Run("deep search stats use merged representable scope", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		engine := newMockEngine(MockConfig{})
-		tracker := &statsTracker{result: &query.TotalStats{}}
-		tracker.install(engine)
-		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
-		model.searchMode = searchModeDeep
-		after := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-		before := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
-		model.searchFilter = query.MessageFilter{
-			Sender:                "alice@example.com",
-			Recipient:             "bob@example.com",
-			Domain:                "example.com",
-			Label:                 "Project Review",
-			MessageType:           "meeting_transcript",
-			SourceIDs:             []int64{7, 8},
-			After:                 &after,
-			Before:                &before,
-			WithAttachmentsOnly:   true,
-			HideDeletedFromSource: true,
-		}
-
-		cmd := model.loadSearch("cross-type stats needle")
-		require.NotNil(cmd, "loadSearch command")
-		msg := cmd()
-		require.IsType(searchResultsMsg{}, msg)
-		require.Equal(1, tracker.callCount, "deep search stats call count")
-		assert.True(tracker.lastOpts.SearchScope, "deep search stats use search scope")
-		assert.Nil(tracker.lastOpts.SourceID, "multi-source scope does not collapse to one source")
-		assert.Equal([]int64{7, 8}, tracker.lastOpts.SourceIDs, "merged source scope")
-		assert.True(tracker.lastOpts.WithAttachmentsOnly, "merged attachment scope")
-		assert.True(tracker.lastOpts.HideDeletedFromSource, "merged deletion scope")
-
-		formatted := search.Parse(tracker.lastOpts.SearchQuery)
-		assert.Equal([]string{"cross-type", "stats", "needle"}, formatted.TextTerms)
-		assert.ElementsMatch([]string{"alice@example.com", "@example.com"}, formatted.FromAddrs)
-		assert.Equal([]string{"bob@example.com"}, formatted.ToAddrs)
-		assert.Equal([]string{"Project Review"}, formatted.Labels)
-		assert.Equal([]string{emailMessageType}, formatted.MessageTypes)
-		require.NotNil(formatted.AfterDate, "merged after date")
-		require.NotNil(formatted.BeforeDate, "merged before date")
-		assert.Equal(after, *formatted.AfterDate)
-		assert.Equal(before, *formatted.BeforeDate)
+func TestNew_ConfiguresAttachmentExportDirectory(t *testing.T) {
+	engine := newMockEngine(MockConfig{})
+	model := New(engine, Options{
+		DataDir:   "/tmp/test",
+		ExportDir: "/tmp/configured-exports",
 	})
 
-	t.Run("conflicting message types short-circuit stats", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		engine := newMockEngine(MockConfig{})
-		tracker := &statsTracker{result: &query.TotalStats{MessageCount: 99}}
-		tracker.install(engine)
-		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
-		model.searchMode = searchModeDeep
-		model.searchFilter = query.MessageFilter{}
+	assert.Equal(t, "/tmp/configured-exports", model.actions.attachmentOutputDir)
+}
 
-		cmd := model.loadSearch("message_type:sms conflictneedle")
-		require.NotNil(cmd, "loadSearch command")
-		msg := cmd()
-		result, ok := msg.(searchResultsMsg)
-		require.True(ok, "expected searchResultsMsg, got %T", msg)
-		assert.Zero(tracker.callCount, "conflicting scope skips stats query")
-		require.NotNil(result.stats, "conflicting scope zero stats")
-		assert.Zero(result.stats.MessageCount, "conflicting scope stats count")
-	})
-
+func TestStatsOptions_SearchScopeBoundaries(t *testing.T) {
 	t.Run("aggregate analytics stats", func(t *testing.T) {
 		require := require.New(t)
 		engine := newMockEngine(MockConfig{})
@@ -152,7 +170,7 @@ func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
 		msg := cmd()
 		require.IsType(dataLoadedMsg{}, msg)
 		require.Equal(1, tracker.callCount, "aggregate analytics stats call count")
-		assert.False(t, tracker.lastOpts.SearchScope, "aggregate analytics retain default scope")
+		assert.True(t, tracker.lastOpts.SearchScope, "aggregate search stats use the body-aware scope")
 	})
 
 	t.Run("ordinary total stats", func(t *testing.T) {
@@ -171,69 +189,65 @@ func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
 	})
 }
 
-func TestDeepSearchStatsFailureClearsStaleContextStats(t *testing.T) {
-	tests := []struct {
-		name         string
-		messages     []query.MessageSummary
-		wantTotal    int64
-		wantMsgCount int64
-	}{
-		{
-			name:         "short page keeps known result count",
-			messages:     []query.MessageSummary{{ID: 42, Subject: "matching result"}},
-			wantTotal:    1,
-			wantMsgCount: 1,
-		},
-		{
-			name:         "full page keeps loaded count when total is unknown",
-			messages:     makeMessages(searchPageSize),
-			wantTotal:    -1,
-			wantMsgCount: searchPageSize,
-		},
+func TestLoadSearchDeepPreservesCompleteViewFilter(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	engine := newMockEngine(MockConfig{})
+	var gotFilter query.MessageFilter
+	engine.SearchDeepWithStatsFunc = func(
+		_ context.Context, _ *search.Query, filter query.MessageFilter, _, _ int,
+	) (*query.SearchFastResult, error) {
+		gotFilter = filter
+		return &query.SearchFastResult{
+			TotalCount: 2,
+			Stats:      &query.TotalStats{MessageCount: 2, TotalSize: 300},
+		}, nil
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			engine := newMockEngine(MockConfig{Messages: tc.messages})
-			engine.GetTotalStatsFunc = func(context.Context, query.StatsOptions) (*query.TotalStats, error) {
-				return nil, errors.New("stats unavailable")
-			}
-			model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
-			model.searchMode = searchModeDeep
-			model.contextStats = &query.TotalStats{
-				MessageCount:    99,
-				TotalSize:       12345,
-				AttachmentCount: 7,
-				LabelCount:      3,
-				AccountCount:    2,
-			}
-
-			cmd := model.loadSearch("matching")
-			require.NotNil(cmd, "loadSearch command")
-			msg, ok := cmd().(searchResultsMsg)
-			require.True(ok, "expected searchResultsMsg")
-			require.NoError(msg.err, "successful results survive stats failure")
-			assert.Equal(tc.wantTotal, msg.totalCount)
-			require.NotNil(msg.stats, "stats failure produces explicit fallback stats")
-			assert.Equal(tc.wantMsgCount, msg.stats.MessageCount)
-			assert.Zero(msg.stats.TotalSize)
-			assert.Zero(msg.stats.AttachmentCount)
-			assert.Zero(msg.stats.LabelCount)
-			assert.Zero(msg.stats.AccountCount)
-
-			model.searchRequestID = msg.requestID
-			updated, _ := model.Update(msg)
-			got := asModel(t, updated)
-			require.NotNil(got.contextStats)
-			assert.Equal(tc.wantMsgCount, got.contextStats.MessageCount)
-			assert.Zero(got.contextStats.TotalSize)
-			assert.Zero(got.contextStats.AttachmentCount)
-			assert.Zero(got.contextStats.LabelCount)
-			assert.Zero(got.contextStats.AccountCount)
-			assert.Len(got.messages, len(tc.messages), "successful search results are preserved")
-		})
+	model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+	model.searchMode = searchModeDeep
+	model.searchFilter = query.MessageFilter{
+		SenderName:        "Alice",
+		RecipientName:     "Bob",
+		Domain:            "example.com",
+		Label:             "Work",
+		EmptyValueTargets: map[query.ViewType]bool{query.ViewLabels: true},
 	}
+
+	msg, ok := model.loadSearch("needle")().(searchResultsMsg)
+	requirements.True(ok)
+	assertions.Equal("Alice", gotFilter.SenderName)
+	assertions.Equal("Bob", gotFilter.RecipientName)
+	assertions.Equal("example.com", gotFilter.Domain)
+	assertions.Equal("Work", gotFilter.Label)
+	assertions.True(gotFilter.MatchesEmpty(query.ViewLabels))
+	assertions.Equal(emailMessageType, gotFilter.MessageType)
+	requirements.NotNil(msg.stats)
+	assertions.Equal(int64(2), msg.totalCount)
+	assertions.Equal(int64(2), msg.stats.MessageCount)
+	assertions.Equal(int64(300), msg.stats.TotalSize)
+}
+
+func TestLoadSearchDeepClearsStaleStatsWhenBackendOmitsStats(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	engine := newMockEngine(MockConfig{})
+	engine.SearchDeepWithStatsFunc = func(
+		context.Context, *search.Query, query.MessageFilter, int, int,
+	) (*query.SearchFastResult, error) {
+		return &query.SearchFastResult{
+			Messages:   []query.MessageSummary{{ID: 42}},
+			TotalCount: 1,
+		}, nil
+	}
+	model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+	model.searchMode = searchModeDeep
+	model.contextStats = &query.TotalStats{MessageCount: 99, TotalSize: 12345}
+
+	msg, ok := model.loadSearch("matching")().(searchResultsMsg)
+	requirements.True(ok)
+	requirements.NotNil(msg.stats)
+	assertions.Equal(int64(1), msg.stats.MessageCount)
+	assertions.Zero(msg.stats.TotalSize)
 }
 
 // =============================================================================

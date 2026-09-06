@@ -1,6 +1,6 @@
 [project]
 site_name = "msgvault"
-site_url = "https://msgvault.io"
+site_url = "https://msgvault.io/docs/"
 site_description = "Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, Circleback, and Notion."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'

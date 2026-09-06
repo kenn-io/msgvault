@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/update"
 	"golang.org/x/crypto/argon2"
 )
@@ -33,6 +34,7 @@ const (
 	runtimeCreateTime               = "create_time"
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
+	minimumDaemonAPISchemaVersion   = "2.14.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
 	daemonProbeTick                 = 250 * time.Millisecond
 )
@@ -368,6 +370,12 @@ func apiSchemaCompatibilityError(peerVersion string) error {
 		return fmt.Errorf(
 			"daemon API schema version %q is incompatible with client API schema version %q",
 			peerVersion, api.APISchemaVersion,
+		)
+	}
+	if !daemonclient.APISchemaVersionAtLeast(peerVersion, minimumDaemonAPISchemaVersion) {
+		return fmt.Errorf(
+			"daemon API schema version %q is incompatible: this CLI requires API schema %s or newer",
+			peerVersion, minimumDaemonAPISchemaVersion,
 		)
 	}
 	return nil

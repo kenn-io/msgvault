@@ -102,6 +102,13 @@ type personProviderRemoveOutput struct {
 	DaemonRestartRequired bool   `json:"daemon_restart_required"`
 }
 
+type personProviderSetOutput struct {
+	Name                  string `json:"name"`
+	Fingerprint           string `json:"fingerprint"`
+	Checked               bool   `json:"checked"`
+	DaemonRestartRequired bool   `json:"daemon_restart_required"`
+}
+
 type personProviderCodexIsolationStatus struct {
 	Available         bool   `json:"available"`
 	ExecutionBoundary string `json:"execution_boundary"`
@@ -141,6 +148,11 @@ type personProviderStatusesOutput struct {
 type personProviderRevokeAllOutput struct {
 	Revoked  int64                        `json:"revoked"`
 	Profiles []personProviderStatusOutput `json:"profiles"`
+}
+
+type personProviderRevokeFingerprintOutput struct {
+	Fingerprint string `json:"fingerprint"`
+	Revoked     bool   `json:"revoked"`
 }
 
 type personSemanticProviderStatusOutput struct {
@@ -301,6 +313,7 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 	}
 	provider.AddCommand(
 		newPersonProviderAddCommand(deps),
+		newPersonProviderSetCommand(deps),
 		newPersonProviderRemoveCommand(deps),
 		newPersonProviderListCommand(deps),
 		newPersonProviderUseCommand(deps),
@@ -513,6 +526,193 @@ func personProviderMutationScope(
 func writePersonProviderDaemonRestartNotice(w io.Writer) {
 	_, _ = fmt.Fprintln(w,
 		"A running daemon keeps the people sweep config it started with; run `msgvault daemon restart` so scheduled sweeps observe this change.")
+}
+
+func runPersonProviderSet(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name string,
+	options personProviderSetOptions,
+) error {
+	if err := rejectRemotePersonProviderMutation(deps, "set"); err != nil {
+		return err
+	}
+	if !options.confirmed {
+		return errors.New("people provider set requires --yes after reviewing the final values")
+	}
+	if !personProviderSetHasMutableChanges(command) {
+		return errors.New("people provider set requires at least one mutable policy flag")
+	}
+	if deps.readConfigFile == nil || deps.editConfigTables == nil || deps.restoreConfigFile == nil {
+		return errors.New("people provider config editing is unavailable")
+	}
+	before, err := deps.readConfigFile()
+	if err != nil {
+		return err
+	}
+	configured, err := personProviderConfigFromSnapshot(deps, before)
+	if err != nil {
+		return err
+	}
+	provider, exists := configured.Providers[name]
+	if !exists {
+		return fmt.Errorf("people provider profile %q is not configured", name)
+	}
+	oldConfig, err := selectPersonProviderConfig(configured, name)
+	if err != nil {
+		return err
+	}
+	oldConfig.Enabled = true
+	oldProfile, err := oldConfig.Profile()
+	if err != nil {
+		return err
+	}
+
+	replacement := provider
+	applyPersonProviderSetOptions(command, &replacement, options)
+	proposed := personProviderProposedConfig(configured, name, replacement)
+	proposedProfile, err := proposed.Profile()
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateConfigTableEdits(before, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	}); err != nil {
+		return err
+	}
+	directStore, daemonRunning, err := personProviderMutationScope(command.Context(), deps)
+	if err != nil {
+		return err
+	}
+	credential, err := readExistingPersonProviderCredential(deps.setup, name, proposedProfile)
+	if err != nil {
+		return err
+	}
+	if replacement.Protocol != peoplesweep.ProtocolCodexAppServer {
+		if deps.setup.negotiate == nil {
+			return errors.New("people provider capability negotiation is unavailable")
+		}
+		capabilities, negotiateErr := deps.setup.negotiate(command.Context(), replacement, credential)
+		if negotiateErr != nil {
+			return negotiateErr
+		}
+		replacement.OutputMode = capabilities.OutputMode
+		replacement.TokenLimitParameter = capabilities.TokenLimitParameter
+		replacement.ReasoningEffort = capabilities.ReasoningEffort
+		replacement.ReasoningMode = capabilities.ReasoningMode
+		replacement.DriverVersion = capabilities.DriverVersion
+	}
+	proposed = personProviderProposedConfig(configured, name, replacement)
+	proposedProfile, err = proposed.Profile()
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateConfigTableEdits(before, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	}); err != nil {
+		return err
+	}
+
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, true); err != nil {
+		return err
+	}
+
+	after, err := deps.editConfigTables(before.ETag, []config.TableEdit{
+		personProviderProfileUpdateEdit(name, replacement),
+	})
+	if err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, false); err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	checkedConfig, err := personProviderConfigFromSnapshot(deps, after)
+	if err == nil {
+		checkedDeps := deps
+		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
+		checkOutput := command.OutOrStdout()
+		if options.jsonOutput {
+			checkOutput = io.Discard
+		}
+		err = executeSavedPersonProviderCheck(command, checkedDeps, name, proposedProfile.Fingerprint, checkOutput)
+	}
+	if err != nil {
+		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
+			errors.New("exact people provider consent remains revoked"))
+	}
+	if options.jsonOutput {
+		checkedProvider, err := selectPersonProviderConfig(checkedConfig, name)
+		if err != nil {
+			return err
+		}
+		checkedProvider.Enabled = true
+		checkedProfile, err := checkedProvider.Profile()
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderSetOutput{
+			Name: name, Fingerprint: checkedProfile.Fingerprint, Checked: true,
+			DaemonRestartRequired: daemonRunning,
+		})
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(),
+		"Updated and checked people provider profile %q; run `msgvault person provider consent %q --yes` to grant consent for the new policy.\n",
+		name, name)
+	if daemonRunning {
+		writePersonProviderDaemonRestartNotice(command.OutOrStdout())
+	}
+	return nil
+}
+
+func personProviderSetHasMutableChanges(command *cobra.Command) bool {
+	for _, name := range personProviderSetMutableFlags {
+		if command.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func revokePersonProviderSetConsent(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	name, fingerprint string,
+	directStore bool,
+	guard bool,
+) error {
+	if directStore {
+		if deps.openStore == nil {
+			return errors.New("people provider consent store is unavailable")
+		}
+		st, cleanup, err := deps.openStore()
+		if err != nil {
+			return err
+		}
+		_, revokeErr := st.RevokePersonInferenceConsent(
+			command.Context(), fingerprint, personProviderConsentActor,
+		)
+		cleanup()
+		return revokeErr
+	}
+	if guard {
+		return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
+	}
+	return proxySavedPersonProviderRevokeFingerprint(command, deps, name, fingerprint)
+}
+
+func rollbackPersonProviderSetConfig(
+	deps personProviderCommandDeps,
+	published, before config.ConfigFile,
+) error {
+	if !published.Exists || published.ETag == "" {
+		return errors.New("cannot roll back people provider config without a verified published snapshot")
+	}
+	if _, err := deps.restoreConfigFile(published, before); err != nil {
+		return fmt.Errorf("restore people provider config: %w", err)
+	}
+	return nil
 }
 
 func runPersonProviderUse(
@@ -782,11 +982,20 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	var jsonOutput bool
 	var semanticEmbeddings bool
 	var ifFingerprint string
+	var fingerprint string
 	command := &cobra.Command{
 		Use:   "revoke [name]",
 		Short: "Revoke consent for the exact people inference policy",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if fingerprint != "" {
+				if err := validatePersonProviderFingerprint(fingerprint); err != nil {
+					return err
+				}
+				if len(args) != 1 || all || semanticEmbeddings {
+					return errors.New("--fingerprint requires one named people provider revoke")
+				}
+			}
 			if ifFingerprint != "" {
 				if err := validatePersonProviderFingerprint(ifFingerprint); err != nil {
 					return err
@@ -819,6 +1028,12 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 						return errors.New("people provider profile changed since removal began")
 					}
 				}
+				if fingerprint != "" {
+					return runPersonProviderRevokeFingerprint(command, runDeps, fingerprint, jsonOutput)
+				}
+			}
+			if fingerprint != "" {
+				return errors.New("--fingerprint requires one named people provider revoke")
 			}
 			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings)
 		},
@@ -830,6 +1045,8 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
 		"Require an exact provider fingerprint")
 	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
+	command.Flags().StringVar(&fingerprint, "fingerprint", "", "Revoke a specific provider fingerprint")
+	_ = command.Flags().MarkHidden("fingerprint")
 	return command
 }
 
@@ -900,6 +1117,7 @@ func newPersonProviderHistoryCommand(deps personProviderCommandDeps) *cobra.Comm
 
 func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Command {
 	var jsonOutput bool
+	var ifFingerprint string
 	command := &cobra.Command{
 		Use:   "check [name]",
 		Short: "Run a fixed synthetic request through the people inference provider",
@@ -916,7 +1134,7 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 						if len(args) == 1 {
 							name = args[0]
 						}
-						return runPersonProviderCheck(command, deps, name, jsonOutput)
+						return runPersonProviderCheck(command, deps, name, ifFingerprint, jsonOutput)
 					}
 				}
 				return deps.proxy(command, args, nil)
@@ -925,10 +1143,13 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runPersonProviderCheck(command, deps, name, jsonOutput)
+			return runPersonProviderCheck(command, deps, name, ifFingerprint, jsonOutput)
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
+		"Require an exact provider fingerprint")
+	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
 	return command
 }
 
@@ -1126,6 +1347,32 @@ func runPersonProviderRevoke(
 	return nil
 }
 
+func runPersonProviderRevokeFingerprint(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	fingerprint string,
+	jsonOutput bool,
+) error {
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	revoked, err := st.RevokePersonInferenceConsent(
+		command.Context(), fingerprint, personProviderConsentActor,
+	)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderRevokeFingerprintOutput{
+			Fingerprint: fingerprint, Revoked: revoked,
+		})
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", fingerprint)
+	return nil
+}
+
 func runPersonSemanticProviderStatus(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
@@ -1265,8 +1512,12 @@ func runPersonProviderCheck(
 	command *cobra.Command,
 	deps personProviderCommandDeps,
 	name string,
+	ifFingerprint string,
 	jsonOutput bool,
 ) error {
+	if err := verifyPersonProviderFingerprint(deps, name, ifFingerprint); err != nil {
+		return err
+	}
 	output, err := checkPersonProvider(command, deps, name)
 	if err != nil {
 		return err

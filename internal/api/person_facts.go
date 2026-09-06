@@ -134,19 +134,19 @@ type PersonFactPinWrite struct {
 }
 
 type PersonFactEvidenceResponse struct {
-	Evidence []PersonFactEvidence `json:"evidence" nullable:"false"`
+	Evidence []PersonFactEvidence `json:"evidence"`
 }
 
 type PersonFactEvidenceStatusEventsResponse struct {
-	Events []PersonFactEvidenceStatusEvent `json:"events" nullable:"false"`
+	Events []PersonFactEvidenceStatusEvent `json:"events"`
 }
 
 type PersonFactClaimsResponse struct {
-	Claims []PersonFactClaim `json:"claims" nullable:"false"`
+	Claims []PersonFactClaim `json:"claims"`
 }
 
 type PersonFactDecisionsResponse struct {
-	Decisions []PersonFactDecision `json:"decisions" nullable:"false"`
+	Decisions []PersonFactDecision `json:"decisions"`
 }
 
 type PersonFactPinsResponse struct {

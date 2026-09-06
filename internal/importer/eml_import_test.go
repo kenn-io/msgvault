@@ -147,6 +147,9 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 	require.ErrorIs(err, context.Canceled)
 	require.NotNil(first)
 	assert.Equal(int64(1), first.MessagesAdded)
+	interrupted, err := st.GetLatestSync(first.SourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusRunning, interrupted.Status)
 
 	resumed, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier:         "resume@example.test",
@@ -157,6 +160,15 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 	assert.Equal(int64(1), resumed.MessagesAdded)
 	assert.Equal(int64(1), resumed.MessagesSkipped)
 	assert.Equal(int64(2), resumed.MessagesProcessed)
+	completed, err := st.GetLatestSync(resumed.SourceID)
+	require.NoError(err)
+	assert.NotEqual(interrupted.ID, completed.ID,
+		"a resumed import must use a new sync generation")
+	var interruptedStatus string
+	require.NoError(st.DB().QueryRow(
+		`SELECT status FROM sync_runs WHERE id = ?`, interrupted.ID,
+	).Scan(&interruptedStatus))
+	assert.Equal(store.SyncStatusFailed, interruptedStatus)
 
 	var messageCount int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
@@ -201,6 +213,38 @@ func TestImportEMLDirResumesFailedCheckpoint(t *testing.T) {
 	assert.Equal(store.SyncStatusCompleted, latest.Status)
 }
 
+func TestImportEMLDirRejectsConcurrentSourceExecution(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "MailMate")
+	mailbox := filepath.Join(root, "Inbox.mailbox")
+	requirements.NoError(os.MkdirAll(mailbox, 0o700))
+	writeTestEML(t, filepath.Join(mailbox, "1.eml"), "One")
+	absRoot, err := filepath.Abs(root)
+	requirements.NoError(err)
+
+	source, err := st.GetOrCreateSource("eml", "concurrent@example.test")
+	requirements.NoError(err)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = execution.Release() })
+	runID, err := execution.StartSyncContext(t.Context(), "import-eml", "")
+	requirements.NoError(err)
+	requirements.NoError(saveEMLCheckpoint(
+		st, runID, absRoot, 0, mailbox, "", &store.Checkpoint{},
+	))
+
+	_, err = ImportEMLDir(t.Context(), st, root, EMLImportOptions{
+		Identifier: "concurrent@example.test",
+	})
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	active, err := st.GetActiveSync(source.ID)
+	requirements.NoError(err)
+	checks.Equal(runID, active.ID)
+	requirements.NoError(st.FailSync(runID, "test complete"))
+}
+
 func TestImportEMLDirIgnoresIncompatibleCheckpoint(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -217,6 +261,7 @@ func TestImportEMLDirIgnoresIncompatibleCheckpoint(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(foreignSyncID, &store.Checkpoint{
 		PageToken: `{"file":"/tmp/archive.mbox","offset":1024}`,
 	}))
+	require.NoError(st.FailSync(foreignSyncID, "interrupted foreign import"))
 
 	summary, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "mixed-imports@example.test",
@@ -293,6 +338,7 @@ func TestImportEMLDirRejectsChangedMailboxAtCheckpoint(t *testing.T) {
 	require.NoError(saveEMLCheckpoint(
 		st, syncID, absRoot, 0, "/old/Inbox.mailbox", "", &store.Checkpoint{},
 	))
+	require.NoError(st.FailSync(syncID, "interrupted test import"))
 
 	_, err = ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "changed@example.test",
@@ -320,6 +366,7 @@ func TestImportEMLDirRejectsNegativeCheckpointIndex(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken: string(cursor),
 	}))
+	require.NoError(st.FailSync(syncID, "interrupted test import"))
 
 	_, err = ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "negative@example.test",
@@ -345,6 +392,7 @@ func TestImportEMLDirRejectsCheckpointForDifferentRoot(t *testing.T) {
 	require.NoError(saveEMLCheckpoint(
 		st, syncID, otherRoot, 0, "", "", &store.Checkpoint{},
 	))
+	require.NoError(st.FailSync(syncID, "interrupted test import"))
 
 	_, err = ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "root@example.test",

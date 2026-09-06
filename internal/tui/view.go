@@ -463,15 +463,17 @@ func (m Model) aggregateTableView() string {
 
 	// Info line - show inline search bar when active, search filter when searching, otherwise blank
 	var infoContent string
-	isLoading := m.loading || m.inlineSearchLoading || m.searchLoadingMore
 	if m.inlineSearchActive {
 		infoContent = "/" + m.searchInput.View()
+		if m.inlineSearchError != "" {
+			infoContent += "  " + m.inlineSearchError
+		}
 	} else if m.searchQuery != "" {
 		infoContent = fmt.Sprintf(" Search: %q", m.searchQuery)
 	} else if m.loading && m.analyticsNotice != "" {
 		infoContent = " " + m.analyticsNotice
 	}
-	sb.WriteString(m.renderInfoLine(infoContent, isLoading))
+	sb.WriteString(m.renderInfoLine(infoContent, m.isLoading()))
 
 	// Overlay modal if active
 	if m.modal != modalNone {
@@ -647,7 +649,6 @@ func (m Model) messageListView() string {
 
 	// Info line - show inline search bar when active, search info when searching, otherwise blank
 	var infoContent string
-	isLoading := m.loading || m.inlineSearchLoading || m.searchLoadingMore
 	if m.inlineSearchActive {
 		modeTag := "[Fast]"
 		switch m.searchMode {
@@ -658,6 +659,11 @@ func (m Model) messageListView() string {
 			modeTag = "[Semantic: active messages only]"
 		}
 		infoContent = modeTag + "/" + m.searchInput.View()
+		if m.inlineSearchError != "" {
+			infoContent += "  " + m.inlineSearchError
+		}
+	} else if m.deletionLoading {
+		infoContent = " Resolving all deletion matches…"
 	} else if m.searchQuery != "" {
 		infoContent = fmt.Sprintf(" Search: %q", m.searchQuery)
 		if m.searchTotalCount > 0 {
@@ -675,7 +681,7 @@ func (m Model) messageListView() string {
 			infoContent += " [Semantic: active messages only]"
 		}
 	}
-	sb.WriteString(m.renderInfoLine(infoContent, isLoading))
+	sb.WriteString(m.renderInfoLine(infoContent, m.isLoading()))
 
 	// Overlay modal if active
 	if m.modal != modalNone {
@@ -683,6 +689,10 @@ func (m Model) messageListView() string {
 	}
 
 	return sb.String()
+}
+
+func (m Model) isLoading() bool {
+	return m.loading || m.inlineSearchLoading || m.searchLoadingMore || m.deletionLoading
 }
 
 // buildDetailLines constructs the lines for message detail view.
@@ -1215,7 +1225,8 @@ var rawHelpLines = []string{
 	"  Space       Toggle selection",
 	"  S           Select all visible",
 	"  x           Clear selection",
-	"  d/D         Stage for deletion",
+	"  d           Stage selected/current for deletion",
+	"  D           Stage all current row/filter matches",
 	"  a           View all messages",
 	"",
 	"Other",
@@ -1224,6 +1235,7 @@ var rawHelpLines = []string{
 	"  f           Filter (attachments, deleted)",
 	"  e           Browse attachments (in message view)",
 	"  m           Cycle Email/Texts/Meetings/People",
+	"  ,           Open Settings",
 	"  q           Quit",
 	"",
 	"[↑/↓] Scroll  [Any other key] Close",
@@ -1249,6 +1261,7 @@ var meetingHelpLines = []string{
 	"",
 	"Other",
 	"  m           Cycle Email/Texts/Meetings/People",
+	"  ,           Open Settings",
 	"  ?           Show this help",
 	"  q           Quit",
 	"",
@@ -1275,6 +1288,7 @@ var peopleHelpLines = []string{
 	"",
 	"Other",
 	"  m           Cycle Email/Texts/Meetings/People",
+	"  ,           Open Settings",
 	"  ?           Show this help",
 	"  q           Quit",
 	"",

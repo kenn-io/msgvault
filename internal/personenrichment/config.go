@@ -177,6 +177,34 @@ func (c ProviderConfig) Validate() error {
 	return c.validatePolicy(true)
 }
 
+// CredentialEndpoint returns the endpoint origin that may receive this
+// provider's credential. Asynchronous providers must keep every credential-
+// bearing endpoint on that same origin.
+func (c ProviderConfig) CredentialEndpoint() (string, error) {
+	endpoint, err := validateHTTPSEndpoint("endpoint", c.Endpoint)
+	if err != nil {
+		return "", err
+	}
+	switch c.Kind {
+	case ProviderExa:
+		if c.PollEndpoint != "" {
+			return "", errors.New("exa poll_endpoint must be empty")
+		}
+	case ProviderSixtyfour:
+		pollEndpoint, err := validateHTTPSEndpoint("poll_endpoint", c.PollEndpoint)
+		if err != nil {
+			return "", err
+		}
+		if !strings.EqualFold(endpoint.Scheme, pollEndpoint.Scheme) ||
+			!strings.EqualFold(endpoint.Host, pollEndpoint.Host) {
+			return "", errors.New("sixtyfour endpoint and poll_endpoint must use the same origin")
+		}
+	default:
+		return "", fmt.Errorf("kind must be %q or %q", ProviderExa, ProviderSixtyfour)
+	}
+	return c.Endpoint, nil
+}
+
 func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 	if c.Name == "" || c.Name != strings.TrimSpace(c.Name) || !providerNamePattern.MatchString(c.Name) {
 		return errors.New("name must be a CLI-safe token using only letters, digits, '.', '_', ':', or '-'")
@@ -184,7 +212,7 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 	if c.Kind != ProviderExa && c.Kind != ProviderSixtyfour {
 		return fmt.Errorf("kind must be %q or %q", ProviderExa, ProviderSixtyfour)
 	}
-	if _, err := validateHTTPSEndpoint("endpoint", c.Endpoint); err != nil {
+	if _, err := c.CredentialEndpoint(); err != nil {
 		return err
 	}
 	if c.APIKeyEnv == "" || !environmentNamePattern.MatchString(c.APIKeyEnv) {
@@ -237,9 +265,6 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 		if c.Mode != "people" && c.Mode != "deep" && c.Mode != "deep-reasoning" {
 			return fmt.Errorf("invalid Exa mode %q", c.Mode)
 		}
-		if c.PollEndpoint != "" {
-			return errors.New("exa poll_endpoint must be empty")
-		}
 		if c.Tier != "" {
 			return errors.New("exa tier must be empty")
 		}
@@ -247,9 +272,6 @@ func (c ProviderConfig) validatePolicy(enforceGuaranteedCost bool) error {
 			return errors.New("exa num_results must be exactly 1")
 		}
 	case ProviderSixtyfour:
-		if _, err := validateHTTPSEndpoint("poll_endpoint", c.PollEndpoint); err != nil {
-			return err
-		}
 		if strings.TrimSpace(c.Tier) == "" {
 			return errors.New("sixtyfour tier is required")
 		}

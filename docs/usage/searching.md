@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-30"
 title: Searching
 description: Gmail-like search syntax with full-text search and JSON output.
 ---
@@ -113,7 +114,7 @@ msgvault search --collection Work
 
 The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
 
-SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/architecture/search-ranking/).
+SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
 ## Source-Deleted Messages
 
@@ -133,6 +134,14 @@ applies to source deletion (`deleted_from_source_at`); rows hidden internally by
 deduplication are never returned. It is available only with `--mode fts` because
 the vector index intentionally covers active messages only. Vector and hybrid
 search reject non-active deletion scopes instead of returning incomplete results.
+
+Gmail incremental sync records History API deletion events. When the saved
+history cursor has expired, msgvault reconciles deletion metadata only after an
+unfiltered, unlimited snapshot of the complete mailbox succeeds. A regular
+`sync-full` result, including one narrowed by a query, limit, or date range, is
+not treated as proof that omitted messages were deleted. In either path, the
+archive retains the message and raw MIME data; only its source-presence metadata
+changes.
 
 HTTP clients can pass the same values as `deletion_scope` on
 `GET /api/v1/cli/search`.
@@ -186,5 +195,5 @@ The same `msgvault search` command supports semantic search when the
 selected local daemon or remote server has `[vector]` configured with
 an embedding endpoint. Pass
 `--mode vector` for pure semantic search, or `--mode hybrid` to fuse
-BM25 and vector ranking. See [Vector Search](/usage/vector-search/)
+BM25 and vector ranking. See [Vector Search](/docs/usage/vector-search/)
 for setup, initial embedding, and incremental update workflows.

@@ -94,82 +94,44 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   await expect(page.getByText('1 remote image is not loaded.')).toBeHidden();
 });
 
-test('activating a replacement API key rejects the old browser authority and requires login', async ({ page }) => {
-  let daemonRestarted = false;
-  let settingsPatch: { body: unknown; csrf: string | undefined; cookie: string | undefined } | undefined;
-  const authorizedAfterPatchCookies: Array<string | undefined> = [];
-  const rejectedCookies: Array<string | undefined> = [];
-  const restartBootstrapCookies: Array<string | undefined> = [];
-  const daemonKey = {
-    key: 'server.api_key', kind: 'secret', secret: { configured: true }, restart_required: true
-  };
-  await page.route('**/api/session', (route) => {
-    if (daemonRestarted) {
-      restartBootstrapCookies.push(route.request().headers().cookie);
-      return route.fulfill({
-        json: { auth_mode: 'required', https: true, plain_http_warning: false }
-      });
-    }
-    return route.fulfill({
-      headers: { 'Set-Cookie': 'msgvault_session=old-authority; Path=/; HttpOnly; SameSite=Strict' },
+test('daemon API key stays host-managed and never crosses the browser settings write boundary', async ({ page }) => {
+	let settingsPatch: unknown;
+	const daemonKey = {
+		key: 'server.api_key', group: 'server', label: 'Daemon API key',
+		description: 'Key used by remote clients and browser login.', kind: 'secret',
+		secret: { configured: true, source: 'environment' }, restart_required: true, read_only: true
+	};
+	await page.route('**/api/session', (route) => {
+		return route.fulfill({
+			headers: { 'Set-Cookie': 'msgvault_session=old-authority; Path=/; HttpOnly; SameSite=Strict' },
       json: { auth_mode: 'session', csrf_token: 'old-csrf', https: true, plain_http_warning: false }
     });
   });
-  await page.route('**/api/v1/settings', async (route) => {
-    if (route.request().method() === 'PATCH') {
-      settingsPatch = {
-        body: route.request().postDataJSON(),
-        csrf: route.request().headers()['x-csrf-token'],
-        cookie: route.request().headers().cookie
-      };
-      return route.fulfill({
-        headers: { ETag: '"settings-b"' },
-        json: { settings: [daemonKey], pending_restart: true }
-      });
-    }
+	await page.route('**/api/v1/settings', async (route) => {
+		if (route.request().method() === 'PATCH') {
+			settingsPatch = route.request().postDataJSON();
+			return route.fulfill({ status: 500, json: { error: 'browser_must_not_write_daemon_key' } });
+		}
     return route.fulfill({
       headers: { ETag: '"settings-a"' },
       json: { settings: [daemonKey], pending_restart: false }
     });
-  });
-  await page.route('**/api/v1/explore', (route) => {
-    if (daemonRestarted) {
-      rejectedCookies.push(route.request().headers().cookie);
-      return route.fulfill({ status: 401, json: {
-        error: 'unauthorized', message: 'The activated key invalidated the old session.'
-      } });
-    }
-    if (settingsPatch) authorizedAfterPatchCookies.push(route.request().headers().cookie);
-    return route.fulfill({ json: {
-      rows: [], total_count: 0, cache_revision: 'before-activation', search_provenance: {}
-    } });
+	});
+	await page.route('**/api/v1/explore', (route) => {
+		return route.fulfill({ json: {
+			rows: [], total_count: 0, cache_revision: 'host-managed-key', search_provenance: {}
+		} });
   });
 
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByLabel('New daemon API key').fill('replacement-key');
-  await page.getByLabel('I understand the API key changes after restart').check();
-  await page.getByRole('button', { name: 'Save settings' }).click();
-  await expect(page.getByRole('status')).toContainText('pending restart');
-  expect(settingsPatch).toEqual({
-    body: {
-      updates: [{ key: 'server.api_key', secret: { action: 'set', value: 'replacement-key' } }],
-      confirm_api_key_restart: true
-    },
-    csrf: 'old-csrf',
-    cookie: expect.stringContaining('msgvault_session=old-authority')
-  });
+	await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await expect(page.getByText('Configured')).toBeVisible();
+	await expect(page.getByText('Set via config.toml on the daemon host.')).toBeVisible();
+	await expect(page.getByLabel('New daemon API key')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Save settings' }).click();
+	expect(settingsPatch).toBeUndefined();
 
-  await page.getByRole('button', { name: 'Everything', exact: true }).click();
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
-  expect(authorizedAfterPatchCookies).toEqual([expect.stringContaining('msgvault_session=old-authority')]);
-  expect(rejectedCookies).toEqual([]);
-
-  daemonRestarted = true;
-  await page.reload();
-  await expect(page.getByRole('main', { name: 'Authentication' })).toBeVisible();
-  await expect(page.getByLabel('API key')).toBeVisible();
-  expect(restartBootstrapCookies).toEqual([expect.stringContaining('msgvault_session=old-authority')]);
-  expect(rejectedCookies).toEqual([]);
+	await page.getByRole('button', { name: 'Everything', exact: true }).click();
+	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
 });

@@ -135,6 +135,7 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 	}{
 		{"communication services", "/api/v1/communication-services"},
 		{"structured profile", fmt.Sprintf("/api/v1/people/%d/profile", person.ID)},
+		{"person network", fmt.Sprintf("/api/v1/people/%d/network", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)

@@ -21,6 +21,9 @@ var (
 	ErrPersonCardDAVPublished             = errors.New("person has CardDAV publication state")
 	ErrPersonMergeActive                  = errors.New("person has active merge lineage")
 	ErrPersonEnrichmentDispatchInProgress = errors.New("person enrichment provider dispatch is in progress")
+	ErrInvalidDirectoryQuery              = errors.New("invalid directory query")
+	ErrInvalidDirectoryCursor             = errors.New("invalid directory cursor")
+	ErrDirectoryProjectionStale           = errors.New("directory projection is stale")
 )
 
 // PersonBindingConflictError reports the curated people that would be

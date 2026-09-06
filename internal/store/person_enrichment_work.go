@@ -321,6 +321,14 @@ func (s *Store) ClaimWork(
 		return nil, errors.New("person enrichment claim options are invalid")
 	}
 	options.Now = options.Now.UTC()
+	return retryContendedWrite(ctx, s, "claim person enrichment work", func() (*personenrichment.WorkLease, error) {
+		return s.claimWorkOnce(ctx, options)
+	})
+}
+
+func (s *Store) claimWorkOnce(
+	ctx context.Context, options personenrichment.ClaimOptions,
+) (*personenrichment.WorkLease, error) {
 	leaseUntil := options.Now.Add(options.LeaseDuration)
 	var lease *personenrichment.WorkLease
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {

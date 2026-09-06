@@ -148,7 +148,7 @@ without a limit to continue normal incremental operation.
 
 ### Browse in the Web UI or TUI
 
-Start `msgvault serve` and open the [Web UI](/web-ui/) to include meetings in
+Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to include meetings in
 Everything, search their titles and transcripts, group them with other archive
 modalities, or filter to meeting notes only. Open a result to read the note in
 its containing context.

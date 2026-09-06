@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-31"
+last_edited: "2026-09-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -62,7 +62,7 @@ msgvault add-account <email> --oauth-app <name>
 | `--headless` | Show instructions for headless server setup |
 | `--oauth-app` | Use a named OAuth app from `[oauth.apps.<name>]` in config |
 | `--force` | Delete existing token and re-authorize |
-| `--readonly` | Request Gmail read-only access instead of read + write. Refused if the account already holds write access — see [OAuth Setup](/guides/oauth-setup/#read-only-access) |
+| `--readonly` | Request Gmail read-only access instead of read + write. Refused if the account already holds write access — see [OAuth Setup](/docs/guides/oauth-setup/#read-only-access) |
 | `--display-name` | Set a display name for the account |
 | `--no-default-identity` | Do not auto-confirm the email address as this account's "me" identity |
 
@@ -99,7 +99,7 @@ It tests the connection before saving credentials.
 
 Credentials are stored in `tokens/imap_<hash>.json` with restricted file permissions (0600). Use app-specific passwords when your provider supports them.
 
-After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/setup/#add-an-imap-account) for a walkthrough.
+After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
 
 ---
 
@@ -115,7 +115,7 @@ msgvault list-folders [account]
 Use the folder names in repeated `--folder` or `--skip-folder` flags on
 `sync-full` and `sync`. When the account argument is omitted, the command lists
 folders for every configured IMAP account. See
-[IMAP Folder Sync](/usage/imap/) for examples and matching rules.
+[IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
 
 ---
 
@@ -129,7 +129,7 @@ msgvault add-o365 <email>
 
 The command opens your browser for Microsoft OAuth consent, then configures IMAP with XOAUTH2 automatically. The correct IMAP host is auto-detected: `outlook.office.com` for personal accounts (hotmail.com, outlook.com, live.com, msn.com) and `outlook.office365.com` for organizational accounts.
 
-Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for Azure AD app registration.
+Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for Azure AD app registration.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -153,7 +153,7 @@ msgvault add-teams <email> --tenant <tenant-id>
 This stores a Teams Graph token under `tokens/teams_<email>.json`, separate from
 the Microsoft IMAP token used by `add-o365`. Requires `[microsoft].client_id` in
 `config.toml` and the Graph permissions documented in
-[Microsoft Teams](/usage/teams/).
+[Microsoft Teams](/docs/usage/teams/).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -188,7 +188,7 @@ Intent, channel-history, and private-thread access issues.
 | `--oauth-app` | sole/default bot | Discord token binding label; no `[oauth.apps]` entry is required |
 
 After registering a guild, sync it with `msgvault sync-discord`. See
-[Discord](/usage/discord/) for least-privilege bot setup and multi-bot binding
+[Discord](/docs/usage/discord/) for least-privilege bot setup and multi-bot binding
 rules.
 
 ---
@@ -223,6 +223,12 @@ and streams the daemon's stdout/stderr back to the terminal. This keeps local
 and remote full sync behavior aligned and avoids running a separate direct
 SQLite writer beside `msgvault serve`.
 
+`sync-full` does not infer source deletion from messages absent from its result
+set. This is especially important with `--query`, `--limit`, or date filters,
+where the listing is intentionally incomplete. Gmail source-deletion
+reconciliation happens only during the complete mailbox recovery described
+under [`sync`](#sync).
+
 ---
 
 ## sync
@@ -244,7 +250,20 @@ local daemon and streams the daemon's stdout/stderr back to the terminal. The
 daemon serializes this work with other archive mutations.
 
 Folder filters are applied only to IMAP accounts. See
-[IMAP Folder Sync](/usage/imap/) for examples and matching rules.
+[IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
+
+For Gmail, normal incremental sync consumes History API deletion events and
+marks those messages as deleted from the source. If Gmail says the saved history
+cursor has expired, msgvault recovers with an unfiltered, unlimited snapshot of
+the complete mailbox, then consumes changes made while that snapshot was in
+progress. Only a successfully completed snapshot is used to mark missing
+messages as source-deleted; interrupted or partial listings do not reconcile
+absence.
+
+Source deletion updates archive metadata rather than deleting local message or
+raw MIME data. Search excludes source-deleted messages by default; use
+`msgvault search ... --deletion-scope deleted` or `--deletion-scope any` to find
+retained history. See [Source-Deleted Messages](/docs/usage/searching/#source-deleted-messages).
 
 ---
 
@@ -269,7 +288,7 @@ so importer upgrades can repair existing data without creating duplicates.
 | `--limit` | `0` | Maximum messages per conversation (`0` = unlimited) |
 | `--full` | `false` | Ignore stored cursor and re-fetch every message |
 
-See [Microsoft Teams](/usage/teams/) for setup, scheduling, search, and inline
+See [Microsoft Teams](/docs/usage/teams/) for setup, scheduling, search, and inline
 media backfill.
 
 ---
@@ -297,7 +316,7 @@ aggregate error.
 
 Normal runs re-scan the configured trailing edit window, seven days by
 default. `--full --after` bounds both re-fetch and deletion repair and leaves
-earlier rows untouched. See [Discord](/usage/discord/) for per-channel/thread
+earlier rows untouched. See [Discord](/docs/usage/discord/) for per-channel/thread
 checkpoint and deletion semantics.
 
 ---
@@ -349,7 +368,7 @@ removed from the archive and directs you to run `add-granola` again.
 | `--after` | — | Full-sync only notes created after this date (YYYY-MM-DD; implies `--full`) |
 | `--full` | `false` | Ignore stored cursor and re-fetch every note |
 
-See [Meeting Transcripts](/usage/meetings/) for setup and what gets stored.
+See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
@@ -392,7 +411,7 @@ maintenance runs outside `--limit`.
 | `--full` | `false` | Force selected snapshots through archive upsert instead of skipping matching checksums |
 | `--probe` | `false` | Validate capabilities and result shape without printing meeting content |
 
-See [Meeting Transcripts](/usage/meetings/#notion-ai-meeting-notes) for setup,
+See [Meeting Transcripts](/docs/usage/meetings/#notion-ai-meeting-notes) for setup,
 privacy, retry behavior, and stored evidence.
 
 ---
@@ -456,7 +475,7 @@ cancellation failures fail the sync and preserve the prior successful cursor.
 | `--full` | `false` | Ignore stored cursor and re-fetch every meeting |
 | `--probe` | `false` | Print the MCP tool inventory and a sample result instead of syncing |
 
-See [Meeting Transcripts](/usage/meetings/) for setup and what gets stored.
+See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
@@ -502,14 +521,14 @@ run sequentially using the same aggregate-failure behavior as
 Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
-[Discord](/usage/discord/#attachment-backfill-and-limits).
+[Discord](/docs/usage/discord/#attachment-backfill-and-limits).
 
 ---
 
 ## add-beeper
 
 Register the chat accounts connected to a locally running
-[Beeper Desktop](/usage/beeper/) as `beeper` sources, one per network.
+[Beeper Desktop](/docs/usage/beeper/) as `beeper` sources, one per network.
 
 ```bash
 msgvault add-beeper
@@ -543,7 +562,7 @@ is resumable; later runs are incremental. Per-account failures do not stop the
 run: remaining accounts still sync, the analytics cache is rebuilt for the
 successful ones, and the command exits non-zero listing the failures. Without
 `--account`, the `[beeper]` config `accounts`/`exclude_accounts` filters
-select which registered sources sync. See [Beeper](/usage/beeper/).
+select which registered sources sync. See [Beeper](/docs/usage/beeper/).
 
 ```bash
 msgvault sync-beeper
@@ -581,7 +600,7 @@ msgvault backfill-beeper-media --account signal
 
 ## add-slack
 
-Register a [Slack workspace](/usage/slack/) as a `slack` source. Requires a
+Register a [Slack workspace](/docs/usage/slack/) as a `slack` source. Requires a
 user token (`xoxp-…`) from an internal Slack app you create (see the usage
 guide for the two-minute setup and scope list). The token is validated with
 `auth.test` plus a `search.messages` probe (thread-reply archiving needs the
@@ -610,7 +629,7 @@ your account from `users.json` by exact Slack user ID or unique profile email.
 The import preserves conversations, threads, reactions, raw JSON, identities,
 and exported files. The path must be local to the daemon host; exports are not
 uploaded through a configured remote. See
-[Slack](/usage/slack/#import-a-slackdump-export).
+[Slack](/docs/usage/slack/#import-a-slackdump-export).
 
 ```bash
 msgvault import-slackdump --me you@example.com /path/to/export
@@ -634,7 +653,7 @@ resumable; later runs are incremental and sweep for thread replies created
 since the last run (any thread age). Per-workspace failures do not stop the run: remaining workspaces
 still sync and the command exits non-zero listing the failures. The `[slack]`
 config `channels`/`exclude_channels` filters select which channels sync. See
-[Slack](/usage/slack/).
+[Slack](/docs/usage/slack/).
 
 ```bash
 msgvault sync-slack
@@ -724,7 +743,7 @@ The export file may be a plain mbox file (any extension) or a `.zip` containing 
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
 
-See [Importing Local Email](/usage/importing/) for usage examples.
+See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
 ---
 
@@ -761,7 +780,7 @@ reports the number of partial files imported.
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
 
-See [Importing Local Email](/usage/importing/) for usage examples.
+See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
 ---
 
@@ -783,7 +802,7 @@ The importer preserves PST folder structure as labels, imports email messages, a
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 
-See [Importing Local Email](/usage/importing/) for usage examples.
+See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
 ---
 
@@ -806,7 +825,7 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--display-name` | No | Display name for the phone owner |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
-See [Text Messages](/usage/text-messages/) for usage examples.
+See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
@@ -829,7 +848,7 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
 
-See [Text Messages](/usage/text-messages/) for usage examples.
+See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
@@ -850,7 +869,7 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
-See [Text Messages](/usage/text-messages/) for usage examples.
+See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
@@ -870,7 +889,7 @@ msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 
-See [Text Messages](/usage/text-messages/) for usage examples.
+See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
@@ -890,7 +909,7 @@ msgvault import-synctech-sms <path> --owner-phone <your-number>
 | `--calls` | `true` | Import call logs |
 | `--attachments` | `true` | Import MMS attachments |
 
-See [Text Messages](/usage/text-messages/) for usage examples.
+See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
@@ -1022,7 +1041,7 @@ target with that flag to guarantee a fully loose result. An overwritten target
 can retain uncataloged old pack files, and `unpack-attachments` processes only
 cataloged packs, so overwrite cannot currently make the same guarantee.
 Restoring into the live archive home of a running daemon is refused. See
-[Backup](/usage/backup/) for repository format, scheduling, verification, and
+[Backup](/docs/usage/backup/) for repository format, scheduling, verification, and
 privacy details.
 
 ---
@@ -1110,7 +1129,7 @@ The query accepts `list:` and `list-id:` as equivalent RFC 2919 List-Id
 filters. Values are case-insensitive literal substrings; quote values that
 contain spaces. Repeating either alias requires every value to match.
 
-`--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/usage/searching/) for the operator reference and [Vector Search](/usage/vector-search/) for semantic setup.
+`--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/docs/usage/searching/) for the operator reference and [Vector Search](/docs/usage/vector-search/) for semantic setup.
 
 ---
 
@@ -1125,6 +1144,33 @@ msgvault repair-list-ids [--apply]
 
 The default is a dry run and does not modify the archive. Pass `--apply` to
 write changed values and mark derived analytics stale for the normal rebuild path.
+
+---
+
+## repair-labels
+
+Rebuild an IMAP source's message labels from its stored mailbox memberships,
+without contacting the provider.
+
+```bash
+msgvault repair-labels [identifier] [--apply]
+```
+
+An add-only label merge — used when a sync's mailbox snapshot is incomplete or
+a dedup match is not fully confirmed — never removes a label. If the
+message's stored membership never changes again, nothing later revisits it,
+and a stray label can persist. `repair-labels` rebuilds a message's labels
+straight from `imap_message_memberships`, the same rebuild a full mailbox
+enumeration performs, without a live IMAP connection.
+
+With no identifier, every IMAP source is repaired. An identifier scopes the
+repair to one matching source. The default is a dry run and does not modify
+the archive. Pass `--apply` to write changed labels and mark derived
+analytics stale for the normal rebuild path.
+
+| Flag | Description |
+|---|---|
+| `--apply` | Write repaired labels to the archive. |
 
 ---
 
@@ -1157,7 +1203,7 @@ review their disclosure and preflight.
 and bound to a stable index revision; restart pagination after a stale-cursor
 error.
 
-See [Document Attachment Indexing](/usage/document-indexing/) for fixture
+See [Document Attachment Indexing](/docs/usage/document-indexing/) for fixture
 generation, configuration, privacy boundaries, scheduling, and recovery.
 
 ---
@@ -1174,7 +1220,7 @@ msgvault tui [flags]
 |---|---|
 | `--local` | Use the local daemon instead of the configured remote server |
 
-Analytics engine and cache behavior are daemon-managed. Configure `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` to force live SQL, require DuckDB, or disable automatic cache builds. See [Configuration: analytics](/configuration/#analytics).
+Analytics engine and cache behavior are daemon-managed. Configure `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` to force live SQL, require DuckDB, or disable automatic cache builds. See [Configuration: analytics](/docs/configuration/#analytics).
 
 Deprecated in 0.17.0: the older TUI-only `--force-sql`, `--no-cache-build`, and `--no-sqlite-scanner` flags are hidden and no longer control the foreground CLI. Use `[analytics].engine = "sql"` for live SQL, `[analytics].auto_build_cache = false` to skip daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host.
 
@@ -1208,7 +1254,7 @@ manifest, all sources, all conversations, all messages, and one completion
 record with counts. A missing completion record means the stream is partial
 and must be rejected. Stdout contains JSONL only; diagnostics use stderr.
 
-See [Exporting Data](/usage/exporting/) for the full record, identity, ordering,
+See [Exporting Data](/docs/usage/exporting/) for the full record, identity, ordering,
 and validation contract.
 
 ---
@@ -1243,7 +1289,7 @@ msgvault export-attachment <content-hash> [flags]
 
 The `--json`, `--base64`, and `--output` flags are mutually exclusive.
 
-See [Exporting Data](/usage/exporting/) for usage examples.
+See [Exporting Data](/docs/usage/exporting/) for usage examples.
 
 ---
 
@@ -1259,7 +1305,7 @@ msgvault export-attachments <message-id> [flags]
 |---|---|
 | `-o`, `--output <dir>` | Output directory (default: current directory) |
 
-Accepts internal numeric IDs or Gmail message IDs. See [Exporting Data](/usage/exporting/) for usage examples.
+Accepts internal numeric IDs or Gmail message IDs. See [Exporting Data](/docs/usage/exporting/) for usage examples.
 
 ---
 
@@ -1358,7 +1404,7 @@ Email sync enriches identities already confirmed for the source with strong
 sender evidence from trusted Sent metadata; it does not confirm first-time
 aliases. Review candidates with `msgvault identity discover` and apply strong
 candidates with `msgvault identity discover --apply`. Recipient-only evidence
-stays review-only. See [People, Profiles, and Source Identities](/usage/people/)
+stays review-only. See [People, Profiles, and Source Identities](/docs/usage/people/)
 for classifications, Fastmail inventory, and import formats.
 
 ---
@@ -1415,7 +1461,7 @@ Exact splits restore the pre-merge profiles when their lineage and referenced
 rows remain available. For partial splits, use `--json` to inspect ambiguous or
 unrestored rows. Complete merge packets retain merge-time profile values even
 after later redaction and require the strongest profile-data options when
-copied into a subset. See [People, Profiles, and Source Identities](/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
+copied into a subset. See [People, Profiles, and Source Identities](/docs/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
 for the workflow and lifecycle boundaries.
 
 | Attribute flag | Applies to | Description |
@@ -1434,8 +1480,42 @@ for the workflow and lifecycle boundaries.
 | `--json` | `list`, `set`, `clear` | Output structured JSON |
 
 Setting or clearing a value closes the current history row rather than deleting
-it. See [People, Profiles, and Source Identities](/usage/people/) for the
+it. See [People, Profiles, and Source Identities](/docs/usage/people/) for the
 shipped definitions and complete workflow.
+
+---
+
+## person provider set
+
+Update the mutable policy fields of an existing named people inference provider
+profile in place. The protocol, endpoint, auth scheme, credential source,
+executable, execution boundary, selection, and enablement stay unchanged.
+
+```bash
+msgvault person provider set <name> --model <model> [flags]
+```
+
+The command reruns the exact synthetic provider check and revokes consent for
+the previous fingerprint. Grant fresh consent with
+`msgvault person provider consent <name> --yes` after reviewing the updated
+policy. A running local daemon requires `msgvault daemon restart` before its
+scheduled sweeps observe the change. Configured remote daemons refuse this
+mutation; run it on the daemon host or pass `--local`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model` | unchanged | Provider model identifier |
+| `--retention-posture` | unchanged | Provider retention assertion |
+| `--training-posture` | unchanged | Provider training assertion |
+| `--source` | unchanged | Allowed source class; repeatable, replaces the existing list |
+| `--source-since` | unchanged | Earliest disclosed source date |
+| `--source-until` | unchanged | Latest disclosed source date |
+| `--allow-sensitive` | unchanged | Allow sensitive text in provider packets |
+| `--reasoning-effort` | unchanged | Explicit reasoning effort |
+| `--reasoning-mode` | unchanged | Explicit reasoning mode |
+| `--request-timeout` | unchanged | Provider request timeout |
+| `--yes` | `false` | Confirm the final provider and privacy values; required |
+| `--json` | `false` | Output structured JSON |
 
 ---
 
@@ -1618,7 +1698,7 @@ Use this if `verify` reports FTS5 shadow-table corruption such as a malformed in
 
 ## embeddings
 
-Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
+Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
 
 ```bash
 msgvault embeddings <subcommand> [flags]
@@ -1650,7 +1730,7 @@ Without `--full-rebuild`, the command is incremental: it resumes any in-flight r
 The account scope is part of the generation fingerprint, so building with a
 different `--account`/`--collection` set than the active generation requires
 `--full-rebuild`, exactly like changing the model. See
-[Scoped Generations](/usage/vector-search/#scoped-generations).
+[Scoped Generations](/docs/usage/vector-search/#scoped-generations).
 
 ### embeddings resume
 
@@ -1726,7 +1806,7 @@ If the analytics cache is stale, it is automatically rebuilt before the query ru
 |---|---|---|
 | `--format` | `json` | Output format: `json`, `csv`, or `table` |
 
-See [SQL Queries](/usage/querying/) for available views and example queries.
+See [SQL Queries](/docs/usage/querying/) for available views and example queries.
 
 ---
 
@@ -1740,12 +1820,12 @@ msgvault mcp [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/configuration/#analytics). |
+| `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 
-See [MCP Server](/usage/chat/) for configuration and tool reference.
+See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
 ---
 
@@ -1772,7 +1852,7 @@ marker are preserved unless `--force` is supplied.
 
 `skills uninstall` accepts `--agent` and `--dir` with the same target
 semantics, and removes only generated copies that still carry the marker. See
-[Agent Skills](/guides/agent-skills/) for the workflow and safety model.
+[Agent Skills](/docs/guides/agent-skills/) for the workflow and safety model.
 
 ---
 
@@ -1806,7 +1886,7 @@ msgvault daemon restart
 
 `start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; incompatible running daemons are reported with a prompt to stop them first.
 
-The lifecycle commands have no command-specific flags. All configuration (port, bind address, API key, CORS, account schedules, SyncTech SMS sources, background idle timeout, daemon restart policy, and vector embedding schedule) is read from your `config.toml`. See [Web UI & API Server](/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/configuration/#vectorembedschedule).
+The lifecycle commands have no command-specific flags. All configuration (port, bind address, API key, CORS, account schedules, SyncTech SMS sources, background idle timeout, daemon restart policy, and vector embedding schedule) is read from your `config.toml`. See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
 Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
 
@@ -1915,6 +1995,66 @@ Attachment files are only deleted when no other account references the same
 content hash. A Discord bot token is preserved while another registered guild
 uses it, and deleted after its last source is removed. The shared Parquet
 analytics cache is rebuilt automatically.
+
+---
+
+## stage-delete
+
+Stage active messages as a pending deletion batch using exactly one selector:
+Gmail-like search criteria or a comma-separated list of explicit internal message
+IDs. The query form uses the daemon's search and preflight checks before staging;
+the ID form sends the existing `message_ids` field directly to the daemon. The
+command does not delete messages from a provider.
+
+In query mode, staging is refused while the daemon is still verifying or
+rebuilding its full-text search index, or while its analytical cache is unavailable, because an
+incomplete index could silently omit matching messages. Both states resolve in
+the background; retry when they finish. These search-index and analytical-cache
+requirements apply to query mode.
+
+In query mode, like deletion staging in the TUI and Web UI, the selection is
+resolved against the committed analytical snapshot, so messages synced after the most recent
+cache build are not included until the daemon refreshes the cache (it does so
+automatically after each sync). Re-run the command after a refresh to stage
+newly synced matches.
+
+```bash
+msgvault stage-delete <query>
+msgvault stage-delete --ids 123,456,789
+```
+
+Exactly one of `<query>` and `--ids IDS` is required. The selectors are mutually
+exclusive, and `--ids` is also mutually exclusive with `--source-id`.
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Show the match count without creating a deletion batch |
+| `--source-id ID` | Restrict staging to one exact source ID |
+| `--ids IDS` | Stage positive, unique, comma-separated internal message IDs instead of a query |
+
+Deletion staging covers Gmail-source email only. The daemon rejects a selection
+that includes anything else — chats, meetings, calendar entries, or mail from
+non-Gmail sources such as Apple Mail imports — rather than staging a subset of
+what matched. Narrow the search until it matches only deletable mail, for
+example with `message_type:email` in the query and `--source-id` for the Gmail
+source. This query narrowing guidance applies to query mode. In ID mode, the
+daemon resolves live Gmail targets and source boundaries for the requested IDs;
+IDs that do not resolve to live deletable Gmail messages with provider message
+IDs are omitted, so the
+reported count is the number of targets resolved by the daemon; the CLI does
+not search, probe FTS readiness, call Explore or preflight, or require
+analytical-cache readiness. A newly started local daemon may initialize its
+cache in the background for later query consumers.
+
+For a query that resolves to one source, the source selector is optional. For a
+multi-source query, provide `--source-id` for each source:
+
+```bash
+msgvault stage-delete --source-id 42 "from:newsletter@example.com older_than:1y"
+```
+
+Review a created batch with `msgvault show-deletion <batch-id>`, then execute it
+with `msgvault delete-staged <batch-id>`.
 
 ---
 
@@ -2084,7 +2224,7 @@ msgvault completion powershell | Out-String | Invoke-Expression
 
 ## logs
 
-View and tail structured log files from the selected daemon. With `[remote].url` configured, this shows remote daemon logs; otherwise it starts or contacts the local daemon. File logging must be enabled first (see [Configuration: Log](/configuration/#log)).
+View and tail structured log files from the selected daemon. With `[remote].url` configured, this shows remote daemon logs; otherwise it starts or contacts the local daemon. File logging must be enabled first (see [Configuration: Log](/docs/configuration/#log)).
 
 ```bash
 msgvault logs [flags]

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -9,6 +10,32 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestCardDAVPublicationStateSourceDoesNotCopyMutationEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, _, book := newCardDAVResourceStore(t)
+	var personID int64
+	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+		VALUES ('safe-source-person', 'Safe Source Person') RETURNING id`).Scan(&personID))
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	privateMarker := "private-mutation-evidence"
+	_, err = st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: personID, Desired: true, AddressBookID: book.ID,
+		Href:                 book.CanonicalURL + "safe-source-person.vcf",
+		OutgoingBody:         []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:" + privateMarker + "\r\nEND:VCARD\r\n"),
+		OutgoingSemanticHash: privateMarker, LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+
+	source, err := st.GetCardDAVPublicationStateSourceContext(t.Context(), personID)
+	require.NoError(err)
+	encoded, err := json.Marshal(source) //nolint:musttag // Marshal the internal projection to prove private fields are absent.
+	require.NoError(err)
+	assert.NotContains(string(encoded), privateMarker)
+	assert.NotContains(string(encoded), "OutgoingBody")
+}
 
 func TestCardDAVPublicationPreparePersistsExactCreateIntent(t *testing.T) {
 	assert := assert.New(t)

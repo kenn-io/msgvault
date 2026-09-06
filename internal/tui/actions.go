@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -36,6 +39,39 @@ type DeletionContext struct {
 	TimeGranularity    query.TimeGranularity
 	Messages           []query.MessageSummary
 	DrillFilter        *query.MessageFilter
+	AllMatches         bool
+	SearchQuery        string
+	SearchMode         searchModeKind
+	MatchFilter        query.MessageFilter
+	AggregateMatchKey  *string
+}
+
+type allMatchesManifestProvenance struct {
+	Scope       string                   `json:"scope"`
+	SearchQuery string                   `json:"search_query,omitempty"`
+	SearchMode  string                   `json:"search_mode,omitempty"`
+	MatchFilter allMatchesManifestFilter `json:"match_filter"`
+}
+
+type allMatchesManifestFilter struct {
+	Sender                string     `json:"sender,omitempty"`
+	SenderName            string     `json:"sender_name,omitempty"`
+	Recipient             string     `json:"recipient,omitempty"`
+	RecipientName         string     `json:"recipient_name,omitempty"`
+	Domain                string     `json:"domain,omitempty"`
+	Label                 string     `json:"label,omitempty"`
+	ListID                string     `json:"list_id,omitempty"`
+	MessageType           string     `json:"message_type,omitempty"`
+	ConversationID        *int64     `json:"conversation_id,omitempty"`
+	EmptyValueTargets     []string   `json:"empty_value_targets,omitempty"`
+	TimePeriod            string     `json:"time_period,omitempty"`
+	TimeGranularity       string     `json:"time_granularity,omitempty"`
+	SourceID              *int64     `json:"source_id,omitempty"`
+	SourceIDs             []int64    `json:"source_ids,omitempty"`
+	After                 *time.Time `json:"after,omitempty"`
+	Before                *time.Time `json:"before,omitempty"`
+	WithAttachmentsOnly   bool       `json:"attachments_only,omitempty"`
+	HideDeletedFromSource bool       `json:"hide_deleted_from_source,omitempty"`
 }
 
 // ActionController handles business logic for actions like deletion and export,
@@ -111,12 +147,25 @@ func (c *ActionController) SaveManifest(manifest *deletion.Manifest) error {
 
 // StageForDeletion prepares messages for deletion based on selection.
 func (c *ActionController) StageForDeletion(ctx DeletionContext) (*deletion.Manifest, error) {
-	targets, err := c.resolveDeletionTargets(ctx)
+	return c.StageForDeletionContext(context.Background(), ctx)
+}
+
+// StageForDeletionContext prepares messages for deletion and lets callers
+// cancel long-running all-match resolution.
+func (c *ActionController) StageForDeletionContext(
+	ctx context.Context,
+	dctx DeletionContext,
+) (*deletion.Manifest, error) {
+	dctx = normalizeEmptyDeletionSearch(dctx)
+	targets, err := c.resolveDeletionTargets(ctx, dctx)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(targets) == 0 {
+		if dctx.AllMatches {
+			return nil, errors.New("no deletable messages match the current filter or search")
+		}
 		return nil, errors.New("no messages selected")
 	}
 	source, err := deletion.SourceReferenceForTargets(targets)
@@ -128,26 +177,98 @@ func (c *ActionController) StageForDeletion(ctx DeletionContext) (*deletion.Mani
 	}
 	gmailIDs := deletion.SourceMessageIDs(targets)
 
-	description := c.buildManifestDescription(ctx)
+	description := c.buildManifestDescription(dctx)
 	manifest := deletion.NewManifestForSource(description, gmailIDs, source)
 	manifest.CreatedBy = "tui"
 
-	c.applyManifestFilters(manifest, ctx)
+	c.applyManifestFilters(manifest, dctx)
+	if dctx.AllMatches {
+		searchMode := ""
+		if dctx.SearchQuery != "" {
+			if dctx.AggregateMatchKey != nil {
+				searchMode = string(query.DeletionSearchAggregate)
+			} else {
+				searchMode = deletionSearchModeName(dctx.SearchMode)
+			}
+		}
+		rawFilter, marshalErr := json.Marshal(allMatchesManifestProvenance{
+			Scope:       "all_matches",
+			SearchQuery: dctx.SearchQuery,
+			SearchMode:  searchMode,
+			MatchFilter: manifestMatchFilter(dctx.MatchFilter),
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("record deletion match provenance: %w", marshalErr)
+		}
+		manifest.RawFilter = rawFilter
+	}
 
 	return manifest, nil
 }
 
+func normalizeEmptyDeletionSearch(dctx DeletionContext) DeletionContext {
+	if !dctx.AllMatches {
+		return dctx
+	}
+	queryString := strings.TrimSpace(dctx.SearchQuery)
+	if queryString == "" {
+		dctx.SearchQuery = ""
+		return dctx
+	}
+	parsed := search.Parse(queryString)
+	if parsed.Err() == nil && search.Format(parsed) == "" {
+		dctx.SearchQuery = ""
+	}
+	return dctx
+}
+
+func manifestMatchFilter(filter query.MessageFilter) allMatchesManifestFilter {
+	emptyTargets := make([]string, 0, len(filter.EmptyValueTargets))
+	for target, matchesEmpty := range filter.EmptyValueTargets {
+		if matchesEmpty {
+			emptyTargets = append(emptyTargets, target.String())
+		}
+	}
+	sort.Strings(emptyTargets)
+	return allMatchesManifestFilter{
+		Sender: filter.Sender, SenderName: filter.SenderName,
+		Recipient: filter.Recipient, RecipientName: filter.RecipientName,
+		Domain: filter.Domain, Label: filter.Label, ListID: filter.ListID, MessageType: filter.MessageType,
+		ConversationID: filter.ConversationID, EmptyValueTargets: emptyTargets,
+		TimePeriod: filter.TimeRange.Period, TimeGranularity: filter.TimeRange.Granularity.String(),
+		SourceID: filter.SourceID, SourceIDs: append([]int64(nil), filter.SourceIDs...),
+		After: filter.After, Before: filter.Before,
+		WithAttachmentsOnly:   filter.WithAttachmentsOnly,
+		HideDeletedFromSource: filter.HideDeletedFromSource,
+	}
+}
+
 // resolveGmailIDs converts selections (aggregate keys and message IDs) into Gmail IDs.
-func (c *ActionController) resolveDeletionTargets(dctx DeletionContext) ([]query.DeletionTarget, error) {
+func (c *ActionController) resolveDeletionTargets(ctx context.Context, dctx DeletionContext) ([]query.DeletionTarget, error) {
+	if dctx.AllMatches {
+		return c.resolveAllMatchingDeletionTargets(ctx, dctx)
+	}
+
 	targetsByMessageID := make(map[int64]query.DeletionTarget)
-	ctx := context.Background()
 
 	// From selected aggregates - resolve to Gmail IDs via query engine
 	if len(dctx.AggregateSelection) > 0 {
 		for key := range dctx.AggregateSelection {
 			filter := c.buildFilterForAggregate(key, dctx)
 
-			targets, err := c.queries.GetDeletionTargetsByFilter(ctx, filter)
+			var targets []query.DeletionTarget
+			var err error
+			if dctx.SearchQuery != "" {
+				resolver, ok := c.queries.(query.DeletionTargetAggregateSearchResolver)
+				if !ok {
+					return nil, errors.New("this query engine cannot resolve the displayed aggregate search safely")
+				}
+				targets, err = resolver.GetDeletionTargetsByAggregateSearch(
+					ctx, dctx.SearchQuery, filter, dctx.AggregateViewType, key,
+				)
+			} else {
+				targets, err = c.queries.GetDeletionTargetsByFilter(ctx, filter)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("error loading messages: %w", err)
 			}
@@ -185,14 +306,78 @@ func (c *ActionController) resolveDeletionTargets(dctx DeletionContext) ([]query
 	return targets, nil
 }
 
+func (c *ActionController) resolveAllMatchingDeletionTargets(
+	ctx context.Context,
+	dctx DeletionContext,
+) ([]query.DeletionTarget, error) {
+	filter := emailScopedMessageFilter(dctx.MatchFilter)
+	filter.Pagination = query.Pagination{}
+	if dctx.SearchQuery == "" {
+		targets, err := c.queries.GetDeletionTargetsByFilter(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("error loading messages: %w", err)
+		}
+		return targets, nil
+	}
+	if dctx.AggregateMatchKey != nil {
+		resolver, ok := c.queries.(query.DeletionTargetAggregateSearchResolver)
+		if !ok {
+			return nil, errors.New("this query engine cannot resolve the displayed aggregate search safely")
+		}
+		targets, err := resolver.GetDeletionTargetsByAggregateSearch(
+			ctx, dctx.SearchQuery, filter, dctx.AggregateViewType, *dctx.AggregateMatchKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error loading messages: %w", err)
+		}
+		return targets, nil
+	}
+	if dctx.SearchMode == searchModeSemantic {
+		return nil, errors.New("semantic search is ranked and bounded; switch to fast or deep search to stage every match")
+	}
+	parsed := search.Parse(dctx.SearchQuery)
+	if err := parsed.Err(); err != nil {
+		return nil, fmt.Errorf("invalid search query: %w", err)
+	}
+	resolver, ok := c.queries.(query.DeletionTargetSearchResolver)
+	if !ok {
+		return nil, errors.New("this query engine cannot resolve every search match safely")
+	}
+	mode := query.DeletionSearchFast
+	if dctx.SearchMode == searchModeDeep {
+		mode = query.DeletionSearchDeep
+	}
+	targets, err := resolver.GetDeletionTargetsBySearch(ctx, parsed, filter, mode)
+	if err != nil {
+		return nil, fmt.Errorf("error loading messages: %w", err)
+	}
+	return targets, nil
+}
+
+func deletionSearchModeName(mode searchModeKind) string {
+	switch mode {
+	case searchModeDeep:
+		return string(query.DeletionSearchDeep)
+	case searchModeSemantic:
+		return "semantic"
+	default:
+		return string(query.DeletionSearchFast)
+	}
+}
+
 // buildFilterForAggregate constructs a MessageFilter for a single aggregate key.
 func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionContext) query.MessageFilter {
-	// Start with drill-down filter as base (preserves parent context)
-	// Use Clone() to deep-copy the filter, preventing shared map mutation.
 	var filter query.MessageFilter
-	if dctx.DrillFilter != nil {
+	if dctx.AllMatches || dctx.SearchQuery != "" {
+		// Search-aware aggregate staging starts with the same complete scope
+		// used to render the aggregate, then adds the selected row below.
+		filter = dctx.MatchFilter.Clone()
+	} else if dctx.DrillFilter != nil {
+		// Selected aggregate staging preserves its parent drill-down context.
 		filter = dctx.DrillFilter.Clone()
 	}
+	filter.WithAttachmentsOnly = filter.WithAttachmentsOnly || dctx.MatchFilter.WithAttachmentsOnly
+	filter.HideDeletedFromSource = filter.HideDeletedFromSource || dctx.MatchFilter.HideDeletedFromSource
 	if dctx.AccountFilter != nil {
 		filter.SourceID = dctx.AccountFilter
 	}
@@ -204,19 +389,41 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 	switch dctx.AggregateViewType {
 	case query.ViewSenders:
 		filter.Sender = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewSenders)
+		}
+	case query.ViewSenderNames:
+		filter.SenderName = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewSenderNames)
+		}
 	case query.ViewRecipients:
 		filter.Recipient = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewRecipients)
+		}
+	case query.ViewRecipientNames:
+		filter.RecipientName = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewRecipientNames)
+		}
 	case query.ViewDomains:
 		filter.Domain = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewDomains)
+		}
 	case query.ViewLabels:
 		filter.Label = key
+		if key == "" {
+			filter.SetEmptyTarget(query.ViewLabels)
+		}
 	case query.ViewLists:
 		filter.ListID = key
 	case query.ViewTime:
 		filter.TimeRange.Period = key
 		filter.TimeRange.Granularity = dctx.TimeGranularity
 	default:
-		// SenderNames / RecipientNames / Count are not drill-down targets here.
+		// Count is a sentinel, not a drill-down target.
 	}
 	return filter
 }
@@ -224,7 +431,13 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 // buildManifestDescription generates a human-readable description for the manifest.
 func (c *ActionController) buildManifestDescription(ctx DeletionContext) string {
 	var description string
-	if len(ctx.AggregateSelection) == 1 {
+	if ctx.AllMatches && ctx.AggregateMatchKey != nil {
+		description = fmt.Sprintf("%s-%s", ctx.AggregateViewType.String(), *ctx.AggregateMatchKey)
+	} else if ctx.AllMatches && ctx.SearchQuery != "" {
+		description = "search-all-matches"
+	} else if ctx.AllMatches {
+		description = "all-matches"
+	} else if len(ctx.AggregateSelection) == 1 {
 		for key := range ctx.AggregateSelection {
 			description = fmt.Sprintf("%s-%s", ctx.AggregateViewType.String(), key)
 			break
@@ -256,6 +469,11 @@ func (c *ActionController) applyManifestFilters(m *deletion.Manifest, ctx Deleti
 		m.Filters.Account = ctx.Accounts[0].Identifier
 	}
 
+	if ctx.AllMatches {
+		applyMessageFilterToManifest(m, ctx.MatchFilter)
+		return
+	}
+
 	// Set context filters from all selected aggregates
 	if len(ctx.AggregateSelection) > 0 {
 		keys := make([]string, 0, len(ctx.AggregateSelection))
@@ -277,6 +495,36 @@ func (c *ActionController) applyManifestFilters(m *deletion.Manifest, ctx Deleti
 		default:
 			// SenderNames / RecipientNames / Time / Count don't map to manifest filters.
 		}
+	}
+}
+
+func applyMessageFilterToManifest(m *deletion.Manifest, filter query.MessageFilter) {
+	if filter.Sender != "" {
+		m.Filters.Senders = []string{filter.Sender}
+	}
+	if filter.Recipient != "" {
+		m.Filters.Recipients = []string{filter.Recipient}
+	}
+	if filter.Domain != "" {
+		m.Filters.SenderDomains = []string{filter.Domain}
+	}
+	if filter.Label != "" {
+		m.Filters.Labels = []string{filter.Label}
+	}
+	if filter.ListID != "" {
+		m.Filters.ListIDs = []string{filter.ListID}
+	}
+	after, before := filter.After, filter.Before
+	if filter.TimeRange.Period != "" {
+		if periodAfter, periodBefore, ok := query.ParseTimePeriodBounds(filter.TimeRange.Period); ok {
+			after, before = &periodAfter, &periodBefore
+		}
+	}
+	if after != nil {
+		m.Filters.After = after.Format(time.RFC3339)
+	}
+	if before != nil {
+		m.Filters.Before = before.Format(time.RFC3339)
 	}
 }
 
@@ -309,7 +557,11 @@ func (c *ActionController) ExportAttachments(detail *query.MessageDetail, select
 	zipFilename := fmt.Sprintf("%s_%d.zip", subject, detail.ID)
 
 	return func() tea.Msg {
-		stats := c.exportSelectedAttachments(zipFilename, attachmentsDir, selectedAttachments)
+		outputDir, err := c.attachmentOutputDirectory()
+		if err != nil {
+			return ExportResultMsg{Title: "Export Failed", Err: err}
+		}
+		stats := c.exportSelectedAttachments(filepath.Join(outputDir, zipFilename), attachmentsDir, selectedAttachments)
 		msg := ExportResultMsg{Title: "Export Complete", Result: export.FormatExportResult(stats)}
 		// Only set Err for true failures: write errors or zero exported files.
 		// Partial success (some files exported, some errors) should show the
@@ -398,27 +650,11 @@ func (c *ActionController) exportOneAttachment(att query.AttachmentInfo) (export
 	if att.URL != "" {
 		return export.ExportedFile{}, errors.New("URL-backed attachments can be opened but not downloaded")
 	}
-	outputDir := c.attachmentOutputDir
-	if outputDir == "" {
-		baseDir := c.dataDir
-		if baseDir == "" {
-			var err error
-			baseDir, err = os.UserCacheDir()
-			if err != nil {
-				return export.ExportedFile{}, fmt.Errorf("get user cache directory: %w", err)
-			}
-			baseDir = filepath.Join(baseDir, "msgvault")
-		}
-		outputDir = filepath.Join(baseDir, "downloads")
-	}
-	absOutputDir, err := filepath.Abs(outputDir)
+	outputDir, err := c.attachmentOutputDirectory()
 	if err != nil {
-		return export.ExportedFile{}, fmt.Errorf("resolve output directory: %w", err)
+		return export.ExportedFile{}, err
 	}
-	if err := fileutil.SecureMkdirAll(absOutputDir, 0o700); err != nil {
-		return export.ExportedFile{}, fmt.Errorf("create output directory: %w", err)
-	}
-	result := export.AttachmentsToDirWithOpener(absOutputDir, []query.AttachmentInfo{att}, c.attachmentOpener())
+	result := export.AttachmentsToDirWithOpener(outputDir, []query.AttachmentInfo{att}, c.attachmentOpener())
 	if len(result.Files) == 1 {
 		exported := result.Files[0]
 		marker := c.markUntrusted
@@ -434,6 +670,30 @@ func (c *ActionController) exportOneAttachment(att query.AttachmentInfo) (export
 		return export.ExportedFile{}, errors.New(result.Errors[0])
 	}
 	return export.ExportedFile{}, errors.New("attachment was not downloaded")
+}
+
+func (c *ActionController) attachmentOutputDirectory() (string, error) {
+	outputDir := c.attachmentOutputDir
+	if outputDir == "" {
+		baseDir := c.dataDir
+		if baseDir == "" {
+			var err error
+			baseDir, err = os.UserCacheDir()
+			if err != nil {
+				return "", fmt.Errorf("get user cache directory: %w", err)
+			}
+			baseDir = filepath.Join(baseDir, "msgvault")
+		}
+		outputDir = filepath.Join(baseDir, "exports")
+	}
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory: %w", err)
+	}
+	if err := fileutil.SecureMkdirAll(absOutputDir, 0o700); err != nil {
+		return "", fmt.Errorf("create output directory: %w", err)
+	}
+	return absOutputDir, nil
 }
 
 func (c *ActionController) attachmentOpener() export.AttachmentOpener {

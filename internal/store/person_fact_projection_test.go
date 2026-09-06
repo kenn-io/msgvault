@@ -615,7 +615,7 @@ func TestApplyPersonFactGenerationPersistsOverLimitTextClaimAlongsideValidSiblin
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
-	overLimit := strings.Repeat("🙂", 121)
+	overLimit := strings.Repeat("🙂", 281)
 	submitted, err := json.Marshal(overLimit)
 	require.NoError(err)
 	input := personFactProjectionInput(personID, "over-limit-text",
@@ -643,7 +643,7 @@ func TestApplyPersonFactGenerationPersistsOverLimitTextClaimAlongsideValidSiblin
 		require.NotNil(claim.Failure)
 		assert.Equal(personfacts.DecisionInvalid, claim.Failure.Action)
 		assert.Equal(personfacts.ReasonMalformedValue, claim.Failure.Reason)
-		assert.Contains(claim.Failure.Detail, "max_length 120")
+		assert.Contains(claim.Failure.Detail, "max_length 280")
 	}
 	values, err := st.ListPersonAttributeValuesContext(t.Context(), personID,
 		PersonAttributeQuery{DefinitionSlug: AttributeSlugPrimaryChannel})
@@ -658,7 +658,7 @@ func TestApplyPersonFactGenerationPersistsTamperedTargetDescriptorAlongsideValid
 	st, personID, targets := newPersonFactProjectionStore(t)
 	tampered := targets[AttributeSlugAskMeAbout]
 	tampered.MaxLength = 0
-	overLimit := strings.Repeat("🙂", 121)
+	overLimit := strings.Repeat("🙂", 281)
 	submitted, err := json.Marshal(overLimit)
 	require.NoError(err)
 	input := personFactProjectionInput(personID, "tampered-target-descriptor",

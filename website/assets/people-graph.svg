@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" role="img" aria-labelledby="title desc">
+  <title id="title">msgvault people layer</title>
+  <desc id="desc">Addresses, handles, and phone numbers from different sources resolve to one durable person profile.</desc>
+  <defs>
+    <pattern id="grid-people" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.2" fill="#1c1c1c"/>
+    </pattern>
+  </defs>
+  <rect width="760" height="520" fill="#0a0a0a"/>
+  <rect width="760" height="520" fill="url(#grid-people)"/>
+  <g fill="none" stroke="#3a3a3a" stroke-width="2">
+    <path d="M258 84q120 8 190 132"/>
+    <path d="M282 172q90 6 160 56"/>
+    <path d="M258 260h180"/>
+    <path d="M282 348q90 -6 160 -56"/>
+    <path d="M258 436q120 -8 190 -132"/>
+  </g>
+  <g fill="#e8e8e8" stroke="#0a0a0a" stroke-width="2">
+    <circle cx="448" cy="216" r="4.5"/>
+    <circle cx="442" cy="228" r="4.5"/>
+    <circle cx="438" cy="260" r="4.5"/>
+    <circle cx="442" cy="292" r="4.5"/>
+    <circle cx="448" cy="304" r="4.5"/>
+  </g>
+  <g fill="#131313" stroke="#282828" stroke-width="1.5">
+    <rect x="42" y="56" width="216" height="56" rx="6"/>
+    <rect x="66" y="144" width="216" height="56" rx="6"/>
+    <rect x="42" y="232" width="216" height="56" rx="6"/>
+    <rect x="66" y="320" width="216" height="56" rx="6"/>
+    <rect x="42" y="408" width="216" height="56" rx="6"/>
+  </g>
+  <rect x="452" y="170" width="266" height="180" rx="8" fill="#1b1b1b" stroke="#e8e8e8" stroke-width="1.5"/>
+  <g font-family="JetBrains Mono, ui-monospace, monospace">
+    <g fill="#f2f2f2" font-size="14">
+      <text x="60" y="84">alice@example.com</text>
+      <text x="84" y="172">alice.w@example.org</text>
+      <text x="60" y="260">@alice · slack</text>
+      <text x="84" y="348">+1 555 0134 · sms</text>
+      <text x="60" y="436">alice#4021 · discord</text>
+    </g>
+    <g fill="#a3a3a3" font-size="11">
+      <text x="60" y="102">gmail</text>
+      <text x="84" y="190">imap</text>
+      <text x="60" y="278">workspace</text>
+      <text x="84" y="366">phone backup</text>
+      <text x="60" y="454">guild</text>
+    </g>
+    <text x="472" y="204" fill="#e8e8e8" font-size="13" letter-spacing="3">PERSON</text>
+    <text x="472" y="238" fill="#f2f2f2" font-size="22">Alice Warren</text>
+    <text x="472" y="268" fill="#a3a3a3" font-size="13">5 identities · 4 sources</text>
+    <text x="472" y="292" fill="#a3a3a3" font-size="13">first contact 2009</text>
+    <text x="472" y="316" fill="#a3a3a3" font-size="13">12,408 messages</text>
+  </g>
+</svg>

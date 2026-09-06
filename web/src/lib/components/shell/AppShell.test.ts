@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
-import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
+import { ExploreState, parseExploreURLState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
 
@@ -289,12 +289,463 @@ describe('AppShell', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
-      'Relationships', 'Everything', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings'
+      'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings'
     ]);
     expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Domains' })).toBeNull();
 
     rendered.unmount();
+    state.destroy();
+  });
+
+  it('restores the Directory review queue and exposes Reviews in the command surface', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'identity', identityState: 'conflict'
+    }))}`);
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/identity/match-candidates') {
+        return Response.json({ candidates: [], limit: 100, offset: 0 });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    expect(await screen.findByRole('main', { name: 'Reviews' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Reviews' })).toBeDefined();
+    expect(state.current).toMatchObject({
+      workspace: 'directory_review', reviewKind: 'identity', identityState: 'conflict'
+    });
+    await vi.waitFor(() => expect(requests.some((request) => {
+      const url = new URL(request.url);
+      return url.pathname === '/api/v1/identity/match-candidates' &&
+        url.searchParams.get('state') === 'conflict' &&
+        url.searchParams.get('limit') === '100' &&
+        url.searchParams.get('offset') === '0';
+    })).toBe(true));
+
+    state.commitWorkspace('everything');
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Everything commands' });
+    const input = within(palette).getByRole('combobox');
+    await fireEvent.input(input, { target: { value: 'reviews' } });
+    await fireEvent.click(within(palette).getByRole('option', { name: 'Open Reviews' }));
+    expect(state.current.workspace).toBe('directory_review');
+    expect(requests.filter((request) => new URL(request.url).pathname === '/api/v1/identity/match-candidates')).toHaveLength(1);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('owns imported relationship URL state and reloads it on restoration', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'relationship', relationshipReviewState: 'accepted'
+    }))}`);
+    const calls: Array<{ method: string; path: string; status: string | null }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/person-relationship-reviews') {
+        calls.push({ method: request.method, path: url.pathname, status: url.searchParams.get('status') });
+        return Response.json({ reviews: [] });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    expect(await screen.findByRole('heading', { name: 'Imported relationships' })).toBeDefined();
+    await waitFor(() => expect(calls).toEqual([
+      { method: 'GET', path: '/api/v1/person-relationship-reviews', status: 'accepted' }
+    ]));
+
+    const accepted = screen.getByRole('radio', { name: 'Accepted' });
+    accepted.focus();
+    await fireEvent.keyDown(accepted, { key: 'ArrowRight' });
+    await waitFor(() => expect(state.current.relationshipReviewState).toBe('rejected'));
+    expect(calls.at(-1)).toEqual({ method: 'GET', path: '/api/v1/person-relationship-reviews', status: 'rejected' });
+
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'relationship', relationshipReviewState: 'accepted'
+    }))}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls.at(-1)).toEqual({ method: 'GET', path: '/api/v1/person-relationship-reviews', status: 'accepted' });
+    expect(state.current.relationshipReviewState).toBe('accepted');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('owns the selected-person fact ledger and reloads the same person on history restoration', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
+    }))}`);
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
+      if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
+      if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
+      if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    expect(await screen.findByText('Person ID 42')).toBeDefined();
+    await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(5));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(10));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open person profile' }));
+    expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 42 });
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('navigates a completed review merge through the durable-person route and keeps its announcement mounted', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'identity', identityState: 'candidate'
+    }))}`);
+    const candidate = {
+      id: 17, left_id: 170, left_kind: 'beeper_user', right_id: 171, right_kind: 'participant',
+      basis: 'stable_provider_id', source: 'synthetic', state: 'candidate', evidence: [],
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+    };
+    const person = (id: number, revision: number, name: string) => ({
+      id, revision, display_name: name, participant_ids: [id * 10], vcard_uid: `synthetic-${id}`,
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z'
+    });
+    const conflict = {
+      error: 'person_merge_required', message: 'Choose a survivor', profiles: [
+        { person: person(7, 4, 'Synthetic One'), etag: '"person-7-r4"' },
+        { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' }
+      ]
+    };
+    const survivor = person(7, 5, 'Synthetic One');
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/identity/match-candidates' && request.method === 'GET') {
+        return Response.json({ candidates: [candidate], limit: 100, offset: 0 });
+      }
+      if (path.endsWith('/accept')) return Response.json(conflict, { status: 409 });
+      if (path === '/api/v1/people/7/merge' && request.method === 'POST') return Response.json({
+        cache_state: 'stale', identity_revision: 8, person: survivor, review_candidates: [],
+        merge: {
+          id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7,
+          survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9',
+          survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5,
+          actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest',
+          created_at: '2026-08-03T00:00:00Z'
+        }
+      }, { headers: { ETag: '"person-7-r4"' } });
+      if (path === '/api/v1/people/directory') return Response.json({ people: [] });
+      if (path === '/api/v1/people/7') return Response.json(survivor, { headers: { ETag: '"person-7-r5"' } });
+      if (path === '/api/v1/people/7/profile') return Response.json({
+        person: survivor, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
+      });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({
+        person_id: 7, cadence_status: 'current', computed_at: '2026-08-03T00:00:00Z', interaction_count: 0, stale: false
+      });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
+      if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Link identities' }));
+    await fireEvent.click(screen.getByRole('dialog', { name: 'Link identities' }).querySelector('button.kit-button--solid')!);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Resolve merge' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
+      .toContain('People merged into Synthetic One. Identity cache stale.');
+    expect(requests.some((request) => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7')).toBe(true);
+    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/accept'))).toHaveLength(1);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('restarts the review queue at page zero after same-filter popstate restoration', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'identity', identityState: 'candidate'
+    }))}`);
+    const restored = (() => {
+      let resolve!: (response: Response) => void;
+      const promise = new Promise<Response>((next) => { resolve = next; });
+      return { promise, resolve };
+    })();
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (requests.length === 1) return Response.json({
+        candidates: [{
+          id: 17, left_id: 170, left_kind: 'beeper_user', right_id: 171, right_kind: 'participant',
+          basis: 'stable_provider_id', source: 'synthetic', state: 'candidate', evidence: [],
+          created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+        }],
+        limit: 100,
+        offset: 0
+      });
+      return restored.promise;
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    expect(await screen.findByRole('heading', { name: 'Identity match 17' })).toBeDefined();
+    window.history.replaceState(null, '', serializeExploreURLState(state.current));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(screen.getByText('Loading identity matches…')).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Identity match 17' })).toBeNull();
+    expect(new URL(requests[1]!.url).searchParams.get('offset')).toBe('0');
+    restored.resolve(Response.json({ error: 'unavailable', message: 'Restored queue unavailable' }, { status: 503 }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Restored queue unavailable');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('navigates to the distinct Directory workspace and loads URL-restored state through its controller', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryQuery: 'synthetic', directoryPersonID: null
+    }))}`);
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (new URL(request.url).pathname === '/api/v1/people/directory') return Response.json({
+        people: [{ id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active', categories: [], organizations: [] }]
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    expect(await screen.findByRole('heading', { name: 'Directory' })).toBeDefined();
+    expect(await screen.findByText('Synthetic Person')).toBeDefined();
+    expect(state.current.workspace).toBe('directory');
+    expect(new URL(requests[0]!.url).searchParams.get('q')).toBe('synthetic');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('owns an ephemeral CardDAV conflict handoff and Browser Back restores the prior Directory person', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryPersonID: 7
+    }))}`);
+    let publicationReads = 0;
+    let restoredPublicationSignal: AbortSignal | undefined;
+    let resolveRestoredPublication!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/directory') return Response.json({ people: [{
+        id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
+        categories: [], organizations: []
+      }] });
+      if (path === '/api/v1/carddav/publications/7') {
+        publicationReads += 1;
+        if (publicationReads === 1) return Response.json({
+          person_id: 7, state: 'conflict', desired: true, conflict_id: 41,
+          address_book: { id: 5, name: 'Synthetic contacts' }
+        });
+        restoredPublicationSignal = request.signal;
+        return new Promise<Response>((resolve) => { resolveRestoredPublication = resolve; });
+      }
+      if (path === '/api/v1/people/7') return Response.json({
+        id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: '',
+        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+      });
+      if (path === '/api/v1/people/7/profile') return Response.json({
+        person: { id: 7, revision: 1, display_name: 'Synthetic Person' },
+        names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
+      });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({
+        person_id: 7, cadence_status: 'current', interaction_count: 0,
+        computed_at: '2026-08-28T10:00:00Z', stale: false
+      });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
+      if (path === '/api/v1/people/7/files/search') return Response.json({
+        files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {}
+      });
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [], limit: 100, offset: 0 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
+    expect(state.current.workspace).toBe('settings');
+    expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
+      .toBe('Opening CardDAV conflict 41 in Settings.');
+
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
+    expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
+    await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(restoredPublicationSignal?.aborted).toBe(true);
+    resolveRestoredPublication(Response.json({
+      person_id: 7, state: 'published', desired: true,
+      address_book: { id: 6, name: 'Old contacts' }
+    }));
+    await Promise.resolve();
+    expect(screen.queryByText('Old contacts')).toBeNull();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('does not reset Directory page one for ordinary selection and filter commits', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryQuery: '', directoryPersonID: null
+    }))}`);
+    const directoryRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/directory') {
+        directoryRequests.push(request);
+        const query = new URL(request.url).searchParams.get('q');
+        return Response.json({ people: [{
+          id: 7, revision: 1, display_name: query ? 'Refined Person' : 'Synthetic Person',
+          contact_state: 'active', categories: [], organizations: []
+        }] });
+      }
+      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await screen.findByText('Synthetic Person');
+    await fireEvent.click(screen.getByRole('row', { name: /Synthetic Person/ }));
+    await Promise.resolve();
+    expect(directoryRequests).toHaveLength(1);
+
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search directory' }), {
+      target: { value: 'refined' }
+    });
+    await waitFor(() => expect(screen.getByText('Refined Person')).toBeDefined());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(directoryRequests).toHaveLength(2);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('restarts Directory page one after a popstate restoration', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryQuery: 'synthetic', directoryPersonID: null
+    }))}`);
+    const directoryRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/directory') {
+        directoryRequests.push(request);
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return Response.json(cursor
+          ? { people: [{ id: 8, revision: 1, display_name: 'Second Page', contact_state: 'active', categories: [], organizations: [] }] }
+          : { people: [{ id: 7, revision: 1, display_name: 'First Page', contact_state: 'active', categories: [], organizations: [] }], next_cursor: 'next-page' });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await screen.findByText('First Page');
+    await fireEvent.click(screen.getByRole('button', { name: 'Load more people' }));
+    await screen.findByText('Second Page');
+    expect(directoryRequests).toHaveLength(2);
+
+    window.history.replaceState(null, '', serializeExploreURLState(state.current));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    await waitFor(() => expect(directoryRequests).toHaveLength(3));
+    expect(new URL(directoryRequests[2]!.url).searchParams.get('cursor')).toBeNull();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('keeps an AppShell-owned Directory request alive across a workspace round-trip', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryQuery: '', directoryPersonID: null
+    }))}`);
+    const directoryRequests: Request[] = [];
+    let resolveDirectory: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/people/directory') {
+        directoryRequests.push(request);
+        return new Promise<Response>((resolve) => { resolveDirectory = resolve; });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await waitFor(() => expect(resolveDirectory).toBeDefined());
+    await fireEvent.click(screen.getByRole('button', { name: 'Everything' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
+    resolveDirectory?.(Response.json({ people: [{
+      id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active', categories: [], organizations: []
+    }] }));
+
+    expect(await screen.findByText('Synthetic Person')).toBeDefined();
+    expect(directoryRequests).toHaveLength(1);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('aborts an AppShell-owned Directory request when the shell is finally destroyed', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryQuery: '', directoryPersonID: null
+    }))}`);
+    let request: Request | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      request = input instanceof Request ? input : new Request(input);
+      return new Promise<Response>(() => undefined);
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await waitFor(() => expect(request).toBeDefined());
+    rendered.unmount();
+
+    expect(request?.signal.aborted).toBe(true);
     state.destroy();
   });
 
@@ -524,6 +975,171 @@ describe('AppShell', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Alice Example' })).toBeNull());
     expect(screen.getByText('Select a person or domain')).toBeDefined();
     expect(state.current.workspace).toBe('relationships');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it.each([200, 201])('hands a selected relationship participant to Directory promotion on %i', async (status) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'relationships', relationshipTarget: 'cluster:11'
+    }))}`);
+    const requests: Request[] = [];
+    let promoted = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+      if (path === '/api/v1/participants/11') return Response.json({
+        id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
+        activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
+        last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
+      });
+      if (path === '/api/v1/relationships/11/timeline') return Response.json({
+        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      });
+      if (path === '/api/v1/people/directory') return Response.json({
+        people: promoted ? [{
+          id: 42, display_name: 'Synthetic Candidate', revision: 1, primary_channel: 'email',
+          contact_state: 'active', categories: [], organizations: []
+        }] : []
+      });
+      if (path === '/api/v1/people' && request.method === 'POST') {
+        promoted = true;
+        return Response.json({ id: 42, revision: 1 }, { status });
+      }
+      if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate' });
+      if (path === '/api/v1/people/42/profile') return Response.json({
+        person: { id: 42, revision: 1, display_name: 'Synthetic Candidate' }, names: [], contact_points: [],
+        addresses: [], dates: [], categories: [], media: []
+      });
+      if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
+      if (path === '/api/v1/people/42/contact-state') return Response.json({
+        person_id: 42, cadence_status: 'current', computed_at: '2026-07-19T10:00:00Z',
+        interaction_count: 1, stale: false
+      });
+      if (path === '/api/v1/people/42/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/42/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/42/days') return Response.json({ person_id: 42, days: [], total_count: 0 });
+      if (path === '/api/v1/people/42/files/search') return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Promote to person' }));
+
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(42));
+    expect(state.current.workspace).toBe('directory');
+    expect(new URL(window.location.href).searchParams.get('explore')).toContain('directoryPersonID');
+    const promotion = requests.find((request) =>
+      new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST'
+    );
+    expect(promotion).toBeDefined();
+    await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
+    expect(requests.filter((request) => new URL(request.url).pathname === '/api/v1/people/directory').length)
+      .toBeGreaterThanOrEqual(2);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('renders actionable Directory guidance for a relationship promotion conflict', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'relationships', relationshipTarget: 'cluster:11'
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+      if (path === '/api/v1/participants/11') return Response.json({
+        id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
+        activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
+        last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
+      });
+      if (path === '/api/v1/relationships/11/timeline') return Response.json({
+        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      });
+      if (path === '/api/v1/people/directory') return Response.json({ people: [] });
+      if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
+        error: 'person_binding_conflict', message: 'This identity is already bound to another person'
+      }, { status: 409 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('already bound to another person');
+    expect(alert.textContent).toContain('resolve that binding before promoting');
+    expect(state.current.directoryPersonID).toBeNull();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('clears prior Directory selection and promotion state before opening a new relationship candidate', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryPersonID: 7
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/directory') return Response.json({ people: [{
+        id: 7, display_name: 'Prior Directory Person', revision: 3, contact_state: 'active', categories: [], organizations: []
+      }] });
+      if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3, display_name: 'Prior Directory Person' });
+      if (path === '/api/v1/people/7/profile') return Response.json({
+        person: { id: 7, revision: 3, display_name: 'Prior Directory Person' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
+      });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, state: 'active' });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
+      if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
+      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+      if (path === '/api/v1/participants/11' || path === '/api/v1/participants/12') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ id, display_label: `Candidate ${id}`, partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel' });
+      }
+      if (path === '/api/v1/relationships/11/timeline' || path === '/api/v1/relationships/12/timeline') {
+        const canonicalID = Number(path.split('/')[3]);
+        return Response.json({ canonical_id: canonicalID, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 });
+      }
+      if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
+        error: 'person_binding_conflict', message: 'This identity is already bound to another person'
+      }, { status: 409 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByRole('heading', { name: 'Prior Directory Person' })).toBeDefined();
+    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:11' });
+    expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
+
+    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:12' });
+    expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+
+    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(state.current.directoryPersonID).toBeNull();
 
     rendered.unmount();
     state.destroy();

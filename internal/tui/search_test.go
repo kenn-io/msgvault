@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -16,6 +18,114 @@ type recordingSemanticSearcher struct {
 	request  query.SemanticMessageSearchRequest
 	response *query.SemanticMessageSearchResult
 	err      error
+}
+
+func commitInlineSearchForHistory(t *testing.T, model Model, value string) Model {
+	t.Helper()
+	model.activateInlineSearch("search")
+	model.searchInput.SetValue(value)
+	updated, _ := applyInlineSearchKey(t, model, keyEnter())
+	return updated
+}
+
+func TestInlineSearchHistoryRecallsQueriesAndRestoresDraft(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model = commitInlineSearchForHistory(t, model, "first query")
+	model = commitInlineSearchForHistory(t, model, "second query")
+	model.activateInlineSearch("search")
+	model.searchInput.SetValue("unfinished draft")
+
+	model, cmd := applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal("second query", model.searchInput.Value())
+	assert.NotNil(cmd, "recall should use the existing debounced search path")
+
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal("first query", model.searchInput.Value())
+
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyDown})
+	assert.Equal("second query", model.searchInput.Value())
+
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyDown})
+	assert.Equal("unfinished draft", model.searchInput.Value())
+}
+
+func TestInlineSearchHistorySuppressesEmptyAndConsecutiveDuplicateQueries(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model = commitInlineSearchForHistory(t, model, "first query")
+	model = commitInlineSearchForHistory(t, model, "")
+	model = commitInlineSearchForHistory(t, model, "first query")
+	model = commitInlineSearchForHistory(t, model, "second query")
+	model.activateInlineSearch("search")
+
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal(t, "second query", model.searchInput.Value())
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal(t, "first query", model.searchInput.Value())
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal(t, "first query", model.searchInput.Value(), "duplicate query must occupy only one history entry")
+}
+
+func TestInlineSearchHistoryDropsOldestEntryAtCapacity(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	for i := range 101 {
+		model = commitInlineSearchForHistory(t, model, fmt.Sprintf("query-%03d", i))
+	}
+	model.activateInlineSearch("search")
+
+	for range 100 {
+		model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	}
+	assert.Equal(t, "query-001", model.searchInput.Value())
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal(t, "query-001", model.searchInput.Value(), "history must retain at most 100 entries")
+}
+
+func TestInlineSearchHistoryEditingRecalledQueryStartsNewDraft(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model = commitInlineSearchForHistory(t, model, "saved query")
+	model.activateInlineSearch("search")
+	model.searchInput.SetValue("original draft")
+
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	require.Equal(t, "saved query", model.searchInput.Value())
+	model, _ = applyInlineSearchKey(t, model, key('!'))
+	require.Equal(t, "saved query!", model.searchInput.Value())
+	model, _ = applyInlineSearchKey(t, model, tea.KeyPressMsg{Code: tea.KeyDown})
+	assert.Equal(t, "saved query!", model.searchInput.Value(), "editing recall must leave history navigation")
+}
+
+func TestInlineSearchHistoryDoesNotReplaceMessageListNavigation(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).WithMessages(
+		query.MessageSummary{ID: 1},
+		query.MessageSummary{ID: 2},
+	).Build()
+	model.cursor = 1
+
+	model = applyMessageListKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
+	assert.Equal(t, 0, model.cursor)
+}
+
+func TestAggregateSearchCommitBeforeDebounceReloadsAndBlocksDeletion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := newTestModelWithRows([]query.AggregateRow{{Key: "stale@example.com", Count: 1}})
+	model.searchQuery = "old query"
+	model.activateInlineSearch("search")
+
+	model, _ = applyInlineSearchKey(t, model, key('n'))
+	pendingRequestID := model.aggregateRequestID
+	model, cmd := applyInlineSearchKey(t, model, keyEnter())
+
+	assert.Equal("n", model.searchQuery)
+	assert.False(model.inlineSearchActive)
+	assert.True(model.inlineSearchLoading)
+	assert.Greater(model.aggregateRequestID, pendingRequestID)
+	require.NotNil(cmd, "committing before debounce must reload aggregate rows")
+
+	model, deletionCmd := applyAggregateKeyWithCmd(t, model, key('D'))
+	assert.False(model.deletionLoading)
+	assert.Nil(deletionCmd, "bulk deletion must wait for rows from the committed query")
 }
 
 func (s *recordingSemanticSearcher) SearchSemanticMessages(
@@ -214,23 +324,22 @@ func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
 	}
 }
 
-func TestListIDScopeForcesDeepSearchToFast(t *testing.T) {
-	var deepCalls int
-	var fastFilter query.MessageFilter
+func TestListIDScopeUsesDeepSearchWithExactFilter(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var deepFilter query.MessageFilter
+	var fastCalls int
 	engine := newMockEngine(MockConfig{})
-	engine.SearchFunc = func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-		deepCalls++
-		return nil, nil
+	engine.SearchDeepWithStatsFunc = func(
+		_ context.Context, _ *search.Query, filter query.MessageFilter, _, _ int,
+	) (*query.SearchFastResult, error) {
+		deepFilter = filter
+		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
 	}
 	engine.SearchFastWithStatsFunc = func(
-		_ context.Context,
-		_ *search.Query,
-		_ string,
-		filter query.MessageFilter,
-		_ query.ViewType,
-		_, _ int,
+		context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int,
 	) (*query.SearchFastResult, error) {
-		fastFilter = filter
+		fastCalls++
 		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
 	}
 
@@ -240,49 +349,12 @@ func TestListIDScopeForcesDeepSearchToFast(t *testing.T) {
 	model.drillFilter = query.MessageFilter{ListID: "<dev_1@example.test>"}
 	model.syncSearchScope()
 
-	{
-		assert := assert.New(t)
-		require := require.New(t)
-		assert.Equal(searchModeFast, model.searchMode)
-		msg, ok := model.loadSearch("find the invoice")().(searchResultsMsg)
-		require.True(ok)
-		require.NoError(msg.err)
-		assert.Zero(deepCalls, "List-Id drills must not use deep substring search")
-		assert.Equal("<dev_1@example.test>", fastFilter.ListID)
-	}
-
-	t.Run("execution fallback when synchronization is bypassed", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		var bypassDeepCalls int
-		var bypassFastFilter query.MessageFilter
-		bypassEngine := newMockEngine(MockConfig{})
-		bypassEngine.SearchFunc = func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			bypassDeepCalls++
-			return nil, nil
-		}
-		bypassEngine.SearchFastWithStatsFunc = func(
-			_ context.Context,
-			_ *search.Query,
-			_ string,
-			filter query.MessageFilter,
-			_ query.ViewType,
-			_, _ int,
-		) (*query.SearchFastResult, error) {
-			bypassFastFilter = filter
-			return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
-		}
-
-		bypassModel := New(bypassEngine, Options{DataDir: t.TempDir(), Version: "test"})
-		bypassModel.searchMode = searchModeDeep
-		bypassModel.searchFilter = query.MessageFilter{ListID: "<dev_1@example.test>"}
-
-		msg, ok := bypassModel.loadSearch("find the invoice")().(searchResultsMsg)
-		require.True(ok)
-		require.NoError(msg.err)
-		assert.Zero(bypassDeepCalls, "runtime List-Id fallback must not use deep search")
-		assert.Equal("<dev_1@example.test>", bypassFastFilter.ListID)
-	})
+	assertions.Equal(searchModeDeep, model.searchMode)
+	msg, ok := model.loadSearch("find the invoice")().(searchResultsMsg)
+	requirements.True(ok)
+	requirements.NoError(msg.err)
+	assertions.Equal("<dev_1@example.test>", deepFilter.ListID)
+	assertions.Zero(fastCalls, "exact List-Id scope stays on deep search")
 }
 
 func TestInheritedSemanticSearchFallsBackInUnsupportedScope(t *testing.T) {
@@ -359,6 +431,21 @@ func TestSemanticSearchPreservesSourceAndAttachmentScope(t *testing.T) {
 	assert.Equal(100, searcher.request.Limit)
 	require.Len(result.messages, 1)
 	assert.True(result.messages[0].HasAttachments)
+}
+
+func TestSemanticSearchPassesOperatorShapedNaturalLanguageThroughRaw(t *testing.T) {
+	searcher := &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+	model := NewBuilder().WithLevel(levelMessageList).Build()
+	model.semanticSearch = searcher
+	model.searchMode = searchModeSemantic
+	model.searchRequestID = 1
+	const naturalLanguage = "before:not-a-date explain message_type:sms invoices"
+
+	msg := model.loadSearch(naturalLanguage)()
+	result, ok := msg.(searchResultsMsg)
+	require.True(t, ok, "expected searchResultsMsg, got %T", msg)
+	require.NoError(t, result.err)
+	assert.Equal(t, naturalLanguage, searcher.request.Query)
 }
 
 func TestSemanticSearchLabelsItsActiveOnlyPopulation(t *testing.T) {
@@ -545,6 +632,53 @@ func TestSearchPaginationUpdatesContextStats(t *testing.T) {
 
 	assert.Len(t, m.messages, 100, "after append")
 	assertContextStats(t, m, 100, -1, -1)
+}
+
+func TestDeepSearchPaginationLoadsKnownRemainingPage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	firstPage := makeMessages(searchPageSize)
+	secondPage := makeMessages(25)
+	for i := range secondPage {
+		secondPage[i].ID += searchPageSize
+	}
+	engine := newMockEngine(MockConfig{})
+	engine.SearchDeepWithStatsFunc = func(
+		_ context.Context, _ *search.Query, _ query.MessageFilter, limit, offset int,
+	) (*query.SearchFastResult, error) {
+		assertions.Equal(searchPageSize, limit)
+		assertions.Equal(searchPageSize, offset)
+		return &query.SearchFastResult{Messages: secondPage, TotalCount: 125}, nil
+	}
+	model := New(engine, Options{DataDir: t.TempDir()})
+	model.level = levelMessageList
+	model.messages = firstPage
+	model.searchQuery = "invoice"
+	model.searchMode = searchModeDeep
+	model.searchOffset = searchPageSize
+	model.searchTotalCount = 125
+	model.cursor = len(firstPage) - 1
+	model.loading = false
+
+	model, cmd := applyMessageListKeyWithCmd(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	requirements.NotNil(cmd)
+	assertions.True(model.searchLoadingMore)
+	var result searchResultsMsg
+	found := false
+	for _, msg := range runBatchCommand(t, cmd) {
+		if searchResult, ok := msg.(searchResultsMsg); ok {
+			result = searchResult
+			found = true
+		}
+	}
+	requirements.True(found, "load-more command must return search results")
+	updated, _ := model.Update(result)
+	model = asModel(t, updated)
+
+	assertions.Len(model.messages, 125)
+	assertions.Equal(125, model.searchOffset)
+	assertions.Equal(int64(125), model.searchTotalCount)
+	assertions.False(model.searchLoadingMore)
 }
 
 // TestFastSearchPaginationTriggersOnNavigation verifies that cursor movement

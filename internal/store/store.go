@@ -44,12 +44,17 @@ const HNSWEfSearch = 1000
 // methods, existing store code that does s.db.Query(...) compiles
 // unchanged and automatically routes through the logger.
 type Store struct {
-	db            *loggedDB
-	dbPath        string
-	dialect       Dialect
-	readOnly      bool // Opened via OpenReadOnly; skips WAL checkpoint on close
-	fts5Available bool // Whether FTS5 is available for full-text search
-	closeCleanup  func()
+	db                   *loggedDB
+	dbPath               string
+	sqliteFilesystemPath string
+	dialect              Dialect
+	readOnly             bool // Opened via OpenReadOnly; skips WAL checkpoint on close
+	fts5Available        bool // Whether FTS5 is available for full-text search
+	closeCleanup         func()
+	// directoryProjectionReady becomes true only after InitSchema has created
+	// the projection tables and dirty-marking triggers. Every writable Store
+	// transaction then refreshes its affected Directory rows before commit.
+	directoryProjectionReady bool
 
 	// syncGeneration is immutable metadata on a per-run Store view.
 	// Mutating transactions on that view fence the exact running source
@@ -58,6 +63,9 @@ type Store struct {
 	// share mutable run state.
 	syncGeneration *syncGeneration
 	syncBase       *Store
+	// syncExecutionLocks is shared with sync-scoped views. Each held lock is
+	// owned by the worker process, not by a durable sync_runs row.
+	syncExecutionLocks *syncExecutionLockState
 
 	sqliteOptimizeMu          sync.Mutex
 	documentVectorOperationMu sync.Mutex
@@ -78,8 +86,10 @@ type Store struct {
 	listIDRepairBeforeApplyHook           func()
 	listIDRepairAfterScanHook             func(context.Context, *loggedTx, []listIDRepairUpdate) error
 	listIDRepairAfterFingerprintLockHook  func()
+	imapLabelRepairPerMessageHook         func(messageID int64)
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
+	cardDAVPublicationStateReadHook       func()
 	identityMatchAcceptBeforeDecisionHook func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
@@ -89,6 +99,9 @@ type Store struct {
 	personEnrichmentRunBarrier            func(phase string)
 	personEnrichmentTxBarrier             func(phase string)
 	personEnrichmentOwnershipBarrier      func(phase string, tx *loggedTx)
+	personNetworkSourceReadHook           func(limit, count int)
+	operationHistoryAfterAdapterReadHook  func(kind string)
+	operationHistoryStatusAfterActiveHook func(kind string)
 
 	// Zero means "use the production batch size"; see
 	// contentChangedBackfillBatch and rfc822IDBackfillBatch. Per-Store for
@@ -206,9 +219,11 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:      newLoggedDB(db, dialect.Rebind),
-		dbPath:  dbPath,
-		dialect: dialect,
+		db:                   newLoggedDB(db, dialect.Rebind),
+		dbPath:               dbPath,
+		sqliteFilesystemPath: filesystemPath,
+		dialect:              dialect,
+		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
 	// Probe like the read-only opens do: a Store must know whether full-text
@@ -225,6 +240,10 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -265,10 +284,11 @@ func openPostgres(dbURL string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:           newLoggedDB(db, dialect.Rebind),
-		dbPath:       dbURL,
-		dialect:      dialect,
-		closeCleanup: cleanup,
+		db:                 newLoggedDB(db, dialect.Rebind),
+		dbPath:             dbURL,
+		dialect:            dialect,
+		closeCleanup:       cleanup,
+		syncExecutionLocks: newSyncExecutionLockState(),
 	}
 
 	// See openSQLite: availability is a property of the database, not of
@@ -280,8 +300,29 @@ func openPostgres(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	return s, nil
+}
+
+// detectDirectoryProjectionReadiness distinguishes an old database without
+// the optional Directory projection from one whose dirty queue must be
+// respected by a read-only Store. It does not create or migrate anything.
+func (s *Store) detectDirectoryProjectionReadiness(ctx context.Context) error {
+	var installed bool
+	query := `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'directory_projection_dirty')`
+	if s.IsPostgreSQL() {
+		query = `SELECT to_regclass('directory_projection_dirty') IS NOT NULL`
+	}
+	if err := s.db.QueryRowContext(ctx, query).Scan(&installed); err != nil {
+		return fmt.Errorf("detect directory projection: %w", err)
+	}
+	s.directoryProjectionReady = installed
+	return nil
 }
 
 // OpenReadOnly opens an existing database in read-only mode. Suitable for
@@ -328,10 +369,12 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:       newLoggedDB(db, dialect.Rebind),
-		dbPath:   dbPath,
-		dialect:  dialect,
-		readOnly: true,
+		db:                   newLoggedDB(db, dialect.Rebind),
+		dbPath:               dbPath,
+		sqliteFilesystemPath: filesystemPath,
+		dialect:              dialect,
+		readOnly:             true,
+		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
 	// OpenReadOnly takes no context, so the probe cannot be cancelled and its
@@ -343,6 +386,10 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -379,11 +426,12 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:           newLoggedDB(db, dialect.Rebind),
-		dbPath:       dbURL,
-		dialect:      dialect,
-		readOnly:     true,
-		closeCleanup: cleanup,
+		db:                 newLoggedDB(db, dialect.Rebind),
+		dbPath:             dbURL,
+		dialect:            dialect,
+		readOnly:           true,
+		closeCleanup:       cleanup,
+		syncExecutionLocks: newSyncExecutionLockState(),
 	}
 
 	// As in OpenReadOnly: no context to honour here, but the error is checked
@@ -395,6 +443,11 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
+	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -475,12 +528,13 @@ func (s *Store) Close() error {
 		// reduces the risk of corruption from stale WAL entries.
 		_ = s.CheckpointWAL()
 	}
+	lockErr := s.releaseAllSyncExecutionLocks()
 	err := s.db.Close()
 	if s.closeCleanup != nil {
 		s.closeCleanup()
 		s.closeCleanup = nil
 	}
-	return err
+	return errors.Join(lockErr, err)
 }
 
 // CheckpointWAL forces a WAL checkpoint, folding the WAL back into the main
@@ -720,6 +774,12 @@ func (s *Store) withTxOptionsContext(
 				"duration_ms", time.Since(start).Milliseconds())
 		}
 		return err
+	}
+	if s.directoryProjectionReady && !s.readOnly && (opts == nil || !opts.ReadOnly) {
+		if err := s.refreshDirectoryProjectionsBeforeCommitTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		_ = tx.Rollback()
@@ -1212,6 +1272,21 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep call journal: %w", err)
 	}
+	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
+		return err
+	}
+	// The Directory projection is derived from the person tables, so an
+	// archive that predates it gets every person marked dirty and refreshed
+	// once. Later opens find the ledger entry and skip the backfill; triggers
+	// keep the projection current from then on.
+	if err := s.runOnceMigration(
+		ctx, migrationDirectoryProjectionV1, 1, false,
+		func(ctx context.Context) error {
+			return s.backfillDirectoryProjectionContext(ctx)
+		},
+	); err != nil {
+		return err
+	}
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
 	// Dedupe before creating the partial unique index that enforces
@@ -1310,6 +1385,26 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	// Older runs predate typed checkpoints. Restore types only when the source
+	// or pinned Gmail handoff cursor identifies them unambiguously, then tag
+	// unfinished Gmail recovery runs for the strict resume matcher.
+	if err := s.runOnceMigration(
+		ctx, migrationSyncRunResumeMetadata, 1, false,
+		func(ctx context.Context) error {
+			return s.withTxContext(ctx, func(tx *loggedTx) error {
+				return s.backfillSyncRunResumeMetadata(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("backfill sync run resume metadata: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_sync_runs_operation
+		ON sync_runs(operation_id, id)
+		WHERE operation_id IS NOT NULL
+	`); err != nil {
+		return fmt.Errorf("create sync operation index: %w", err)
 	}
 	if err := s.ensureCardDAVConflictPendingInvariant(ctx); err != nil {
 		return fmt.Errorf("migrate CardDAV conflict pending state: %w", err)

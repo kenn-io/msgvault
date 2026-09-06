@@ -459,8 +459,10 @@ func TestPeopleFilesPageDeduplicatesAndUsesAttachmentExportPath(t *testing.T) {
 		},
 	}
 	model := peopleContentModel(backend, &contact)
+	outputDir := t.TempDir()
 	model.actions = NewActionControllerWithOptions(model.engine, ActionControllerOptions{
-		DataDir: t.TempDir(),
+		DataDir:             t.TempDir(),
+		AttachmentOutputDir: outputDir,
 		AttachmentReader: mapAttachmentReader{data: map[string][]byte{
 			contentHash: []byte("attachment bytes"),
 		}},
@@ -503,8 +505,6 @@ func TestPeopleFilesPageDeduplicatesAndUsesAttachmentExportPath(t *testing.T) {
 	model = asModel(t, updatedModel)
 	require.NotNil(exportCmd)
 
-	outputDir := t.TempDir()
-	t.Chdir(outputDir)
 	exportMessage, ok := exportCmd().(peopleFileExportedMsg)
 	require.True(ok)
 	require.NoError(exportMessage.result.Err)

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-28
 title: Web UI
 description: Use and securely deploy msgvault's daemon-served analytical interface.
 ---
@@ -16,22 +17,22 @@ provenance-documented Enron-derived fixture imported through the real daemon;
 the ordinary browser checks continue to use small synthetic API fixtures.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
   <figcaption>Relationships ranked view and selected activity timeline.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
+  <img src="/docs/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
   <figcaption>Relationships workspace in light theme with compact density.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
+  <img src="/docs/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
   <figcaption>Dark theme with comfortable density.</figcaption>
 </figure>
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
   <figcaption>Light theme with compact density.</figcaption>
 </figure>
 
@@ -148,7 +149,33 @@ and filters continue to scope both the timeline and file table.
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and
 typed profile attributes are separate curated operations; see [People,
-Profiles, and Source Identities](/usage/people/).
+Profiles, and Source Identities](/docs/usage/people/).
+
+Directory is the curated durable-person workspace. Its person detail keeps
+Overview, Organizations, Relationships, Network, and Media & Files together.
+The Network tab can request one, two, or three hops and optionally include
+ended records. It visualizes at most 250 nodes and 500 connections, while an
+always-present list groups the same connections by hop for keyboard and screen
+reader use. Person and organization names in this view come from durable
+profiles. Edges come only from curated typed relationships and employments
+(including shared organizations), never messages, participant co-occurrence,
+or inferred communication activity.
+
+Settings is a daemon-described workspace: the daemon publishes the catalog of
+editable keys with their groups, kinds, and allowed values, and the browser
+renders that catalog rather than a hard-coded form. Saving writes
+`config.toml` on the daemon host. Keys marked restart-required show a
+pending-restart state until the daemon restarts. Person enrichment uses named
+provider policies for Exa and SixtyFour; the workspace can create and edit
+those policies, and the TUI shows them read-only.
+
+Provider credentials (embedding, enrichment, and sweep API keys) are
+write-only. You can add, replace, or remove a key; the value is never shown
+again after saving, only whether one is configured and where it comes from.
+Credentials are versioned separately from `config.toml`. When both an endpoint
+or model change and a credential change are pending, save the endpoint/model
+change first, then the credential, so the key is bound to the endpoint it was
+entered for.
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
@@ -226,9 +253,10 @@ integration keys. It performs targeted, comment-preserving edits to
 never displays secret values—only whether they are configured.
 
 Most settings are restart-required by design. After saving, the UI shows a
-pending-restart state until the daemon restarts. An API-key change requires an
-extra confirmation. The current process keeps the active key until restart;
-after restart, old browser sessions are gone and the login screen appears.
+pending-restart state until the daemon restarts. The server API key
+(`server.api_key`) is read-only in the browser; it can only be changed in
+`config.toml` on the daemon host. After a key change and restart, old browser
+sessions are gone and the login screen appears.
 
 ## Optional integration states
 

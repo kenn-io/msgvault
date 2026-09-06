@@ -42,6 +42,75 @@ func conflictCapture(mapping *store.CardDAVResource) store.CardDAVConflictCaptur
 	}
 }
 
+func TestCardDAVConflictSafeReadModelsUseCompactHeadersAndExactBaseFence(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutate        func(*testing.T, *store.Store, *store.CardDAVResource, *store.CardDAVConflict)
+		baseAvailable bool
+	}{
+		{name: "exact tuple", baseAvailable: true},
+		{name: "wrong revision", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
+			require.NoError(t, err)
+		}},
+		{name: "wrong semantic hash", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET remote_semantic_hash = ? WHERE id = ?`), "different", mapping.ID)
+			require.NoError(t, err)
+		}},
+		{name: "wrong etag", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET remote_etag = ? WHERE id = ?`), `"different"`, mapping.ID)
+			require.NoError(t, err)
+		}},
+		{name: "missing mapping", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind(`DELETE FROM carddav_resources WHERE id = ?`), mapping.ID)
+			require.NoError(t, err)
+		}},
+		{name: "resolved and remapped", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, conflict *store.CardDAVConflict) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET status = 'resolved', resolution = 'keep_local', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`), conflict.ID)
+			require.NoError(t, err)
+			_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
+			require.NoError(t, err)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, _, book, mapping := seededCardDAVConflictMapping(t)
+			capture := conflictCapture(mapping)
+			capture.LocalBody = append(capture.LocalBody, bytes.Repeat([]byte("private-local-body"), 1024)...)
+			capture.RemoteBody = append(capture.RemoteBody, bytes.Repeat([]byte("private-remote-body"), 1024)...)
+			conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
+			require.NoError(err)
+
+			headers, err := st.ListCardDAVConflictHeadersContext(t.Context())
+			require.NoError(err)
+			require.Len(headers, 1)
+			assert.Equal(conflict.ID, headers[0].ID)
+			assert.Equal(book.DisplayName, headers[0].AddressBookName)
+
+			if tt.mutate != nil {
+				tt.mutate(t, st, mapping, conflict)
+			}
+			detail, err := st.GetCardDAVConflictDetailSourceContext(t.Context(), conflict.ID)
+			require.NoError(err)
+			assert.Equal(capture.LocalBody, detail.LocalBody)
+			assert.Equal(capture.RemoteBody, detail.RemoteBody)
+			assert.Equal(tt.baseAvailable, detail.BaseAvailable)
+			if tt.baseAvailable {
+				assert.Equal(mapping.RemoteBody, detail.BaseBody)
+			} else {
+				assert.Empty(detail.BaseBody)
+			}
+		})
+	}
+}
+
 func seededCardDAVTombstoneConflict(
 	t *testing.T, mappedPerson bool,
 ) (*store.Store, store.CardDAVAccount, store.CardDAVAddressBook, *store.CardDAVResource, *store.CardDAVConflict, store.CardDAVRemoteResource) {

@@ -594,7 +594,7 @@ func TestMediaTimeoutScalesWithCap(t *testing.T) {
 	// on slow links; the media bound must scale with the size cap (~128
 	// KiB/s floor rate) above a generous minimum, and never be infinite.
 	assert.Equal(10*time.Minute, mediaTimeout(1<<20), "small caps get the floor")
-	assert.Equal(800*time.Second, mediaTimeout(100<<20), "default 100 MiB cap ≈ 13m20s")
+	assert.Equal(2000*time.Second, mediaTimeout(defaultMaxMediaBytes), "default 250 MiB cap ≈ 33m20s")
 	assert.Equal(8192*time.Second, mediaTimeout(1<<30), "bigger caps scale up")
 	assert.Greater(mediaTimeout(1), time.Minute, "never anywhere near the 60s API deadline")
 }

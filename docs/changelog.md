@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-01
+last_edited: 2026-09-04
 title: Changelog
 description: Release history for msgvault
 ---
@@ -12,7 +12,9 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.14.0. The
+  current unreleased API schema is 2.15.0. Version 2.14.0 also replaces the CardDAV
+  publication and conflict response shapes with bounded projections that
+  omit raw vCards and resource hrefs. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
   summary, timeline, files) now live under `/api/v1/participants/*`, and the
   durable person routes formerly under `/api/v1/persons/*` now live under
@@ -31,6 +33,48 @@ All notable changes to msgvault, grouped by release.
   should pass `account` or stage each source separately.
 
 **Features**
+
+- Web Directory workspace: browse and search promoted durable people, filter
+  by contact state, category, organization, and last contact, and maintain a
+  person's profile, custom fields, employment, typed relationships, tracking,
+  CardDAV publication, and merge history in place. Identity-match and
+  imported-relationship review queues, explicit merge and split, and a
+  bounded person network (`GET /api/v1/people/{id}/network`) built only
+  from curated relationships and employments live in the same shell.
+
+- Settings workspace in the Web UI and a keyboard-only Settings screen in
+  the TUI (`,`), driven by a daemon-described catalog with restart-pending
+  state. Provider API keys are stored write-only in
+  `tokens/provider-credentials.json` and can be added, replaced, or removed
+  without revealing their values; named Exa and SixtyFour person-enrichment
+  policies, text and visual embedding configuration, and future-only
+  attachment download rules are editable from the browser.
+
+- Operation history: `GET /api/v1/operations/runs` and `/operations/status`
+  expose normalized sync, person-sweep, and CardDAV run history with stable
+  cursors, and CardDAV sync runs are recorded and recoverable after a
+  daemon restart.
+
+- Chat media collection now skips attachments from conversations with more
+  than 20 participants by default on Beeper, Slack, Discord, and Teams. Direct
+  chats and small groups keep their media; skipped occurrences carry a typed
+  `participant_threshold` marker instead of a retry marker. Set
+  `media_max_participants = 0` in the provider table to remove the cap, or
+  raise it to taste. With large-room volume gone, the per-attachment size
+  default for Beeper, Slack, and Teams moves from 100 MiB to 250 MiB so long
+  voice notes, screen recordings, and phone video from direct chats are kept;
+  Discord stays at 50 MiB, and an explicit `max_media_mb` is unchanged.
+  Previously over-cap files under 250 MiB are retried by the next
+  `backfill-*-media` run because the cap changed. The `media_scope`,
+  `media_max_participants`, `max_media_mb`, and `accounts_config` keys are now
+  documented for every chat provider.
+
+- Add `msgvault stage-delete <query>` or `msgvault stage-delete --ids 123,456,789`
+  to stage active messages, with optional exact-source narrowing and `--dry-run`
+  support for reviewing the match count first. The ID form uses the existing
+  message-ID resolver directly, without search or waiting for analytical-cache
+  readiness. A newly started local daemon may initialize its cache in the
+  background for later query consumers.
 
 - Starting in v0.20.0, remote deletion remains permanently opt-in. The
   invoking CLI can grant durable consent with
@@ -60,12 +104,29 @@ All notable changes to msgvault, grouped by release.
   and staging responses preserve the source type and identifier so execution
   remains scoped when two source types share the same identifier.
 
+- The MCP server answers "who is this", "when did we last talk", and "which
+  network do I reach them on" for a durable person through one read-only
+  `get_person_profile` tool. It returns the display name, tracking state,
+  the deterministic contact state (first and last contact, last inbound and
+  outbound, interaction count, inferred channel), the curated
+  `primary_channel`, non-sensitive attributes, current employment, typed
+  relationships, contact points, dates, and categories, all from local
+  derived state. Sensitive attributes, private Notes, addresses, and media
+  are excluded, and the tool makes no provider calls.
+
 - Person profile catalog and tracking foundation: eleven reconciled system
   profile attributes (location, birthplace, membership, religion, politics,
   personality, pets, interests, favorites) with portable `is_sensitive`
   metadata, plus `msgvault person track|untrack` and
   `/api/v1/people/{id}/tracking` to opt a durable person into future profile
   maintenance.
+
+- The seeded person catalog gains `how_we_met`, a single-value text field
+  for how you and a person first met, and every seeded text field
+  now accepts 280 characters instead of 120. Both changes apply on store open
+  for SQLite and PostgreSQL alike: a fresh archive has the field before anyone
+  types, an existing archive is widened in place, and tracked people pick up
+  the changed target catalog on their next sweep.
 
 - Scope embedding builds to selected accounts: `[vector.embed.scope] accounts`
   keeps the daemon's scheduled embeds within the listed accounts, and
@@ -97,6 +158,8 @@ All notable changes to msgvault, grouped by release.
 - Everything and Files now page narrow analytical metadata before enriching
   participant details, preventing default listings on multi-million-message
   archives from exhausting the interactive DuckDB memory budget.
+- WhatsApp vCard imports skip phone values without explicit international `+`
+  or `00` provenance.
 
 ---
 
@@ -480,7 +543,7 @@ All notable changes to msgvault, grouped by release.
   the single archive writer: concurrent operations queue with a visible
   `Waiting:` message, read-only commands run immediately, and scheduled
   syncs yield to interactive commands. See the
-  [Daemon Migration Guide](/guides/daemon-migration/).
+  [Daemon Migration Guide](/docs/guides/daemon-migration/).
 - Daemon lifecycle management via `msgvault serve start|status|stop|restart`,
   with automatic restart of older local daemons on binary upgrade
   (`[server].daemon_auto_restart`).
@@ -670,7 +733,7 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- **Vector search (semantic and hybrid).** msgvault can now embed your archive using a configured OpenAI-compatible embedding endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) and search it by meaning, not just keywords. `msgvault search --mode vector` runs pure semantic search; `--mode hybrid` fuses BM25 and vector similarity via Reciprocal Rank Fusion. Exposed through local CLI search (`msgvault search`), the HTTP API (`GET /api/v1/search?mode=vector|hybrid`), and the MCP server (`search_messages` mode argument plus a new `find_similar_messages` tool). See [Vector Search](/usage/vector-search/).
+- **Vector search (semantic and hybrid).** msgvault can now embed your archive using a configured OpenAI-compatible embedding endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) and search it by meaning, not just keywords. `msgvault search --mode vector` runs pure semantic search; `--mode hybrid` fuses BM25 and vector similarity via Reciprocal Rank Fusion. Exposed through local CLI search (`msgvault search`), the HTTP API (`GET /api/v1/search?mode=vector|hybrid`), and the MCP server (`search_messages` mode argument plus a new `find_similar_messages` tool). See [Vector Search](/docs/usage/vector-search/).
 - `msgvault build-embeddings` command to generate and maintain the local vector index. Incremental by default; `--full-rebuild` creates a new generation and atomically activates it once coverage reaches zero. Same-model rebuilds keep answering against the previous active generation while the new one is built, with active-generation top-ups frozen until activation; model or dimension changes return `index_stale` until activation.
 - Background embedding via the daemon scheduler. A new `[vector.embed.schedule]` config block drives the embed worker on cron and/or after every successful scheduled sync, so `msgvault serve` can keep the vector index current without manual intervention.
 - `/api/v1/stats` gains a `vector_search` sub-object reporting the active generation, any in-flight rebuild, and the actionable missing embedding count for the generation the worker will target next.
@@ -679,7 +742,7 @@ All notable changes to msgvault, grouped by release.
 **Improvements**
 
 - `search` command gains `--mode fts|vector|hybrid` and `--explain` flags. `--explain` includes per-signal scores (RRF, BM25, vector) in table and JSON output for ranking inspection.
-- Configuration gains a full `[vector]` block with sub-tables for the embedding endpoint, message preprocessing, hybrid ranking, and the embed scheduler. See [Configuration: vector](/configuration/#vector).
+- Configuration gains a full `[vector]` block with sub-tables for the embedding endpoint, message preprocessing, hybrid ranking, and the embed scheduler. See [Configuration: vector](/docs/configuration/#vector).
 - `remove-account` deletes attachment files from disk when they were unique to the removed account. Files shared across multiple accounts are preserved automatically, and an in-progress sync on any account skips file deletion to avoid racing new attachment writes.
 
 **Bug fixes**
@@ -708,7 +771,7 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- Structured file logging with per-run correlation IDs. Every CLI invocation gets a unique `run_id` on every log line, making it easy to trace a single run across shared log files. New `msgvault logs` command for viewing and tailing logs. File logging is opt-in; see [Configuration: Log](/configuration/#log) for setup.
+- Structured file logging with per-run correlation IDs. Every CLI invocation gets a unique `run_id` on every log line, making it easy to trace a single run across shared log files. New `msgvault logs` command for viewing and tailing logs. File logging is opt-in; see [Configuration: Log](/docs/configuration/#log) for setup.
 
 **Improvements**
 
@@ -761,9 +824,9 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
-- SQL query interface via `msgvault query`. Run arbitrary SQL against DuckDB over Parquet with `--format json|csv|table`. See [SQL Queries](/usage/querying/).
+- SQL query interface via `msgvault query`. Run arbitrary SQL against DuckDB over Parquet with `--format json|csv|table`. See [SQL Queries](/docs/usage/querying/).
 - Microsoft 365 OAuth2 support via `msgvault add-o365` for Outlook.com and organizational accounts. Auto-detects personal vs. org IMAP hosts.
-- Text message import: `import-whatsapp`, `import-imessage`, and `import-gvoice` for WhatsApp, iMessage, and Google Voice. See [Text Messages](/usage/text-messages/).
+- Text message import: `import-whatsapp`, `import-imessage`, and `import-gvoice` for WhatsApp, iMessage, and Google Voice. See [Text Messages](/docs/usage/text-messages/).
 - TUI text mode: press `m` to toggle between Email and Texts for browsing imported text conversations.
 - `--after` and `--before` date filters for `sync-full` with IMAP accounts.
 - CC and BCC recipients exposed in the message API responses.

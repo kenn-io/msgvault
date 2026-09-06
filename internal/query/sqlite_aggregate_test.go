@@ -787,6 +787,48 @@ func TestAggregateByLabel_WithSearchQuery(t *testing.T) {
 	}
 }
 
+func TestAggregateLabelSearchStatsMatchRepeatedFilterRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	searchQuery := "label:work label:important"
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels,
+		AggregateOptions{SearchQuery: searchQuery})
+	require.NoError(err)
+	assertAggRows(t, rows, []aggExpectation{{"Work", 2}, {"IMPORTANT", 1}})
+
+	stats, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{
+		SearchQuery: searchQuery,
+		SearchScope: true,
+		GroupBy:     ViewLabels,
+	})
+	require.NoError(err)
+	assert.Equal(int64(3), stats.MessageCount)
+}
+
+func TestAggregateLabelSearchStatsCorrelateFilterAndText(t *testing.T) {
+	env := newTestEnv(t)
+	needle := env.AddLabel(dbtest.LabelOpts{Name: "Needle"})
+	env.AddMessageLabel(1, needle)
+	workNeedle := env.AddLabel(dbtest.LabelOpts{Name: "Work Needle"})
+	env.AddMessageLabel(2, workNeedle)
+	searchQuery := "label:Work Needle"
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels,
+		AggregateOptions{SearchQuery: searchQuery})
+	require.NoError(t, err)
+	assertAggRows(t, rows, []aggExpectation{{"Work Needle", 1}})
+
+	stats, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{
+		SearchQuery: searchQuery,
+		SearchScope: true,
+		GroupBy:     ViewLabels,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), stats.MessageCount)
+}
+
 // TestSubAggregate_WithSearchQuery verifies that SubAggregate applies
 // SearchQuery to filter results (not silently dropped).
 func TestSubAggregate_WithSearchQuery(t *testing.T) {
@@ -803,6 +845,75 @@ func TestSubAggregate_WithSearchQuery(t *testing.T) {
 	// Should return exactly the "Work" label, not all labels for alice
 	require.Len(t, rows, 1, "expected 1 label row")
 	assert.Equal(t, "Work", rows[0].Key)
+}
+
+func TestAggregateSearchMatchesDisplayedKeysAndStats(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		wantKey string
+		view    ViewType
+		setup   func(*testEnv)
+	}{
+		{
+			name:    "label",
+			query:   "LabelOnly Needle",
+			wantKey: "LabelOnly Needle",
+			view:    ViewLabels,
+			setup: func(env *testEnv) {
+				labelID := env.AddLabel(dbtest.LabelOpts{Name: "LabelOnly Needle"})
+				env.AddMessageLabel(1, labelID)
+				env.AddMessageLabel(2, env.AddLabel(dbtest.LabelOpts{Name: "LabelOnly"}))
+				env.AddMessageLabel(2, env.AddLabel(dbtest.LabelOpts{Name: "Needle"}))
+			},
+		},
+		{
+			name:    "sender name",
+			query:   "SenderNameOnlyNeedle",
+			wantKey: "SenderNameOnlyNeedle",
+			view:    ViewSenderNames,
+			setup: func(env *testEnv) {
+				env.SetFromName(1, "SenderNameOnlyNeedle")
+			},
+		},
+		{
+			name:    "recipient name",
+			query:   "RecipientNameOnlyNeedle",
+			wantKey: "RecipientNameOnlyNeedle",
+			view:    ViewRecipientNames,
+			setup: func(env *testEnv) {
+				env.SetRecipientName(1, env.MustLookupParticipant("bob@company.org"), "RecipientNameOnlyNeedle")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			env := newTestEnv(t)
+			env.EnableFTS()
+			tt.setup(env)
+			filter := MessageFilter{MessageType: messageTypeEmail}
+
+			rows, err := env.Engine.SubAggregate(env.Ctx, filter, tt.view,
+				AggregateOptions{SearchQuery: tt.query})
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal(tt.wantKey, rows[0].Key)
+			assert.Equal(int64(1), rows[0].Count)
+
+			stats, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{
+				Filter:      &filter,
+				SearchQuery: tt.query,
+				SearchScope: true,
+				GroupBy:     tt.view,
+			})
+			require.NoError(err)
+			assert.Equal(int64(1), stats.MessageCount)
+		})
+	}
 }
 
 // TestEscapeSQLiteLike verifies that wildcard characters are escaped

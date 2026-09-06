@@ -1,6 +1,7 @@
 package daemonclient
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -137,6 +138,10 @@ func cliDeletionManifestToGenerated(manifest *deletion.Manifest) generated.Creat
 		ID:          manifest.ID,
 		Status:      string(manifest.Status),
 		Version:     int64(manifest.Version),
+	}
+	if len(manifest.RawFilter) > 0 {
+		rawFilter := append(json.RawMessage(nil), manifest.RawFilter...)
+		out.RawFilter = &rawFilter
 	}
 	if manifest.Execution != nil {
 		out.Execution = cliDeletionExecutionToGenerated(manifest.Execution)

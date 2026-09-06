@@ -15,6 +15,86 @@
       "source": "/install.ps1",
       "destination": "https://raw.githubusercontent.com/kenn-io/msgvault/main/scripts/install.ps1",
       "permanent": false
+    },
+    {
+      "source": "/introduction/:path*",
+      "destination": "/docs/introduction/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/setup/:path*",
+      "destination": "/docs/setup/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/web-ui/:path*",
+      "destination": "/docs/web-ui/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/configuration/:path*",
+      "destination": "/docs/configuration/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/cli-reference/:path*",
+      "destination": "/docs/cli-reference/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/api-server/:path*",
+      "destination": "/docs/api-server/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/changelog/:path*",
+      "destination": "/docs/changelog/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/troubleshooting/:path*",
+      "destination": "/docs/troubleshooting/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/development/:path*",
+      "destination": "/docs/development/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/faq/:path*",
+      "destination": "/docs/faq/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/usage/:path*",
+      "destination": "/docs/usage/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/guides/:path*",
+      "destination": "/docs/guides/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/architecture/:path*",
+      "destination": "/docs/architecture/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/assets/static/:path*",
+      "destination": "/docs/assets/static/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/assets/generated/:path*",
+      "destination": "/docs/assets/generated/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/search/:path*",
+      "destination": "/docs/search/:path*",
+      "permanent": true
     }
   ]
 }

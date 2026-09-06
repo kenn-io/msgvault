@@ -358,6 +358,80 @@ func TestEgressGateRejectsMissingCredentialAfterSuppressionChecks(t *testing.T) 
 	assert.Equal(t, []string{"consent", "key_ids", "suppression", "credential"}, events)
 }
 
+func TestEgressGateResolvesCredentialsByStableProviderProfile(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x79}, 32))
+	requirements.NoError(err)
+	profiles := make([]personenrichment.ProviderProfile, 0, 2)
+	for _, name := range []string{"exa-primary", "exa-secondary"} {
+		provider := validProviderConfig(personenrichment.ProviderExa)
+		provider.Name = name
+		provider.APIKeyEnv = "SHARED_EXA_KEY"
+		provider.AllowedIdentifiers = []personenrichment.IdentifierClass{personenrichment.IdentifierEmail}
+		profile, profileErr := provider.Profile(profileCatalog())
+		requirements.NoError(profileErr)
+		profiles = append(profiles, profile)
+	}
+	events := []string{}
+	probe := hasher.Digest(profiles[0].ProviderNamespace, personenrichment.SuppressionEmail,
+		personenrichment.EmailNormalizationV1, "person@example.com")
+	gate, err := personenrichment.NewProviderBoundEgressGate(
+		recordingConsentChecker{events: &events, active: true},
+		&recordingSuppressionChecker{events: &events, keyIDs: []string{probe.KeyID}, suppressed: map[string]bool{}},
+		hasher,
+		func(profile personenrichment.ProviderProfile) (string, bool, error) {
+			events = append(events, "credential:"+profile.Name)
+			return "stored-" + profile.Name, true, nil
+		},
+	)
+	requirements.NoError(err)
+
+	for _, profile := range profiles {
+		authorization, authorizeErr := gate.Authorize(t.Context(), personenrichment.EgressInput{
+			Request: personenrichment.Request{Identity: personenrichment.Identity{Email: "person@example.com"}},
+			Profile: profile,
+		})
+		requirements.NoError(authorizeErr)
+		assertions.Equal("stored-"+profile.Name, authorization.Credential)
+	}
+	assertions.Contains(events, "credential:exa-primary")
+	assertions.Contains(events, "credential:exa-secondary")
+}
+
+func TestEgressGateProviderCredentialResolutionFailureDoesNotUseEnvironmentFallback(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x7a}, 32))
+	requirements.NoError(err)
+	profile := egressProfile(t, []personenrichment.IdentifierClass{personenrichment.IdentifierEmail})
+	events := []string{}
+	probe := hasher.Digest(profile.ProviderNamespace, personenrichment.SuppressionEmail,
+		personenrichment.EmailNormalizationV1, "person@example.com")
+	resolutionErr := errors.New("credential store binding mismatch")
+	gate, err := personenrichment.NewProviderBoundEgressGate(
+		recordingConsentChecker{events: &events, active: true},
+		&recordingSuppressionChecker{events: &events, keyIDs: []string{probe.KeyID}, suppressed: map[string]bool{}},
+		hasher,
+		func(personenrichment.ProviderProfile) (string, bool, error) {
+			events = append(events, "provider_credential")
+			return "", false, resolutionErr
+		},
+	)
+	requirements.NoError(err)
+	gate.LookupCredential = func(string) (string, bool) {
+		events = append(events, "environment")
+		return "environment-secret", true
+	}
+
+	_, err = gate.Authorize(t.Context(), personenrichment.EgressInput{
+		Request: personenrichment.Request{Identity: personenrichment.Identity{Email: "person@example.com"}},
+		Profile: profile,
+	})
+	requirements.ErrorIs(err, resolutionErr)
+	assertions.NotContains(events, "environment")
+}
+
 func TestEgressGateRejectsInvalidConstruction(t *testing.T) {
 	hasher, err := personenrichment.NewSuppressionHasher(bytes.Repeat([]byte{0x81}, 32))
 	require.NoError(t, err)

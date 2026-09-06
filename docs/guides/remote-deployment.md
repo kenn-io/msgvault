@@ -225,7 +225,7 @@ curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/statu
     `msgvault add-calendar you@gmail.com` on a machine with a browser, copy the
     token to the server (it now carries Gmail + Calendar), then add a `[[gcal]]`
     entry with a cron `schedule` so the daemon syncs it. See
-    [Google Calendar](/usage/calendar/).
+    [Google Calendar](/docs/usage/calendar/).
 
 After setup, your data directory contains:
 
@@ -248,7 +248,7 @@ regular remote use, terminate HTTPS at a reverse proxy and add only that
 proxy's address or CIDR to `server.trusted_proxies`; the daemon uses trusted
 forwarding information to mark its browser session cookie `Secure`. Plain HTTP
 on a private network is supported as an explicit tradeoff and produces a UI
-warning because the cookie is not encrypted in transit. See [Web UI](/web-ui/)
+warning because the cookie is not encrypted in transit. See [Web UI](/docs/web-ui/)
 for the complete session and proxy model.
 
 ## Using the Local CLI Against Remote

@@ -643,6 +643,18 @@ func TestConfigValidationRejectsProtocolIncompatibleHTTPProfiles(t *testing.T) {
 			want:     `anthropic_messages requires auth "x_api_key"`,
 		},
 		{
+			name:     "anthropic empty auth",
+			protocol: peoplesweep.ProtocolAnthropicMessages,
+			mutate:   func(p *peoplesweep.ProviderConfig) { p.Auth = "" },
+			want:     `anthropic_messages requires auth "x_api_key"`,
+		},
+		{
+			name:     "anthropic unknown auth",
+			protocol: peoplesweep.ProtocolAnthropicMessages,
+			mutate:   func(p *peoplesweep.ProviderConfig) { p.Auth = "unknown" },
+			want:     `anthropic_messages requires auth "x_api_key"`,
+		},
+		{
 			name:     "anthropic json object output",
 			protocol: peoplesweep.ProtocolAnthropicMessages,
 			mutate:   func(p *peoplesweep.ProviderConfig) { p.OutputMode = peoplesweep.OutputModeJSONObject },
@@ -670,6 +682,12 @@ func TestConfigValidationRejectsProtocolIncompatibleHTTPProfiles(t *testing.T) {
 			name:     "google x api key auth",
 			protocol: peoplesweep.ProtocolGoogleGenerateContent,
 			mutate:   func(p *peoplesweep.ProviderConfig) { p.Auth = peoplesweep.AuthXAPIKey },
+			want:     `google_generate_content requires auth "google_api_key"`,
+		},
+		{
+			name:     "google unknown auth",
+			protocol: peoplesweep.ProtocolGoogleGenerateContent,
+			mutate:   func(p *peoplesweep.ProviderConfig) { p.Auth = "unknown" },
 			want:     `google_generate_content requires auth "google_api_key"`,
 		},
 		{

@@ -59,6 +59,38 @@ type CardDAVConflict struct {
 	UpdatedAt               time.Time
 }
 
+// CardDAVConflictHeader is the compact, body-free read model used by public
+// conflict lists. Sensitive mutation evidence deliberately remains absent.
+type CardDAVConflictHeader struct {
+	ID              int64
+	AddressBookID   int64
+	AddressBookName string
+	Status          CardDAVConflictStatus
+	LocalTombstone  bool
+	RemoteTombstone bool
+	UpdatedAt       time.Time
+}
+
+// CardDAVConflictDetailSource contains the internal evidence needed to build
+// one bounded public projection. It must not cross the CardDAV service boundary.
+type CardDAVConflictDetailSource struct {
+	ID              int64
+	AddressBookID   int64
+	AddressBookName string
+	MappingRevision int64
+	LocalBody       []byte
+	RemoteBody      []byte
+	BaseBody        []byte
+	LocalTombstone  bool
+	RemoteTombstone bool
+	BaseAvailable   bool
+	Status          CardDAVConflictStatus
+	Resolution      CardDAVConflictResolution
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ResolvedAt      *time.Time
+}
+
 type CardDAVConflictCapture struct {
 	AddressBookID           int64
 	Href                    string
@@ -1049,6 +1081,72 @@ func (s *Store) ListCardDAVConflictsContext(
 		conflicts = append(conflicts, *conflict)
 	}
 	return conflicts, rows.Err()
+}
+
+func (s *Store) ListCardDAVConflictHeadersContext(ctx context.Context) ([]CardDAVConflictHeader, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.address_book_id, b.display_name,
+		c.status, c.local_tombstone, c.remote_tombstone, c.updated_at
+		FROM carddav_conflicts c
+		JOIN carddav_address_books b ON b.id = c.address_book_id
+		WHERE c.status = 'unresolved'
+		ORDER BY c.updated_at DESC, c.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list CardDAV conflict headers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []CardDAVConflictHeader{}
+	for rows.Next() {
+		var header CardDAVConflictHeader
+		if err := rows.Scan(&header.ID, &header.AddressBookID, &header.AddressBookName,
+			&header.Status, &header.LocalTombstone, &header.RemoteTombstone, &header.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan CardDAV conflict header: %w", err)
+		}
+		result = append(result, header)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetCardDAVConflictDetailSourceContext(
+	ctx context.Context, id int64,
+) (*CardDAVConflictDetailSource, error) {
+	var source CardDAVConflictDetailSource
+	var resolution sql.NullString
+	var resolvedAt sql.NullTime
+	var baseBody []byte
+	err := s.db.QueryRowContext(ctx, `SELECT c.id, c.address_book_id, b.display_name,
+		c.mapping_revision, c.local_body, c.remote_body,
+		c.local_tombstone, c.remote_tombstone, c.status, c.resolution,
+		c.created_at, c.updated_at, c.resolved_at, r.remote_body
+		FROM carddav_conflicts c
+		JOIN carddav_address_books b ON b.id = c.address_book_id
+		LEFT JOIN carddav_resources r ON r.address_book_id = c.address_book_id
+			AND r.href = c.href
+			AND r.mapping_revision = c.mapping_revision
+			AND r.remote_semantic_hash = c.base_remote_hash
+			AND r.remote_etag = c.base_remote_etag
+		WHERE c.id = ?`, id).Scan(
+		&source.ID, &source.AddressBookID, &source.AddressBookName,
+		&source.MappingRevision, &source.LocalBody, &source.RemoteBody,
+		&source.LocalTombstone, &source.RemoteTombstone, &source.Status, &resolution,
+		&source.CreatedAt, &source.UpdatedAt, &resolvedAt, &baseBody)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCardDAVConflictNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get CardDAV conflict detail source: %w", err)
+	}
+	source.Resolution = CardDAVConflictResolution(resolution.String)
+	if resolvedAt.Valid {
+		value := resolvedAt.Time.UTC()
+		source.ResolvedAt = &value
+	}
+	if baseBody != nil {
+		source.BaseAvailable = true
+		source.BaseBody = append([]byte(nil), baseBody...)
+	}
+	source.LocalBody = append([]byte(nil), source.LocalBody...)
+	source.RemoteBody = append([]byte(nil), source.RemoteBody...)
+	return &source, nil
 }
 
 func (s *Store) ResolveCardDAVConflictRemoteContext(

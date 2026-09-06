@@ -5,11 +5,11 @@ description: Import chats and texts from common exports, and browse synchronized
 
 msgvault can import chats and text messages from WhatsApp, iMessage, Google
 Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft
-Teams chats and channels through [Microsoft Teams](/usage/teams/) and Discord
-guild channels and threads through [Discord](/usage/discord/). These records
-are stored in the same database as email. The [Web UI](/web-ui/) presents chats
+Teams chats and channels through [Microsoft Teams](/docs/usage/teams/) and Discord
+guild channels and threads through [Discord](/docs/usage/discord/). These records
+are stored in the same database as email. The [Web UI](/docs/web-ui/) presents chats
 as conversation rows in Everything, with individual messages available on
-drill-down; in the [TUI](/usage/tui/), press `m` to switch to text mode.
+drill-down; in the [TUI](/docs/usage/tui/), press `m` to switch to text mode.
 
 ## import-whatsapp
 
@@ -233,7 +233,7 @@ msgvault sync-synctech-sms phone-backups
 
 ## Browsing Texts
 
-Start `msgvault serve` and open the [Web UI](/web-ui/) to search email, chats,
+Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to search email, chats,
 calendar events, and meeting notes together. Chat results stay grouped as
 conversations so short message fragments do not overwhelm Everything. Open a
 conversation to inspect its matching messages in context.
@@ -247,7 +247,7 @@ to Email.
 msgvault tui
 ```
 
-Text mode is only available when text data has been imported. See the [TUI documentation](/usage/tui/) for keyboard shortcuts and navigation.
+Text mode is only available when text data has been imported. See the [TUI documentation](/docs/usage/tui/) for keyboard shortcuts and navigation.
 
 ## Deduplication
 

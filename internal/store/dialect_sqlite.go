@@ -1936,6 +1936,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE carddav_conflicts ADD COLUMN pending_started_at DATETIME`, "carddav_conflicts.pending_started_at"},
 		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
 		{`ALTER TABLE sync_runs ADD COLUMN sync_type TEXT NOT NULL DEFAULT ''`, "sync_runs.sync_type"},
+		{`ALTER TABLE sync_runs ADD COLUMN request_fingerprint TEXT`, "sync_runs.request_fingerprint"},
+		{`ALTER TABLE sync_runs ADD COLUMN operation_id TEXT`, "sync_runs.operation_id"},
 		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE messages ADD COLUMN list_id TEXT`, "list_id"},

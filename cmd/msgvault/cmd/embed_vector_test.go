@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -527,6 +528,38 @@ func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
 	must.Len(calls[4].Inputs, 1)
 	must.Len(calls[4].Inputs[0], 1)
 	check.Len(calls[4].Inputs[0][0], len(maxChunk)+len("search_document: "))
+}
+
+func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *testing.T) {
+	t.Setenv("TEXT_EMBEDDING_KEY", "")
+	var authorization string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"embedding": []float32{1, 0, 0, 0}, "index": 0}},
+			"model": "text-embedding-test",
+		}))
+	}))
+	t.Cleanup(provider.Close)
+	var storedETag string
+	vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false, func(c *config.Config) {
+		c.Vector.Embeddings.Endpoint = provider.URL
+		c.Vector.Embeddings.APIKeyEnv = "TEXT_EMBEDDING_KEY"
+		empty, err := providercredentials.Read(c.TokensDir())
+		require.NoError(t, err)
+		stored, err := providercredentials.Put(c.TokensDir(), empty.ETag,
+			providercredentials.VectorEmbeddingsID, provider.URL, "stored-at-startup")
+		require.NoError(t, err)
+		storedETag = stored.ETag
+	})
+	_, err := providercredentials.Put(cfg.TokensDir(), storedETag,
+		providercredentials.VectorEmbeddingsID, provider.URL, "stored-after-startup")
+	require.NoError(t, err)
+
+	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query")
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer stored-at-startup", authorization)
 }
 
 func TestSetupVectorFeatures_SelectsRunnerByAPIFormat(t *testing.T) {

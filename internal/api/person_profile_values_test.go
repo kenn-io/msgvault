@@ -35,6 +35,36 @@ func TestGetPersonProfileReturnsTypedValuesAndETag(t *testing.T) {
 	assert.Equal("Alice@Example.com", profile.ContactPoints[0].OriginalValue)
 }
 
+func TestPatchPersonProfileAcceptsServiceLessEmailAndRejectsUnknownService(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server, st := newProfileTestServer(t)
+	personID := seedAPIPerson(t, st)
+
+	read := doRequest(t, server, http.MethodGet, personProfilePath(personID), nil, nil)
+	require.Equal(http.StatusOK, read.Code, read.Body.String())
+	plainEmail := doRequest(t, server, http.MethodPatch, personProfilePath(personID),
+		[]byte(`{"contact_points":{"add":[{"address_kind":"email","original_value":"plain@example.test","envelope":{"source":"user"}}]}}`),
+		map[string]string{"If-Match": read.Header().Get("ETag")})
+	require.Equal(http.StatusOK, plainEmail.Code, plainEmail.Body.String())
+	var profile store.PersonProfile
+	require.NoError(json.Unmarshal(plainEmail.Body.Bytes(), &profile), plainEmail.Body.String())
+	var added *store.PersonContactPoint
+	for index := range profile.ContactPoints {
+		if profile.ContactPoints[index].OriginalValue == "plain@example.test" {
+			added = &profile.ContactPoints[index]
+			break
+		}
+	}
+	require.NotNil(added)
+	assert.Nil(added.ServiceSlug)
+
+	unknownService := doRequest(t, server, http.MethodPatch, personProfilePath(personID),
+		[]byte(`{"contact_points":{"add":[{"address_kind":"email","service_slug":"not-a-real-service","original_value":"scoped@example.test","envelope":{"source":"user"}}]}}`),
+		map[string]string{"If-Match": plainEmail.Header().Get("ETag")})
+	assert.Equal(http.StatusBadRequest, unknownService.Code, unknownService.Body.String())
+}
+
 func TestPatchPersonProfileRoundTripsPartialDatesAndAddresses(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

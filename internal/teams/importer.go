@@ -1092,7 +1092,7 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 	policy := opts.MediaPolicy
 	maxBytes := policy.MaxBytes
 	if maxBytes <= 0 {
-		maxBytes = 100 << 20
+		maxBytes = attachmentpolicy.DefaultChatMaxBytes
 	}
 	policy.MaxBytes = maxBytes
 

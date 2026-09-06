@@ -199,7 +199,7 @@ func (m Model) handleTextDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case keyNameEsc, keyNameBackspace:
 			return m.textGoBack()
-		case "left", "h", "right", "l", "T":
+		case "left", "h", keyNameRight, "l", "T":
 			return m, nil
 		}
 	}
@@ -271,7 +271,7 @@ func (m Model) handleTextInlineSearchKeys(
 		m.searchInput.SetValue("")
 		return m, nil
 
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 

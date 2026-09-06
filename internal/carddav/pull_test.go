@@ -1,7 +1,9 @@
 package carddav
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -212,6 +214,13 @@ func TestSyncContinuesAfterOneBookFailsAndReconcilesPublications(t *testing.T) {
 	_, publicationErr := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.ErrorIs(publicationErr, store.ErrCardDAVPublicationNotFound,
 		"publication reconciliation must still run after an independent book failure")
+	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(listErr)
+	require.Len(runs, 1)
+	assert.Equal(store.CardDAVSyncRunPartial, runs[0].State)
+	assert.Equal(int64(result.Books), runs[0].Books)
+	assert.Equal("upstream_failed", runs[0].ErrorCode)
+	assert.Equal("CardDAV server request failed.", runs[0].ErrorMessage)
 }
 
 func newPullService(t *testing.T, server *httptest.Server, supportsSync bool) (*Service, *store.Store, store.CardDAVAddressBook) {
@@ -308,6 +317,183 @@ func writeDAVXML(t *testing.T, w http.ResponseWriter, body string) {
 	w.WriteHeader(http.StatusMultiStatus)
 	_, err := w.Write([]byte(body))
 	require.NoError(t, err)
+}
+
+func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := readRequestBody(t, r)
+		if strings.Contains(body, "sync-collection") {
+			writeDAVXML(t, w, syncResponse(
+				changedResponse("/books/personal/alice.vcf", `&quot;one&quot;`), "token-1",
+			))
+			return
+		}
+		writeDAVXML(t, w, syncResponse(
+			cardResponse("/books/personal/alice.vcf", `&quot;one&quot;`, "alice"), "",
+		))
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+
+	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	assert.Equal(SyncResult{Books: 1, Created: 1}, result)
+
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(store.CardDAVSyncTriggerManual, runs[0].Trigger)
+	assert.True(runs[0].Full)
+	assert.Equal(store.CardDAVSyncRunSucceeded, runs[0].State)
+	assert.NotNil(runs[0].FinishedAt)
+	assert.Equal(int64(result.Books), runs[0].Books)
+	assert.Equal(int64(result.Created), runs[0].Created)
+	assert.Equal(int64(result.Updated), runs[0].Updated)
+	assert.Equal(int64(result.Removed), runs[0].Removed)
+}
+
+func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeDAVXML(t, w, syncResponse("", "token-1"))
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+
+	_, err := service.Sync(t.Context(), SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+	require.NoError(err)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(t, store.CardDAVSyncTriggerScheduled, runs[0].Trigger)
+}
+
+func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseRequest
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Sync(ctx, SyncOptions{})
+		done <- err
+	}()
+	<-requestStarted
+	cancel()
+
+	err := <-done
+	close(releaseRequest)
+	require.ErrorIs(err, context.Canceled)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(err)
+	require.Len(runs, 1)
+	assert.Equal(store.CardDAVSyncRunCancelled, runs[0].State)
+	assert.Equal("cancelled", runs[0].ErrorCode)
+	assert.NotNil(runs[0].FinishedAt)
+}
+
+func TestSyncActiveClaimPreventsNetworkAndSecondRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+	_, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	require.NoError(err)
+
+	_, err = service.Sync(t.Context(), SyncOptions{})
+	require.ErrorIs(err, store.ErrCardDAVSyncActive)
+	assert.Zero(requests)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(err)
+	assert.Len(runs, 1)
+}
+
+func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+
+	result, err := service.Sync(t.Context(), SyncOptions{})
+	require.Error(err)
+	assert.Equal(SyncResult{}, result)
+	assert.Equal("CardDAV server request failed.", err.Error())
+	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	require.NoError(listErr)
+	require.Len(runs, 1)
+	assert.Equal(store.CardDAVSyncRunFailed, runs[0].State)
+	assert.Equal("upstream_failed", runs[0].ErrorCode)
+	assert.Equal("CardDAV server request failed.", runs[0].ErrorMessage)
+}
+
+func TestSyncFailureProjectionRejectsPrivateMaterial(t *testing.T) {
+	assert := assert.New(t)
+	privateErr := errors.New("Authorization: Bearer synthetic-secret BEGIN:VCARD https://private.invalid/dav")
+	finish := cardDAVSyncRunFinish(SyncResult{}, privateErr)
+	returned := publicCardDAVSyncError(privateErr)
+	assert.Equal("sync_failed", finish.ErrorCode)
+	assert.Equal("CardDAV sync failed.", finish.ErrorMessage)
+	require.Error(t, returned)
+	assert.Equal("CardDAV sync failed.", returned.Error())
+	for _, private := range []string{"synthetic-secret", "BEGIN:VCARD", "private.invalid"} {
+		assert.NotContains(finish.ErrorMessage, private)
+		assert.NotContains(returned.Error(), private)
+	}
+	assert.ErrorIs(returned, privateErr, "safe projection must preserve machine-readable cause semantics")
+}
+
+func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`CREATE FUNCTION fail_carddav_run_finish_fn() RETURNS trigger AS $$
+			BEGIN
+				IF OLD.state = 'running' THEN
+					RAISE EXCEPTION 'injected finish failure';
+				END IF;
+				RETURN NEW;
+			END $$ LANGUAGE plpgsql`)
+		require.NoError(err)
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_carddav_run_finish
+			BEFORE UPDATE OF state ON carddav_sync_runs
+			FOR EACH ROW EXECUTE FUNCTION fail_carddav_run_finish_fn()`)
+	} else {
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_carddav_run_finish
+			BEFORE UPDATE OF state ON carddav_sync_runs
+			WHEN OLD.state = 'running'
+			BEGIN SELECT RAISE(ABORT, 'injected finish failure'); END`)
+	}
+	require.NoError(err)
+
+	result, err := service.Sync(t.Context(), SyncOptions{})
+	require.Error(err)
+	assert.Equal(SyncResult{}, result)
+	var statusErr *StatusError
+	require.ErrorAs(err, &statusErr, "execution error must remain inspectable")
+	require.ErrorContains(err, "injected finish failure")
+	assert.Equal(1, requests, "finish failure must not replay network work")
 }
 
 func TestSyncEmptyTokenReturnsMembersAndAdvancesToken(t *testing.T) {

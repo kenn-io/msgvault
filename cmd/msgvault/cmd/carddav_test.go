@@ -36,6 +36,7 @@ func TestCardDAVCommandsExposeSafeOperatorSurface(t *testing.T) {
 	show, _, err := root.Find([]string{"conflicts", "show"})
 	require.NoError(err)
 	assert.Equal("show", show.Name())
+	assert.Equal("Show safe base, local, and remote summaries for a CardDAV conflict", show.Short)
 }
 
 func TestCardDAVCLIProductionRoutes(t *testing.T) {
@@ -65,16 +66,16 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		case "GET /api/v1/carddav/conflicts":
 			_, _ = w.Write([]byte(`{"conflicts":[]}`))
 		case "GET /api/v1/carddav/conflicts/7":
-			_, _ = w.Write([]byte(`{"id":7,"address_book_id":9,"href":"/alice.vcf","local_tombstone":false,"local_vcard":"BEGIN:VCARD\\r\\nFN:Local Alice\\r\\nEND:VCARD\\r\\n","remote_tombstone":false,"remote_vcard":"BEGIN:VCARD\\r\\nFN:Remote Alice\\r\\nEND:VCARD\\r\\n","status":"open"}`))
+			_, _ = w.Write([]byte(`{"id":7,"address_book":{"id":9,"name":"Personal"},"status":"unresolved","base":{"state":"unavailable","emails":[],"phones":[]},"local":{"state":"present","display_name":"Local Alice","emails":["local@example.test"],"phones":[]},"remote":{"state":"present","display_name":"Remote Alice","emails":[],"phones":["+12025550123"]},"allowed_resolutions":["keep_local","keep_remote"],"created_at":"2026-08-28T09:10:11Z","updated_at":"2026-08-28T10:11:12Z"}`))
 		case "POST /api/v1/carddav/conflicts/7/resolve":
 			var body map[string]string
 			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
 			assert.Equal("keep_remote", body["choice"])
-			_, _ = w.Write([]byte(`{"id":7,"address_book_id":9,"href":"/alice.vcf","local_tombstone":false,"remote_tombstone":false,"status":"resolved"}`))
+			_, _ = w.Write([]byte(`{"id":7,"status":"resolved","resolution":"keep_remote"}`))
 		case "POST /api/v1/carddav/publications/11":
-			_, _ = w.Write([]byte(`{"person_id":11,"desired":true}`))
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
 		case "DELETE /api/v1/carddav/publications/11":
-			_, _ = w.Write([]byte(`{"person_id":11,"desired":false}`))
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"unpublished","desired":false,"address_book":{"id":9,"name":"Personal"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -128,19 +129,30 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 	assert.NotContains(strings.Join(requests, "\n"), "synthetic-password")
 }
 
-func TestCardDAVConflictShowPrintsSnapshotsAsSafeJSON(t *testing.T) {
+func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	localVCard := "BEGIN:VCARD\r\nFN:\x1b[31mLocal Alice\x1b[0m\r\nEND:VCARD\r\n"
-	remoteVCard := "BEGIN:VCARD\r\nFN:Remote Alice\r\nEND:VCARD\r\n"
+	const localRawMarker = "synthetic-local-raw-card"
+	const remoteRawMarker = "synthetic-remote-raw-card"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodGet, r.Method)
 		assert.Equal("/api/v1/carddav/conflicts/7", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-			"id": 7, "address_book_id": 9, "href": "/alice.vcf",
-			"local_tombstone": false, "local_vcard": localVCard,
-			"remote_tombstone": false, "remote_vcard": remoteVCard, "status": "open",
+			"id": 7, "address_book": map[string]any{"id": 9, "name": "Personal"},
+			"status": "resolved", "resolution": "keep_remote",
+			"base": map[string]any{"state": "unavailable", "emails": []string{}, "phones": []string{}},
+			"local": map[string]any{
+				"state": "present", "display_name": "Local Alice",
+				"emails": []string{"local@example.test"}, "phones": []string{"+12025550123"},
+			},
+			"remote":              map[string]any{"state": "deleted", "emails": []string{}, "phones": []string{}},
+			"allowed_resolutions": []string{},
+			"created_at":          "2026-08-28T09:10:11Z",
+			"updated_at":          "2026-08-28T10:11:12Z",
+			"resolved_at":         "2026-08-28T11:12:13Z",
+			"local_vcard":         localRawMarker,
+			"remote_vcard":        remoteRawMarker,
 		}))
 	}))
 	t.Cleanup(server.Close)
@@ -155,16 +167,23 @@ func TestCardDAVConflictShowPrintsSnapshotsAsSafeJSON(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"conflicts", "show", "7"})
 	require.NoError(cmd.Execute())
-	assert.NotContains(stdout.String(), "\x1b")
-	var got struct {
-		LocalVCard  *string `json:"local_vcard"`
-		RemoteVCard *string `json:"remote_vcard"`
-	}
-	require.NoError(json.Unmarshal(stdout.Bytes(), &got))
-	require.NotNil(got.LocalVCard)
-	require.NotNil(got.RemoteVCard)
-	assert.Equal(localVCard, *got.LocalVCard)
-	assert.Equal(remoteVCard, *got.RemoteVCard)
+	assert.JSONEq(`{
+		"id":7,
+		"address_book":{"id":9,"name":"Personal"},
+		"status":"resolved",
+		"resolution":"keep_remote",
+		"base":{"state":"unavailable","emails":[],"phones":[]},
+		"local":{"state":"present","display_name":"Local Alice","emails":["local@example.test"],"phones":["+12025550123"]},
+		"remote":{"state":"deleted","emails":[],"phones":[]},
+		"allowed_resolutions":[],
+		"created_at":"2026-08-28T09:10:11Z",
+		"updated_at":"2026-08-28T10:11:12Z",
+		"resolved_at":"2026-08-28T11:12:13Z"
+	}`, stdout.String())
+	assert.NotContains(stdout.String(), "local_vcard")
+	assert.NotContains(stdout.String(), "remote_vcard")
+	assert.NotContains(stdout.String(), localRawMarker)
+	assert.NotContains(stdout.String(), remoteRawMarker)
 }
 
 func TestCardDAVBooksSanitizesTerminalControls(t *testing.T) {

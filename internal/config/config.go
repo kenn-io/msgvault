@@ -336,9 +336,23 @@ type BackupConfig struct {
 }
 
 const (
-	DefaultChatMaxMediaBytes       int64         = 100 << 20
+	// DefaultChatMaxMediaBytes is the per-attachment size cap for Beeper,
+	// Slack, and Teams when max_media_mb is unset. The importers fall back to
+	// the same attachmentpolicy constant, so the effective default is one
+	// number wherever the policy is resolved.
+	DefaultChatMaxMediaBytes       int64         = attachmentpolicy.DefaultChatMaxBytes
 	DefaultDiscordMaxMediaBytes    int64         = 50 << 20
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
+
+	// DefaultMediaMaxParticipants is the participant cap applied to Beeper,
+	// Slack, Discord, and Teams media collection when a config file omits
+	// media_max_participants. Media from rooms above this size is skipped
+	// with a typed participant_threshold marker; direct chats and small
+	// groups keep theirs. NewDefaultConfig pre-fills the four provider
+	// fields so a file that omits the key inherits the cap, while an explicit
+	// media_max_participants = 0 still means "no cap" because TOML decoding
+	// overwrites the pre-filled value with the operator's zero.
+	DefaultMediaMaxParticipants = 20
 )
 
 // MediaAccountConfig overrides attachment download settings for one provider
@@ -536,6 +550,7 @@ type LogConfig struct {
 // DataConfig holds data storage configuration.
 type DataConfig struct {
 	DataDir          string `toml:"data_dir"`
+	ExportDir        string `toml:"export_dir"`
 	DatabaseURL      string `toml:"database_url"`
 	LooseAttachments bool   `toml:"loose_attachments"`
 }
@@ -688,6 +703,11 @@ func NewDefaultConfig() *Config {
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
+		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
+		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -803,6 +823,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
+	cfg.Data.ExportDir = expandPath(cfg.Data.ExportDir)
 	cfg.Log.Dir = expandPath(cfg.Log.Dir)
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
@@ -819,6 +840,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// directory so behavior doesn't depend on the working directory.
 	if explicit {
 		cfg.Data.DataDir = resolveRelative(cfg.Data.DataDir, cfg.HomeDir)
+		cfg.Data.ExportDir = resolveRelative(cfg.Data.ExportDir, cfg.HomeDir)
 		cfg.Log.Dir = resolveRelative(cfg.Log.Dir, cfg.HomeDir)
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
@@ -1073,6 +1095,14 @@ func (c *Config) AttachmentsDir() string {
 	return filepath.Join(c.Data.DataDir, "attachments")
 }
 
+// ExportDir returns the directory used for user-requested file exports.
+func (c *Config) ExportDir() string {
+	if c.Data.ExportDir != "" {
+		return c.Data.ExportDir
+	}
+	return filepath.Join(c.Data.DataDir, "exports")
+}
+
 // TokensDir returns the path to the OAuth tokens directory.
 func (c *Config) TokensDir() string {
 	return filepath.Join(c.Data.DataDir, "tokens")
@@ -1225,11 +1255,12 @@ type BeeperConfig struct {
 	RateLimitQPS float64 `toml:"rate_limit_qps"`
 	// Media toggles attachment download (nil/absent = enabled).
 	Media *bool `toml:"media"`
-	// MaxMediaMB caps individual attachment downloads in MiB (0 = 100).
+	// MaxMediaMB caps individual attachment downloads in MiB (0 = 250).
 	MaxMediaMB int `toml:"max_media_mb"`
 	// MediaScope is all, direct, or none (empty = all).
 	MediaScope string `toml:"media_scope"`
-	// MediaMaxParticipants caps eligible conversation membership (0 = no cap).
+	// MediaMaxParticipants caps eligible conversation membership (omitted =
+	// DefaultMediaMaxParticipants; explicit 0 = no cap).
 	MediaMaxParticipants int `toml:"media_max_participants"`
 	// AccountsConfig holds per-Beeper-account media overrides.
 	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
@@ -1250,17 +1281,20 @@ type SlackConfig struct {
 	ExcludeChannels []string `toml:"exclude_channels"`
 	// Media toggles file download (nil/absent = enabled).
 	Media *bool `toml:"media"`
-	// MaxMediaMB caps individual file downloads in MiB (0 = 100).
+	// MaxMediaMB caps individual file downloads in MiB (0 = 250).
 	MaxMediaMB int `toml:"max_media_mb"`
 	// MediaScope is all, direct, or none (empty = all).
 	MediaScope string `toml:"media_scope"`
-	// MediaMaxParticipants caps eligible conversation membership (0 = no cap).
+	// MediaMaxParticipants caps eligible conversation membership (omitted =
+	// DefaultMediaMaxParticipants; explicit 0 = no cap).
 	MediaMaxParticipants int `toml:"media_max_participants"`
 	// AccountsConfig holds per-workspace media overrides keyed by team ID.
 	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
 // TeamsConfig configures provider-wide and per-account Teams media policy.
+// MediaMaxParticipants follows the same omitted-versus-explicit-zero rule as
+// the other providers.
 type TeamsConfig struct {
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
@@ -1292,7 +1326,7 @@ func (b BeeperConfig) MaxMediaBytes() int64 {
 	if b.MaxMediaMB > 0 {
 		return int64(b.MaxMediaMB) << 20
 	}
-	return 100 << 20
+	return DefaultChatMaxMediaBytes
 }
 
 // MediaPolicy resolves Beeper provider settings and an account override.

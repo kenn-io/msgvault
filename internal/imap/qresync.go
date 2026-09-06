@@ -132,6 +132,7 @@ func (c *Client) tryBuildQresyncMessageList(
 		if len(delta.ChangedUIDs) == 0 && len(delta.VanishedUIDs) == 0 {
 			unchanged++
 		}
+		c.loadSourceMessageAliases(mailbox, delta.ChangedUIDs)
 		for _, uid := range delta.ChangedUIDs {
 			sourceMessageID := compositeID(mailbox, uid)
 			messages = append(messages, gmailapi.MessageID{ID: sourceMessageID})

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-30
+last_edited: 2026-09-03
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,9 @@ Override the data directory with the `MSGVAULT_HOME` environment variable or the
 [data]
 # Base data directory (default: ~/.msgvault)
 data_dir = "/path/to/msgvault/data"
+
+# User-requested exports (default: {data_dir}/exports)
+export_dir = "/path/to/msgvault/exports"
 
 # Database URL (default: {data_dir}/msgvault.db; PostgreSQL DSN supported)
 database_url = "/path/to/msgvault.db"
@@ -53,6 +56,9 @@ auto_confirm_identities = false
 [discord]
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
+# Skip attachments from rooms with more than this many participants
+# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"
 
@@ -342,6 +348,7 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 | Key | Default | Description |
 |---|---|---|
 | `data_dir` | `~/.msgvault` | Base directory for all data |
+| `export_dir` | `{data_dir}/exports` | Directory for attachment ZIPs, downloads, and files opened from the TUI |
 | `database_url` | `{data_dir}/msgvault.db` | SQLite database path or PostgreSQL DSN |
 | `loose_attachments` | `false` | Keep attachments as loose files and reject pack/repack commands instead of creating immutable packs |
 
@@ -392,7 +399,7 @@ all supported standalone attachment sources. The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
 Hosted document embeddings are not enabled by this configuration.
 
-See [Document Attachment Indexing](/usage/document-indexing/) for the complete
+See [Document Attachment Indexing](/docs/usage/document-indexing/) for the complete
 probe, consent, build, and recovery flow.
 
 ### `[oauth]`
@@ -411,7 +418,7 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 | `client_secrets` | — | Path to the org's `client_secret.json` |
 | `service_account_key` | — | Path to the org's Google service account key JSON |
 
-See [OAuth Setup: Google Workspace Accounts](/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
+See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
 
 Discord's `--oauth-app` value is only a protected bot-token binding label. It
 is not resolved from this section and does not require an `[oauth.apps]` entry.
@@ -433,7 +440,7 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+See [OAuth Setup: Microsoft 365](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
 
 ### `[[fastmail]]`
 
@@ -452,7 +459,7 @@ Exactly one source selector is required. Prefer `source_id` when two sources
 share an identifier or display name. With automatic confirmation disabled,
 `msgvault identity discover --source-id <id> --provider` fetches the inventory
 for an explicit preview; add `--apply` only after reviewing it. See [People,
-Profiles, and Source Identities](/usage/people/#fastmail-alias-inventory).
+Profiles, and Source Identities](/docs/usage/people/#fastmail-alias-inventory).
 
 ### `[discord]`
 
@@ -463,14 +470,22 @@ add-discord`; tokens and binding labels do not belong in `config.toml`.
 | Key | Default | Description |
 |---|---|---|
 | `max_media_bytes` | `52428800` (50 MiB) | Maximum size of one Discord attachment downloaded during sync or backfill |
+| `max_media_mb` | — | Same cap in MiB; when set it takes precedence over `max_media_bytes` |
+| `media` | `true` | Download attachment bytes at all |
+| `media_scope` | `all` | Which conversations collect media: `all`, `direct` (direct and group chats only), or `none` |
+| `media_max_participants` | `20` | Skip media from conversations with more participants than this; `0` disables the cap. See [Media policy](#media-policy) |
 | `edit_rescan_window` | `168h` (seven days) | Trailing per-channel/thread window refreshed for edits, deletions, and reaction summaries |
 
-Use an exact guild ID for a per-guild filter block:
+Use an exact guild ID for a per-guild filter block. The same block also takes
+the per-account media overrides (`media`, `max_media_mb`) that the other chat
+providers put under `accounts_config`:
 
 ```toml
 [discord.guilds."123456789012345678"]
 include = ["456789012345678901"]
 exclude = ["567890123456789012"]
+# media = false
+# max_media_mb = 25
 ```
 
 An empty `include` means every accessible text or announcement channel, thread,
@@ -478,7 +493,49 @@ and forum post. Top-level channels match directly. A child inherits its
 parent's state unless its own ID appears explicitly. An explicit child include
 can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
-[Discord](/usage/discord/#configure-media-repairs-and-channel-filters).
+[Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
+
+### Media policy
+
+`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
+vocabulary. It decides which chat media is downloaded during sync and backfill;
+message text is always archived.
+
+| Key | Default | Description |
+|---|---|---|
+| `media` | `true` | Download attachment bytes. `false` archives messages without their media and records a `policy_scope` skip marker |
+| `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
+| `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
+| `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+
+The participant cap exists because most attachment bytes in a real chat
+archive come from large rooms whose forwarded videos nobody wants kept. Direct
+chats and small groups keep their photos, voice notes, and files. A skipped
+occurrence is recorded with a typed marker (`participant_threshold`,
+`policy_scope`, `account_policy`, or `size_cap`) that distinguishes a
+deliberate skip from a failed download, so the `backfill-*-media` commands do
+not retry it unless the policy changes.
+
+```toml
+[beeper]
+media_scope = "all"
+media_max_participants = 20
+max_media_mb = 250
+
+# Keep everything from one account regardless of room size or size cap.
+[beeper.accounts_config.signal]
+media = true
+max_media_mb = 500
+
+# Never download from another account.
+[beeper.accounts_config.telegram]
+media = false
+```
+
+Policy changes apply to future downloads. Media already stored under an
+earlier policy stays until you run `msgvault purge-excluded-media`, which
+removes attachment bytes the current policy would no longer collect.
 
 ### `[log]`
 
@@ -496,7 +553,7 @@ Log files are named `msgvault-YYYY-MM-DD.log` (UTC date), written as newline-del
 
 When SQL logging is enabled, slow/error entries include query arguments and streaming query durations, which makes it easier to diagnose expensive reads without enabling full trace output.
 
-Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/cli-reference/#logs).
+Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/docs/cli-reference/#logs).
 
 ### `[sync]`
 
@@ -506,7 +563,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/api-server/) for API endpoint documentation and [MCP Server](/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -528,7 +585,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser
 access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
-clients—in `trusted_proxies`. See [Web UI](/web-ui/) for the complete security
+clients—in `trusted_proxies`. See [Web UI](/docs/web-ui/) for the complete security
 model and the plain-HTTP warning.
 
 For MCP Streamable HTTP, send `[server].api_key` as `Authorization: Bearer
@@ -598,11 +655,11 @@ Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.
 
-This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/architecture/postgresql/) for the current scope.
+This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
 
 ### `[backup]`
 
-Default settings for `msgvault backup`. See [Backup](/usage/backup/) for the
+Default settings for `msgvault backup`. See [Backup](/docs/usage/backup/) for the
 capture, verify, and restore workflow.
 
 | Key | Default | Description |
@@ -692,7 +749,7 @@ enabled = true
 
 ### `[beeper]`
 
-Archive chats from a locally running [Beeper Desktop](/usage/beeper/). A single
+Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
 block (not a list): the Beeper Desktop API is loopback-only, so there is one
 instance per machine and the daemon must run beside it. Authorize first with
 `msgvault add-beeper`.
@@ -706,7 +763,13 @@ accounts = []                     # accountID include filter (empty = all)
 exclude_accounts = []             # skip networks archived natively, e.g. ["whatsapp"]
 rate_limit_qps = 20               # request rate against the local API
 media = true                      # download attachment bytes
-max_media_mb = 100                # per-attachment download cap (MiB)
+media_scope = "all"               # all, direct, or none
+media_max_participants = 20       # skip media from larger rooms; 0 = no cap
+max_media_mb = 250                # per-attachment download cap (MiB)
+
+# [beeper.accounts_config.signal]  # per-account override, keyed by accountID
+# media = true
+# max_media_mb = 500
 ```
 
 | Key | Default | Description |
@@ -718,11 +781,14 @@ max_media_mb = 100                # per-attachment download cap (MiB)
 | `exclude_accounts` | — | Beeper accountIDs to skip (wins over `accounts`) |
 | `rate_limit_qps` | `20` | Request rate limit against the local API |
 | `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
-| `max_media_mb` | `100` | Per-attachment download cap in MiB (over-cap media leaves a retry marker) |
+| `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media from conversations above this many participants; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
+| `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
 ### `[slack]`
 
-Archive [Slack workspaces](/usage/slack/). A single block covers every
+Archive [Slack workspaces](/docs/usage/slack/). A single block covers every
 registered workspace (tokens are per-workspace files). Authorize each
 workspace first with `msgvault add-slack`.
 
@@ -733,7 +799,12 @@ schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
 channels = []                     # channel-name include filter (empty = all memberships)
 exclude_channels = []             # channel names to skip, e.g. ["noise"]
 media = true                      # download shared-file bytes
-max_media_mb = 100                # per-file download cap (MiB)
+media_scope = "all"               # all, direct, or none
+media_max_participants = 20       # skip files from larger channels; 0 = no cap
+max_media_mb = 250                # per-file download cap (MiB)
+
+# [slack.accounts_config.T0123456]  # per-workspace override, keyed by team ID
+# media = false
 ```
 
 | Key | Default | Description |
@@ -743,7 +814,36 @@ max_media_mb = 100                # per-file download cap (MiB)
 | `channels` | all | Channel names to sync (include filter; DMs are never filtered) |
 | `exclude_channels` | — | Channel names to skip (wins over `channels`) |
 | `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
-| `max_media_mb` | `100` | Per-file download cap in MiB (over-cap files leave a retry marker) |
+| `media_scope` | `all` | `all`, `direct` (DMs and group DMs only), or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip files from conversations above this many members; `0` = no cap |
+| `max_media_mb` | `250` | Per-file download cap in MiB (over-cap files are recorded as a `size_cap` skip and retried only after the cap changes) |
+| `accounts_config` | — | Per-team-ID `media` and `max_media_mb` overrides |
+
+### `[teams]`
+
+Media policy for [Microsoft Teams](/docs/usage/teams/) chats and channels. Teams
+sync itself is scheduled through `[[accounts]]`; this table only decides which
+attachments are downloaded.
+
+```toml
+[teams]
+media = true
+media_scope = "all"
+media_max_participants = 20
+max_media_mb = 250
+
+[teams.accounts_config."user@example.com"]
+media = true
+max_media_mb = 500
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `media` | `true` | Download attachment and inline hosted-content bytes (failed downloads retry via `backfill-teams-media`) |
+| `media_scope` | `all` | `all`, `direct` (chats only, not channels), or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media from chats and channels above this many members; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
 ### Granola Sources
 
@@ -752,7 +852,7 @@ Each entry is one Granola account. `identifier` is a stable source label;
 `account_email` is the primary identity used for organizer attribution.
 `msgvault serve` runs it on the given cron schedule. Register the account
 first with `msgvault add-granola`. See
-[Meeting Transcripts](/usage/meetings/).
+[Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
 [[granola]]
@@ -784,7 +884,7 @@ the archive; removing it prevents the scheduler from silently recreating it.
 Circleback meeting sync is configured with top-level `[[circleback]]`
 entries. Authentication is browser OAuth (`msgvault add-circleback`); no
 secret lives in the config file. See
-[Meeting Transcripts](/usage/meetings/).
+[Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
 [[circleback]]
@@ -834,13 +934,13 @@ enabled = true
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the
-scheduler from recreating it. See [Meeting Transcripts](/usage/meetings/) for
+scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
 the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
 
 ### `[vector]`
 
-Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
+Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/docs/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.
 
 | Key | Default | Description |
 |---|---|---|
@@ -866,6 +966,25 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
+
+##### Stored provider credentials
+
+Instead of naming an environment variable in `api_key_env`, you can store a
+provider API key through Settings in the Web UI or the TUI. Stored keys live in
+`tokens/provider-credentials.json` under the data directory with owner-only
+file permissions. They are never written to `config.toml` and are never shown
+again after saving; Settings only reports whether a key is configured and
+whether it comes from the store or from the environment.
+
+A stored key takes precedence over the environment variable named by
+`api_key_env`. Each stored key is bound to the endpoint origin (scheme, host,
+and port) it was saved for. If you later change the endpoint to another origin,
+the stored key is removed automatically and must be entered again, so a key
+is never sent to a host it was not entered for.
+
+Changing a stored key for vector or multimodal (visual) embeddings requires a daemon
+restart, like the other `[vector]` settings. Person enrichment and sweep keys
+apply on the next run.
 
 The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
@@ -971,5 +1090,5 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `msgvault.db` | SQLite database (system of record when PostgreSQL is not configured) |
 | `attachments/` | Content-addressed attachment files |
 | `tokens/` | OAuth tokens per account |
-| `logs/` | Structured log files (when [file logging](/configuration/#log) is enabled) |
+| `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |

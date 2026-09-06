@@ -73,6 +73,29 @@ func shouldDefaultStatsToEmail(opts StatsOptions) bool {
 	return !opts.SearchScope && !hasExplicitMessageTypeSearch(opts.SearchQuery)
 }
 
+// effectiveStatsFilter returns the complete message scope for a stats query.
+// Legacy top-level options remain authoritative so existing callers can add a
+// full filter without changing their source, attachment, or deletion scope.
+func effectiveStatsFilter(opts StatsOptions) *MessageFilter {
+	if opts.Filter == nil {
+		return nil
+	}
+	filter := opts.Filter.Clone()
+	if opts.SourceIDs != nil {
+		filter.SourceIDs = make([]int64, len(opts.SourceIDs))
+		copy(filter.SourceIDs, opts.SourceIDs)
+		filter.SourceID = nil
+	} else if opts.SourceID != nil {
+		filter.SourceID = opts.SourceID
+		filter.SourceIDs = nil
+	}
+	filter.WithAttachmentsOnly = filter.WithAttachmentsOnly || opts.WithAttachmentsOnly
+	filter.HideDeletedFromSource = filter.HideDeletedFromSource || opts.HideDeletedFromSource
+	filter.Pagination = Pagination{}
+	filter.Sorting = MessageSorting{}
+	return &filter
+}
+
 // participantNameExpr returns the SQL expression for a participant's display
 // label, falling back through display_name → phone_number → email_address.
 // Used by name-based aggregates and filters so phone-only participants

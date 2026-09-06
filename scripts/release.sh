@@ -2,7 +2,6 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VERSION="$1"
 EXTRA_INSTRUCTIONS="$2"
@@ -79,15 +78,3 @@ echo "Release $TAG created and pushed successfully!"
 echo "GitHub Actions will create the release with the changelog from the tag message."
 echo ""
 echo "GitHub release URL: https://github.com/kenn-io/msgvault/releases/tag/$TAG"
-
-# Offer to update nix flake
-if [ -f "$REPO_ROOT/flake.nix" ] && command -v nix &>/dev/null; then
-    echo ""
-    read -p "Update nix flake for $TAG? (opens a PR) [y/N] " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        "$SCRIPT_DIR/update-nix-flake.sh" "$TAG"
-    else
-        echo "Skipped. Run manually later: scripts/update-nix-flake.sh $TAG"
-    fi
-fi

@@ -246,12 +246,34 @@ describe('FilesWorkspace', () => {
     });
 
     expect(await screen.findByText('fixture.pdf')).toBeDefined();
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/participants/1/files/search');
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
       directions: ['from_person'],
       mime_families: ['pdf', 'audio', 'text', 'document', 'archive', 'other']
     });
     expect(screen.getByRole('radio', { name: 'Files' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByText('From them · Group conversation')).toBeDefined();
+  });
+
+  it('keeps durable-person file searches separate from analytical participant searches', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json(personResponse());
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      // The production union gains this explicit durable-person scope. The
+      // cast lets this regression prove the current fallback is unsafe.
+      identityScope: { kind: 'durable-person', id: 7 } as never,
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    await screen.findByText('fixture.pdf');
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/files/search');
+    expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/participants/7/files/search')).toBe(false);
+    expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/files/search')).toBe(false);
   });
 
   it('updates the person direction union without exposing controls outside person scope', async () => {

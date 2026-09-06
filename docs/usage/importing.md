@@ -3,7 +3,7 @@ title: Importing Local Email
 description: Import PST archives, MBOX archives, and Apple Mail exports into msgvault.
 ---
 
-msgvault can import email from local files, not just Gmail. This lets you archive Microsoft Outlook PST files, messages from any provider that supports MBOX export, or Apple Mail's on-disk storage. For live syncing from non-Gmail providers, see [IMAP account setup](/setup/#add-an-imap-account).
+msgvault can import email from local files, not just Gmail. This lets you archive Microsoft Outlook PST files, messages from any provider that supports MBOX export, or Apple Mail's on-disk storage. For live syncing from non-Gmail providers, see [IMAP account setup](/docs/setup/#add-an-imap-account).
 
 Imported messages are stored in the same database as Gmail messages. You can search, browse, export, and analyze them with all the same tools (Web UI, TUI, CLI, MCP server, and REST API). Labels, threading, attachments, and full-text search all work the same way.
 

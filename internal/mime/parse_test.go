@@ -172,6 +172,19 @@ func TestParse_InvalidTextPartContentTypeDefaultsToBody(t *testing.T) {
 	assert.Contains(msg.Errors[0], "invalid Content-Type treated as text/plain")
 }
 
+func TestParse_TextPlainContentTypeWithTrailingSemicolon(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: trailing semicolon\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain;\r\n\r\n" +
+		"searchable body\r\n")
+
+	msg := mustParse(t, raw)
+	assert.Equal(t, "searchable body", strings.TrimSpace(msg.BodyText))
+	assert.Empty(t, msg.Attachments)
+}
+
 func TestParse_InvalidPartContentTypePreservesNameParameter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

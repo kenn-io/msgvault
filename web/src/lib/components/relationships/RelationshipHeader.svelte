@@ -4,8 +4,10 @@
 
   import type { APIClient } from '../../api/client';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
-  import type { LinkOutcome } from '../../relationships/controller.svelte';
+  import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
+  import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
+  import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
   const STALE_CACHE_MESSAGE =
@@ -19,6 +21,11 @@
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
+    onOpenDirectory?: (participantID: number) => void;
+    capturePersonMergeContext?: () => RelationshipsMergeContext;
+    onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
+    onOpenDirectoryPerson?: (personID: number) => void;
+    onAnnounce?: (message: string) => void;
   }
 
   let {
@@ -28,12 +35,20 @@
     onFilesToggle,
     client,
     onLinkParticipants,
-    onUnlinkParticipants
+    onUnlinkParticipants,
+    onOpenDirectory = undefined,
+    capturePersonMergeContext = undefined,
+    onReconcilePersonMerge = undefined,
+    onOpenDirectoryPerson = undefined,
+    onAnnounce = undefined
   }: Props = $props();
 
   type LinkMutation = { kind: 'link' | 'unlink'; a: number; b: number };
 
-  let dialogOpen = $state(false);
+  type ActiveDialog =
+    | { kind: 'link'; context?: RelationshipsMergeContext }
+    | { kind: 'merge'; context?: RelationshipsMergeContext; conflict: ValidatedPersonMergeRequired };
+  let activeDialog = $state<ActiveDialog>();
   let staleBanner = $state<'identity_cache_stale' | null>(null);
   let lastMutation = $state<LinkMutation | null>(null);
   let retrying = $state(false);
@@ -111,6 +126,7 @@
     lastMutation = null;
     confirmingParticipantID = null;
     unlinkError = null;
+    activeDialog = undefined;
   });
 
   // ok/ready clears any earlier stale banner; ok/stale (re)raises it and
@@ -136,6 +152,25 @@
     // for whoever is showing now with a result that was never about them.
     if (currentPersonID() === id) applyOutcome(outcome, 'link', id, participantID);
     return outcome;
+  }
+
+  function openLinkDialog(): void {
+    activeDialog = { kind: 'link', context: capturePersonMergeContext?.() };
+  }
+
+  function resolveMerge(conflict: ValidatedPersonMergeRequired): void {
+    if (activeDialog?.kind !== 'link') return;
+    activeDialog = { kind: 'merge', context: activeDialog.context, conflict };
+  }
+
+  function completeMerge(success: PersonMergeSuccess): void {
+    if (activeDialog?.kind !== 'merge') return;
+    const context = activeDialog.context;
+    activeDialog = undefined;
+    const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
+    onAnnounce?.(`People merged into ${name}. Identity cache ${success.result.cache_state}.`);
+    if (context && onReconcilePersonMerge) void onReconcilePersonMerge(context);
+    onOpenDirectoryPerson?.(success.survivor.id);
   }
 
   async function retryRefresh(): Promise<void> {
@@ -232,11 +267,18 @@
           onclick={() => onFilesToggle(!filesOpen)}
         />
         {#if isPersonDetail(detail)}
+          {#if onOpenDirectory}
+            <Button
+              label="Open in Directory"
+              surface="outline"
+              onclick={() => onOpenDirectory?.(detail.id)}
+            />
+          {/if}
           <Button
             label="Same person…"
             ariaLabel="Same person…"
             surface="outline"
-            onclick={() => (dialogOpen = true)}
+            onclick={openLinkDialog}
           />
         {/if}
       </div>
@@ -329,13 +371,22 @@
         <p class="unlink-error" role="alert">{unlinkError}</p>
       {/if}
     {/if}
-    {#if dialogOpen && isPersonDetail(detail)}
+    {#if activeDialog?.kind === 'link' && isPersonDetail(detail)}
       <LinkIdentityDialog
         {client}
         excludeID={detail.id}
         personLabel={detail.display_label}
         onConfirm={confirmLink}
-        onClose={() => (dialogOpen = false)}
+        onMergeRequired={resolveMerge}
+        onClose={() => (activeDialog = undefined)}
+      />
+    {:else if activeDialog?.kind === 'merge'}
+      <PersonBindingConflictModal
+        {client}
+        conflict={activeDialog.conflict}
+        onOpenProfile={(personID) => onOpenDirectoryPerson?.(personID)}
+        onSuccess={completeMerge}
+        onClose={() => (activeDialog = undefined)}
       />
     {/if}
   {/if}

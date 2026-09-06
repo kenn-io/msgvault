@@ -272,13 +272,8 @@ $(WEB_INSTALL_STAMP): web/package.json web/bun.lock
 web-generate: web-install
 	cd web && bun run generate
 
-web-check: web-generate
-	@git diff --exit-code -- web/src/lib/api/generated/schema.d.ts || (echo "Web API generated types are stale; run 'make web-generate' and commit the changes." >&2; exit 1)
-	@if [ -n "$$(git status --porcelain --untracked-files=all -- web/src/lib/api/generated/schema.d.ts)" ]; then \
-		git status --short --untracked-files=all -- web/src/lib/api/generated/schema.d.ts; \
-		echo "Web API generated types are stale; run 'make web-generate' and commit the changes." >&2; \
-		exit 1; \
-	fi
+web-check: web-install
+	cd web && bun run check:generated
 	cd web && bun run check
 	cd web && bun run check:kit-ui
 
@@ -388,10 +383,9 @@ docs-install:
 docs-build:
 	cd docs && bash ./vercel-build.sh
 
-# Serve docs site locally
-docs-serve:
-	bash docs/assets/hydrate-assets.sh
-	cd docs && uv run bash ./zensical-docs.sh serve
+# Serve the complete site locally with the same layout used by deployment.
+docs-serve: docs-build
+	cd docs && uv run --frozen python -m http.server 8000 --bind 127.0.0.1 --directory site
 
 # Check docs sources and build output
 docs-check:
@@ -485,7 +479,7 @@ help:
 	@echo ""
 	@echo "  docs-install   - Install docs dependencies"
 	@echo "  docs-build     - Build docs site"
-	@echo "  docs-serve     - Hydrate and serve docs locally"
+	@echo "  docs-serve     - Build and serve the complete site locally"
 	@echo "  docs-check     - Run docs validation"
 	@echo "  docs-screenshots - Regenerate docs screenshots"
 	@echo "  docs-assets-branch - Publish static docs assets branch"

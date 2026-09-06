@@ -9,7 +9,7 @@ A long-running archive accumulates overlapping sources: a current Gmail sync, an
 The defining principle: **deduplication hides redundant copies, it does not delete them.** One survivor stays visible. The other copies drop out of normal reads but remain on disk, and `--undo` restores them. Removing data is always a separate, explicit step that you opt into.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/deduplication-concept.png" alt="Deduplication keeps one survivor visible per duplicate group and hides the other copies, which remain on disk. Deleting those copies is a separate step." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/deduplication-concept.png" alt="Deduplication keeps one survivor visible per duplicate group and hides the other copies, which remain on disk. Deleting those copies is a separate step." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## How Duplicates Are Detected
@@ -25,7 +25,7 @@ The two passes are sequential, not merged into one transitive set. A content-has
 
 Survivor selection is deterministic and explainable, and the reasoning is printed in dry-run output. It runs in two stages.
 
-**Stage 1, sent-copy eligibility.** If any message in a group looks like a copy you sent, only sent copies are eligible to survive, and received copies drop out before tie-breaking. A message looks sent when any of these is true: it carries a Gmail `SENT` label, ingest metadata flagged it as from you, or its `From` address matches a confirmed [identity](/usage/multi-account/#identities) for that account. The reasoning is that "I sent this" is harder to recover from data than "I received this," so a richer received copy is never allowed to silently win.
+**Stage 1, sent-copy eligibility.** If any message in a group looks like a copy you sent, only sent copies are eligible to survive, and received copies drop out before tie-breaking. A message looks sent when any of these is true: it carries a Gmail `SENT` label, ingest metadata flagged it as from you, or its `From` address matches a confirmed [identity](/docs/usage/multi-account/#identities) for that account. The reasoning is that "I sent this" is harder to recover from data than "I received this," so a richer received copy is never allowed to silently win.
 
 **Stage 2, priority list.** Among the eligible copies, msgvault prefers, in order:
 
@@ -41,7 +41,7 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 Earlier rules win outright; later rules apply only when all earlier ones tie. The attachment-count, attachment-presence, and payload-size rules apply only when every eligible copy has raw MIME and all their normalized MIME hashes match. A shared `Message-ID` alone cannot make those payload-completeness signals authoritative. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection filters to eligible sent copies first, then considers source preference and raw MIME. Only when every eligible copy has matching normalized MIME does it compare attachments, attachment presence, and payload size before labels, archive time, and stable row ID." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection filters to eligible sent copies first, then considers source preference and raw MIME. Only when every eligible copy has matching normalized MIME does it compare attachments, attachment presence, and payload size before labels, archive time, and stable row ID." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 ## Choosing a Scope
@@ -63,7 +63,7 @@ This protects sent-message provenance. If Alice's Sent copy and Bob's Inbox copy
 Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 is an automatic backup; the others you climb deliberately, one explicit action at a time. msgvault never escalates from one rung to the next on its own: applying dedup never implies a local hard delete, and a local hard delete never implies a remote delete.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/assets/generated/concepts/safety-ladder-concept.png" alt="The safety ladder: five rungs, 00 through 04. Rung 00 is an automatic SQLite-only backup (PostgreSQL uses pg_dump); rungs 01 scan, 02 hide, 03 local hard delete, and 04 remote delete are deliberate, opt-in actions. Remote deletes go to Gmail trash by default but are permanent on IMAP. Deletion is never required." loading="lazy" style="width: 100%; display: block;" />
+  <img src="/docs/assets/generated/concepts/safety-ladder-concept.png" alt="The safety ladder: five rungs, 00 through 04. Rung 00 is an automatic SQLite-only backup (PostgreSQL uses pg_dump); rungs 01 scan, 02 hide, 03 local hard delete, and 04 remote delete are deliberate, opt-in actions. Remote deletes go to Gmail trash by default but are permanent on IMAP. Deletion is never required." loading="lazy" style="width: 100%; display: block;" />
 </figure>
 
 | Rung | Action | Command | Reversibility |
@@ -81,7 +81,7 @@ Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 i
 - **Rung 01, scan.** `deduplicate --dry-run` reports the duplicate groups it found, the proposed survivor for each, and why. Nothing is modified.
 - **Rung 02, hide.** `deduplicate` applies the scan. Pruned copies are hidden from normal reads but kept on disk, and the run prints a batch ID. `--undo <batch-id>` restores them.
 - **Rung 03, local hard delete.** `delete-deduped` permanently removes hidden rows from the local archive to reclaim disk. It acts on named batches via `--batch` and refuses to touch rows it did not hide; all selected batches commit as one transaction, so cancellation rolls the whole selection back. `--all-hidden` purges every hidden row and always prompts for confirmation. Undo cannot recover purged rows.
-- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list` and target one batch with `delete-staged <batch-id>`. Execution requires durable `[deletion] remote_enabled = true` consent in the invoking CLI config, or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
+- **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only when the loser and survivor share a source and have matching normalized raw MIME. A group spanning two sources or lacking content equivalence stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list` and target one batch with `delete-staged <batch-id>`. Execution requires durable `[deletion] remote_enabled = true` consent in the invoking CLI config, or `MSGVAULT_ENABLE_REMOTE_DELETE=1` for one command. The same-source and content-equivalence restrictions live in the staging step, not in `delete-staged`. See [Deleting Email](/docs/usage/deletion/) for how remote deletion works.
 
 !!! note "What \"hidden\" means"
     A hidden copy is excluded from search, the Web UI, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
@@ -162,7 +162,7 @@ there is no planned automatic removal of the guardrail. A remote daemon's own
 `[deletion]` section is not policy for a command invoked elsewhere. Staging,
 listing, inspecting, and dry-running deletion batches remain ungated.
 
-See [Deleting Email](/usage/deletion/) for the full workflow.
+See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 
 ## What Undo Restores
 
@@ -188,4 +188,4 @@ msgvault embeddings build --full-rebuild
 
 ## Command Reference
 
-See the [CLI Reference](/cli-reference/#deduplicate) for the complete flag list on `deduplicate`, `delete-deduped`, `identity`, and `collection`.
+See the [CLI Reference](/docs/cli-reference/#deduplicate) for the complete flag list on `deduplicate`, `delete-deduped`, `identity`, and `collection`.

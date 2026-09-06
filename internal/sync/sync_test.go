@@ -316,32 +316,28 @@ func TestFullSyncProviderHookDoesNotRunAfterFailedSync(t *testing.T) {
 	assert.Zero(t, hookCalls)
 }
 
-func TestFullSyncSupersededGenerationDoesNotPublishCursorOrReturnSuccess(t *testing.T) {
+func TestFullSyncRejectsConcurrentStart(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	require.NoError(env.Store.UpdateSourceSyncCursor(source.ID, "baseline-cursor"))
-	var newerSyncID int64
+	var concurrentErr error
 	env.Syncer = New(&supersedingProfileAPI{
 		MockAPI: env.Mock,
 		supersede: func() {
-			var err error
-			newerSyncID, err = env.Store.StartSync(source.ID, "full")
-			require.NoError(err)
+			_, concurrentErr = env.Store.StartSync(source.ID, "full")
 		},
 	}, env.Store, nil)
 
 	summary, err := env.Syncer.Full(env.Context, testEmail)
 
-	require.ErrorIs(err, store.ErrSyncRunSuperseded)
-	assert.Nil(summary)
+	require.NoError(err)
+	require.ErrorIs(concurrentErr, store.ErrSyncAlreadyActive)
+	require.NotNil(summary)
 	source, err = env.Store.GetSourceByID(source.ID)
 	require.NoError(err)
-	assert.Equal("baseline-cursor", source.SyncCursor.String)
-	active, err := env.Store.GetActiveSync(source.ID)
-	require.NoError(err)
-	assert.Equal(newerSyncID, active.ID)
+	assert.NotEqual("baseline-cursor", source.SyncCursor.String)
 }
 
 func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
@@ -374,32 +370,24 @@ func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
 	assert.Contains(run.ErrorMessage.String, "forced sync completion failure")
 }
 
-func TestIncrementalSyncSupersededGenerationDoesNotPublishCursorOrReturnSuccess(t *testing.T) {
+func TestIncrementalSyncRejectsConcurrentStart(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "1000")
 	env.Mock.Profile.HistoryID = 1000
-	var newerSyncID int64
+	var concurrentErr error
 	env.Syncer = New(&supersedingProfileAPI{
 		MockAPI: env.Mock,
 		supersede: func() {
-			var err error
-			newerSyncID, err = env.Store.StartSync(source.ID, "incremental")
-			require.NoError(err)
+			_, concurrentErr = env.Store.StartSync(source.ID, "incremental")
 		},
 	}, env.Store, nil)
 
 	summary, err := env.Syncer.Incremental(env.Context, source)
 
-	require.ErrorIs(err, store.ErrSyncRunSuperseded)
-	assert.Nil(summary)
-	source, err = env.Store.GetSourceByID(source.ID)
 	require.NoError(err)
-	assert.Equal("1000", source.SyncCursor.String)
-	active, err := env.Store.GetActiveSync(source.ID)
-	require.NoError(err)
-	assert.Equal(newerSyncID, active.ID)
+	require.ErrorIs(concurrentErr, store.ErrSyncAlreadyActive)
+	require.NotNil(summary)
 }
 
 // TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion also pins the
@@ -635,7 +623,7 @@ func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing
 	assertMessageCount(t, env.Store, 1)
 	run, err := env.Store.GetLatestSync(source.ID)
 	require.NoError(err, "GetLatestSync")
-	assert.Equal(store.SyncStatusRunning, run.Status, "cancelled run remains resumable")
+	assert.Equal(store.SyncStatusFailed, run.Status, "cancelled worker leaves a resumable failed run")
 	assert.Equal(int64(0), run.MessagesProcessed, "failed checkpoint does not advance the page")
 
 	identities, err := env.Store.ListAccountIdentities(source.ID)
@@ -652,7 +640,7 @@ func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing
 	env.Syncer = New(env.Mock, env.Store, nil)
 	summary, err := env.Syncer.Full(env.Context, testEmail)
 	require.NoError(err, "resume sync")
-	assert.True(summary.WasResumed, "retry resumes the uncheckpointed run")
+	assert.False(summary.WasResumed, "a failed checkpoint write restarts the traversal")
 
 	identities, err = env.Store.ListAccountIdentities(source.ID)
 	require.NoError(err, "ListAccountIdentities after retry")
@@ -706,7 +694,7 @@ func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageTok
 	return c.MockAPI.ListMessages(ctx, query, pageToken)
 }
 
-func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
+func TestFullSyncCanceledFailsRunAndKeepsCheckpointResumable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -721,7 +709,7 @@ func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
 	require.NoError(err, "GetSourceByIdentifier")
 	run, err := env.Store.GetLatestSync(source.ID)
 	require.NoError(err, "GetLatestSync")
-	assert.Equal(store.SyncStatusRunning, run.Status, "cancelled run keeps status running")
+	assert.Equal(store.SyncStatusFailed, run.Status, "cancelled worker marks its run failed")
 	assert.Equal(int64(2), run.MessagesProcessed, "checkpoint keeps first page progress")
 
 	env.Syncer = New(env.Mock, env.Store, nil)
@@ -731,6 +719,115 @@ func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
 	assert.Equal("page_1", summary.ResumedFromToken, "resume picks up at the saved page token")
 	assert.Equal(int64(4), summary.MessagesAdded, "resumed summary carries pre-cancellation progress")
 	assertMessageCount(t, env.Store, 4)
+}
+
+func TestFullSyncRestartsWhenCheckpointRequestDiffers(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	firstOptions := DefaultOptions()
+	firstOptions.Query = "after:2024/01/01"
+	env.Syncer = New(
+		&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, firstOptions,
+	)
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	requirements.ErrorIs(err, context.Canceled)
+
+	secondOptions := DefaultOptions()
+	secondOptions.Query = "before:2024/01/01"
+	summary, err := New(env.Mock, env.Store, secondOptions).Full(env.Context, testEmail)
+	requirements.NoError(err)
+	checks.False(summary.WasResumed)
+	checks.Empty(summary.ResumedFromToken)
+}
+
+func TestBoundedGmailFullSyncPreservesIncrementalCursor(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.Mock.Profile.HistoryID = 2000
+	seedMessages(env, 1, 2000, "bounded-message")
+
+	options := DefaultOptions()
+	options.Query = "after:2024/01/01"
+	_, err := New(env.Mock, env.Store, options).Full(env.Context, testEmail)
+	requirements.NoError(err)
+
+	refreshed, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	requirements.True(refreshed.SyncCursor.Valid)
+	checks.Equal("1000", refreshed.SyncCursor.String)
+	checks.True(refreshed.LastSyncAt.Valid)
+
+	run, err := env.Store.GetLatestSync(source.ID)
+	requirements.NoError(err)
+	checks.Equal("2000", run.CursorAfter.String)
+}
+
+func TestFullSyncLeavesOperationFinalizationToCaller(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedMessages(env, 1, 12345, "message")
+
+	options := DefaultOptions()
+	options.OperationID = "finalizer-operation"
+	_, err := env.Store.CreateSyncOperation(source.ID, options.OperationID)
+	requirements.NoError(err)
+	syncer := New(env.Mock, env.Store, options)
+	var competingErr error
+	_, err = syncer.FullWithFinalizer(
+		env.Context,
+		source,
+		func(*gmail.SyncSummary) error {
+			_, competingErr = env.Store.StartSync(source.ID, "competing")
+			op, opErr := env.Store.GetSyncOperation(options.OperationID)
+			requirements.NoError(opErr)
+			checks.Equal("running", op.Status)
+			return nil
+		},
+	)
+	requirements.NoError(err)
+	requirements.ErrorIs(competingErr, store.ErrSyncAlreadyActive)
+
+	op, err := env.Store.GetSyncOperation(options.OperationID)
+	requirements.NoError(err)
+	checks.Equal("running", op.Status)
+}
+
+func TestFullSyncKeepsSelectedLegacySourceID(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	legacySource, err := env.Store.GetOrCreateSource("", testEmail)
+	requirements.NoError(err)
+
+	options := DefaultOptions()
+	options.SourceType = ""
+	options.OperationID = "legacy-source-operation"
+	_, err = env.Store.CreateSyncOperation(legacySource.ID, options.OperationID)
+	requirements.NoError(err)
+
+	_, err = New(env.Mock, env.Store, options).FullWithFinalizer(
+		env.Context,
+		legacySource,
+		nil,
+	)
+	requirements.NoError(err)
+
+	op, err := env.Store.GetSyncOperation(options.OperationID)
+	requirements.NoError(err)
+	requirements.Len(op.Runs, 1)
+	checks.Equal(legacySource.ID, op.Runs[0].SourceID)
+	sources, err := env.Store.GetSourcesByIdentifier(testEmail)
+	requirements.NoError(err)
+	checks.Len(sources, 1)
 }
 
 func TestFullSyncAcknowledgesOnlySafelyHandledMessages(t *testing.T) {
@@ -940,7 +1037,7 @@ func TestSyncCancellationDuringDiscoveryStaysResumable(t *testing.T) {
 
 	run, err := env.Store.GetLatestSync(source.ID)
 	require.NoError(err, "GetLatestSync")
-	assert.Equal(store.SyncStatusRunning, run.Status, "a cancelled run stays resumable")
+	assert.Equal(store.SyncStatusFailed, run.Status, "a cancelled worker leaves a resumable failed run")
 
 	found, _, err := env.Store.IdentityDiscoveryBacklogContext(context.Background(), source.ID)
 	require.NoError(err, "IdentityDiscoveryBacklogContext")
@@ -1583,17 +1680,66 @@ func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
 type recoveryProfileSequenceAPI struct {
 	*gmail.MockAPI
 
-	historyIDs []uint64
-	calls      int
+	historyIDs  []uint64
+	calls       int
+	beforeFetch func(call int)
 }
 
 func (a *recoveryProfileSequenceAPI) GetProfile(context.Context) (*gmail.Profile, error) {
+	if a.beforeFetch != nil {
+		a.beforeFetch(a.calls)
+	}
 	profile := *a.Profile
 	if a.calls < len(a.historyIDs) {
 		profile.HistoryID = a.historyIDs[a.calls]
 	}
 	a.calls++
 	return &profile, nil
+}
+
+func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "owner-exit.db")
+	first, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	requirements.NoError(first.InitSchema())
+	source, err := first.GetOrCreateSource("gmail", "owner-exit@example.com")
+	requirements.NoError(err)
+	_, err = first.CreateSyncOperation(source.ID, "owner-exit-operation")
+	requirements.NoError(err)
+	abandonedRun, err := first.StartSyncOperation(source.ID, "owner-exit-operation")
+	requirements.NoError(err)
+	fingerprint := New(gmail.NewMockAPI(), first, nil).fullSyncRequestFingerprint()
+	_, err = first.DB().Exec(
+		`UPDATE sync_runs SET sync_type = 'full', request_fingerprint = ? WHERE id = ?`,
+		fingerprint, abandonedRun,
+	)
+	requirements.NoError(err)
+	requirements.NoError(first.UpdateSyncCheckpoint(abandonedRun, &store.Checkpoint{
+		PageToken:         "page_1",
+		MessagesProcessed: 7,
+		MessagesAdded:     5,
+	}))
+	requirements.NoError(first.Close())
+
+	second, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+	mock := gmail.NewMockAPI()
+	mock.Profile = &gmail.Profile{
+		EmailAddress:  source.Identifier,
+		MessagesTotal: 0,
+		HistoryID:     2000,
+	}
+
+	summary, err := New(mock, second, nil).Full(t.Context(), source.Identifier)
+	requirements.NoError(err)
+	checks.True(summary.WasResumed)
+	checks.Equal(int64(7), summary.MessagesFound)
+	op, err := second.GetSyncOperation("owner-exit-operation")
+	requirements.NoError(err)
+	checks.Equal("failed", op.Status)
 }
 
 func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
@@ -1624,6 +1770,50 @@ func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
 	refreshed, err := env.Store.GetSourceByID(source.ID)
 	require.NoError(err, "GetSourceByID")
 	assert.Equal("2000", refreshed.SyncCursor.String, "persisted history cursor")
+}
+
+func TestRecoverExpiredHistoryRetainsSourceOwnershipThroughCatchup(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	seedMessages(env, 1, 1000, "present")
+	runFullSync(t, env)
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	requirements.NoError(err)
+	competitor, err := store.OpenForTest(filepath.Join(env.TmpDir, "test.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = competitor.Close() })
+
+	env.Mock.MessagePages = [][]string{{"present"}}
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.HistoryRecords = nil
+	env.Mock.HistoryID = 2000
+	var probeErr error
+	var probeRunID int64
+	api := &recoveryProfileSequenceAPI{
+		MockAPI:    env.Mock,
+		historyIDs: []uint64{1500, 2000},
+		beforeFetch: func(call int) {
+			if call == 1 {
+				probeRunID, probeErr = competitor.StartSync(source.ID, "competing")
+			}
+		},
+	}
+	options := DefaultOptions()
+	options.OperationID = "retained-ownership-operation"
+	_, err = env.Store.CreateSyncOperation(source.ID, options.OperationID)
+	requirements.NoError(err)
+	syncer := New(api, env.Store, options)
+
+	_, err = syncer.RecoverExpiredHistory(t.Context(), source)
+	requirements.NoError(err)
+	requirements.ErrorIs(probeErr, store.ErrSyncAlreadyActive)
+	checks.Zero(probeRunID)
+	op, err := env.Store.GetSyncOperation(options.OperationID)
+	requirements.NoError(err)
+	checks.Equal("running", op.Status)
+	checks.False(op.FinishedAt.Valid)
+	requirements.Len(op.Runs, 2)
 }
 
 func TestRecoverExpiredHistoryRejectsPartialEnumerationOptions(t *testing.T) {
@@ -1705,9 +1895,8 @@ func TestRecoverExpiredHistoryDoesNotReconcileIncompleteSnapshot(t *testing.T) {
 	assertDeletedFromSource(t, env.Store, "not-yet-enumerated", false)
 }
 
-func TestRecoverExpiredHistoryDoesNotReuseUnmarkedFullCheckpoint(t *testing.T) {
+func TestRecoverExpiredHistoryRejectsUnmarkedActiveSync(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
 	seedPagedMessages(env, 4)
@@ -1726,19 +1915,16 @@ func TestRecoverExpiredHistoryDoesNotReuseUnmarkedFullCheckpoint(t *testing.T) {
 	env.Mock.SnapshotListCalls = 0
 
 	summary, err := env.Syncer.RecoverExpiredHistory(env.Context, source)
-	require.NoError(err, "RecoverExpiredHistory")
-	assert.False(summary.WasResumed, "an ordinary full checkpoint has no pinned recovery cursor")
-	assert.Empty(summary.ResumedFromToken, "recovery restarts ordinary full enumeration")
-	assert.Equal(2, env.Mock.ListMessagesCalls, "recovery content enumeration starts at page zero")
-	assert.Equal(2, env.Mock.SnapshotListCalls, "presence snapshot starts at page zero")
-	assertDeletedFromSource(t, env.Store, "msg1", false)
-	assertDeletedFromSource(t, env.Store, "msg4", false)
+	require.ErrorIs(err, store.ErrSyncAlreadyActive)
+	require.Nil(summary)
+	require.Zero(env.Mock.ListMessagesCalls)
+	require.Zero(env.Mock.SnapshotListCalls)
 }
 
 func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	env, source, active := setupInterruptedHistoryRecoveryWithPrefixChange(t)
+	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
 	env.Syncer = New(env.Mock, env.Store, nil)
 
 	var recoveryNotices []bool
@@ -1748,23 +1934,62 @@ func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *t
 	require.NoError(err, "IncrementalWithHistoryRecovery")
 	assert.Equal([]bool{true}, recoveryNotices, "retry announces the resumed recovery")
 	assert.True(summary.WasResumed, "recovery uses its saved page checkpoint")
-	assert.Equal(active.ID, summary.SyncRunID, "retry does not supersede the recovery run")
+	assert.NotEqual(prior.ID, summary.SyncRunID, "retry creates a new recovery run")
 	assertRawDataExists(t, env.Store, "arrived-before-resume")
 	refreshed, err := env.Store.GetSourceByID(source.ID)
 	require.NoError(err, "GetSourceByID")
 	assert.Equal("20000", refreshed.SyncCursor.String, "catch-up advances from the pinned cursor")
 }
 
+func TestIncrementalWithHistoryRecoveryRejectsPartialEnumerationOptions(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*Options)
+	}{
+		{
+			name: "query",
+			modify: func(options *Options) {
+				options.Query = "from:alice@example.com"
+			},
+		},
+		{
+			name: "limit",
+			modify: func(options *Options) {
+				options.Limit = 1
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			checks := assert.New(t)
+			env := newTestEnv(t)
+			source := env.CreateSourceWithHistory(t, "1000")
+			env.Mock.Profile.HistoryID = 2000
+			env.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
+			options := DefaultOptions()
+			test.modify(options)
+			syncer := New(env.Mock, env.Store, options)
+
+			_, err := syncer.IncrementalWithHistoryRecovery(env.Context, source, nil)
+			requirements.ErrorContains(err, "requires an unfiltered, unlimited full sync")
+			checks.Zero(env.Mock.ListMessagesCalls)
+			checks.Zero(env.Mock.SnapshotListCalls)
+		})
+	}
+}
+
 func TestFullRoutesPinnedHistoryRecoveryThroughCatchup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	env, source, active := setupInterruptedHistoryRecoveryWithPrefixChange(t)
+	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
 	env.Syncer = New(env.Mock, env.Store, nil)
 
 	summary, err := env.Syncer.Full(env.Context, testEmail)
 	require.NoError(err, "Full")
 	assert.True(summary.WasResumed, "full routes through the marked recovery")
-	assert.Equal(active.ID, summary.SyncRunID, "full does not reinterpret or supersede the recovery run")
+	assert.NotEqual(prior.ID, summary.SyncRunID, "resumed recovery uses a new run")
 	assertRawDataExists(t, env.Store, "arrived-before-resume")
 	refreshed, err := env.Store.GetSourceByID(source.ID)
 	require.NoError(err, "GetSourceByID")
@@ -1789,9 +2014,10 @@ func setupInterruptedHistoryRecoveryWithPrefixChange(
 	env.Syncer = New(&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, nil)
 	_, err = env.Syncer.RecoverExpiredHistory(env.Context, source)
 	require.ErrorIs(err, context.Canceled, "interrupt recovery after its first page")
-	active, err := env.Store.GetActiveSync(source.ID)
-	require.NoError(err, "GetActiveSync")
-	assert.Equal("15000", active.CursorAfter.String, "recovery pins its handoff cursor before enumeration")
+	prior, err := env.Store.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err, "GetLatestCheckpointedSync")
+	assert.Equal(store.SyncStatusFailed, prior.Status, "the stopped recovery worker is not active")
+	assert.Equal("15000", prior.CursorAfter.String, "recovery pins its handoff cursor before enumeration")
 
 	env.Mock.AddMessage("arrived-before-resume", testMIME(), []string{"INBOX"})
 	env.Mock.MessagePages = [][]string{
@@ -1801,7 +2027,7 @@ func setupInterruptedHistoryRecoveryWithPrefixChange(
 	env.Mock.Profile.HistoryID = 20000
 	env.Mock.HistoryID = 20000
 	env.Mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("arrived-before-resume")}
-	return env, source, active
+	return env, source, prior
 }
 
 func TestIncrementalSyncProfileError(t *testing.T) {
@@ -2367,6 +2593,11 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 
 	syncID, err := env.Store.StartSync(source.ID, "full")
 	require.NoError(err, "StartSync")
+	_, err = env.Store.DB().Exec(
+		`UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?`,
+		env.Syncer.fullSyncRequestFingerprint(), syncID,
+	)
+	require.NoError(err, "record request fingerprint")
 
 	checkpoint := &store.Checkpoint{
 		PageToken:         "page_1",
@@ -2374,6 +2605,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 		MessagesAdded:     2,
 	}
 	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
+	require.NoError(env.Store.FailSync(syncID, "worker stopped"))
 
 	summary := runFullSync(t, env)
 
@@ -2382,6 +2614,62 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assertSummary(t, summary, WantSummary{Added: new(int64(4))})
 
 	assertListMessagesCalls(t, env, 1)
+	assertMessageCount(t, env.Store, 4)
+}
+
+func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	source := env.CreateSource(t)
+	env.Mock.MessagePages = [][]string{{"msg1", "msg2"}}
+	runFullSync(t, env)
+
+	env.Mock.MessagePages = [][]string{
+		{"msg1", "msg2"},
+		{"msg3", "msg4"},
+	}
+	env.Mock.ListMessagesCalls = 0
+	syncID, err := env.Store.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	requirements.NoError(env.Store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+		PageToken:         "page_1",
+		MessagesProcessed: 2,
+		MessagesAdded:     2,
+	}))
+	requirements.NoError(env.Store.FailSync(syncID, "worker stopped"))
+
+	summary := runFullSync(t, env)
+	checks.True(summary.WasResumed)
+	checks.Equal("page_1", summary.ResumedFromToken)
+	checks.Equal(1, env.Mock.ListMessagesCalls)
+	assertMessageCount(t, env.Store, 4)
+}
+
+func TestFullSyncDoesNotResumeIncrementalCheckpoint(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	source := env.CreateSourceWithHistory(t, "12340")
+	syncID, err := env.Store.StartSync(source.ID, "incremental")
+	requirements.NoError(err)
+	requirements.NoError(env.Store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+		PageToken:         "page_1",
+		MessagesProcessed: 2,
+		MessagesAdded:     2,
+	}))
+	requirements.NoError(env.Store.FailSync(syncID, "worker stopped"))
+
+	summary := runFullSync(t, env)
+	checks.False(summary.WasResumed)
+	checks.Empty(summary.ResumedFromToken)
+	checks.Equal(2, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -2524,9 +2812,13 @@ func TestInitSyncState_NewSync(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
+	execution, err := env.Store.AcquireSyncExecutionContext(env.Context, source.ID)
+	require.NoError(t, err, "AcquireSyncExecutionContext")
+	t.Cleanup(func() { _ = execution.Release() })
 
-	state, err := env.Syncer.initSyncState(source.ID)
+	state, err := env.Syncer.initSyncState(env.Context, source.ID, execution)
 	require.NoError(t, err, "initSyncState")
+	t.Cleanup(func() { _ = env.Store.FailSync(state.syncID, "test complete") })
 
 	assert.False(state.wasResumed, "expected wasResumed = false for new sync")
 	assert.Empty(state.pageToken, "pageToken")
@@ -2540,9 +2832,14 @@ func TestInitSyncState_Resume(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 
-	// Create an active sync with checkpoint
+	// Create a failed sync with a resumable checkpoint.
 	syncID, err := env.Store.StartSync(source.ID, "full")
 	require.NoError(err, "StartSync")
+	_, err = env.Store.DB().Exec(
+		`UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?`,
+		env.Syncer.fullSyncRequestFingerprint(), syncID,
+	)
+	require.NoError(err, "record request fingerprint")
 	checkpoint := &store.Checkpoint{
 		PageToken:         "resume_token_123",
 		MessagesProcessed: 50,
@@ -2551,15 +2848,57 @@ func TestInitSyncState_Resume(t *testing.T) {
 		ErrorsCount:       2,
 	}
 	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
+	require.NoError(env.Store.FailSync(syncID, "worker stopped"))
+	execution, err := env.Store.AcquireSyncExecutionContext(env.Context, source.ID)
+	require.NoError(err, "AcquireSyncExecutionContext")
+	t.Cleanup(func() { _ = execution.Release() })
 
-	state, err := env.Syncer.initSyncState(source.ID)
+	state, err := env.Syncer.initSyncState(env.Context, source.ID, execution)
 	require.NoError(err, "initSyncState")
+	t.Cleanup(func() { _ = env.Store.FailSync(state.syncID, "test complete") })
 
 	assert.True(state.wasResumed, "expected wasResumed = true")
 	assert.Equal("resume_token_123", state.pageToken, "pageToken")
-	assert.Equal(syncID, state.syncID, "syncID")
+	assert.NotEqual(syncID, state.syncID, "resume starts a new run")
 	assert.Equal(int64(50), state.checkpoint.MessagesProcessed, "MessagesProcessed")
 	assert.Equal(int64(45), state.checkpoint.MessagesAdded, "MessagesAdded")
+}
+
+func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
+	legacy := &store.SyncRun{
+		CursorBefore: sql.NullString{String: "page_1", Valid: true},
+	}
+	pinnedRecovery := *legacy
+	pinnedRecovery.CursorAfter = sql.NullString{String: "12345", Valid: true}
+
+	tests := []struct {
+		name   string
+		run    *store.SyncRun
+		modify func(*Options)
+		want   bool
+	}{
+		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: true},
+		{name: "filtered Gmail", run: legacy, modify: func(options *Options) {
+			options.Query = "after:2024/01/01"
+		}},
+		{name: "limited Gmail", run: legacy, modify: func(options *Options) {
+			options.Limit = 10
+		}},
+		{name: "IMAP", run: legacy, modify: func(options *Options) {
+			options.SourceType = "imap"
+		}},
+		{name: "pinned recovery", run: &pinnedRecovery, modify: func(*Options) {}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := DefaultOptions()
+			test.modify(options)
+			syncer := &Syncer{opts: options}
+			assert.Equal(t, test.want,
+				syncer.fullCheckpointMatchesRequest(test.run, "current-request"))
+		})
+	}
 }
 
 func TestInitSyncState_NoResumeOption(t *testing.T) {
@@ -2580,12 +2919,9 @@ func TestInitSyncState_NoResumeOption(t *testing.T) {
 	}
 	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
 
-	state, err := env.Syncer.initSyncState(source.ID)
-	require.NoError(err, "initSyncState")
-
-	assert.False(state.wasResumed, "expected wasResumed = false with NoResume option")
-	assert.Empty(state.pageToken, "pageToken with NoResume")
-	assert.NotEqual(syncID, state.syncID, "expected new syncID, not the existing one")
+	state, err := env.Syncer.Full(env.Context, source.Identifier)
+	require.ErrorIs(err, store.ErrSyncAlreadyActive)
+	assert.Nil(state)
 }
 
 // Tests for processBatch

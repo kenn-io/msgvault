@@ -469,6 +469,7 @@ type CLISyncRequest struct {
 	Before      string
 	After       string
 	Limit       int
+	OperationID string
 	Folders     []string
 	SkipFolders []string
 }
@@ -641,7 +642,7 @@ type cliDeleteDedupedExecuteRequest struct {
 	NoBackup           bool                            `json:"no_backup,omitempty"`
 	ExpectedTotal      *int64                          `json:"expected_total" nullable:"false"`
 	ExpectedBatchCount *int64                          `json:"expected_batch_count" nullable:"false"`
-	ExpectedBatches    []cliDeleteDedupedBatchResponse `json:"expected_batches" nullable:"false"`
+	ExpectedBatches    []cliDeleteDedupedBatchResponse `json:"expected_batches"`
 }
 
 func (r cliDeleteDedupedExecuteRequest) scope() cliDeleteDedupedScopeRequest {
@@ -1637,6 +1638,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"purge-excluded-media",
 		"repair-dates",
 		"repair-identity",
+		"repair-labels",
 		"repair-list-ids",
 		"repair-senders",
 		"repack-attachments",
@@ -1681,6 +1683,7 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 			boolFlags[name] = true
 		}
 		valueFlags["if-fingerprint"] = true
+		valueFlags["fingerprint"] = true
 	case "history":
 		maxPositionals = 1
 		boolFlags["json"] = true
@@ -1689,6 +1692,7 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 	case "check":
 		maxPositionals = 1
 		boolFlags["json"] = true
+		valueFlags["if-fingerprint"] = true
 	default:
 		return false
 	}

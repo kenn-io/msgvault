@@ -562,7 +562,7 @@ func (m Model) handlePeopleActivityMessageKey(msg tea.KeyPressMsg) (tea.Model, t
 		return m, nil
 	}
 	if msg.String() == "left" || msg.String() == "h" ||
-		msg.String() == "right" || msg.String() == "l" {
+		msg.String() == keyNameRight || msg.String() == "l" {
 		return m, nil
 	}
 	if msg.String() == "r" {
@@ -595,7 +595,7 @@ func (m Model) handlePeopleMeetingDetailKey(msg tea.KeyPressMsg) (tea.Model, tea
 		m.peopleState.meetingsErr = nil
 		m.updatePeopleLoading()
 		return m, nil
-	case "left", "h", "right", "l":
+	case "left", "h", keyNameRight, "l":
 		return m, nil
 	case "r":
 		if m.peopleState.meetingsErr == nil || m.peopleState.selectedContentMessage <= 0 {
@@ -899,7 +899,7 @@ func (m Model) handlePeopleMessageKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 	if msg.String() == "left" || msg.String() == "h" ||
-		msg.String() == "right" || msg.String() == "l" {
+		msg.String() == keyNameRight || msg.String() == "l" {
 		return m, nil
 	}
 	return m.handleMessageDetailKeys(msg)
@@ -1080,7 +1080,7 @@ func (m Model) handlePeopleSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		}
 		m.settlePeopleDirectoryLoad()
 		return m, nil
-	case "ctrl+c":
+	case keyNameCtrlC:
 		m.quitting = true
 		return m, tea.Quit
 	default:

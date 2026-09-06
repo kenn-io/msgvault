@@ -2,13 +2,17 @@ package imap
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -98,6 +102,11 @@ type Client struct {
 	since                 time.Time            // IMAP SINCE date filter (zero = no filter)
 	before                time.Time            // IMAP BEFORE date filter (zero = no filter)
 
+	// aliasLoader resolves durable aliases for the mailbox UIDs a listing
+	// actually touches. Nil when the caller keeps no durable state.
+	aliasLoader     func(mailbox string, uids []uint32) (map[string]string, error)
+	aliasLoadWarned bool // one failing load must not warn once per request
+
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
@@ -123,6 +132,14 @@ type Client struct {
 	// unchanged the running count of mailboxes skipped via saved
 	// folder state.
 	listProgress func(done, total int, mailbox string, found, unchanged int)
+	sleep        func(context.Context, time.Duration) error
+	tlsConfig    *tls.Config
+}
+
+var connectRetryDelays = [...]time.Duration{
+	5 * time.Second,
+	15 * time.Second,
+	45 * time.Second,
 }
 
 // NewClient creates a new IMAP client.
@@ -132,6 +149,7 @@ func NewClient(cfg *Config, password string, opts ...Option) *Client {
 		password:         password,
 		logger:           slog.Default(),
 		labelMapComplete: true,
+		sleep:            sleepContext,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -173,38 +191,114 @@ func (c *Client) labelsSnapshotFilteredLocked() bool {
 			len(c.folderFilterExclude) > 0)
 }
 
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// transportProbe records the first zero-byte transport error seen on the
+// connection. The pinned IMAP client reports a clean close before the
+// greeting as a plain "connection closed" error without the socket cause, so
+// the retry decision reads the cause from here instead.
+type transportProbe struct {
+	net.Conn
+
+	mu  sync.Mutex
+	err error
+}
+
+func (c *transportProbe) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.record(n, err)
+	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
+}
+
+func (c *transportProbe) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.record(n, err)
+	return n, err //nolint:wrapcheck // net.Conn errors retain their typed transport cause
+}
+
+func (c *transportProbe) record(n int, err error) {
+	if n > 0 || err == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err == nil {
+		c.err = err
+	}
+}
+
+func (c *transportProbe) transportError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
+// isProtocolFailure reports whether the server answered and refused: an IMAP
+// status response, a TLS alert, or a certificate the client rejected. These
+// never get a retry, whatever the socket did afterwards.
+func isProtocolFailure(err error) bool {
+	if _, ok := errors.AsType[*imap.Error](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[tls.AlertError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+		return true
+	}
+	return false
+}
+
+// retryableConnect decides whether a failed connection attempt gets a retry.
+// The returned error usually carries the transport cause; the probe covers
+// the case where the IMAP client dropped it.
+func retryableConnect(err error, probe *transportProbe) bool {
+	if isProtocolFailure(err) {
+		return false
+	}
+	if isRetryableTransportError(err) {
+		return true
+	}
+	return probe != nil && isRetryableTransportError(probe.transportError())
+}
+
+func isRetryableTransportError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) { //nolint:staticcheck // legacy net.Error implementations can mark transient transport failures.
+		return true
+	}
+	return slices.ContainsFunc(transportErrnos, func(errno syscall.Errno) bool {
+		return errors.Is(err, errno)
+	})
+}
+
 // connect establishes and authenticates the IMAP connection. Caller must hold mu.
 func (c *Client) connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
 
-	addr := c.config.Addr()
-	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
-
-	imapOpts := &imapclient.Options{
-		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
-			Vanished: c.captureQresyncVanished,
-		},
-	}
-	var (
-		conn *imapclient.Client
-		err  error
-	)
-	if c.config.TLS {
-		conn, err = imapclient.DialTLS(addr, imapOpts)
-	} else if c.config.STARTTLS {
-		conn, err = imapclient.DialStartTLS(addr, imapOpts)
-	} else {
-		conn, err = imapclient.DialInsecure(addr, imapOpts)
-	}
+	conn, err := c.connectTransport(ctx)
 	if err != nil {
-		return fmt.Errorf("dial IMAP %s: %w", addr, err)
-	}
-
-	if err := conn.WaitGreeting(); err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+		return err
 	}
 
 	switch c.config.EffectiveAuthMethod() {
@@ -213,18 +307,26 @@ func (c *Client) connect(ctx context.Context) error {
 			_ = conn.Close()
 			return errors.New("XOAUTH2 auth requires a token source (use WithTokenSource)")
 		}
-		token, err := c.tokenSource(ctx)
-		if err != nil {
+		var token string
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			var err error
+			token, err = c.tokenSource(ctx)
+			return err
+		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("get XOAUTH2 token: %w", err)
 		}
 		saslClient := NewXOAuth2Client(c.config.Username, token)
-		if err := conn.Authenticate(saslClient); err != nil {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			return conn.Authenticate(saslClient)
+		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("XOAUTH2 authenticate: %w", err)
 		}
 	default:
-		if err := conn.Login(c.config.Username, c.password).Wait(); err != nil {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			return conn.Login(c.config.Username, c.password).Wait()
+		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("IMAP login: %w", err)
 		}
@@ -236,6 +338,151 @@ func (c *Client) connect(ctx context.Context) error {
 	c.qresyncEnabled = false
 	c.logger.Debug("connected and authenticated", "user", c.config.Username)
 	return nil
+}
+
+func (c *Client) connectTransport(ctx context.Context) (*imapclient.Client, error) {
+	for attempt := 0; ; attempt++ {
+		conn, retry, err := c.connectTransportOnce(ctx)
+		if err == nil {
+			return conn, nil
+		}
+		if !retry || ctx.Err() != nil || attempt == len(connectRetryDelays) {
+			return nil, err
+		}
+
+		delay := connectRetryDelays[attempt]
+		c.logger.Warn("retrying IMAP connection",
+			"addr", c.config.Addr(),
+			"attempt", attempt+2,
+			"limit", len(connectRetryDelays)+1,
+			"delay", delay,
+			"error", err,
+		)
+		if err := c.sleep(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, bool, error) {
+	addr := c.config.Addr()
+	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
+
+	imapOpts := &imapclient.Options{
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+			Vanished: c.captureQresyncVanished,
+		},
+	}
+	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, isRetryableTransportError(err), fmt.Errorf("dial IMAP %s: %w", addr, err)
+	}
+
+	if c.config.STARTTLS {
+		probe := &transportProbe{Conn: rawConn}
+		startTLSOpts := *imapOpts
+		startTLSOpts.TLSConfig = c.newTLSConfig(false)
+		conn, err := newStartTLSContext(ctx, probe, &startTLSOpts)
+		if err != nil {
+			_ = rawConn.Close()
+			return nil, retryableConnect(err, probe), fmt.Errorf("IMAP STARTTLS from %s: %w", addr, err)
+		}
+		return conn, false, nil
+	}
+
+	greetingConn := rawConn
+	if c.config.TLS {
+		tlsConn := tls.Client(rawConn, c.newTLSConfig(true))
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return nil, retryableConnect(err, nil), fmt.Errorf("TLS handshake with %s: %w", addr, err)
+		}
+		greetingConn = tlsConn
+	}
+	probe := &transportProbe{Conn: greetingConn}
+	conn := imapclient.New(probe, imapOpts)
+	if err := waitGreetingContext(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, retryableConnect(err, probe), fmt.Errorf("IMAP greeting from %s: %w", addr, err)
+	}
+	return conn, false, nil
+}
+
+func (c *Client) newTLSConfig(implicit bool) *tls.Config {
+	var config *tls.Config
+	if c.tlsConfig == nil {
+		config = &tls.Config{}
+	} else {
+		config = c.tlsConfig.Clone()
+	}
+	if config.ServerName == "" {
+		config.ServerName = normalizeHost(c.config.Host)
+	}
+	if implicit && config.NextProtos == nil {
+		config.NextProtos = []string{"imap"}
+	}
+	return config
+}
+
+func waitGreetingContext(ctx context.Context, conn *imapclient.Client) error {
+	result := make(chan error, 1)
+	go func() { result <- conn.WaitGreeting() }()
+	select {
+	case err := <-result:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	case <-ctx.Done():
+		_ = conn.Close()
+		return ctx.Err()
+	}
+}
+
+func newStartTLSContext(
+	ctx context.Context, rawConn net.Conn, options *imapclient.Options,
+) (*imapclient.Client, error) {
+	result := make(chan struct {
+		conn *imapclient.Client
+		err  error
+	}, 1)
+	go func() {
+		conn, err := imapclient.NewStartTLS(rawConn, options)
+		result <- struct {
+			conn *imapclient.Client
+			err  error
+		}{conn: conn, err: err}
+	}()
+	select {
+	case result := <-result:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			return nil, ctxErr
+		}
+		return result.conn, result.err
+	case <-ctx.Done():
+		_ = rawConn.Close()
+		return nil, ctx.Err()
+	}
+}
+
+func waitAuthenticationContext(
+	ctx context.Context, conn *imapclient.Client, authenticate func() error,
+) error {
+	result := make(chan error, 1)
+	go func() { result <- authenticate() }()
+	select {
+	case err := <-result:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	case <-ctx.Done():
+		_ = conn.Close()
+		return ctx.Err()
+	}
 }
 
 // reconnect closes the current connection and re-establishes it.
@@ -1084,6 +1331,10 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			trackState.UIDNext = baselineUIDNext(trackState.UIDNext, knownUIDs)
 			c.trackFolderMessages(mailbox, trackState, uids)
 		}
+		if prior, ok := c.priorFolderStates[mailbox]; ok &&
+			prior.UIDValidity == trackState.UIDValidity {
+			c.loadSourceMessageAliases(mailbox, uids)
+		}
 		for _, uid := range uids {
 			sourceMessageID := compositeID(mailbox, uid)
 			messages = append(messages, gmailapi.MessageID{
@@ -1243,6 +1494,9 @@ func folderStatusesCoverMailboxes(
 func isNetworkError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if _, ok := errors.AsType[net.Error](err); ok {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "use of closed network connection") ||

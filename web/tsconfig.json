@@ -7,7 +7,7 @@
     "isolatedModules": true,
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "types": ["vitest/globals", "vite/client"]
+    "types": ["node", "vitest/globals", "vite/client"]
   },
   "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte", "vite.config.ts", "playwright.config.ts"]
 }

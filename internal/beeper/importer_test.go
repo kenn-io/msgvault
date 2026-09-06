@@ -25,8 +25,7 @@ func TestImporterScopesEveryStoreOwningHelper(t *testing.T) {
 	imp := NewImporter(st, nil)
 	imp.res = newParticipantResolver(st, "account-a")
 	scoped := imp.scopedToSync(source.ID, runID)
-	_, err = st.StartSync(source.ID, sourceTypeBeeper)
-	requirements.NoError(err)
+	requirements.NoError(st.FailSync(runID, "worker stopped"))
 
 	_, err = scoped.res.resolveID("user-a", "User A")
 	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)

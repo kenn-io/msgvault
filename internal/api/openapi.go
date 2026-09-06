@@ -241,16 +241,34 @@ import (
 // Omission preserves the active-only default. Additive (minor bump): existing
 // clients continue to receive the same result population.
 // 2.13.0 makes deduplicate planning use an explicit, version-gated backfill
-// confirmation protocol.
+// confirmation protocol. It also adds GET /api/v1/people/directory: a paginated,
+// lexical, non-sensitive Directory view of promoted durable people. The legacy
+// unpaginated GET /api/v1/people response remains unchanged.
 // 2.14.0 adds exact case-insensitive List-ID filtering to analytics, deletion,
 // and vector/hybrid search MessageFilter routes, and includes nullable list_id
 // values in the message change feed. Remote clients must require this version
 // before sending list_id because older compatible daemons ignore unknown query
-// parameters and could widen a scoped request.
+// parameters and could widen a scoped request. It also adds the person network,
+// operation history, CardDAV status and run-history reads, the self-describing
+// Settings catalog, stable-name person enrichment provider updates, and
+// write-only provider credential endpoints. It replaces the CardDAV publication
+// and conflict response shapes with bounded projections that omit raw vCards and
+// resource hrefs so those responses cannot expose private contact data or
+// infrastructure identifiers. That shape change lands inside the unreleased 2.x
+// line: nothing after the released 1.36.0 contract has shipped yet, so it does
+// not open a new major version.
+// Existing filtered target requests are unchanged.
 // 2.15.0 adds POST /api/v1/cli/repair-message with a dedicated request and
 // streaming event contract for Gmail snapshot repair and audit operations.
 // Additive (minor bump): existing CLI routes and clients remain unchanged.
-const APISchemaVersion = "2.15.0"
+// 2.16.0 adds complete MessageFilter parameters to total statistics and adds
+// result totals and statistics to deep search. Search-aware deletion query
+// parameters introduced with these TUI contracts are also covered by 2.16.0.
+// It also adds authenticated asynchronous historical import jobs at
+// POST /api/v1/imports and GET /api/v1/imports/{job_id}. Existing synchronous
+// CLI sync routes, source-status responses, unfiltered statistics, search, and
+// deletion requests are unchanged.
+const APISchemaVersion = "2.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -504,7 +522,10 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	if setting := schemas["Setting"]; setting != nil {
-		setting.Properties["group"].Enum = []any{"browser", "server", "archive", "search", "sources", "integrations"}
+		setting.Properties["group"].Enum = []any{
+			"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
+			"activity", "backup", "enrichment", "integrations",
+		}
 		setting.Properties["kind"].Enum = []any{"string", "integer", "number", "boolean", "string_array", "secret"}
 	}
 	if request := schemas["SettingsPatchRequest"]; request != nil {
@@ -512,6 +533,7 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 	}
 	if response := schemas["SettingsResponse"]; response != nil {
 		response.Properties["settings"].Nullable = false
+		response.Properties["groups"].Nullable = false
 	}
 }
 
@@ -659,6 +681,15 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			snapshot.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
 		}
 	}
+	if manifest := schemas["Manifest"]; manifest != nil {
+		if rawFilter := manifest.Properties["raw_filter"]; rawFilter != nil {
+			if rawFilter.Extensions == nil {
+				rawFilter.Extensions = map[string]any{}
+			}
+			rawFilter.Extensions["x-go-type"] = "json.RawMessage"
+			rawFilter.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
+		}
+	}
 	for schemaName, properties := range map[string][]string{
 		"PersonMergeDetail": {"participants", "review_candidates", "rows", "splits"},
 		"PersonMergeResult": {"review_candidates"},
@@ -742,6 +773,26 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				"CreateCommunicationServiceRequestScopePolicyRequired",
 			},
 		},
+		"CardDAVConflictDetailResponse": {
+			"resolution": {"CardDAVConflictDetailResponseResolutionKeepLocal", "CardDAVConflictDetailResponseResolutionKeepRemote"},
+			"status":     {"CardDAVConflictDetailResponseStatusUnresolved", "CardDAVConflictDetailResponseStatusResolved"},
+		},
+		"CardDAVConflictResolutionResponse": {
+			"resolution": {"CardDAVConflictResolutionResponseResolutionKeepLocal", "CardDAVConflictResolutionResponseResolutionKeepRemote"},
+			"status":     {"CardDAVConflictResolutionResponseStatusResolved"},
+		},
+		"CardDAVConflictResponse": {
+			"local_state":  {"CardDAVConflictResponseLocalStatePresent", "CardDAVConflictResponseLocalStateDeleted", "CardDAVConflictResponseLocalStateUnavailable"},
+			"remote_state": {"CardDAVConflictResponseRemoteStatePresent", "CardDAVConflictResponseRemoteStateDeleted", "CardDAVConflictResponseRemoteStateUnavailable"},
+			"status":       {"CardDAVConflictResponseStatusUnresolved", "CardDAVConflictResponseStatusResolved"},
+		},
+		"CardDAVContactSummaryResponse": {
+			"state": {"CardDAVContactSummaryResponseStatePresent", "CardDAVContactSummaryResponseStateDeleted", "CardDAVContactSummaryResponseStateUnavailable"},
+		},
+		"CardDAVPublicationResponse": {
+			"pending_operation": {"CardDAVPublicationResponsePendingOperationCreate", "CardDAVPublicationResponsePendingOperationUpdate", "CardDAVPublicationResponsePendingOperationDelete"},
+			"state":             {"CardDAVPublicationResponseStateUnpublished", "CardDAVPublicationResponseStatePublished", "CardDAVPublicationResponseStatePending", "CardDAVPublicationResponseStateConflict"},
+		},
 		"ExploreCacheUnavailableResponse": {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
@@ -764,6 +815,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"direction": {"IdentitySearchSortDirectionAsc", "IdentitySearchSortDirectionDesc"},
 			"field":     {"IdentitySearchSortFieldActivityCount", "IdentitySearchSortFieldLatestAt", "IdentitySearchSortFieldDisplayLabel"},
 		},
+		"ImportJobResponse": {
+			"status": {
+				"ImportJobResponseStatusPending",
+				"ImportJobResponseStatusRunning",
+				"ImportJobResponseStatusDone",
+				"ImportJobResponseStatusFailed",
+			},
+		},
 		"ExploreSelection": {
 			"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"},
 		},
@@ -779,6 +838,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		for propertyName, enumNames := range properties {
 			setEnumNames(schema.Properties[propertyName], enumNames)
 		}
+	}
+	for _, schemaName := range []string{"CardDAVConflictDetailResponse", "CardDAVConflictResponse"} {
+		schema := schemas[schemaName]
+		if schema == nil || schema.Properties["allowed_resolutions"] == nil {
+			continue
+		}
+		setEnumNames(schema.Properties["allowed_resolutions"].Items, []any{
+			schemaName + "AllowedResolutionsKeepLocal",
+			schemaName + "AllowedResolutionsKeepRemote",
+		})
 	}
 	meeting := schemas["Meeting"]
 	if meeting == nil || meeting.Properties == nil {

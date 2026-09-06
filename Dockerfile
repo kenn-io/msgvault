@@ -6,7 +6,6 @@ WORKDIR /src
 COPY web/package.json web/bun.lock ./web/
 RUN cd web && bun install --frozen-lockfile
 COPY api/openapi.yaml ./api/openapi.yaml
-COPY scripts/generate-web-client.mjs ./scripts/generate-web-client.mjs
 COPY web/ ./web/
 RUN cd web && bun run generate && bun run build
 

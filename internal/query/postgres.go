@@ -34,6 +34,8 @@ type pgEngine struct {
 }
 
 var _ MessageBodySearcher = (*pgEngine)(nil)
+var _ DeletionTargetSearchResolver = (*pgEngine)(nil)
+var _ DeletionTargetAggregateSearchResolver = (*pgEngine)(nil)
 
 type deletionTargetsByMessageIDsResolver interface {
 	GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error)
@@ -45,6 +47,33 @@ func (e *pgEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int
 		return nil, ErrNotImplemented
 	}
 	return resolver.GetDeletionTargetsByMessageIDs(ctx, ids)
+}
+
+func (e *pgEngine) GetDeletionTargetsBySearch(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter MessageFilter,
+	mode DeletionSearchMode,
+) ([]DeletionTarget, error) {
+	resolver, ok := e.Engine.(DeletionTargetSearchResolver)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	return resolver.GetDeletionTargetsBySearch(ctx, searchQuery, filter, mode)
+}
+
+func (e *pgEngine) GetDeletionTargetsByAggregateSearch(
+	ctx context.Context,
+	searchQuery string,
+	filter MessageFilter,
+	groupBy ViewType,
+	key string,
+) ([]DeletionTarget, error) {
+	resolver, ok := e.Engine.(DeletionTargetAggregateSearchResolver)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	return resolver.GetDeletionTargetsByAggregateSearch(ctx, searchQuery, filter, groupBy, key)
 }
 
 // SearchMessageBodies forwards exact body-only search through the PostgreSQL

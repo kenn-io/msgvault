@@ -133,7 +133,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	assert.Equal("Refreshed Meeting", cachedSubject)
 }
 
-func TestCacheNeedsBuild_SupersededCirclebackRunWithoutCheckpoint(t *testing.T) {
+func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -169,8 +169,7 @@ func TestCacheNeedsBuild_SupersededCirclebackRunWithoutCheckpoint(t *testing.T) 
 		WHERE source_message_id = 'meeting:failed-refresh-1'
 	`)
 	require.NoError(err)
-	_, err = st.StartSync(first.SourceID, circleback.SourceType)
-	require.NoError(err, "starting the replacement run supersedes the abandoned run")
+	require.NoError(st.FailSync(abandonedRunID, "worker stopped"))
 
 	var status string
 	var additions, updates int64

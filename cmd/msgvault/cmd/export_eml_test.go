@@ -89,6 +89,37 @@ func TestExportEMLHTTPNotFoundPreservesCLIError(t *testing.T) {
 	assert.NotContains(err.Error(), "API error", "transport details")
 }
 
+func TestWriteExportedEMLDefaultsToSourceMessageIDFilename(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	outputDir := t.TempDir()
+	t.Chdir(outputDir)
+	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
+	var out bytes.Buffer
+	cmd := &cobra.Command{Use: "export-eml"}
+	cmd.SetOut(&out)
+
+	err := writeExportedEML(cmd, "gmail-raw", "", raw)
+	require.NoError(err)
+
+	outputPath := filepath.Join(outputDir, "gmail-raw.eml")
+	got, err := os.ReadFile(outputPath)
+	require.NoError(err)
+	assert.Equal(raw, got)
+	assert.Contains(out.String(), "Exported message to: gmail-raw.eml")
+}
+
+func TestWriteExportedEMLWritesRawBytesToStdout(t *testing.T) {
+	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
+	var out bytes.Buffer
+	cmd := &cobra.Command{Use: "export-eml"}
+	cmd.SetOut(&out)
+
+	err := writeExportedEML(cmd, "gmail-raw", stdoutSentinel, raw)
+	require.NoError(t, err)
+	assert.Equal(t, raw, out.Bytes())
+}
+
 func emlHTTPDaemon(t *testing.T, raw []byte) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	requests := &atomic.Int32{}

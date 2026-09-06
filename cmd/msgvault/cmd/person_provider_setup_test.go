@@ -439,6 +439,69 @@ func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrS
 	assert.Contains(string(content), `[people.sweep.providers.catalog-provider]`)
 }
 
+func TestPersonProviderCatalogAuthUsesProtocolCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol peoplesweep.Protocol
+		explicit peoplesweep.AuthScheme
+		want     peoplesweep.AuthScheme
+		wantErr  string
+	}{
+		{name: "openai chat default", protocol: peoplesweep.ProtocolOpenAIChat, want: peoplesweep.AuthBearer},
+		{name: "openai chat x api key", protocol: peoplesweep.ProtocolOpenAIChat, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "openai responses default", protocol: peoplesweep.ProtocolOpenAIResponses, want: peoplesweep.AuthBearer},
+		{name: "openai responses x api key", protocol: peoplesweep.ProtocolOpenAIResponses, explicit: peoplesweep.AuthXAPIKey, want: peoplesweep.AuthXAPIKey},
+		{name: "anthropic default", protocol: peoplesweep.ProtocolAnthropicMessages, want: peoplesweep.AuthXAPIKey},
+		{name: "google default", protocol: peoplesweep.ProtocolGoogleGenerateContent, want: peoplesweep.AuthGoogleAPIKey},
+		{name: "anthropic bearer rejected", protocol: peoplesweep.ProtocolAnthropicMessages, explicit: peoplesweep.AuthBearer, wantErr: "does not support auth"},
+		{name: "google x api key rejected", protocol: peoplesweep.ProtocolGoogleGenerateContent, explicit: peoplesweep.AuthXAPIKey, wantErr: "does not support auth"},
+		{name: "codex rejected", protocol: peoplesweep.ProtocolCodexAppServer, wantErr: "unsupported protocol"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := personProviderCatalogAuth(test.protocol, test.explicit)
+			if test.wantErr != "" {
+				require.ErrorContains(err, test.wantErr)
+				assert.Empty(got)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(test.want, got)
+		})
+	}
+}
+
+func TestPersonProviderCandidateUsesProtocolCapabilityDefaults(t *testing.T) {
+	for _, test := range []struct {
+		protocol peoplesweep.Protocol
+		auth     peoplesweep.AuthScheme
+		output   peoplesweep.OutputMode
+		token    string
+	}{
+		{protocol: peoplesweep.ProtocolOpenAIChat, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema, token: "max_completion_tokens"},
+		{protocol: peoplesweep.ProtocolOpenAIResponses, auth: peoplesweep.AuthBearer,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolAnthropicMessages, auth: peoplesweep.AuthXAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+		{protocol: peoplesweep.ProtocolGoogleGenerateContent, auth: peoplesweep.AuthGoogleAPIKey,
+			output: peoplesweep.OutputModeNativeJSONSchema},
+	} {
+		t.Run(string(test.protocol), func(t *testing.T) {
+			candidate, err := personProviderCandidate(personProviderAddOptions{
+				protocol: string(test.protocol), endpoint: "https://example.test",
+				model: "test-model", auth: string(test.auth), retentionPosture: "zero",
+				trainingPosture: "none", allowedSources: []string{"conversation_text"},
+				sourceSince: "2025-01-01",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.output, candidate.OutputMode)
+			assert.Equal(t, test.token, candidate.TokenLimitParameter)
+		})
+	}
+}
+
 // TestPersonProviderAddNeverSendsCredentialToCatalogEndpoint catches
 // onboarding reading a credential or negotiating capabilities against an
 // endpoint chosen by the models.dev catalog: a compromised catalog must not
@@ -714,6 +777,291 @@ func TestPersonProviderAddRejectsInvalidSnapshotCapsBeforeSecretOrProvider(t *te
 	assert.Zero(credentialReads)
 	assert.Zero(negotiations)
 	assert.Zero(writes)
+}
+
+func TestPersonProviderSetUpdatesExistingProfile(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	output, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "updated-model", "--yes")
+	require.NoError(err)
+	assert.Contains(output, `Updated and checked people provider profile "default"`)
+
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	provider := reloaded.People.Sweep.Providers["default"]
+	assert.Equal("updated-model", provider.Model)
+	assert.Equal("https://default.example.test/v1", provider.Endpoint)
+	assert.Equal(peoplesweep.AuthBearer, provider.Auth)
+	assert.Equal(peoplesweep.CredentialEnv, provider.Credential)
+	assert.Equal("DEFAULT_KEY", provider.CredentialEnv)
+}
+
+func TestPersonProviderSetClosesStoreBeforeChecking(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
+	deps.daemonAliveForRestartNotice = func(context.Context) (bool, error) { return false, nil }
+	active := false
+	opens := 0
+	deps.openStore = func() (personProviderStore, func(), error) {
+		opens++
+		if active {
+			return nil, nil, errors.New("people provider store lock is held")
+		}
+		active = true
+		return st, func() { active = false }, nil
+	}
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	_, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "local-model", "--yes")
+	require.NoError(err)
+	assert.Equal(3, opens)
+	assert.False(active)
+}
+
+func TestPersonProviderSetDoesNotRollbackAnUnverifiedConflictSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+	before, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	raced := before
+	raced.Content = []byte("operator change")
+	raced.ETag = "operator-change"
+	reads := 0
+	deps.readConfigFile = func() (config.ConfigFile, error) {
+		reads++
+		if reads == 1 {
+			return before, nil
+		}
+		return raced, nil
+	}
+	deps.editConfigTables = func(string, []config.TableEdit) (config.ConfigFile, error) {
+		return config.ConfigFile{}, config.ErrConfigConflict
+	}
+	restored := false
+	deps.restoreConfigFile = func(config.ConfigFile, config.ConfigFile) (config.ConfigFile, error) {
+		restored = true
+		return config.ConfigFile{}, nil
+	}
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "conflict-model", "--yes")
+	require.ErrorIs(err, config.ErrConfigConflict)
+	assert.Equal(1, reads)
+	assert.False(restored)
+}
+
+func TestPersonProviderSetClearsOptionalPolicyFields(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	provider := loaded.People.Sweep.Providers["default"]
+	provider.SourceUntil = "2025-12-31"
+	provider.ReasoningEffort = "high"
+	provider.ReasoningMode = "enabled"
+	_, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{{
+		Path:   []string{"people", "sweep", "providers", "default"},
+		Values: personProviderTableValues(provider),
+	}})
+	require.NoError(err)
+	loaded, err = config.Load(path, "")
+	require.NoError(err)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	_, err = executePersonProviderCommand(t, deps, "set", "default",
+		"--source-until", "", "--reasoning-effort", "", "--reasoning-mode", "", "--yes")
+	require.NoError(err)
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	updated := reloaded.People.Sweep.Providers["default"]
+	assert.Empty(updated.SourceUntil)
+	assert.Empty(updated.ReasoningEffort)
+	assert.Empty(updated.ReasoningMode)
+}
+
+func TestPersonProviderSetRechecksAndRevokesOldConsent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	checker := newCheckedPersonProviderChecker()
+	deps := providerSetupCommandDeps(t, path, loaded, checker)
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	oldConfig := loaded.People.Sweep
+	oldConfig.Enabled = true
+	oldProfile, err := oldConfig.Profile()
+	require.NoError(err)
+	st, cleanup, err := deps.openStore()
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), oldProfile)
+	require.NoError(err)
+	_, _, err = st.GrantPersonInferenceConsent(
+		t.Context(), oldProfile.Fingerprint, personProviderConsentActor)
+	require.NoError(err)
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "rechecked-model", "--yes")
+	require.NoError(err)
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	newConfig := reloaded.People.Sweep
+	newConfig.Enabled = true
+	newProfile, err := newConfig.Profile()
+	require.NoError(err)
+	assert.NotEqual(oldProfile.Fingerprint, newProfile.Fingerprint)
+	oldActive, err := st.HasActivePersonInferenceConsent(
+		t.Context(), oldProfile.Fingerprint)
+	require.NoError(err)
+	assert.False(oldActive)
+	newChecked, err := st.HasSuccessfulPersonInferenceCheck(
+		t.Context(), newProfile.Fingerprint)
+	require.NoError(err)
+	assert.True(newChecked)
+	newActive, err := st.HasActivePersonInferenceConsent(
+		t.Context(), newProfile.Fingerprint)
+	require.NoError(err)
+	assert.False(newActive)
+	assert.Equal(int64(1), checker.calls.Load())
+}
+
+func TestPersonProviderSetPreservesUnselectedProfileAndConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, _ := providerSetupConfigFile(t)
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	sibling := peoplesweep.ProviderConfig{
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://sibling.example.test/v1",
+		Model: "sibling-model", Auth: peoplesweep.AuthBearer,
+		Credential: peoplesweep.CredentialEnv, CredentialEnv: "SIBLING_KEY",
+		OutputMode:          peoplesweep.OutputModeNativeJSONSchema,
+		TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention",
+		TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{
+			peoplesweep.SourceConversationText,
+		}, SourceSince: "2025-01-01",
+	}
+	_, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{
+		{Path: []string{"people", "sweep", "providers", "sibling"}, Values: personProviderTableValues(sibling)},
+	})
+	require.NoError(err)
+	loaded, err := config.Load(path, "")
+	require.NoError(err)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+	t.Setenv("SIBLING_KEY", "sibling-secret")
+
+	_, err = executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "preserved-model", "--yes")
+	require.NoError(err)
+	content, err := os.ReadFile(path)
+	require.NoError(err)
+	text := string(content)
+	assert.Contains(text, "# retained operator comment")
+	assert.Contains(text, "[future.operator_extension]")
+	assert.Contains(text, "answer = 42")
+	assert.Contains(text, "input_cost_microusd_per_million_tokens = 111 # operator price")
+	assert.Contains(text, `provider = "default" # selector formatting must survive rollback`)
+	assert.Contains(text, "credential_env = \"SIBLING_KEY\"")
+	assert.Contains(text, "model = \"sibling-model\"")
+
+	reloaded, err := config.Load(path, "")
+	require.NoError(err)
+	assert.Equal("default", reloaded.People.Sweep.Provider.Name)
+	assert.False(reloaded.People.Sweep.Enabled)
+	assert.Equal("preserved-model", reloaded.People.Sweep.Providers["default"].Model)
+	assert.Equal("SIBLING_KEY", reloaded.People.Sweep.Providers["sibling"].CredentialEnv)
+}
+
+func TestPersonProviderSetRemote(t *testing.T) {
+	assertAnError := assert.AnError
+	assert := assert.New(t)
+	require := require.New(t)
+	calls := 0
+	deps := personProviderCommandDeps{
+		remoteConfigured: func() bool { return true },
+		readConfigFile: func() (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		editConfigTables: func(string, []config.TableEdit) (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		restoreConfigFile: func(config.ConfigFile, config.ConfigFile) (config.ConfigFile, error) {
+			calls++
+			return config.ConfigFile{}, assertAnError
+		},
+		setup: personProviderSetupDeps{
+			credentials: countingCredentialStore{calls: &calls},
+			lookupEnv: func(string) (string, bool) {
+				calls++
+				return providerSetupSecretCanary, true
+			},
+		},
+	}
+
+	_, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "remote-model", "--yes")
+	require.Error(err)
+	assert.Contains(err.Error(), "remote daemon")
+	assert.Zero(calls)
+}
+
+func TestPersonProviderSetDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, newCheckedPersonProviderChecker())
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return true, nil }
+	var proxied []string
+	var checkFingerprint string
+	var revokeFingerprints []string
+	var revokeTargets []string
+	deps.proxy = func(command *cobra.Command, _ []string, _ map[string]string) error {
+		proxied = append(proxied, command.Use)
+		if command.Use == "revoke" {
+			fingerprint, _ := command.Flags().GetString(personProviderIfFingerprintFlag)
+			revokeFingerprints = append(revokeFingerprints, fingerprint)
+			target, _ := command.Flags().GetString("fingerprint")
+			revokeTargets = append(revokeTargets, target)
+		}
+		if command.Use == "check" {
+			checkFingerprint, _ = command.Flags().GetString(personProviderIfFingerprintFlag)
+		}
+		return nil
+	}
+	t.Setenv("DEFAULT_KEY", providerSetupSecretCanary)
+
+	output, err := executePersonProviderCommand(t, deps,
+		"set", "default", "--model", "daemon-model", "--yes")
+	require.NoError(err)
+	assert.Contains(output, "msgvault daemon restart")
+	assert.Contains(output, "Updated and checked people provider profile")
+	assert.Equal([]string{"revoke", "revoke", "check"}, proxied)
+	assert.Len(revokeFingerprints, 2)
+	assert.NotEmpty(revokeFingerprints[0])
+	assert.Empty(revokeFingerprints[1])
+	assert.Empty(revokeTargets[0])
+	assert.NotEmpty(revokeTargets[1])
+	assert.NotEmpty(checkFingerprint)
 }
 
 func providerSetupConfigFile(t *testing.T) (string, *config.Config) {

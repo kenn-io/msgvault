@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSessionAwareAPIClient } from './client';
+import { getSession } from './generated/session/session';
 
 function client(fetchFn: typeof fetch, onUnauthorized: () => void) {
   return createSessionAwareAPIClient(fetchFn, () => undefined, onUnauthorized);
@@ -10,13 +11,12 @@ describe('session-aware API client 401 handling', () => {
   it('logs out on the daemon session-expiry 401 (error: "unauthorized")', async () => {
     const onUnauthorized = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async () =>
-      Response.json({ error: 'unauthorized', message: 'Invalid or missing API key' }, { status: 401 })
+      Response.json({ error: 'unauthorized', message: 'Invalid or missing API key' }, { status: 401 }),
     );
 
-    const { GET } = client(fetchFn, onUnauthorized);
-    const { response } = await GET('/api/session');
+    const response = await getSession(client(fetchFn, onUnauthorized));
 
-    expect(response.status).toBe(401);
+    expect(response.response.status).toBe(401);
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
@@ -25,12 +25,11 @@ describe('session-aware API client 401 handling', () => {
     const body = { error: 'authentication_required', message: 'Task service authentication is required' };
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(body, { status: 401 }));
 
-    const { GET } = client(fetchFn, onUnauthorized);
-    const { response, error } = await GET('/api/session');
+    const { response, error } = await getSession(client(fetchFn, onUnauthorized));
 
     expect(onUnauthorized).not.toHaveBeenCalled();
     // The response passes through so the caller handles it inline; the wrapper
-    // only inspected a clone, leaving the body intact for openapi-fetch to parse.
+    // only inspected a clone, leaving the body intact for the generated client to parse.
     expect(response.status).toBe(401);
     expect(error).toEqual(body);
   });
@@ -39,8 +38,7 @@ describe('session-aware API client 401 handling', () => {
     const onUnauthorized = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async () => new Response('not json', { status: 401 }));
 
-    const { GET } = client(fetchFn, onUnauthorized);
-    const { response } = await GET('/api/session');
+    const { response } = await getSession(client(fetchFn, onUnauthorized));
 
     expect(response.status).toBe(401);
     expect(onUnauthorized).not.toHaveBeenCalled();
@@ -48,12 +46,9 @@ describe('session-aware API client 401 handling', () => {
 
   it('does not log out on non-401 responses', async () => {
     const onUnauthorized = vi.fn();
-    const fetchFn = vi.fn<typeof fetch>(async () =>
-      Response.json({ error: 'unauthorized' }, { status: 403 })
-    );
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error: 'unauthorized' }, { status: 403 }));
 
-    const { GET } = client(fetchFn, onUnauthorized);
-    await GET('/api/session');
+    await getSession(client(fetchFn, onUnauthorized));
 
     expect(onUnauthorized).not.toHaveBeenCalled();
   });

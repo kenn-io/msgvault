@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -195,10 +196,29 @@ func EditConfigFile(path, ifMatch string, edits []Edit) (ConfigFile, error) {
 	return editConfigFile(path, ifMatch, edits, defaultConfigFileOps())
 }
 
+// EditConfigFilePrivate performs the same conditional atomic transaction as
+// EditConfigFile, but publishes the candidate owner-only. Remote settings
+// surfaces use this boundary because config.toml may already contain secrets
+// outside the particular keys being changed.
+func EditConfigFilePrivate(path, ifMatch string, edits []Edit) (ConfigFile, error) {
+	return editConfigFileWithPrivacy(path, ifMatch, edits, defaultConfigFileOps(), true)
+}
+
 func editConfigFile(path, ifMatch string, edits []Edit, ops configFileOps) (ConfigFile, error) {
 	return editConfigWithTransform(path, ifMatch, len(edits) > 0, func(content []byte) ([]byte, error) {
 		return applyTargetedEdits(content, edits)
 	}, ops)
+}
+
+func editConfigFileWithPrivacy(
+	path, ifMatch string,
+	edits []Edit,
+	ops configFileOps,
+	forcePrivate bool,
+) (ConfigFile, error) {
+	return editConfigWithMatch(path, ifMatch, nil, len(edits) > 0, func(content []byte) ([]byte, error) {
+		return applyTargetedEdits(content, edits)
+	}, ops, forcePrivate)
 }
 
 // EditConfigTables applies exact table insertions/removals through the same
@@ -327,7 +347,7 @@ func editConfigWithTransform(
 	transform func([]byte) ([]byte, error),
 	ops configFileOps,
 ) (result ConfigFile, resultErr error) {
-	return editConfigWithMatch(path, ifMatch, nil, hasChanges, transform, ops)
+	return editConfigWithMatch(path, ifMatch, nil, hasChanges, transform, ops, false)
 }
 
 func editConfigWithExpectedTransform(
@@ -337,7 +357,7 @@ func editConfigWithExpectedTransform(
 	transform func([]byte) ([]byte, error),
 	ops configFileOps,
 ) (result ConfigFile, resultErr error) {
-	return editConfigWithMatch(path, "", &published, hasChanges, transform, ops)
+	return editConfigWithMatch(path, "", &published, hasChanges, transform, ops, false)
 }
 
 func editConfigWithMatch(
@@ -346,6 +366,7 @@ func editConfigWithMatch(
 	hasChanges bool,
 	transform func([]byte) ([]byte, error),
 	ops configFileOps,
+	forcePrivate bool,
 ) (result ConfigFile, resultErr error) {
 	var expected ConfigFile
 	defer func() {
@@ -430,7 +451,7 @@ func editConfigWithMatch(
 	}()
 
 	mode := before.Mode.Perm()
-	if !before.Exists {
+	if !before.Exists || forcePrivate {
 		mode = 0o600
 	}
 	expected = ConfigFile{
@@ -1032,6 +1053,17 @@ func applyTargetedEdits(content []byte, edits []Edit) ([]byte, error) {
 			return nil, fmt.Errorf("%w: duplicate requested key %q", ErrAmbiguousConfigTarget, edit.Key)
 		}
 		seenEdits[edit.Key] = struct{}{}
+		if provider, ok := edit.Value.(personEnrichmentProviderEdit); ok {
+			if edit.Key != personEnrichmentProviderEditKey {
+				return nil, fmt.Errorf("%w: invalid dedicated provider target", ErrUnsafeConfigTarget)
+			}
+			var err error
+			lines, err = replacePersonEnrichmentProviderLines(lines, provider)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 		section, key, ok := strings.Cut(edit.Key, ".")
 		if !ok || section == "" || key == "" {
 			return nil, fmt.Errorf("invalid config edit key %q", edit.Key)
@@ -1938,15 +1970,7 @@ func pathPrefix(prefix, path []string) bool {
 }
 
 func equalPath(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func replaceAssignmentValue(line, value string) (string, error) {

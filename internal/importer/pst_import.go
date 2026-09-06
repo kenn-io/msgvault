@@ -97,7 +97,9 @@ const defaultMaxPstMessageBytes int64 = 128 << 20 // 128 MiB
 // Folder structure is preserved as labels. Non-email items (calendar, contacts,
 // tasks) are skipped automatically. The import is resumable: if interrupted,
 // rerunning with the same arguments continues from where it left off.
-func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImportOptions) (*PstImportSummary, error) {
+func ImportPst(
+	ctx context.Context, st *store.Store, pstPath string, opts PstImportOptions,
+) (retSummary *PstImportSummary, retErr error) {
 	if opts.SourceType == "" {
 		opts.SourceType = "pst"
 	}
@@ -155,6 +157,14 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
 	summary.SourceID = src.ID
+	ownershipCtx := context.WithoutCancel(ctx)
+	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire sync execution: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, execution.Release())
+	}()
 
 	// Set display name to the PST filename so it appears in list-accounts / get_stats.
 	pstBase := filepath.Base(absPath)
@@ -175,12 +185,11 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	)
 
 	if !opts.NoResume {
-		active, err := st.GetActiveSync(src.ID)
+		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-pst")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("check active sync: %w", err)
+			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
 		if active != nil {
-			syncID = active.ID
 			cp.MessagesProcessed = active.MessagesProcessed
 			cp.MessagesAdded = active.MessagesAdded
 			cp.MessagesUpdated = active.MessagesUpdated
@@ -231,11 +240,9 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 		}
 	}
 
-	if syncID == 0 {
-		syncID, err = st.StartSync(src.ID, "import-pst")
-		if err != nil {
-			return nil, fmt.Errorf("start sync: %w", err)
-		}
+	syncID, err = execution.StartSyncContext(ownershipCtx, "import-pst", "")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
 

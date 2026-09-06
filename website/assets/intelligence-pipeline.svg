@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" role="img" aria-labelledby="title desc">
+  <title id="title">msgvault intelligence pipeline</title>
+  <desc id="desc">The archive feeds a keyword index, vector embeddings, and Docbank document text; hybrid retrieval fuses them for the CLI, Web UI, and MCP agents.</desc>
+  <defs>
+    <pattern id="grid-intel" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.2" fill="#1c1c1c"/>
+    </pattern>
+  </defs>
+  <rect width="760" height="440" fill="#0a0a0a"/>
+  <rect width="760" height="440" fill="url(#grid-intel)"/>
+  <g fill="none" stroke="#3a3a3a" stroke-width="2">
+    <path d="M212 186q28 -60 66 -74"/>
+    <path d="M216 220h60"/>
+    <path d="M212 254q28 60 66 74"/>
+    <path d="M482 112q38 14 66 74"/>
+    <path d="M484 220h60"/>
+    <path d="M482 328q38 -14 66 -74"/>
+  </g>
+  <g fill="none" stroke="#e8e8e8" stroke-width="2">
+    <path d="M648 186v-60"/>
+    <path d="M648 254v60"/>
+  </g>
+  <g fill="#e8e8e8" stroke="#0a0a0a" stroke-width="2">
+    <circle cx="278" cy="112" r="4.5"/>
+    <circle cx="278" cy="220" r="4.5"/>
+    <circle cx="278" cy="328" r="4.5"/>
+    <circle cx="546" cy="220" r="4.5"/>
+  </g>
+  <rect x="36" y="150" width="180" height="140" rx="8" fill="#1b1b1b" stroke="#3a3a3a" stroke-width="1.5"/>
+  <g fill="#131313" stroke="#282828" stroke-width="1.5">
+    <rect x="284" y="82" width="196" height="60" rx="6"/>
+    <rect x="284" y="190" width="196" height="60" rx="6"/>
+    <rect x="284" y="298" width="196" height="60" rx="6"/>
+  </g>
+  <rect x="548" y="172" width="180" height="96" rx="8" fill="#1b1b1b" stroke="#e8e8e8" stroke-width="1.5"/>
+  <g fill="#131313" stroke="#282828" stroke-width="1.5">
+    <rect x="566" y="62" width="164" height="44" rx="6"/>
+    <rect x="566" y="334" width="164" height="44" rx="6"/>
+  </g>
+  <g font-family="JetBrains Mono, ui-monospace, monospace">
+    <text x="56" y="192" fill="#e8e8e8" font-size="12" letter-spacing="2">ARCHIVE</text>
+    <text x="56" y="222" fill="#f2f2f2" font-size="17">messages</text>
+    <text x="56" y="246" fill="#f2f2f2" font-size="17">attachments</text>
+    <text x="56" y="272" fill="#a3a3a3" font-size="12">every source, one schema</text>
+    <g fill="#f2f2f2" font-size="15">
+      <text x="302" y="108">FTS5 keyword</text>
+      <text x="302" y="216">vector embeddings</text>
+      <text x="302" y="324">Docbank documents</text>
+    </g>
+    <g fill="#a3a3a3" font-size="11">
+      <text x="302" y="128">Gmail-style operators</text>
+      <text x="302" y="236">local embedding server</text>
+      <text x="302" y="344">attachment text + OCR</text>
+    </g>
+    <text x="568" y="204" fill="#e8e8e8" font-size="12" letter-spacing="2">RETRIEVAL</text>
+    <text x="568" y="232" fill="#f2f2f2" font-size="17">hybrid fusion</text>
+    <text x="568" y="254" fill="#a3a3a3" font-size="12">BM25 + vectors · RRF</text>
+    <g fill="#f2f2f2" font-size="14" text-anchor="middle">
+      <text x="648" y="89">CLI · Web · TUI</text>
+      <text x="648" y="361">MCP agents</text>
+    </g>
+  </g>
+</svg>

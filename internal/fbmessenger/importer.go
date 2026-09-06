@@ -140,33 +140,23 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		return nil, fmt.Errorf("fbmessenger: source: %w", err)
 	}
 
-	// Read any existing active-run checkpoint before calling
-	// StartSync (which marks active runs failed). This mirrors the
-	// pattern used by emlx_import / mbox_import.
+	// Resume only a checkpoint whose worker has stopped. StartSync rejects a
+	// running sync, so a live worker cannot be replaced by this import.
 	var (
 		startThreadIdx int
 		cp             store.Checkpoint
 	)
 	if !opts.NoResume {
-		// Look for a resumable sync run. Try active (running) first,
-		// then fall back to the latest checkpointed run (which includes
-		// failed/interrupted runs whose checkpoint is still valid).
-		prev, err := st.GetActiveSync(source.ID)
+		prev, err := st.GetLatestCheckpointedSync(source.ID)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("fbmessenger: check active sync: %w", err)
-		}
-		if prev == nil || !prev.CursorBefore.Valid || prev.CursorBefore.String == "" {
-			prev, err = st.GetLatestCheckpointedSync(source.ID)
-			if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-				return nil, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
-			}
+			return nil, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
 		}
 		if prev != nil && prev.CursorBefore.Valid && prev.CursorBefore.String != "" {
 			var prior fbmessengerCheckpoint
 			if err := json.Unmarshal([]byte(prev.CursorBefore.String), &prior); err == nil {
 				if prior.RootDir != "" && prior.RootDir != absRoot {
 					return nil, fmt.Errorf(
-						"fbmessenger: active import is for a different root (%q), not %q; rerun with --no-resume to start fresh",
+						"fbmessenger: checkpointed import is for a different root (%q), not %q; rerun with --no-resume to start fresh",
 						prior.RootDir, absRoot,
 					)
 				}

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-03
 title: Microsoft Teams
 description: Archive Microsoft Teams chats and channels through delegated Microsoft Graph sync.
 ---
@@ -19,7 +20,7 @@ separate Graph token under `tokens/teams_<email>.json`. An Outlook IMAP token
 created by `add-o365` does not authorize Teams sync.
 
 Register a Microsoft Entra app as described in
-[OAuth Setup](/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
+[OAuth Setup](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
 
 - Redirect URI: `http://localhost:8089/callback/microsoft`
 - Public client flows enabled
@@ -112,6 +113,28 @@ The backfill scans stored Teams HTML bodies for `hostedContents` URLs and
 downloads those images into the attachment store. It is idempotent because
 attachment storage is content-addressed.
 
+## Media Policy
+
+Attachment downloads follow the shared chat media policy. By default media
+from chats and channels with more than 20 members is skipped with a typed
+`participant_threshold` marker, while one-to-one and small group chats keep
+theirs. Adjust it under `[teams]`:
+
+```toml
+[teams]
+media = true
+media_scope = "all"            # all, direct (chats only), or none
+media_max_participants = 20    # 0 = no cap
+max_media_mb = 250
+
+[teams.accounts_config."user@example.com"]
+max_media_mb = 500
+```
+
+See [Media policy](/docs/configuration/#media-policy) for the full vocabulary and
+`msgvault purge-excluded-media` for removing media a changed policy would no
+longer collect.
+
 ## Scheduled Sync
 
 `msgvault serve` can schedule Teams syncs through the normal `[[accounts]]`
@@ -148,7 +171,7 @@ search is enabled and you want newly synced Teams messages in semantic/hybrid
 results, run `msgvault embeddings build` after the sync, or configure
 `[vector.embed.schedule].run_after_sync = true` for scheduled daemon syncs.
 
-In the [Web UI](/web-ui/), Teams direct chats, group chats, and channel
+In the [Web UI](/docs/web-ui/), Teams direct chats, group chats, and channel
 conversations appear as conversation rows in Everything and can be combined
 with the same search, filters, and grouping as other archive modalities. In
-the [TUI](/usage/tui/), press `m` to switch from Email mode to Texts mode.
+the [TUI](/docs/usage/tui/), press `m` to switch from Email mode to Texts mode.

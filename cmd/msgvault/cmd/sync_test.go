@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -143,6 +144,46 @@ func TestResolveSyncSourcesSourceIDIsExact(t *testing.T) {
 	assert.False(legacy)
 	require.Len(sources, 1)
 	assert.Equal(gmail.ID, sources[0].ID)
+}
+
+func TestSyncFullSourceIDTreatsLegacyEmptyTypeAsGmail(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	legacy, err := st.GetOrCreateSource("", "legacy@example.test")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	savedCfg := cfg
+	savedLogger := logger
+	t.Cleanup(func() {
+		cfg = savedCfg
+		logger = savedLogger
+	})
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	command.Flags().Int64("source-id", 0, "")
+	require.NoError(command.Flags().Set("source-id", strconv.FormatInt(legacy.ID, 10)))
+	err = runSyncFullLocal(command, nil)
+	require.Error(err)
+	require.ErrorContains(err, "1 account(s) failed")
+	require.NotErrorIs(err, store.ErrSourceNotFound)
+
+	st, err = store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	preserved, err := st.GetSourceByID(legacy.ID)
+	require.NoError(err)
+	assert.Empty(preserved.SourceType)
 }
 
 func TestResolveSyncSourcesNumericTokenDoesNotBecomeSourceID(t *testing.T) {

@@ -188,7 +188,8 @@ func TestPersonEnrichmentScheduleRegistersWithoutResolvingProviderCredentials(t 
 		},
 	}
 	sched := scheduler.New(nil)
-	require.NoError(registerPersonEnrichmentJob(t.Context(), sched, f.Store, config))
+	require.NoError(registerPersonEnrichmentJob(t.Context(), sched, f.Store, config,
+		testPersonEnrichmentRuntimeCredentials(t)))
 	assert.True(sched.IsJobScheduled(personEnrichmentJob))
 
 	var profiles int
@@ -435,7 +436,7 @@ func TestRegisterPersonEnrichmentJobCancelsWorkForUnavailableProfiles(t *testing
 			requirements.NoError(registerPersonEnrichmentJob(t.Context(), sched, f.Store, personenrichment.Config{
 				Enabled: enrichmentEnabled, Schedule: "*/15 * * * *", BatchSize: 25, LeaseDuration: time.Minute,
 				SuppressionKeyEnv: "UNAVAILABLE_PROFILE_SUPPRESSION_KEY", Providers: providers,
-			}))
+			}, testPersonEnrichmentRuntimeCredentials(t)))
 
 			stored, err := f.Store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
 			requirements.NoError(err)

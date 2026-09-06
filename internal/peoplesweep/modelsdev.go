@@ -331,21 +331,6 @@ func modelsDevEnvironment(raw json.RawMessage) ([]string, error) {
 	return slices.Compact(values), nil
 }
 
-func protocolsForModelsDevShape(shape string) []Protocol {
-	switch shape {
-	case "@ai-sdk/openai-compatible":
-		return []Protocol{ProtocolOpenAIChat}
-	case "@ai-sdk/openai":
-		return []Protocol{ProtocolOpenAIChat, ProtocolOpenAIResponses}
-	case "@ai-sdk/anthropic":
-		return []Protocol{ProtocolAnthropicMessages}
-	case "@ai-sdk/google":
-		return []Protocol{ProtocolGoogleGenerateContent}
-	default:
-		return nil
-	}
-}
-
 func decodeModelsDevObject(ctx context.Context, raw []byte) (map[string]json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -479,26 +464,14 @@ func validModelsDevEndpoint(value string) bool {
 	return err == nil
 }
 
-// independentlyTrustedEndpointHosts maps each HTTP protocol to the
-// first-party API host this binary ships independently of any catalog.
-// Catalog suggestions may pair a credential only with these hosts; every
-// other catalog-supplied endpoint requires an explicitly supplied endpoint
-// so a compromised catalog can never redirect a credential to itself.
-var independentlyTrustedEndpointHosts = map[Protocol]string{
-	ProtocolOpenAIChat:            "api.openai.com",
-	ProtocolOpenAIResponses:       "api.openai.com",
-	ProtocolAnthropicMessages:     "api.anthropic.com",
-	ProtocolGoogleGenerateContent: "generativelanguage.googleapis.com",
-}
-
 // IndependentlyTrustedEndpoint reports whether endpoint is an HTTPS endpoint
 // on the first-party API host compiled into this binary for protocol. Trust
 // never depends on catalog input: paths and the default port may vary because
 // a credential is only ever presented to the first-party TLS endpoint. It
 // returns false for every other host, scheme, port, or protocol.
 func IndependentlyTrustedEndpoint(protocol Protocol, endpoint string) bool {
-	host, trusted := independentlyTrustedEndpointHosts[protocol]
-	if !trusted || endpoint == "" {
+	capability, ok := ProtocolCapabilityFor(protocol)
+	if !ok || capability.CatalogTrustedHost == "" || endpoint == "" {
 		return false
 	}
 	parsed, err := url.Parse(endpoint)
@@ -506,7 +479,7 @@ func IndependentlyTrustedEndpoint(protocol Protocol, endpoint string) bool {
 		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery {
 		return false
 	}
-	if !strings.EqualFold(parsed.Hostname(), host) {
+	if !strings.EqualFold(parsed.Hostname(), capability.CatalogTrustedHost) {
 		return false
 	}
 	port := parsed.Port()

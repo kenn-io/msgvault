@@ -1,8 +1,14 @@
-import type { components } from '../api/generated/schema';
+import type {
+  RelationshipCalendarDay as GeneratedRelationshipCalendarDay,
+  RelationshipCalendarHTTPResponse as GeneratedRelationshipCalendarHTTPResponse,
+  RelationshipRow as GeneratedRelationshipRow,
+  RelationshipSignals as GeneratedRelationshipSignals,
+  TimelineRow as GeneratedTimelineRow,
+} from '../api/generated/models';
 
-export type RelationshipRow = components['schemas']['RelationshipRow'];
-export type RelationshipSignals = components['schemas']['RelationshipSignals'];
-export type RelationshipTimelineRow = components['schemas']['TimelineRow'];
-export type RelationshipCalendar = components['schemas']['RelationshipCalendarHTTPResponse'];
-export type RelationshipCalendarDay = components['schemas']['RelationshipCalendarDay'];
+export type RelationshipRow = GeneratedRelationshipRow;
+export type RelationshipSignals = GeneratedRelationshipSignals;
+export type RelationshipTimelineRow = GeneratedTimelineRow;
+export type RelationshipCalendar = GeneratedRelationshipCalendarHTTPResponse;
+export type RelationshipCalendarDay = GeneratedRelationshipCalendarDay;
 export type RelationshipFacet = 'people' | 'domains';

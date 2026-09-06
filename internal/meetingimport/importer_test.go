@@ -138,7 +138,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Equal(int64(0), latest.MessagesUpdated)
 }
 
-func TestImporterPostSupersessionWriteFailsGenerationFence(t *testing.T) {
+func TestImporterRejectsConcurrentStartWhileWriterIsBlocked(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -190,27 +190,23 @@ func TestImporterPostSupersessionWriteFailsGenerationFence(t *testing.T) {
 	waitForBlockedMeetingImportPID(t, st, holderPID, "SELECT source_message_id",
 		"meeting importer did not pause in its post-start message lookup")
 
-	var oldRunID int64
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT id FROM sync_runs
-		WHERE source_id = ? AND status = 'running'
-	`), baseline.SourceID).Scan(&oldRunID))
-	newRunID, err := st.StartSyncContext(t.Context(), baseline.SourceID, "superseding-test-run")
-	requirements.NoError(err)
-	requirements.NotEqual(oldRunID, newRunID)
+	_, err = st.StartSyncContext(t.Context(), baseline.SourceID, "concurrent-test-run")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
 	requirements.NoError(tx.Commit())
 	locked = false
 
 	got := <-importDone
-	requirements.ErrorIs(got.err, store.ErrSyncRunSuperseded)
-	checks.Zero(got.result.MessageID)
+	requirements.NoError(got.err)
+	checks.NotZero(got.result.MessageID)
 	var messageCount int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_id = ? AND source_message_id = ?
 	`), baseline.SourceID, "meeting:42").Scan(&messageCount))
-	checks.Zero(messageCount,
-		"a meeting writer must not commit after its sync generation is superseded")
+	checks.Equal(1, messageCount)
+
+	newRunID, err := st.StartSyncContext(t.Context(), baseline.SourceID, "post-import-test-run")
+	requirements.NoError(err)
 	requirements.NoError(st.FailSync(newRunID, "test cleanup"))
 }
 

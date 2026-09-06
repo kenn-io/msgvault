@@ -61,24 +61,33 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 }
 
 func TestBackend_PruneOrphanEmbeddingsDisablesStatementTimeout(t *testing.T) {
-	backend, tracer, ctx := newTracedBackendForTest(t)
+	backend, ctx, db := newBackendForTest(t)
 	generation := seedAndEmbed(t, backend, backend.db, map[int64][]float32{
 		1: unitVec(768, 0),
 	})
 	require.Equal(t, 1, countEmbeddingRows(t, backend, generation))
 	_, err := backend.db.ExecContext(ctx, "DELETE FROM messages WHERE id = 1")
 	require.NoError(t, err)
-	backend.db.SetMaxOpenConns(1)
-	_, err = backend.db.ExecContext(ctx, "SET statement_timeout = 1")
+	// Delay the actual DELETE beyond the session timeout. A 1 ms timeout
+	// can cancel BEGIN before prune reaches SET LOCAL, and a fast DELETE
+	// would not prove that the maintenance transaction lifts the timeout.
+	_, err = db.ExecContext(ctx, `
+		CREATE FUNCTION delay_orphan_prune() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			PERFORM pg_sleep(1.5);
+			RETURN NULL;
+		END
+		$$;
+		CREATE TRIGGER delay_orphan_prune
+		BEFORE DELETE ON embeddings
+		FOR EACH STATEMENT EXECUTE FUNCTION delay_orphan_prune()`)
 	require.NoError(t, err)
 
-	tracer.reset()
-	pruned, err := backend.PruneOrphanEmbeddings(ctx)
+	low := openLowTimeoutHandle(t, db)
+	lowBackend := &Backend{db: low}
+	pruned, err := lowBackend.PruneOrphanEmbeddings(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), pruned)
-
-	_, err = backend.db.ExecContext(ctx, "RESET statement_timeout")
-	require.NoError(t, err)
-	assert.True(t, tracer.contains("SET LOCAL statement_timeout = 0"),
-		"prune transaction must disable the pool-wide statement timeout; got %v", tracer.snapshot())
+	assert.Zero(t, countEmbeddingRows(t, backend, generation), "orphan deletion committed")
 }

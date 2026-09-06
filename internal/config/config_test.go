@@ -821,6 +821,7 @@ func TestLoadEmptyPath(t *testing.T) {
 	// Verify default values
 	assert.Equal(tmpDir, cfg.HomeDir)
 	assert.Equal(tmpDir, cfg.Data.DataDir)
+	assert.Equal(filepath.Join(tmpDir, "exports"), cfg.ExportDir())
 	assert.Equal(5, cfg.Sync.RateLimitQPS)
 
 	// DatabaseDSN should return default path
@@ -840,6 +841,7 @@ func TestLoadWithConfigFile(t *testing.T) {
 	configContent := `
 [data]
 data_dir = "~/custom/data"
+export_dir = "~/custom/exports"
 
 [oauth]
 client_secrets = "~/secrets/client.json"
@@ -858,6 +860,7 @@ rate_limit_qps = 10
 	// Verify paths were expanded
 	expectedDataDir := filepath.Join(home, "custom/data")
 	assert.Equal(expectedDataDir, cfg.Data.DataDir)
+	assert.Equal(filepath.Join(home, "custom/exports"), cfg.ExportDir())
 
 	expectedSecrets := filepath.Join(home, "secrets/client.json")
 	assert.Equal(expectedSecrets, cfg.OAuth.ClientSecrets)
@@ -940,6 +943,7 @@ func TestLoadExplicitPathRelativePaths(t *testing.T) {
 	configContent := `
 [data]
 data_dir = "data"
+export_dir = "exports"
 
 [oauth]
 client_secrets = "secrets/client.json"
@@ -951,6 +955,7 @@ client_secrets = "secrets/client.json"
 
 	expectedDataDir := filepath.Join(tmpDir, "data")
 	assert.Equal(expectedDataDir, cfg.Data.DataDir)
+	assert.Equal(filepath.Join(tmpDir, "exports"), cfg.ExportDir())
 
 	expectedSecrets := filepath.Join(tmpDir, "secrets/client.json")
 	assert.Equal(expectedSecrets, cfg.OAuth.ClientSecrets)

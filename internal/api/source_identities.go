@@ -22,14 +22,14 @@ type SourceIdentityCatalogStore interface {
 
 type SourceIdentityResponse struct {
 	Identifier  string    `json:"identifier"`
-	Signals     []string  `json:"signals" nullable:"false"`
+	Signals     []string  `json:"signals"`
 	ConfirmedAt time.Time `json:"confirmed_at"`
 }
 
 type SourceIdentitiesResponse struct {
 	SourceID   int64                    `json:"source_id"`
 	Account    string                   `json:"account"`
-	Identities []SourceIdentityResponse `json:"identities" nullable:"false"`
+	Identities []SourceIdentityResponse `json:"identities"`
 }
 
 func (s *Server) handleSourceIdentities(w http.ResponseWriter, r *http.Request) {

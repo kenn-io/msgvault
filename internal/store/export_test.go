@@ -12,6 +12,12 @@ import (
 // ParseDBTime is exported for testing unexported timestamp parsing behavior.
 var ParseDBTime = parseDBTime
 
+// DBPathForTest returns the backend address used by a Store so an integration
+// test can open a second independent handle to the same isolated database.
+func DBPathForTest(s *Store) string {
+	return s.dbPath
+}
+
 // MessagesTableColumns returns the live column names of the messages table on
 // whichever backend the store uses. Test-only: it exists so
 // TestMessagesColumnClassificationIsExhaustive can compare the real table
@@ -183,6 +189,28 @@ func (s *Store) SetListIDRepairAfterFingerprintLockHookForTest(fn func()) func()
 	return func() { s.listIDRepairAfterFingerprintLockHook = nil }
 }
 
+// SetIMAPLabelRepairPerMessageHookForTest installs a hook called with each
+// message's ID just before RepairIMAPSourceLabels processes it. Tests use it
+// to cancel the context mid-repair without needing a source large enough to
+// make cancellation a race.
+func (s *Store) SetIMAPLabelRepairPerMessageHookForTest(fn func(messageID int64)) func() {
+	s.imapLabelRepairPerMessageHook = fn
+	return func() { s.imapLabelRepairPerMessageHook = nil }
+}
+
+// ReconcileMessageLabelsTxContextForTest runs the context-aware label
+// reconciliation on its own transaction. The transaction is deliberately begun
+// without ctx: BeginTx would otherwise reject a cancelled context first, and
+// the test could not tell whether the statements inside carry ctx or not.
+func ReconcileMessageLabelsTxContextForTest(
+	ctx context.Context, s *Store, messageID int64, labelIDs []int64, replace bool,
+) error {
+	return s.withTx(func(tx *loggedTx) error {
+		_, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, replace)
+		return err
+	})
+}
+
 // SetIdentityMatchAcceptBeforeDecisionHookForTest pauses a user acceptance
 // after its initial read and before its locked decision transaction.
 func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func() {
@@ -287,4 +315,11 @@ func RollbackPersonEnrichmentAttemptCompletionForTest(
 		return nil
 	}
 	return err
+}
+
+// SetPersonNetworkSourceReadHookForTest records the finite layer budget and
+// raw adjacency rows consumed before edge deduplication or hydration.
+func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int)) func() {
+	s.personNetworkSourceReadHook = fn
+	return func() { s.personNetworkSourceReadHook = nil }
 }
