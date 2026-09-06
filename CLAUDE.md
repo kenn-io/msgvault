@@ -188,6 +188,18 @@ follow-up work.
 tests. pgvector tests require a PostgreSQL instance with the `vector`
 extension and the `pgvector` build tag.
 
+The PostgreSQL deadlock tests also require permission to set
+`deadlock_timeout`. They defer the blocker transaction's deadlock detector
+so the write under test is the deadlock victim. For a non-superuser test
+role, have the database administrator run:
+
+```sql
+GRANT SET ON PARAMETER deadlock_timeout TO test_role;
+```
+
+Replace `test_role` with the role in `MSGVAULT_TEST_DB`. This parameter grant
+is sufficient; the test role does not need superuser access.
+
 There are two PostgreSQL configurations to cover: the pgvector build
 (`make test-pg`) and the shipped build, which has no pgvector tag
 (`make test-pg-shipped`). Run `make test-pg-both` rather than both of those —

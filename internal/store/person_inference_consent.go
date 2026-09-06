@@ -189,21 +189,7 @@ func (p *personInferenceProfileProjection) insertValues() []any {
 	indexes := personInferenceProfileDBFieldIndexes(value.Type())
 	values := make([]any, len(indexes))
 	for valueIndex, fieldIndex := range indexes {
-		field := value.Field(fieldIndex)
-		if field.Type() == reflect.TypeFor[sql.NullString]() {
-			sourceUntil, ok := reflect.TypeAssert[sql.NullString](field)
-			if !ok {
-				values[valueIndex] = field.Interface()
-				continue
-			}
-			if !sourceUntil.Valid {
-				values[valueIndex] = nil
-				continue
-			}
-			values[valueIndex] = sourceUntil.String
-			continue
-		}
-		values[valueIndex] = field.Interface()
+		values[valueIndex] = value.Field(fieldIndex).Interface()
 	}
 	return values
 }
@@ -242,6 +228,8 @@ func (p *personInferenceProfileProjection) equal(expected personInferenceProfile
 }
 
 func (p *personInferenceProfileProjection) profile() (peoplesweep.ProviderProfile, error) {
+	// Validate each entire JSON array before comparing it. equalJSON reads
+	// only the first JSON value and would accept trailing garbage in SQLite.
 	var storedSources []peoplesweep.SourceClass
 	if err := json.Unmarshal([]byte(p.AllowedSources), &storedSources); err != nil {
 		return peoplesweep.ProviderProfile{}, fmt.Errorf("decode allowed sources: %w", err)
