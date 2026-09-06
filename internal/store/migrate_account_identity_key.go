@@ -54,7 +54,7 @@ func (s *Store) ensureAccountIdentityAddressKeys(ctx context.Context) error {
 	// writer cannot trip the pool-wide PostgreSQL statement timeout and
 	// fail the open; IF NOT EXISTS covers a cancellation between the
 	// create and the ledger write.
-	return s.runOnceMigration(ctx, migrationAccountIdentityAddressKeyIndex, false,
+	return s.runOnceMigration(ctx, migrationAccountIdentityAddressKeyIndex, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				if _, err := tx.ExecContext(ctx, `
