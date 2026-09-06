@@ -384,7 +384,7 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			assert.Empty(got)
 			assert.LessOrEqual(calls.Load(), int32(1))
 			if test.wait {
-				assert.ErrorIs(negotiationErr, context.DeadlineExceeded)
+				require.ErrorIs(negotiationErr, context.DeadlineExceeded)
 			}
 			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 			assert.NotContains(negotiationErr.Error(), capabilityCredentialValue)
@@ -447,7 +447,8 @@ func TestCapabilityErrorClassificationRequiresProtocolSpecificStructuredCode(t *
 			}
 			profile, err := capabilityProfile(capabilityTestCandidate(test.protocol, "https://example.test"), OutputModeNativeJSONSchema, tokenParameter, false)
 			require.NoError(t, err)
-			assert.Equal(t, test.want, classifyProviderCapabilityError(profile, []byte(test.body)))
+			capability, _ := classifyProviderError(profile, []byte(test.body))
+			assert.Equal(t, test.want, capability)
 		})
 	}
 }
@@ -831,7 +832,7 @@ func TestCapabilityNegotiationReportsDistinctProviderFailures(t *testing.T) {
 				w.Header().Set("X-Request-ID", "capability-repro-request")
 				w.WriteHeader(response.status)
 				_, err := w.Write([]byte(response.body))
-				require.NoError(err)
+				assert.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -869,7 +870,7 @@ func TestCapabilityNegotiationPreservesGoogleForeignFieldDiagnostic(t *testing.T
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"UNSUPPORTED_PARAMETER","domain":"generativelanguage.googleapis.com","metadata":{"parameter":"model"}}]}}`))
-		require.NoError(err)
+		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -898,16 +899,16 @@ func TestCapabilityNegotiationKeepsClassifiedFallback(t *testing.T) {
 	var attempts []capabilityAttempt
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		require.NoError(json.NewDecoder(r.Body).Decode(&body))
+		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
 		attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
 		if len(attempts) == 1 {
 			w.WriteHeader(http.StatusBadRequest)
 			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"response_format"}}`))
-			require.NoError(err)
+			assert.NoError(err)
 			return
 		}
 		_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
-		require.NoError(err)
+		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -949,7 +950,7 @@ func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
 				w.Header().Set("X-Request-ID", "safe-diagnostic-request")
 				w.WriteHeader(http.StatusBadRequest)
 				_, err := w.Write([]byte(test.body))
-				require.NoError(err)
+				assert.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -976,7 +977,7 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 			w.Header().Set("X-Request-ID", "probe-request")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, err := w.Write([]byte(capabilityResponseCanary))
-			require.NoError(err)
+			assert.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -1001,13 +1002,13 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			if calls.Add(1) == 1 {
 				_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
-				require.NoError(err)
+				assert.NoError(err)
 				return
 			}
 			w.Header().Set("X-Request-ID", "reasoning-request")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, err := w.Write([]byte(capabilityResponseCanary))
-			require.NoError(err)
+			assert.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -1033,7 +1034,7 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			var body map[string]any
-			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
 			parameter := "max_completion_tokens"
 			if _, present := body["max_tokens"]; present {
 				parameter = "max_tokens"
@@ -1041,7 +1042,7 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 			w.Header().Set("X-Request-ID", "last-attempt")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"` + parameter + `"}}`))
-			require.NoError(err)
+			assert.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
@@ -1075,7 +1076,9 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 		var settingsTyped *NegotiationError
 		require.ErrorAs(settingsErr, &settingsTyped)
 		assert.Equal(NegotiationStageSettingsInvalid, settingsTyped.Stage)
-		assert.Nil(settingsTyped.Unwrap())
+		require.Error(settingsTyped.Unwrap())
+		assert.Equal("provider capability negotiation settings are invalid (stage=settings_invalid): "+
+			settingsTyped.Unwrap().Error(), settingsErr.Error())
 
 		unsupported := capabilityTestCandidate(ProtocolCodexAppServer, "https://example.test")
 		_, driverErr := NewCapabilityChecker(registry).Negotiate(t.Context(), unsupported,
@@ -1084,7 +1087,9 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 		var driverTyped *NegotiationError
 		require.ErrorAs(driverErr, &driverTyped)
 		assert.Equal(NegotiationStageDriverUnavailable, driverTyped.Stage)
-		assert.Nil(driverTyped.Unwrap())
+		require.Error(driverTyped.Unwrap())
+		assert.Equal("provider capability negotiation is unavailable (stage=driver_unavailable): "+
+			driverTyped.Unwrap().Error(), driverErr.Error())
 	})
 }
 

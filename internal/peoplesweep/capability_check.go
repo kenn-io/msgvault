@@ -86,10 +86,20 @@ func (e *NegotiationError) Error() string {
 		parts = append(parts, "field="+string(e.Diagnostics.Field))
 	}
 	summary := negotiationSummary(e.Stage)
-	if len(parts) == 0 {
-		return summary
+	if len(parts) > 0 {
+		summary += " (" + strings.Join(parts, " ") + ")"
 	}
-	return summary + " (" + strings.Join(parts, " ") + ")"
+	if e.cause != nil && !e.providerCause() {
+		summary += ": " + e.cause.Error()
+	}
+	return summary
+}
+
+// providerCause reports whether the cause is a ProviderError, whose safe
+// fields are already rendered as structured parts.
+func (e *NegotiationError) providerCause() bool {
+	_, ok := errors.AsType[*ProviderError](e.cause)
+	return ok
 }
 
 func (e *NegotiationError) Unwrap() error {
@@ -110,8 +120,7 @@ func newNegotiationError(
 		Stage: stage, OutputMode: mode, TokenLimitParameter: tokenParameter,
 		Reasoning: reasoning, cause: cause,
 	}
-	var providerErr *ProviderError
-	if errors.As(cause, &providerErr) {
+	if providerErr, ok := errors.AsType[*ProviderError](cause); ok {
 		result.StatusCode = providerErr.StatusCode
 		result.RequestID = providerErr.RequestID
 		result.Capability = providerErr.Capability
@@ -195,10 +204,10 @@ func (c *CapabilityChecker) Negotiate(
 ) (NegotiatedCapabilities, error) {
 	driver, err := c.registry.capabilityDriver(candidate.Protocol)
 	if err != nil {
-		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageDriverUnavailable, "", "", false, nil)
+		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageDriverUnavailable, "", "", false, err)
 	}
 	if err := validateCapabilityReasoning(candidate); err != nil {
-		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
+		return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, err)
 	}
 
 	// reasoningMissed records that at least one classified reasoning
@@ -216,7 +225,7 @@ func (c *CapabilityChecker) Negotiate(
 		for _, tokenParameter := range capabilityTokenParameters(candidate.Protocol) {
 			base, profileErr := capabilityProfile(candidate, mode, tokenParameter, false)
 			if profileErr != nil {
-				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, mode, tokenParameter, false, profileErr)
 			}
 			response, attemptErr := runCapabilityAttempt(ctx, candidate.RequestTimeout,
 				driver, base, credential)
@@ -242,7 +251,7 @@ func (c *CapabilityChecker) Negotiate(
 
 			reasoningProfile, profileErr := capabilityProfile(candidate, mode, tokenParameter, true)
 			if profileErr != nil {
-				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, "", "", false, nil)
+				return NegotiatedCapabilities{}, newNegotiationError(NegotiationStageSettingsInvalid, mode, tokenParameter, true, profileErr)
 			}
 			reasoningResponse, reasoningErr := runCapabilityAttempt(ctx, candidate.RequestTimeout,
 				driver, reasoningProfile, credential)

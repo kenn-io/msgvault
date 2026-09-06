@@ -133,11 +133,6 @@ func (d *httpDriver) postWithHeaders(
 	return httpDriverResponse{body: responseBody, requestID: requestID}, nil
 }
 
-func classifyProviderCapabilityError(profile ProviderProfile, body []byte) ProviderCapabilityError {
-	capability, _ := classifyProviderError(profile, body)
-	return capability
-}
-
 func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabilityError, ProviderDiagnostics) {
 	root, ok := decodeUniqueErrorObject(body)
 	if !ok {
@@ -284,6 +279,8 @@ func capabilityCodeMatchesProfile(
 		return capabilityParameterMatchesProfile(profile, parameter)
 	case ProviderDiagnosticCodeRejectedRepresentation:
 		return capabilityRepresentationCodeMatchesProfile(profile, code) && !parameterPresent
+	case ProviderDiagnosticCodeUnclassified:
+		return false
 	}
 	return false
 }
@@ -311,6 +308,8 @@ func capabilityCodeClass(protocol Protocol, code string) ProviderDiagnosticCode 
 		if code == "UNSUPPORTED_RESPONSE_FORMAT" || code == "UNSUPPORTED_JSON_SCHEMA" {
 			return ProviderDiagnosticCodeRejectedRepresentation
 		}
+	case ProtocolCodexAppServer:
+		return ProviderDiagnosticCodeUnclassified
 	}
 	return ProviderDiagnosticCodeUnclassified
 }
