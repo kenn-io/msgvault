@@ -43,10 +43,24 @@ func (e *recordingEnqueuer) EnqueueMessages(_ context.Context, ids []int64) erro
 	return nil
 }
 
+// selfChatAbsent answers the self-chat probe the way Graph answers for an
+// account that has never used that chat. These fakes route on a path suffix,
+// so without this they serve the self chat another chat's messages.
+func selfChatAbsent(w http.ResponseWriter, r *http.Request) bool {
+	if strings.Contains(r.URL.Path, SelfChatID) {
+		http.Error(w, "404", http.StatusNotFound)
+		return true
+	}
+	return false
+}
+
 func fakeChatGraph(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -89,6 +103,9 @@ func TestImportChatsPopulatesConversationParticipantsAndStats(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -145,6 +162,9 @@ func fakeChannelGraph(t *testing.T) *httptest.Server {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -169,6 +189,9 @@ func TestInlineImageDownloaded(t *testing.T) {
 	assert := assert.New(t)
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			w.Header().Set("Content-Type", "image/png")
@@ -209,6 +232,9 @@ func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -257,6 +283,9 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	includeImage := true
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			w.Header().Set("Content-Type", "image/png")
@@ -339,6 +368,9 @@ func TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement(t *testing.T) {
 	hostedFetches := 0
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			hostedFetches++
@@ -414,6 +446,9 @@ func TestBackfillInlineMedia(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		// Regression guard: a doubled version segment ("/v1.0/v1.0") must 404.
 		if strings.Contains(r.URL.Path, "/v1.0/v1.0") {
 			http.Error(w, "404", http.StatusNotFound)
@@ -649,6 +684,9 @@ func TestHostedFetchPath(t *testing.T) {
 func fakeLimitChatGraph(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -722,6 +760,9 @@ func TestLimitedChatImportStopsPaging(t *testing.T) {
 	serverURL := ""
 	var secondPageRequests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -759,6 +800,9 @@ func TestChatMemberFetchFailureDoesNotAdvanceCursor(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -863,6 +907,9 @@ func TestChatMessageIDsAreNamespacedByConversation(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -954,6 +1001,9 @@ func TestChannelMediaPolicyUsesTeamParticipantCount(t *testing.T) {
 			hostedFetches := 0
 			serverURL := ""
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if selfChatAbsent(w, r) {
+					return
+				}
 				switch {
 				case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 					hostedFetches++
@@ -1053,6 +1103,9 @@ func newPrivateChannelGraph(t *testing.T) *privateChannelGraph {
 
 	g := &privateChannelGraph{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			g.hostedFetches++
@@ -1271,6 +1324,9 @@ func TestBackfillChannelMediaRefreshesUnknownTeamMembership(t *testing.T) {
 			rosterReadable := false
 			serverURL := ""
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if selfChatAbsent(w, r) {
+					return
+				}
 				switch {
 				case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 					hostedFetches++
@@ -1376,6 +1432,9 @@ func TestLimitedChannelImportDoesNotAdvanceDelta(t *testing.T) {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1420,6 +1479,9 @@ func TestLimitedChannelImportStopsPagingAndDeltaPrime(t *testing.T) {
 	var secondPageRequests int
 	var deltaRequests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1470,6 +1532,9 @@ func TestChannelReplyFetchErrorDoesNotAdvanceDelta(t *testing.T) {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1511,6 +1576,9 @@ func TestChannelDeltaPrimeErrorStillPersistsBackfill(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1563,6 +1631,9 @@ func TestChannelDeltaPrimeMessageReplacesBackfilledVersion(t *testing.T) {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1609,6 +1680,9 @@ func TestReplyBeforeRoot(t *testing.T) {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1661,6 +1735,9 @@ func TestRecipientAndMentionRows(t *testing.T) {
 	// - /chats/{id}/members → two members: alice (sender) and bob
 	// - chat /messages → one message from alice @mentioning bob
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1828,6 +1905,9 @@ func TestResumeFromCheckpoint(t *testing.T) {
 	// Server that returns one chat with one message newer than our pre-seeded cursor.
 	var requestedSince string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1890,6 +1970,9 @@ func TestFullIgnoresCursor(t *testing.T) {
 
 	var requestedSince string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -1984,6 +2067,9 @@ func TestImportMigratesLegacyRawMessageIDBeforeDelete(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2076,6 +2162,9 @@ func TestTeamsReimportReplacesRemovedChildCollections(t *testing.T) {
 
 	includeChildren := true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2129,6 +2218,9 @@ func TestCallRecordingAndAttachmentsPersisted(t *testing.T) {
 	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2200,6 +2292,9 @@ func TestTeamsMixedInlineAndLinkAttachmentsRefreshMessageStats(t *testing.T) {
 
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			w.Header().Set("Content-Type", "image/png")
@@ -2261,6 +2356,9 @@ func TestDuplicateMentionDedup(t *testing.T) {
 	// Message that @mentions bob twice should produce exactly one 'mention' row
 	// and sum.Errors should remain 0.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2341,6 +2439,9 @@ func newChatRosterGraph(t *testing.T, rosterSize int) *chatRosterGraph {
 
 	g := &chatRosterGraph{rosterSize: rosterSize}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		switch {
 		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
 			g.hostedFetches++
@@ -2615,6 +2716,9 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 	var filters graphFilterFake
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2746,6 +2850,9 @@ func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
 	var filters graphFilterFake
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/me/chats":
@@ -2835,4 +2942,47 @@ func chatCursorAfterLastSync(t *testing.T, st *store.Store, chatID string) strin
 	state, err := LoadSyncState(run.CursorAfter.String)
 	require.NoError(t, err)
 	return state.ChatCursor(chatID)
+}
+
+// The Teams self chat is not listed by /me/chats and rejects a members read,
+// but its messages endpoint works. Its messages belong in the archive, and its
+// roster is the signed-in user rather than an unreadable one.
+func TestSyncImportsSelfChat(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var memberCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "48:notes") && strings.HasSuffix(r.URL.Path, "/members"):
+			// Graph: "Call made for a thread which is not a ChatThread".
+			memberCalls.Add(1)
+			http.Error(w, `{"error":{"code":"BadRequest"}}`, http.StatusBadRequest)
+		case strings.Contains(r.URL.Path, "48:notes") && strings.HasSuffix(r.URL.Path, "/messages"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me"}},"body":{"contentType":"text","content":"note to self"}}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	require.NoError(err)
+
+	assert.EqualValues(1, sum.MessagesAdded)
+	assert.EqualValues(0, sum.Errors)
+	assert.EqualValues(0, memberCalls.Load())
+
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	msgs, err := st.MessageExistsBatch(src.ID, []string{chatSourceMessageID(SelfChatID, "n1")})
+	require.NoError(err)
+	assert.Len(msgs, 1)
 }

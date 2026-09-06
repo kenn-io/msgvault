@@ -206,6 +206,14 @@ func pageThroughLimit[T any](ctx context.Context, c *Client, startURL string, li
 	}
 }
 
+// SelfChatID is the Teams chat a user holds with themselves. Graph never
+// returns it from /me/chats, and a metadata read of /chats/48:notes fails with
+// "Call made for a thread which is not a ChatThread". Its messages endpoint
+// answers normally, including the incremental lastModifiedDateTime filter, so
+// once the chat is in the list it syncs through the same path as every other
+// chat.
+const SelfChatID = "48:notes"
+
 func (c *Client) ListChats(ctx context.Context) ([]Chat, error) {
 	var out []Chat
 	_, err := pageThrough[Chat](ctx, c, "/me/chats?$top=50", func(p []Chat) { out = append(out, p...) })
