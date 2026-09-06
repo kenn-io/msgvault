@@ -133,12 +133,7 @@ func validateCapabilityReasoning(candidate ProviderConfig) error {
 		}
 		return errors.New("reasoning settings are not represented by the selected protocol")
 	}
-	customReasoningMode := candidate.ReasoningMode != "" && candidate.ReasoningMode != reasoningModeProviderDefault
-	if (candidate.ReasoningEffort == "" || capability.SupportsReasoningEffort) &&
-		(!customReasoningMode || capability.SupportsCustomReasoningMode) {
-		return nil
-	}
-	return errors.New("reasoning settings are not represented by the selected protocol")
+	return capability.validateReasoning(candidate)
 }
 
 func capabilityReasoningRequested(candidate ProviderConfig) bool {

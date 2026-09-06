@@ -55,13 +55,6 @@ func (d *GoogleGenerateContentDriver) Prepare(
 	if profile.Protocol != ProtocolGoogleGenerateContent {
 		return PreparedStructuredRequest{}, errors.New("google generateContent driver requires google_generate_content profile")
 	}
-	if profile.Auth != AuthGoogleAPIKey {
-		return PreparedStructuredRequest{}, errors.New("google generateContent profile requires google_api_key authentication")
-	}
-	if profile.ReasoningEffort != "" ||
-		(profile.ReasoningMode != "" && profile.ReasoningMode != reasoningModeProviderDefault) {
-		return PreparedStructuredRequest{}, errors.New("google generateContent profile has unsupported reasoning settings")
-	}
 	if _, err := googleGenerateContentTarget(profile.Endpoint, profile.Model); err != nil {
 		return PreparedStructuredRequest{}, err
 	}

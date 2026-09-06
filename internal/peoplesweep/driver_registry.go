@@ -24,15 +24,9 @@ var ErrCodexIsolationUnreleased = errors.New("codex app-server isolation is not 
 // configured at selection time because its executable is operational config,
 // not part of the immutable provider profile.
 type DriverRegistry struct {
-	drivers       map[Protocol]StructuredDriver
-	registrations map[Protocol]driverRegistration
-	commands      CommandStarter
-	isolation     CodexIsolationGate
-}
-
-type driverRegistration struct {
-	capability ProtocolCapability
-	driver     StructuredDriver
+	drivers   map[Protocol]StructuredDriver
+	commands  CommandStarter
+	isolation CodexIsolationGate
 }
 
 func NewDriverRegistry(
@@ -46,16 +40,8 @@ func NewDriverRegistry(
 		ProtocolAnthropicMessages:     NewAnthropicMessagesDriver(httpClient),
 		ProtocolGoogleGenerateContent: NewGoogleGenerateContentDriver(httpClient),
 	}
-	registrations := make(map[Protocol]driverRegistration, len(drivers))
-	for protocol, driver := range drivers {
-		capability, ok := ProtocolCapabilityFor(protocol)
-		if !ok {
-			return nil, fmt.Errorf("missing people sweep capability declaration for %q", protocol)
-		}
-		registrations[protocol] = driverRegistration{capability: capability, driver: driver}
-	}
 	return &DriverRegistry{
-		drivers: drivers, registrations: registrations,
+		drivers:  drivers,
 		commands: commands, isolation: isolation,
 	}, nil
 }
@@ -67,14 +53,6 @@ func (r *DriverRegistry) capabilityDriver(protocol Protocol) (StructuredDriver, 
 	if r == nil {
 		return nil, errors.New("people inference driver registry is required")
 	}
-	if registration, ok := r.registrations[protocol]; ok {
-		if registration.driver == nil || registration.capability.Protocol != protocol {
-			return nil, fmt.Errorf("unsupported people sweep protocol %q", protocol)
-		}
-		return registration.driver, nil
-	}
-	// Internal test registries intentionally provide controlled drivers without
-	// built-in registration records, so retain their source-compatible path.
 	if _, declared := ProtocolCapabilityFor(protocol); declared {
 		if driver, ok := r.drivers[protocol]; ok && driver != nil {
 			return driver, nil

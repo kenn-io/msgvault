@@ -7,22 +7,26 @@ import "slices"
 // Slice fields are copied by ProtocolCapabilityFor before they leave this
 // package so callers cannot mutate the declarations.
 type ProtocolCapability struct {
-	Protocol                    Protocol
-	DriverVersion               string
-	AuthSchemes                 []AuthScheme
-	RequiredAuth                AuthScheme
-	OutputModes                 []OutputMode
+	Protocol      Protocol
+	DriverVersion string
+	AuthSchemes   []AuthScheme
+	OutputModes   []OutputMode
+	// TokenParameters lists negotiation attempts in preference order. An empty
+	// string means use the driver's fixed token field; an empty slice offers no attempts.
 	TokenParameters             []string
 	SupportsReasoningEffort     bool
 	SupportsCustomReasoningMode bool
 	CatalogAuthSchemes          []AuthScheme
 	CatalogDefaultAuth          AuthScheme
-	ModelsDevShapes             []string
+	// CatalogTrustedHost is compiled into the binary, independent of catalog input.
+	CatalogTrustedHost string
+	ModelsDevShapes    []string
 }
 
 var httpProtocolCapabilities = []ProtocolCapability{
 	{
 		Protocol:                    ProtocolOpenAIChat,
+		CatalogTrustedHost:          "api.openai.com",
 		DriverVersion:               OpenAIChatProviderVersion,
 		AuthSchemes:                 []AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone},
 		OutputModes:                 []OutputMode{OutputModeNativeJSONSchema, OutputModeJSONObject, OutputModePromptJSON},
@@ -35,6 +39,7 @@ var httpProtocolCapabilities = []ProtocolCapability{
 	},
 	{
 		Protocol:                ProtocolOpenAIResponses,
+		CatalogTrustedHost:      "api.openai.com",
 		DriverVersion:           "openai-responses-v1",
 		AuthSchemes:             []AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone},
 		OutputModes:             []OutputMode{OutputModeNativeJSONSchema, OutputModeJSONObject, OutputModePromptJSON},
@@ -46,9 +51,9 @@ var httpProtocolCapabilities = []ProtocolCapability{
 	},
 	{
 		Protocol:           ProtocolAnthropicMessages,
+		CatalogTrustedHost: "api.anthropic.com",
 		DriverVersion:      "anthropic-messages-v1",
 		AuthSchemes:        []AuthScheme{AuthXAPIKey},
-		RequiredAuth:       AuthXAPIKey,
 		OutputModes:        []OutputMode{OutputModeNativeJSONSchema, OutputModePromptJSON},
 		TokenParameters:    []string{""},
 		CatalogAuthSchemes: []AuthScheme{AuthXAPIKey},
@@ -57,9 +62,9 @@ var httpProtocolCapabilities = []ProtocolCapability{
 	},
 	{
 		Protocol:           ProtocolGoogleGenerateContent,
+		CatalogTrustedHost: "generativelanguage.googleapis.com",
 		DriverVersion:      "google-generate-content-v1",
 		AuthSchemes:        []AuthScheme{AuthGoogleAPIKey},
-		RequiredAuth:       AuthGoogleAPIKey,
 		OutputModes:        []OutputMode{OutputModeNativeJSONSchema, OutputModePromptJSON},
 		TokenParameters:    []string{""},
 		CatalogAuthSchemes: []AuthScheme{AuthGoogleAPIKey},

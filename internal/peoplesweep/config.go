@@ -367,22 +367,18 @@ func (c Config) validateOperationalConfig() error {
 }
 
 func (c Config) validateProvider(provider ProviderConfig) error {
+	var capability ProtocolCapability
 	if provider.Protocol == ProtocolCodexAppServer {
 		if err := requireCodexIsolationFields(provider); err != nil {
 			return err
 		}
 	} else {
-		capability, ok := ProtocolCapabilityFor(provider.Protocol)
+		var ok bool
+		capability, ok = ProtocolCapabilityFor(provider.Protocol)
 		if !ok {
 			return fmt.Errorf("unsupported people inference protocol %q", provider.Protocol)
 		}
-		var err error
-		if len(capability.TokenParameters) == 1 && capability.TokenParameters[0] == "" {
-			err = requireEmpty(provider.TokenLimitParameter)
-		} else {
-			err = requireOneOf(provider.TokenLimitParameter, capability.TokenParameters...)
-		}
-		if err != nil {
+		if err := requireOneOf(provider.TokenLimitParameter, capability.TokenParameters...); err != nil {
 			return err
 		}
 	}
@@ -398,19 +394,12 @@ func (c Config) validateProvider(provider ProviderConfig) error {
 		}
 		return validateCommonEnabledPolicy(provider)
 	}
-	return c.validateHTTPProvider(provider)
+	return c.validateHTTPProvider(provider, capability)
 }
 
 func requireOneOf(value string, allowed ...string) error {
 	if !slices.Contains(allowed, value) {
 		return fmt.Errorf("[people.sweep.provider] token_limit_parameter %q is not supported", value)
-	}
-	return nil
-}
-
-func requireEmpty(value string) error {
-	if value != "" {
-		return errors.New("[people.sweep.provider] token_limit_parameter is only valid for openai_chat")
 	}
 	return nil
 }
@@ -438,19 +427,13 @@ func validateReasoning(provider ProviderConfig) error {
 	return nil
 }
 
-func (c Config) validateHTTPProvider(provider ProviderConfig) error {
+func (c Config) validateHTTPProvider(provider ProviderConfig, capability ProtocolCapability) error {
 	endpoint, loopback, err := validateEndpoint(provider.Endpoint)
 	if err != nil {
 		return err
 	}
-	if err := validateProtocolHTTPCapabilities(provider); err != nil {
+	if err := capability.validateHTTP(provider); err != nil {
 		return err
-	}
-	if !slices.Contains([]OutputMode{OutputModeNativeJSONSchema, OutputModeJSONObject, OutputModePromptJSON}, provider.OutputMode) {
-		return fmt.Errorf("invalid [people.sweep.provider] output_mode %q", provider.OutputMode)
-	}
-	if !slices.Contains([]AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone}, provider.Auth) {
-		return fmt.Errorf("invalid [people.sweep.provider] auth %q", provider.Auth)
 	}
 	if !slices.Contains([]CredentialSource{CredentialStored, CredentialEnv, CredentialNone}, provider.Credential) {
 		return fmt.Errorf("invalid [people.sweep.provider] credential %q", provider.Credential)
@@ -646,55 +629,35 @@ func setDefaultDuration(target *time.Duration, value time.Duration) {
 	}
 }
 
-// validateProtocolHTTPCapabilities mirrors, at config-validation time, the
-// per-protocol contracts each HTTP driver enforces again at Prepare as
-// defense in depth. Without this centralization, a protocol-incompatible
-// profile (for example bearer auth for anthropic_messages) passes startup
-// validation and then fails every scheduled sweep during preparation.
-func validateProtocolHTTPCapabilities(provider ProviderConfig) error {
-	capability, ok := ProtocolCapabilityFor(provider.Protocol)
-	if !ok {
-		return nil
-	}
-	if capability.RequiredAuth != "" && !slices.Contains(capability.AuthSchemes, provider.Auth) {
-		return fmt.Errorf(
-			"[people.sweep.provider] %s requires auth %q",
-			capability.Protocol, capability.RequiredAuth)
-	}
-	if capability.RequiredAuth == "" &&
-		slices.Contains([]AuthScheme{AuthBearer, AuthXAPIKey, AuthGoogleAPIKey, AuthNone}, provider.Auth) &&
-		!slices.Contains(capability.AuthSchemes, provider.Auth) {
-		return fmt.Errorf(
-			"[people.sweep.provider] auth %q is not supported by %s",
+// validateHTTP applies the same declaration to config validation and driver
+// preparation, which calls ProviderProfile.Validate before encoding a request.
+func (capability ProtocolCapability) validateHTTP(provider ProviderConfig) error {
+	if !slices.Contains(capability.AuthSchemes, provider.Auth) {
+		if len(capability.AuthSchemes) == 1 {
+			return fmt.Errorf("[people.sweep.provider] %s requires auth %q",
+				capability.Protocol, capability.AuthSchemes[0])
+		}
+		return fmt.Errorf("[people.sweep.provider] auth %q is not supported by %s",
 			provider.Auth, capability.Protocol)
 	}
-	if slices.Contains([]OutputMode{OutputModeNativeJSONSchema, OutputModeJSONObject, OutputModePromptJSON}, provider.OutputMode) &&
-		!slices.Contains(capability.OutputModes, provider.OutputMode) {
-		return fmt.Errorf(
-			"[people.sweep.provider] output_mode %q is not supported by %s",
+	if !slices.Contains(capability.OutputModes, provider.OutputMode) {
+		return fmt.Errorf("[people.sweep.provider] output_mode %q is not supported by %s",
 			provider.OutputMode, capability.Protocol)
 	}
-	customReasoningMode := provider.ReasoningMode != "" && provider.ReasoningMode != reasoningModeProviderDefault
-	if !capability.SupportsReasoningEffort && !capability.SupportsCustomReasoningMode &&
-		(provider.ReasoningEffort != "" || customReasoningMode) {
-		return validateProviderDefaultReasoning(provider, string(capability.Protocol))
-	}
-	if customReasoningMode && !capability.SupportsCustomReasoningMode {
-		return fmt.Errorf(
-			"[people.sweep.provider] reasoning_mode %q is not supported by %s",
-			provider.ReasoningMode, capability.Protocol)
-	}
-	return nil
+	return capability.validateReasoning(provider)
 }
 
-// validateProviderDefaultReasoning rejects reasoning settings the protocol's
-// driver cannot represent on its wire format.
-func validateProviderDefaultReasoning(provider ProviderConfig, protocol string) error {
-	if provider.ReasoningEffort != "" ||
-		(provider.ReasoningMode != "" && provider.ReasoningMode != reasoningModeProviderDefault) {
-		return fmt.Errorf("[people.sweep.provider] reasoning settings are not supported by %s", protocol)
+func (capability ProtocolCapability) validateReasoning(provider ProviderConfig) error {
+	customReasoningMode := provider.ReasoningMode != "" && provider.ReasoningMode != reasoningModeProviderDefault
+	if (provider.ReasoningEffort == "" || capability.SupportsReasoningEffort) &&
+		(!customReasoningMode || capability.SupportsCustomReasoningMode) {
+		return nil
 	}
-	return nil
+	if !capability.SupportsReasoningEffort {
+		return fmt.Errorf("[people.sweep.provider] reasoning settings are not supported by %s", capability.Protocol)
+	}
+	return fmt.Errorf("[people.sweep.provider] reasoning_mode %q is not supported by %s",
+		provider.ReasoningMode, capability.Protocol)
 }
 
 func validateEndpoint(raw string) (*url.URL, bool, error) {

@@ -59,10 +59,6 @@ func (d *OpenAIResponsesDriver) Prepare(
 	if profile.Protocol != ProtocolOpenAIResponses {
 		return PreparedStructuredRequest{}, errors.New("OpenAI Responses driver requires openai_responses profile")
 	}
-	if profile.ReasoningMode != "" && profile.ReasoningMode != reasoningModeProviderDefault {
-		return PreparedStructuredRequest{}, errors.New("OpenAI Responses profile has unsupported reasoning mode")
-	}
-
 	instruction := structuredSystemInstruction
 	body := responsesRequest{
 		Model: profile.Model,
