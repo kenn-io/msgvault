@@ -333,6 +333,7 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 	}
 
 	t.Run("current cache", func(t *testing.T) {
+		assert := assert.New(t)
 		builder := NewTestDataBuilder(t)
 		srcID := builder.AddSource("owner@example.com")
 		alice := builder.AddParticipant("alice@example.com", "example.com", "Alice")
@@ -343,12 +344,12 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 
 		populated, absent := scan(t, builder)
 		alias := sql.NullString{String: "alice-alias@example.com", Valid: true}
-		assert.Equal(t, alias, populated.envelope)
-		assert.Equal(t, alias, populated.resolved,
+		assert.Equal(alias, populated.envelope)
+		assert.Equal(alias, populated.resolved,
 			"a recorded header address is also the resolved address")
-		assert.Equal(t, sql.NullString{}, absent.envelope,
+		assert.Equal(sql.NullString{}, absent.envelope,
 			"row without a recorded address reads as NULL, not ''")
-		assert.Equal(t, sql.NullString{String: "bob@example.com", Valid: true}, absent.resolved,
+		assert.Equal(sql.NullString{String: "bob@example.com", Valid: true}, absent.resolved,
 			"row without a recorded address resolves to the participant's address")
 	})
 
