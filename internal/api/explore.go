@@ -175,6 +175,7 @@ type ExploreActionTarget struct {
 }
 
 type ExplorePreflightResponse struct {
+	DeletableCount      int64                      `json:"deletable_count"`
 	Count               int64                      `json:"count"`
 	EstimatedBytes      int64                      `json:"estimated_bytes"`
 	CacheRevision       string                     `json:"cache_revision"`
@@ -540,10 +541,6 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return
 	}
-	if httpErr := validateSelectionAddressFilters(predicate.request.Query); httpErr != nil {
-		writeAPIHTTPError(w, httpErr)
-		return
-	}
 	if selection.CacheRevision == "" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
 		return
@@ -638,7 +635,8 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		Action: "open_in_source", Reason: "trusted_source_link_unavailable",
 	})
 	writeJSON(w, http.StatusOK, ExplorePreflightResponse{
-		Count: stats.Count, EstimatedBytes: stats.EstimatedBytes, CacheRevision: stats.CacheRevision,
+		DeletableCount: stats.DeletableCount,
+		Count:          stats.Count, EstimatedBytes: stats.EstimatedBytes, CacheRevision: stats.CacheRevision,
 		SearchProvenance: stats.SearchProvenance, UnavailableActions: unavailableActions,
 		ActionTargets:  actionTargets,
 		OperationToken: token, ExpiresAt: state.now().Add(exploreOperationTokenTTL),

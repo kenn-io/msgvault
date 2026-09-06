@@ -239,16 +239,21 @@
   function partialWarning(value: StageDeletionResponse): string {
     const { staged, skipped } = stageCounts(value);
     if (value.dry_run) {
-      return `Partial staging: only the deletable Gmail subset (${staged.toLocaleString()}) will be staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match may be' : 'matches may be'} skipped.`;
+      return `Partial staging: only the deletable Gmail subset (${staged.toLocaleString()}) will be staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match will be' : 'matches will be'} skipped.`;
     }
     return `Partial staging: only the deletable Gmail subset (${staged.toLocaleString()}) was staged; ${skipped.toLocaleString()} unsupported ${skipped === 1 ? 'match was' : 'matches were'} skipped.`;
   }
+  function selectionExclusions(): string {
+    const count = selection?.exclusions?.length ?? 0;
+    return selection?.mode === 'all_matching' && count > 0
+      ? ` After ${count.toLocaleString()} ${count === 1 ? 'exclusion' : 'exclusions'}.`
+      : '';
+  }
   function confirmationDescription(): string {
-    if (preview?.dry_run) {
-      const partial = stageCounts(preview).skipped > 0;
-      return `${resultSummary(preview)} ${partial ? 'Only the deletable Gmail subset will be staged.' : 'These reviewed matches will be staged.'} This creates a staged manifest; it does not execute deletion.`;
-    }
-    return 'The server stages only deletable Gmail matches and may skip unsupported matches. This creates a staged manifest; it does not execute deletion.';
+    const counts = preview?.dry_run
+      ? resultSummary(preview)
+      : `Matched: ${reviewed!.count.toLocaleString()} · Will stage: ${reviewed!.deletable_count.toLocaleString()} · Will skip: ${(reviewed!.count - reviewed!.deletable_count).toLocaleString()}`;
+    return `${counts}.${selectionExclusions()} Only deletable Gmail messages will be staged. This creates a staged manifest; it does not execute deletion.`;
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
@@ -289,6 +294,9 @@
             >{reviewed.count.toLocaleString()}
             {reviewed.count === 1 ? 'item' : 'items'} · {reviewed.estimated_bytes.toLocaleString()} bytes</strong
           >
+          <span>
+            {reviewed.deletable_count.toLocaleString()} can be staged · {(reviewed.count - reviewed.deletable_count).toLocaleString()} will be skipped.{selectionExclusions()}
+          </span>
           <span>Authority expires {reviewed.expires_at}</span>
           {#if reviewed.search_deletion_scope === 'active'}
             <span>Semantic search covers active messages only.</span>

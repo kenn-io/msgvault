@@ -469,6 +469,7 @@ func TestStageDeletionStagesDeletableSubsetOfMixedSelection(t *testing.T) {
 	var reviewed ExplorePreflightResponse
 	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &reviewed))
 	assertions.Equal(int64(3), reviewed.Count, "all three items match")
+	assertions.Equal(int64(2), reviewed.DeletableCount, "preflight discloses the deletable subset")
 	assertions.NotContains(reviewed.UnavailableActions, ExploreUnavailableAction{
 		Action: "stage_deletion", Reason: "selection_contains_items_that_cannot_be_deleted_from_source",
 	}, "a partly deletable selection can still be staged")
@@ -546,13 +547,17 @@ func TestDeletionSelectionRejectsEmptyAddressFilter(t *testing.T) {
 			`{"mode":"all_matching","predicate":{"query":%q,"search_mode":"full_text","filters":[{"dimension":"source","values":["1"]}]},"cache_revision":"cache-1"}`,
 			queryText)
 
+		explore := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(`{"query":%q,"search_mode":"full_text"}`, queryText))
+		assertions.Equal(http.StatusBadRequest, explore.Code, explore.Body.String())
+		assertions.Contains(explore.Body.String(), "non-empty address filter")
+
 		preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
 		assertions.Equal(http.StatusBadRequest, preflight.Code, "query %q -> preflight status", queryText)
-		assertions.Contains(preflight.Body.String(), "invalid_selection_predicate", "query %q -> preflight code", queryText)
+		assertions.Contains(preflight.Body.String(), "invalid_query", "query %q -> preflight code", queryText)
 
 		stage := postDeletions(t, srv, `{"selection":`+selection+`,"operation_token":"token-1"}`)
 		assertions.Equal(http.StatusBadRequest, stage.Code, "query %q -> stage status", queryText)
-		assertions.Contains(stage.Body.String(), "invalid_selection_predicate", "query %q -> stage code", queryText)
+		assertions.Contains(stage.Body.String(), "invalid_query", "query %q -> stage code", queryText)
 	}
 	requirements.Empty(st.saved, "nothing staged from a wildcard address filter")
 }

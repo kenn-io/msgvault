@@ -165,10 +165,10 @@ func TestStageDeleteCommand(t *testing.T) {
 		}{
 			{name: "invalid", args: []string{"before:not-a-date"}, want: "invalid value"},
 			{name: "empty", args: []string{"   "}, want: "empty search query"},
-			{name: "empty_from", args: []string{"from:"}, want: "empty address filter"},
-			{name: "empty_to", args: []string{"to:"}, want: "empty address filter"},
-			{name: "empty_cc", args: []string{"cc:"}, want: "empty address filter"},
-			{name: "empty_bcc", args: []string{"bcc:"}, want: "empty address filter"},
+			{name: "empty_from", args: []string{"from:"}, want: "non-empty address filter"},
+			{name: "empty_to", args: []string{"to:"}, want: "non-empty address filter"},
+			{name: "empty_cc", args: []string{"cc:"}, want: "non-empty address filter"},
+			{name: "empty_bcc", args: []string{"bcc:"}, want: "non-empty address filter"},
 			{name: "zero_source_id", args: []string{"subject:test", "--source-id", "0"}, want: "source ID must be positive"},
 			{name: "negative_source_id", args: []string{"subject:test", "--source-id", "-1"}, want: "source ID must be positive"},
 		} {
@@ -231,13 +231,15 @@ func TestStageDeleteCommand(t *testing.T) {
 		}{
 			{
 				name: "staged", status: http.StatusCreated,
-				wantOutput: "Staged 2 message(s) for deletion in batch batch-191.\n" +
+				wantOutput: "Preflight: 3 matching item(s); 2 message(s) can be staged; 1 item(s) will be skipped.\n" +
+					"Staged 2 message(s) for deletion in batch batch-191.\n" +
 					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n" +
 					"Review with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
 			},
 			{
 				name: "dry_run", dryRun: true, status: http.StatusOK,
-				wantOutput: "Dry run: 2 message(s) would be staged; no deletion batch was created.\n" +
+				wantOutput: "Preflight: 3 matching item(s); 2 message(s) can be staged; 1 item(s) will be skipped.\n" +
+					"Dry run: 2 message(s) would be staged; no deletion batch was created.\n" +
 					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n",
 			},
 		} {
@@ -257,6 +259,7 @@ func TestStageDeleteCommand(t *testing.T) {
 						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
 							"cache_revision":      "cache-191",
 							"count":               3,
+							"deletable_count":     2,
 							"operation_token":     "operation-191",
 							"expires_at":          "2099-01-01T00:00:00Z",
 							"search_provenance":   map[string]any{"lexical_index_revision": "lex-191"},
@@ -321,6 +324,7 @@ func TestStageDeleteCommand(t *testing.T) {
 						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
 							"cache_revision":      "cache-191",
 							"count":               3,
+							"deletable_count":     3,
 							"operation_token":     "operation-191",
 							"expires_at":          "2099-01-01T00:00:00Z",
 							"search_provenance":   map[string]any{"lexical_index_revision": "lex-191"},
@@ -583,6 +587,7 @@ func newStageDeleteTestServerWithSchema(t *testing.T, wantQuery string, dryRun b
 		writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
 			"cache_revision":      "cache-191",
 			"count":               3,
+			"deletable_count":     3,
 			"operation_token":     "operation-191",
 			"expires_at":          "2099-01-01T00:00:00Z",
 			"search_provenance":   map[string]any{"lexical_index_revision": "lex-191"},

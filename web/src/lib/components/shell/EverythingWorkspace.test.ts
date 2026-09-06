@@ -369,7 +369,7 @@ describe('EverythingWorkspace', () => {
       if (new URL(request.url).pathname.endsWith('/explore/preflight')) {
         preflightRequests.push(request);
         return Response.json({
-          count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+          count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
           unavailable_actions: [
             { action: 'export', reason: 'selection_contains_items_without_exportable_files' },
             { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
@@ -411,7 +411,7 @@ describe('EverythingWorkspace', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/explore/preflight')) return Response.json({
-        count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+        count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
         unavailable_actions: [{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }],
         action_targets: [{ action: 'export', message_id: 1, filename: 'message-1.eml' }],
         operation_token: 'operation-1', expires_at: '2026-07-19T10:05:00Z'

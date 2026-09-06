@@ -433,6 +433,10 @@ func TestParse_InvalidOperatorValues(t *testing.T) {
 		{"smaller bad size", "smaller:abc", "abc", "smaller:"},
 		{"older_than bad age", "older_than:99q", "99q", "older_than:"},
 		{"newer_than bad age", "newer_than:7z", "7z", "newer_than:"},
+		{"empty from", "from:", "non-empty address", "from:"},
+		{"empty to with text", `receipt to:""`, "non-empty address", "to:"},
+		{"whitespace cc", `cc:"   "`, "non-empty address", "cc:"},
+		{"empty bcc", "bcc:", "non-empty address", "bcc:"},
 		{"has bad value", "has:banana", "banana", "has:"},
 	}
 	for _, tc := range cases {

@@ -12,7 +12,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/search"
 )
 
 // stageDeletionSampleSize caps the dry-run Gmail-ID preview.
@@ -353,10 +352,6 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return nil, nil, 0, false
 	}
-	if httpErr := validateSelectionAddressFilters(predicate.request.Query); httpErr != nil {
-		writeAPIHTTPError(w, httpErr)
-		return nil, nil, 0, false
-	}
 	if selection.CacheRevision == "" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
 		return nil, nil, 0, false
@@ -444,29 +439,6 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	}
 	claim := &deletionOperationClaim{state: state, token: token, selectionHash: selectionHash}
 	return targets, claim, int(stats.Count), true
-}
-
-// validateSelectionAddressFilters rejects address operators whose value is
-// empty or whitespace-only. The store renders those as LIKE '%%', which
-// widens a deletion selection to the whole archive instead of narrowing it.
-func validateSelectionAddressFilters(queryText string) *apiHTTPError {
-	if strings.TrimSpace(queryText) == "" {
-		return nil
-	}
-	// A query that fails to parse carries its own error from the search
-	// resolver, so only a parsed query is worth inspecting here.
-	parsed := search.Parse(queryText)
-	if parsed.Err() == nil {
-		for _, values := range [][]string{parsed.FromAddrs, parsed.ToAddrs, parsed.CcAddrs, parsed.BccAddrs} {
-			for _, value := range values {
-				if strings.TrimSpace(value) == "" {
-					return newAPIHTTPError(http.StatusBadRequest, "invalid_selection_predicate",
-						"address filters (from, to, cc, bcc) require a non-empty value")
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // resolveStageDeletionTargets unions filter-resolved and explicitly selected

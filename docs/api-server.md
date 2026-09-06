@@ -1397,6 +1397,7 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
 ```json
 {
   "count": 1234,
+  "deletable_count": 1200,
   "estimated_bytes": 52428800,
   "cache_revision": "<current cache revision>",
   "search_provenance": {},
@@ -1409,6 +1410,10 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
   "expires_at": "2026-07-06T15:35:00Z"
 }
 ```
+
+`count` includes all selected items after exclusions. `deletable_count` is the
+Gmail subset that can be staged; the difference is the number of items staging
+will skip. A chat conversation counts as one item.
 
 `unavailable_actions` lists actions this selection does not support. A
 `stage_deletion` entry means nothing in the selection can be deleted from its
@@ -1424,7 +1429,8 @@ reused or expired token is rejected with `409 operation_token_invalid`.
 
 Malformed selections return `400` with `invalid_selection` (bad `mode`,
 missing `cache_revision`, or `mode: "explicit"` without `row_keys`) or
-`invalid_selection_predicate`. If the analytical cache or search index changes
+`invalid_selection_predicate`. Malformed search operators return `400 invalid_query`.
+If the analytical cache or search index changes
 after the explore response was produced, preflight fails with
 `409 archive_revision_changed` or `409 search_revision_changed` — re-run
 explore and preflight against the new revision. Staging repeats all of these
@@ -1529,7 +1535,7 @@ re-evaluated filter — is what gets staged:
 1. `POST /api/v1/explore` with the predicate; review the rows and note
    `cache_revision` (plus `search_provenance` and `candidate_snapshot_id` for
    search-backed predicates).
-2. `POST /api/v1/explore/preflight` with the `selection`; review `count` and
+2. `POST /api/v1/explore/preflight` with the `selection`; review `count`, `deletable_count`, and
    `estimated_bytes`, and keep the `operation_token`.
 3. `POST /api/v1/deletions` with the same `selection` and the token:
 

@@ -173,7 +173,7 @@ All notable changes to msgvault, grouped by release.
   instead of rejecting the whole selection, dry run included. `message_type:email`
   matches legacy Gmail rows whose stored type is blank, as the search
   documentation already described, and an empty `from` / `to` / `cc` / `bcc`
-  value in a deletion selection is rejected instead of matching everything.
+  value in a search is rejected instead of matching everything.
 
 ---
 

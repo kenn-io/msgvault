@@ -4041,6 +4041,9 @@ components:
         count:
           format: int64
           type: integer
+        deletable_count:
+          format: int64
+          type: integer
         estimated_bytes:
           format: int64
           type: integer
@@ -4058,6 +4061,7 @@ components:
             $ref: "#/components/schemas/ExploreUnavailableAction"
           type: array
       required:
+        - deletable_count
         - count
         - estimated_bytes
         - cache_revision

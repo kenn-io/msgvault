@@ -30,7 +30,8 @@ func newStageDeleteCommand() *cobra.Command {
 The search runs with the same semantics as msgvault search. Matches that no
 source supports deleting, such as chats, meetings, and non-Gmail mail, are
 reported and skipped rather than rejecting the whole search. Use --dry-run to
-see the same staged subset and counts without creating a batch. Alternatively, pass a comma-separated --ids list to stage explicit internal
+see the same staged subset and counts without creating a batch.
+Alternatively, pass a comma-separated --ids list to stage explicit internal
 message IDs; this form bypasses search and analytical-cache readiness.
 Review a created batch with show-deletion before running delete-staged.`,
 		Args: cobra.ArbitraryArgs,
@@ -62,9 +63,6 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 	}
 	if parsed.IsEmpty() {
 		return usageErr(cmd, errors.New("empty search query"))
-	}
-	if hasEmptyAddressFilter(parsed) {
-		return usageErr(cmd, errors.New("empty address filter"))
 	}
 	sourceID, err := cmd.Flags().GetInt64("source-id")
 	if err != nil {
@@ -163,6 +161,15 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 	}
 	if preflightResp == nil || preflightResp.JSON200 == nil {
 		return errors.New("preflight search selection returned no response")
+	}
+
+	reviewed := preflightResp.JSON200
+	if reviewed.DeletableCount < reviewed.Count {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(),
+			"Preflight: %d matching item(s); %d message(s) can be staged; %d item(s) will be skipped.\n",
+			reviewed.Count, reviewed.DeletableCount, reviewed.Count-reviewed.DeletableCount); err != nil {
+			return fmt.Errorf("write preflight summary: %w", err)
+		}
 	}
 
 	description := "staged from CLI search"
@@ -347,17 +354,6 @@ func stageDeleteDaemonErr(op string, err error) error {
 			op, apiErr.Message)
 	}
 	return fmt.Errorf("%s: %w", op, err)
-}
-
-func hasEmptyAddressFilter(q *search.Query) bool {
-	for _, values := range [][]string{q.FromAddrs, q.ToAddrs, q.CcAddrs, q.BccAddrs} {
-		for _, value := range values {
-			if strings.TrimSpace(value) == "" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func init() {

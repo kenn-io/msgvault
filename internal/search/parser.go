@@ -393,6 +393,15 @@ func (p *Parser) Parse(queryStr string) *Query {
 		if op, value, ok := splitOperatorToken(token); ok {
 			value = unquote(value)
 
+			// Empty address filters would become LIKE '%%' in store searches.
+			// Reject the query instead of silently widening its match set.
+			switch op {
+			case "from", "to", "cc", "bcc":
+				if strings.TrimSpace(value) == "" {
+					q.parseErrs = append(q.parseErrs, operatorValueError(op, value, "expected a non-empty address filter"))
+					continue
+				}
+			}
 			if handler, ok := operators[op]; ok {
 				if err := handler(q, value, now); err != nil {
 					q.parseErrs = append(q.parseErrs, err)

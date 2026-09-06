@@ -15,6 +15,7 @@ describe('SelectionBar', () => {
     unavailable_actions: GeneratedExploreUnavailableAction[] = [],
   ): GeneratedExplorePreflightResponse => ({
     count: 2,
+    deletable_count: 2,
     estimated_bytes: 20,
     cache_revision: 'cache-1',
     search_provenance: {},

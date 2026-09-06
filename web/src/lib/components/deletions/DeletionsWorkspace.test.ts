@@ -27,6 +27,7 @@ const matching: ExploreSelection = {
 function preflight(overrides: Record<string, unknown> = {}) {
   return {
     count: 1,
+    deletable_count: 1,
     estimated_bytes: 120,
     cache_revision: 'cache-1',
     search_provenance: {},
@@ -111,7 +112,7 @@ describe('DeletionsWorkspace', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3 }));
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3, deletable_count: 2 }));
       if (request.method === 'POST') {
         deletionPosts += 1;
         return deletionPosts === 1
@@ -127,12 +128,12 @@ describe('DeletionsWorkspace', () => {
     await screen.findByText('3 items · 120 bytes');
     await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
     expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1 in archive@example.com/)).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toMatch(/Partial staging.*deletable Gmail subset.*unsupported match may be skipped/);
+    expect(screen.getByRole('alert').textContent).toMatch(/Partial staging.*deletable Gmail subset.*unsupported match will be skipped/);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
     const dialog = screen.getByRole('dialog', { name: 'Confirm selected deletion' });
     expect(dialog.textContent).toMatch(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/);
-    expect(dialog.textContent).toMatch(/deletable Gmail subset/);
+    expect(dialog.textContent).toMatch(/Only deletable Gmail messages will be staged/);
     expect(deletionPosts).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
     await waitFor(() => expect(deletionPosts).toBe(2));
@@ -146,7 +147,7 @@ describe('DeletionsWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3 }));
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 3, deletable_count: 2 }));
       if (request.method === 'POST') {
         deletionPosts += 1;
         return deletionPosts === 1
@@ -266,7 +267,7 @@ describe('DeletionsWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 8 }));
+      if (path.endsWith('/explore/preflight')) return Response.json(preflight({ count: 8, deletable_count: 6 }));
       if (request.method === 'POST') {
         staged += 1;
         return Response.json({ dry_run: false, message_count: 8, id: 'batch-2', status: 'pending' }, { status: 201 });
@@ -278,8 +279,8 @@ describe('DeletionsWorkspace', () => {
       await screen.findByText('No deletion manifests yet.');
       await fireEvent.keyDown(window, { key: 'D', shiftKey: true });
       expect(await screen.findByRole('dialog', { name: 'Confirm matching deletion' })).toBeDefined();
-      expect(screen.getByText(/server stages only deletable Gmail matches and may skip unsupported matches/)).toBeDefined();
-      expect(screen.queryByText(/8 matching items minus 1 exclusion/)).toBeNull();
+      expect(screen.getByText(/Matched: 8 · Will stage: 6 · Will skip: 2.*After 1 exclusion/)).toBeDefined();
+      expect(screen.getByText(/6 can be staged · 2 will be skipped/)).toBeDefined();
       expect(staged).toBe(0);
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
       expect(staged).toBe(0);

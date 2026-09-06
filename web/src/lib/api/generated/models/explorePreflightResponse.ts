@@ -9,6 +9,7 @@ export interface ExplorePreflightResponse {
   action_targets: ExploreActionTarget[];
   cache_revision: string;
   count: number;
+  deletable_count: number;
   estimated_bytes: number;
   expires_at: string;
   operation_token: string;
