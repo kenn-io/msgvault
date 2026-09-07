@@ -465,7 +465,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("Family", timeline[0].ConversationTitle)
 	assert.Equal("+15555550123", timeline[0].FromPhone)
 
-	searchResults, err := textEngine.TextSearch(context.Background(), "dinner", 10, 5)
+	searchResults, err := textEngine.TextSearch(context.Background(), "dinner", nil, 10, 5)
 	require.NoError(err, "TextSearch")
 	require.Len(searchResults, 1, "searchResults")
 	assert.Equal("search body", searchResults[0].BodyText)
@@ -2675,4 +2675,27 @@ func TestEngineSearchFastWithStatsMessageTypeConflictReturnsNoMatches(t *testing
 	require.NotNil(result.Stats, "Stats")
 	assert.Equal(int64(0), result.Stats.MessageCount, "Stats.MessageCount")
 	assert.Equal([]string{"email"}, parsedQuery.MessageTypes, "base query MessageTypes must not be mutated")
+}
+
+func TestEngineTextSearchRejectsUnconfirmedAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		applied *int64
+	}{
+		{name: "missing confirmation"},
+		{name: "different account", applied: new(int64(2))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "1", r.URL.Query().Get("source_id"))
+				writeJSONResponse(t, w, map[string]any{
+					"applied_source_id": tc.applied,
+					"messages":          []map[string]any{{"id": 2}},
+				})
+			})
+			messages, err := NewEngineAdapter(store).TextSearch(t.Context(), "hello", new(int64(1)), 10, 0)
+			require.ErrorContains(t, err, "did not confirm text-search source ID")
+			assert.Empty(t, messages)
+		})
+	}
 }

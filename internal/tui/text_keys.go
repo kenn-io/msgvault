@@ -96,8 +96,9 @@ func (m Model) handleTextListKeys(
 		return m, cmd
 
 	case "a":
-		// Reset to conversations view (clear filters)
+		// Reset navigation and drill filters within the selected account.
 		m.textState = textState{
+			sourceID: m.textState.sourceID,
 			viewType: query.TextViewConversations,
 		}
 		m.loading = true

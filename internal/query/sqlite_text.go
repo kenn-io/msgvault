@@ -778,7 +778,7 @@ func sanitizeTextSearchMatch(query string) string {
 // TextSearch performs plain full-text search over text messages.
 // Uses FTS5 if available; otherwise returns empty results.
 func (e *SQLiteEngine) TextSearch(
-	ctx context.Context, query string, limit, offset int,
+	ctx context.Context, query string, sourceID *int64, limit, offset int,
 ) ([]MessageSummary, error) {
 	match := sanitizeTextSearchMatch(query)
 	if match == "" {
@@ -790,6 +790,11 @@ func (e *SQLiteEngine) TextSearch(
 	if limit == 0 {
 		limit = 50
 	}
+
+	conditions, args := appendSourceFilter(
+		[]string{"fts.messages_fts MATCH ?", textMsgTypeFilter(), store.LiveMessagesWhere("m", true)},
+		[]any{match}, "m.", sourceID, nil,
+	)
 
 	sqlQuery := fmt.Sprintf(`
 		SELECT
@@ -813,14 +818,12 @@ func (e *SQLiteEngine) TextSearch(
 		JOIN messages m ON m.id = fts.rowid
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE fts.messages_fts MATCH ?
-		  AND %s
-		  AND %s
+		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, textMsgTypeFilter(), store.LiveMessagesWhere("m", true))
+	`, strings.Join(conditions, " AND "))
 
-	rows, err := e.db.QueryContext(ctx, sqlQuery, match, limit, offset)
+	rows, err := e.db.QueryContext(ctx, sqlQuery, append(args, limit, offset)...)
 	if err != nil {
 		return nil, fmt.Errorf("text search: %w", err)
 	}

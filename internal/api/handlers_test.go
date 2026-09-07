@@ -5854,7 +5854,7 @@ func (e *contextErrorTextEngine) ListConversationMessages(context.Context, int64
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
 }
 
-func (e *contextErrorTextEngine) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+func (e *contextErrorTextEngine) TextSearch(context.Context, string, *int64, int, int) ([]query.MessageSummary, error) {
 	return nil, fmt.Errorf("acquire query slot: %w", e.err)
 }
 
@@ -5878,7 +5878,7 @@ func (*textEngineWithoutSnapshot) ListConversationMessages(context.Context, int6
 	return []query.MessageSummary{}, nil
 }
 
-func (*textEngineWithoutSnapshot) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+func (*textEngineWithoutSnapshot) TextSearch(context.Context, string, *int64, int, int) ([]query.MessageSummary, error) {
 	return nil, nil
 }
 
@@ -8307,4 +8307,41 @@ func TestHandleGmailIDsEchoesSourceIDs(t *testing.T) {
 	var response map[string]any
 	requirements.NoError(json.NewDecoder(w.Body).Decode(&response))
 	assertions.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"])
+}
+
+func TestDaemonTextSearchScopesBeforePagination(t *testing.T) {
+	require := require.New(t)
+	db := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := db.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES
+			(1, 'imessage', 'first@example.com'), (2, 'imessage', 'second@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
+			(1, 1, 'chat-1', 'direct_chat'), (2, 2, 'chat-2', 'direct_chat');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject) VALUES
+			(1, 1, 1, 'message-1', 'imessage', '2026-01-01 10:00:00', 'hello first'),
+			(2, 2, 2, 'message-2', 'imessage', '2026-01-01 11:00:00', 'hello second');
+		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body);
+		INSERT INTO messages_fts (rowid, subject, body) VALUES
+			(1, 'hello first', ''), (2, 'hello second', '');
+	`)
+	require.NoError(err)
+
+	srv := newTestServerWithEngine(t, query.NewSQLiteEngine(db.DB))
+	daemon := httptest.NewServer(srv.Router())
+	t.Cleanup(daemon.Close)
+	engine, err := daemonclient.NewEngine(daemonclient.Config{
+		URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client(),
+	})
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, engine.Close()) })
+
+	messages, err := engine.TextSearch(t.Context(), "hello", new(int64(1)), 1, 0)
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal(t, int64(1), messages[0].ID)
+
+	messages, err = engine.TextSearch(t.Context(), "hello", nil, 1, 0)
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal(t, int64(2), messages[0].ID)
 }

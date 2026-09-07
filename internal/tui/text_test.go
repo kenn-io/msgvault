@@ -143,7 +143,7 @@ type globalSearchRefineTextEngine struct {
 }
 
 func (e *globalSearchRefineTextEngine) TextSearch(
-	_ context.Context, searchQuery string, _, _ int,
+	_ context.Context, searchQuery string, _ *int64, _, _ int,
 ) ([]query.MessageSummary, error) {
 	e.searches = append(e.searches, searchQuery)
 	return []query.MessageSummary{{ID: 77, Subject: "Refined global result"}}, nil

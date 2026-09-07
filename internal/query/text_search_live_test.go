@@ -79,7 +79,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 	ctx := context.Background()
 
 	// Confirm the message appears before deletion.
-	results, err := engine.TextSearch(ctx, "hello", 10, 0)
+	results, err := engine.TextSearch(ctx, "hello", nil, 10, 0)
 	require.NoError(err, "TextSearch before delete")
 	require.Len(results, 1, "want 1 result before delete")
 
@@ -87,7 +87,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 	_, err = db.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
 	require.NoError(err, "set deleted_at")
 
-	results, err = engine.TextSearch(ctx, "hello", 10, 0)
+	results, err = engine.TextSearch(ctx, "hello", nil, 10, 0)
 	require.NoError(err, "TextSearch after dedup delete")
 	assert.Empty(t, results, "want 0 results after dedup delete")
 }
@@ -101,7 +101,7 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 	_, err := db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
 	require.NoError(t, err, "set deleted_from_source_at")
 
-	results, err := engine.TextSearch(ctx, "hello", 10, 0)
+	results, err := engine.TextSearch(ctx, "hello", nil, 10, 0)
 	require.NoError(t, err, "TextSearch after source delete")
 	assert.Empty(t, results, "want 0 results after source delete")
 }
@@ -150,7 +150,7 @@ func TestTextSearch_SanitizesFTSInput(t *testing.T) {
 
 			for _, tc := range tests {
 				t.Run(tc.name, func(t *testing.T) {
-					results, err := engine.TextSearch(ctx, tc.query, 10, 0)
+					results, err := engine.TextSearch(ctx, tc.query, nil, 10, 0)
 					require.NoError(t, err,
 						"TextSearch(%q) must not error", tc.query)
 					if tc.wantMatch {
@@ -177,7 +177,7 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	insertTextSearchMessage(t, db, 4, "teams", "teams body")
 	insertTextSearchMessage(t, db, 5, "synctech_sms_call", "missed call body")
 
-	results, err := engine.TextSearch(ctx, "body", 10, 0)
+	results, err := engine.TextSearch(ctx, "body", nil, 10, 0)
 	require.NoError(t, err, "TextSearch")
 	var types []string
 	for _, r := range results {
@@ -201,4 +201,46 @@ func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, bo
 	require.NoError(t, err, "insert %s message", messageType)
 	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, id, body, body)
 	require.NoError(t, err, "insert %s fts", messageType)
+}
+
+func TestTextSearchScopesBeforePagination(t *testing.T) {
+	db, _ := openTextSearchDB(t)
+	insertTextSearchMessage(t, db, 2, "imessage", "hello second")
+	_, err := db.Exec(`
+		INSERT INTO sources (id, identifier) VALUES (2, 'second@example.com');
+		UPDATE messages SET sent_at = '2026-01-01 10:00:00' WHERE id = 1;
+		UPDATE messages SET source_id = 2, sent_at = '2026-01-01 11:00:00' WHERE id = 2;
+	`)
+	require.NoError(t, err)
+
+	for name, engine := range map[string]TextEngine{
+		"sqlite": NewSQLiteEngine(db),
+		"duckdb": &DuckDBEngine{sqliteDB: db},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name     string
+				sourceID *int64
+				offset   int
+				wantIDs  []int64
+			}{
+				{name: "first account", sourceID: new(int64(1)), wantIDs: []int64{1}},
+				{name: "second account", sourceID: new(int64(2)), wantIDs: []int64{2}},
+				{name: "all accounts", wantIDs: []int64{2}},
+				{name: "account offset", sourceID: new(int64(1)), offset: 1},
+				{name: "all accounts offset", offset: 1, wantIDs: []int64{1}},
+				{name: "missing account", sourceID: new(int64(3))},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					messages, err := engine.TextSearch(t.Context(), "hello", tc.sourceID, 1, tc.offset)
+					require.NoError(t, err)
+					var ids []int64
+					for _, message := range messages {
+						ids = append(ids, message.ID)
+					}
+					assert.Equal(t, tc.wantIDs, ids)
+				})
+			}
+		})
+	}
 }

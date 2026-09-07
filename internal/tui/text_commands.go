@@ -222,12 +222,13 @@ func (m Model) handleTextMessageLoaded(msg textMessageLoadedMsg) (tea.Model, tea
 // loadTextSearch executes a text message search.
 func (m *Model) loadTextSearch(searchQuery string) tea.Cmd {
 	te := m.textEngine
+	sourceID := m.textState.sourceID
 	requestID := m.nextTextRequestID()
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			msgs, err := te.TextSearch(
-				context.Background(), searchQuery, 100, 0,
+				context.Background(), searchQuery, sourceID, 100, 0,
 			)
 			return textSearchResultMsg{
 				messages: msgs, err: err, requestID: requestID,

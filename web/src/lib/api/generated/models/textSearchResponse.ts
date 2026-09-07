@@ -4,6 +4,7 @@
 import type { CLIQueryMessageSummary } from "./cLIQueryMessageSummary";
 
 export interface TextSearchResponse {
+  applied_source_id?: number;
   count: number;
   has_more: boolean;
   limit: number;

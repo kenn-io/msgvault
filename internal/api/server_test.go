@@ -63,7 +63,7 @@ func (e *participantFilterTextEngine) ListConversationMessages(_ context.Context
 	return nil, nil
 }
 
-func (*participantFilterTextEngine) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+func (*participantFilterTextEngine) TextSearch(context.Context, string, *int64, int, int) ([]query.MessageSummary, error) {
 	return nil, nil
 }
 

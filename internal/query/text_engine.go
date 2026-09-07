@@ -20,7 +20,8 @@ type TextEngine interface {
 		filter TextFilter) ([]MessageSummary, error)
 
 	// TextSearch performs plain full-text search over text messages.
-	TextSearch(ctx context.Context, query string,
+	// A nil sourceID searches all Text accounts.
+	TextSearch(ctx context.Context, query string, sourceID *int64,
 		limit, offset int) ([]MessageSummary, error)
 
 	// GetTextStats returns aggregate stats for text messages.

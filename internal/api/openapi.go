@@ -270,7 +270,8 @@ import (
 // 2.17.0 adds repeated/comma-separated source_ids to aggregate and message
 // filter routes, plus applied_source_ids echoes. Clients can therefore fail
 // closed when an older daemon ignores an additive source scope instead of
-// widening the result to all sources.
+// widening the result to all sources. Text search also accepts source_id
+// and confirms it with applied_source_id.
 const APISchemaVersion = "2.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

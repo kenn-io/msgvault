@@ -2078,11 +2078,12 @@ type TextMessagesResponse struct {
 }
 
 type TextSearchResponse struct {
-	Count    int                    `json:"count"`
-	HasMore  bool                   `json:"has_more"`
-	Offset   int                    `json:"offset"`
-	Limit    int                    `json:"limit"`
-	Messages []query.MessageSummary `json:"messages"`
+	AppliedSourceID *int64                 `json:"applied_source_id,omitempty"`
+	Count           int                    `json:"count"`
+	HasMore         bool                   `json:"has_more"`
+	Offset          int                    `json:"offset"`
+	Limit           int                    `json:"limit"`
+	Messages        []query.MessageSummary `json:"messages"`
 }
 
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
@@ -4067,7 +4068,15 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 		limit = maxPageSize
 	}
 
-	messages, err := textEngine.TextSearch(r.Context(), queryStr, limit+1, offset)
+	var sourceID *int64
+	if id, present, err := queryInt64(r, "source_id"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if present {
+		sourceID = &id
+	}
+
+	messages, err := textEngine.TextSearch(r.Context(), queryStr, sourceID, limit+1, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -4086,11 +4095,12 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, TextSearchResponse{
-		Count:    len(messages),
-		HasMore:  hasMore,
-		Offset:   offset,
-		Limit:    limit,
-		Messages: messages,
+		AppliedSourceID: sourceID,
+		Count:           len(messages),
+		HasMore:         hasMore,
+		Offset:          offset,
+		Limit:           limit,
+		Messages:        messages,
 	})
 }
 

@@ -4,6 +4,10 @@
 
 export type SearchTextMessagesParams = {
   /**
+   * Source ID
+   */
+  source_id?: number;
+  /**
    * Search query
    */
   q: string;

@@ -1387,18 +1387,22 @@ func (e *Engine) ListConversationMessages(ctx context.Context, convID int64, fil
 	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
 }
 
-func (e *Engine) TextSearch(ctx context.Context, queryStr string, limit, offset int) ([]query.MessageSummary, error) {
+func (e *Engine) TextSearch(ctx context.Context, queryStr string, sourceID *int64, limit, offset int) ([]query.MessageSummary, error) {
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.SearchTextMessagesResp, error) {
 		return client.SearchTextMessagesWithResponse(ctx, &generated.SearchTextMessagesRequestOptions{
 			Query: &generated.SearchTextMessagesQuery{
-				Q:      queryStr,
-				Limit:  optionalPositiveInt64(limit),
-				Offset: optionalPositiveInt64(offset),
+				Q:        queryStr,
+				SourceID: copyInt64(sourceID),
+				Limit:    optionalPositiveInt64(limit),
+				Offset:   optionalPositiveInt64(offset),
 			},
 		})
 	})
 	if err != nil {
 		return nil, err
+	}
+	if sourceID != nil && (resp.JSON200.AppliedSourceID == nil || *resp.JSON200.AppliedSourceID != *sourceID) {
+		return nil, errors.New("daemon did not confirm text-search source ID; upgrade the daemon and retry")
 	}
 	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
 }

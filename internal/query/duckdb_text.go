@@ -542,7 +542,7 @@ func (e *DuckDBEngine) listConversationMessages(
 // chat timeline will show truncated previews for search results rather than
 // the complete message body.
 func (e *DuckDBEngine) TextSearch(
-	ctx context.Context, query string, limit, offset int,
+	ctx context.Context, query string, sourceID *int64, limit, offset int,
 ) ([]MessageSummary, error) {
 	if e.sqliteDB == nil {
 		return nil, nil
@@ -556,6 +556,11 @@ func (e *DuckDBEngine) TextSearch(
 	}
 
 	// Use FTS5 MATCH on messages_fts, filtered to text message types.
+	conditions, args := appendSourceFilter(
+		[]string{"messages_fts MATCH ?", textMsgTypeFilter(), store.LiveMessagesWhere("m", true)},
+		[]any{match}, "m.", sourceID, nil,
+	)
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -578,15 +583,12 @@ func (e *DuckDBEngine) TextSearch(
 		JOIN messages m ON m.id = fts.rowid
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE messages_fts MATCH ?
-		  AND %s
-		  AND %s
+		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, textMsgTypeFilter(), store.LiveMessagesWhere("m", true))
+	`, strings.Join(conditions, " AND "))
 
-	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery,
-		match, limit, offset)
+	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery, append(args, limit, offset)...)
 	if err != nil {
 		return nil, fmt.Errorf("text search: %w", err)
 	}

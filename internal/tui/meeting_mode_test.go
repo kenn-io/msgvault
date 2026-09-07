@@ -39,7 +39,7 @@ func (meetingModeTextEngine) ListConversationMessages(
 }
 
 func (meetingModeTextEngine) TextSearch(
-	context.Context, string, int, int,
+	context.Context, string, *int64, int, int,
 ) ([]query.MessageSummary, error) {
 	return []query.MessageSummary{{ID: 99, Subject: "Old search result"}}, nil
 }

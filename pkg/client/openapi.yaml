@@ -11114,6 +11114,9 @@ components:
       type: object
     TextSearchResponse:
       properties:
+        applied_source_id:
+          format: int64
+          type: integer
         count:
           format: int64
           type: integer
@@ -23897,6 +23900,12 @@ paths:
     get:
       operationId: searchTextMessages
       parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
         - description: Search query
           in: query
           name: q

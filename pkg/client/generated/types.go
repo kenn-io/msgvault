@@ -10811,11 +10811,12 @@ func (t TextMessagesResponse) Validate() error {
 }
 
 type TextSearchResponse struct {
-	Count    int64                    `json:"count"`
-	HasMore  bool                     `json:"has_more"`
-	Limit    int64                    `json:"limit"`
-	Messages []CLIQueryMessageSummary `json:"messages" validate:"required"`
-	Offset   int64                    `json:"offset"`
+	AppliedSourceID *int64                   `json:"applied_source_id,omitempty"`
+	Count           int64                    `json:"count"`
+	HasMore         bool                     `json:"has_more"`
+	Limit           int64                    `json:"limit"`
+	Messages        []CLIQueryMessageSummary `json:"messages" validate:"required"`
+	Offset          int64                    `json:"offset"`
 }
 
 func (t TextSearchResponse) Validate() error {

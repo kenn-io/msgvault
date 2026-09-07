@@ -920,6 +920,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}, textFilterParams()...)
 	case "searchTextMessages":
 		return []*huma.Param{
+			queryIntegerParam("source_id", "Source ID"),
 			queryStringParam("q", "Search query", true),
 			queryIntegerParam("offset", "Zero-based row offset"),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),

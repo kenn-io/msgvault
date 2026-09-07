@@ -1413,6 +1413,9 @@ type ListTextConversationMessagesQuery struct {
 }
 
 type SearchTextMessagesQuery struct {
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
