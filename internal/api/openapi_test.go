@@ -1666,17 +1666,25 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	require.NoError(
 		os.WriteFile(filepath.Join(tmpRoot, "openapi.yaml"), spec, 0o600), "write generated spec")
 
-	cmd := exec.Command(
-		"go",
-		"run",
-		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5",
+	// Build with the tools module so the generator uses its pinned
+	// dependencies and checksums, then run it in the temporary output directory.
+	// A versioned go run outside the module resolves a separate dependency graph
+	// and can fail on checksum-service requests during an otherwise local test.
+	generator := filepath.Join(tmpRoot, "oapi-codegen.exe")
+	cmd := exec.Command("go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
+		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	out, err := cmd.CombinedOutput()
+	require.NoError(err, "build client generator:\n%s", out)
+
+	cmd = exec.Command(
+		generator,
 		"-config",
 		"config.yaml",
 		"../openapi.yaml",
 	)
 	cmd.Dir = tmpGenerated
-	cmd.Env = append(os.Environ(), "GOWORK=off")
-	out, err := cmd.CombinedOutput()
+	out, err = cmd.CombinedOutput()
 	require.NoError(err, "generate client:\n%s", out)
 	fixer, err := filepath.Abs("../codegenfix/cmd")
 	require.NoError(err, "resolve generated-client validator fixup")

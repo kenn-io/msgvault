@@ -241,11 +241,13 @@ vcard-registry-update:
 # Regenerate the committed OpenAPI schemas and generated Go client.
 # api/openapi.yaml is the published OpenAPI 3.1 schema; pkg/client/openapi.yaml
 # is the OpenAPI 3.0 schema used by the Go client generator.
+# The tools module pins the generator and its checksums independently of the
+# client runtime, so generation does not resolve an unchecked dependency graph.
 api-generate:
 	@mkdir -p api pkg/client/generated
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi > "$$tmp"; if [ -f api/openapi.yaml ] && cmp -s "$$tmp" api/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" api/openapi.yaml; fi; trap - EXIT
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi --version 3.0 --format yaml > "$$tmp"; if [ -f pkg/client/openapi.yaml ] && cmp -s "$$tmp" pkg/client/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" pkg/client/openapi.yaml; fi; trap - EXIT
-	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5 -config config.yaml ../openapi.yaml
+	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go tool -modfile=../../../tools/oapi-codegen/go.mod oapi-codegen -config config.yaml ../openapi.yaml
 	go run ./internal/codegenfix/cmd pkg/client/generated/types.go
 
 openapi-check: api-generate
