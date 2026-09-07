@@ -581,7 +581,10 @@ func loadAppleLIDMap(ctx context.Context, chatDBPath string) (map[string]string,
 	return mapping, rows.Err()
 }
 
-func loadApplePushNames(ctx context.Context, db *sql.DB) (map[string]string, error) {
+func loadApplePushNames(
+	ctx context.Context,
+	db *sql.DB,
+) (mapping map[string]string, retErr error) {
 	var tableCount int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
@@ -603,12 +606,16 @@ func loadApplePushNames(ctx context.Context, db *sql.DB) (map[string]string, err
 	if err != nil {
 		return nil, fmt.Errorf("query ZWAPROFILEPUSHNAME: %w", err)
 	}
+	defer func() {
+		if err := rows.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("close ZWAPROFILEPUSHNAME rows: %w", err)
+		}
+	}()
 
-	mapping := make(map[string]string)
+	mapping = make(map[string]string)
 	for rows.Next() {
 		var jid, pushName string
 		if err := rows.Scan(&jid, &pushName); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan ZWAPROFILEPUSHNAME: %w", err)
 		}
 		jid = strings.ToLower(strings.TrimSpace(jid))
@@ -618,11 +625,7 @@ func loadApplePushNames(ctx context.Context, db *sql.DB) (map[string]string, err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, fmt.Errorf("iterate ZWAPROFILEPUSHNAME: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close ZWAPROFILEPUSHNAME rows: %w", err)
 	}
 	return mapping, nil
 }
