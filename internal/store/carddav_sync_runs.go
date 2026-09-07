@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -15,7 +14,6 @@ import (
 const (
 	cardDAVSyncRunDefaultLimit       = 25
 	cardDAVSyncRunMaxLimit           = 100
-	cardDAVSyncRunRetention          = 100
 	cardDAVSyncRunErrorMessageMax    = 2000
 	cardDAVSyncRunRedactedErrorCode  = "unsafe_error_redacted"
 	cardDAVSyncRunRedactedError      = "CardDAV sync failed; sensitive details were removed."
@@ -156,7 +154,6 @@ func (s *Store) FinishCardDAVSyncRunContext(
 	if err != nil {
 		return nil, err
 	}
-	s.pruneCardDAVSyncRunsBestEffort(ctx)
 	return run, nil
 }
 
@@ -224,7 +221,9 @@ func (s *Store) RecoverCardDAVSyncRunsContext(ctx context.Context) (int64, error
 	var recovered int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE carddav_sync_runs SET
-			state = 'failed', finished_at = %s, error_code = ?, error_message = ?
+			state = CASE WHEN created > 0 OR updated > 0 OR removed > 0
+			             THEN 'partial' ELSE 'failed' END,
+			finished_at = %s, error_code = ?, error_message = ?
 			WHERE state = 'running'`, s.dialect.Now()),
 			cardDAVSyncRunRestartedErrorCode, cardDAVSyncRunRestartedError)
 		if err != nil {
@@ -239,7 +238,6 @@ func (s *Store) RecoverCardDAVSyncRunsContext(ctx context.Context) (int64, error
 	if err != nil {
 		return recovered, err
 	}
-	s.pruneCardDAVSyncRunsBestEffort(ctx)
 	return recovered, nil
 }
 
@@ -293,23 +291,6 @@ func truncateCardDAVSyncRunMessage(message string) string {
 		end--
 	}
 	return message[:end]
-}
-
-func (s *Store) pruneCardDAVSyncRunsBestEffort(ctx context.Context) {
-	if err := pruneCardDAVSyncRuns(ctx, s.db); err != nil {
-		slog.Warn("CardDAV sync run history prune failed", "error", err)
-	}
-}
-
-func pruneCardDAVSyncRuns(ctx context.Context, db contextQuerier) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM carddav_sync_runs
-		WHERE state <> 'running' AND id NOT IN (
-			SELECT id FROM carddav_sync_runs WHERE state <> 'running' ORDER BY id DESC LIMIT ?
-		)`, cardDAVSyncRunRetention)
-	if err != nil {
-		return fmt.Errorf("prune CardDAV sync runs: %w", err)
-	}
-	return nil
 }
 
 func getCardDAVSyncRun(

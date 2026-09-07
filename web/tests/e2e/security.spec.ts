@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { installOperations, OPERATION_PRIVACY_SENTINELS } from './fixtures/operations';
 
 const secureRow = {
   key: 'source:1:message:secure', kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -8,6 +9,19 @@ const secureRow = {
   attachment_size: 0, has_attachments: false, deleted_from_source: false, message_count: 1,
   anchor_message_id: 42, conversation_id: 7, match: {}
 };
+
+test('operations keeps production privacy sentinels out of rendered text', async ({ page }) => {
+  await installOperations(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+  await expect(page.getByRole('main', { name: 'Operations' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
+
+  const rendered = await page.locator('body').innerText();
+  for (const sentinel of OPERATION_PRIVACY_SENTINELS) {
+    expect(rendered, `rendered private sentinel: ${sentinel}`).not.toContain(sentinel);
+  }
+});
 
 test('sanitized archived HTML requires remote-image consent and rejects forged frame messages', async ({ page }) => {
   const remoteRequests: string[] = [];

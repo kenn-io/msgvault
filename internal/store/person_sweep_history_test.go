@@ -77,6 +77,90 @@ func TestFinalizePersonSweepFailureAccountsAfterLeaseLoss(t *testing.T) {
 		"a reclaimed started request keeps its conservative reservation charge")
 }
 
+func TestPersonSweepRecoveryUsesLeaseReclamation(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	journal := newPersonSweepJournalFixture(t, true, false)
+	journal.insertMessage(t, "restart-reclaim", "email", journal.aliceID, sweepBudgetNow())
+	reconcilePersonSweepFixture(t, journal, peoplesweep.SourceConversationText)
+	lease := claimPersonSweepFixture(t, journal.store, "stopped-daemon")
+
+	const runID = "run-restart-reclaim"
+	const attemptID = "attempt-restart-reclaim"
+	_, err := journal.store.StartPersonSweepRun(t.Context(), peoplesweep.StartRun{
+		ID: runID, Kind: peoplesweep.RunScheduled, Mode: peoplesweep.RunIncremental,
+		ProgramFingerprint: "program-fingerprint", CatalogFingerprint: "catalog-fingerprint",
+		ProviderFingerprint: "provider-fingerprint", StartedAt: sweepBudgetNow(),
+	})
+	requirements.NoError(err)
+	requirements.NoError(journal.store.StartPersonSweepAttempt(t.Context(), sweepStartAttempt(
+		t, attemptID, runID, journal.alicePersonID, lease.Fence)))
+
+	recovered, err := journal.store.RecoverPersonSweepRunsContext(t.Context())
+	requirements.NoError(err)
+	checks.Equal(int64(1), recovered)
+	recovered, err = journal.store.RecoverPersonSweepRunsContext(t.Context())
+	requirements.NoError(err)
+	checks.Zero(recovered)
+
+	var runStatus, attemptStatus, failureClass, leaseOwner string
+	requirements.NoError(journal.store.DB().QueryRowContext(t.Context(), journal.store.Rebind(
+		`SELECT status FROM person_sweep_runs WHERE id = ?`), runID).Scan(&runStatus))
+	requirements.NoError(journal.store.DB().QueryRowContext(t.Context(), journal.store.Rebind(
+		`SELECT status, failure_class FROM person_sweep_attempts WHERE id = ?`), attemptID).
+		Scan(&attemptStatus, &failureClass))
+	requirements.NoError(journal.store.DB().QueryRowContext(t.Context(), journal.store.Rebind(
+		`SELECT lease_owner FROM person_sweep_work WHERE person_id = ?`), lease.PersonID).
+		Scan(&leaseOwner))
+	checks.Equal("failed", runStatus)
+	checks.Equal("failed", attemptStatus)
+	checks.Equal(string(peoplesweep.FailureLeaseLost), failureClass)
+	checks.Empty(leaseOwner)
+}
+
+func TestPersonSweepRecoveryCountsDistinctTerminalizedRuns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	journal := newPersonSweepJournalFixture(t, true, true)
+	journal.insertMessage(t, "restart-alice", "email", journal.aliceID, sweepBudgetNow())
+	journal.insertMessage(t, "restart-bob", "email", journal.bobID, sweepBudgetNow())
+	reconcilePersonSweepFixture(t, journal, peoplesweep.SourceConversationText)
+	first := claimPersonSweepFixture(t, journal.store, "stopped-daemon-a")
+	second := claimPersonSweepFixture(t, journal.store, "stopped-daemon-b")
+
+	const leasedRun = "run-restart-multiple-leases"
+	_, err := journal.store.StartPersonSweepRun(t.Context(), peoplesweep.StartRun{
+		ID: leasedRun, Kind: peoplesweep.RunScheduled, Mode: peoplesweep.RunIncremental,
+		ProgramFingerprint: "program-fingerprint", CatalogFingerprint: "catalog-fingerprint",
+		ProviderFingerprint: "provider-fingerprint", StartedAt: sweepBudgetNow(),
+	})
+	require.NoError(err)
+	for index, lease := range []*peoplesweep.Lease{first, second} {
+		require.NoError(journal.store.StartPersonSweepAttempt(t.Context(), sweepStartAttempt(t,
+			"attempt-restart-multiple-"+string(rune('a'+index)), leasedRun,
+			lease.PersonID, lease.Fence)))
+	}
+	for _, runID := range []string{"run-restart-orphan-a", "run-restart-orphan-b"} {
+		_, err := journal.store.StartPersonSweepRun(t.Context(), peoplesweep.StartRun{
+			ID: runID, Kind: peoplesweep.RunScheduled, Mode: peoplesweep.RunIncremental,
+			ProgramFingerprint: "program-fingerprint", CatalogFingerprint: "catalog-fingerprint",
+			ProviderFingerprint: "provider-fingerprint", StartedAt: sweepBudgetNow(),
+		})
+		require.NoError(err)
+	}
+
+	recovered, err := journal.store.RecoverPersonSweepRunsContext(t.Context())
+	require.NoError(err)
+	assert.Equal(int64(3), recovered, "two leases for one run plus two orphan runs are three public runs")
+	var running int
+	require.NoError(journal.store.DB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM person_sweep_runs WHERE status = 'running'`).Scan(&running))
+	assert.Zero(running)
+	recovered, err = journal.store.RecoverPersonSweepRunsContext(t.Context())
+	require.NoError(err)
+	assert.Zero(recovered)
+}
+
 func TestPersonSweepHistoryContainsOnlySafeMetadata(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

@@ -26,6 +26,29 @@ const initialSettings = {
 afterEach(() => vi.useRealTimers());
 
 describe('SettingsWorkspace', () => {
+  it.each([
+    [{ authority: 'document_index', categoryID: 'archive', settingKey: 'analytics.auto_build_cache' }, 'Archive and cache'],
+    [{ authority: 'document_vector', categoryID: 'search', settingKey: 'vector.enabled' }, 'Search and vectors'],
+    [{ authority: 'visual_attachments', categoryID: 'search', settingKey: 'vector.multimodal.enabled' }, 'Search and vectors']
+  ] as const)('opens and focuses the requested $0.authority setting authority', async (navigationTarget, categoryLabel) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      settings: [
+        setting('analytics.auto_build_cache', false, { kind: 'boolean' }),
+        setting('vector.enabled', true, { kind: 'boolean' }),
+        setting('vector.multimodal.enabled', false, { kind: 'boolean' })
+      ],
+      pending_restart: false
+    }));
+    render(SettingsWorkspace, {
+      client: createAPIClient(fetchFn),
+      navigationTarget
+    });
+
+    const category = await screen.findByRole('button', { name: new RegExp(`^${categoryLabel}`) });
+    await waitFor(() => expect(category.getAttribute('aria-current') ?? category.getAttribute('aria-pressed')).toBeTruthy());
+    await waitFor(() => expect((document.activeElement as HTMLElement | null)?.dataset.settingKey).toBe(navigationTarget.settingKey));
+  });
+
   it('groups fields, redacts secrets, labels restart posture and warns on plain HTTP', async () => {
     render(SettingsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => settingsResponse(initialSettings, '"etag-a"'))),

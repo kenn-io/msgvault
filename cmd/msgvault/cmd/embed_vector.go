@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -213,10 +215,18 @@ func runEmbeddingPasses(
 	for {
 		var pass embed.RunResult
 		var err error
+		phase := "forward"
 		if first && backstop {
-			pass, err = runner.RunBackstop(ctx, gen)
+			phase = "backstop"
+		}
+		scope := operations.PassScope{
+			Key:     fmt.Sprintf("cli:%s:g:%d:%s", uuid.NewString(), gen, phase),
+			Trigger: operations.TriggerManual, StartedAt: time.Now().UTC(),
+		}
+		if first && backstop {
+			pass, err = runner.RunBackstop(ctx, gen, scope)
 		} else {
-			pass, err = runner.RunOnce(ctx, gen)
+			pass, err = runner.RunOnce(ctx, gen, scope)
 		}
 		if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
 			if generationErr.Person != nil {

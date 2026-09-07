@@ -267,7 +267,8 @@ func (id StableID) Validate() error {
 
 func stableIDTypeForKind(kind Kind) (StableIDType, bool) {
 	switch kind {
-	case KindSourceSync, KindCardDAVSync:
+	case KindSourceSync, KindCardDAVSync, KindMessageEmbedding, KindPersonEmbedding,
+		KindDocumentExtraction, KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
 		return StableIDInt64, true
 	case KindPersonSweep:
 		return StableIDText, true
@@ -279,47 +280,90 @@ func stableIDTypeForKind(kind Kind) (StableIDType, bool) {
 type CounterName string
 
 const (
-	CounterProcessed       CounterName = "processed"
-	CounterAdded           CounterName = "added"
-	CounterUpdated         CounterName = "updated"
-	CounterItemErrors      CounterName = "item_errors"
-	CounterAttempted       CounterName = "attempted"
-	CounterSucceeded       CounterName = "succeeded"
-	CounterFailed          CounterName = "failed"
-	CounterProjectedWrites CounterName = "projected_writes"
-	CounterBooks           CounterName = "books"
-	CounterCreated         CounterName = "created"
-	CounterRemoved         CounterName = "removed"
+	CounterProcessed        CounterName = "processed"
+	CounterAdded            CounterName = "added"
+	CounterUpdated          CounterName = "updated"
+	CounterItemErrors       CounterName = "item_errors"
+	CounterAttempted        CounterName = "attempted"
+	CounterSucceeded        CounterName = "succeeded"
+	CounterFailed           CounterName = "failed"
+	CounterProjectedWrites  CounterName = "projected_writes"
+	CounterBooks            CounterName = "books"
+	CounterCreated          CounterName = "created"
+	CounterRemoved          CounterName = "removed"
+	CounterTruncated        CounterName = "truncated"
+	CounterSkipped          CounterName = "skipped"
+	CounterRequested        CounterName = "requested"
+	CounterStarted          CounterName = "started"
+	CounterSuppressed       CounterName = "suppressed"
+	CounterIdentityRejected CounterName = "identity_rejected"
 )
 
 func (n CounterName) Validate() error {
 	switch n {
 	case CounterProcessed, CounterAdded, CounterUpdated, CounterItemErrors,
 		CounterAttempted, CounterSucceeded, CounterFailed, CounterProjectedWrites,
-		CounterBooks, CounterCreated, CounterRemoved:
+		CounterBooks, CounterCreated, CounterRemoved, CounterTruncated, CounterSkipped,
+		CounterRequested, CounterStarted, CounterSuppressed, CounterIdentityRejected:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation counter name %q", n)
 	}
 }
 
+// CounterNames returns every counter name the closed operation registry can emit.
+func CounterNames() []CounterName {
+	set := make(map[CounterName]struct{})
+	for _, counters := range counterUnitsByKind {
+		for name := range counters {
+			set[name] = struct{}{}
+		}
+	}
+	result := make([]CounterName, 0, len(set))
+	for name := range set {
+		result = append(result, name)
+	}
+	slices.Sort(result)
+	return result
+}
+
 type CounterUnit string
 
 const (
-	CounterUnitMessages CounterUnit = "messages"
-	CounterUnitPeople   CounterUnit = "people"
-	CounterUnitWrites   CounterUnit = "writes"
-	CounterUnitBooks    CounterUnit = "books"
-	CounterUnitContacts CounterUnit = "contacts"
+	CounterUnitMessages    CounterUnit = "messages"
+	CounterUnitPeople      CounterUnit = "people"
+	CounterUnitWrites      CounterUnit = "writes"
+	CounterUnitBooks       CounterUnit = "books"
+	CounterUnitContacts    CounterUnit = "contacts"
+	CounterUnitDocuments   CounterUnit = "documents"
+	CounterUnitChunks      CounterUnit = "chunks"
+	CounterUnitAttachments CounterUnit = "attachments"
 )
 
 func (u CounterUnit) Validate() error {
 	switch u {
-	case CounterUnitMessages, CounterUnitPeople, CounterUnitWrites, CounterUnitBooks, CounterUnitContacts:
+	case CounterUnitMessages, CounterUnitPeople, CounterUnitWrites, CounterUnitBooks, CounterUnitContacts,
+		CounterUnitDocuments, CounterUnitChunks, CounterUnitAttachments:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation counter unit %q", u)
 	}
+}
+
+// CounterUnits returns every counter unit the closed operation registry can emit.
+func CounterUnits() []CounterUnit {
+	set := make(map[CounterUnit]struct{})
+	for _, counters := range counterUnitsByKind {
+		for _, unit := range counters {
+			set[unit] = struct{}{}
+		}
+	}
+	result := make([]CounterUnit, 0, len(set))
+	for unit := range set {
+		result = append(result, unit)
+	}
+	slices.Sort(result)
+	return result
 }
 
 type PublicCounter struct {
@@ -346,6 +390,42 @@ var counterUnitsByKind = map[Kind]map[CounterName]CounterUnit{
 		CounterCreated: CounterUnitContacts,
 		CounterUpdated: CounterUnitContacts,
 		CounterRemoved: CounterUnitContacts,
+	},
+	KindMessageEmbedding: {
+		CounterAttempted: CounterUnitMessages,
+		CounterSucceeded: CounterUnitMessages,
+		CounterFailed:    CounterUnitMessages,
+		CounterTruncated: CounterUnitMessages,
+	},
+	KindPersonEmbedding: {
+		CounterAttempted: CounterUnitPeople,
+		CounterSucceeded: CounterUnitPeople,
+		CounterFailed:    CounterUnitPeople,
+		CounterTruncated: CounterUnitPeople,
+	},
+	KindDocumentExtraction: {
+		CounterAttempted: CounterUnitDocuments,
+		CounterSucceeded: CounterUnitDocuments,
+		CounterFailed:    CounterUnitDocuments,
+	},
+	KindDocumentEmbedding: {
+		CounterAttempted: CounterUnitChunks,
+		CounterSucceeded: CounterUnitChunks,
+		CounterFailed:    CounterUnitChunks,
+	},
+	KindVisualEmbedding: {
+		CounterAttempted: CounterUnitAttachments,
+		CounterSucceeded: CounterUnitAttachments,
+		CounterFailed:    CounterUnitAttachments,
+		CounterSkipped:   CounterUnitAttachments,
+	},
+	KindPersonEnrichment: {
+		CounterRequested:        CounterUnitPeople,
+		CounterStarted:          CounterUnitPeople,
+		CounterSucceeded:        CounterUnitPeople,
+		CounterFailed:           CounterUnitPeople,
+		CounterSuppressed:       CounterUnitPeople,
+		CounterIdentityRejected: CounterUnitPeople,
 	},
 }
 
@@ -383,26 +463,37 @@ func ValidateCounters(kind Kind, counters []PublicCounter) error {
 type PublicErrorCode string
 
 const (
-	PublicErrorSourceSyncFailed     PublicErrorCode = "source_sync_failed"
-	PublicErrorPersonSweepFailed    PublicErrorCode = "person_sweep_failed"
-	PublicErrorPolicy               PublicErrorCode = "policy"
-	PublicErrorBudget               PublicErrorCode = "budget"
-	PublicErrorLeaseLost            PublicErrorCode = "lease_lost"
-	PublicErrorRateLimited          PublicErrorCode = "rate_limited"
-	PublicErrorTimeout              PublicErrorCode = "timeout"
-	PublicErrorProviderHTTP         PublicErrorCode = "provider_http"
-	PublicErrorInvalidOutput        PublicErrorCode = "invalid_output"
-	PublicErrorArchiveGap           PublicErrorCode = "archive_gap"
-	PublicErrorInternal             PublicErrorCode = "internal"
-	PublicErrorCancelled            PublicErrorCode = "cancelled"
-	PublicErrorRetryAfter           PublicErrorCode = "retry_after"
-	PublicErrorAuthenticationFailed PublicErrorCode = "authentication_failed"
-	PublicErrorUpstreamFailed       PublicErrorCode = "upstream_failed"
-	PublicErrorSafetyLimit          PublicErrorCode = "safety_limit"
-	PublicErrorSyncFailed           PublicErrorCode = "sync_failed"
-	PublicErrorUnsafeErrorRedacted  PublicErrorCode = "unsafe_error_redacted"
-	PublicErrorDaemonRestarted      PublicErrorCode = "daemon_restarted"
-	PublicErrorCardDAVSyncFailed    PublicErrorCode = "carddav_sync_failed"
+	PublicErrorSourceSyncFailed               PublicErrorCode = "source_sync_failed"
+	PublicErrorPersonSweepFailed              PublicErrorCode = "person_sweep_failed"
+	PublicErrorPolicy                         PublicErrorCode = "policy"
+	PublicErrorBudget                         PublicErrorCode = "budget"
+	PublicErrorLeaseLost                      PublicErrorCode = "lease_lost"
+	PublicErrorRateLimited                    PublicErrorCode = "rate_limited"
+	PublicErrorTimeout                        PublicErrorCode = "timeout"
+	PublicErrorProviderHTTP                   PublicErrorCode = "provider_http"
+	PublicErrorInvalidOutput                  PublicErrorCode = "invalid_output"
+	PublicErrorArchiveGap                     PublicErrorCode = "archive_gap"
+	PublicErrorInternal                       PublicErrorCode = "internal"
+	PublicErrorCancelled                      PublicErrorCode = "cancelled"
+	PublicErrorRetryAfter                     PublicErrorCode = "retry_after"
+	PublicErrorAuthenticationFailed           PublicErrorCode = "authentication_failed"
+	PublicErrorUpstreamFailed                 PublicErrorCode = "upstream_failed"
+	PublicErrorSafetyLimit                    PublicErrorCode = "safety_limit"
+	PublicErrorSyncFailed                     PublicErrorCode = "sync_failed"
+	PublicErrorUnsafeErrorRedacted            PublicErrorCode = "unsafe_error_redacted"
+	PublicErrorDaemonRestarted                PublicErrorCode = "daemon_restarted"
+	PublicErrorCardDAVSyncFailed              PublicErrorCode = "carddav_sync_failed"
+	PublicErrorInvocationCancelled            PublicErrorCode = "invocation_cancelled"
+	PublicErrorInvocationTimeout              PublicErrorCode = "invocation_timeout"
+	PublicErrorInvocationRateLimited          PublicErrorCode = "invocation_rate_limited"
+	PublicErrorInvocationAuthenticationFailed PublicErrorCode = "invocation_authentication_failed"
+	PublicErrorInvocationUpstreamFailed       PublicErrorCode = "invocation_upstream_failed"
+	PublicErrorInvocationInvalidOutput        PublicErrorCode = "invocation_invalid_output"
+	PublicErrorInvocationSafetyLimit          PublicErrorCode = "invocation_safety_limit"
+	PublicErrorInvocationArchiveDrift         PublicErrorCode = "invocation_archive_drift"
+	PublicErrorInvocationDaemonRestarted      PublicErrorCode = "invocation_daemon_restarted"
+	PublicErrorInvocationInternal             PublicErrorCode = "invocation_internal"
+	PublicErrorInvocationUnsafeErrorRedacted  PublicErrorCode = "invocation_unsafe_error_redacted"
 )
 
 func (c PublicErrorCode) Validate() error {
@@ -418,26 +509,75 @@ type PublicError struct {
 }
 
 var fixedPublicErrorMessages = map[PublicErrorCode]string{
-	PublicErrorSourceSyncFailed:     "Source sync failed.",
-	PublicErrorPersonSweepFailed:    "Person sweep failed.",
-	PublicErrorPolicy:               "Person sweep was blocked by policy.",
-	PublicErrorBudget:               "Person sweep budget was exhausted.",
-	PublicErrorLeaseLost:            "Person sweep ownership expired.",
-	PublicErrorRateLimited:          "Person sweep was rate limited.",
-	PublicErrorTimeout:              "Person sweep timed out.",
-	PublicErrorProviderHTTP:         "Person sweep provider request failed.",
-	PublicErrorInvalidOutput:        "Person sweep provider output was invalid.",
-	PublicErrorArchiveGap:           "Person sweep archive input changed.",
-	PublicErrorInternal:             "Person sweep failed internally.",
-	PublicErrorCancelled:            "CardDAV sync was cancelled.",
-	PublicErrorRetryAfter:           "CardDAV sync is temporarily paused.",
-	PublicErrorAuthenticationFailed: "CardDAV authentication failed.",
-	PublicErrorUpstreamFailed:       "CardDAV server request failed.",
-	PublicErrorSafetyLimit:          "CardDAV sync exceeded its safety limits.",
-	PublicErrorSyncFailed:           "CardDAV sync failed.",
-	PublicErrorUnsafeErrorRedacted:  "CardDAV sync failed; sensitive details were removed.",
-	PublicErrorDaemonRestarted:      "CardDAV sync stopped because the daemon restarted.",
-	PublicErrorCardDAVSyncFailed:    "CardDAV sync failed.",
+	PublicErrorSourceSyncFailed:               "Source sync failed.",
+	PublicErrorPersonSweepFailed:              "Person sweep failed.",
+	PublicErrorPolicy:                         "Person sweep was blocked by policy.",
+	PublicErrorBudget:                         "Person sweep budget was exhausted.",
+	PublicErrorLeaseLost:                      "Person sweep ownership expired.",
+	PublicErrorRateLimited:                    "Person sweep was rate limited.",
+	PublicErrorTimeout:                        "Person sweep timed out.",
+	PublicErrorProviderHTTP:                   "Person sweep provider request failed.",
+	PublicErrorInvalidOutput:                  "Person sweep provider output was invalid.",
+	PublicErrorArchiveGap:                     "Person sweep archive input changed.",
+	PublicErrorInternal:                       "Person sweep failed internally.",
+	PublicErrorCancelled:                      "CardDAV sync was cancelled.",
+	PublicErrorRetryAfter:                     "CardDAV sync is temporarily paused.",
+	PublicErrorAuthenticationFailed:           "CardDAV authentication failed.",
+	PublicErrorUpstreamFailed:                 "CardDAV server request failed.",
+	PublicErrorSafetyLimit:                    "CardDAV sync exceeded its safety limits.",
+	PublicErrorSyncFailed:                     "CardDAV sync failed.",
+	PublicErrorUnsafeErrorRedacted:            "CardDAV sync failed; sensitive details were removed.",
+	PublicErrorDaemonRestarted:                "CardDAV sync stopped because the daemon restarted.",
+	PublicErrorCardDAVSyncFailed:              "CardDAV sync failed.",
+	PublicErrorInvocationCancelled:            "Operation was cancelled.",
+	PublicErrorInvocationTimeout:              "Operation timed out.",
+	PublicErrorInvocationRateLimited:          "Operation was rate limited.",
+	PublicErrorInvocationAuthenticationFailed: "Operation authentication failed.",
+	PublicErrorInvocationUpstreamFailed:       "Upstream operation failed.",
+	PublicErrorInvocationInvalidOutput:        "Operation output was invalid.",
+	PublicErrorInvocationSafetyLimit:          "Operation exceeded its safety limits.",
+	PublicErrorInvocationArchiveDrift:         "Operation archive input changed.",
+	PublicErrorInvocationDaemonRestarted:      "Operation stopped because the daemon restarted.",
+	PublicErrorInvocationInternal:             "Operation failed internally.",
+	PublicErrorInvocationUnsafeErrorRedacted:  "Operation failed; sensitive details were removed.",
+}
+
+// PublicErrorCodes returns every fixed public error code the runtime can emit.
+func PublicErrorCodes() []PublicErrorCode {
+	result := make([]PublicErrorCode, 0, len(fixedPublicErrorMessages))
+	for code := range fixedPublicErrorMessages {
+		result = append(result, code)
+	}
+	slices.Sort(result)
+	return result
+}
+
+// ValidateInvocationPublicError closes recorder errors independently from
+// subsystem-specific public errors that happen to share similar categories.
+func ValidateInvocationPublicError(kind Kind, publicError *PublicError) error {
+	if publicError == nil {
+		return nil
+	}
+	if err := publicError.Validate(); err != nil {
+		return err
+	}
+	switch kind {
+	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
+		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
+	default:
+		return fmt.Errorf("operation kind %q has no invocation public errors", kind)
+	}
+	switch publicError.Code {
+	case PublicErrorInvocationCancelled, PublicErrorInvocationTimeout,
+		PublicErrorInvocationRateLimited, PublicErrorInvocationAuthenticationFailed,
+		PublicErrorInvocationUpstreamFailed, PublicErrorInvocationInvalidOutput,
+		PublicErrorInvocationSafetyLimit, PublicErrorInvocationArchiveDrift,
+		PublicErrorInvocationDaemonRestarted, PublicErrorInvocationInternal,
+		PublicErrorInvocationUnsafeErrorRedacted:
+		return nil
+	default:
+		return fmt.Errorf("operation kind %q cannot use public error code %q", kind, publicError.Code)
+	}
 }
 
 func (e PublicError) Validate() error {
@@ -456,6 +596,15 @@ func (e PublicError) Validate() error {
 
 func newPublicError(code PublicErrorCode) *PublicError {
 	return &PublicError{Code: code, Message: fixedPublicErrorMessages[code]}
+}
+
+// FixedPublicError returns the only public-safe error for code. Callers cannot
+// attach provider or content details to the returned error.
+func FixedPublicError(code PublicErrorCode) *PublicError {
+	if code.Validate() != nil {
+		return nil
+	}
+	return newPublicError(code)
 }
 
 func ProjectSourceState(
@@ -548,6 +697,62 @@ type Run struct {
 	Error      *PublicError
 }
 
+// TerminalReplayError is the fixed, privacy-safe non-success returned when an
+// idempotent invocation reuses a terminal operation run. It never contains the
+// stored provider error, request data, or operation identifier.
+type TerminalReplayError struct {
+	state State
+	code  PublicErrorCode
+}
+
+func (e *TerminalReplayError) Error() string {
+	return fixedPublicErrorMessages[e.code]
+}
+
+func (e *TerminalReplayError) State() State { return e.state }
+
+func (e *TerminalReplayError) Code() PublicErrorCode { return e.code }
+
+func (e *TerminalReplayError) Unwrap() error {
+	switch e.code {
+	case PublicErrorCancelled, PublicErrorInvocationCancelled:
+		return context.Canceled
+	case PublicErrorTimeout, PublicErrorInvocationTimeout:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// TerminalReplayOutcome reconstructs only the public terminal semantics of a
+// durable run. Successful and partial runs remain useful completed outcomes;
+// failed and cancelled runs return a typed error containing only fixed text.
+func TerminalReplayOutcome(run *Run) error {
+	if run == nil {
+		return errors.New("operation terminal replay outcome is required")
+	}
+	if err := run.Validate(); err != nil {
+		return errors.New("operation terminal replay outcome is invalid")
+	}
+	switch run.State {
+	case StateSucceeded, StatePartial:
+		return nil
+	case StateCancelled:
+		code := PublicErrorInvocationCancelled
+		if run.Error != nil {
+			code = run.Error.Code
+		}
+		return &TerminalReplayError{state: run.State, code: code}
+	case StateFailed:
+		if run.Error == nil {
+			return errors.New("operation terminal replay outcome is invalid")
+		}
+		return &TerminalReplayError{state: run.State, code: run.Error.Code}
+	default:
+		return errors.New("operation terminal replay outcome is not terminal")
+	}
+}
+
 func (r Run) Validate() error {
 	if err := r.ID.Validate(); err != nil {
 		return err
@@ -559,7 +764,7 @@ func (r Run) Validate() error {
 	if err := r.State.Validate(); err != nil {
 		return err
 	}
-	if r.State == StateQueued {
+	if r.State == StateQueued && r.ID.Kind() != KindPersonEnrichment {
 		return fmt.Errorf("operation kind %q has no durable queued runs", r.ID.Kind())
 	}
 	if r.Trigger != nil {
@@ -582,10 +787,10 @@ func (r Run) Validate() error {
 	if r.FinishedAt != nil && r.FinishedAt.Location() != time.UTC {
 		return errors.New("operation finish time must be normalized to UTC")
 	}
-	if r.State == StateRunning && r.FinishedAt != nil {
-		return errors.New("running operation cannot have a finish time")
+	if (r.State == StateQueued || r.State == StateRunning) && r.FinishedAt != nil {
+		return fmt.Errorf("active operation state %q cannot have a finish time", r.State)
 	}
-	if r.State != StateRunning && r.FinishedAt == nil {
+	if r.State != StateQueued && r.State != StateRunning && r.FinishedAt == nil {
 		return fmt.Errorf("terminal operation state %q requires a finish time", r.State)
 	}
 	if err := ValidateCounters(r.ID.Kind(), r.Counters); err != nil {
@@ -671,8 +876,63 @@ func validateRunStateAndError(
 		default:
 			return fmt.Errorf("CardDAV sync does not support operation state %q", state)
 		}
+	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
+		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment:
+		return validateInvocationRunState(kind, state, counters, publicError)
 	default:
 		return fmt.Errorf("operation kind %q has no durable run validation", kind)
+	}
+	return nil
+}
+
+func validateInvocationRunState(kind Kind, state State, counters []PublicCounter, publicError *PublicError) error {
+	if state == StateQueued {
+		if kind != KindPersonEnrichment || publicError != nil {
+			return fmt.Errorf("operation kind %q cannot use queued state with a public error", kind)
+		}
+		return nil
+	}
+	if state == StateRunning {
+		if publicError != nil {
+			return fmt.Errorf("running operation kind %q cannot carry a public error", kind)
+		}
+		return nil
+	}
+	invocationCounters, err := InvocationCountersFromPublic(kind, counters)
+	if err != nil {
+		return err
+	}
+	if err := invocationCounters.ValidateFinal(kind); err != nil {
+		return err
+	}
+	derivedState, err := DeriveInvocationState(kind, invocationCounters, publicError)
+	if err != nil {
+		return err
+	}
+	if state != derivedState {
+		return fmt.Errorf("operation invocation state %q does not match derived state %q", state, derivedState)
+	}
+	useful := invocationCounters.Succeeded > 0
+	hasFailures := invocationCounters.Failed > 0 || publicError != nil
+	switch state {
+	case StateSucceeded:
+		if hasFailures {
+			return errors.New("succeeded invocation cannot have failures")
+		}
+	case StatePartial:
+		if !useful || !hasFailures {
+			return errors.New("partial invocation requires useful outcomes and failures")
+		}
+	case StateFailed:
+		if useful || !hasFailures {
+			return errors.New("failed invocation requires no useful outcomes and at least one failure")
+		}
+	case StateCancelled:
+		if publicError == nil || publicError.Code != PublicErrorInvocationCancelled {
+			return errors.New("cancelled invocation requires its fixed public error")
+		}
+	default:
+		return fmt.Errorf("operation kind %q does not support state %q", kind, state)
 	}
 	return nil
 }
@@ -757,10 +1017,12 @@ func (p Position) Validate() error {
 }
 
 type Query struct {
-	Kinds    []Kind
-	States   []State
-	Position *Position
-	Limit    int
+	Kinds         []Kind
+	States        []State
+	StartedFrom   *time.Time
+	StartedBefore *time.Time
+	Position      *Position
+	Limit         int
 }
 
 func (q Query) Validate() error {
@@ -783,6 +1045,25 @@ func (q Query) Validate() error {
 			return errors.New("operation history states must be sorted and unique")
 		}
 	}
+	if q.StartedFrom != nil {
+		if q.StartedFrom.IsZero() {
+			return errors.New("operation history lower date bound is required when present")
+		}
+		if q.StartedFrom.Location() != time.UTC {
+			return errors.New("operation history lower date bound must be normalized to UTC")
+		}
+	}
+	if q.StartedBefore != nil {
+		if q.StartedBefore.IsZero() {
+			return errors.New("operation history upper date bound is required when present")
+		}
+		if q.StartedBefore.Location() != time.UTC {
+			return errors.New("operation history upper date bound must be normalized to UTC")
+		}
+	}
+	if q.StartedFrom != nil && q.StartedBefore != nil && !q.StartedFrom.Before(*q.StartedBefore) {
+		return errors.New("operation history lower date bound must precede upper date bound")
+	}
 	if q.Position != nil {
 		if err := q.Position.Validate(); err != nil {
 			return err
@@ -792,6 +1073,14 @@ func (q Query) Validate() error {
 		}
 	}
 	return nil
+}
+
+type HistorySnapshot struct {
+	Runs               []Run
+	Position           *Position
+	AvailableKinds     []Kind
+	UnavailableKinds   []Kind
+	MembershipRevision int64
 }
 
 type LaneHistoryStatus struct {
@@ -815,21 +1104,27 @@ func (s LaneHistoryStatus) Validate() error {
 	if s.Lane != definition.Lane {
 		return fmt.Errorf("operation kind %q requires lane %q", s.Kind, definition.Lane)
 	}
-	if s.HistoryAvailability != definition.HistoryAvailability {
-		return fmt.Errorf("operation kind %q requires history availability %q",
-			s.Kind, definition.HistoryAvailability)
-	}
-	if s.UnavailableCode != definition.UnavailableCode {
-		return fmt.Errorf("operation kind %q has an invalid history availability code", s.Kind)
+	if err := s.HistoryAvailability.Validate(); err != nil {
+		return err
 	}
 	if s.HistoryAvailability == HistoryUnavailable {
+		if s.UnavailableCode != string(s.Kind)+"_history_unavailable" {
+			return fmt.Errorf("operation kind %q has an invalid history availability code", s.Kind)
+		}
 		if s.Active != nil || s.Latest != nil || s.LatestSuccessful != nil {
 			return fmt.Errorf("unavailable operation history %q cannot contain runs", s.Kind)
 		}
 		return nil
 	}
-	if err := validateStatusRun(s, "active", s.Active, StateRunning); err != nil {
+	if s.UnavailableCode != "" {
+		return fmt.Errorf("available operation history %q cannot carry an unavailable code", s.Kind)
+	}
+	if err := validateStatusRun(s, "active", s.Active, ""); err != nil {
 		return err
+	}
+	if s.Active != nil && s.Active.State != StateRunning &&
+		(s.Kind != KindPersonEnrichment || s.Active.State != StateQueued) {
+		return errors.New("operation history active run must have an active state")
 	}
 	if err := validateStatusRun(s, "latest", s.Latest, ""); err != nil {
 		return err
@@ -866,7 +1161,7 @@ func validateStatusRun(status LaneHistoryStatus, role string, run *Run, required
 
 type HistoryReader interface {
 	Kinds() []Kind
-	ListRuns(ctx context.Context, query Query) ([]Run, error)
+	ListRuns(ctx context.Context, query Query) (HistorySnapshot, error)
 	GetRun(ctx context.Context, id StableID) (Run, error)
 	LaneStatus(ctx context.Context, kind Kind) (LaneHistoryStatus, error)
 }

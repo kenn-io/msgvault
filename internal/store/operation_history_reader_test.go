@@ -19,11 +19,7 @@ func TestOperationHistoryReaderWalksExactMergedOrder(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	instant := time.Date(2026, 8, 29, 2, 0, 0, 0, time.UTC)
 	seedMergedOperationRuns(t, st, instant)
-	assert.Equal([]operations.Kind{
-		operations.KindCardDAVSync,
-		operations.KindPersonSweep,
-		operations.KindSourceSync,
-	}, st.Kinds())
+	assert.Equal(allOperationHistoryKinds, st.Kinds())
 
 	want := []string{
 		"carddav_sync:10", "carddav_sync:9",
@@ -33,17 +29,30 @@ func TestOperationHistoryReaderWalksExactMergedOrder(t *testing.T) {
 	var got []string
 	var position *operations.Position
 	for len(got) < len(want) {
-		runs, err := st.ListRuns(t.Context(), operations.Query{Position: position, Limit: 1})
+		snapshot, err := st.ListRuns(t.Context(), operations.Query{Position: position, Limit: 1})
 		require.NoError(err)
-		require.NotEmpty(runs)
-		assert.LessOrEqual(len(runs), 2, "reader returns at most limit+1")
-		got = append(got, operationRunKey(t, runs[0]))
-		position = &operations.Position{StartedAt: runs[0].StartedAt, ID: runs[0].ID}
+		require.NotEmpty(snapshot.Runs)
+		assert.LessOrEqual(len(snapshot.Runs), 2, "reader returns at most limit+1")
+		got = append(got, operationRunKey(t, snapshot.Runs[0]))
+		if len(snapshot.Runs) > 1 {
+			require.NotNil(snapshot.Position, "lookahead returns a snapshot-bound continuation")
+			assert.Equal(snapshot.Runs[0].StartedAt, snapshot.Position.StartedAt)
+			assert.Equal(snapshot.Runs[0].ID, snapshot.Position.ID,
+				"continuation identifies the last row exposed at the requested limit")
+			position = snapshot.Position
+		} else {
+			assert.Nil(snapshot.Position, "the terminal page has no continuation")
+			position = &operations.Position{
+				StartedAt: snapshot.Runs[0].StartedAt,
+				ID:        snapshot.Runs[0].ID,
+			}
+		}
 	}
 	assert.Equal(want, got)
 	after, err := st.ListRuns(t.Context(), operations.Query{Position: position, Limit: 1})
 	require.NoError(err)
-	assert.Empty(after)
+	assert.Empty(after.Runs)
+	assert.Nil(after.Position)
 }
 
 func TestOperationHistoryReaderFiltersAndRejectsInvalidQueries(t *testing.T) {
@@ -57,14 +66,14 @@ func TestOperationHistoryReaderFiltersAndRejectsInvalidQueries(t *testing.T) {
 		Kinds: []operations.Kind{operations.KindPersonSweep}, Limit: 100,
 	})
 	require.NoError(err)
-	assert.Equal([]string{"person_sweep:run-b", "person_sweep:run-a"}, operationRunKeys(t, people))
+	assert.Equal([]string{"person_sweep:run-b", "person_sweep:run-a"}, operationRunKeys(t, people.Runs))
 
 	succeeded, err := st.ListRuns(t.Context(), operations.Query{
 		States: []operations.State{operations.StateSucceeded}, Limit: 100,
 	})
 	require.NoError(err)
-	require.Len(succeeded, 6)
-	for _, run := range succeeded {
+	require.Len(succeeded.Runs, 6)
+	for _, run := range succeeded.Runs {
 		assert.Equal(operations.StateSucceeded, run.State)
 	}
 
@@ -73,7 +82,7 @@ func TestOperationHistoryReaderFiltersAndRejectsInvalidQueries(t *testing.T) {
 	}} {
 		runs, queryErr := st.ListRuns(t.Context(), query)
 		require.Error(queryErr)
-		assert.Nil(runs)
+		assert.Empty(runs.Runs)
 	}
 }
 
@@ -100,13 +109,13 @@ func TestOperationHistoryReaderOrdersNeighboringTimestamps(t *testing.T) {
 		"source_sync:" + fmtInt64(sourceID),
 		"person_sweep:neighbor-person",
 		"carddav_sync:" + fmtInt64(cardDAVID),
-	}, operationRunKeys(t, runs))
+	}, operationRunKeys(t, runs.Runs))
 
 	running, err := st.ListRuns(t.Context(), operations.Query{
 		States: []operations.State{operations.StateRunning}, Limit: 10,
 	})
 	require.NoError(err)
-	assert.Equal([]string{"source_sync:" + fmtInt64(sourceID)}, operationRunKeys(t, running))
+	assert.Equal([]string{"source_sync:" + fmtInt64(sourceID)}, operationRunKeys(t, running.Runs))
 }
 
 func TestOperationHistoryReaderPreservesMixedTimestampPrecision(t *testing.T) {
@@ -130,7 +139,7 @@ func TestOperationHistoryReaderPreservesMixedTimestampPrecision(t *testing.T) {
 	assert.Equal(t, []string{
 		"carddav_sync:" + fmtInt64(cardDAVID),
 		"source_sync:" + fmtInt64(sourceID),
-	}, operationRunKeys(t, runs))
+	}, operationRunKeys(t, runs.Runs))
 }
 
 func TestOperationHistoryReaderDoesNotApplyIDTieAtFinerSourceCursor(t *testing.T) {
@@ -156,7 +165,7 @@ func TestOperationHistoryReaderDoesNotApplyIDTieAtFinerSourceCursor(t *testing.T
 	assert.Equal(t, []string{
 		"source_sync:" + fmtInt64(higherID),
 		"source_sync:" + fmtInt64(lowerID),
-	}, operationRunKeys(t, runs))
+	}, operationRunKeys(t, runs.Runs))
 }
 
 func TestOperationHistoryReaderDoesNotApplyIDTieAtSubMillisecondPeopleCursor(t *testing.T) {
@@ -176,7 +185,7 @@ func TestOperationHistoryReaderDoesNotApplyIDTieAtSubMillisecondPeopleCursor(t *
 		Limit: 10,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"person_sweep:run-b", "person_sweep:run-a"}, operationRunKeys(t, runs))
+	assert.Equal(t, []string{"person_sweep:run-b", "person_sweep:run-a"}, operationRunKeys(t, runs.Runs))
 }
 
 func TestOperationHistoryReaderBoundsEveryAdapterToLimitPlusOne(t *testing.T) {
@@ -198,13 +207,43 @@ func TestOperationHistoryReaderBoundsEveryAdapterToLimitPlusOne(t *testing.T) {
 				st, t.Context(), query, fetchLimit)
 			return err
 		},
+		func(fetchLimit int) error {
+			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
+				st, t.Context(), operations.KindMessageEmbedding, query, fetchLimit)
+			return err
+		},
+		func(fetchLimit int) error {
+			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
+				st, t.Context(), operations.KindPersonEmbedding, query, fetchLimit)
+			return err
+		},
+		func(fetchLimit int) error {
+			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
+				st, t.Context(), operations.KindDocumentExtraction, query, fetchLimit)
+			return err
+		},
+		func(fetchLimit int) error {
+			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
+				st, t.Context(), operations.KindDocumentEmbedding, query, fetchLimit)
+			return err
+		},
+		func(fetchLimit int) error {
+			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
+				st, t.Context(), operations.KindVisualEmbedding, query, fetchLimit)
+			return err
+		},
+		func(fetchLimit int) error {
+			_, err := store.ListPersonEnrichmentOperationRunsWithFetchLimitForTest(
+				st, t.Context(), query, fetchLimit)
+			return err
+		},
 	} {
 		require.NoError(t, list(2))
 		require.Error(t, list(3))
 	}
 }
 
-func TestOperationHistoryReaderReturnsNoPartialRowsOnAdapterFailure(t *testing.T) {
+func TestOperationHistoryReaderReturnsPartialRowsOnAdapterFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -214,9 +253,12 @@ func TestOperationHistoryReaderReturnsNoPartialRowsOnAdapterFailure(t *testing.T
 		`ALTER TABLE person_sweep_runs RENAME TO person_sweep_runs_unavailable`)
 	require.NoError(err)
 
-	runs, err := st.ListRuns(t.Context(), operations.Query{Limit: 100})
-	require.Error(err)
-	assert.Nil(runs)
+	snapshot, err := st.ListRuns(t.Context(), operations.Query{Limit: 100})
+	require.NoError(err)
+	assert.Equal([]operations.Kind{operations.KindPersonSweep}, snapshot.UnavailableKinds)
+	assert.Equal([]string{
+		"carddav_sync:10", "carddav_sync:9", "source_sync:10", "source_sync:9",
+	}, operationRunKeys(t, snapshot.Runs))
 
 	cardDAVStatus, err := st.LaneStatus(t.Context(), operations.KindCardDAVSync)
 	require.NoError(err)
@@ -234,7 +276,7 @@ func TestOperationHistoryReaderGetDispatchesByTypedKind(t *testing.T) {
 
 	runs, err := st.ListRuns(t.Context(), operations.Query{Limit: 100})
 	require.NoError(err)
-	for _, listed := range runs {
+	for _, listed := range runs.Runs {
 		detail, detailErr := st.GetRun(t.Context(), listed.ID)
 		require.NoError(detailErr)
 		assert.Equal(listed, detail)
@@ -289,8 +331,8 @@ func TestOperationHistoryReaderUsesOneCoherentSnapshot(t *testing.T) {
 
 	runs, err := st.ListRuns(t.Context(), operations.Query{Limit: 10})
 	require.NoError(err)
-	require.Len(runs, 2)
-	for _, run := range runs {
+	require.Len(runs.Runs, 2)
+	for _, run := range runs.Runs {
 		wantStartedAt := before
 		if run.ID.Kind() == operations.KindCardDAVSync && !st.IsPostgreSQL() {
 			wantStartedAt = before.Truncate(time.Second)

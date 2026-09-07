@@ -25,6 +25,16 @@ function run(status: string, processed: number, overrides: Record<string, unknow
 afterEach(() => vi.useRealTimers());
 
 describe('SourcesWorkspace', () => {
+  it('opens normalized source-sync operation history through its shell callback', async () => {
+    const onOpenOperations = vi.fn();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn), onOpenOperations });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View source operations' }));
+
+    expect(onOpenOperations).toHaveBeenCalledOnce();
+  });
+
   it('shows status and only exposes Sync now from server capability truth', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source(),

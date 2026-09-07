@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	ErrDocumentExtractionRebuildActive  = errors.New("document extraction rebuild is already active")
-	ErrDocumentExtractionRebuildMissing = errors.New("document extraction rebuild is not active")
+	ErrDocumentExtractionRebuildActive     = errors.New("document extraction rebuild is already active")
+	ErrDocumentExtractionRebuildMissing    = errors.New("document extraction rebuild is not active")
+	ErrDocumentIndexStatusScopeUnavailable = errors.New("current document index status scope is unavailable")
 )
 
 const authoritativeDocumentRoleSourcesSQL = "('mime_disposition','provider_explicit','importer_semantics','raw_mime_repair')"
@@ -205,6 +206,40 @@ func (s *Store) EnsureDocumentExtractionProfile(
 		return nil
 	})
 	return created, err
+}
+
+// GetCurrentDocumentIndexStatusScope resolves the exact durable target profile
+// selected by document_index_state and its immutable media allowlist. The
+// profile identifier is used only as an internal query coordinate; API status
+// responses do not publish it.
+func (s *Store) GetCurrentDocumentIndexStatusScope(
+	ctx context.Context,
+) (string, []string, error) {
+	var profileID string
+	var allowedJSON string
+	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
+		SELECT p.id, CAST(p.allowed_media_types AS TEXT)
+		FROM document_index_state state
+		JOIN document_extraction_profiles p ON p.id = state.target_profile_id
+		WHERE state.singleton = 1
+		  AND p.enabled = TRUE
+		  AND p.retired_at IS NULL`)).Scan(&profileID, &allowedJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrDocumentIndexStatusScopeUnavailable
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("read current document index status scope: %w", err)
+	}
+	var mediaTypes []string
+	if err := json.Unmarshal([]byte(allowedJSON), &mediaTypes); err != nil {
+		return "", nil, errors.New("current document index status scope is invalid")
+	}
+	slices.Sort(mediaTypes)
+	mediaTypes = slices.Compact(mediaTypes)
+	if profileID == "" || len(mediaTypes) == 0 || slices.Contains(mediaTypes, "") {
+		return "", nil, ErrDocumentIndexStatusScopeUnavailable
+	}
+	return profileID, mediaTypes, nil
 }
 
 // RecordDocumentProviderConsent enables one exact immutable profile. A change

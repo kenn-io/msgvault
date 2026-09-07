@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,6 +11,48 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestOperationInvocationSchemasExposeOnlyAllowlistedColumns(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	common := []string{"id", "invocation_key", "trigger", "state", "started_at", "finished_at", "error_code", "attempted", "succeeded", "failed"}
+	want := map[string][]string{
+		"message_embedding_runs":   append(slices.Clone(common), "truncated"),
+		"person_embedding_runs":    append(slices.Clone(common), "truncated"),
+		"document_extraction_runs": slices.Clone(common),
+		"document_embedding_runs":  slices.Clone(common),
+		"visual_embedding_runs":    append(slices.Clone(common), "skipped"),
+		"operation_token_keys":     {"key_id", "key_bytes", "state", "created_at", "retired_at"},
+	}
+	for table, expected := range want {
+		t.Run(table, func(t *testing.T) {
+			assert.Equal(t, expected, operationTableColumns(t, st, table))
+		})
+	}
+}
+
+func operationTableColumns(t *testing.T, st interface {
+	IsPostgreSQL() bool
+	DB() *sql.DB
+	Rebind(query string) string
+}, table string) []string {
+	t.Helper()
+	query := `SELECT name FROM pragma_table_info(?) ORDER BY cid`
+	if st.IsPostgreSQL() {
+		query = `SELECT column_name FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position`
+	}
+	rows, err := st.DB().Query(st.Rebind(query), table)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var columns []string
+	for rows.Next() {
+		var column string
+		require.NoError(t, rows.Scan(&column))
+		columns = append(columns, column)
+	}
+	require.NoError(t, rows.Err())
+	return columns
+}
 
 func TestOperationRunOrderIndexes(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -19,9 +62,14 @@ func TestOperationRunOrderIndexes(t *testing.T) {
 		columns []string
 	}
 	want := map[string]expectedIndex{
-		"idx_sync_runs_operations_order":         {table: "sync_runs", columns: []string{"started_at", "id"}},
-		"idx_person_sweep_runs_operations_order": {table: "person_sweep_runs", columns: []string{"started_at", "id"}},
-		"idx_carddav_sync_runs_operations_order": {table: "carddav_sync_runs", columns: []string{"started_at", "id"}},
+		"idx_sync_runs_operations_order":                {table: "sync_runs", columns: []string{"started_at", "id"}},
+		"idx_person_sweep_runs_operations_order":        {table: "person_sweep_runs", columns: []string{"started_at", "id"}},
+		"idx_carddav_sync_runs_operations_order":        {table: "carddav_sync_runs", columns: []string{"started_at", "id"}},
+		"idx_message_embedding_runs_operations_order":   {table: "message_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_person_embedding_runs_operations_order":    {table: "person_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_document_extraction_runs_operations_order": {table: "document_extraction_runs", columns: []string{"started_at", "id"}},
+		"idx_document_embedding_runs_operations_order":  {table: "document_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_visual_embedding_runs_operations_order":    {table: "visual_embedding_runs", columns: []string{"started_at", "id"}},
 	}
 	for indexName, expected := range want {
 		t.Run(indexName, func(t *testing.T) {

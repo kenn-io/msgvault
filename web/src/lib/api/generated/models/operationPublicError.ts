@@ -6,5 +6,4 @@ import type { OperationPublicErrorCode } from "./operationPublicErrorCode";
 export interface OperationPublicError {
   code: OperationPublicErrorCode;
   message: string;
-  [key: string]: unknown;
 }

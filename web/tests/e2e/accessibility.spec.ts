@@ -1,14 +1,40 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { expectKitTheme, selectKitOption, setKitTheme } from '../kit-ui';
+import { expectKitTheme, selectKitOption, selectKitTopBarTab, setKitTheme } from '../kit-ui';
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
+import { installOperations, OPERATION_REFERENCES } from './fixtures/operations';
 
 async function assertNoViolations(page: Page, label: string) {
   const result = await new AxeBuilder({ page }).analyze();
   expect(result.violations, `${label}: ${result.violations.map((v) => `${v.id}: ${v.help}`).join('; ')}`)
     .toEqual([]);
 }
+
+test('Operations workspace, detail, failure, and narrow states have no axe violations', async ({ page }) => {
+  test.slow();
+  const fixture = await installOperations(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+  await expect(page.getByRole('main', { name: 'Operations' })).toBeVisible();
+  await assertNoViolations(page, 'Operations workspace');
+
+  await page.getByRole('button', { name: 'Open Document extraction run' }).click();
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Operation archive input changed.');
+  await assertNoViolations(page, 'Operations detail with fixed failure');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+    workspace: 'operations', operationRunID: OPERATION_REFERENCES.document
+  }))}`);
+  await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
+  await assertNoViolations(page, 'Operations narrow detail');
+
+  await page.getByRole('button', { name: 'Back to operation history' }).click();
+  fixture.failNextHistory();
+  await page.getByRole('button', { name: 'Refresh operations' }).click();
+  await expect(page.getByRole('alert', { name: 'Operation history failure' })).toBeVisible();
+  await assertNoViolations(page, 'Operations history failure');
+});
 
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
@@ -66,7 +92,7 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `Relationships reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
 
-      await page.getByRole('button', { name: 'Everything', exact: true }).click();
+      await selectKitTopBarTab(page, 'Everything');
       const grid = page.getByRole('grid', { name: 'Everything results' });
       await expect(grid.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Everything ${theme}/${density}`);
@@ -83,7 +109,7 @@ for (const theme of ['light', 'dark'] as const) {
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
       for (const workspace of ['Directory', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings']) {
-        await page.getByRole('button', { name: workspace, exact: true }).click();
+        await selectKitTopBarTab(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
         if (workspace === 'Files') {

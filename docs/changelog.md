@@ -14,7 +14,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.17.0. Version 2.14.0 also replaces the CardDAV
+  current unreleased API schema is 2.19.0. Version 2.14.0 also replaces the CardDAV
   publication and conflict response shapes with bounded projections that
   omit raw vCards and resource hrefs. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,

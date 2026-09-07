@@ -57,6 +57,42 @@ func TestDocumentExtractionProfileRequiresExactConsent(t *testing.T) {
 	require.ErrorContains(err, "does not match immutable profile")
 }
 
+func TestCurrentDocumentIndexStatusScopeUsesOnlySelectedDurableProfile(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	_, _, err := f.Store.GetCurrentDocumentIndexStatusScope(t.Context())
+	require.ErrorIs(err, store.ErrDocumentIndexStatusScopeUnavailable)
+	fingerprint := strings.Repeat("9", 64)
+	profile := store.DocumentExtractionProfile{
+		ID: "profile-" + fingerprint, Fingerprint: fingerprint,
+		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
+		Region: "eu", Model: "mistral-ocr-4-0",
+		RetentionPosture: "standard", TrainingPosture: "opted-out",
+		AllowedMediaTypes: []string{"text/csv", "application/pdf", "text/csv"},
+		PolicyJSON:        []byte(`{"normalization":1,"chunking":1}`),
+	}
+	_, err = f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+
+	profileID, mediaTypes, err := f.Store.GetCurrentDocumentIndexStatusScope(t.Context())
+
+	require.NoError(err)
+	assert.Equal(profile.ID, profileID)
+	assert.Equal([]string{"application/pdf", "text/csv"}, mediaTypes)
+	retired, err := f.Store.RetireDocumentExtractionProfile(t.Context(), profile.ID)
+	require.NoError(err)
+	require.True(retired)
+	_, _, err = f.Store.GetCurrentDocumentIndexStatusScope(t.Context())
+	require.ErrorIs(err, store.ErrDocumentIndexStatusScopeUnavailable)
+}
+
 func TestReconcileDocumentOccurrenceUsesTrustedCASAndLiveRole(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

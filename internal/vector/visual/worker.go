@@ -22,6 +22,11 @@ type WorkerConfig struct {
 }
 
 type WorkerResult struct {
+	Attempted int64
+	Succeeded int64
+	Failed    int64
+	Skipped   int64
+
 	ProviderRequests int64
 	Published        int64
 	Retryable        int64
@@ -80,8 +85,8 @@ func NewWorker(
 // Run publishes already-claimed reconciliation work. Every provider and vector
 // operation happens outside archive transactions. Exact claim and source-fence
 // checks remain in the archive prepare/commit operations.
-func (w *Worker) Run(ctx context.Context, work []WorkItem) (WorkerResult, error) {
-	result := WorkerResult{}
+func (w *Worker) Run(ctx context.Context, work []WorkItem) (result WorkerResult, runErr error) {
+	defer result.finalizeOutcomes()
 	for start := 0; start < len(work); start += w.config.MaxBatchItems {
 		end := min(start+w.config.MaxBatchItems, len(work))
 		if err := w.runBatch(ctx, work[start:end], &result); err != nil {
@@ -89,6 +94,16 @@ func (w *Worker) Run(ctx context.Context, work []WorkItem) (WorkerResult, error)
 		}
 	}
 	return result, nil
+}
+
+// finalizeOutcomes projects durable attachment decisions, not provider calls
+// or batch splits. Obsolete work is a skipped final decision and participates
+// in the visual attempted invariant.
+func (r *WorkerResult) finalizeOutcomes() {
+	r.Succeeded = r.Published
+	r.Failed = r.Retryable + r.Terminal
+	r.Skipped = r.Obsolete
+	r.Attempted = r.Succeeded + r.Failed + r.Skipped
 }
 
 func (w *Worker) runBatch(

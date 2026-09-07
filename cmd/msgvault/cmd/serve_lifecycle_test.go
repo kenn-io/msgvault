@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,60 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestNativeOperationRecoveryRunsBeforeDaemonServices(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "startup-recovery@example.test")
+	require.NoError(err)
+	_, err = st.StartSync(source.ID, "incremental")
+	require.NoError(err)
+	_, err = st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
+		Trigger: store.CardDAVSyncTriggerScheduled,
+	})
+	require.NoError(err)
+	ledgers := []struct {
+		kind  operations.Kind
+		table string
+	}{
+		{operations.KindMessageEmbedding, "message_embedding_runs"},
+		{operations.KindPersonEmbedding, "person_embedding_runs"},
+		{operations.KindDocumentExtraction, "document_extraction_runs"},
+		{operations.KindDocumentEmbedding, "document_embedding_runs"},
+		{operations.KindVisualEmbedding, "visual_embedding_runs"},
+	}
+	for index, ledger := range ledgers {
+		_, err := st.BeginOperationInvocation(t.Context(), operations.InvocationSpec{
+			Kind: ledger.kind, Key: "startup:" + strconv.Itoa(index),
+			Trigger: operations.TriggerScheduled, StartedAt: time.Now().UTC(),
+		})
+		require.NoError(err)
+	}
+
+	require.NoError(recoverNativeOperationRunsAtStartup(
+		t.Context(), st, slog.New(slog.DiscardHandler)))
+	require.NoError(recoverNativeOperationRunsAtStartup(
+		t.Context(), st, slog.New(slog.DiscardHandler)), "startup recovery must be idempotent")
+
+	for _, table := range append([]string{"sync_runs", "carddav_sync_runs"},
+		[]string{"message_embedding_runs", "person_embedding_runs", "document_extraction_runs",
+			"document_embedding_runs", "visual_embedding_runs"}...) {
+		stateColumn := "state"
+		running := "running"
+		if table == "sync_runs" {
+			stateColumn = "status"
+		}
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(),
+			st.Rebind("SELECT COUNT(*) FROM "+table+" WHERE "+stateColumn+" = ?"), running).Scan(&count))
+		assert.Zero(count, table)
+	}
+}
 
 func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
 	assert := assert.New(t)

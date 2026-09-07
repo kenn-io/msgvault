@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -259,15 +260,22 @@ func TestRunContextWorkerUntilConverged_RequiresProgress(t *testing.T) {
 		{Claimed: 64, Succeeded: 64, Contextual: &embed.ContextConvergence{}},
 		{Claimed: 36, Succeeded: 36, Contextual: &embed.ContextConvergence{Converged: true}},
 	}}
-	total, err := runContextWorkerUntilConverged(t.Context(), worker, vector.GenerationID(1))
+	total, err := runContextWorkerUntilConverged(
+		t.Context(), worker, vector.GenerationID(1), "contextual-eval:test",
+	)
 	require.NoError(t, err)
 	assert.Equal(t, 100, total.Claimed)
 	assert.Equal(t, 100, total.Succeeded)
 	assert.True(t, total.Contextual.Converged)
+	require.Len(t, worker.scopes, 2)
+	assert.Equal(t, "contextual-eval:test:pass:1", worker.scopes[0].Key)
+	assert.Equal(t, "contextual-eval:test:pass:2", worker.scopes[1].Key)
+	assert.Equal(t, operations.TriggerManual, worker.scopes[0].Trigger)
+	assert.False(t, worker.scopes[0].StartedAt.IsZero())
 
 	_, err = runContextWorkerUntilConverged(t.Context(), &scriptedContextWorker{
 		results: []embed.RunResult{{Contextual: &embed.ContextConvergence{}}},
-	}, vector.GenerationID(1))
+	}, vector.GenerationID(1), "contextual-eval:test-stalled")
 	require.ErrorContains(t, err, "made no progress")
 }
 
@@ -1392,10 +1400,14 @@ type batchRecordingEmbedder struct {
 
 type scriptedContextWorker struct {
 	results []embed.RunResult
+	scopes  []operations.PassScope
 	next    int
 }
 
-func (w *scriptedContextWorker) RunOnce(context.Context, vector.GenerationID) (embed.RunResult, error) {
+func (w *scriptedContextWorker) RunOnce(
+	_ context.Context, _ vector.GenerationID, scope operations.PassScope,
+) (embed.RunResult, error) {
+	w.scopes = append(w.scopes, scope)
 	if w.next >= len(w.results) {
 		return embed.RunResult{Contextual: &embed.ContextConvergence{}}, nil
 	}

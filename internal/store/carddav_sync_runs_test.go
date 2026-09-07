@@ -3,6 +3,7 @@ package store_test
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -172,7 +173,7 @@ func TestCardDAVSyncRunRejectsInvalidInputAndTransitions(t *testing.T) {
 	}
 }
 
-func TestCardDAVSyncRunPaginationAndRetention(t *testing.T) {
+func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -191,7 +192,7 @@ func TestCardDAVSyncRunPaginationAndRetention(t *testing.T) {
 	var terminalCount, activeCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state <> 'running'`)).Scan(&terminalCount))
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state = 'running'`)).Scan(&activeCount))
-	assert.Equal(100, terminalCount)
+	assert.Equal(103, terminalCount)
 	assert.Equal(1, activeCount)
 
 	page1, err := st.ListCardDAVSyncRunsContext(ctx, 2, nil)
@@ -207,8 +208,8 @@ func TestCardDAVSyncRunPaginationAndRetention(t *testing.T) {
 	assert.Equal(ids[len(ids)-1], page1[1].ID)
 
 	wantIDs := []int64{active.ID}
-	for i := len(ids) - 1; i >= 3; i-- {
-		wantIDs = append(wantIDs, ids[i])
+	for _, id := range slices.Backward(ids) {
+		wantIDs = append(wantIDs, id)
 	}
 	gotIDs := make([]int64, 0, len(wantIDs))
 	var cursor *int64
@@ -290,6 +291,28 @@ func TestCardDAVSyncRunRecoveryAndSafePublicErrors(t *testing.T) {
 		State: store.CardDAVSyncRunFailed, ErrorCode: "remote_failure",
 	})
 	require.ErrorIs(err, store.ErrCardDAVSyncRunTransition)
+}
+
+func TestCardDAVSyncRunRecoveryUsesDurableUsefulCounters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
+		Trigger: store.CardDAVSyncTriggerScheduled,
+	})
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+		`UPDATE carddav_sync_runs SET books = 1, updated = 2 WHERE id = ?`), run.ID)
+	require.NoError(err)
+
+	recovered, err := st.RecoverCardDAVSyncRunsContext(t.Context())
+	require.NoError(err)
+	assert.Equal(int64(1), recovered)
+	got, err := st.ListCardDAVSyncRunsContext(t.Context(), 1, nil)
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal(store.CardDAVSyncRunPartial, got[0].State)
+	assert.Equal("daemon_restarted", got[0].ErrorCode)
 }
 
 func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {

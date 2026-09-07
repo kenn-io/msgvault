@@ -50,8 +50,9 @@ func TestWorker_SourceScopeSkipsOutOfScopeMessages(t *testing.T) {
 		Client:     f.FakeClient,
 		BatchSize:  1,
 		BuildScope: vector.NewBuildScope(nil, []int64{2}),
+		Recorder:   f.Recorder,
 	})
-	res, err := w.RunOnce(context.Background(), f.BuildingGen)
+	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 	assert.Equal(2, res.Claimed, "only source 2's messages are claimed")
 	assert.Equal(2, res.Succeeded, "only source 2's messages embed")
@@ -68,7 +69,7 @@ func TestWorker_SourceScopeSkipsOutOfScopeMessages(t *testing.T) {
 	}
 
 	// A second run finds no remaining work for the scoped generation.
-	res, err = w.RunOnce(context.Background(), f.BuildingGen)
+	res, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce again")
 	assert.Equal(0, res.Claimed, "scoped drain is complete")
 }

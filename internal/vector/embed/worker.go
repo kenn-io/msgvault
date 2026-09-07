@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -104,6 +105,8 @@ type WorkerDeps struct {
 	// the worker goroutine; rate-limit inside the callback if output is
 	// expensive.
 	Progress func(ProgressReport)
+	// Recorder owns archive-side public history for each bounded worker pass.
+	Recorder operations.Recorder
 }
 
 // ProgressReport captures RunOnce progress after a set of messages has
@@ -269,8 +272,10 @@ func (w *Worker) finalizeEmbedRun(ctx context.Context, runID int64, res RunResul
 // MaxConsecutiveFailures, so a persistently misconfigured embedder (bad
 // credentials, unreachable endpoint) surfaces quickly instead of looping
 // forever. A successful batch resets the failure counter.
-func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (res RunResult, retErr error) {
-	return w.run(ctx, gen, false)
+func (w *Worker) RunOnce(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (res RunResult, retErr error) {
+	return w.runOperationPass(ctx, gen, scope, false)
 }
 
 // RunBackstop performs a full-scan pass that ignores the per-gen
@@ -281,11 +286,35 @@ func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (res RunR
 // scan/embed/stamp path with the scan cursor pinned at 0. Idempotent:
 // already-covered rows are skipped by the scan predicate, so re-running it
 // is cheap once the corpus is embedded.
-func (w *Worker) RunBackstop(ctx context.Context, gen vector.GenerationID) (res RunResult, retErr error) {
-	return w.run(ctx, gen, true)
+func (w *Worker) RunBackstop(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope,
+) (res RunResult, retErr error) {
+	return w.runOperationPass(ctx, gen, scope, true)
 }
 
-func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool) (res RunResult, retErr error) {
+func (w *Worker) runOperationPass(
+	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
+) (res RunResult, retErr error) {
+	pass, terminal, err := beginOperationPass(
+		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
+	)
+	if err != nil {
+		return res, err
+	}
+	if terminal != nil {
+		return runResultFromOperationRun(terminal)
+	}
+	outcomes := newMessagePassOutcomes(pass)
+	defer func() {
+		retErr = operationRunError(retErr)
+		pass.finish(ctx, outcomes.counters(true), retErr)
+	}()
+	return w.run(ctx, gen, backstop, outcomes)
+}
+
+func (w *Worker) run(
+	ctx context.Context, gen vector.GenerationID, backstop bool, outcomes *messagePassOutcomes,
+) (res RunResult, retErr error) {
 	consecutiveFailures := 0
 	var lastErr error
 	completedRows := 0
@@ -343,6 +372,7 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			return res, nil
 		}
 		res.Claimed += len(ids)
+		outcomes.attempt(ids)
 		// batchMax is the highest id in this scan slice; once the batch is
 		// stamped these rows drop out of the predicate, but advancing the
 		// cursor past them avoids re-scanning the covered prefix.
@@ -363,7 +393,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				// unstamped (endpoint-wide failure can't be ruled out).
 				w.deps.Log.Info("embed: downshifting to BatchSize=1 to drain failing batch",
 					"gen", gen, "batch_size", len(ids))
-				embedded, embeddedOK, stamped, safeAdvanceID, drainErr := w.downshiftDrain(ctx, gen, ids, &res, &completedRows)
+				embedded, embeddedOK, stamped, safeAdvanceID, drainErr := w.downshiftDrain(
+					ctx, gen, ids, &res, &completedRows, outcomes,
+				)
 				if w.stopIfYielded(ctx, gen) {
 					return res, nil
 				}
@@ -409,9 +441,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 
 				if drainErr != nil {
 					lastErr = drainErr
-					// A retired generation is a benign drop, never a hard abort.
+					// A retired generation cancels this pass rather than retrying it.
 					if errors.Is(drainErr, vector.ErrGenerationRetired) {
-						return res, nil
+						return res, drainErr
 					}
 					if !errors.Is(drainErr, ErrPermanent4xx) {
 						return res, fmt.Errorf("downshift drain: %w", drainErr)
@@ -443,6 +475,7 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			continue
 		}
 		res.Truncated += eb.truncated
+		outcomes.addTruncated(eb.truncated)
 
 		// Skip-mark messages that produced no embeddable content (missing
 		// from the main DB, or empty after preprocess). Stamping embed_gen
@@ -477,6 +510,8 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				w.logCASMisses(gen, missed)
 				// Count only rows actually stamped (a CAS miss was not stamped).
 				stampedRows := len(skipIDs) - len(missed)
+				outcomes.succeed(idsWithout(skipIDs, missed))
+				outcomes.checkpoint(ctx)
 				completedRows += stampedRows
 				w.reportProgress(completedRows, stampedRows, 0, time.Since(batchStart))
 			}
@@ -493,9 +528,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				// the ErrGenerationRetired contract this is a benign "stop"
 				// signal, not a hard failure: re-embedding would re-fail
 				// identically. Do NOT stamp embed_gen (the retired gen is
-				// going away) and end the run cleanly.
+				// going away); the operation boundary records cancellation.
 				w.deps.Log.Info("embed: generation retired mid-run; stopping", "gen", gen)
-				return res, nil
+				return res, err
 			}
 			if w.stopIfYielded(ctx, gen) {
 				return res, nil
@@ -557,6 +592,8 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 		}
 		missed = append(missed, skipMissed...)
 		w.logCASMisses(gen, missed)
+		outcomes.succeed(idsWithout(append(append([]int64(nil), eb.embeddedIDs...), skipIDs...), missed))
+		outcomes.checkpoint(ctx)
 
 		if len(eb.missing) > 0 {
 			w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
@@ -903,6 +940,7 @@ func (w *Worker) downshiftDrain(
 	ids []int64,
 	res *RunResult,
 	completedRows *int,
+	outcomes *messagePassOutcomes,
 ) (embedded int, embeddedOK int, stamped int, safeAdvanceID int64, err error) {
 	var deferredDrops []int64
 	var lastDeferredErr error
@@ -970,6 +1008,8 @@ func (w *Worker) downshiftDrain(
 				}
 				w.logCASMisses(gen, missed)
 				stampedSkip := len(skip) - len(missed)
+				outcomes.succeed(idsWithout(skip, missed))
+				outcomes.checkpoint(ctx)
 				stamped += stampedSkip
 				*completedRows += stampedSkip
 				w.reportProgress(*completedRows, stampedSkip, 0, time.Since(batchStart))
@@ -1024,6 +1064,9 @@ func (w *Worker) downshiftDrain(
 		// not count as embedded/stamped here.
 		stampedHere := len(eb.embeddedIDs) - len(missed)
 		res.Truncated += eb.truncated
+		outcomes.addTruncated(eb.truncated)
+		outcomes.succeed(idsWithout(eb.embeddedIDs, missed))
+		outcomes.checkpoint(ctx)
 		embedded += stampedHere
 		stamped += stampedHere
 		*completedRows += stampedHere
@@ -1086,6 +1129,8 @@ func (w *Worker) downshiftDrain(
 		}
 		w.logCASMisses(gen, missed)
 		stampedDrops := len(deferredDrops) - len(missed)
+		outcomes.fail(idsWithout(deferredDrops, missed))
+		outcomes.checkpoint(ctx)
 		stamped += stampedDrops
 		*completedRows += stampedDrops
 		w.reportProgress(*completedRows, stampedDrops, 0, time.Since(dropStart))

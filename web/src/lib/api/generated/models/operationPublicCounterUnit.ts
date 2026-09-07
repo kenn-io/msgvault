@@ -6,9 +6,12 @@ export type OperationPublicCounterUnit =
   (typeof OperationPublicCounterUnit)[keyof typeof OperationPublicCounterUnit];
 
 export const OperationPublicCounterUnit = {
+  attachments: "attachments",
+  books: "books",
+  chunks: "chunks",
+  contacts: "contacts",
+  documents: "documents",
   messages: "messages",
   people: "people",
   writes: "writes",
-  books: "books",
-  contacts: "contacts",
 } as const;

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -62,9 +63,9 @@ func (s *Server) SetVisualSearch(service *visual.SearchService) {
 }
 
 func (s *Server) SetVisualOperations(
-	build func(context.Context) error,
-	run func(context.Context) error,
-	retry func(context.Context, int64, string) error,
+	build func(context.Context, operations.PassScope) error,
+	run func(context.Context, operations.PassScope) error,
+	retry func(context.Context, operations.PassScope, int64, string) error,
 	status func(context.Context, bool) (visual.Status, error),
 	retire func(context.Context) error,
 ) {

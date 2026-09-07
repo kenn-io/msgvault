@@ -6,15 +6,21 @@ export type OperationPublicCounterName =
   (typeof OperationPublicCounterName)[keyof typeof OperationPublicCounterName];
 
 export const OperationPublicCounterName = {
-  processed: "processed",
   added: "added",
-  updated: "updated",
-  item_errors: "item_errors",
   attempted: "attempted",
-  succeeded: "succeeded",
-  failed: "failed",
-  projected_writes: "projected_writes",
   books: "books",
   created: "created",
+  failed: "failed",
+  identity_rejected: "identity_rejected",
+  item_errors: "item_errors",
+  processed: "processed",
+  projected_writes: "projected_writes",
   removed: "removed",
+  requested: "requested",
+  skipped: "skipped",
+  started: "started",
+  succeeded: "succeeded",
+  suppressed: "suppressed",
+  truncated: "truncated",
+  updated: "updated",
 } as const;

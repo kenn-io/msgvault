@@ -6,6 +6,24 @@ import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
 describe('CardDAVOperations', () => {
+  it('opens normalized CardDAV operation history through its shell callback', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ configured: false, available: false, credential_configured: false, enabled: false, scheduled: false, schedule: '' });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      return Response.json({ runs: [] });
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    const onOpenOperations = vi.fn();
+    render(CardDAVOperations, { controller, onOpenOperations });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View CardDAV operations' }));
+
+    expect(onOpenOperations).toHaveBeenCalledOnce();
+    controller.destroy();
+  });
+
   it('renders independent status, roles, history and never exposes a book URL marker', async () => {
     const forbidden = 'forbidden-url-marker.example.test/private';
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

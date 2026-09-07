@@ -22,7 +22,10 @@ const currentState: ExploreURLState = {
   activeRow: null, selectedRow: null, inspectorPinned: true, inspectorWidth: 380,
   conversationAnchor: null, scrollAnchor: null,
   relationshipFacet: 'people', relationshipTarget: null,
-  relationshipShowAll: false, relationshipFiles: false
+  relationshipShowAll: false, relationshipFiles: false,
+  operationLane: '', operationKind: '', operationState: '',
+  operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '',
+  settingsAuthority: ''
 };
 
 function savedView(overrides: Record<string, unknown> = {}) {

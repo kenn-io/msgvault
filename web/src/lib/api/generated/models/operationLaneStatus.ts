@@ -19,5 +19,4 @@ export interface OperationLaneStatus {
   related_status?: OperationLaneStatusRelatedStatus;
   supported_actions: OperationLaneStatusSupportedActionsItem[];
   unavailable_code?: string;
-  [key: string]: unknown;
 }

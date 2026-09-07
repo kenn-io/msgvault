@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
@@ -24,6 +25,8 @@ func nextDocumentVectorWorkerOwner() string {
 type checkpointingDocumentVectorWorker struct {
 	worker       vectordocument.WorkerRunner
 	checkpointer documentVectorBuildCheckpointer
+	recorder     operations.Recorder
+	scope        operations.PassScope
 	fingerprint  string
 	now          func() time.Time
 }
@@ -32,8 +35,24 @@ type documentVectorBuildCheckpointer interface {
 	CheckpointDocumentVectorBuildForFingerprint(ctx context.Context, generationID int64, fingerprint string, afterChunkID int64, exhausted bool, delta store.DocumentVectorUsageDelta, now time.Time) error
 }
 
-func (w checkpointingDocumentVectorWorker) Run(ctx context.Context, generationID vectordocument.GenerationID, limit int) (vectordocument.RunResult, error) {
-	result, runErr := w.worker.Run(ctx, generationID, limit)
+func (w checkpointingDocumentVectorWorker) Run(
+	ctx context.Context, generationID vectordocument.GenerationID, limit int,
+) (result vectordocument.RunResult, runErr error) {
+	pass, terminal, err := beginCommandOperationPass(
+		ctx, w.recorder, operations.KindDocumentEmbedding, w.scope,
+	)
+	if err != nil {
+		return result, err
+	}
+	if terminal != nil {
+		return documentVectorRunResultFromOperationRun(terminal)
+	}
+	defer func() {
+		counters := documentEmbeddingCounters(result)
+		pass.checkpoint(ctx, counters)
+		pass.finish(ctx, counters, runErr)
+	}()
+	result, runErr = w.worker.Run(ctx, generationID, limit)
 	if !result.Exhausted && result.AfterGenerationID == 0 {
 		return result, runErr
 	}
@@ -45,6 +64,26 @@ func (w checkpointingDocumentVectorWorker) Run(ctx context.Context, generationID
 		ctx, int64(generationID), w.fingerprint, result.AfterChunkID, result.Exhausted, delta, w.now(),
 	)
 	return result, errors.Join(runErr, checkpointErr)
+}
+
+func documentEmbeddingCounters(result vectordocument.RunResult) operations.InvocationCounters {
+	return operations.InvocationCounters{
+		Attempted: int64(result.Attempted), Succeeded: int64(result.Succeeded), Failed: int64(result.Failed),
+	}
+}
+
+func documentVectorRunResultFromOperationRun(run *operations.Run) (vectordocument.RunResult, error) {
+	if run == nil {
+		return vectordocument.RunResult{}, errors.New("document embedding operation outcome is required")
+	}
+	counters, err := operations.InvocationCountersFromPublic(run.ID.Kind(), run.Counters)
+	if err != nil {
+		return vectordocument.RunResult{}, err
+	}
+	return vectordocument.RunResult{
+		Attempted: int(counters.Attempted), Succeeded: int(counters.Succeeded), Failed: int(counters.Failed),
+		Published: int(counters.Succeeded),
+	}, operations.TerminalReplayOutcome(run)
 }
 
 func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store, generationID int64, limit int) (vectordocument.ReconcileResult, error) {
@@ -74,7 +113,8 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 		return vectordocument.ReconcileResult{}, errors.New("document vector runtime is unavailable")
 	}
 	defer func() { _ = vf.Close() }()
-	return runDocumentVectorWithFeatures(ctx, st, vf, generationID, limit)
+	return runDocumentVectorWithFeatures(ctx, st, vf, generationID, limit,
+		newOperationPassScope("cli:document-vector", operations.TriggerManual))
 }
 
 func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, mainPath string) (vectordocument.Backend, func() error, error) {
@@ -96,7 +136,10 @@ func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, main
 	return backend.DocumentBackend(), backend.Close, nil
 }
 
-func runDocumentVectorWithFeatures(ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int) (vectordocument.ReconcileResult, error) {
+func runDocumentVectorWithFeatures(
+	ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int,
+	scope operations.PassScope,
+) (vectordocument.ReconcileResult, error) {
 	limit = min(limit, max(1, vf.Cfg.Embeddings.BatchSize))
 	generation, err := st.GetDocumentVectorGeneration(ctx, generationID)
 	if err != nil {
@@ -121,7 +164,8 @@ func runDocumentVectorWithFeatures(ctx context.Context, st *store.Store, vf *vec
 		AfterGenerationID: afterGenerationID, AfterChunkID: cursor, Now: now,
 	})
 	checkpointed := checkpointingDocumentVectorWorker{
-		worker: worker, checkpointer: st, fingerprint: generation.Fingerprint, now: now,
+		worker: worker, checkpointer: st, recorder: st, scope: scope,
+		fingerprint: generation.Fingerprint, now: now,
 	}
 	reconciler := vectordocument.NewReconciler(vectordocument.ReconcilerDeps{
 		Ledger: st, Worker: checkpointed, Backend: vf.DocumentBackend, Now: now,
@@ -136,6 +180,7 @@ func runScheduledDocumentVectorGeneration(ctx context.Context, st *store.Store, 
 }
 
 func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.Store, vf *vectorFeatures, limit int) error {
+	scope := newOperationPassScope("scheduled:document-vector", operations.TriggerScheduled)
 	retired, err := st.GetOldestRetiredDocumentVectorGeneration(ctx)
 	if err != nil {
 		return err
@@ -178,7 +223,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		}
 		// Reconcile only the obsolete generation this pass. The next bounded
 		// run creates the desired generation without exceeding one cleanup page.
-		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit)
+		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
 		return reconcileErr
 	}
 	if building == nil {
@@ -199,7 +244,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 				return statusErr
 			}
 			if status.CleanupPending > 0 {
-				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit)
+				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope)
 				return reconcileErr
 			}
 			coverage, coverageErr := st.GetDocumentVectorCoverage(ctx, active.ID)
@@ -216,6 +261,6 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 			building = &generation
 		}
 	}
-	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit)
+	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
 	return err
 }

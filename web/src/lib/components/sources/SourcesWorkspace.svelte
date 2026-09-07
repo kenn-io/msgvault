@@ -20,10 +20,12 @@
     client,
     maxAwaitingPolls = 6,
     now = () => new Date(),
+    onOpenOperations = () => undefined,
   }: {
     client: APIClient;
     maxAwaitingPolls?: number;
     now?: () => Date;
+    onOpenOperations?: () => void;
   } = $props();
   let sources = $state<Source[]>([]);
   let loading = $state(true);
@@ -250,7 +252,10 @@
       <p>Archive workspace</p>
       <h1>Sources</h1>
     </div>
-    <span>Status and incremental sync</span>
+    <div class="header-actions">
+      <span>Status and incremental sync</span>
+      <Button size="sm" surface="soft" label="View source operations" onclick={onOpenOperations} />
+    </div>
   </header>
   {#if statusError}<p class="notice notice--error" role="alert">{statusError}</p>{/if}
   {#if triggerError}<p class="notice notice--error" role="alert">{triggerError}</p>{/if}
@@ -381,6 +386,11 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
   }
   header p,
   h1 {

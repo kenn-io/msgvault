@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
+import { createRawSnippet } from 'svelte';
 
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
@@ -16,6 +17,50 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
     search_provenance: {},
     ...overrides
   };
+}
+
+const OPERATION_RUN = `op2.${'a'.repeat(32)}.syntheticShellRun`;
+
+function operationSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    id: OPERATION_RUN,
+    kind: 'source_sync',
+    lane: 'messages',
+    trigger: 'manual',
+    state: 'succeeded',
+    started_at: '2026-08-30T10:00:00Z',
+    finished_at: '2026-08-30T10:01:00Z',
+    counters: [{ name: 'processed', unit: 'messages', value: 3 }],
+    ...overrides
+  };
+}
+
+function documentIndexStatusResponse() {
+  return {
+    status: {
+      profile_exists: true, profile_enabled: true, exact_consent: true,
+      ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
+      terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2
+    }
+  };
+}
+
+function documentVectorStatusResponse() {
+  return { enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } } };
+}
+
+function visualAttachmentStatusResponse() {
+  return {
+    current: 8, eligible: 10, retryable: 1, terminal: 0, unavailable: 1,
+    active_leases: 0, journal_lag: 2, reconciliation_complete: false
+  };
+}
+
+function operationAuthorityResponse(path: string): Response | undefined {
+  if (path.endsWith('/documents/status/current')) return Response.json(documentIndexStatusResponse());
+  if (path.endsWith('/documents/vectors/status')) return Response.json(documentVectorStatusResponse());
+  if (path.endsWith('/multimodal/status')) return Response.json(visualAttachmentStatusResponse());
+  return undefined;
 }
 
 describe('AppShell', () => {
@@ -258,6 +303,8 @@ describe('AppShell', () => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
       if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
       if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
       if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
       return Response.json(exploreResponse());
     });
@@ -267,6 +314,7 @@ describe('AppShell', () => {
     for (const [tab, label, workspace] of [
       ['Saved Views', 'Saved Views', 'saved_views'],
       ['Sources', 'Sources', 'sources'],
+      ['Operations', 'Operations', 'operations'],
       ['Deletions', 'Deletions', 'deletions']
     ] as const) {
       await fireEvent.click(screen.getByRole('button', { name: tab }));
@@ -289,11 +337,305 @@ describe('AppShell', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
-      'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings'
+      'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved Views', 'Sources', 'Operations', 'Deletions', 'Settings'
     ]);
     expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Domains' })).toBeNull();
 
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('restores Operations filters and detail through popstate and routes related authority through shell state', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'operations', operationLane: 'messages', operationKind: 'source_sync',
+      operationState: 'succeeded', operationRunID: OPERATION_RUN
+    }))}`);
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path === '/api/v1/operations/runs') return Response.json({
+        runs: [operationSummary()], unavailable_kinds: [], membership_revision: 1
+      });
+      if (path.startsWith('/api/v1/operations/runs/')) return Response.json({
+        ...operationSummary(), related_status: 'listSourceStatus', supported_actions: []
+      });
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(fetchFn), state, enabled: false, archiveContextKey: 'archive-a'
+    });
+
+    expect(await screen.findByRole('main', { name: 'Operations' })).toBeDefined();
+    expect(await screen.findByRole('region', { name: 'Operation run detail' })).toBeDefined();
+    const firstHistory = requests.find((request) => new URL(request.url).pathname === '/api/v1/operations/runs')!;
+    expect(Object.fromEntries(new URL(firstHistory.url).searchParams)).toMatchObject({
+      lane: 'messages', kind: 'source_sync', state: 'succeeded'
+    });
+
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'operations', operationLane: 'documents', operationKind: 'document_extraction',
+      operationState: 'failed', operationRunID: null
+    }))}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(requests.filter((request) =>
+      new URL(request.url).pathname === '/api/v1/operations/runs'
+    )).toHaveLength(2));
+    const restored = requests.filter((request) => new URL(request.url).pathname === '/api/v1/operations/runs')[1]!;
+    expect(Object.fromEntries(new URL(restored.url).searchParams)).toMatchObject({
+      lane: 'documents', kind: 'document_extraction', state: 'failed'
+    });
+    expect(state.current.operationRunID).toBeNull();
+
+    state.commitNavigation({
+      operationLane: 'messages', operationKind: 'source_sync', operationState: 'succeeded',
+      operationRunID: null
+    });
+    await waitFor(() => expect(requests.filter((request) =>
+      new URL(request.url).pathname === '/api/v1/operations/runs'
+    )).toHaveLength(3));
+    state.commitNavigation({ operationRunID: OPERATION_RUN });
+    expect(await screen.findByRole('button', { name: 'Open Sources status' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Sources status' }));
+    expect(await screen.findByRole('main', { name: 'Sources' })).toBeDefined();
+    expect(state.current.workspace).toBe('sources');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('opens source history from Sources with the exact normalized lane and kind', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'sources' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'View source operations' }));
+
+    expect(state.current).toMatchObject({
+      workspace: 'operations', operationLane: 'messages', operationKind: 'source_sync'
+    });
+    expect(await screen.findByRole('main', { name: 'Operations' })).toBeDefined();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it.each([
+    ['document_extraction', 'documents', 'Open Document index status', 'getDocumentIndexStatus',
+      'Document index status', '4 of 5 owners ready', '/api/v1/documents/status/current'],
+    ['document_embedding', 'documents', 'Open Document vector status', 'getDocumentVectorStatus',
+      'Document vector status', '7 of 9 chunks ready', '/api/v1/documents/vectors/status'],
+    ['visual_embedding', 'visual_attachments', 'Open Visual attachment status', 'getVisualAttachmentStatus',
+      'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
+  ] as const)('routes %s to its live status authority across Back and Forward', async (
+    kind, lane, linkName, authority, statusName, expectedCopy, expectedPath
+  ) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+    const requests: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      requests.push(path);
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{
+        kind, lane, configured: true, history_availability: 'available',
+        related_status: authority,
+        supported_actions: []
+      }] });
+      if (path.endsWith('/operations/runs')) return Response.json({
+        runs: [], unavailable_kinds: [], membership_revision: 1
+      });
+      const status = operationAuthorityResponse(path);
+      if (status) return status;
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: linkName }));
+    expect(await screen.findByRole('region', { name: statusName })).toBeDefined();
+    expect(await screen.findByText(expectedCopy)).toBeDefined();
+    expect(state.current).toMatchObject({ workspace: 'operations', operationStatus: authority });
+    expect(requests).toContain(expectedPath);
+
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByRole('button', { name: linkName })).toBeDefined();
+    expect(state.current.operationStatus).toBe('');
+    window.history.forward();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByRole('region', { name: statusName })).toBeDefined();
+    expect(state.current.operationStatus).toBe(authority);
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('opens document Settings without a live status request when Operations proves it is unconfigured', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+    const requests: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      requests.push(path);
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{
+        kind: 'document_extraction', lane: 'documents', configured: false,
+        history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
+      }] });
+      if (path.endsWith('/operations/runs')) return Response.json({
+        runs: [], unavailable_kinds: [], membership_revision: 1
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document index status' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open document index settings' }));
+    expect(state.current).toMatchObject({ workspace: 'settings', settingsAuthority: 'document_index' });
+    expect(requests).not.toContain('/api/v1/documents/status/current');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it.each(['constructor', 'toString', '__proto__'] as const)(
+    'does not pass inherited Settings authority %s to the Settings workspace',
+    async (settingsAuthority) => {
+      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+        workspace: 'settings', settingsAuthority
+      }))}`);
+      const settingsTargets: unknown[] = [];
+      const settings = createRawSnippet<[unknown, (key: number) => void, unknown]>(
+        (_getRequest, _getConsumed, getTarget) => ({
+          render: () => '<main aria-label="Settings target fixture"></main>',
+          setup: () => { settingsTargets.push(getTarget?.()); }
+        })
+      );
+      const state = new ExploreState(window);
+      const rendered = render(AppShell, {
+        client: createAPIClient(vi.fn()), state, enabled: false, settings: settings as never
+      });
+
+      expect(await screen.findByRole('main', { name: 'Settings target fixture' })).toBeDefined();
+      expect(settingsTargets.at(-1)).toBeUndefined();
+      rendered.unmount();
+      state.destroy();
+    }
+  );
+
+  it('restores each live Operations status authority from history and reload', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [
+        {
+          kind: 'document_extraction', lane: 'documents', configured: true,
+          history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
+        },
+        {
+          kind: 'document_embedding', lane: 'documents', configured: true,
+          history_availability: 'available', related_status: 'getDocumentVectorStatus', supported_actions: []
+        }
+      ] });
+      if (path.endsWith('/operations/runs')) return Response.json({
+        runs: [], unavailable_kinds: [], membership_revision: 1
+      });
+      const status = operationAuthorityResponse(path);
+      if (status) return status;
+      return Response.json(exploreResponse());
+    });
+    let state = new ExploreState(window);
+    let rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document index status' }));
+    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to operations' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document vector status' }));
+    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
+
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByRole('button', { name: 'Open Document vector status' })).toBeDefined();
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
+
+    window.history.forward();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByRole('button', { name: 'Open Document vector status' })).toBeDefined();
+    window.history.forward();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
+
+    rendered.unmount();
+    state.destroy();
+    state = new ExploreState(window);
+    rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
+
+    const restoredNav = screen.getByRole('navigation', { name: 'Primary' });
+    await fireEvent.click(within(restoredNav).getByRole('button', { name: 'Everything' }));
+    await fireEvent.click(within(restoredNav).getByRole('button', { name: 'Settings' }));
+    expect(state.current.operationStatus).toBe('');
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('clears a prior authority when nested Everything navigation opens generic Settings', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
+    const settingsTargets: unknown[] = [];
+    const settings = createRawSnippet<[unknown, (key: number) => void, unknown]>((_getRequest, _getConsumed, getTarget) => ({
+      render: () => '<main aria-label="Settings target fixture"></main>',
+      setup: () => { settingsTargets.push(getTarget?.()); }
+    }));
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{
+        kind: 'document_extraction', lane: 'documents', configured: true,
+        history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
+      }] });
+      if (path.endsWith('/operations/runs')) return Response.json({
+        runs: [], unavailable_kinds: [], membership_revision: 1
+      });
+      const status = operationAuthorityResponse(path);
+      if (status) return status;
+      if (path.endsWith('/integrations/tasks/status')) return Response.json({
+        state: 'disabled', message: 'Task integration is disabled.', project: ''
+      });
+      if (path.endsWith('/messages/42/tasks')) return Response.json({
+        state: 'disabled', complete: false, tasks: [], outbound_metadata: null
+      });
+      return Response.json(exploreResponse({ rows: [{ ...entry(1), anchor_message_id: 42 }], total_count: 1 }));
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, {
+      client: createAPIClient(fetchFn), state, settings: settings as never
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document index status' }));
+    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
+    expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await fireEvent.click(within(nav).getByRole('button', { name: 'Everything' }));
+    const row = (await screen.findByText('Synthetic subject 1')).closest('[role="row"]');
+    expect(row).not.toBeNull();
+    await fireEvent.click(row!);
+    await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+    await fireEvent.click(await screen.findByLabelText('Tasks for this message'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Settings' }));
+
+    expect(await screen.findByRole('main', { name: 'Settings target fixture' })).toBeDefined();
+    expect(settingsTargets.at(-1)).toBeUndefined();
     rendered.unmount();
     state.destroy();
   });
@@ -597,11 +939,20 @@ describe('AppShell', () => {
       if (path === '/api/v1/people/7/merges') return Response.json({ merges: [], limit: 100, offset: 0 });
       return Response.json(exploreResponse());
     });
+    const settingsHandoffs: Array<{ request: unknown; target: unknown }> = [];
+    const settings = createRawSnippet<[unknown, (key: number) => void, unknown]>((getRequest, _getConsumed, getTarget) => ({
+      render: () => '<main aria-label="CardDAV Settings fixture"></main>',
+      setup: () => { settingsHandoffs.push({ request: getRequest(), target: getTarget?.() }); }
+    }));
     const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+    const rendered = render(AppShell, {
+      client: createAPIClient(fetchFn), state, enabled: false, settings: settings as never
+    });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current.workspace).toBe('settings');
+    expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
+    expect(settingsHandoffs.at(-1)?.target).toBeUndefined();
     expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
       .toBe('Opening CardDAV conflict 41 in Settings.');
 

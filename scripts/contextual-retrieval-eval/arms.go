@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -362,14 +363,15 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 		return replayPathStats{}, replayTrace{}, err
 	}
 	policy := evaluationAssemblyPolicy()
-	var runOnce func(context.Context, vector.GenerationID) (embed.RunResult, error)
+	var runOnce func(context.Context, vector.GenerationID, operations.PassScope) (embed.RunResult, error)
 	if mode == "legacy_scheduled" {
 		legacy, ok := client.(embed.EmbeddingClient)
 		if !ok {
 			return replayPathStats{}, replayTrace{}, errors.New("legacy replay requires embedding client")
 		}
 		worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: backend.DB(), MainDB: st.DB(), Store: st,
-			Client: legacy, Preprocess: productionPreprocessConfig(), MaxInputChars: evaluationChunkRunes, BatchSize: 32})
+			Client: legacy, Preprocess: productionPreprocessConfig(), MaxInputChars: evaluationChunkRunes, BatchSize: 32,
+			Recorder: st})
 		runOnce = worker.RunOnce
 	} else {
 		semantic, ok := client.(embed.SemanticClient)
@@ -378,7 +380,7 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 		}
 		worker := embed.NewContextWorker(embed.ContextWorkerDeps{Backend: backend, Publisher: backend, Store: st,
 			Assembler: embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}},
-			Client:    semantic, ChangeBatchSize: 64, ReconcileBatchSize: 128})
+			Client:    semantic, ChangeBatchSize: 64, ReconcileBatchSize: 128, Recorder: st})
 		runOnce = worker.RunOnce
 	}
 	before := replayUsageSnapshot(client, observer)
@@ -389,7 +391,11 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 			if mode == "contextual_per_append_stress" {
 				continue
 			}
-			_, err := runOnce(ctx, generation)
+			scope := operations.PassScope{
+				Key:     fmt.Sprintf("contextual-eval:%s:tick:%d", mode, len(trace.Ticks)),
+				Trigger: operations.TriggerManual, StartedAt: time.Now().UTC(),
+			}
+			_, err := runOnce(ctx, generation, scope)
 			if err != nil {
 				return replayPathStats{}, replayTrace{}, err
 			}
@@ -410,7 +416,10 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 		}
 		trace.MessageIDs = append(trace.MessageIDs, messageID)
 		if mode == "contextual_per_append_stress" {
-			_, err := runOnce(ctx, generation)
+			scope := evaluationPassScope(fmt.Sprintf(
+				"contextual-eval:%s:append:%d", mode, len(trace.MessageIDs),
+			))
+			_, err := runOnce(ctx, generation, scope)
 			if err != nil {
 				return replayPathStats{}, replayTrace{}, err
 			}
@@ -1138,8 +1147,10 @@ func buildFreshArmIndex(ctx context.Context, dir, arm string, documents []ArmDoc
 		}
 		worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: backend.DB(), MainDB: mainStore.DB(),
 			Store: mainStore, Client: legacy, Preprocess: productionPreprocessConfig(),
-			MaxInputChars: config.Embeddings.MaxInputChars, BatchSize: config.Embeddings.BatchSize})
-		if _, err := worker.RunOnce(ctx, generation); err != nil {
+			MaxInputChars: config.Embeddings.MaxInputChars, BatchSize: config.Embeddings.BatchSize, Recorder: mainStore})
+		if _, err := worker.RunOnce(ctx, generation, evaluationPassScope(
+			fmt.Sprintf("contextual-eval:index:%s:pass:1", arm),
+		)); err != nil {
 			return fail(fmt.Errorf("run production O-prod worker: %w", err))
 		}
 		latencies = append(latencies, time.Since(workerStart))
@@ -1151,8 +1162,9 @@ func buildFreshArmIndex(ctx context.Context, dir, arm string, documents []ArmDoc
 		policy := evaluationAssemblyPolicy()
 		worker := embed.NewContextWorker(embed.ContextWorkerDeps{Backend: backend, Publisher: backend, Store: mainStore,
 			Assembler: embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}},
-			Client:    semantic, ChangeBatchSize: 64, ReconcileBatchSize: 128})
-		if _, err := runContextWorkerUntilConverged(ctx, worker, generation); err != nil {
+			Client:    semantic, ChangeBatchSize: 64, ReconcileBatchSize: 128, Recorder: mainStore})
+		if _, err := runContextWorkerUntilConverged(ctx, worker, generation,
+			"contextual-eval:index:"+arm); err != nil {
 			return fail(fmt.Errorf("run production N-c4 context worker: %w", err))
 		}
 		coverage, err := mainStore.ContextualConvergenceCounts(ctx, int64(generation))
@@ -1208,15 +1220,17 @@ func buildFreshArmIndex(ctx context.Context, dir, arm string, documents []ArmDoc
 }
 
 type contextWorkerRunner interface {
-	RunOnce(ctx context.Context, generation vector.GenerationID) (embed.RunResult, error)
+	RunOnce(ctx context.Context, generation vector.GenerationID, scope operations.PassScope) (embed.RunResult, error)
 }
 
 func runContextWorkerUntilConverged(
-	ctx context.Context, worker contextWorkerRunner, generation vector.GenerationID,
+	ctx context.Context, worker contextWorkerRunner, generation vector.GenerationID, scopePrefix string,
 ) (embed.RunResult, error) {
 	var total embed.RunResult
-	for {
-		pass, err := worker.RunOnce(ctx, generation)
+	for passIndex := 0; ; passIndex++ {
+		pass, err := worker.RunOnce(ctx, generation, evaluationPassScope(
+			fmt.Sprintf("%s:pass:%d", scopePrefix, passIndex+1),
+		))
 		if err != nil {
 			return total, err
 		}
@@ -1231,6 +1245,12 @@ func runContextWorkerUntilConverged(
 		if pass.Claimed == 0 && pass.Succeeded == 0 && pass.Failed == 0 && pass.Truncated == 0 {
 			return total, errors.New("production N-c4 worker made no progress before convergence")
 		}
+	}
+}
+
+func evaluationPassScope(key string) operations.PassScope {
+	return operations.PassScope{
+		Key: key, Trigger: operations.TriggerManual, StartedAt: time.Now().UTC(),
 	}
 }
 

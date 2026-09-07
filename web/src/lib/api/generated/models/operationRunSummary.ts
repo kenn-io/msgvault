@@ -18,5 +18,4 @@ export interface OperationRunSummary {
   started_at: string;
   state: OperationRunSummaryState;
   trigger?: OperationRunSummaryTrigger;
-  [key: string]: unknown;
 }

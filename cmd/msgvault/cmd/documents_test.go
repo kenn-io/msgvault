@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	internalmime "go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -617,6 +619,12 @@ func TestDocumentFullRebuildResumesDurableTargetSnapshot(t *testing.T) {
 	require.NoError(rebuild.ExecuteContext(t.Context()))
 	assert.Contains(rebuildOutput.String(), "1 current owner(s) remaining")
 	assert.Equal(3, processor.calls)
+	profile, err := configuredDocumentProfileOnly(manifestPath)
+	require.NoError(err)
+	privateRebuild, err := fixture.Store.GetActiveDocumentExtractionRebuild(
+		t.Context(), profile.ID, "original",
+	)
+	require.NoError(err)
 	status := newDocumentsCmd(deps)
 	var statusOutput bytes.Buffer
 	status.SetOut(&statusOutput)
@@ -637,13 +645,16 @@ func TestDocumentFullRebuildResumesDurableTargetSnapshot(t *testing.T) {
 	require.NoError(resume.ExecuteContext(t.Context()))
 	assert.Contains(resumeOutput.String(), "Full document rebuild completed")
 	assert.Equal(4, processor.calls)
-	profile, err := configuredDocumentProfileOnly(manifestPath)
-	require.NoError(err)
 	_, err = fixture.Store.GetActiveDocumentExtractionRebuild(t.Context(), profile.ID, "original")
 	require.ErrorIs(err, store.ErrDocumentExtractionRebuildMissing)
+	runs := operationRunsForKind(t, fixture.Store, operations.KindDocumentExtraction)
+	require.Len(runs, 3, "incremental, rebuild, and resume are separate bounded passes")
+	assert.NotContains(fmt.Sprint(runs), privateRebuild.ID,
+		"the private rebuild reference must not enter public operation rows")
 }
 
 func TestDocumentBuildRecordsOversizedCandidateAndContinues(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	fixture := storetest.New(t)
 	contents := make(map[string][]byte)
@@ -682,16 +693,92 @@ func TestDocumentBuildRecordsOversizedCandidateAndContinues(t *testing.T) {
 	}))
 
 	result, err := executeDocumentBuild(
-		t.Context(), fixture.Store, commandAttachmentMapOpener{contents: contents},
+		t.Context(), fixture.Store, testOperationPassScope("document:oversized"),
+		fixture.Store, commandAttachmentMapOpener{contents: contents},
 		&commandBuildProcessor{}, &documentsConfig, manifest, allowed, profile, 2,
 		"documents-isolation-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorContains(err, "1 extraction failure")
-	assert.Equal(t, 1, result.Processed)
-	assert.Equal(t, 1, result.Failed)
+	assert.Equal(1, result.Processed)
+	assert.Equal(1, result.Failed)
+	runs := operationRunsForKind(t, fixture.Store, operations.KindDocumentExtraction)
+	require.Len(runs, 1)
+	assert.Equal(operations.StatePartial, runs[0].State)
+	assert.Equal([]operations.PublicCounter{
+		{Name: operations.CounterAttempted, Unit: operations.CounterUnitDocuments, Value: 2},
+		{Name: operations.CounterSucceeded, Unit: operations.CounterUnitDocuments, Value: 1},
+		{Name: operations.CounterFailed, Unit: operations.CounterUnitDocuments, Value: 1},
+	}, runs[0].Counters)
 	response, searchErr := fixture.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "Synthetic"})
 	require.NoError(searchErr)
 	require.Len(response.Results, 1, "the valid document must publish after the oversized candidate is recorded")
+}
+
+func TestDocumentBuildRequiresRecorderBeforeWork(t *testing.T) {
+	result, err := executeDocumentBuild(
+		t.Context(), nil, testOperationPassScope("document:missing-recorder"),
+		nil, nil, nil, nil, mistral.CapabilityManifest{}, nil, store.DocumentExtractionProfile{}, 1,
+		"documents-recorder-test", t.TempDir(), documentBuildIncremental, nil,
+	)
+
+	require.ErrorContains(t, err, "operation recorder is required")
+	assert.Equal(t, documentBuildResult{}, result)
+}
+
+func TestDocumentBuildTerminalReplayReturnsOnlyFixedNonSuccess(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 8, 30, 15, 30, 0, 0, time.UTC)
+	finished := started.Add(time.Second)
+	trigger := operations.TriggerManual
+	id, err := operations.NewInt64ID(operations.KindDocumentExtraction, 9)
+	require.NoError(t, err)
+	tests := []struct {
+		name      string
+		state     operations.State
+		counters  operations.InvocationCounters
+		publicErr *operations.PublicError
+		wantIs    error
+		wantErr   bool
+	}{
+		{name: "success", state: operations.StateSucceeded,
+			counters: operations.InvocationCounters{Attempted: 1, Succeeded: 1}},
+		{name: "partial", state: operations.StatePartial,
+			counters:  operations.InvocationCounters{Attempted: 2, Succeeded: 1, Failed: 1},
+			publicErr: operations.FixedPublicError(operations.PublicErrorInvocationUpstreamFailed)},
+		{name: "failed", state: operations.StateFailed,
+			counters:  operations.InvocationCounters{Attempted: 1, Failed: 1},
+			publicErr: operations.FixedPublicError(operations.PublicErrorInvocationUpstreamFailed), wantErr: true},
+		{name: "cancelled", state: operations.StateCancelled,
+			publicErr: operations.FixedPublicError(operations.PublicErrorInvocationCancelled),
+			wantIs:    context.Canceled, wantErr: true},
+		{name: "timed out", state: operations.StateFailed,
+			publicErr: operations.FixedPublicError(operations.PublicErrorInvocationTimeout),
+			wantIs:    context.DeadlineExceeded, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			run := &operations.Run{
+				ID: id, Lane: operations.LaneDocuments, State: test.state, Trigger: &trigger,
+				StartedAt: started, FinishedAt: &finished,
+				Counters: test.counters.PublicCounters(operations.KindDocumentExtraction), Error: test.publicErr,
+			}
+			result, replayErr := documentBuildResultFromOperationRun(run)
+			assert.Equal(int(test.counters.Succeeded), result.Processed)
+			assert.Equal(int(test.counters.Failed), result.Failed)
+			if !test.wantErr {
+				require.NoError(replayErr)
+				return
+			}
+			require.Error(replayErr)
+			assert.NotContains(replayErr.Error(), "private provider response")
+			if test.wantIs != nil {
+				assert.ErrorIs(replayErr, test.wantIs)
+			}
+		})
+	}
 }
 
 func TestDocumentBuildStopsOnCancellation(t *testing.T) {
@@ -726,7 +813,8 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	result, err := executeDocumentBuild(
-		ctx, fixture.Store, commandAttachmentMapOpener{contents: map[string][]byte{digest: content}},
+		ctx, fixture.Store, testOperationPassScope("document:cancelled"),
+		fixture.Store, commandAttachmentMapOpener{contents: map[string][]byte{digest: content}},
 		commandCancelingProcessor{cancel: cancel}, &documentsConfig, manifest, allowed, profile, 1,
 		"documents-cancellation-test", t.TempDir(), documentBuildIncremental, nil,
 	)
@@ -737,6 +825,9 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(status.StagingOwners, "provider cancellation must release the claim")
 	assert.Equal(int64(1), status.RetryOwners)
+	runs := operationRunsForKind(t, fixture.Store, operations.KindDocumentExtraction)
+	require.Len(runs, 1, "detached finish must survive caller cancellation")
+	assert.Equal(operations.StateCancelled, runs[0].State)
 }
 
 func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
@@ -778,7 +869,8 @@ func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 	}))
 
 	result, err := executeDocumentBuild(
-		t.Context(), fixture.Store, commandAttachmentMapOpener{contents: contents},
+		t.Context(), fixture.Store, testOperationPassScope("document:timeout"),
+		fixture.Store, commandAttachmentMapOpener{contents: contents},
 		&commandBuildProcessor{firstErr: context.DeadlineExceeded},
 		&documentsConfig, manifest, allowed, profile, 2,
 		"documents-timeout-test", t.TempDir(), documentBuildIncremental, nil,
@@ -1044,6 +1136,22 @@ func commandDocumentOccurrenceCount(t *testing.T, st *store.Store) int {
 	var count int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM document_occurrences`).Scan(&count))
 	return count
+}
+
+func testOperationPassScope(key string) operations.PassScope {
+	return operations.PassScope{
+		Key: key, Trigger: operations.TriggerManual,
+		StartedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func operationRunsForKind(t *testing.T, st *store.Store, kind operations.Kind) []operations.Run {
+	t.Helper()
+	snapshot, err := st.ListRuns(t.Context(), operations.Query{
+		Kinds: []operations.Kind{kind}, Limit: 100,
+	})
+	require.NoError(t, err)
+	return snapshot.Runs
 }
 
 func commandMistralResult(markdown string) mistral.Result {

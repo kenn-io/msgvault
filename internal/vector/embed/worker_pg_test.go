@@ -246,9 +246,10 @@ func TestWorkerPG_RunOnce_EndToEnd(t *testing.T) {
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
 		BatchSize:        2, // force multiple scan/embedBatch rounds
+		Recorder:         newTestOperationRecorder(),
 	})
 
-	res, err := worker.RunOnce(ctx, gen)
+	res, err := worker.RunOnce(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce must not error on pgx")
 
@@ -436,8 +437,9 @@ func TestWorkerPG_CASRepairRace(t *testing.T) {
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
 		BatchSize:        1,
+		Recorder:         newTestOperationRecorder(),
 	})
-	res, err := w.RunOnce(ctx, gen)
+	res, err := w.RunOnce(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 
@@ -456,7 +458,7 @@ func TestWorkerPG_CASRepairRace(t *testing.T) {
 
 	// Recovery: backstop re-embeds with the corrected content.
 	client.preReturn = nil
-	res, err = w.RunBackstop(ctx, gen)
+	res, err = w.RunBackstop(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunBackstop recovery")
 
@@ -492,8 +494,9 @@ func TestWorkerPG_CASNormalPath(t *testing.T) {
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
 		BatchSize:        2,
+		Recorder:         newTestOperationRecorder(),
 	})
-	res, err := w.RunOnce(ctx, gen)
+	res, err := w.RunOnce(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 

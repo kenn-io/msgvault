@@ -10,16 +10,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
@@ -27,9 +30,107 @@ import (
 )
 
 const (
-	documentsCommandName    = "documents"
-	documentBuildSubcommand = "build"
+	documentsCommandName            = "documents"
+	documentBuildSubcommand         = "build"
+	commandOperationRecorderTimeout = 5 * time.Second
 )
+
+type commandOperationPass struct {
+	recorder operations.Recorder
+	id       operations.StableID
+	kind     operations.Kind
+}
+
+func newOperationPassScope(prefix string, trigger operations.Trigger) operations.PassScope {
+	return operations.PassScope{
+		Key: prefix + ":" + uuid.NewString(), Trigger: trigger, StartedAt: time.Now().UTC(),
+	}
+}
+
+func beginCommandOperationPass(
+	ctx context.Context, recorder operations.Recorder, kind operations.Kind, scope operations.PassScope,
+) (*commandOperationPass, *operations.Run, error) {
+	spec := scope.InvocationSpec(kind)
+	if err := spec.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("%s operation pass scope: %w", kind, err)
+	}
+	if operationRecorderIsNil(recorder) {
+		return nil, nil, fmt.Errorf("begin %s operation pass: operation recorder is required", kind)
+	}
+	begun, err := recorder.Begin(ctx, spec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin %s operation pass: %w", kind, err)
+	}
+	switch begun.Disposition {
+	case operations.BeginCreated:
+		return &commandOperationPass{recorder: recorder, id: begun.ID, kind: kind}, nil, nil
+	case operations.BeginTerminal:
+		if begun.Terminal == nil {
+			return nil, nil, fmt.Errorf("begin %s operation pass returned terminal without outcome", kind)
+		}
+		return nil, begun.Terminal, nil
+	case operations.BeginActive:
+		return nil, nil, fmt.Errorf("begin %s operation pass found an active invocation", kind)
+	default:
+		return nil, nil, fmt.Errorf("begin %s operation pass returned invalid disposition %q", kind, begun.Disposition)
+	}
+}
+
+func operationRecorderIsNil(recorder operations.Recorder) bool {
+	if recorder == nil {
+		return true
+	}
+	value := reflect.ValueOf(recorder)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func (p *commandOperationPass) checkpoint(ctx context.Context, counters operations.InvocationCounters) {
+	if p == nil {
+		return
+	}
+	checkpointCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), commandOperationRecorderTimeout)
+	defer cancel()
+	if err := p.recorder.Checkpoint(checkpointCtx, p.id, counters); err != nil {
+		logger.Error("operation recorder checkpoint failed", "kind", p.kind, "error", err)
+	}
+}
+
+func (p *commandOperationPass) finish(
+	ctx context.Context, counters operations.InvocationCounters, runErr error,
+) {
+	if p == nil {
+		return
+	}
+	publicError := commandOperationPublicError(ctx, runErr)
+	state, err := operations.DeriveInvocationState(p.kind, counters, publicError)
+	if err != nil {
+		logger.Error("operation recorder finish state failed", "kind", p.kind, "error", err)
+		return
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), commandOperationRecorderTimeout)
+	defer cancel()
+	if err := p.recorder.Finish(finishCtx, p.id, counters, state, publicError); err != nil {
+		logger.Error("operation recorder finish failed", "kind", p.kind, "error", err)
+	}
+}
+
+func commandOperationPublicError(ctx context.Context, runErr error) *operations.PublicError {
+	if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return operations.FixedPublicError(operations.PublicErrorInvocationCancelled)
+	}
+	if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return operations.FixedPublicError(operations.PublicErrorInvocationTimeout)
+	}
+	if runErr != nil {
+		return operations.FixedPublicError(operations.PublicErrorInvocationUpstreamFailed)
+	}
+	return nil
+}
 
 type documentBuildMode int
 
@@ -629,7 +730,9 @@ func runBuildDocuments(
 		return err
 	}
 	result, err := executeDocumentBuild(
-		command.Context(), st, attachments, processor, documentsConfig, manifest,
+		command.Context(), st,
+		newOperationPassScope("cli:document-extraction", operations.TriggerManual),
+		st, attachments, processor, documentsConfig, manifest,
 		allowedMediaTypes, profile, limit, "documents-cli", cfg.Data.DataDir, mode, &reconcileResult,
 	)
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
@@ -682,6 +785,8 @@ func printDocumentBuildPreflight(
 
 func executeDocumentBuild(
 	ctx context.Context,
+	recorder operations.Recorder,
+	scope operations.PassScope,
 	st *store.Store,
 	attachments documentindex.DocumentAttachmentOpener,
 	processor documentindex.MistralProcessor,
@@ -694,8 +799,19 @@ func executeDocumentBuild(
 	dataDirectory string,
 	mode documentBuildMode,
 	preReconciled *documentindex.ReconcileResult,
-) (documentBuildResult, error) {
-	result := documentBuildResult{}
+) (result documentBuildResult, runErr error) {
+	pass, terminal, err := beginCommandOperationPass(
+		ctx, recorder, operations.KindDocumentExtraction, scope,
+	)
+	if err != nil {
+		return result, err
+	}
+	if terminal != nil {
+		return documentBuildResultFromOperationRun(terminal)
+	}
+	defer func() {
+		pass.finish(ctx, documentExtractionCounters(result), runErr)
+	}()
 	var reconcileResult documentindex.ReconcileResult
 	if preReconciled != nil {
 		reconcileResult = *preReconciled
@@ -797,6 +913,7 @@ func executeDocumentBuild(
 				CanonicalBlobHash: extraction.CanonicalBlobHash,
 				ReasonCode:        extraction.FailureReasonCode,
 			})
+			pass.checkpoint(ctx, documentExtractionCounters(result))
 			continue
 		}
 		result.Processed++
@@ -804,6 +921,7 @@ func executeDocumentBuild(
 		if extraction.CleanupError != nil {
 			result.CleanupFailures++
 		}
+		pass.checkpoint(ctx, documentExtractionCounters(result))
 		if result.Units > documentsConfig.MaxPagesPerRun {
 			return result, errors.New("document provider output exceeded max_pages_per_run")
 		}
@@ -833,6 +951,27 @@ func executeDocumentBuild(
 		)
 	}
 	return result, nil
+}
+
+func documentExtractionCounters(result documentBuildResult) operations.InvocationCounters {
+	succeeded := int64(result.Processed)
+	failed := int64(result.Failed)
+	return operations.InvocationCounters{
+		Attempted: succeeded + failed, Succeeded: succeeded, Failed: failed,
+	}
+}
+
+func documentBuildResultFromOperationRun(run *operations.Run) (documentBuildResult, error) {
+	if run == nil {
+		return documentBuildResult{}, errors.New("document extraction operation outcome is required")
+	}
+	counters, err := operations.InvocationCountersFromPublic(run.ID.Kind(), run.Counters)
+	if err != nil {
+		return documentBuildResult{}, err
+	}
+	return documentBuildResult{
+		Processed: int(counters.Succeeded), Failed: int(counters.Failed),
+	}, operations.TerminalReplayOutcome(run)
 }
 
 func newDocumentRebuildID() (string, error) {

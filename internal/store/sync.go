@@ -20,6 +20,7 @@ const (
 
 	manualTransactionCleanupTimeout = 5 * time.Second
 	syncWorkerExitedMessage         = "sync worker exited before recording completion"
+	syncRunRestartedError           = "daemon_restarted"
 )
 
 // ErrSyncRunNotFound is returned by the sync-run getters (GetActiveSync,
@@ -314,6 +315,26 @@ type SyncRun struct {
 	CursorBefore       sql.NullString // Page token for resumption
 	CursorAfter        sql.NullString // Final history ID
 	RequestFingerprint sql.NullString // Full-sync request identity for safe resumption
+}
+
+// RecoverSyncRunsContext terminalizes source runs whose owning daemon ended.
+// Native checkpoints and counters remain untouched so a later invocation can
+// resume through the source-specific recovery path.
+func (s *Store) RecoverSyncRunsContext(ctx context.Context, recoveredAt time.Time) (int64, error) {
+	if recoveredAt.IsZero() {
+		return 0, errors.New("sync run recovery time is required")
+	}
+	result, err := s.db.ExecContext(ctx, s.Rebind(`UPDATE sync_runs
+		SET status = 'failed', completed_at = ?, error_message = ?
+		WHERE status = 'running'`), s.dialect.TimestampParam(recoveredAt.UTC()), syncRunRestartedError)
+	if err != nil {
+		return 0, fmt.Errorf("recover source sync runs: %w", err)
+	}
+	recovered, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count recovered source sync runs: %w", err)
+	}
+	return recovered, nil
 }
 
 // Checkpoint represents sync progress for resumption.

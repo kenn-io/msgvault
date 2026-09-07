@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -62,6 +63,70 @@ func TestScanSyncRun_ZeroTime(t *testing.T) {
 
 	// The driver normalizes invalid timestamps to zero time
 	assert.True(t, run.StartedAt.IsZero(), "StartedAt = %v, expected zero time", run.StartedAt)
+}
+
+func TestSyncRunRecoveryTerminalizesOnlyRunningRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	usefulSource, err := st.GetOrCreateSource("gmail", "useful-recovery@example.test")
+	require.NoError(err)
+	emptySource, err := st.GetOrCreateSource("gmail", "empty-recovery@example.test")
+	require.NoError(err)
+	terminalSource, err := st.GetOrCreateSource("gmail", "terminal-recovery@example.test")
+	require.NoError(err)
+
+	usefulID, err := st.StartSync(usefulSource.ID, "incremental")
+	require.NoError(err)
+	require.NoError(st.UpdateSyncCheckpoint(usefulID, &store.Checkpoint{
+		MessagesProcessed: 3, MessagesAdded: 1, MessagesUpdated: 1,
+	}))
+	emptyID, err := st.StartSync(emptySource.ID, "incremental")
+	require.NoError(err)
+	terminalID, err := st.StartSync(terminalSource.ID, "incremental")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(terminalID, "terminal-cursor"))
+
+	recoveredAt := time.Now().UTC().Add(time.Second).Truncate(time.Millisecond)
+	recovered, err := st.RecoverSyncRunsContext(t.Context(), recoveredAt)
+	require.NoError(err)
+	assert.Equal(int64(2), recovered)
+	recovered, err = st.RecoverSyncRunsContext(t.Context(), recoveredAt.Add(time.Hour))
+	require.NoError(err)
+	assert.Zero(recovered, "recovery must be idempotent")
+
+	var status, message string
+	var completed time.Time
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT status, error_message, completed_at FROM sync_runs WHERE id = ?`), emptyID).
+		Scan(&status, &message, &completed))
+	assert.Equal(store.SyncStatusFailed, status)
+	assert.Equal("daemon_restarted", message)
+	assert.Equal(recoveredAt, completed.UTC())
+
+	var terminalStatus string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT status FROM sync_runs WHERE id = ?`), terminalID).Scan(&terminalStatus))
+	assert.Equal(store.SyncStatusCompleted, terminalStatus)
+	var added, updated int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT messages_added, messages_updated FROM sync_runs WHERE id = ?`), usefulID).
+		Scan(&added, &updated))
+	assert.Equal(int64(1), added)
+	assert.Equal(int64(1), updated)
+	snapshot, err := st.ListRuns(t.Context(), operations.Query{
+		Kinds: []operations.Kind{operations.KindSourceSync}, Limit: 10,
+	})
+	require.NoError(err)
+	states := make(map[int64]operations.State, len(snapshot.Runs))
+	for _, run := range snapshot.Runs {
+		id, ok := run.ID.Int64()
+		require.True(ok)
+		states[id] = run.State
+	}
+	assert.Equal(operations.StatePartial, states[usefulID])
+	assert.Equal(operations.StateFailed, states[emptyID])
+	assert.Equal(operations.StateSucceeded, states[terminalID])
 }
 
 // TestScanSource_ZeroTime verifies that sources with timestamps that the driver
