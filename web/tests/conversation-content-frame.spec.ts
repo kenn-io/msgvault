@@ -255,10 +255,18 @@ test('archived content has an opaque capability boundary and durable conversatio
 
   // Browser Back closes the reading pane, restores the pre-open URL, and
   // returns focus to the grid.
+  const restoredResults = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/v1/explore'
+  );
   await page.evaluate(() => history.back());
   await expect(reading).toBeHidden();
   await expect(grid).toBeFocused();
   expect(page.url()).toBe(priorURL);
+
+  // Focus can return before Back's results reload finishes. Wait for the
+  // restored row before sending a command that opens it.
+  await restoredResults;
+  await expect(grid.getByText(row.title)).toBeVisible();
 
   // Reopening and expanding the peer message keeps the anchor expanded and
   // renders the peer's own frame, whose missing inline image degrades to a

@@ -87,7 +87,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
-			_ = imp.store.FailSync(syncID, err.Error())
+			blob, _ := state.Marshal()
+			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), &store.Checkpoint{
+				PageToken:         blob,
+				MessagesProcessed: sum.MessagesProcessed,
+				MessagesAdded:     sum.MessagesAdded,
+				ErrorsCount:       sum.Errors,
+			})
 		}
 	}()
 
@@ -205,7 +211,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 	if err != nil {
 		return err
 	}
-	selfChat, selfMembers, err := imp.selfChat(ctx)
+	selfChat, selfMembers, err := imp.selfChat(ctx, opts.Email)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -345,7 +351,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // object ID a members read would have returned. Resolution therefore takes the
 // same path as every other chat member, down to the participant cache key that
 // mention resolution reads.
-func (imp *Importer) selfChat(ctx context.Context) ([]Chat, []ChatMember, error) {
+func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []ChatMember, error) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 1)
 	if errors.Is(err, errGraphNotFound) {
 		return nil, nil, nil
@@ -358,7 +364,7 @@ func (imp *Importer) selfChat(ctx context.Context) ([]Chat, []ChatMember, error)
 	}
 	var members []ChatMember
 	if from := msgs[0].From; from != nil && from.User != nil && from.User.ID != "" {
-		members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName}}
+		members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName, Email: email}}
 	}
 	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, members, nil
 }

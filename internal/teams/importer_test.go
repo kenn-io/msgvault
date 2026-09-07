@@ -2966,7 +2966,7 @@ func TestSyncImportsSelfChat(t *testing.T) {
 		case strings.Contains(r.URL.Path, "48:notes") && strings.HasSuffix(r.URL.Path, "/messages"):
 			_, _ = w.Write([]byte(`{"value":[{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me","userIdentityType":"aadUser"}},"body":{"contentType":"text","content":"note to self"}}]}`))
 		case r.URL.Path == "/users/u-me":
-			_, _ = w.Write([]byte(`{"id":"u-me","mail":"me@example.com","displayName":"Me"}`))
+			http.Error(w, "directory lookup denied", http.StatusForbidden)
 		default:
 			http.Error(w, "404", http.StatusNotFound)
 		}
@@ -2989,9 +2989,8 @@ func TestSyncImportsSelfChat(t *testing.T) {
 	require.NoError(err)
 	assert.Len(msgs, 1)
 
-	// The roster comes from the probed message, so the signed-in user resolves
-	// through the same path a members read would have taken and is archived
-	// against the account email.
+	// The account email identifies the sender even when directory lookups fail.
+	// The roster must cache that participant under the probed user object ID.
 	name, err := st.InspectDisplayName(sourceMessageID, "from", "me@example.com")
 	require.NoError(err)
 	assert.Equal("Me", name)
@@ -3022,6 +3021,8 @@ func TestSelfChatProbeFailureReporting(t *testing.T) {
 		{name: "forbidden without chats", status: http.StatusForbidden, wantErrors: 1, noChats: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
@@ -3045,18 +3046,44 @@ func TestSelfChatProbeFailureReporting(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000))
 			sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com"})
-			require.NoError(t, err)
-			assert.EqualValues(t, tt.wantErrors, sum.Errors)
+			require.NoError(err)
+			assert.EqualValues(tt.wantErrors, sum.Errors)
 			if tt.noChats {
-				assert.Zero(t, sum.ChatsProcessed)
+				assert.Zero(sum.ChatsProcessed)
 			} else {
-				assert.EqualValues(t, 1, sum.ChatsProcessed, "ordinary chats must still sync")
+				assert.EqualValues(1, sum.ChatsProcessed, "ordinary chats must still sync")
 			}
 			run, err := st.GetLastSuccessfulSync(sum.SourceID)
-			require.NoError(t, err)
-			assert.EqualValues(t, tt.wantErrors, run.ErrorsCount, "sync history must retain probe errors")
+			require.NoError(err)
+			assert.EqualValues(tt.wantErrors, run.ErrorsCount, "sync history must retain probe errors")
 		})
 	}
+}
+
+func TestSelfChatProbeErrorSurvivesLaterSyncFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case "/me/chats/48:notes/messages", "/me/joinedTeams":
+			http.Error(w, "access denied", http.StatusForbidden)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000))
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	require.Error(err)
+	assert.EqualValues(1, sum.Errors)
+	assert.Zero(sum.ChatsProcessed)
+	run, err := st.GetLatestSync(sum.SourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, run.Status)
+	assert.EqualValues(1, run.ErrorsCount, "failed sync history must retain earlier probe errors")
 }
 
 func TestSelfChatProbeCancellationStopsSync(t *testing.T) {
