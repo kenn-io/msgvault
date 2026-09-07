@@ -343,6 +343,12 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 
 ## Sections
 
+`msgvault setup providers` writes recommended values for the `[vector]`,
+`[attachments.documents]`, and `[people.sweep]` sections from the API keys in
+your environment, and `msgvault setup status` reports every lane with its
+provider, model, consent state, and next step. The values it chooses are
+listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
+
 ### `[data]`
 
 | Key | Default | Description |
@@ -955,6 +961,7 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 
 | Key | Default | Description |
 |---|---|---|
+| `api_format` | `openai` | Request contract: `openai` (OpenAI-compatible `/embeddings`, one vector per message chunk) or `voyage-contextual` (Voyage `/contextualizedembeddings`; pins `model = "voyage-context-4"` and embeds chat conversation windows and turn-aware meeting chunks as contextual documents). |
 | `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
 | `model` | (required) | Model name to pass in each request (e.g., `nomic-embed-text`). |
 | `dimension` | (required) | Vector dimension. Must match the model's output dimension. |
@@ -1051,6 +1058,63 @@ Optional background scheduling for the embed worker inside `msgvault serve`. Emp
 |---|---|---|
 | `cron` | — | 5-field cron expression. Empty string disables the standalone cron. |
 | `run_after_sync` | `false` | When `true`, an embed pass runs after every successful scheduled sync. |
+
+`msgvault setup providers` sets `run_after_sync = true` and `cron = "*/15 * * * *"` when it enables a text lane. See [Recommended Configuration](/docs/usage/recommended-configuration/).
+
+#### `[vector.people]`
+
+Semantic people search: one curated document per durable person, built from
+searchable non-sensitive attributes, embedded into the text-search generation.
+Requires `[vector] enabled = true` and a separate consent
+(`msgvault person provider consent --semantic-embeddings --yes`).
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Embed curated person documents and serve `msgvault person search`. |
+| `retention_posture` | — | Your assertion about the embedding provider's retention; must be explicit (not `unknown`). |
+| `training_posture` | — | Your assertion about the embedding provider's training use; must be explicit. |
+
+#### `[vector.multimodal]`
+
+Independently consented visual attachment lane over Voyage. Every value has a
+default except the probe manifest; uploads fail closed without it, and a
+daemon started with `enabled = true` and no manifest refuses every vector
+lane until one exists.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Turn on the visual lane. |
+| `provider` | `voyage` | Only legal value. |
+| `endpoint` | `https://api.voyageai.com/v1` | Pinned provider root; other origins are refused. |
+| `api_key_env` | `VOYAGE_API_KEY` | Environment variable holding the key. A key alone enables nothing. |
+| `model` | `voyage-multimodal-3.5` | Pinned model. |
+| `dimension` | `1024` | Pinned dimension. |
+| `capabilities_file` | — | Manifest written by `msgvault multimodal probe --seeds <dir> --out <file> --yes`. |
+| `max_context_chars` | `4000` | Owning-message text sent with each attachment. |
+| `include_images` | `true` | Embed still images (JPEG, PNG, WebP). |
+| `include_animated_gifs` | `false` | Embed animated GIFs; requires `include_images` and a manifest that authorized them. |
+| `include_video` | `true` | Embed direct-input MP4 video. |
+| `allow_image_queries` | `true` | Allow `multimodal search --image`. |
+
+`[vector.multimodal.scope]` accepts the same `message_types` and `accounts`
+keys as `[vector.embed.scope]`; `[vector.multimodal.schedule]` accepts the
+same `cron` and `run_after_sync` keys as `[vector.embed.schedule]`. Consent is
+recorded per generation by `msgvault multimodal build --yes`.
+
+### `[activity]`
+
+Dated activity projection and per-person contact state (first and last
+contact, inbound/outbound, interaction count, inferred channel). It is the
+deterministic source of "when did we last talk" for every person and runs
+hourly by default inside `msgvault serve`. `msgvault activity build` runs it
+by hand; `--backstop` rescans the whole archive.
+
+| Key | Default | Description |
+|---|---|---|
+| `schedule` | `17 * * * *` | 5-field cron used by `msgvault serve`. Empty disables the scheduled job. |
+| `timezone` | `UTC` | IANA zone name for day bucketing. `Local` is rejected because the projection keys replay on the persisted zone name. |
+| `max_direct_counterparts` | `25` | Largest conversation still projected as direct activity between its participants. |
+| `batch_size` | `500` | Messages per projection batch. |
 
 ## Overriding the Home Directory
 

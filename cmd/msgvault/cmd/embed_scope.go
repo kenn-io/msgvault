@@ -167,12 +167,10 @@ func ensureEmbedScopeResolved() error {
 }
 
 // resolvedVectorConfig returns a copy of the vector config with the
-// configured [vector.embed.scope] accounts resolved into Scope.SourceIDs,
-// leaving the shared package-global cfg untouched. This is the resolution
-// path for the daemon, where concurrent HTTP handler goroutines and the
-// background vector init would otherwise race on the global scope field.
-func resolvedVectorConfig(s *store.Store) (vector.Config, error) {
-	vecCfg := cfg.Vector
+// configured text and multimodal accounts resolved into Scope.SourceIDs,
+// leaving the supplied config untouched. Setup and the daemon must use the
+// same resolution when comparing generation fingerprints.
+func resolvedVectorConfig(s *store.Store, vecCfg vector.Config) (vector.Config, error) {
 	// Each scope resolves only for its enabled lane: a stale account in a
 	// disabled lane's scope must not block the enabled lane from starting.
 	if vecCfg.Enabled && len(vecCfg.Embed.Scope.Accounts) > 0 {
@@ -203,5 +201,5 @@ func openResolvedVectorConfig() (vector.Config, error) {
 		return vector.Config{}, fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	return resolvedVectorConfig(s)
+	return resolvedVectorConfig(s, cfg.Vector)
 }

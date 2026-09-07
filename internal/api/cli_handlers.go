@@ -1344,10 +1344,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 			return keyEnv != "" && keyEnv == name
 		}
 		if providerCall {
-			// Provider checks always resolve credentials from the daemon
-			// process's own environment and credential store; request-carried
-			// values are rejected.
-			return false
+			return s.cliRunSavedProviderCheckEnvAllowed(args, name)
 		}
 		enrichmentRun := args[1] == "enrichment" && args[2] == "run"
 		if enrichmentRun {
@@ -1363,6 +1360,33 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 		return false
 	}
 	return s.cliRunEnvAllowed(name)
+}
+
+// Local onboarding may supply the selected profile's key for one synthetic
+// check. Ordinary checks continue to use daemon-owned credentials.
+func (s *Server) cliRunSavedProviderCheckEnvAllowed(args []string, name string) bool {
+	fingerprint, ok := cliRunFlagValue(args, "if-fingerprint")
+	if !ok || !cliRunPersonProviderArgsAllowed("check", args[3:]) {
+		return false
+	}
+	var profileName string
+	for i := 3; i < len(args); i++ {
+		if args[i] == "--if-fingerprint" {
+			i++
+		} else if !strings.HasPrefix(args[i], "--") {
+			profileName = args[i]
+		}
+	}
+	sweep, ok := s.currentPeopleSweepConfig()
+	if !ok || profileName == "" {
+		return false
+	}
+	sweep.Enabled = true
+	sweep.Provider = peoplesweep.ProviderSelection{Name: profileName}
+	profile, err := sweep.Profile()
+	return err == nil && profile.Fingerprint == fingerprint &&
+		profile.Auth != peoplesweep.AuthNone && profile.Credential == peoplesweep.CredentialEnv &&
+		profile.CredentialRef == name
 }
 
 func (s *Server) cliRunPersonEnrichmentRunEnvAllowed(args []string, name string) bool {
@@ -1911,8 +1935,8 @@ func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 }
 
 // cliRunEnvAllowed permits the static forwarding allowlist plus configured
-// provider variables used by non-check commands. Provider checks always use
-// the daemon process's own environment and reject request-carried values.
+// provider variables used by non-check commands. Provider checks use the
+// separate fingerprint-bound policy in cliRunSavedProviderCheckEnvAllowed.
 func (s *Server) cliRunEnvAllowed(name string) bool {
 	if clirun.EnvAllowed(name) {
 		return true

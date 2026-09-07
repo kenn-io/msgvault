@@ -47,12 +47,9 @@ type VoyageProvider struct {
 // from the manifest. Construction succeeds with zero authorized capabilities;
 // requests then fail closed per input.
 func NewVoyageProvider(config VoyageConfig) (*VoyageProvider, error) {
-	policy, err := voyage.NewPolicy(voyage.PolicyConfig{
-		Model: config.Model, Dimension: config.Dimension,
-		Media: config.Media.documentPolicy(),
-	})
+	policy, err := config.Policy()
 	if err != nil {
-		return nil, fmt.Errorf("voyage policy: %w", err)
+		return nil, err
 	}
 	client, err := voyage.NewClient(policy, voyage.ClientConfig{
 		APIKey: config.APIKey, Timeout: config.Timeout, HTTPClient: config.HTTPClient,
@@ -78,6 +75,18 @@ func NewVoyageProvider(config VoyageConfig) (*VoyageProvider, error) {
 		provider.fingerprint = fingerprint
 	}
 	return provider, nil
+}
+
+// Policy derives the upload policy without resolving credentials or creating
+// a transport, so readiness checks use the same identity as the provider.
+func (c VoyageConfig) Policy() (voyage.Policy, error) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{
+		Model: c.Model, Dimension: c.Dimension, Media: c.Media.documentPolicy(),
+	})
+	if err != nil {
+		return voyage.Policy{}, fmt.Errorf("voyage policy: %w", err)
+	}
+	return policy, nil
 }
 
 // AuthorizedCapabilities returns the sorted capability IDs with probed upload

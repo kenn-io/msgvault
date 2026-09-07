@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 )
 
@@ -188,7 +189,8 @@ func (s *FileCredentialStore) SaveNew(
 	return cleanup, created, err
 }
 
-// Load reads and validates one exact named credential.
+// Load reads and validates one exact named credential without creating files
+// or directories or repairing their permissions.
 func (s *FileCredentialStore) Load(profileName string) (Credential, error) {
 	if err := validateCredentialProfileName(profileName); err != nil {
 		return Credential{}, err
@@ -214,6 +216,9 @@ func (s *FileCredentialStore) Load(profileName string) (Credential, error) {
 		}
 		return nil
 	})
+	if errors.Is(err, os.ErrNotExist) {
+		return Credential{}, fmt.Errorf("%w for profile %q: %w", ErrCredentialNotFound, profileName, err)
+	}
 	return credential, err
 }
 

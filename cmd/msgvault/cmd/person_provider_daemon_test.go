@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -53,7 +54,12 @@ func (s *inProcessPersonProviderDaemonStore) RunCLICommand(
 			config,
 			consent,
 			registry,
-			peoplesweep.NewCredentialResolver(s.credentials, os.LookupEnv),
+			peoplesweep.NewCredentialResolver(s.credentials, func(name string) (string, bool) {
+				if value, ok := req.Env[name]; ok {
+					return value, true
+				}
+				return os.LookupEnv(name)
+			}),
 		)
 	}
 
@@ -75,6 +81,93 @@ func (s *inProcessPersonProviderDaemonStore) RunCLICommand(
 		return fmt.Errorf("execute in-process person provider command: %w", err)
 	}
 	return nil
+}
+
+func TestSavedPersonProviderCheckForwardsExactCredentialThroughDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const keyName = "SETUP_ONLY_PROVIDER_KEY"
+	const secret = "synthetic-onboarding-key"
+	t.Setenv(keyName, "") // The daemon process does not have the caller's key.
+	var received atomic.Int64
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+secret {
+			http.Error(w, "missing credential", http.StatusUnauthorized)
+			return
+		}
+		received.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"test-model","choices":[{"message":{"content":"{\"ok\":true}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	t.Cleanup(provider.Close)
+	peopleConfig := personProviderTestConfig()
+	onboarded := configuredPersonProvider(peopleConfig)
+	onboarded.Endpoint, onboarded.CredentialEnv = provider.URL+"/v1", keyName
+	peopleConfig.Providers["onboarded"] = onboarded
+	daemonConfig := config.NewDefaultConfig()
+	daemonConfig.HomeDir = t.TempDir()
+	daemonConfig.People.Sweep = personProviderTestConfig()
+	// Onboarding publishes a new profile after the daemon has started.
+	saved := *daemonConfig
+	saved.People.Sweep = peopleConfig
+	require.NoError(saved.Save())
+	st := &inProcessPersonProviderDaemonStore{
+		storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)},
+		config:          peopleConfig, httpClient: provider.Client(),
+	}
+	daemon := api.NewServerWithOptions(api.ServerOptions{
+		Config: daemonConfig, Store: st, Logger: slog.New(slog.DiscardHandler),
+		OperationGate: api.NewSerialOperationGate(),
+	})
+	server := httptest.NewServer(daemon.Router())
+	t.Cleanup(server.Close)
+	frontend := *daemonConfig
+	frontend.People.Sweep = peopleConfig
+	frontend.Remote = config.RemoteConfig{URL: server.URL, AllowInsecure: true}
+	withStoreResolverConfig(t, &frontend)
+	deps := defaultPersonProviderCommandDeps()
+	callerHasKey := false
+	deps.setup.lookupEnv = func(name string) (string, bool) {
+		assert.Equal(keyName, name)
+		return secret, callerHasKey
+	}
+	var output bytes.Buffer
+	command := &cobra.Command{Use: "setup"}
+	command.SetContext(t.Context())
+	command.SetOut(&output)
+	command.SetErr(&output)
+	require.Error(executeSavedPersonProviderCheck(command, deps, "onboarded", "", &output))
+	assert.Zero(received.Load())
+	output.Reset()
+	callerHasKey = true
+	require.NoError(executeSavedPersonProviderCheck(command, deps, "onboarded", "", &output), output.String())
+	assert.Equal(int64(1), received.Load())
+	assert.NotContains(output.String(), secret)
+
+	profileConfig := peopleConfig
+	profileConfig.Enabled = true
+	profileConfig.Provider = peoplesweep.ProviderSelection{Name: "onboarded"}
+	profile, err := profileConfig.Profile()
+	require.NoError(err)
+	for _, test := range []struct{ name, fingerprint, key string }{
+		{name: "other provider key", fingerprint: profile.Fingerprint, key: "TEST_PROVIDER_KEY"},
+		{name: "changed profile", fingerprint: strings.Repeat("a", 64), key: keyName},
+		{name: "ordinary check", key: keyName},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := []string{"person", "provider", "check", "onboarded"}
+			if test.fingerprint != "" {
+				args = append(args, "--if-fingerprint", test.fingerprint)
+			}
+			body := mustJSON(t, api.CLIRunRequest{Args: args, Env: map[string]string{test.key: secret}})
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			daemon.Router().ServeHTTP(response, request)
+			assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Equal(int64(1), received.Load())
+		})
+	}
 }
 
 func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {

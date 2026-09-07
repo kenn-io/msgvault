@@ -145,7 +145,7 @@ func TestResolvedVectorConfigLeavesGlobalUntouched(t *testing.T) {
 	// Scope resolution is gated on the lane being enabled.
 	cfg.Vector.Enabled = true
 
-	vecCfg, err := resolvedVectorConfig(f.Store)
+	vecCfg, err := resolvedVectorConfig(f.Store, cfg.Vector)
 	require.NoError(err)
 	assert.Equal([]int64{f.Source.ID}, vecCfg.Embed.Scope.SourceIDs,
 		"the copy carries the resolved scope")

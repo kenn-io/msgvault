@@ -32,8 +32,11 @@ func (s *FileCredentialStore) withCredentialRoot(
 	if s == nil || filepath.Clean(s.tokensDir) == "." || s.tokensDir == "" {
 		return errors.New("people provider credential tokens directory is required")
 	}
-	if err := fileutil.SecureMkdirAll(s.tokensDir, 0o700); err != nil {
-		return fmt.Errorf("create people provider tokens directory: %w", err)
+	readOnly := operation == "load"
+	if !readOnly {
+		if err := fileutil.SecureMkdirAll(s.tokensDir, 0o700); err != nil {
+			return fmt.Errorf("create people provider tokens directory: %w", err)
+		}
 	}
 	tokensFD, err := unix.Open(s.tokensDir, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -47,11 +50,15 @@ func (s *FileCredentialStore) withCredentialRoot(
 	if err := validateUnixDirectoryFD(tokensFD, "tokens"); err != nil {
 		return err
 	}
-	if err := unix.Fchmod(tokensFD, 0o700); err != nil {
+	if readOnly {
+		if _, err := validateUnixPrivateDirectoryFD(tokensFD, "tokens"); err != nil {
+			return err
+		}
+	} else if err := unix.Fchmod(tokensFD, 0o700); err != nil {
 		return fmt.Errorf("protect pinned people provider tokens directory: %w", err)
 	}
 
-	rootFD, created, err := openUnixCredentialNamespace(tokensFD)
+	rootFD, created, err := openUnixCredentialNamespace(tokensFD, !readOnly)
 	if err != nil {
 		return err
 	}
@@ -76,7 +83,12 @@ func (s *FileCredentialStore) withCredentialRoot(
 			retErr = fmt.Errorf("unlock pinned people provider credential directory: %w", err)
 		}
 	}()
-	if err := ensureUnixCredentialLockMarker(rootFD); err != nil {
+	if readOnly {
+		// The namespace flock serializes reads; the marker need not be created.
+		if err := inspectUnixCredentialEntry(rootFD, ".credentials.lock", true); err != nil {
+			return err
+		}
+	} else if err := ensureUnixCredentialLockMarker(rootFD); err != nil {
 		return err
 	}
 	if s.hooks != nil && s.hooks.afterLockAcquired != nil {
@@ -88,11 +100,11 @@ func (s *FileCredentialStore) withCredentialRoot(
 	return callback(&unixCredentialStoreRoot{fd: rootFD, tokensFD: tokensFD, hooks: s.hooks})
 }
 
-func openUnixCredentialNamespace(tokensFD int) (int, bool, error) {
+func openUnixCredentialNamespace(tokensFD int, create bool) (int, bool, error) {
 	rootFD, err := unix.Openat(tokensFD, credentialNamespace,
 		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	created := false
-	if err == unix.ENOENT {
+	if err == unix.ENOENT && create {
 		if err := unix.Mkdirat(tokensFD, credentialNamespace, 0o700); err != nil && err != unix.EEXIST {
 			return -1, false, fmt.Errorf("create people provider credential directory relative to pinned parent: %w", err)
 		}
@@ -107,7 +119,12 @@ func openUnixCredentialNamespace(tokensFD int) (int, bool, error) {
 		_ = unix.Close(rootFD)
 		return -1, false, err
 	}
-	if err := unix.Fchmod(rootFD, 0o700); err != nil {
+	if !create {
+		if _, err := validateUnixPrivateDirectoryFD(rootFD, "credential"); err != nil {
+			_ = unix.Close(rootFD)
+			return -1, false, err
+		}
+	} else if err := unix.Fchmod(rootFD, 0o700); err != nil {
 		_ = unix.Close(rootFD)
 		return -1, false, fmt.Errorf("protect pinned people provider credential directory: %w", err)
 	}

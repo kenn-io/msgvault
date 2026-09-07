@@ -477,6 +477,30 @@ func (s *Store) HasActiveDocumentProviderConsent(ctx context.Context) (bool, err
 	return consented, nil
 }
 
+// HasMatchingDocumentProviderConsent reports consent for an enabled, unretired
+// profile with the requested immutable policy identity.
+// Unlike the journal bootstrap gate, setup must not borrow consent from an
+// older policy that shares the same provider but has different content limits,
+// normalization, scope, or capability evidence.
+func (s *Store) HasMatchingDocumentProviderConsent(ctx context.Context, profile DocumentExtractionProfile) (bool, error) {
+	var consented bool
+	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM document_extraction_profiles p
+			JOIN document_provider_consents c ON c.profile_id = p.id
+			WHERE p.enabled = TRUE AND p.retired_at IS NULL
+			  AND c.profile_fingerprint = p.fingerprint
+			  AND c.retention_posture = p.retention_posture
+			  AND c.training_posture = p.training_posture
+			  AND p.id = ? AND p.fingerprint = ?
+		)`), profile.ID, profile.Fingerprint).Scan(&consented)
+	if err != nil {
+		return false, fmt.Errorf("read matching document provider consent: %w", err)
+	}
+	return consented, nil
+}
+
 func (s *Store) GetDocumentIndexStatus(ctx context.Context, profileID string) (DocumentIndexStatus, error) {
 	if profileID == "" {
 		return DocumentIndexStatus{}, errors.New("document index status requires a profile ID")

@@ -281,6 +281,40 @@ func TestCredentialStoreDeleteConsumesGuardWhenProfileNameIsInvalid(t *testing.T
 	assert.Equal(credentialCanary, credential.Value())
 }
 
+func TestCredentialStoreLoadDoesNotCreateOrRepairState(t *testing.T) {
+	for _, kind := range []string{"missing tokens", "missing namespace", "directory permissions", "missing lock marker", "valid"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			parent := t.TempDir()
+			tokensDir := filepath.Join(parent, "tokens")
+			store := peoplesweep.NewFileCredentialStore(tokensDir)
+			if kind != "missing tokens" {
+				require.NoError(os.Mkdir(tokensDir, 0o700))
+			}
+			if kind == "directory permissions" || kind == "valid" || kind == "missing lock marker" {
+				require.NoError(store.Save("profile", peoplesweep.NewCredential(peoplesweep.AuthBearer, credentialCanary)))
+			}
+			if kind == "directory permissions" {
+				require.NoError(os.Chmod(tokensDir, 0o750))
+			}
+			root := filepath.Join(tokensDir, "people-providers")
+			if kind == "missing lock marker" {
+				require.NoError(os.Remove(filepath.Join(root, ".credentials.lock")))
+			}
+			before := snapshotCredentialPaths(t, parent, tokensDir, root,
+				filepath.Join(root, ".credentials.lock"), filepath.Join(root, "profile.json"))
+			credential, err := store.Load("profile")
+			if kind == "valid" || kind == "missing lock marker" {
+				require.NoError(err)
+				assert.Equal(t, credentialCanary, credential.Value())
+			} else {
+				require.Error(err)
+			}
+			assertCredentialPathsUnchanged(t, before)
+		})
+	}
+}
+
 func TestCredentialStorePreflightDeleteValidatesWithoutReadingOrChangingSecret(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -883,6 +917,7 @@ func TestCredentialStoreRejectsInvalidNamesAndMalformedJSON(t *testing.T) {
 
 	root := filepath.Join(t.TempDir(), "people-providers")
 	store = peoplesweep.NewFileCredentialStore(filepath.Dir(root))
+	require.NoError(os.Chmod(filepath.Dir(root), 0o700))
 	require.NoError(os.Mkdir(root, 0o700))
 	require.NoError(os.WriteFile(filepath.Join(root, "broken.json"), []byte(`{"scheme":"bearer","value":`), 0o600))
 	_, err := store.Load("broken")
