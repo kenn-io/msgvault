@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-07
 title: Accounts, Identities, and Collections
 description: How msgvault organizes every source into accounts, tracks which identifiers are "you," and groups accounts into collections for scoped search, stats, and deduplication.
 ---
@@ -59,6 +60,60 @@ msgvault list-accounts
 
 !!! tip "Add every account as a Test user"
     Each Gmail account must be listed as a **Test user** in the OAuth consent screen of the app that authorizes it. For Workspace accounts using a named OAuth app, add test users in that org's Google Cloud project. This is the most common reason a second account fails to authorize.
+
+### Gmail addresses and display names
+
+Pass your Gmail account's email address to `add-account`, then select that
+account in Google's consent screen. The argument is required and must be a bare
+email address. A label such as `Work` belongs in `--display-name`:
+
+```bash
+msgvault add-account user@example.com --display-name "Work"
+msgvault update-account user@example.com --display-name "Personal"
+```
+
+Msgvault checks the authenticated mailbox against the requested address, including
+when reusing a stored token. A mismatch or failed verification stops registration
+before account settings change. Gmail's equivalent spellings (dots,
+plus-addressing, and `googlemail.com`) are accepted. For Google Workspace, use the
+primary address returned by Google; a different local part is not assumed to be
+an alias of the same account.
+
+Changing a display name keeps the account identifier and archived mail intact.
+Commands such as `sync-full` continue to use the identifier from `list-accounts`.
+
+### Recovering an older mislabeled Gmail account
+
+Older versions could store credentials under a label that did not match the
+authenticated mailbox. Account identifiers cannot currently be renamed in place.
+If you only need a readable name, use `update-account --display-name` above.
+
+To replace an incorrect identifier, remove the old Gmail source and add the
+primary address. **Removal deletes that source's local messages and sync state.**
+Only use this recovery path if the mail is still available in Gmail. Take a
+verified backup first so you can roll back; restoring it preserves the old
+identifier rather than moving mail to the new one. Removal does not delete mail
+from Google.
+
+```bash
+msgvault list-accounts
+msgvault remove-account old-label --type gmail
+msgvault add-account user@example.com
+msgvault sync-full user@example.com
+```
+
+Reuse the `--oauth-app` value originally used for this account, if any. Named
+apps are defined under `[oauth.apps.<name>]` in `config.toml`; identify the
+applicable one before removal. Use `--readonly` if you want the replacement Gmail
+grant to be read-only. Update any `[[accounts]]` schedule in `config.toml` to use the correct
+address, and recreate custom collection memberships and source identities as
+needed.
+
+Gmail removal also removes its local Google token and attempts to revoke the
+grant. Calendar sources registered under the old address remain in the archive,
+but can no longer rely on that credential. If you also sync Calendar or Drive,
+record their settings and re-authorize those integrations under the primary
+address; the Gmail commands above do not migrate them.
 
 ## Syncing
 

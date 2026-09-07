@@ -120,6 +120,9 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			// No --oauth-app flag: binding inherited from DB
 			root.SetArgs([]string{"add-account", "user@acme.com"})
 
+			if !tc.wantError {
+				ctx = gmailProfileContext(t, "user@acme.com")
+			}
 			err = root.ExecuteContext(ctx)
 			if tc.wantError {
 				require.Error(err, "expected error for mismatched token")
@@ -228,8 +231,7 @@ func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 	}
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx := gmailProfileContext(t, "user@example.com")
 
 	testCmd := &cobra.Command{
 		Use: "add-account <email>", Args: cobra.ExactArgs(1),
@@ -346,7 +348,7 @@ func TestAddAccount_RebindWithExistingToken(t *testing.T) {
 	})
 
 	// Should succeed without opening a browser — token exists
-	err = root.Execute()
+	err = root.ExecuteContext(gmailProfileContext(t, "user@acme.com"))
 	require.NoError(err)
 
 	// Token file should still exist
@@ -559,10 +561,8 @@ func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
 	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
-	// Pre-cancel so if regression causes auth attempt, it fails fast
-	// instead of opening a browser.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// Verify the cached token against a synthetic Gmail profile.
+	ctx := gmailProfileContext(t, "user@example.com")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -782,7 +782,7 @@ func TestAddAccount_AutoDefaultIdentityFires(t *testing.T) {
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"add-account", "user@example.com"})
 
-	require.NoError(root.Execute())
+	require.NoError(root.ExecuteContext(gmailProfileContext(t, "user@example.com")))
 
 	s, err := store.Open(dbPath)
 	require.NoError(err, "reopen store")
@@ -853,7 +853,7 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
 
-	require.NoError(root.Execute())
+	require.NoError(root.ExecuteContext(gmailProfileContext(t, "user@example.com")))
 
 	s, err := store.Open(dbPath)
 	require.NoError(err, "reopen store")
@@ -934,7 +934,7 @@ func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
 	// the auto-default would otherwise add a third identity row.
 	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
 
-	require.NoError(root.Execute())
+	require.NoError(root.ExecuteContext(gmailProfileContext(t, "user@example.com")))
 
 	// The user-facing notice must only describe the applied path.
 	// Emitting the "deferred — will run on the next command" notice
@@ -1039,7 +1039,7 @@ func TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity(t *testing.T) 
 	// when the auto-default write is supposed to fire.
 	root.SetArgs([]string{"add-account", "user@example.com"})
 
-	require.NoError(root.Execute())
+	require.NoError(root.ExecuteContext(gmailProfileContext(t, "user@example.com")))
 
 	s, err := store.Open(dbPath)
 	require.NoError(err, "reopen store")

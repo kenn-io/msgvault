@@ -83,6 +83,13 @@ func saveAddAccountFlags(t *testing.T) {
 // the absence of that failure.
 func runAddAccountForTest(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return runAddAccountForTestContext(ctx, t, args...)
+}
+
+func runAddAccountForTestContext(ctx context.Context, t *testing.T, args ...string) (string, error) {
+	t.Helper()
 	testCmd := &cobra.Command{
 		Use:  addAccountUse,
 		Args: cobra.ExactArgs(1),
@@ -106,8 +113,6 @@ func runAddAccountForTest(t *testing.T, args ...string) (string, error) {
 		captured <- buf.String()
 	}()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	runErr := root.ExecuteContext(ctx)
 
 	os.Stdout = savedStdout
@@ -583,7 +588,7 @@ func TestAddAccount_LegacyTokenStillReusableWithoutReadonly(t *testing.T) {
 	_, restore := seedTokenEnv(t, legacyTokenJSON)
 	defer restore()
 
-	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--no-default-identity")
+	out, err := runAddAccountForTestContext(gmailProfileContext(t, scopeEscalationAccount), t, scopeEscalationAccount, "--no-default-identity")
 
 	require.NoError(err)
 	assert.Contains(out, "already authorized")
@@ -599,7 +604,7 @@ func TestAddAccount_AuthenticatedPreflightRegistersWiderGrant(t *testing.T) {
 	defer restore()
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
-	out, err := runAddAccountForTest(t,
+	out, err := runAddAccountForTestContext(gmailProfileContext(t, scopeEscalationAccount), t,
 		scopeEscalationAccount, "--readonly", "--grant-decided", "--no-default-identity")
 
 	require.NoError(err)
@@ -791,7 +796,7 @@ func TestAddAccount_ReadonlyReusesAlreadyNarrowToken(t *testing.T) {
 	before, err := os.ReadFile(tokenPath)
 	require.NoError(err)
 
-	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--readonly", "--no-default-identity")
+	out, err := runAddAccountForTestContext(gmailProfileContext(t, scopeEscalationAccount), t, scopeEscalationAccount, "--readonly", "--no-default-identity")
 
 	require.NoError(err)
 	assert.Contains(out, "already authorized")

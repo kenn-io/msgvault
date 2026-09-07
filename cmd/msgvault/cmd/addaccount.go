@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"os"
 	"slices"
 	"strings"
@@ -49,8 +50,11 @@ var addAccountCmd = &cobra.Command{
 By default, opens a browser for authorization. Use --headless to see instructions
 for authorizing on headless servers (Google does not support Gmail in device flow).
 
-If a token already exists, the command skips authorization. Use --force to delete
-the existing token and start a fresh OAuth flow.
+The email must match the Google account selected during authorization. Use
+--display-name for a label such as "Work".
+
+If a token already exists, the command verifies its mailbox and skips browser
+authorization. Use --force to delete the existing token and start a fresh OAuth flow.
 
 By default msgvault requests Gmail read and modify access. Use --readonly to
 request read access only.
@@ -71,7 +75,7 @@ Examples:
   msgvault add-account you@gmail.com --readonly
   msgvault add-account you@acme.com --oauth-app acme
   msgvault add-account you@gmail.com --display-name "Work Account"`,
-	Args: cobra.ExactArgs(1),
+	Args: validateAddAccountArgs,
 	RunE: runAddAccountLocal,
 }
 
@@ -80,7 +84,7 @@ func newAddAccountCmd() *cobra.Command {
 		Use:   addAccountUse,
 		Short: addAccountCmd.Short,
 		Long:  addAccountCmd.Long,
-		Args:  cobra.ExactArgs(1),
+		Args:  validateAddAccountArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if headless && forceReauth {
 				return usageErr(cmd, errors.New("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
@@ -93,6 +97,17 @@ func newAddAccountCmd() *cobra.Command {
 	}
 	registerAddAccountFlags(cmd)
 	return cmd
+}
+
+func validateAddAccountArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return err
+	}
+	address, err := mail.ParseAddress(args[0])
+	if err != nil || address.Address != args[0] {
+		return errors.New("account must be a bare email address; use --display-name for a label")
+	}
+	return nil
 }
 
 // addAccountGrantDecided reports whether the daemon authenticated a completed
@@ -524,6 +539,15 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 	tokenReusable := !forceReauth && addAccountTokenReusable(oauthMgr, email, binding, grantDecided)
 	if tokenReusable {
+		// A token's filename and OAuth client do not establish which mailbox
+		// it accesses. Verify copied and legacy tokens before changing the source.
+		ts, err := oauthMgr.TokenSource(cmd.Context(), email)
+		if err != nil {
+			return fmt.Errorf("load stored token: %w", err)
+		}
+		if err := oauth.ValidateTokenEmail(cmd.Context(), ts, email); err != nil {
+			return fmt.Errorf("verify stored token: %w", err)
+		}
 		if grantDecided {
 			warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 		}
