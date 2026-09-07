@@ -299,11 +299,12 @@ func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
 	tests := []struct {
 		name   string
 		filter query.MessageFilter
+		scope  sourceScope
 	}{
 		{name: "sender display name", filter: query.MessageFilter{SenderName: "Billing Team"}},
 		{name: "recipient display name", filter: query.MessageFilter{RecipientName: "Accounts Payable"}},
 		{name: "empty aggregate bucket", filter: query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewSenderNames: true}}},
-		{name: "multiple sources", filter: query.MessageFilter{SourceIDs: []int64{7, 8}}},
+		{name: "multiple sources", scope: collectionSourceScope(query.CollectionScope{Name: "Work", SourceIDs: []int64{7, 8}})},
 	}
 
 	for _, tt := range tests {
@@ -313,6 +314,7 @@ func TestInlineSearchOmitsSemanticForUnsupportedScopes(t *testing.T) {
 				WithActiveSearch("find the invoice", searchModeDeep).Build()
 			model.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
 			model.drillFilter = tt.filter
+			model.sourceScope = tt.scope
 
 			assertions.Contains(model.searchPlaceholder(), "fast")
 			assertions.NotContains(model.searchPlaceholder(), "semantic")

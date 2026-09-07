@@ -59,9 +59,9 @@ func (m Model) textTitleBar() string {
 
 	// Mode indicator
 	accountStr := "Texts"
-	if m.accountFilter != nil {
+	if m.textState.sourceID != nil {
 		for _, acc := range m.accounts {
-			if acc.ID == *m.accountFilter {
+			if acc.ID == *m.textState.sourceID {
 				accountStr = "Texts - " + acc.Identifier
 				break
 			}

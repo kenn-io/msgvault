@@ -31,8 +31,8 @@ func TestPeopleInboxKeepsTextWorkspaceIndependentAcrossModeSwitches(t *testing.T
 	model := peopleModel(&fakePeopleBackend{})
 	model.textEngine = meetingModeTextEngine{}
 	model.mode = modeTexts
-	model.accountFilter = &textSourceID
 	model.textState = textState{
+		sourceID: &textSourceID,
 		viewType: query.TextViewContacts,
 		level:    textLevelDetail,
 		conversations: []query.ConversationRow{
@@ -49,7 +49,6 @@ func TestPeopleInboxKeepsTextWorkspaceIndependentAcrossModeSwitches(t *testing.T
 		selectedConvID:    701,
 		selectedMessageID: 713,
 		filter: query.TextFilter{
-			SourceID:     &textSourceID,
 			ContactPhone: "+15550000071",
 			SortField:    query.TextSortByName,
 		},
@@ -99,8 +98,8 @@ func TestPeopleInboxKeepsTextWorkspaceIndependentAcrossModeSwitches(t *testing.T
 	assert.Equal(int64(713), model.textState.selectedMessageID)
 	assert.Equal(2, model.textState.cursor)
 	assert.Equal(1, model.textState.scrollOffset)
-	require.NotNil(t, model.textState.filter.SourceID)
-	assert.Equal(textSourceID, *model.textState.filter.SourceID)
+	require.NotNil(t, model.textState.sourceID)
+	assert.Equal(textSourceID, *model.textState.sourceID)
 	assert.Equal("+15550000071", model.textState.filter.ContactPhone)
 	assert.Empty(model.textState.filter.ParticipantIDs)
 	assert.Equal([]int64{711, 712, 713}, messageSummaryIDs(model.textState.messages))

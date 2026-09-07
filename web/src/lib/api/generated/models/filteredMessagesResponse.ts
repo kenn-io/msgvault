@@ -4,6 +4,7 @@
 import type { MessageSummary } from "./messageSummary";
 
 export interface FilteredMessagesResponse {
+  applied_source_ids?: number[];
   count: number;
   has_more: boolean;
   limit: number;

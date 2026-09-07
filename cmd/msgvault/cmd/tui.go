@@ -51,7 +51,7 @@ Navigation:
   ,           Open Settings
   g           Cycle aggregate view (Email and Texts)
   /           Search; Tab adds active-message-only Semantic mode when enabled
-  A           Filter by account, or meeting source in Meetings mode
+  A           Filter by account or named Email collection
   s           Cycle sort field
   r           Reverse sort direction
   t           Toggle time granularity (Time view only)
@@ -96,17 +96,19 @@ HTTP Mode:
 
 		// Create and run TUI
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
+		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
 		model := tui.New(backend.engine, tui.Options{
-			DataDir:          cfg.Data.DataDir,
-			ExportDir:        cfg.ExportDir(),
-			Version:          Version,
-			TextEngine:       textEngine,
-			PeopleBackend:    peopleBackend,
-			ManifestSaver:    backend.client,
-			AttachmentReader: tuiAttachmentOpener{client: backend.client},
-			SemanticSearch:   semanticSearch,
-			AnalyticsNotice:  notice,
-			SettingsBackend:  backend.settings,
+			DataDir:               cfg.Data.DataDir,
+			ExportDir:             cfg.ExportDir(),
+			Version:               Version,
+			TextEngine:            textEngine,
+			PeopleBackend:         peopleBackend,
+			ManifestSaver:         backend.client,
+			AttachmentReader:      tuiAttachmentOpener{client: backend.client},
+			SemanticSearch:        semanticSearch,
+			AnalyticsNotice:       notice,
+			SettingsBackend:       backend.settings,
+			CollectionScopeLister: collectionScopes,
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -176,10 +178,27 @@ func tuiPeopleBackend(
 }
 
 const (
-	semanticSearchMinAPISchemaVersion = "2.7.0"
-	peopleMinAPISchemaVersion         = "2.10.0"
-	tuiSemanticMessageType            = "email"
+	semanticSearchMinAPISchemaVersion   = "2.7.0"
+	peopleMinAPISchemaVersion           = "2.10.0"
+	collectionScopesMinAPISchemaVersion = "2.17.0"
+	tuiSemanticMessageType              = "email"
 )
+
+func tuiCollectionScopes(
+	ctx context.Context,
+	client *daemonclient.Client,
+	engine query.Engine,
+) query.CollectionScopeLister {
+	if client == nil || engine == nil {
+		return nil
+	}
+	compatible, err := client.SupportsAPISchemaVersion(ctx, collectionScopesMinAPISchemaVersion)
+	if err != nil || !compatible {
+		return nil
+	}
+	lister, _ := engine.(query.CollectionScopeLister)
+	return lister
+}
 
 type tuiAttachmentOpener struct {
 	client *daemonclient.Client

@@ -70,8 +70,8 @@ func TestAccountSelectorModal(t *testing.T) {
 	m, cmd = applyModalKey(t, m, keyEnter())
 
 	assert.Equal(modalNone, m.modal, "after selection")
-	require.NotNil(t, m.accountFilter)
-	assert.Equal(int64(1), *m.accountFilter)
+	require.NotNil(t, m.sourceScope.accountID)
+	assert.Equal(int64(1), *m.sourceScope.accountID)
 	assert.NotNil(cmd, "expected command to reload data")
 }
 
@@ -89,7 +89,7 @@ func TestOpenAccountSelector(t *testing.T) {
 			query.AccountInfo{ID: 10, Identifier: "a@example.com"},
 			query.AccountInfo{ID: 42, Identifier: "b@example.com"},
 		).Build()
-		m.accountFilter = &acctID
+		m.sourceScope = accountSourceScope(&acctID)
 		m.openAccountSelector()
 		assertModal(t, m, modalAccountSelector)
 		assert.Equal(t, 2, m.modalCursor, "index 1 + 1 for All Accounts")

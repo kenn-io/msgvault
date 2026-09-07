@@ -52,6 +52,29 @@ msgvault tui --local
 ```
 
 Deletion staging and attachment export use the selected daemon. When connected to a configured remote server, staged deletion manifests are saved on that remote host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine.
+
+### Email Account and Collection Scopes
+
+Press `A` in Email mode to choose `All Accounts`, an individual account, or a
+named collection. A collection is a daemon-owned group of accounts, and the
+title shows `Collection: <name>` while its exact member sources scope
+aggregates, message lists, fast search, statistics, and deletion-target
+inspection. An empty collection shows no results and makes no scoped HTTP read.
+
+Collections require a daemon with API schema `2.17.0` or newer. Older or
+unavailable daemons keep the account selector usable and hide collection rows.
+Changing the Email scope returns to the top-level view and clears the current
+search and selection. Texts and Meetings keep separate account or source
+selectors; changing one mode's selection does not change another mode's scope.
+
+Collections with multiple sources offer Fast search only. Deep search is
+available for single-source collections; Semantic search requires an individual
+account or All Accounts, subject to its other filter limits.
+
+Deletion staging requires the selected messages to belong to one source.
+You can stage messages from one source within a larger collection, but a
+selection spanning sources is rejected. The TUI does not offer deduplication
+operations; use the collection-scoped CLI commands for those.
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view with message counts and sizes" loading="lazy">
 </figure>
@@ -217,7 +240,7 @@ Press `Esc` to return to the message list.
 | `v` | Reverse sort direction |
 | `t` | Jump to Time view (cycle granularity when already in Time) |
 | `a` | Show all individual messages in current view |
-| `A` | Filter by account, or by source in Meetings mode |
+| `A` | Filter by account or named Email collection; select a source in Meetings mode |
 | `f` | Open filter modal |
 | `Space` | Toggle selection |
 | `d` | Stage selected for deletion |

@@ -516,6 +516,78 @@ func TestSubAggregates(t *testing.T) {
 	}
 }
 
+func TestSQLiteEngine_SubAggregateSourceScopePrecedence(t *testing.T) {
+	env := newTestEnv(t)
+	sourceOne := int64(1)
+	sourceTwo := env.AddSource(dbtest.SourceOpts{Identifier: "scope@example.com"})
+	senderID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email: new("scope-sender@example.com"), DisplayName: new("Scope Sender"), Domain: "example.com",
+	})
+	conversationID := env.AddConversation(dbtest.ConversationOpts{SourceID: sourceTwo, Title: "Scoped"})
+	env.AddMessage(dbtest.MessageOpts{
+		SourceID: sourceTwo, ConversationID: conversationID, FromID: senderID,
+		Subject: "Scoped message", SentAt: "2024-06-01 10:00:00",
+	})
+
+	sourceTwoID := sourceTwo
+	cases := []struct {
+		name   string
+		filter MessageFilter
+		opts   AggregateOptions
+		want   []aggExpectation
+	}{
+		{
+			name:   "option multi overrides filter single",
+			filter: MessageFilter{SourceID: &sourceOne, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceIDs: []int64{sourceTwo}},
+			want:   []aggExpectation{{"scope-sender@example.com", 1}},
+		},
+		{
+			name:   "option single overrides filter multi",
+			filter: MessageFilter{SourceIDs: []int64{sourceOne}, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceID: &sourceTwoID},
+			want:   []aggExpectation{{"scope-sender@example.com", 1}},
+		},
+		{
+			name:   "option single overrides empty filter",
+			filter: MessageFilter{SourceIDs: []int64{}, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceID: &sourceTwoID},
+			want:   []aggExpectation{{"scope-sender@example.com", 1}},
+		},
+		{
+			name:   "explicit empty option overrides filter",
+			filter: MessageFilter{SourceID: &sourceTwo, Sender: "scope-sender@example.com"},
+			opts:   AggregateOptions{SourceIDs: []int64{}},
+			want:   nil,
+		},
+		{
+			name:   "filter remains when options are nil",
+			filter: MessageFilter{SourceID: &sourceTwo, Sender: "scope-sender@example.com"},
+			opts:   DefaultAggregateOptions(),
+			want:   []aggExpectation{{"scope-sender@example.com", 1}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			filter := tc.filter
+			opts := DefaultAggregateOptions()
+			opts.SourceID = tc.opts.SourceID
+			opts.SourceIDs = tc.opts.SourceIDs
+			rows, err := env.Engine.SubAggregate(env.Ctx, filter, ViewSenders, opts)
+			require.NoError(err, "SubAggregate")
+			assertAggRows(t, rows, tc.want)
+			if tc.filter.SourceID != nil {
+				require.NotNil(filter.SourceID)
+				assert.Equal(*tc.filter.SourceID, *filter.SourceID)
+			}
+			assert.Equal(tc.filter.SourceIDs, filter.SourceIDs)
+		})
+	}
+}
+
 func TestSubAggregate_MatchEmptySenderName(t *testing.T) {
 	env := newTestEnvWithEmptyBuckets(t)
 

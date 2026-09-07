@@ -67,6 +67,7 @@ func (m *Model) nextTextRequestID() uint64 {
 func (m *Model) loadTextConversations() tea.Cmd {
 	te := m.textEngine
 	filter := m.textState.filter
+	filter.SourceID = m.textState.sourceID
 	requestID := m.nextTextRequestID()
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
@@ -101,6 +102,7 @@ func (m *Model) loadTextAggregate() tea.Cmd {
 	te := m.textEngine
 	vt := m.textState.viewType
 	filter := m.textState.filter
+	filter.SourceID = m.textState.sourceID
 	requestID := m.nextTextRequestID()
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
@@ -143,6 +145,7 @@ func (m *Model) loadTextMessages() tea.Cmd {
 	te := m.textEngine
 	convID := m.textState.selectedConvID
 	filter := m.textState.filter
+	filter.SourceID = m.textState.sourceID
 	requestID := m.nextTextRequestID()
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
@@ -255,5 +258,19 @@ func (m *Model) loadTextData() tea.Cmd {
 		return nil
 	default:
 		return m.loadTextAggregate()
+	}
+}
+
+func (m *Model) textPresentationLoadCmd() tea.Cmd {
+	switch {
+	case m.textState.level == textLevelDetail:
+		if m.messageDetail == nil && m.textState.selectedMessageID > 0 {
+			return m.loadTextMessage(m.textState.selectedMessageID)
+		}
+		return nil
+	case m.textState.level == textLevelTimeline && m.textState.globalSearchTimeline:
+		return nil
+	default:
+		return m.loadTextData()
 	}
 }

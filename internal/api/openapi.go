@@ -266,9 +266,12 @@ import (
 // parameters introduced with these TUI contracts are also covered by 2.16.0.
 // It also adds authenticated asynchronous historical import jobs at
 // POST /api/v1/imports and GET /api/v1/imports/{job_id}. Existing synchronous
-// CLI sync routes, source-status responses, unfiltered statistics, search, and
-// deletion requests are unchanged.
-const APISchemaVersion = "2.16.0"
+// CLI sync routes and source-status responses are unchanged.
+// 2.17.0 adds repeated/comma-separated source_ids to aggregate and message
+// filter routes, plus applied_source_ids echoes. Clients can therefore fail
+// closed when an older daemon ignores an additive source scope instead of
+// widening the result to all sources.
+const APISchemaVersion = "2.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

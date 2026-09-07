@@ -291,7 +291,7 @@ func (b *TestModelBuilder) configureState(m *Model) {
 	}
 
 	if b.accountFilter != nil {
-		m.accountFilter = b.accountFilter
+		m.sourceScope = accountSourceScope(b.accountFilter)
 	}
 
 	if b.stats != nil {

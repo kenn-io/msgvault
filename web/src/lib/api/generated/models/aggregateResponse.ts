@@ -4,6 +4,7 @@
 import type { AggregateRowJSON } from "./aggregateRowJSON";
 
 export interface AggregateResponse {
+  applied_source_ids?: number[];
   rows: AggregateRowJSON[];
   view_type: string;
   [key: string]: unknown;

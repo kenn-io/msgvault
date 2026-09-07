@@ -84,6 +84,141 @@ type Options struct {
 	// SettingsBackend reads and writes the same daemon-owned settings catalog
 	// used by the Web UI. When nil, the Settings surface reports unavailable.
 	SettingsBackend SettingsBackend
+
+	// CollectionScopeLister optionally supplies named Email source scopes. The
+	// command root gates this capability on the daemon API schema version.
+	CollectionScopeLister query.CollectionScopeLister
+}
+
+type sourceScopeKind uint8
+
+const (
+	sourceScopeAll sourceScopeKind = iota
+	sourceScopeAccount
+	sourceScopeCollection
+)
+
+type sourceScope struct {
+	kind           sourceScopeKind
+	accountID      *int64
+	collectionName string
+	sourceIDs      []int64
+}
+
+type scopeOptionKind uint8
+
+const (
+	scopeOptionAll scopeOptionKind = iota
+	scopeOptionAccount
+	scopeOptionCollection
+)
+
+type scopeOption struct {
+	kind       scopeOptionKind
+	label      string
+	accountID  *int64
+	collection query.CollectionScope
+}
+
+func allSourceScope() sourceScope { return sourceScope{} }
+
+func accountSourceScope(id *int64) sourceScope {
+	if id == nil {
+		return allSourceScope()
+	}
+	idCopy := *id
+	return sourceScope{kind: sourceScopeAccount, accountID: &idCopy}
+}
+
+func collectionSourceScope(collection query.CollectionScope) sourceScope {
+	return sourceScope{
+		kind:           sourceScopeCollection,
+		collectionName: collection.Name,
+		sourceIDs:      copySourceIDs(collection.SourceIDs),
+	}
+}
+
+func (s sourceScope) title(accounts []query.AccountInfo) string {
+	if s.kind == sourceScopeCollection {
+		return "Collection: " + s.collectionName
+	}
+	if s.accountID == nil {
+		return "All Accounts"
+	}
+	for _, account := range accounts {
+		if account.ID == *s.accountID {
+			return account.Identifier
+		}
+	}
+	return "All Accounts"
+}
+
+func (s sourceScope) apply(filter *query.MessageFilter) {
+	filter.SourceID = nil
+	filter.SourceIDs = nil
+	switch s.kind {
+	case sourceScopeAll:
+		return
+	case sourceScopeAccount:
+		if s.accountID != nil {
+			id := *s.accountID
+			filter.SourceID = &id
+		}
+	case sourceScopeCollection:
+		filter.SourceIDs = copySourceIDs(s.sourceIDs)
+	}
+}
+
+func copySourceIDs(ids []int64) []int64 {
+	if ids == nil {
+		return nil
+	}
+	return append(make([]int64, 0, len(ids)), ids...)
+}
+
+func (m Model) scopeTitle() string {
+	if m.mode != modeEmail {
+		return accountSourceScope(m.textState.sourceID).title(m.accounts)
+	}
+	return m.sourceScope.title(m.accounts)
+}
+
+func (m Model) scopeOptions() []scopeOption {
+	options := []scopeOption{{kind: scopeOptionAll, label: "All Accounts"}}
+	for _, account := range m.accounts {
+		id := account.ID
+		options = append(options, scopeOption{kind: scopeOptionAccount, label: account.Identifier, accountID: &id})
+	}
+	for _, collection := range m.collectionScopes {
+		options = append(options, scopeOption{kind: scopeOptionCollection, label: collection.Name,
+			collection: query.CollectionScope{Name: collection.Name, SourceIDs: copySourceIDs(collection.SourceIDs)}})
+	}
+	return options
+}
+
+func (m Model) selectorOptions() []scopeOption {
+	if m.mode == modeEmail {
+		return m.scopeOptions()
+	}
+	options := []scopeOption{{kind: scopeOptionAll}}
+	for _, account := range m.selectableAccounts() {
+		id := account.ID
+		options = append(options, scopeOption{kind: scopeOptionAccount, label: account.Identifier, accountID: &id})
+	}
+	return options
+}
+
+func (s sourceScope) matches(option scopeOption) bool {
+	switch option.kind {
+	case scopeOptionAll:
+		return s.kind == sourceScopeAll
+	case scopeOptionAccount:
+		return s.kind == sourceScopeAccount && s.accountID != nil && option.accountID != nil && *s.accountID == *option.accountID
+	case scopeOptionCollection:
+		return s.kind == sourceScopeCollection && s.collectionName == option.collection.Name
+	default:
+		return false
+	}
 }
 
 // modalType represents the type of modal dialog.
@@ -191,11 +326,11 @@ type Model struct {
 	breadcrumbs []navigationSnapshot
 
 	// Global Stats (not view specific)
-	stats    *query.TotalStats // Global stats
-	accounts []query.AccountInfo
-
-	// Account filter (nil = all accounts)
-	accountFilter *int64
+	stats                 *query.TotalStats // Global stats
+	accounts              []query.AccountInfo
+	collectionScopeLister query.CollectionScopeLister
+	collectionScopes      []query.CollectionScope
+	sourceScope           sourceScope
 
 	// Content filters
 	filters struct {
@@ -234,6 +369,7 @@ type Model struct {
 
 	// Request tracking to ignore stale async results
 	aggregateRequestID     uint64 // Current request ID for aggregate data
+	statsRequestID         uint64 // Current request ID for total statistics
 	loadRequestID          uint64 // Current request ID for message list
 	detailRequestID        uint64 // Current request ID for message detail
 	searchRequestID        uint64 // Current request ID for search results
@@ -329,11 +465,13 @@ func New(engine query.Engine, opts Options) Model {
 	}
 
 	return Model{
-		engine:          engine,
-		textEngine:      textEngine,
-		peopleBackend:   opts.PeopleBackend,
-		settingsBackend: opts.SettingsBackend,
-		settings:        newSettingsState(),
+		engine:                engine,
+		textEngine:            textEngine,
+		collectionScopeLister: opts.CollectionScopeLister,
+		sourceScope:           allSourceScope(),
+		peopleBackend:         opts.PeopleBackend,
+		settingsBackend:       opts.SettingsBackend,
+		settings:              newSettingsState(),
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
 			DataDir:             opts.DataDir,
 			AttachmentOutputDir: opts.ExportDir,
@@ -382,6 +520,7 @@ func (m Model) Init() tea.Cmd {
 		m.loadData(),
 		m.loadStats(),
 		m.loadAccounts(),
+		m.loadCollectionScopes(),
 		m.checkForUpdate(),
 		spinnerTick(), // Start spinner for initial load
 	)
@@ -410,8 +549,10 @@ type dataLoadedMsg struct {
 
 // statsLoadedMsg is sent when stats are loaded.
 type statsLoadedMsg struct {
-	stats *query.TotalStats
-	err   error
+	stats                  *query.TotalStats
+	err                    error
+	requestID              uint64
+	presentationGeneration uint64
 }
 
 // accountsLoadedMsg is sent when accounts are loaded.
@@ -420,12 +561,17 @@ type accountsLoadedMsg struct {
 	err      error
 }
 
+type collectionScopesLoadedMsg struct {
+	scopes []query.CollectionScope
+	err    error
+}
+
 // scopeLabelForLog returns a short, stable string describing the
 // current account scope so it can be attached to log records.
 // Uses "filtered" rather than the account identifier to avoid
 // persisting email addresses in the log file.
 func (m Model) scopeLabelForLog() string {
-	if m.accountFilter != nil {
+	if m.sourceScope.kind != sourceScopeAll {
 		return "filtered"
 	}
 	return "all"
@@ -454,7 +600,6 @@ func (m Model) loadData() tea.Cmd {
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			opts := query.AggregateOptions{
-				SourceID:              m.accountFilter,
 				SortField:             m.sortField,
 				SortDirection:         m.sortDirection,
 				Limit:                 m.aggregateLimit,
@@ -463,6 +608,9 @@ func (m Model) loadData() tea.Cmd {
 				HideDeletedFromSource: m.filters.hideDeletedFromSource,
 				SearchQuery:           m.searchQuery,
 			}
+			scope := m.sourceScope
+			opts.SourceID = scope.accountID
+			opts.SourceIDs = copySourceIDs(scope.sourceIDs)
 
 			start := time.Now()
 			ctx := context.Background()
@@ -474,7 +622,7 @@ func (m Model) loadData() tea.Cmd {
 			// generic Aggregate call, lets the TUI's mode constraint intersect
 			// an explicit message_type search instead of being overridden by it.
 			aggregateFilter := emailScopedMessageFilter(m.drillFilter)
-			aggregateFilter.SourceID = m.accountFilter
+			m.sourceScope.apply(&aggregateFilter)
 			aggregateFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
 			aggregateFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
 			rows, err = m.engine.SubAggregate(ctx, aggregateFilter, m.viewType, opts)
@@ -507,13 +655,14 @@ func (m Model) loadData() tea.Cmd {
 				} else {
 					statsOpts := query.StatsOptions{
 						Filter:                &aggregateFilter,
-						SourceID:              m.accountFilter,
 						WithAttachmentsOnly:   m.filters.attachmentsOnly,
 						HideDeletedFromSource: m.filters.hideDeletedFromSource,
 						SearchQuery:           scopedQuery,
 						SearchScope:           true,
 						GroupBy:               m.viewType,
 					}
+					statsOpts.SourceID = m.sourceScope.accountID
+					statsOpts.SourceIDs = copySourceIDs(m.sourceScope.sourceIDs)
 					filteredStats, _ = m.engine.GetTotalStats(ctx, statsOpts)
 				}
 			}
@@ -532,20 +681,29 @@ func (m Model) loadData() tea.Cmd {
 	)
 }
 
+// refreshStats supersedes previous totals whenever a new statistics read is scheduled.
+func (m *Model) refreshStats() tea.Cmd {
+	m.statsRequestID++
+	return m.loadStats()
+}
+
 // loadStats fetches total statistics.
 func (m Model) loadStats() tea.Cmd {
+	requestID := m.statsRequestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			opts := query.StatsOptions{
-				SourceID:              m.accountFilter,
 				WithAttachmentsOnly:   m.filters.attachmentsOnly,
 				HideDeletedFromSource: m.filters.hideDeletedFromSource,
 			}
+			opts.SourceID = m.sourceScope.accountID
+			opts.SourceIDs = copySourceIDs(m.sourceScope.sourceIDs)
 			stats, err := m.engine.GetTotalStats(context.Background(), opts)
-			return statsLoadedMsg{stats: stats, err: err}
+			return statsLoadedMsg{stats: stats, err: err, requestID: requestID, presentationGeneration: presentationGeneration}
 		},
 		func(r any) tea.Msg {
-			return statsLoadedMsg{err: fmt.Errorf("stats panic: %v", r)}
+			return statsLoadedMsg{err: fmt.Errorf("stats panic: %v", r), requestID: requestID, presentationGeneration: presentationGeneration}
 		},
 	)
 }
@@ -567,6 +725,30 @@ func (m Model) loadAccounts() tea.Cmd {
 		},
 		func(r any) tea.Msg {
 			return accountsLoadedMsg{err: fmt.Errorf("accounts panic: %v", r)}
+		},
+	)
+}
+
+func (m Model) loadCollectionScopes() tea.Cmd {
+	lister := m.collectionScopeLister
+	return safeCmdWithPanic(
+		func() tea.Msg {
+			if lister == nil {
+				return collectionScopesLoadedMsg{}
+			}
+			scopes, err := lister.ListCollectionScopes(context.Background())
+			if err != nil {
+				slog.Warn("tui loadCollectionScopes failed", "error", err)
+				return collectionScopesLoadedMsg{err: err}
+			}
+			out := make([]query.CollectionScope, len(scopes))
+			for i, scope := range scopes {
+				out[i] = query.CollectionScope{Name: scope.Name, SourceIDs: copySourceIDs(scope.SourceIDs)}
+			}
+			return collectionScopesLoadedMsg{scopes: out}
+		},
+		func(r any) tea.Msg {
+			return collectionScopesLoadedMsg{err: fmt.Errorf("collections panic: %v", r)}
 		},
 	)
 }
@@ -690,6 +872,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 			ctx := context.Background()
 			q := search.Parse(queryStr)
 			searchFilter := emailScopedMessageFilter(m.searchFilter)
+			m.sourceScope.apply(&searchFilter)
 
 			start := time.Now()
 			var results []query.MessageSummary
@@ -807,7 +990,7 @@ func (m Model) buildMessageFilter() query.MessageFilter {
 	}
 
 	// Override sorting and pagination
-	filter.SourceID = m.accountFilter
+	m.sourceScope.apply(&filter)
 	filter.Sorting.Field = m.msgSortField
 	filter.Sorting.Direction = m.msgSortDirection
 	filter.WithAttachmentsOnly = m.filters.attachmentsOnly
@@ -957,6 +1140,7 @@ func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 				Sorting:        query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortAsc},
 				Pagination:     query.Pagination{Limit: threadLimit + 1}, // Request one extra to detect truncation
 			}
+			m.sourceScope.apply(&filter)
 			messages, err := m.engine.ListMessages(context.Background(), filter)
 
 			// Check if truncated (more messages than limit)
@@ -1061,6 +1245,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStatsLoaded(msg)
 	case accountsLoadedMsg:
 		return m.handleAccountsLoaded(msg)
+	case collectionScopesLoadedMsg:
+		return m.handleCollectionScopesLoaded(msg)
 	case updateCheckMsg:
 		return m.handleUpdateCheck(msg)
 	case AnalyticsNoticeMsg:
@@ -1367,6 +1553,9 @@ func (m Model) sumRowStats(rows []query.AggregateRow) *query.TotalStats {
 
 // handleStatsLoaded processes stats load completion.
 func (m Model) handleStatsLoaded(msg statsLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.statsRequestID || msg.presentationGeneration != m.presentationGeneration {
+		return m, nil
+	}
 	if msg.err == nil {
 		m.stats = msg.stats
 	}
@@ -1377,6 +1566,13 @@ func (m Model) handleStatsLoaded(msg statsLoadedMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleAccountsLoaded(msg accountsLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil {
 		m.accounts = msg.accounts
+	}
+	return m, nil
+}
+
+func (m Model) handleCollectionScopesLoaded(msg collectionScopesLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err == nil {
+		m.collectionScopes = msg.scopes
 	}
 	return m, nil
 }
@@ -1668,6 +1864,22 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.settings.active {
 		return m.handleSettingsKeyPress(msg)
 	}
+
+	// Resolving every deletion match is view-independent. Keep the current
+	// scope stable until it finishes, while still allowing cancellation and
+	// the normal quit flow from every mode.
+	if m.deletionLoading {
+		switch msg.String() {
+		case keyNameEsc:
+			m.cancelDeletionResolution()
+			return m.showFlash("Deletion match resolution canceled")
+		case "q", keyNameCtrlC:
+			m.cancelDeletionResolution()
+		default:
+			return m, nil
+		}
+	}
+
 	if msg.String() == "," && m.settingsShortcutAvailable() {
 		return m.openSettings()
 	}
@@ -1685,21 +1897,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle modal first (error modals must dismiss even during search)
 	if m.modal != modalNone {
 		return m.handleModalKeys(msg)
-	}
-
-	// Resolving every deletion match is view-independent. Keep the current
-	// scope stable until it finishes, while still allowing cancellation and
-	// the normal quit flow from aggregate and message-list views alike.
-	if m.deletionLoading {
-		switch msg.String() {
-		case keyNameEsc:
-			m.cancelDeletionResolution()
-			return m.showFlash("Deletion match resolution canceled")
-		case "q", keyNameCtrlC:
-			m.cancelDeletionResolution()
-		default:
-			return m, nil
-		}
 	}
 
 	// Handle inline search (takes priority over view)
@@ -1873,6 +2070,7 @@ func (m Model) stageForDeletionContext(allMatches bool) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) deletionContext(allMatches bool) DeletionContext {
+	scope := m.sourceScope
 	var drillFilter *query.MessageFilter
 	if m.hasDrillFilter() {
 		f := m.drillFilter
@@ -1882,7 +2080,8 @@ func (m Model) deletionContext(allMatches bool) DeletionContext {
 		AggregateSelection: m.selection.aggregateKeys,
 		MessageSelection:   m.selection.messageIDs,
 		AggregateViewType:  m.selection.aggregateViewType,
-		AccountFilter:      m.accountFilter,
+		AccountFilter:      scope.accountID,
+		SourceIDs:          copySourceIDs(scope.sourceIDs),
 		Accounts:           m.accounts,
 		TimeGranularity:    m.timeGranularity,
 		Messages:           m.messages,

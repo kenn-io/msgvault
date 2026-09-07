@@ -155,7 +155,7 @@ func TestMeetingAccountSelectionDoesNotReplaceEmailFilter(t *testing.T) {
 		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 	).Build()
 	model.mode = modeMeetings
-	model.accountFilter = &emailID
+	model.sourceScope = accountSourceScope(&emailID)
 	model.modal = modalAccountSelector
 	model.modalCursor = 1
 
@@ -163,8 +163,8 @@ func TestMeetingAccountSelectionDoesNotReplaceEmailFilter(t *testing.T) {
 
 	require.NotNil(updatedModel.meetingState.sourceID)
 	assert.Equal(int64(2), *updatedModel.meetingState.sourceID)
-	require.NotNil(updatedModel.accountFilter)
-	assert.Equal(emailID, *updatedModel.accountFilter)
+	require.NotNil(updatedModel.sourceScope.accountID)
+	assert.Equal(emailID, *updatedModel.sourceScope.accountID)
 }
 
 func TestMeetingAccountSelectionRerunsActiveSearchForNewSource(t *testing.T) {

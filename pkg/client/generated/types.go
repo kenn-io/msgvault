@@ -145,8 +145,9 @@ func (a Address) Validate() error {
 }
 
 type AggregateResponse struct {
-	Rows     []AggregateRowJSON `json:"rows" validate:"required"`
-	ViewType string             `json:"view_type" validate:"required"`
+	AppliedSourceIds []int64            `json:"applied_source_ids,omitempty"`
+	Rows             []AggregateRowJSON `json:"rows" validate:"required"`
+	ViewType         string             `json:"view_type" validate:"required"`
 }
 
 func (a AggregateResponse) Validate() error {
@@ -4041,11 +4042,12 @@ func (f FileSearchSort) Validate() error {
 }
 
 type FilteredMessagesResponse struct {
-	Count    int64            `json:"count"`
-	HasMore  bool             `json:"has_more"`
-	Limit    int64            `json:"limit"`
-	Messages []MessageSummary `json:"messages" validate:"required"`
-	Offset   int64            `json:"offset"`
+	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
+	Count            int64            `json:"count"`
+	HasMore          bool             `json:"has_more"`
+	Limit            int64            `json:"limit"`
+	Messages         []MessageSummary `json:"messages" validate:"required"`
+	Offset           int64            `json:"offset"`
 }
 
 func (f FilteredMessagesResponse) Validate() error {
@@ -4103,10 +4105,11 @@ func (g GenerationSummary) Validate() error {
 }
 
 type GmailIDsResponse struct {
-	GmailIds    []string         `json:"gmail_ids" validate:"required"`
-	SearchMode  *string          `json:"search_mode,omitempty"`
-	SearchQuery *string          `json:"search_query,omitempty"`
-	Targets     []DeletionTarget `json:"targets,omitempty"`
+	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
+	GmailIds         []string         `json:"gmail_ids" validate:"required"`
+	SearchMode       *string          `json:"search_mode,omitempty"`
+	SearchQuery      *string          `json:"search_query,omitempty"`
+	Targets          []DeletionTarget `json:"targets,omitempty"`
 }
 
 func (g GmailIDsResponse) Validate() error {

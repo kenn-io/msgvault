@@ -592,6 +592,10 @@ func appendExactListIDCondition(
 // SubAggregate performs aggregation on a filtered subset of messages.
 // This is used for sub-grouping after drill-down.
 func (e *SQLiteEngine) SubAggregate(ctx context.Context, filter MessageFilter, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
+	if opts.SourceIDs != nil || opts.SourceID != nil {
+		filter.SourceID = nil
+		filter.SourceIDs = nil
+	}
 	// Reconcile opts.HideDeletedFromSource into filter so the helper
 	// inside buildFilterJoinsAndConditions / optsToFilterConditions
 	// sees the OR of both fields. Mirrors the DuckDB SubAggregate

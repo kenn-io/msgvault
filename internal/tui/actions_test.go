@@ -216,6 +216,27 @@ func TestStageForDeletion_FromMessageSelection(t *testing.T) {
 	assert.ElementsMatch(t, []string{"gid_a", "gid_c"}, manifest.GmailIDs)
 }
 
+func TestStageForDeletion_MessageSelectionRespectsSourceScope(t *testing.T) {
+	env := newTestEnv(t)
+	accounts := []query.AccountInfo{
+		{ID: 1, SourceType: "gmail", Identifier: "one@example.invalid"},
+		{ID: 2, SourceType: "gmail", Identifier: "two@example.invalid"},
+	}
+	messages := []query.MessageSummary{
+		{ID: 10, SourceID: 1, SourceMessageID: "in-scope"},
+		{ID: 20, SourceID: 2, SourceMessageID: "out-of-scope"},
+	}
+
+	manifest, err := env.Ctrl.StageForDeletion(DeletionContext{
+		MessageSelection: map[int64]bool{10: true, 20: true},
+		SourceIDs:        []int64{1},
+		Accounts:         accounts,
+		Messages:         messages,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"in-scope"}, manifest.GmailIDs)
+}
+
 func TestStageForDeletion_NoSelection(t *testing.T) {
 	env := newTestEnv(t)
 

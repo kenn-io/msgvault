@@ -50,6 +50,7 @@ const (
 
 // textState holds all state for the Texts mode TUI.
 type textState struct {
+	sourceID             *int64 // Account selector; independent of Email and navigation snapshots.
 	viewType             query.TextViewType
 	level                textViewLevel
 	conversations        []query.ConversationRow
