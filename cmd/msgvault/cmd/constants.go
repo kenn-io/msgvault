@@ -25,6 +25,7 @@ const (
 	tableMessages                 = "messages"
 	tableLabels                   = "labels"
 	tableAttachments              = "attachments"
+	tablePersonDisplayNames       = "person_display_names"
 	tableParticipants             = "participants"
 	tableParticipantIdentifiers   = "participant_identifiers"
 	tableConversations            = "conversations"

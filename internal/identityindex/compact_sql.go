@@ -217,6 +217,18 @@ WITH canon AS (
 		WHERE display_name != ''
 	)
 	WHERE position = 1
+), person_display_names AS (
+	SELECT c.canonical_id, c.participant_id, pn.person_id,
+	       NULLIF(trim(pn.display_name), '') AS display_name
+	FROM canon c
+	JOIN read_parquet('%s') pn ON pn.participant_id = c.participant_id
+	WHERE trim(coalesce(pn.display_name, '')) != ''
+), person_named AS (
+	SELECT canonical_id, display_name FROM (
+		SELECT canonical_id, display_name,
+		       row_number() OVER (PARTITION BY canonical_id ORDER BY person_id, participant_id) AS position
+		FROM person_display_names
+	) WHERE position = 1
 ), fallback_candidates AS (
 	-- The identifier fallback matches the legacy label policy: only the
 	-- canonical participant's own phone, email, and identifiers are
@@ -270,6 +282,8 @@ WITH canon AS (
 	FROM canon c
 	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
 	WHERE trim(coalesce(pi.display_value, '')) != ''
+	UNION
+	SELECT canonical_id, lower(display_name) FROM person_display_names
 ), searches AS (
 	SELECT canonical_id, list(value ORDER BY value) AS search_values
 	FROM raw_searches
@@ -304,6 +318,9 @@ WITH canon AS (
 	FROM canon c
 	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
 	WHERE trim(coalesce(pi.identifier_value, '')) != ''
+	UNION ALL
+	SELECT canonical_id, participant_id, 'name', lower(display_name), display_name, 'person'
+	FROM person_display_names
 ), primitives AS (
 	SELECT canonical_id,
 	       list(struct_pack(
@@ -326,9 +343,9 @@ WITH canon AS (
 	JOIN read_parquet('%s') o ON o.participant_id = c.participant_id
 )
 SELECT m.canonical_id,
-       coalesce(n.display_name, f.display_label,
+       coalesce(pnm.display_name, n.display_name, f.display_label,
                 'Unknown person #' || m.canonical_id)::VARCHAR AS display_label,
-       (n.display_name IS NULL) AS partial_label,
+       (pnm.display_name IS NULL AND n.display_name IS NULL) AS partial_label,
        m.member_ids,
        coalesce(s.search_values, []::VARCHAR[]) AS search_values,
        coalesce(p.search_primitives, []::STRUCT(
@@ -337,6 +354,7 @@ SELECT m.canonical_id,
        (o.canonical_id IS NOT NULL) AS is_owner
 FROM members m
 LEFT JOIN named n USING (canonical_id)
+LEFT JOIN person_named pnm USING (canonical_id)
 LEFT JOIN fallback f USING (canonical_id)
 LEFT JOIN searches s USING (canonical_id)
 LEFT JOIN primitives p USING (canonical_id)
@@ -344,6 +362,7 @@ LEFT JOIN owners o USING (canonical_id)
 ORDER BY m.canonical_id`,
 		quoteSQLString(path("participants")),
 		quoteSQLString(path("participant_clusters")),
+		quoteSQLString(path("person_display_names")),
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),

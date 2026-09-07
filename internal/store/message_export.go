@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 const messageExportPageSize = 256
@@ -26,6 +28,7 @@ const (
 )
 
 type MessageExportFilter struct {
+	PersonScope  *personscope.Scope
 	Start        time.Time
 	End          time.Time
 	SourceIDs    []int64
@@ -107,6 +110,7 @@ type messageExportMessageRow struct {
 	deletedFromSource    bool
 	senderID             sql.NullInt64
 	recipientDisplayName string
+	personDisplayName    string
 	senderDisplayName    string
 	senderAddress        string
 }
@@ -133,6 +137,11 @@ func (s *Store) ExportMessages(
 		}
 	}
 
+	if filter.PersonScope != nil {
+		if err := personscope.Validate(*filter.PersonScope); err != nil {
+			return MessageExportCounts{}, err
+		}
+	}
 	var counts MessageExportCounts
 	if err := s.exportMessageSources(ctx, filter, sink, &counts); err != nil {
 		return counts, err
@@ -152,10 +161,10 @@ func (s *Store) exportMessageSources(
 	sink MessageExportSink,
 	counts *MessageExportCounts,
 ) error {
-	messagePredicate, messageArgs := messageExportPredicate("m", filter, false)
+	messagePredicate, messageArgs := messageExportPredicate("m", filter, true)
 	var query string
 	var args []any
-	if len(filter.SourceIDs) > 0 {
+	if len(filter.SourceIDs) > 0 && filter.PersonScope == nil {
 		sourceClause, sourceArgs := messageExportInClause("s.id", filter.SourceIDs)
 		query = `
 			SELECT s.id, s.source_type, s.identifier, COALESCE(s.display_name, '')
@@ -341,6 +350,9 @@ func (s *Store) exportMessageRows(
 			           THEN COALESCE(mr_from.display_name, '')
 			           ELSE ''
 			       END,
+			       COALESCE((SELECT NULLIF(TRIM(person_name.display_name), '')
+			                 FROM person_participants person_binding JOIN persons person_name ON person_name.id = person_binding.person_id
+			                 WHERE person_binding.participant_id = p_sender.id), ''),
 			       COALESCE(p_sender.display_name, ''),
 			       COALESCE(p_sender.email_address, p_sender.phone_number, '')
 			FROM messages m
@@ -419,7 +431,7 @@ func scanMessageExportPage(rows *loggedRows) ([]messageExportMessageRow, error) 
 			&row.id, &row.sourceType, &row.sourceIdentifier, &sourceMessageID,
 			&sourceConversationID, &row.messageType, &row.subject, &row.metadata,
 			&occurredAt, &deletedFromSource, &row.senderID,
-			&row.recipientDisplayName, &row.senderDisplayName, &row.senderAddress,
+			&row.recipientDisplayName, &row.personDisplayName, &row.senderDisplayName, &row.senderAddress,
 		); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan message export message: %w", err)
@@ -469,6 +481,11 @@ func messageExportPredicate(
 	if len(filter.MessageTypes) > 0 {
 		clause, values := messageExportInClause(alias+".message_type", filter.MessageTypes)
 		parts = append(parts, clause)
+		args = append(args, values...)
+	}
+	if filter.PersonScope != nil {
+		predicate, values := personscope.MessagePredicate(*filter.PersonScope, alias, "person_scope_c")
+		parts = append(parts, "EXISTS (SELECT 1 FROM conversations person_scope_c WHERE person_scope_c.id = "+alias+".conversation_id AND ("+predicate+"))")
 		args = append(args, values...)
 	}
 	return strings.Join(parts, " AND "), args
@@ -526,7 +543,10 @@ func normalizeMessageExportConversation(
 func normalizeMessageExportAuthor(
 	row messageExportMessageRow,
 ) (*MessageExportAuthor, error) {
-	displayName := strings.TrimSpace(row.recipientDisplayName)
+	displayName := strings.TrimSpace(row.personDisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(row.recipientDisplayName)
+	}
 	if row.sourceType == "discord" && displayName == "" {
 		var metadata messageExportMessageMetadata
 		if err := json.Unmarshal([]byte(row.metadata), &metadata); err != nil {

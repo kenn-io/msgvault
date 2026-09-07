@@ -228,6 +228,66 @@ func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *tes
 		"a later tombstone must delete the still-untouched rebased import")
 }
 
+func TestCardDAVDisplayNameRevisionTracksRebaseAndRetirement(t *testing.T) {
+	t.Run("rebase", func(t *testing.T) {
+		require := require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		href := book.CanonicalURL + "rebase.vcf"
+		initial := remoteResource(href, "remote-rebase", "Alice Initial", "rebase@example.test", `"one"`)
+		_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+			AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+			SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{initial},
+		})
+		require.NoError(err)
+		before, err := st.PersonDisplayNameRevision()
+		require.NoError(err)
+
+		updated := remoteResource(href, "remote-rebase", "Alice Updated", "updated@example.test", `"two"`)
+		updated.SemanticHash = "semantic-remote-rebase-updated"
+		_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+			AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+			SyncRevision: book.SyncRevision + 1, Upserts: []store.CardDAVRemoteResource{updated},
+		})
+		require.NoError(err)
+		after, err := st.PersonDisplayNameRevision()
+		require.NoError(err)
+		require.Equal(before+1, after)
+	})
+
+	t.Run("retirement", func(t *testing.T) {
+		require := require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		href := book.CanonicalURL + "retire.vcf"
+		input := remoteResource(href, "remote-retire", "Alice Retired", "retire@example.test", `"one"`)
+		_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+			AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+			SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+		})
+		require.NoError(err)
+		resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, href)
+		require.NoError(err)
+		require.NotNil(resource.PersonID)
+		participantID, err := st.EnsureParticipantByIdentifier("email", input.Emails[0], input.DisplayName)
+		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(
+			`INSERT INTO person_participants (person_id, participant_id) VALUES (?, ?)`),
+			*resource.PersonID, participantID)
+		require.NoError(err)
+		before, err := st.PersonDisplayNameRevision()
+		require.NoError(err)
+
+		_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+			BaseURL: "https://contacts-new.example/dav", Username: "alice",
+			PrincipalURL: "https://contacts-new.example/principal/alice/",
+			HomeURL:      "https://contacts-new.example/books/alice/",
+		})
+		require.NoError(err)
+		after, err := st.PersonDisplayNameRevision()
+		require.NoError(err)
+		require.Equal(before+1, after)
+	})
+}
+
 func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

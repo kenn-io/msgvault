@@ -2499,6 +2499,7 @@ var RequiredParquetDirs = []string{
 	datasetConversationParticipants,
 	datasetOwnerParticipants,
 	datasetParticipantClusters,
+	datasetPersonDisplayNames,
 	identityindex.DatasetActivity,
 	identityindex.DatasetPeople,
 	identityindex.DatasetDomains,

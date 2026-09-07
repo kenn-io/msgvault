@@ -851,6 +851,11 @@ func (s *Store) createCardDAVImportedPersonTx(
 		VALUES (?, NULLIF(?, '')) RETURNING id`, uid, input.DisplayName).Scan(&personID); err != nil {
 		return nil, nil, fmt.Errorf("create CardDAV imported person: %w", err)
 	}
+	if strings.TrimSpace(input.DisplayName) != "" {
+		if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input); err != nil {
 		return nil, nil, err
 	}
@@ -952,6 +957,11 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 			return false, fmt.Errorf("count rebased CardDAV display label: %w", err)
 		}
 		displayChanged = affected > 0
+		if displayChanged {
+			if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
+				return false, err
+			}
+		}
 	}
 	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 		return false, err
@@ -1000,9 +1010,19 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 		}
 	}
 	if remoteOwnsDisplay {
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL
-			WHERE id = ? AND display_name = ?`, personID, importedDisplay.String); err != nil {
+		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL
+			WHERE id = ? AND display_name = ?`, personID, importedDisplay.String)
+		if err != nil {
 			return fmt.Errorf("clear retired CardDAV display label: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count cleared CardDAV display label: %w", err)
+		}
+		if affected > 0 {
+			if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
+				return err
+			}
 		}
 	}
 	if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {

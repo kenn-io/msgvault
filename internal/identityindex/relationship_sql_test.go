@@ -155,6 +155,7 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	requirements.NoError(err)
 
 	stagedRoot := t.TempDir()
+	writeRelationshipParquet(t, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	writeSyntheticRelationshipFanOut(t, db, stagedRoot, syntheticRelationshipFanOutOptions{
 		firstMessageID:   101,
 		messageCount:     3,

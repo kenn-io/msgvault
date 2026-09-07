@@ -486,6 +486,7 @@ func writeRelationshipBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {
 		SELECT * FROM (VALUES
 			(1::BIGINT, 1::BIGINT)
 		) AS t(source_id, participant_id)`+where)
+	writeRelationshipParquet(t, db, root, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	writeRelationshipParquet(t, db, root, "participant_clusters", `
 		SELECT * FROM (VALUES
 			(2::BIGINT, 2::BIGINT),
@@ -615,4 +616,40 @@ func moveRelationshipDatasetAside(t *testing.T, root, dataset string) string {
 		filepath.Join(oldRoot, dataset),
 	))
 	return oldRoot
+}
+
+func TestBuildPeopleCuratedNamePreservesObservedPrimitives(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	root, db := writeRelationshipBaseFixture(t, false)
+	ctx := context.Background()
+	opts := BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root}
+	_, err := Build(ctx, db, opts)
+	requirements.NoError(err)
+	_, err = db.Exec(`CREATE TEMP TABLE observed_directory AS SELECT * FROM read_parquet(?)`, relationshipParquetGlob(root, DatasetPeople))
+	requirements.NoError(err)
+	replaceRelationshipParquet(t, db, root, "person_display_names", `SELECT 3::BIGINT AS participant_id, 10::BIGINT AS person_id, 'Alice Curated'::VARCHAR AS display_name`)
+	_, err = Build(ctx, db, opts)
+	requirements.NoError(err)
+	var retained, curated bool
+	requirements.NoError(db.QueryRow(`
+  SELECT list_has_all(current.search_values, observed.search_values)
+         AND list_has_all(current.search_primitives, observed.search_primitives),
+         list_contains(current.search_values, 'alice curated')
+  FROM read_parquet(?) current JOIN observed_directory observed USING (canonical_id)
+  WHERE canonical_id = 2
+ `, relationshipParquetGlob(root, DatasetPeople)).Scan(&retained, &curated))
+	assertions.True(retained)
+	assertions.True(curated)
+	var participantID int64
+	var source, name string
+	requirements.NoError(db.QueryRow(`
+  SELECT primitive.participant_id, primitive.source, primitive.display_value
+  FROM (SELECT unnest(search_primitives) AS primitive FROM read_parquet(?) WHERE canonical_id = 2)
+  WHERE primitive.source = 'person'
+ `, relationshipParquetGlob(root, DatasetPeople)).Scan(&participantID, &source, &name))
+	assertions.Equal(int64(3), participantID)
+	assertions.Equal("person", source)
+	assertions.Equal("Alice Curated", name)
+	t.Log("all observed search values and primitives retained; curated primitive source=person participant_id=3")
 }

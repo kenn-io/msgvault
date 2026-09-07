@@ -801,8 +801,16 @@ func participantsExportSelectSQL() string {
 		FROM sqlite_db.participants`
 }
 
+// personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
+func personDisplayNamesExportSelectSQL() string {
+	return `SELECT pp.participant_id, pp.person_id,
+		COALESCE(TRY_CAST(p.display_name AS VARCHAR), '') AS display_name
+		FROM sqlite_db.person_participants pp
+		JOIN sqlite_db.persons p ON p.id = pp.person_id`
+}
+
 // derivedDriftOnly reports whether participant-link, conversation-membership,
-// conversation-type, participant-identifier, or participant display-name drift
+// conversation-type, participant-identifier, participant or person display-name drift
 // is the only staleness signal. The index-only refresh rebuilds the four
 // relationship datasets from committed base Parquet while re-staging any
 // drifted replaceable base dataset.
@@ -816,7 +824,7 @@ func participantsExportSelectSQL() string {
 func derivedDriftOnly(staleness cacheStaleness) bool {
 	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
 		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift ||
-		staleness.HasParticipantDisplayNameDrift) &&
+		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift &&
 		!staleness.HasDerivedDataDrift
@@ -938,6 +946,11 @@ func buildCacheLocked(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read participant display-name revision: %w", err)
+	}
+	personDisplayNameRevision, err := identityStore.PersonDisplayNameRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read person display-name revision: %w", err)
 	}
 	participantClusters, err := identityStore.ParticipantClusters()
 	if err != nil {
@@ -1274,6 +1287,13 @@ func buildCacheLocked(
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
 	}
 
+	personDisplayNamesDir := filepath.Join(staging.root, tablePersonDisplayNames)
+	if err := runExport(tablePersonDisplayNames, fmt.Sprintf(
+		`COPY (%s) TO '%s/person_display_names.parquet' (FORMAT PARQUET, COMPRESSION 'zstd')`,
+		personDisplayNamesExportSelectSQL(), quoteCacheSQL(personDisplayNamesDir))); err != nil {
+		return nil, fmt.Errorf("export person names: %w", err)
+	}
+
 	// Owner participants: every participant row that a confirmed
 	// account_identities address resolves to for its source (see
 	// ownerParticipantsSelectSQL for the resolution rules). Always fully
@@ -1581,6 +1601,7 @@ func buildCacheLocked(
 		AccountIdentityRevision:             accountIdentityRevision,
 		ParticipantIdentifierRevision:       participantIdentifierRevision,
 		ParticipantDisplayNameRevision:      participantDisplayNameRevision,
+		PersonDisplayNameRevision:           personDisplayNameRevision,
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,
@@ -1963,6 +1984,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}"},
 		{tableAttachments, attachmentQuery,
 			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}"},
+		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}"},
+		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}"},
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR'}"},
 		{"account_identities", "SELECT source_id, address FROM account_identities",

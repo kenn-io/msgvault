@@ -52,8 +52,9 @@ Consumers should require one manifest first, phase order, one completion record
 last, and completion counts equal to observed record counts. A command failure
 after streaming begins deliberately leaves no completion record, making a
 partial export invalid. Explicitly selected sources still produce source
-records when the window is empty; a selector that does not exist fails before
-stdout begins.
+records when the window is empty unless `--person-id` narrows the export, in
+which case only sources containing in-scope messages appear. A selector that
+does not exist fails before stdout begins.
 
 Output order is deterministic for an unchanged archive and command version.
 The command reads the configured local or remote daemon archive, does not load

@@ -99,6 +99,11 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("read participant display-name revision: %w", err)
 	}
+	personDisplayNameRevision, err := st.PersonDisplayNameRevision()
+	if err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("read person display-name revision: %w", err)
+	}
 	clusters, err := st.ParticipantClusters()
 	if err != nil {
 		_ = st.Close()
@@ -130,6 +135,7 @@ func refreshDerivedDatasetsOnly(
 		"account_identities",
 		tableParticipants,
 		tableParticipantIdentifiers,
+		"persons", "person_participants",
 	); err != nil {
 		return nil, err
 	}
@@ -155,6 +161,7 @@ func refreshDerivedDatasetsOnly(
 	if identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
+		personDisplayNameRevision == state.PersonDisplayNameRevision &&
 		conversationFingerprint == state.ConversationParticipantsFingerprint &&
 		typesFingerprint == state.ConversationTypesFingerprint {
 		// Nothing the derived datasets read has changed (the account-identity
@@ -203,6 +210,13 @@ func refreshDerivedDatasetsOnly(
 			return nil, err
 		}
 	}
+	personDisplayNamesChanged := personDisplayNameRevision != state.PersonDisplayNameRevision
+	identityChanged := identityRevision != state.IdentityRevision
+	if personDisplayNamesChanged || identityChanged {
+		if err := exportDerivedPersonDisplayNames(ctx, exportDB, staging.root); err != nil {
+			return nil, err
+		}
+	}
 	typesChanged := typesFingerprint != state.ConversationTypesFingerprint
 	if typesChanged {
 		// The index rebuild reads conversation_type from the conversations
@@ -241,6 +255,7 @@ func refreshDerivedDatasetsOnly(
 	state.IdentityRevision = identityRevision
 	state.ParticipantIdentifierRevision = participantIdentifierRevision
 	state.ParticipantDisplayNameRevision = participantDisplayNameRevision
+	state.PersonDisplayNameRevision = personDisplayNameRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	state.ConversationTypesFingerprint = typesFingerprint
 	// Stats describe the unchanged committed raw snapshot. Preserve them
@@ -250,6 +265,7 @@ func refreshDerivedDatasetsOnly(
 		typesChanged,
 		identifiersChanged,
 		identifiersChanged || displayNamesChanged,
+		personDisplayNamesChanged || identityChanged,
 	)
 	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
@@ -391,6 +407,27 @@ func exportDerivedParticipants(
 	return nil
 }
 
+func exportDerivedPersonDisplayNames(
+	ctx context.Context,
+	db sqlRunner,
+	stagingRoot string,
+) error {
+	dir := filepath.Join(stagingRoot, tablePersonDisplayNames)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create derived person_display_names directory: %w", err)
+	}
+	path := filepath.Join(dir, "person_display_names.parquet")
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		COPY (
+			%s
+		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
+	`, personDisplayNamesExportSelectSQL(), quoteCacheSQL(path)))
+	if err != nil {
+		return fmt.Errorf("export derived person_display_names: %w", err)
+	}
+	return nil
+}
+
 // exportDerivedParticipantIdentifiers re-stages the participant_identifiers
 // base dataset with the full export query so an index-only refresh triggered
 // by identifier drift rebuilds the identity directory from current mappings
@@ -493,7 +530,7 @@ func quoteCacheSQL(value string) string {
 
 func derivedCachePublishPlan(
 	includeConversationParticipants, includeConversations,
-	includeParticipantIdentifiers, includeParticipants bool,
+	includeParticipantIdentifiers, includeParticipants, includePersonDisplayNames bool,
 ) cachePublishPlan {
 	plan := cachePublishPlan{
 		Append:  make(map[string]bool),
@@ -520,6 +557,9 @@ func derivedCachePublishPlan(
 	}
 	if includeParticipants {
 		plan.Replace[tableParticipants] = true
+	}
+	if includePersonDisplayNames {
+		plan.Replace[tablePersonDisplayNames] = true
 	}
 	return plan
 }

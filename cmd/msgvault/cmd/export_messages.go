@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/personscope"
+	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -19,6 +21,7 @@ type exportMessagesDeps struct {
 }
 
 type exportMessagesOptions struct {
+	PersonID     int64
 	Start        string
 	End          string
 	Format       string
@@ -37,6 +40,7 @@ type exportMessagesWindow struct {
 }
 
 type exportMessagesFilters struct {
+	PersonID     *int64                         `json:"person_id,omitempty"`
 	MessageTypes []string                       `json:"message_types"`
 	Sources      []exportMessagesSourceSelector `json:"sources"`
 }
@@ -183,6 +187,7 @@ func newExportMessagesLocalCmd(deps exportMessagesDeps) *cobra.Command {
 	cmd.Flags().StringArrayVar(
 		&opts.Sources, "source", nil, "typed source selector type:identifier (repeatable)",
 	)
+	cmd.Flags().Int64Var(&opts.PersonID, "person-id", 0, "export messages for the durable person's bound participants")
 	cmd.Flags().StringVar(&opts.Format, "format", "jsonl", "output format (jsonl)")
 	return cmd
 }
@@ -221,6 +226,16 @@ func runExportMessages(
 		return err
 	}
 
+	var scope *personscope.Scope
+	var personID *int64
+	if cmd.Flags().Changed("person-id") {
+		resolved, err := personresolver.Resolve(cmd.Context(), st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: opts.PersonID}, nil)
+		if err != nil {
+			return fmt.Errorf("resolve --person-id: %w", err)
+		}
+		scope = &resolved.Scope
+		personID = &resolved.PersonID
+	}
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(exportMessagesManifest{
@@ -229,6 +244,7 @@ func runExportMessages(
 		MsgvaultVersion: Version,
 		Window:          exportMessagesWindow{Start: start, End: end},
 		Filters: exportMessagesFilters{
+			PersonID:     personID,
 			MessageTypes: messageTypes,
 			Sources:      selectors,
 		},
@@ -237,6 +253,7 @@ func runExportMessages(
 	}
 
 	counts, err := st.ExportMessages(cmd.Context(), store.MessageExportFilter{
+		PersonScope:  scope,
 		Start:        start,
 		End:          end,
 		SourceIDs:    sourceIDs,

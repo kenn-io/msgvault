@@ -1,22 +1,92 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestPersonRenameHTTPRefreshesCachedPeople(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("gmail", "user@example.com")
+	require.NoError(err)
+	conv := insertExportMessagesConversation(t, st, source.ID, "conversation", "Test")
+	insertExportMessagesMessage(t, st, source.ID, conv, "message", time.Now().UTC(), "body")
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(alice)
+	require.NoError(err)
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
+
+	// Keep the real refresh builder and publication path, running it in this
+	// process so the HTTP fixture needs no separately installed daemon binary.
+	old := runDerivedCacheSubprocess
+	runDerivedCacheSubprocess = func(_ context.Context, dir string) error {
+		_, refreshErr := buildCacheDerivedOnly(dbPath, dir)
+		return refreshErr
+	}
+	t.Cleanup(func() { runDerivedCacheSubprocess = old })
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Store:  &storeAPIAdapter{store: st, analyticsDir: analyticsDir},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	for _, test := range []struct {
+		body, label string
+	}{
+		{`{"display_name":"Alice Curated"}`, "Alice Curated"},
+		{`{"display_name":"  Alice Curated  "}`, "Alice Curated"},
+		{`{"display_name":null}`, "Alice Observed"},
+	} {
+		request := httptest.NewRequest(http.MethodPatch,
+			fmt.Sprintf("/api/v1/people/%d", person.ID), strings.NewReader(test.body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("If-Match", fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision))
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusOK, response.Code, response.Body.String())
+		person = new(store.Person)
+		require.NoError(json.Unmarshal(response.Body.Bytes(), person))
+		assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+		people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: test.label})
+		require.NoError(err)
+		require.Len(people.Rows, 1)
+		assert.Equal(test.label, people.Rows[0].DisplayLabel)
+		assert.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir))
+	}
+}
 
 func TestServeRuntimeConfigCarriesVectorScopeBeforeInitialization(t *testing.T) {
 	vectorCfg := config.NewDefaultConfig().Vector

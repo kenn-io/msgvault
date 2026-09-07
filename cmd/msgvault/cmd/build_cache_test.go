@@ -2433,6 +2433,20 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
 		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
+		CREATE TABLE persons (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			vcard_uid TEXT NOT NULL UNIQUE,
+			display_name TEXT,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE person_participants (
+			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			PRIMARY KEY (person_id, participant_id),
+			UNIQUE(participant_id)
+		);
 	`)
 	_ = db.Close()
 
@@ -3648,7 +3662,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
-	require.Equal(26, cacheSchemaVersion, "the recipient address columns require cache v26")
+	require.Equal(query.CacheSchemaVersion, cacheSchemaVersion, "cache schema version must mirror query")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")

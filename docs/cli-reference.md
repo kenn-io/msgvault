@@ -1238,6 +1238,7 @@ msgvault export-messages \
   --end <RFC3339> \
   [--message-type <type>] \
   [--source <type:identifier>] \
+  [--person-id <id>] \
   [--format jsonl]
 ```
 
@@ -1247,7 +1248,13 @@ msgvault export-messages \
 | `--end` | required | Exclusive RFC3339 upper bound |
 | `--message-type` | all | Exact message type to include; repeatable |
 | `--source` | all | Exact typed source selector; repeatable |
+| `--person-id` | all | Durable person whose bound participants scope the export |
 | `--format` | `jsonl` | Output format; v1 accepts only `jsonl` |
+
+Use `--person-id N` to export messages involving a durable person's bound
+participants. Linked participants outside those bindings contribute no
+messages. Exported authors use the sender's curated person name when present,
+keeping the address unchanged.
 
 The stream schema is `msgvault-message-export/1`. Records appear as one
 manifest, all sources, all conversations, all messages, and one completion

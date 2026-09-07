@@ -425,6 +425,9 @@ func (s *Server) handlePatchPerson(w http.ResponseWriter, r *http.Request) {
 		s.writePersonError(w, err)
 		return
 	}
+	// The rename has committed. Refresh the cache before subsequent people
+	// queries, while retaining the mutation result if refresh fails.
+	s.refreshIdentityCacheState(r.Context())
 	writePerson(w, http.StatusOK, person)
 }
 

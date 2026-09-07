@@ -3,7 +3,9 @@ package query
 // Display-label policy for identity clusters, shared by the ranked
 // relationships list and participant search/detail
 // (searchParticipants). The canonical cluster ID stays the join/dedup key
-// everywhere; only the label evaluates all cluster members: the non-empty
+// everywhere; curated person names take precedence over observed names.
+// The override orders by person ID then participant ID across cluster members.
+// Within the observed tier, the non-empty
 // display_name of the smallest-ID member wins, so linking an older unnamed
 // participant to a named alias never degrades the label to a bare identifier
 // or "Unknown person". The identifier fallback chain (phone → email → stored
@@ -33,8 +35,13 @@ func sqlPersonIdentifierFallbackExpr(alias string) string {
 		"        'Unknown person #' || CAST(" + alias + ".id AS VARCHAR))"
 }
 
-// sqlPersonDisplayLabelExpr composes the full label policy: bestNameExpr
-// first, then the identifier fallback chain on the identity's own row.
+// sqlPersonDisplayLabelExpr orders observed names before identifier fallbacks.
 func sqlPersonDisplayLabelExpr(bestNameExpr, alias string) string {
 	return "COALESCE(" + bestNameExpr + ", " + sqlPersonIdentifierFallbackExpr(alias) + ")"
+}
+
+// sqlPersonNameOverrideExpr pins conflicting bindings by person ID, then participant ID.
+func sqlPersonNameOverrideExpr(personDisplayNamesRelation, memberFilter string) string {
+	return "(SELECT NULLIF(TRIM(pnv.display_name), '') FROM read_parquet('" + quoteIdentitySQLPath(personDisplayNamesRelation) + "') pnv WHERE " + memberFilter +
+		" AND TRIM(COALESCE(pnv.display_name, '')) <> '' ORDER BY pnv.person_id, pnv.participant_id LIMIT 1)"
 }

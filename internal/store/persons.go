@@ -504,8 +504,19 @@ func (s *Store) updatePersonDisplayNameOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		var previousName sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT display_name FROM persons WHERE id = ? AND revision = ?`,
+			id, expectedRevision,
+		).Scan(&previousName)
+		if errors.Is(err, sql.ErrNoRows) {
+			return s.personCASMissTx(ctx, tx, id)
+		}
+		if err != nil {
+			return fmt.Errorf("read person %d display name: %w", id, err)
+		}
 		var updatedID int64
-		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		err = tx.QueryRowContext(ctx, fmt.Sprintf(`
 			UPDATE persons
 			SET display_name = ?, revision = revision + 1,
 			    vcard_projection_revision = vcard_projection_revision + 1,
@@ -518,6 +529,17 @@ func (s *Store) updatePersonDisplayNameOnce(
 		}
 		if err != nil {
 			return fmt.Errorf("update person %d: %w", id, err)
+		}
+		// Preserve the person revision contract, but invalidate analytics only
+		// when the normalized display name actually changed.
+		nameChanged := previousName.Valid
+		if displayName != nil {
+			nameChanged = !previousName.Valid || previousName.String != *displayName
+		}
+		if nameChanged {
+			if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := s.bumpDisplayNameCounterpartVCardProjectionsTx(
 			ctx, tx, updatedID,

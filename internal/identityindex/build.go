@@ -184,6 +184,7 @@ var baseIdentityDatasets = []string{
 	"conversation_participants",
 	"owner_participants",
 	"participant_clusters",
+	"person_display_names",
 	"attachments",
 }
 

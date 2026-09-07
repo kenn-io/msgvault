@@ -61,6 +61,8 @@ type cacheStaleness struct {
 	// and relationship_people, but not into message facts, so the index-only
 	// refresh can repair this drift without a full rebuild.
 	HasParticipantDisplayNameDrift bool
+	// HasPersonDisplayNameDrift repairs curated names without rewriting message facts.
+	HasPersonDisplayNameDrift bool
 	// HasAccountIdentityDrift signals an identity mutation that invalidates
 	// baked message data since the last build: an account identity was
 	// confirmed or removed, or two participants were merged (merges repoint
@@ -386,6 +388,17 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	if participantDisplayNameRevision != state.ParticipantDisplayNameRevision {
 		result.HasParticipantDisplayNameDrift = true
 		reasons = append(reasons, "participant display names changed")
+	}
+	personDisplayNameRevision, err := db.PersonDisplayNameRevision()
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify person display-name revision",
+		}
+	}
+	if personDisplayNameRevision != state.PersonDisplayNameRevision {
+		result.HasPersonDisplayNameDrift = true
+		reasons = append(reasons, "person display names changed")
 	}
 
 	conversationFingerprint, err := sourceConversationParticipantsFingerprint(
