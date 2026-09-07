@@ -201,6 +201,8 @@ type setupDetection struct {
 	ollamaLoopback      bool
 	voyageManifest      string
 	voyageManifestError string
+	visualKey           bool
+	visualUnavailable   string
 	mistralManifest     string
 	backend             string
 	backendUnavailable  string
@@ -215,6 +217,21 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	}
 	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
 	detection.backend, detection.backendUnavailable = setupVectorBackend(loaded)
+	// A disabled lane retains operator settings. Validate those settings and
+	// resolve its own credential before proposing to enable it; the standard
+	// Voyage environment key may belong only to the text lane.
+	multimodal := loaded.Vector.Multimodal
+	if err := multimodal.Validate(); err != nil {
+		detection.visualUnavailable = err.Error() + "; configure [vector.multimodal] before enabling visual search"
+	} else {
+		credentials, _ := providercredentials.Read(loaded.TokensDir())
+		credential, _, err := credentials.Resolve(providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv, deps.lookupEnv)
+		if err != nil {
+			detection.visualUnavailable = "visual provider credential unavailable: " + err.Error()
+		} else {
+			detection.visualKey = strings.TrimSpace(credential) != ""
+		}
+	}
 	// Validate the path setup would publish, including an enabled lane whose
 	// capabilities_file was never configured. Status still checks the saved
 	// configuration, so it stays pending until this edit is applied.
@@ -552,10 +569,15 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 			Path: []string{tomlTableVector, "multimodal"}, Values: map[string]any{"capabilities_file": detection.voyageManifest},
 		}}
 		lane.next = []string{"msgvault multimodal build --yes"}
-	case !detection.voyageKey:
+	case detection.visualUnavailable != "":
+		lane.Action, lane.Reason = planActionPending, detection.visualUnavailable
+	case !detection.visualKey:
 		lane.Action = planActionSkip
 		lane.Provider, lane.Model = "", ""
-		lane.Reason = "needs " + setupVoyageKeyEnv
+		lane.Reason = "needs " + loaded.Vector.Multimodal.APIKeyEnv + " or a stored visual provider credential"
+		if loaded.Vector.Multimodal.APIKeyEnv != setupVoyageKeyEnv {
+			lane.Action = planActionPending
+		}
 	case detection.backendUnavailable != "":
 		lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
 	case detection.voyageManifest != "":

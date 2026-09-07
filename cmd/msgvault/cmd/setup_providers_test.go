@@ -124,7 +124,11 @@ func TestSetupProvidersRejectsUnusableVisualManifest(t *testing.T) {
 			require.NoError(err, output)
 			loaded := fixture.load(t)
 			assert.False(loaded.Vector.Multimodal.Enabled)
-			assert.Contains(output, "capability manifest")
+			wantReason := "capability manifest"
+			if kind == "wrong model" {
+				wantReason = "vector.multimodal.model"
+			}
+			assert.Contains(output, wantReason)
 			if kind == "no text queries" {
 				assert.Contains(output, "does not authorize text queries")
 			}
@@ -134,7 +138,93 @@ func TestSetupProvidersRejectsUnusableVisualManifest(t *testing.T) {
 				lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists, consent: &setupConsentState{Visual: true},
 			})
 			assert.Equal(laneStatePending, lane.State)
-			assert.Contains(lane.Reason, "capability manifest")
+			assert.Contains(lane.Reason, wantReason)
+		})
+	}
+}
+
+func TestSetupProvidersPreservesInvalidDisabledVisualSettings(t *testing.T) {
+	for _, test := range []struct{ name, settings, reason string }{
+		{"provider", `provider = "custom"`, "vector.multimodal.provider"},
+		{"endpoint", `endpoint = "https://custom.example.com/v1"`, "vector.multimodal.endpoint"},
+		{"media", "include_images = false\ninclude_video = false\ninclude_animated_gifs = false", "at least one document media type"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector.multimodal]\nenabled = false\n"+test.settings+"\n")
+			fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+			fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
+			before := fixture.load(t).Vector.Multimodal
+			output, err := fixture.run(t, "providers", "--yes", "--json")
+			require.NoError(err, output)
+			loaded := fixture.load(t)
+			assert.Equal(before, loaded.Vector.Multimodal)
+			assert.True(loaded.Vector.Enabled, "invalid visual settings must not block text setup")
+			var result setupProvidersOutput
+			require.NoError(json.Unmarshal([]byte(output), &result))
+			for _, lane := range result.Plan {
+				if lane.Lane == laneVisualSearch {
+					assert.Equal(planActionPending, lane.Action)
+					assert.Contains(lane.Reason, test.reason)
+				}
+			}
+			assert.Contains(findLane(t, result.Report, laneVisualSearch).Reason, test.reason)
+		})
+	}
+}
+
+func TestSetupProvidersResolvesDisabledVisualCredential(t *testing.T) {
+	for _, test := range []struct {
+		name, storedEndpoint            string
+		standardKey, customKey, enabled bool
+	}{
+		{name: "wrong environment key", standardKey: true},
+		{name: "configured environment key", customKey: true, enabled: true},
+		{name: "stored key", storedEndpoint: setupVoyageEndpoint, enabled: true},
+		{name: "stored origin mismatch", storedEndpoint: "https://other.example.com/v1", customKey: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector.multimodal]\nenabled = false\napi_key_env = \"CUSTOM_VOYAGE_KEY\"\n")
+			if test.standardKey {
+				fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+			}
+			if test.customKey {
+				fixture.env["CUSTOM_VOYAGE_KEY"] = setupProvidersTestKey
+			}
+			fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
+			before := fixture.load(t).Vector.Multimodal
+			if test.storedEndpoint != "" {
+				tokens := fixture.load(t).TokensDir()
+				snapshot, err := providercredentials.Read(tokens)
+				require.NoError(err)
+				_, err = providercredentials.Put(tokens, snapshot.ETag, providercredentials.VectorMultimodalID, test.storedEndpoint, "synthetic-visual-key")
+				require.NoError(err)
+			}
+			output, err := fixture.run(t, "providers", "--yes", "--json")
+			require.NoError(err, output)
+			loaded := fixture.load(t)
+			assert.Equal(test.enabled, loaded.Vector.Multimodal.Enabled)
+			assert.Equal("CUSTOM_VOYAGE_KEY", loaded.Vector.Multimodal.APIKeyEnv)
+			if !test.enabled {
+				assert.Equal(before, loaded.Vector.Multimodal)
+			}
+			if test.standardKey {
+				assert.True(loaded.Vector.Enabled)
+			}
+			var result setupProvidersOutput
+			require.NoError(json.Unmarshal([]byte(output), &result))
+			for _, lane := range result.Plan {
+				if lane.Lane == laneVisualSearch {
+					want := planActionPending
+					if test.enabled {
+						want = planActionEnable
+					}
+					assert.Equal(want, lane.Action)
+				}
+			}
 		})
 	}
 }

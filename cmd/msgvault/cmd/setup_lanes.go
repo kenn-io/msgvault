@@ -190,6 +190,9 @@ func setupVoyageManifestPath(cfg *config.Config) string {
 }
 
 func setupVisualManifestError(cfg *config.Config, env setupEnvironment) error {
+	if err := cfg.Vector.Multimodal.Validate(); err != nil {
+		return fmt.Errorf("invalid visual configuration: %w", err)
+	}
 	path := setupVoyageManifestPath(cfg)
 	if !env.exists(path) {
 		return fmt.Errorf("capability manifest is missing at %s", path)
@@ -465,7 +468,15 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		return lane
 	}
 	lane.State = laneStateOff
+	if err := multimodal.Validate(); err != nil {
+		lane.State = laneStatePending
+		lane.Reason = "invalid visual configuration: " + err.Error()
+		return lane
+	}
 	if !env.hasEnv(multimodal.APIKeyEnv) {
+		if multimodal.APIKeyEnv != setupVoyageKeyEnv {
+			lane.State = laneStatePending
+		}
 		lane.Reason = "needs " + multimodal.APIKeyEnv + " (Voyage is the only visual provider)"
 		return lane
 	}
