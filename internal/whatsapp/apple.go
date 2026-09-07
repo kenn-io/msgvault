@@ -138,6 +138,10 @@ func (imp *Importer) importApple(
 	if err != nil {
 		return nil, fmt.Errorf("load Apple LID mapping: %w", err)
 	}
+	pushNames, err := loadApplePushNames(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("load Apple push names: %w", err)
+	}
 	duplicateStanzas, duplicateRows, err := fetchDuplicateAppleTextStanzas(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("find duplicate Apple stanza IDs: %w", err)
@@ -170,6 +174,7 @@ func (imp *Importer) importApple(
 	}
 	totalLimit := int64(opts.Limit)
 	var totalAdded int64
+	pendingPushNames := make(map[string]string)
 
 	for _, chat := range chats {
 		if err := ctx.Err(); err != nil {
@@ -214,12 +219,18 @@ func (imp *Importer) importApple(
 				if phone == "" {
 					continue
 				}
+				legacyName := firstNonEmptyApple(member.ContactName, member.FirstName)
 				participantID, err := ensureAppleParticipant(
-					imp.store, phone, firstNonEmptyApple(member.ContactName, member.FirstName),
+					imp.store, phone, legacyName,
 					participantIDs, summary,
 				)
 				if err != nil {
 					return summary, err
+				}
+				if legacyName == "" {
+					if pushName := applePushNameFor(pushNames, member.JID); pushName != "" {
+						pendingPushNames[phone] = pushName
+					}
 				}
 				role := "member"
 				if member.IsAdmin {
@@ -293,6 +304,12 @@ func (imp *Importer) importApple(
 				if err != nil {
 					return summary, err
 				}
+				if sourceMessage.FromMe == 0 && senderPhone != "" && sourceMessage.GroupMemberJID != "" &&
+					firstNonEmptyApple(sourceMessage.GroupContact, sourceMessage.GroupFirstName) == "" {
+					if pushName := applePushNameFor(pushNames, sourceMessage.GroupMemberJID); pushName != "" {
+						pendingPushNames[senderPhone] = pushName
+					}
+				}
 				if sourceMessage.FromMe != 0 {
 					senderPhone = opts.Phone
 				}
@@ -356,6 +373,13 @@ func (imp *Importer) importApple(
 			}
 		}
 		imp.progress.OnChatComplete(canonicalChatJID, chatAdded)
+	}
+	for phone, pushName := range pendingPushNames {
+		if _, err := ensureAppleParticipant(
+			imp.store, phone, pushName, participantIDs, summary,
+		); err != nil {
+			return summary, err
+		}
 	}
 
 	if err := imp.store.RecomputeConversationStats(source.ID); err != nil {
@@ -557,6 +581,52 @@ func loadAppleLIDMap(ctx context.Context, chatDBPath string) (map[string]string,
 	return mapping, rows.Err()
 }
 
+func loadApplePushNames(ctx context.Context, db *sql.DB) (map[string]string, error) {
+	var tableCount int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'ZWAPROFILEPUSHNAME'
+	`).Scan(&tableCount); err != nil {
+		return nil, fmt.Errorf("check ZWAPROFILEPUSHNAME availability: %w", err)
+	}
+	if tableCount == 0 {
+		return map[string]string{}, nil
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT COALESCE(ZJID, ''), COALESCE(ZPUSHNAME, '')
+		FROM ZWAPROFILEPUSHNAME
+		WHERE TRIM(COALESCE(ZJID, '')) <> ''
+		  AND TRIM(COALESCE(ZPUSHNAME, '')) <> ''
+		ORDER BY Z_PK ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query ZWAPROFILEPUSHNAME: %w", err)
+	}
+
+	mapping := make(map[string]string)
+	for rows.Next() {
+		var jid, pushName string
+		if err := rows.Scan(&jid, &pushName); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan ZWAPROFILEPUSHNAME: %w", err)
+		}
+		jid = strings.ToLower(strings.TrimSpace(jid))
+		pushName = strings.TrimSpace(pushName)
+		if _, exists := mapping[jid]; !exists {
+			mapping[jid] = pushName
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate ZWAPROFILEPUSHNAME: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close ZWAPROFILEPUSHNAME rows: %w", err)
+	}
+	return mapping, nil
+}
+
 func resolveAppleMessageSender(
 	s *store.Store,
 	message appleMessage,
@@ -709,4 +779,15 @@ func firstNonEmptyApple(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func applePushNameFor(pushNames map[string]string, jid string) string {
+	if len(pushNames) == 0 {
+		return ""
+	}
+	key := strings.ToLower(strings.TrimSpace(jid))
+	if key == "" {
+		return ""
+	}
+	return pushNames[key]
 }

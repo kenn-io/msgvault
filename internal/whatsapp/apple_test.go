@@ -253,6 +253,148 @@ func TestAppleMappingFallbacks(t *testing.T) {
 	)
 }
 
+func TestImportApplePushNames(t *testing.T) {
+	need := require.New(t)
+	check := assert.New(t)
+
+	chatDBPath := createApplePushNameFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	_, err := importer.Import(context.Background(), chatDBPath, ImportOptions{
+		Phone:       "+15555550100",
+		DisplayName: "Test Owner",
+	})
+	need.NoError(err)
+
+	names := make(map[string]string)
+	rows, err := st.DB().Query(`
+		SELECT phone_number, COALESCE(display_name, '')
+		FROM participants
+		WHERE phone_number IN ('+15555550103', '+15555550104')
+	`)
+	need.NoError(err)
+	defer func() { need.NoError(rows.Close()) }()
+	for rows.Next() {
+		var phone, name string
+		need.NoError(rows.Scan(&phone, &name))
+		names[phone] = name
+	}
+	need.NoError(rows.Err())
+	check.Equal("Push Roster Only", names["+15555550103"])
+	check.Equal("Push Name Only", names["+15555550104"])
+
+	var messageCount int
+	need.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages`,
+	).Scan(&messageCount))
+	check.Equal(5, messageCount)
+	var senderPhone string
+	need.NoError(st.DB().QueryRow(`
+		SELECT p.phone_number
+		FROM messages m
+		JOIN participants p ON p.id = m.sender_id
+		WHERE m.source_message_id = 'push-name-only'
+	`).Scan(&senderPhone))
+	check.Equal("+15555550104", senderPhone)
+
+	t.Run("message_pushname_not_used", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		assert.NotContains(names, "IAA=")
+		assert.NotEqual("IAA=", names["+15555550103"])
+		assert.NotEqual("IAA=", names["+15555550104"])
+		var badNameCount int
+		require.NoError(st.DB().QueryRow(
+			`SELECT COUNT(*) FROM participants WHERE display_name = 'IAA='`,
+		).Scan(&badNameCount))
+		assert.Zero(badNameCount)
+	})
+}
+
+func TestImportApplePushNameFallbacks(t *testing.T) {
+	check := assert.New(t)
+	need := require.New(t)
+	chatDBPath := createApplePushNameFallbackFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	_, err := importer.Import(context.Background(), chatDBPath, ImportOptions{
+		Phone:       "+15555550100",
+		DisplayName: "Test Owner",
+	})
+	need.NoError(err)
+
+	names := make(map[string]string)
+	rows, err := st.DB().Query(`
+		SELECT phone_number, COALESCE(display_name, '')
+		FROM participants
+		WHERE phone_number IN (
+			'+15555550101', '+15555550103', '+15555550105',
+			'+15555550106', '+15555550107'
+		)
+	`)
+	need.NoError(err)
+	defer func() { need.NoError(rows.Close()) }()
+	for rows.Next() {
+		var phone, name string
+		need.NoError(rows.Scan(&phone, &name))
+		names[phone] = name
+	}
+	need.NoError(rows.Err())
+	check.Equal("Alice Test", names["+15555550101"])
+	check.Equal("Bob Test", names["+15555550103"])
+	check.Empty(names["+15555550105"])
+	check.Empty(names["+15555550106"])
+	check.Equal("Later Legacy", names["+15555550107"])
+
+	var unmatched int
+	need.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM participants WHERE phone_number = '+15555550199'`,
+	).Scan(&unmatched))
+	check.Zero(unmatched)
+}
+
+func TestImportApplePushNameErrors(t *testing.T) {
+	t.Run("absent_profile_table", func(t *testing.T) {
+		chatDBPath := createAppleChatFixture(t)
+		createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+
+		st := testutil.NewTestStore(t)
+		_, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+			Phone:       "+15555550100",
+			DisplayName: "Test Owner",
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("malformed_profile_table", func(t *testing.T) {
+		check := assert.New(t)
+		need := require.New(t)
+		chatDBPath := createAppleChatFixture(t)
+		db, err := sql.Open("sqlite3", chatDBPath)
+		need.NoError(err)
+		_, err = db.Exec(`
+			CREATE TABLE ZWAPROFILEPUSHNAME (
+				Z_PK INTEGER PRIMARY KEY,
+				ZJID TEXT
+			);
+		`)
+		need.NoError(err)
+		need.NoError(db.Close())
+
+		st := testutil.NewTestStore(t)
+		_, err = NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+			Phone:       "+15555550100",
+			DisplayName: "Test Owner",
+		})
+		need.Error(err)
+		check.ErrorContains(err, "ZWAPROFILEPUSHNAME")
+	})
+}
+
 func createAppleChatFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ChatStorage.sqlite")
@@ -327,6 +469,81 @@ func createAppleLIDFixture(t *testing.T, dir string) {
 	`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
+}
+
+func createApplePushNameFixture(t *testing.T) string {
+	t.Helper()
+	path := createAppleChatFixture(t)
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		ALTER TABLE ZWAMESSAGE ADD COLUMN ZPUSHNAME TEXT;
+		UPDATE ZWAGROUPMEMBER
+		SET ZCONTACTNAME = '', ZFIRSTNAME = ''
+		WHERE Z_PK = 10;
+		INSERT INTO ZWAGROUPMEMBER
+			(Z_PK, ZCHATSESSION, ZMEMBERJID, ZCONTACTNAME, ZFIRSTNAME, ZISADMIN)
+		VALUES (11, NULL, '15555550104@s.whatsapp.net', '', '', 0);
+		INSERT INTO ZWAMESSAGE
+			(Z_PK, ZCHATSESSION, ZGROUPMEMBER, ZSTANZAID, ZISFROMME,
+			 ZMESSAGEDATE, ZTEXT, ZMESSAGETYPE, ZFROMJID, ZPUSHNAME)
+		VALUES
+			(11, 2, 11, 'push-name-only', 0, 700000011,
+			 'sender profile text', 0, '120363000000000000@g.us', 'IAA=');
+		CREATE TABLE ZWAPROFILEPUSHNAME (
+			Z_PK INTEGER PRIMARY KEY,
+			Z_ENT INTEGER,
+			Z_OPT INTEGER,
+			ZJID TEXT,
+			ZPUSHNAME TEXT
+		);
+		INSERT INTO ZWAPROFILEPUSHNAME (Z_PK, Z_ENT, Z_OPT, ZJID, ZPUSHNAME)
+		VALUES
+			(1, 1, 1, '888888888888888@lid', 'Push Roster Only'),
+			(2, 1, 1, '15555550104@s.whatsapp.net', 'Push Name Only'),
+			(3, 1, 1, '888888888888888@lid', 'Later Roster Name');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return path
+}
+
+func createApplePushNameFallbackFixture(t *testing.T) string {
+	t.Helper()
+	path := createAppleChatFixture(t)
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO ZWACHATSESSION
+			(Z_PK, ZCONTACTJID, ZPARTNERNAME, ZSESSIONTYPE, ZLASTMESSAGEDATE)
+		VALUES
+			(5, '120363000000000001@g.us', 'Future Group', 1, 700000100),
+			(6, '15555550107@s.whatsapp.net', 'Later Legacy', 0, 700000050);
+		INSERT INTO ZWAGROUPMEMBER
+			(Z_PK, ZCHATSESSION, ZMEMBERJID, ZCONTACTNAME, ZFIRSTNAME, ZISADMIN)
+		VALUES
+			(11, 2, '15555550105@s.whatsapp.net', '', '', 0),
+			(12, 2, '15555550106@s.whatsapp.net', '', '', 0),
+			(13, 5, '15555550107@s.whatsapp.net', '', '', 0);
+		CREATE TABLE ZWAPROFILEPUSHNAME (
+			Z_PK INTEGER PRIMARY KEY,
+			Z_ENT INTEGER,
+			Z_OPT INTEGER,
+			ZJID TEXT,
+			ZPUSHNAME TEXT
+		);
+		INSERT INTO ZWAPROFILEPUSHNAME (Z_PK, Z_ENT, Z_OPT, ZJID, ZPUSHNAME)
+		VALUES
+			(1, 1, 1, '888888888888888@lid', 'Profile Bob'),
+			(2, 1, 1, '15555550105@s.whatsapp.net', '   '),
+			(3, 1, 1, '15555550106@s.whatsapp.net', ''),
+			(4, 1, 1, '15555550107@s.whatsapp.net', 'Push Early'),
+			(5, 1, 1, '15555550101@s.whatsapp.net', 'Ignored Direct'),
+			(6, 1, 1, '15555550199@s.whatsapp.net', 'Unmatched');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return path
 }
 
 func assertStoreCount(t *testing.T, db *sql.DB, table string, want int) {
