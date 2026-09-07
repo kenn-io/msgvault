@@ -1627,7 +1627,7 @@ msgvault embeddings <subcommand> [flags]
 | Subcommand | Description |
 |---|---|
 | `build` | Build or update the index. Incremental by default; `--full-rebuild` starts a new generation. |
-| `resume` | Continue scan-and-fill embedding for the building or active generation. Always incremental. |
+| `resume` | Continue scan-and-fill embedding for the building or active generation. Incremental by default; `--backstop` also scans below the watermark. |
 | `list` | List index generations with their state, model, dimension, and pending count. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
 | `retire <generation-id>` | Retire a generation. |
@@ -1642,6 +1642,7 @@ msgvault embeddings build [flags]
 |---|---|
 | `--full-rebuild` | Create a new index generation and rebuild from scratch. The new generation is activated atomically once coverage reaches zero. Same-model rebuilds keep serving the previous active generation in the meantime, but active-generation top-ups are frozen until activation; model or dimension changes return `index_stale` for vector/hybrid search until the new generation activates. |
 | `--yes` | Skip the confirmation prompt that `--full-rebuild` otherwise requires. |
+| `--backstop` | Run a full-scan pass that ignores the per-generation watermark to recover missing coverage skipped by incremental scans. Already-covered messages are skipped. |
 | `--account <identifier>` | Limit embedding to this account, by identifier or display name — numeric source IDs are rejected (repeatable). Overrides `[vector.embed.scope] accounts` for this run; configured `message_types` still apply. After activating this one-off scope, add the equivalent accounts to config and restart the daemon before searching. |
 | `--collection <name>` | Limit embedding to this collection's accounts (repeatable). Can be combined with `--account`; the scope is the union. This is a one-run override; persist the resolved accounts in config before restarting the daemon. |
 
@@ -1655,10 +1656,18 @@ different `--account`/`--collection` set than the active generation requires
 ### embeddings resume
 
 ```bash
-msgvault embeddings resume
+msgvault embeddings resume [flags]
 ```
 
 Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
+
+Pass `--backstop` to scan for missing coverage below the per-generation watermark
+as well. This fills gaps in the selected generation without starting a full
+rebuild; it only activates a generation if that generation is building.
+
+```bash
+msgvault embeddings resume --backstop
+```
 
 ### embeddings list
 
