@@ -3010,6 +3010,7 @@ func TestSelfChatProbeFailureReporting(t *testing.T) {
 		status     int
 		body       string
 		wantErrors int
+		noChats    bool
 	}{
 		{name: "absent", status: http.StatusNotFound},
 		{name: "empty", status: http.StatusOK, body: `{"value":[]}`},
@@ -3018,12 +3019,17 @@ func TestSelfChatProbeFailureReporting(t *testing.T) {
 		{name: "forbidden", status: http.StatusForbidden, wantErrors: 1},
 		{name: "bad request", status: http.StatusBadRequest, wantErrors: 1},
 		{name: "invalid response", status: http.StatusOK, body: `{`, wantErrors: 1},
+		{name: "forbidden without chats", status: http.StatusForbidden, wantErrors: 1, noChats: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/me/chats":
+					if tt.noChats {
+						_, _ = w.Write([]byte(`{"value":[]}`))
+						return
+					}
 					_, _ = w.Write([]byte(`{"value":[{"id":"chat-1","chatType":"oneOnOne"}]}`))
 				case "/me/chats/48:notes/messages":
 					w.Header().Set("Retry-After", "0")
@@ -3041,7 +3047,14 @@ func TestSelfChatProbeFailureReporting(t *testing.T) {
 			sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com"})
 			require.NoError(t, err)
 			assert.EqualValues(t, tt.wantErrors, sum.Errors)
-			assert.EqualValues(t, 1, sum.ChatsProcessed, "ordinary chats must still sync")
+			if tt.noChats {
+				assert.Zero(t, sum.ChatsProcessed)
+			} else {
+				assert.EqualValues(t, 1, sum.ChatsProcessed, "ordinary chats must still sync")
+			}
+			run, err := st.GetLastSuccessfulSync(sum.SourceID)
+			require.NoError(t, err)
+			assert.EqualValues(t, tt.wantErrors, run.ErrorsCount, "sync history must retain probe errors")
 		})
 	}
 }

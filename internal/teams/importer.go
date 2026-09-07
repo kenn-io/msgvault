@@ -104,6 +104,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	blob, _ := state.Marshal()
+	// Errors can occur without any conversation reaching a checkpoint.
+	if err = imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+		PageToken:         blob,
+		MessagesProcessed: sum.MessagesProcessed,
+		MessagesAdded:     sum.MessagesAdded,
+		ErrorsCount:       sum.Errors,
+	}); err != nil {
+		return sum, err
+	}
 	if err = imp.store.CompleteSync(syncID, blob); err != nil {
 		return sum, err
 	}
