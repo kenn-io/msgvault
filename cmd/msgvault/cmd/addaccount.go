@@ -272,10 +272,14 @@ func warnOnWiderThanRequestedGrant(out io.Writer, mgr *oauth.Manager, email, res
 // addAccountGrantFlagSuffix renders the grant-affecting flags of the current
 // run for inclusion in remediation commands.
 func addAccountGrantFlagSuffix() string {
-	if readonlyGrant {
-		return " --readonly"
+	var suffix string
+	if oauthAppName != "" {
+		suffix = " --oauth-app " + oauth.ShellQuote(oauthAppName)
 	}
-	return ""
+	if readonlyGrant {
+		suffix += " --readonly"
+	}
+	return suffix
 }
 
 // runAddAccountHTTP completes any needed browser authorization in this
@@ -546,7 +550,15 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("load stored token: %w", err)
 		}
 		if err := oauth.ValidateTokenEmail(cmd.Context(), ts, email); err != nil {
-			return fmt.Errorf("verify stored token: %w", err)
+			err = fmt.Errorf("verify stored token: %w", err)
+			if _, ok := errors.AsType[*oauth.TokenMismatchError](err); ok {
+				if existingSource == nil {
+					return addAccountAuthorizeError(err, false)
+				}
+				return fmt.Errorf("%w\nFor recovery steps for an existing mislabeled account, see:\n"+
+					"  https://msgvault.io/usage/multi-account/#recovering-an-older-mislabeled-gmail-account", err)
+			}
+			return err
 		}
 		if grantDecided {
 			warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)

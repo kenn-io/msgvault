@@ -102,8 +102,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			}
 			logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
+			ctx := gmailProfileContext(t, "user@acme.com")
 
 			testCmd := &cobra.Command{
 				Use: "add-account <email>", Args: cobra.ExactArgs(1),
@@ -120,12 +119,9 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			// No --oauth-app flag: binding inherited from DB
 			root.SetArgs([]string{"add-account", "user@acme.com"})
 
-			if !tc.wantError {
-				ctx = gmailProfileContext(t, "user@acme.com")
-			}
 			err = root.ExecuteContext(ctx)
 			if tc.wantError {
-				require.Error(err, "expected error for mismatched token")
+				require.ErrorIs(err, context.Canceled, "unexpected browser authorization must stop at cancellation")
 			} else {
 				require.NoError(err)
 			}

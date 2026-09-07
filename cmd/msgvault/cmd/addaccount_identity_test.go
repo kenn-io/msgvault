@@ -1,16 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -44,30 +44,37 @@ func TestAddAccountAcceptsEmailAddress(t *testing.T) {
 }
 
 type gmailProfileTransport struct {
-	server *httptest.Server
+	email      string
+	statusCode int
 }
 
 func (tr gmailProfileTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.String() != "https://gmail.googleapis.com/gmail/v1/users/me/profile" {
 		return nil, fmt.Errorf("unexpected OAuth request: %s", req.URL)
 	}
-	forward := req.Clone(req.Context())
-	forward.URL.Scheme = "http"
-	forward.URL.Host = tr.server.Listener.Addr().String()
-	return tr.server.Client().Transport.RoundTrip(forward)
+	body, err := json.Marshal(map[string]string{"emailAddress": tr.email})
+	if err != nil {
+		return nil, fmt.Errorf("encode Gmail profile fixture: %w", err)
+	}
+	return &http.Response{
+		StatusCode: tr.statusCode,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 // gmailProfileContext supplies only the external Gmail profile response.
 // Account registration, token loading, and all database writes remain real.
+// The in-memory transport accepts a cancelled context so an unexpected fallthrough
+// to browser authorization fails before opening a browser or callback listener.
 func gmailProfileContext(t *testing.T, email string) context.Context {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"emailAddress": email})
-	}))
-	t.Cleanup(srv.Close)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	t.Cleanup(cancel)
-	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: gmailProfileTransport{srv}})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
+		Transport: gmailProfileTransport{email: email, statusCode: http.StatusOK},
+	})
 }
 
 // A cached token must prove mailbox ownership before add-account creates a
@@ -105,15 +112,12 @@ func TestAddAccountCachedTokenIdentity(t *testing.T) {
 						require.NoError(err)
 						require.NoError(s.UpdateSourceDisplayName(source.ID, "Original"))
 					}
-					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if profile == "unavailable" {
-							w.WriteHeader(http.StatusServiceUnavailable)
-							return
-						}
-						_ = json.NewEncoder(w).Encode(map[string]string{"emailAddress": profile})
-					}))
-					defer srv.Close()
-					ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{Transport: gmailProfileTransport{srv}})
+					ctx := gmailProfileContext(t, profile)
+					if profile == "unavailable" {
+						ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
+							Transport: gmailProfileTransport{statusCode: http.StatusServiceUnavailable},
+						})
+					}
 					cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
 					registerAddAccountFlags(cmd)
 					cmd.SetArgs([]string{"user@example.com", "--display-name", "Updated", "--no-default-identity"})
@@ -129,6 +133,13 @@ func TestAddAccountCachedTokenIdentity(t *testing.T) {
 					if profile == "other@example.com" {
 						var mismatch *oauth.TokenMismatchError
 						require.ErrorAs(err, &mismatch)
+						if existing {
+							assert.Contains(err.Error(), "https://msgvault.io/usage/multi-account/#recovering-an-older-mislabeled-gmail-account")
+						} else {
+							assert.Contains(err.Error(), "msgvault add-account other@example.com")
+						}
+					} else {
+						assert.Contains(err.Error(), "HTTP 503")
 					}
 					source, lookupErr := findGmailSource(s, "user@example.com")
 					if existing {

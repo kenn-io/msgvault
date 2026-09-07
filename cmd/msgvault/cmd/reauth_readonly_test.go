@@ -183,6 +183,7 @@ func TestReauthAliasMismatchUnchangedForWriteGrant(t *testing.T) {
 // account's recorded one — no token exists yet at that point.
 func TestAddAccountGrantFlagSuffix(t *testing.T) {
 	saveAddAccountFlags(t)
+	oauthAppName = ""
 
 	readonlyGrant = false
 	assert.Empty(t, addAccountGrantFlagSuffix())
@@ -197,6 +198,7 @@ func TestAddAccountGrantFlagSuffix(t *testing.T) {
 func TestAddAccountAuthorizeErrorRepeatsReadonly(t *testing.T) {
 	assert := assert.New(t)
 	saveAddAccountFlags(t)
+	oauthAppName = ""
 
 	mismatch := &oauth.TokenMismatchError{
 		Expected: "alias@gmail.com",
@@ -211,4 +213,9 @@ func TestAddAccountAuthorizeErrorRepeatsReadonly(t *testing.T) {
 	err = addAccountAuthorizeError(mismatch, false)
 	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com")
 	assert.NotContains(err.Error(), "--readonly")
+
+	oauthAppName = "work"
+	readonlyGrant = true
+	err = addAccountAuthorizeError(mismatch, false)
+	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com --oauth-app 'work' --readonly")
 }
