@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-09"
+last_edited: "2026-09-07"
 title: Interactive TUI
 description: Terminal interface for exploring email, text messages, and meeting transcripts.
 ---
@@ -226,6 +226,17 @@ From any message list (after drilling into a sender, label, domain, etc.), press
 </figure>
 Press `Esc` to return to the message list.
 
+## Save an email
+
+Open an email with `Enter`, then press `s` to save its original MIME content,
+including attachments, as `message-<id>.eml` in the directory where you launched
+the TUI. Existing files are preserved: repeated saves add `_1`, `_2`, and so on.
+The result dialog shows the saved path or the error if the email could not be
+saved. This requires raw email content in the archive.
+
+When connected to a remote server, the file is saved on the machine running the
+TUI. In message lists and aggregate views, `s` continues to cycle the sort field.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
@@ -236,7 +247,7 @@ Press `Esc` to return to the message list.
 | `Esc` / `Backspace` | Go back |
 | `m` | Cycle through Email, Texts, and Meetings (skips unavailable Texts) |
 | `g` | Cycle view mode |
-| `s` | Cycle sort field (Name / Count / Size) |
+| `s` | Save email as `.eml` in message detail; cycle sort field in lists |
 | `v` | Reverse sort direction |
 | `t` | Jump to Time view (cycle granularity when already in Time) |
 | `a` | Show all individual messages in current view |

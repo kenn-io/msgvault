@@ -361,6 +361,7 @@ type Model struct {
 
 	// Loading state
 	loading         bool
+	savingMessage   bool
 	deletionLoading bool // True while resolving every message matching the current filter
 	deletionCancel  context.CancelFunc
 	err             error
@@ -1299,6 +1300,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePeopleActivityMessageLoaded(msg)
 	case ExportResultMsg:
 		return m.handleExportResult(msg)
+	case saveMessageResultMsg:
+		m.savingMessage = false
+		return m.showExportResult(ExportResultMsg(msg))
 	case messagesLoadedMsg:
 		return m.handleMessagesLoaded(msg)
 	case messageDetailLoadedMsg:
@@ -1793,9 +1797,13 @@ func (m Model) handleFlashClear() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleExportResult processes attachment export completion.
+// handleExportResult processes message and attachment action completion.
 func (m Model) handleExportResult(msg exportResultMsg) (tea.Model, tea.Cmd) {
 	m.loading = false
+	return m.showExportResult(msg)
+}
+
+func (m Model) showExportResult(msg ExportResultMsg) (tea.Model, tea.Cmd) {
 	m.modal = modalExportResult
 	m.modalResultTitle = msg.Title
 	if msg.Err != nil && msg.Result == "" {

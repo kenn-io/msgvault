@@ -1097,6 +1097,11 @@ func (m Model) footerView() string {
 			"↑/↓ scroll",
 			"/ find",
 		}
+		if m.savingMessage {
+			keys = append(keys, "saving .eml")
+		} else {
+			keys = append(keys, "s save .eml")
+		}
 		if m.detailSearchQuery != "" {
 			keys = append(keys, "n/N next/prev")
 		}
@@ -1224,6 +1229,7 @@ var rawHelpLines = []string{
 	"  A           Select account",
 	"  f           Filter (attachments, deleted)",
 	"  e           Browse attachments (in message view)",
+	"  s           Save email to current directory (in message view)",
 	"  m           Cycle Email/Texts/Meetings/People",
 	"  ,           Open Settings",
 	"  q           Quit",

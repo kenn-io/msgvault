@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// ExportResultMsg is returned when attachment export completes.
+// ExportResultMsg is returned when a message or attachment action completes.
 type ExportResultMsg struct {
 	Title  string
 	Result string
