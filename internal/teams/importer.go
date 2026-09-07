@@ -196,7 +196,8 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 	if err != nil {
 		return err
 	}
-	chats = append(chats, imp.selfChat(ctx)...)
+	selfChat, selfMembers := imp.selfChat(ctx)
+	chats = append(chats, selfChat...)
 	total := len(chats)
 	for idx, ch := range chats {
 		if ctx.Err() != nil {
@@ -209,7 +210,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Resolve chat members once for this chat.
 		// Member fetch failure is non-fatal; we proceed with empty toRecips
 		// rather than aborting the chat import.
-		members, merr := imp.chatMembers(ctx, ch.ID, opts.Email)
+		members, merr := imp.chatMembers(ctx, ch.ID, selfMembers)
 		// Only the roster's size and read outcome matter to media policy; the
 		// members are resolved below, where their display names are kept too.
 		roster := &memberRoster{memberCount: len(members), err: merr}
@@ -319,25 +320,35 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 }
 
 // selfChat reports the chat a user holds with themselves, which Graph does not
-// list under /me/chats. It is read once here because the thread is
-// undocumented: an account that has never used it, and a tenant where it is
-// unavailable, both answer this probe and are then left alone rather than
-// counted as a sync failure.
-func (imp *Importer) selfChat(ctx context.Context) []Chat {
+// list under /me/chats, together with its roster. It is read once here because
+// the thread is undocumented: an account that has never used it, and a tenant
+// where it is unavailable, both answer this probe and are then left alone
+// rather than counted as a sync failure.
+//
+// Graph also rejects a members read on the thread, so the roster is taken from
+// the probed message instead. The chat's only member is the signed-in user,
+// who is the sender of every message in it, and that identity carries the same
+// object ID a members read would have returned. Resolution therefore takes the
+// same path as every other chat member, down to the participant cache key that
+// mention resolution reads.
+func (imp *Importer) selfChat(ctx context.Context) ([]Chat, []ChatMember) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 1)
 	if err != nil || len(msgs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}
+	var members []ChatMember
+	if from := msgs[0].From; from != nil && from.User != nil && from.User.ID != "" {
+		members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName}}
+	}
+	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, members
 }
 
-// chatMembers reads a chat's roster. Graph rejects a members read on the self
-// chat, whose only member is the signed-in user, so that roster is built here
-// rather than fetched. A roster reported as unreadable would archive the chat
+// chatMembers reads a chat's roster, using the roster selfChat already resolved
+// for the self chat. A roster reported as unreadable would archive the chat
 // with unknown membership and fail media policy closed against it.
-func (imp *Importer) chatMembers(ctx context.Context, chatID, email string) ([]ChatMember, error) {
+func (imp *Importer) chatMembers(ctx context.Context, chatID string, self []ChatMember) ([]ChatMember, error) {
 	if chatID == SelfChatID {
-		return []ChatMember{{Email: email, DisplayName: email}}, nil
+		return self, nil
 	}
 	return imp.client.ListChatMembers(ctx, chatID)
 }

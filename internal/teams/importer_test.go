@@ -2964,7 +2964,9 @@ func TestSyncImportsSelfChat(t *testing.T) {
 			memberCalls.Add(1)
 			http.Error(w, `{"error":{"code":"BadRequest"}}`, http.StatusBadRequest)
 		case strings.Contains(r.URL.Path, "48:notes") && strings.HasSuffix(r.URL.Path, "/messages"):
-			_, _ = w.Write([]byte(`{"value":[{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me"}},"body":{"contentType":"text","content":"note to self"}}]}`))
+			_, _ = w.Write([]byte(`{"value":[{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me","userIdentityType":"aadUser"}},"body":{"contentType":"text","content":"note to self"}}]}`))
+		case r.URL.Path == "/users/u-me":
+			_, _ = w.Write([]byte(`{"id":"u-me","mail":"me@example.com","displayName":"Me"}`))
 		default:
 			http.Error(w, "404", http.StatusNotFound)
 		}
@@ -2982,7 +2984,22 @@ func TestSyncImportsSelfChat(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("teams", "me@example.com")
 	require.NoError(err)
-	msgs, err := st.MessageExistsBatch(src.ID, []string{chatSourceMessageID(SelfChatID, "n1")})
+	sourceMessageID := chatSourceMessageID(SelfChatID, "n1")
+	msgs, err := st.MessageExistsBatch(src.ID, []string{sourceMessageID})
 	require.NoError(err)
 	assert.Len(msgs, 1)
+
+	// The roster comes from the probed message, so the signed-in user resolves
+	// through the same path a members read would have taken and is archived
+	// against the account email.
+	name, err := st.InspectDisplayName(sourceMessageID, "from", "me@example.com")
+	require.NoError(err)
+	assert.Equal("Me", name)
+
+	// A self chat has no "to" rows: they are every member except the sender,
+	// and here the only member is the sender. Pinned so a future roster change
+	// cannot start addressing these messages to their own author.
+	to, err := st.InspectRecipientCount(sourceMessageID, "to")
+	require.NoError(err)
+	assert.Equal(0, to)
 }
