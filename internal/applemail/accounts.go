@@ -173,7 +173,8 @@ func findV10GUIDs(mailDir string) ([]string, error) {
 // given GUID within mailDir. Searches V* directories from newest to
 // oldest, preferring the newest directory that contains mailbox
 // subdirectories (.mbox/.imapmbox). Falls back to the newest
-// existing directory if none are populated.
+// existing directory if none are populated. A discovery error keeps the
+// candidate selected so the importer can report it instead of using older mail.
 func V10AccountDir(mailDir, guid string) (string, error) {
 	vDirs, err := sortedVDirs(mailDir)
 	if err != nil {
@@ -195,11 +196,11 @@ func V10AccountDir(mailDir, guid string) (string, error) {
 		if firstMatch == "" {
 			firstMatch = candidate
 		}
-		mailboxes, _ := emlx.DiscoverMailboxes(candidate)
-		// Readable mailboxes still prove this version is populated. Import
-		// performs discovery again and reports any partial-discovery errors.
-		if len(mailboxes) > 0 {
-			return candidate, nil
+		mailboxes, discoveryErr := emlx.DiscoverMailboxes(candidate)
+		// A failed read cannot prove this version is empty. Import performs
+		// discovery again and reports errors, including wholly unreadable mail.
+		if len(mailboxes) > 0 || discoveryErr != nil {
+			return candidate, nil //nolint:nilerr // The importer reports discovery errors for the selected directory.
 		}
 	}
 
