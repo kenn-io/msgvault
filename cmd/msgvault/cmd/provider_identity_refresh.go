@@ -12,7 +12,12 @@ import (
 var fastmailIdentityInventoryFactory provideridentity.Factory = provideridentity.NewFastmailInventory
 
 func newMessageSyncer(client gmail.API, st *store.Store, opts *msgsync.Options) *msgsync.Syncer {
-	return withAutomaticProviderIdentityRefresh(msgsync.New(client, st, opts), st)
+	if opts == nil {
+		opts = msgsync.DefaultOptions()
+	}
+	configured := *opts
+	configured.RemoteImages = configuredRemoteImageFetcher()
+	return withAutomaticProviderIdentityRefresh(msgsync.New(client, st, &configured), st)
 }
 
 func withAutomaticProviderIdentityRefresh(syncer *msgsync.Syncer, st *store.Store) *msgsync.Syncer {

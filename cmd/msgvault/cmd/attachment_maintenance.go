@@ -320,7 +320,8 @@ func attachmentProducingCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "backfill-beeper-media",
+	case "archive-remote-images",
+		"backfill-beeper-media",
 		"backfill-discord-media",
 		"backfill-slack-media",
 		"backfill-teams-media",

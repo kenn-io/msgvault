@@ -184,7 +184,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		detail := MessageDetail{
 			MessageSummary: toMessageSummary(message),
 			Body:           message.Body,
-			BodyHTML:       message.BodyHTML,
+			BodyHTML:       s.archivedRemoteImageHTML(message.ID, message.BodyHTML),
 			BodyOmitted:    message.BodyOmitted,
 			IsFromMe:       message.IsFromMe,
 			Attachments:    make([]AttachmentInfo, 0, len(message.Attachments)),

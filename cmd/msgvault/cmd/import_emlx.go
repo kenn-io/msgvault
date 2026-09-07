@@ -188,6 +188,7 @@ func importSingleAccount(
 			NoResume:           importEmlxNoResume,
 			CheckpointInterval: importEmlxCheckpointInterval,
 			AttachmentsDir:     attachmentsDir,
+			RemoteImages:       configuredRemoteImageFetcher(),
 			Logger:             logger,
 		},
 	)
@@ -321,6 +322,7 @@ func importAutoAccounts(
 				NoResume:           importEmlxNoResume,
 				CheckpointInterval: importEmlxCheckpointInterval,
 				AttachmentsDir:     attachmentsDir,
+				RemoteImages:       configuredRemoteImageFetcher(),
 				Logger:             logger,
 			},
 		)

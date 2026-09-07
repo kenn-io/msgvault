@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -39,6 +40,8 @@ type MboxImportOptions struct {
 	// AttachmentsDir controls where attachments are written.
 	// If empty, attachments are not written to disk (but messages are still imported).
 	AttachmentsDir string
+	// RemoteImages is nil unless remote image archiving was explicitly enabled.
+	RemoteImages *remoteimage.Fetcher
 
 	// MaxMessageBytes limits the maximum size of a single message read from the MBOX.
 	// If zero, a default of 128 MiB is used.
@@ -102,7 +105,7 @@ func ImportMbox(
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = ingestRawEmail
+		ingestFn = mboxMessageIngester(opts.RemoteImages)
 	}
 	log := opts.Logger
 	if log == nil {
@@ -544,13 +547,19 @@ func ingestRawEmail(
 	labelIDs []int64, sourceMsgID, rawHash string,
 	msg *mbox.Message, log *slog.Logger,
 ) error {
-	var fallbackDate time.Time
-	if t, ok := parseFromLineDate(msg.FromLine); ok {
-		fallbackDate = t
+	return mboxMessageIngester(nil)(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, msg, log)
+}
+
+func mboxMessageIngester(images *remoteimage.Fetcher) func(context.Context, *store.Store, int64, string, string, []int64, string, string, *mbox.Message, *slog.Logger) error {
+	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, msg *mbox.Message, log *slog.Logger) error {
+		var fallbackDate time.Time
+		if t, ok := parseFromLineDate(msg.FromLine); ok {
+			fallbackDate = t
+		}
+		return rawMessageIngester(images)(
+			ctx, st, sourceID, identifier, attachmentsDir,
+			labelIDs, sourceMsgID, rawHash,
+			msg.Raw, fallbackDate, log,
+		)
 	}
-	return IngestRawMessage(
-		ctx, st, sourceID, identifier, attachmentsDir,
-		labelIDs, sourceMsgID, rawHash,
-		msg.Raw, fallbackDate, log,
-	)
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -36,6 +37,8 @@ type EmlxImportOptions struct {
 	// AttachmentsDir controls where attachments are written.
 	// Empty means no disk storage.
 	AttachmentsDir string
+	// RemoteImages is nil unless remote image archiving was explicitly enabled.
+	RemoteImages *remoteimage.Fetcher
 
 	// MaxMessageBytes limits the maximum .emlx file size to read.
 	// Defaults to 128 MiB.
@@ -108,7 +111,7 @@ func ImportEmlxDir(
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = IngestRawMessage
+		ingestFn = rawMessageIngester(opts.RemoteImages)
 	}
 	log := opts.Logger
 	if log == nil {

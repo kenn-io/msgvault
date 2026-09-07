@@ -16,6 +16,7 @@ import (
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
 	pstreader "go.kenn.io/msgvault/internal/pst"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -41,6 +42,8 @@ type PstImportOptions struct {
 	// AttachmentsDir controls where attachment files are written.
 	// Empty string disables disk storage (messages still imported).
 	AttachmentsDir string
+	// RemoteImages is nil unless remote image archiving was explicitly enabled.
+	RemoteImages *remoteimage.Fetcher
 
 	// MaxMessageBytes limits the total byte size (body + attachments) read
 	// per message. Defaults to 128 MiB.
@@ -115,7 +118,7 @@ func ImportPst(
 
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = IngestRawMessage
+		ingestFn = rawMessageIngester(opts.RemoteImages)
 	}
 
 	log := opts.Logger

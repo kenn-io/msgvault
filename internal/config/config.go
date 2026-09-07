@@ -645,6 +645,9 @@ func (c *MicrosoftConfig) EffectiveTenantID() string {
 // SyncConfig holds sync-related configuration.
 type SyncConfig struct {
 	RateLimitQPS int `toml:"rate_limit_qps"`
+	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
+	// can activate tracking pixels. Unset is deliberately false.
+	ArchiveRemoteImages bool `toml:"archive_remote_images"`
 }
 
 // DefaultHome returns the default msgvault home directory.

@@ -683,7 +683,9 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Message not found")
 			return
 		case err == nil:
-			writeJSON(w, http.StatusOK, messageDetailFromQuery(qMsg))
+			detail := messageDetailFromQuery(qMsg)
+			detail.BodyHTML = s.archivedRemoteImageHTML(id, detail.BodyHTML)
+			writeJSON(w, http.StatusOK, detail)
 			return
 		}
 		// err is unsupported sentinel — fall through to store path so
@@ -722,6 +724,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		attachments = append(attachments, attachmentInfoFromStore(att))
 	}
 	detail.Attachments = attachments
+	detail.BodyHTML = s.archivedRemoteImageHTML(id, detail.BodyHTML)
 
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -4151,10 +4154,6 @@ type archivedMessageRawReader interface {
 // without ambiguity in the routing layer.
 func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 	engine := s.queryEngineForContext(r.Context())
-	if engine == nil {
-		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
-		return
-	}
 
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -4166,6 +4165,14 @@ func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 	cidParam := r.URL.Query().Get("cid")
 	if cidParam == "" {
 		writeError(w, http.StatusBadRequest, "missing_cid", "Missing 'cid' query parameter")
+		return
+	}
+	if strings.HasPrefix(cidParam, "remote-image:") {
+		s.serveArchivedRemoteImage(w, r, id, cidParam)
+		return
+	}
+	if engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
 

@@ -18,11 +18,14 @@ import {
 // redirect hop server-side, which also closes DNS rebinding. The proxy is
 // POST so the daemon's session CSRF machinery (same-origin + X-Csrf-Token,
 // injected by the API client for unsafe methods) guards every fetch.
-export const MAX_ARCHIVED_REMOTE_IMAGE_URLS = 64;
-export const MAX_ARCHIVED_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES = 30 * 1024 * 1024;
-export const MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES = 128;
-export const MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES = 36 * 1024 * 1024;
+import {
+  MAX_ARCHIVED_REMOTE_IMAGE_URLS,
+  MAX_ARCHIVED_REMOTE_IMAGE_BYTES,
+  MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES,
+  MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES,
+  MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES,
+} from './remote-image-limits';
+export * from './remote-image-limits';
 interface RemoteImagePublicationLimits {
   occurrences?: number;
   dataURLBytes?: number;

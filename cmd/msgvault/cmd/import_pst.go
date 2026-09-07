@@ -114,6 +114,7 @@ Examples:
 			NoResume:           importPstNoResume,
 			CheckpointInterval: importPstCheckpointInterval,
 			AttachmentsDir:     attachmentsDir,
+			RemoteImages:       configuredRemoteImageFetcher(),
 			Logger:             logger,
 		})
 		if err != nil {

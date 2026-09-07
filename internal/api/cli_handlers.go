@@ -1619,6 +1619,7 @@ func cliRunCommandAllowed(args []string) bool {
 	}
 	switch args[0] {
 	case "add-account",
+		"archive-remote-images",
 		"activity",
 		"add-beeper",
 		"add-calendar",

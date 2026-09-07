@@ -3,33 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/netguard"
+	"go.kenn.io/msgvault/internal/remoteimage"
 )
 
-// POST /api/v1/content/remote-image is the SSRF-hardened proxy consented
-// remote mail images load through. The browser never contacts a
-// sender-controlled host directly: the daemon fetches the image itself,
-// which closes DNS rebinding (a public hostname resolving to a private
-// address at fetch time) because every resolved address is validated here
-// and the connection is dialed against the validated IP only. It also stops
-// mail senders from learning the reader's browser IP.
-//
-// The route is POST (JSON body) rather than GET on purpose: browsers cannot
-// make an <img> element or a navigation issue a POST, and the session CSRF
-// middleware enforces same-origin plus X-Csrf-Token on every unsafe method,
-// so a same-site sibling origin cannot trigger authenticated outbound
-// fetches through a victim's session.
 const (
 	remoteImagePath = "/api/v1/content/remote-image"
 
@@ -39,22 +21,10 @@ const (
 	remoteImageMaxURLBytes     = 4096
 	remoteImageMaxRequestBytes = 16 << 10 // JSON body carries one bounded URL
 	remoteImageUserAgent       = "msgvault-image-proxy"
-
-	remoteImageErrInvalidURL      = "invalid_url"
-	remoteImageErrProhibitedHost  = "prohibited_host"
-	remoteImageErrProhibitedDest  = "prohibited_destination"
-	remoteImageErrFetchFailed     = "fetch_failed"
-	remoteImageErrTooManyRedirect = "too_many_redirects"
-	remoteImageErrUpstream        = "upstream_error"
-	remoteImageErrTooLarge        = "image_too_large"
-	remoteImageErrUnsupportedType = "unsupported_type"
 )
 
-// prohibitedRemoteIP and prohibitedRemoteHostname retain the package-private
-// wrappers used by the image proxy while the shared policy lives in netguard.
+// prohibitedRemoteIP retains the proxy's policy-test seam.
 func prohibitedRemoteIP(addr netip.Addr) bool { return netguard.ProhibitedIP(addr) }
-
-func prohibitedRemoteHostname(hostname string) bool { return netguard.ProhibitedHostname(hostname) }
 
 // remoteImageFetchError is a fetch failure mapped to an API error response.
 // The fetched bytes are never echoed on error.
@@ -75,196 +45,17 @@ type remoteImageFetcher struct {
 }
 
 func newRemoteImageFetcher() *remoteImageFetcher {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return &remoteImageFetcher{
-		lookupNetIP: func(ctx context.Context, host string) ([]netip.Addr, error) {
-			addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-			if err != nil {
-				return nil, fmt.Errorf("resolving remote image host %q: %w", host, err)
-			}
-			return addrs, nil
-		},
-		dialContext:  dialer.DialContext,
-		maxBytes:     remoteImageMaxBytes,
-		maxRedirects: remoteImageMaxRedirects,
-	}
+	f := remoteimage.NewFetcher()
+	return &remoteImageFetcher{f.LookupNetIP, f.DialContext, f.MaxBytes, f.MaxRedirects}
 }
 
-// validateTarget applies every pre-connection check to one URL hop and
-// returns the address the connection must be pinned to: scheme http/https,
-// no userinfo, hostname-spelling gate, private-literal rejection, and
-// validation of every resolved A/AAAA answer. Dialing only the returned
-// address closes the check-then-resolve-again (TOCTOU rebinding) window.
-func (f *remoteImageFetcher) validateTarget(
-	ctx context.Context, rawURL string,
-) (*url.URL, netip.AddrPort, *remoteImageFetchError) {
-	var none netip.AddrPort
-	if len(rawURL) > remoteImageMaxURLBytes {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL is too long"}
-	}
-	target, err := url.Parse(rawURL)
+func (f *remoteImageFetcher) fetch(ctx context.Context, url string) (string, []byte, *remoteImageFetchError) {
+	shared := &remoteimage.Fetcher{LookupNetIP: f.lookupNetIP, DialContext: f.dialContext, MaxBytes: f.maxBytes, MaxRedirects: f.maxRedirects}
+	ct, body, err := shared.Fetch(ctx, url)
 	if err != nil {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL could not be parsed"}
+		return "", nil, &remoteImageFetchError{err.Status, err.Code, err.Message}
 	}
-	scheme := strings.ToLower(target.Scheme)
-	if scheme != "http" && scheme != schemeHTTPS {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL must use http or https"}
-	}
-	if target.User != nil {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL must not carry credentials"}
-	}
-	host := target.Hostname()
-	if host == "" {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL has no host"}
-	}
-	port := uint16(80)
-	if scheme == schemeHTTPS {
-		port = 443
-	}
-	if portText := target.Port(); portText != "" {
-		parsed, err := strconv.ParseUint(portText, 10, 16)
-		if err != nil || parsed == 0 {
-			return nil, none, &remoteImageFetchError{
-				http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL has an invalid port"}
-		}
-		port = uint16(parsed)
-	}
-	if literal, err := netip.ParseAddr(host); err == nil {
-		if prohibitedRemoteIP(literal) {
-			return nil, none, &remoteImageFetchError{
-				http.StatusBadRequest, remoteImageErrProhibitedHost,
-				"Remote image URL targets a private or reserved address"}
-		}
-		return target, netip.AddrPortFrom(literal.Unmap(), port), nil
-	}
-	if prohibitedRemoteHostname(host) {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadRequest, remoteImageErrProhibitedHost,
-			"Remote image URL targets a reserved or private hostname"}
-	}
-	addrs, err := f.lookupNetIP(ctx, host)
-	if err != nil || len(addrs) == 0 {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image host could not be resolved"}
-	}
-	if slices.ContainsFunc(addrs, prohibitedRemoteIP) {
-		return nil, none, &remoteImageFetchError{
-			http.StatusBadGateway, remoteImageErrProhibitedDest,
-			"Remote image host resolves to a private or reserved address"}
-	}
-	return target, netip.AddrPortFrom(addrs[0].Unmap(), port), nil
-}
-
-// doPinned performs one GET against a single validated hop. The transport's
-// DialContext ignores the address derived from the URL and dials the
-// already-validated IP, so a rebinding resolver cannot swap the destination
-// between validation and connection. TLS verification still uses the URL
-// hostname. No cookies or stored credentials ever travel outbound.
-func (f *remoteImageFetcher) doPinned(
-	ctx context.Context, target *url.URL, pinned netip.AddrPort,
-) (*http.Response, error) {
-	transport := &http.Transport{
-		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-			return f.dialContext(dialCtx, network, pinned.String())
-		},
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableKeepAlives:   true,
-	}
-	client := &http.Client{
-		Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			// Redirects are followed manually in fetch so every hop is
-			// re-validated and re-pinned.
-			return http.ErrUseLastResponse
-		},
-	}
-	// The user-supplied URL is intentionally fetched: this handler IS the
-	// SSRF mitigation. validateTarget rejected private/reserved hosts and
-	// resolved addresses, and the transport above dials only the pinned,
-	// validated IP.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("building remote image request: %w", err)
-	}
-	req.Header.Set("Accept", "image/*")
-	req.Header.Set("User-Agent", remoteImageUserAgent)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching remote image: %w", err)
-	}
-	return resp, nil
-}
-
-// fetch retrieves one consented remote image, re-validating and re-pinning
-// every redirect hop, and enforces the image/* content type and the byte
-// cap before any byte is returned.
-func (f *remoteImageFetcher) fetch(
-	ctx context.Context, rawURL string,
-) (contentType string, body []byte, fetchErr *remoteImageFetchError) {
-	current := rawURL
-	for hop := 0; ; hop++ {
-		target, pinned, ferr := f.validateTarget(ctx, current)
-		if ferr != nil {
-			return "", nil, ferr
-		}
-		resp, err := f.doPinned(ctx, target, pinned)
-		if err != nil {
-			return "", nil, &remoteImageFetchError{
-				http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image could not be fetched"}
-		}
-		switch resp.StatusCode {
-		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
-			http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-			location := resp.Header.Get("Location")
-			_ = resp.Body.Close()
-			if hop >= f.maxRedirects {
-				return "", nil, &remoteImageFetchError{
-					http.StatusBadGateway, remoteImageErrTooManyRedirect, "Remote image redirected too many times"}
-			}
-			next, err := target.Parse(location)
-			if location == "" || err != nil {
-				return "", nil, &remoteImageFetchError{
-					http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image redirect target is invalid"}
-			}
-			current = next.String()
-			continue
-		case http.StatusOK:
-			contentType, body, fetchErr = f.readImageBody(resp)
-			_ = resp.Body.Close()
-			return contentType, body, fetchErr
-		default:
-			_ = resp.Body.Close()
-			return "", nil, &remoteImageFetchError{
-				http.StatusBadGateway, remoteImageErrUpstream,
-				fmt.Sprintf("Remote image host returned status %d", resp.StatusCode)}
-		}
-	}
-}
-
-func (f *remoteImageFetcher) readImageBody(resp *http.Response) (string, []byte, *remoteImageFetchError) {
-	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-	if base, _, found := strings.Cut(contentType, ";"); found {
-		contentType = strings.TrimSpace(base)
-	}
-	if !strings.HasPrefix(contentType, "image/") || strings.HasPrefix(contentType, "image/svg") {
-		return "", nil, &remoteImageFetchError{
-			http.StatusUnsupportedMediaType, "unsupported_type", "Remote content is not a permitted image type"}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, f.maxBytes+1))
-	if err != nil {
-		return "", nil, &remoteImageFetchError{
-			http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image body could not be read"}
-	}
-	if int64(len(body)) > f.maxBytes {
-		return "", nil, &remoteImageFetchError{
-			http.StatusBadGateway, remoteImageErrTooLarge, "Remote image exceeds the proxy size limit"}
-	}
-	return contentType, body, nil
+	return ct, body, nil
 }
 
 // RemoteImageRequest is the JSON body of POST /api/v1/content/remote-image.

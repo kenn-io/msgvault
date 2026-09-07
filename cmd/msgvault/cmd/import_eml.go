@@ -63,6 +63,7 @@ duplicate messages receive every mailbox label where they appear.`,
 				NoResume:           flags.noResume,
 				CheckpointInterval: flags.checkpointInterval,
 				AttachmentsDir:     attachmentsDir,
+				RemoteImages:       configuredRemoteImageFetcher(),
 				Logger:             logger,
 			})
 			if importErr != nil {

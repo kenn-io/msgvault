@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-03"
+last_edited: "2026-09-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -476,6 +476,33 @@ cancellation failures fail the sync and preserve the prior successful cursor.
 | `--probe` | `false` | Print the MCP tool inventory and a sample result instead of syncing |
 
 See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
+
+---
+
+## archive-remote-images
+
+Download remote `<img src>` images from existing email for offline viewing.
+This is separate from the default-off `[sync].archive_remote_images` setting.
+
+```bash
+msgvault archive-remote-images --allow-tracking
+msgvault archive-remote-images --allow-tracking --source-id 1 --limit 100
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow-tracking` | `false` | Required consent to image requests that can activate tracking pixels |
+| `--source-id` | `0` | Restrict to one source; 0 includes all email sources |
+| `--limit` | `0` | Maximum messages to scan; 0 scans all matching email |
+
+Requests originate from the archive server, not the browser. Private-network
+destinations are blocked, but public hosts can still track requests. The command
+requires `--allow-tracking` even when automatic archiving is enabled.
+
+Already archived images are reused. Failed downloads can be retried by running
+the command again; successful downloads are preserved if other images fail.
+The summary reports messages scanned, images downloaded or reused, and errors.
+Any image errors produce a nonzero exit status. Original messages are unchanged.
 
 ---
 

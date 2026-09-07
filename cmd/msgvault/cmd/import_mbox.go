@@ -260,6 +260,7 @@ Examples:
 				NoResume:           importMboxNoResume,
 				CheckpointInterval: importMboxCheckpointInterval,
 				AttachmentsDir:     attachmentsDir,
+				RemoteImages:       configuredRemoteImageFetcher(),
 				Logger:             logger,
 			})
 			if err != nil {

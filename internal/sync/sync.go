@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -52,6 +53,8 @@ type Options struct {
 
 	// AttachmentsDir is where to store attachments
 	AttachmentsDir string
+	// RemoteImages is nil unless remote image archiving was explicitly enabled.
+	RemoteImages *remoteimage.Fetcher
 
 	// Limit caps the number of messages scanned per sync (0 = unlimited).
 	// Enforced by truncating the message ID list before downloading content.
@@ -1854,7 +1857,13 @@ func (s *Syncer) ingestMessage(
 		}
 	}
 
-	_, err = s.persistMessage(data, labelMap)
+	messageID, err := s.persistMessage(data, labelMap)
+	if err == nil && s.opts.RemoteImages != nil && data.message.MessageType == store.MessageTypeEmail {
+		archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, messageID, data.bodyHTML)
+		for _, imageErr := range archived.Errors {
+			s.logger.Warn("failed to archive remote image", "message", messageID, "error", imageErr)
+		}
+	}
 	return false, err
 }
 

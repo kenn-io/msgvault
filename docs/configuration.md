@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-03
+last_edited: 2026-09-07
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -566,6 +566,36 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | Key | Default | Description |
 |---|---|---|
 | `rate_limit_qps` | `5` | Gmail API requests per second |
+| `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+
+Remote image archiving is **off by default**. Enabling it sends requests to
+sender-controlled servers. Those requests can activate tracking pixels and
+disclose the archive server's IP address. Private-network targets are blocked,
+but this does not prevent tracking by public image hosts.
+
+```toml
+[sync]
+archive_remote_images = true
+```
+
+Restart the daemon after changing this setting. It applies to newly ingested
+messages, not mail already in the archive. To process existing mail explicitly:
+
+```bash
+msgvault archive-remote-images --allow-tracking
+```
+
+Downloaded PNG, JPEG, GIF, and WebP images are stored locally and displayed
+offline in message and conversation views. Raw MIME and stored HTML are left
+unchanged. Disabling the setting stops automatic downloads without removing
+images already archived. Missing images remain subject to the reader's existing
+remote-image consent control.
+
+Archiving handles HTTP(S) `<img src>` URLs, including protocol-relative URLs.
+It does not fetch CSS backgrounds, `srcset` candidates, linked pages, or external
+stylesheets. Each message is limited to 64 distinct image URLs, 10 MiB per
+image, and 30 MiB of newly archived image data. Failed downloads are reported
+without failing the mail import.
 
 ### `[server]`
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { ArchivedInlineImage } from '../../content/sanitize';
+import { sanitizeArchivedHTML } from '../../content/sanitize';
 import {
   MAX_ARCHIVED_INLINE_IMAGE_BYTES,
   MAX_ARCHIVED_INLINE_IMAGE_CIDS,
@@ -52,6 +53,27 @@ async function resolveWithPublicationByteLimit(
 }
 
 describe('resolveArchivedInlineImages', () => {
+  it('hydrates archived remote images with their own budget alongside original MIME images', async () => {
+    const cids = [
+      ...Array.from({ length: 32 }, (_, i) => `mime-${i}@example.com`),
+      ...Array.from({ length: 64 }, (_, i) => `remote-image:${i.toString(16).padStart(64, '0')}`)
+    ];
+    const input = sanitizeArchivedHTML(cids.map((cid) => `<img src="cid:${cid}">`).join(''), { messageId: 42 });
+    expect(input.remoteImages).toHaveLength(0);
+    const fetchFn = vi.fn<typeof fetch>(async (request) => {
+      const cid = new URL((request as Request).url).searchParams.get('cid');
+      return pngResponse(cid === cids[32] ? 6 * 1024 * 1024 : 16);
+    });
+    const html = await resolveArchivedInlineImages({
+      ...input,
+      client: createAPIClient(fetchFn),
+      messageId: 42,
+      signal: new AbortController().signal
+    });
+    expect(parse(html).querySelectorAll('img')).toHaveLength(96);
+    expect(html).not.toContain('Inline image unavailable');
+    expect(fetchFn.mock.calls.every(([request]) => new URL((request as Request).url).pathname.endsWith('/inline'))).toBe(true);
+  }, 30_000);
   it('exports conservative request and decoded-byte budgets', () => {
     expect(MAX_ARCHIVED_INLINE_IMAGE_CIDS).toBe(32);
     expect(MAX_ARCHIVED_INLINE_IMAGE_BYTES).toBe(5 * 1024 * 1024);

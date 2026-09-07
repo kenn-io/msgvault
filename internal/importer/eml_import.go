@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/eml"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -26,7 +27,9 @@ type EMLImportOptions struct {
 	NoResume           bool
 	CheckpointInterval int
 	AttachmentsDir     string
-	MaxMessageBytes    int64
+	// RemoteImages is nil unless remote image archiving was explicitly enabled.
+	RemoteImages    *remoteimage.Fetcher
+	MaxMessageBytes int64
 	// IngestFunc overrides message ingestion for focused importer tests.
 	// Nil uses IngestRawMessage.
 	IngestFunc func(
@@ -83,7 +86,7 @@ func ImportEMLDir(
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = IngestRawMessage
+		ingestFn = rawMessageIngester(opts.RemoteImages)
 	}
 	log := opts.Logger
 	if log == nil {

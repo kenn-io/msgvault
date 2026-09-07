@@ -1461,6 +1461,10 @@ func (a *storeAPIAdapter) GetMessage(id int64) (*api.APIMessage, error) {
 	return a.store.GetMessage(id)
 }
 
+func (a *storeAPIAdapter) MessageRemoteImages(id int64) (map[string]store.AttachmentRef, error) {
+	return a.store.MessageRemoteImages(id)
+}
+
 func (a *storeAPIAdapter) GetMessagesSummariesByIDs(ids []int64) ([]api.APIMessage, error) {
 	return a.store.GetMessagesSummariesByIDs(ids)
 }
