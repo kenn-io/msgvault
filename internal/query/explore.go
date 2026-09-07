@@ -873,7 +873,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		CASE WHEN candidate_rank IS NOT NULL THEN message_id ELSE NULL END AS strongest_matched_message_id,
 		1::BIGINT AS message_count,
 		(size_estimate + attachment_size)::BIGINT AS estimated_bytes,
-		(entry_kind = 'email' AND lower(source_type) = 'gmail' AND NOT deleted_from_source
+		(entry_kind = 'email' AND lower(source_type) = 'gmail' AND NOT internally_deleted AND NOT deleted_from_source
 			AND COALESCE(source_message_id, '') <> '') AS deletable,
 		has_attachments,
 		is_from_me,

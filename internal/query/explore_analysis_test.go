@@ -360,6 +360,33 @@ func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
 	assertions.NotContains(result.DeletableMessageIDs, first)
 }
 
+func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
+	for _, deletion := range []DeletionFilter{DeletionAny, DeletionActive} {
+		t.Run(string(deletion), func(t *testing.T) {
+			b := NewTestDataBuilder(t)
+			source := b.AddSource("archive@example.com")
+			live := b.AddMessage(MessageOpt{SourceID: source, Subject: "Live message"})
+			hiddenAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			b.AddMessage(MessageOpt{SourceID: source, Subject: "Hidden duplicate", InternalDeletedAt: &hiddenAt})
+			engine := b.BuildEngine()
+
+			stats, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+				Explore:                    ExploreRequest{Context: Context{Deletion: deletion}},
+				IncludeDeletableMessageIDs: true,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), stats.Count, "the selection still includes both matching entries")
+			assert.Equal(t, int64(1), stats.DeletableCount, "only the live message can be staged")
+			assert.Equal(t, []int64{live}, stats.DeletableMessageIDs)
+
+			targets, err := engine.GetDeletionTargetsByMessageIDs(context.Background(), stats.DeletableMessageIDs)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			assert.Equal(t, stats.DeletableCount, int64(len(targets)), "preflight and staging resolve the same subset")
+		})
+	}
+}
+
 func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
