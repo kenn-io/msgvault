@@ -45,20 +45,22 @@ func TestDiscoverMailboxes_UnreadableDescendant(t *testing.T) {
 				name = denied + "/partial"
 			}
 			t.Run(name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
 				root := t.TempDir()
 				blocked := filepath.Join(root, filepath.FromSlash(denied))
-				require.NoError(t, os.MkdirAll(blocked, 0700))
+				require.NoError(os.MkdirAll(blocked, 0700))
 				if readable {
 					mkMailbox(t, filepath.Join(root, "Readable.mbox"), "1.emlx")
 				}
 				denyDirectory(t, blocked)
 				mailboxes, err := DiscoverMailboxes(root)
-				require.ErrorIs(t, err, os.ErrPermission)
+				require.ErrorIs(err, os.ErrPermission)
 				if readable {
-					require.Len(t, mailboxes, 1)
-					assert.Equal(t, "Readable", mailboxes[0].Label)
+					require.Len(mailboxes, 1)
+					assert.Equal("Readable", mailboxes[0].Label)
 				} else {
-					assert.Empty(t, mailboxes)
+					assert.Empty(mailboxes)
 				}
 			})
 		}
@@ -66,13 +68,14 @@ func TestDiscoverMailboxes_UnreadableDescendant(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_UnreadablePartitionPreservesFiles(t *testing.T) {
+	require := require.New(t)
 	root := filepath.Join(t.TempDir(), "Inbox.mbox")
 	mkV10Mailbox(t, root, "1.emlx")
 	partition := filepath.Join(root, testMailboxGUID, "Data", "0", "Messages")
-	require.NoError(t, os.MkdirAll(partition, 0700))
+	require.NoError(os.MkdirAll(partition, 0700))
 	denyDirectory(t, partition)
 	mailboxes, err := DiscoverMailboxes(root)
-	require.ErrorIs(t, err, os.ErrPermission)
-	require.Len(t, mailboxes, 1)
+	require.ErrorIs(err, os.ErrPermission)
+	require.Len(mailboxes, 1)
 	assert.Len(t, mailboxes[0].Files, 1)
 }
