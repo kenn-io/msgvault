@@ -52,6 +52,31 @@ func (b *batchErrorAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []str
 	return nil, errors.New("batch fetch unavailable")
 }
 
+type replayControlAPI struct {
+	*gmail.MockAPI
+
+	beforeBatch   func(batchIndex int, messageIDs []string)
+	beforeResults func()
+	batchErrors   map[int]error
+	batchSizes    []int
+}
+
+func (a *replayControlAPI) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error) {
+	batchIndex := len(a.batchSizes)
+	a.batchSizes = append(a.batchSizes, len(messageIDs))
+	if a.beforeBatch != nil {
+		a.beforeBatch(batchIndex, messageIDs)
+	}
+	if err, ok := a.batchErrors[batchIndex]; ok {
+		return nil, err
+	}
+	results, err := a.MockAPI.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+	if a.beforeResults != nil {
+		a.beforeResults()
+	}
+	return results, err
+}
+
 type acknowledgingAPI struct {
 	*gmail.MockAPI
 
@@ -150,6 +175,91 @@ func (a *supersedingProfileAPI) GetProfile(ctx context.Context) (*gmail.Profile,
 
 func (a *staticLabelsAPI) ListLabels(_ context.Context) ([]*gmail.Label, error) {
 	return a.labels, nil
+}
+
+func recordSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status string, items ...store.SyncRunItem) {
+	t.Helper()
+	recordSyncRunItemsOfType(t, env, sourceID, "full", status, items...)
+}
+
+func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status string, items ...store.SyncRunItem) {
+	t.Helper()
+	recordSyncRunItemsOfType(t, env, sourceID, "incremental", status, items...)
+}
+
+func recordSyncRunItemsOfType(t *testing.T, env *TestEnv, sourceID int64, syncType, status string, items ...store.SyncRunItem) {
+	t.Helper()
+	syncID, err := env.Store.StartSync(sourceID, syncType)
+	require.NoError(t, err, "StartSync")
+	for _, item := range items {
+		item.SyncRunID = syncID
+		require.NoError(t, env.Store.RecordSyncRunItem(item), "RecordSyncRunItem")
+	}
+	if status == store.SyncStatusCompleted {
+		require.NoError(t, env.Store.CompleteSync(syncID, "1000"), "CompleteSync")
+	} else {
+		require.NoError(t, env.Store.FailSync(syncID, "test failure"), "FailSync")
+	}
+}
+
+func seedReplaySource(t *testing.T, env *TestEnv, messageID string) *store.Source {
+	t.Helper()
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.SetHistory(1001, historyAdded(messageID))
+	env.Mock.GetMessageError[messageID] = errors.New("temporary fetch failure")
+	_, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(t, err, "seed replay failure")
+	delete(env.Mock.GetMessageError, messageID)
+	env.Mock.AddMessage(messageID, testMIME(), []string{"INBOX"})
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(t, err, "refresh replay source")
+	env.SetHistory(1001)
+	return source
+}
+
+// TestIncrementalSyncReplayRecordsEachErrorResultClass keeps fetch and ingest
+// failures in their respective phases when replay cannot archive a message.
+func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "1000")
+
+	ids := []string{"b-nil", "c-ingest"}
+	items := make([]store.SyncRunItem, 0, len(ids))
+	for _, id := range ids {
+		items = append(items, store.SyncRunItem{
+			SourceMessageID: id,
+			Phase:           syncItemPhaseFetch,
+			Status:          store.SyncRunItemStatusError,
+			ErrorKind:       syncItemKindFetchError,
+		})
+	}
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, items...)
+	env.SetHistory(1000)
+
+	env.Mock.GetMessageError["b-nil"] = errors.New("temporary transport failure")
+	env.Mock.AddMessage("c-ingest", nil, []string{"INBOX"})
+
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "replay run must complete despite per-item errors")
+	assert.Equal(int64(2), summary.Errors, "each result class records one error")
+	assert.Equal(int64(0), summary.MessagesAdded, "failed messages are not archived")
+
+	run, err := env.Store.GetLastSuccessfulSyncByType(source.ID, "incremental")
+	require.NoError(err, "latest completed incremental run")
+	recorded, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	kinds := map[string][2]string{}
+	for _, item := range recorded {
+		kinds[item.SourceMessageID] = [2]string{item.Phase, item.ErrorKind}
+	}
+	assert.Equal([2]string{syncItemPhaseFetch, syncItemKindFetchError}, kinds["b-nil"], "nil result with transient error")
+	assert.Equal([2]string{syncItemPhaseIngest, syncItemKindIngestError}, kinds["c-ingest"], "ingest failure")
+
+	existing, err := env.Store.MessageExistsBatch(source.ID, ids)
+	require.NoError(err, "MessageExistsBatch")
+	assert.Empty(existing, "failed messages are not archived")
 }
 
 func TestFullSync_PanicReturnsError(t *testing.T) {
@@ -1206,6 +1316,368 @@ func TestFullSyncWithErrors(t *testing.T) {
 	assert.Equal("fetch_error", items[0].ErrorKind, "ErrorKind")
 }
 
+func TestIncrementalSyncReplaysPreviousCompletedFetchError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	const messageID = "replay-message"
+
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.SetHistory(1001, historyAdded(messageID))
+	env.Mock.GetMessageError[messageID] = errors.New("temporary fetch failure")
+
+	firstSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "first incremental sync")
+	assert.Equal(int64(1), firstSummary.Errors, "first run errors")
+	assert.Equal(uint64(1001), firstSummary.FinalHistoryID, "first run final history")
+	assert.Len(env.Mock.GetMessageCalls, 1, "first run fetches the message")
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "source after first run")
+	assert.Equal("1001", source.SyncCursor.String, "first run advances cursor")
+
+	delete(env.Mock.GetMessageError, messageID)
+	env.Mock.AddMessage(messageID, testMIME(), []string{"INBOX"})
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source")
+	env.SetHistory(1001)
+
+	secondSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "second incremental sync")
+	assert.Equal(int64(1), secondSummary.MessagesAdded, "second run added")
+	assert.Equal(int64(1), secondSummary.MessagesFound, "second run processed")
+	assert.Len(env.Mock.GetMessageCalls, 2, "second run replays the message")
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "source after second run")
+	assert.Equal("1001", source.SyncCursor.String, "replay keeps cursor policy")
+
+	existing, err := env.Store.MessageExistsBatch(source.ID, []string{messageID})
+	require.NoError(err, "check replayed message")
+	assert.Contains(existing, messageID, "replayed message is archived")
+}
+
+func TestIncrementalSyncReplaysAfterInterveningFailedRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	const messageID = "replay-after-failed-run"
+
+	source := seedReplaySource(t, env, messageID)
+
+	env.Mock.ProfileError = errors.New("temporary profile failure")
+	_, err := env.Syncer.Incremental(env.Context, source)
+	require.Error(err, "intervening run fails")
+	env.Mock.ProfileError = nil
+
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source after failed run")
+	env.Mock.GetMessageCalls = nil
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "replay after failed run")
+	assert.Equal(int64(1), summary.MessagesAdded, "replay added")
+	assert.Equal(int64(1), summary.MessagesFound, "replay processed")
+	assert.Equal([]string{messageID}, env.Mock.GetMessageCalls, "replay fetches the message")
+	assertMessageCount(t, env.Store, 1)
+}
+
+func TestIncrementalSyncReplayCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		historyID      uint64
+		fetchErr       error
+		mailboxChanged bool
+		errors         int64
+	}{
+		{name: "idle successful replay", historyID: 1001, mailboxChanged: true},
+		{name: "idle failed replay", historyID: 1001, fetchErr: errors.New("temporary fetch failure"), errors: 1},
+		{name: "idle gone message", historyID: 1001, fetchErr: &gmail.NotFoundError{Path: "/messages/replay-completion"}},
+		{name: "new history with failed replay", historyID: 1002, fetchErr: errors.New("temporary fetch failure"), mailboxChanged: true, errors: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			env := newTestEnv(t)
+			const messageID = "replay-completion"
+			source := seedReplaySource(t, env, messageID)
+			env.Mock.GetMessageError[messageID] = tc.fetchErr
+			env.Mock.HistoryCalls = nil
+			env.SetHistory(tc.historyID)
+			logs := newSyncLogCapture(nil)
+			var changedFlags []bool
+			env.Syncer.WithLogger(logs.logger()).WithSuccessfulSyncHook(
+				"test", func(_ context.Context, _ *store.Source, changed bool) error {
+					changedFlags = append(changedFlags, changed)
+					return nil
+				},
+			)
+
+			summary, err := env.Syncer.Incremental(env.Context, source)
+			require.NoError(err)
+			assert.Equal([]bool{tc.mailboxChanged}, changedFlags)
+			assert.Equal(tc.errors, summary.Errors)
+			if tc.historyID == 1001 {
+				assert.Empty(env.Mock.HistoryCalls, "idle replay must not request history")
+			} else {
+				assert.Equal([]uint64{1001}, env.Mock.HistoryCalls)
+			}
+			if tc.errors > 0 {
+				assert.Contains(logs.String(), "incremental sync completed with errors")
+			}
+		})
+	}
+}
+
+func TestIncrementalSyncReplayUsesBoundedBatches(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "1000")
+	messageIDs := make([]string, 11)
+	history := make([]gmail.HistoryRecord, 0, len(messageIDs))
+	for i := range messageIDs {
+		messageIDs[i] = fmt.Sprintf("bounded-replay-%02d", i)
+		history = append(history, historyAdded(messageIDs[i]))
+		env.Mock.GetMessageError[messageIDs[i]] = errors.New("temporary fetch failure")
+	}
+	env.SetHistory(1001, history...)
+	_, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "seed replay failures")
+
+	for _, messageID := range messageIDs {
+		delete(env.Mock.GetMessageError, messageID)
+		env.Mock.AddMessage(messageID, testMIME(), []string{"INBOX"})
+	}
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source")
+	env.SetHistory(1001)
+
+	var checkpointAfterFirstBatch *store.SyncRun
+	api := &replayControlAPI{
+		MockAPI:     env.Mock,
+		batchErrors: map[int]error{0: errors.New("temporary batch outage")},
+		beforeBatch: func(batchIndex int, _ []string) {
+			if batchIndex != 1 {
+				return
+			}
+			checkpointAfterFirstBatch, err = env.Store.GetLatestSync(source.ID)
+			require.NoError(err, "checkpoint after first replay batch")
+		},
+	}
+	env.Mock.GetMessageCalls = nil
+	env.Syncer = New(api, env.Store, nil)
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "bounded replay")
+	require.NotNil(checkpointAfterFirstBatch, "first replay batch checkpoint")
+	assert.Equal(int64(10), checkpointAfterFirstBatch.MessagesProcessed, "checkpoint processed")
+	assert.Equal(int64(10), checkpointAfterFirstBatch.ErrorsCount, "checkpoint errors")
+	assert.Equal(int64(1), summary.MessagesAdded, "replay added after whole-batch error")
+	assert.Equal(int64(10), summary.Errors, "whole-batch errors")
+	assert.Equal(int64(len(messageIDs)), summary.MessagesFound, "replay processed")
+	assert.Equal([]int{10, 1}, api.batchSizes, "replay batch sizes")
+	assert.Equal([]string{messageIDs[len(messageIDs)-1]}, env.Mock.GetMessageCalls, "later batch continues after error")
+}
+
+func TestIncrementalSyncCarriesForwardFailedFetchReplay(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	const messageID = "carry-forward-message"
+
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.SetHistory(1001, historyAdded(messageID))
+	env.Mock.GetMessageError[messageID] = errors.New("temporary fetch failure")
+	firstSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "first incremental sync")
+	assert.Equal(int64(1), firstSummary.Errors, "first run errors")
+
+	env.Mock.AddMessage(messageID, testMIME(), []string{"INBOX"})
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source after first run")
+	env.SetHistory(1001)
+	secondSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "second incremental sync")
+	assert.Equal(int64(1), secondSummary.Errors, "replay errors")
+	assert.Equal(int64(1), secondSummary.MessagesFound, "replay processed")
+
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "latest replay run")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "replay error items")
+	require.Len(items, 1, "replay error item")
+	assert.Equal(messageID, items[0].SourceMessageID, "replay source ID")
+	assert.Equal(syncItemPhaseFetch, items[0].Phase, "replay phase")
+	assert.Equal(syncItemKindFetchError, items[0].ErrorKind, "replay kind")
+
+	delete(env.Mock.GetMessageError, messageID)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source before successful replay")
+	thirdSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "third incremental sync")
+	assert.Equal(int64(1), thirdSummary.MessagesAdded, "successful replay added")
+	assert.Equal(int64(0), thirdSummary.Errors, "successful replay errors")
+	assertMessageCount(t, env.Store, 1)
+}
+
+func TestIncrementalSyncSkipsGoneFetchReplay(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	const (
+		notFoundID = "replay-not-found"
+		goneID     = "replay-gone"
+	)
+
+	source := env.CreateSourceWithHistory(t, "1000")
+	env.SetHistory(1001, historyAdded(notFoundID), historyAdded(goneID))
+	env.Mock.GetMessageError[notFoundID] = errors.New("temporary fetch failure")
+	env.Mock.GetMessageError[goneID] = errors.New("temporary fetch failure")
+	_, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "seed gone replay failures")
+
+	env.Mock.GetMessageError[notFoundID] = &gmail.NotFoundError{Path: "/messages/" + notFoundID}
+	env.Mock.GetMessageError[goneID] = gmail.ErrMessageGone
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source")
+	env.SetHistory(1001)
+	secondSummary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "gone replay")
+	assert.Equal(int64(0), secondSummary.Errors, "gone replay errors")
+	assert.Equal(int64(2), secondSummary.MessagesSkipped, "gone replay skipped")
+
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "gone replay run")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusSkipped, 10)
+	require.NoError(err, "gone replay items")
+	require.Len(items, 2, "gone replay skipped items")
+	kinds := map[string]string{}
+	for _, item := range items {
+		kinds[item.SourceMessageID] = item.ErrorKind
+	}
+	assert.Equal(syncItemKindGmailNotFound, kinds[notFoundID], "404 replay kind")
+	assert.Equal(syncItemKindMessageGone, kinds[goneID], "gone replay kind")
+
+	callsAfterGone := len(env.Mock.GetMessageCalls)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh source after gone replay")
+	_, err = env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "following idle sync")
+	assert.Len(env.Mock.GetMessageCalls, callsAfterGone, "gone messages are not replayed again")
+}
+
+func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 1000
+	const presentID = "replay-present"
+	env.Mock.AddMessage(presentID, testMIME(), []string{"INBOX"})
+	env.Mock.MessagePages = [][]string{{presentID}}
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "seed present archive row")
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "source after full sync")
+	require.NoError(env.Store.UpdateSourceSyncCursor(source.ID, "1000"), "set current cursor")
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "refresh current source")
+	env.Mock.GetMessageCalls = nil
+
+	const (
+		olderID       = "replay-older"
+		failedID      = "replay-failed-run"
+		eligibleID    = "replay-eligible"
+		batchEligible = "replay-batch-eligible"
+	)
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{
+		SourceMessageID: olderID,
+		Phase:           syncItemPhaseFetch,
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       syncItemKindFetchError,
+	})
+	recordSyncRunItems(t, env, source.ID, store.SyncStatusFailed, store.SyncRunItem{
+		SourceMessageID: failedID,
+		Phase:           syncItemPhaseFetch,
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       syncItemKindFetchError,
+	})
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted,
+		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
+		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
+		store.SyncRunItem{SourceMessageID: batchEligible, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
+		store.SyncRunItem{SourceMessageID: "replay-ingest", Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindIngestError},
+		store.SyncRunItem{SourceMessageID: "replay-delete", Phase: syncItemPhaseDelete, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindDeleteError},
+		store.SyncRunItem{SourceMessageID: "replay-skipped", Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusSkipped, ErrorKind: syncItemKindGmailNotFound},
+		store.SyncRunItem{SourceMessageID: "", Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
+		store.SyncRunItem{SourceMessageID: "(unknown)", Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
+		store.SyncRunItem{SourceMessageID: presentID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
+	)
+	// A later filtered or limited full run completes without establishing full
+	// Gmail coverage, so it neither contributes debt nor hides the incremental run.
+	recordSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{
+		SourceMessageID: "replay-full-run",
+		Phase:           syncItemPhaseFetch,
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       syncItemKindFetchError,
+	})
+	env.Mock.AddMessage(eligibleID, testMIME(), []string{"INBOX"})
+	env.Mock.AddMessage(batchEligible, testMIME(), []string{"INBOX"})
+	env.SetHistory(1000)
+
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "filtered replay")
+	assert.Equal(int64(2), summary.MessagesFound, "eligible replay processed")
+	assert.Equal(int64(2), summary.MessagesAdded, "eligible replay added")
+	assert.Equal(int64(0), summary.Errors, "eligible replay errors")
+	assert.Equal([]string{batchEligible, eligibleID}, env.Mock.GetMessageCalls, "only latest eligible absent IDs fetched")
+}
+
+func TestIncrementalSyncFetchReplayPreservesCursorAndFence(t *testing.T) {
+	t.Run("cancellation", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		env := newTestEnv(t)
+		source := seedReplaySource(t, env, "replay-cancelled")
+		ctx, cancel := context.WithCancel(env.Context)
+		defer cancel()
+		env.Syncer = New(&replayControlAPI{
+			MockAPI: env.Mock,
+			beforeResults: func() {
+				cancel()
+			},
+		}, env.Store, nil)
+
+		_, err := env.Syncer.Incremental(ctx, source)
+		require.ErrorIs(err, context.Canceled, "cancelled replay")
+		source, err = env.Store.GetSourceByID(source.ID)
+		require.NoError(err, "source after cancellation")
+		assert.Equal("1001", source.SyncCursor.String, "cancelled replay does not publish cursor")
+		assertMessageCount(t, env.Store, 0)
+		run, err := env.Store.GetLatestSync(source.ID)
+		require.NoError(err, "cancelled replay run")
+		assert.Equal(store.SyncStatusFailed, run.Status, "cancelled replay fails its run")
+	})
+
+	t.Run("fence", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		env := newTestEnv(t)
+		source := seedReplaySource(t, env, "replay-fenced")
+		env.Syncer = New(&replayControlAPI{
+			MockAPI: env.Mock,
+			beforeResults: func() {
+				active, err := env.Store.GetActiveSync(source.ID)
+				require.NoError(err, "active replay run")
+				require.NoError(env.Store.FailSync(active.ID, "superseded in test"), "fence replay run")
+			},
+		}, env.Store, nil)
+
+		_, err := env.Syncer.Incremental(env.Context, source)
+		require.ErrorIs(err, store.ErrSyncRunSuperseded, "fenced replay")
+		source, err = env.Store.GetSourceByID(source.ID)
+		require.NoError(err, "source after fence")
+		assert.Equal("1001", source.SyncCursor.String, "fenced replay does not publish cursor")
+		assertMessageCount(t, env.Store, 0)
+	})
+}
+
 func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1494,6 +1966,10 @@ func TestIncrementalSyncAlreadyUpToDate(t *testing.T) {
 
 	summary := runIncrementalSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+	assert.Zero(t, env.Mock.LabelsCalls,
+		"the no-replay no-op path must not gain a label request")
+	assert.Empty(t, env.Mock.GetMessageCalls,
+		"the no-replay no-op path must not fetch messages")
 }
 
 func TestIncrementalSyncWithChanges(t *testing.T) {

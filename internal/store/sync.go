@@ -1437,18 +1437,38 @@ func (s *Store) HasAnyActiveSync() (bool, error) {
 
 // GetLastSuccessfulSync returns the most recent successful sync for a source.
 func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
+	return s.getLastSuccessfulSync(sourceID, "", false)
+}
+
+// GetLastSuccessfulSyncByType returns the most recent successful sync whose
+// sync_type exactly equals syncType, the legacy empty value included; only
+// GetLastSuccessfulSync queries without a type filter.
+func (s *Store) GetLastSuccessfulSyncByType(sourceID int64, syncType string) (*SyncRun, error) {
+	return s.getLastSuccessfulSync(sourceID, syncType, true)
+}
+
+func (s *Store) getLastSuccessfulSync(sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+	whereType := ""
+	args := []any{sourceID}
+	if filterByType {
+		whereType = " AND sync_type = ?"
+		args = append(args, syncType)
+	}
 	row := s.db.QueryRow(`
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
-		WHERE source_id = ? AND status = 'completed'
+		WHERE source_id = ? AND status = 'completed'`+whereType+`
 		ORDER BY completed_at DESC, id DESC
 		LIMIT 1
-	`, sourceID)
+	`, args...)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
+		if filterByType {
+			return nil, fmt.Errorf("last successful %s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
+		}
 		return nil, fmt.Errorf("last successful sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err

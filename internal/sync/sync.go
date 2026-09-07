@@ -258,6 +258,7 @@ func (s *Syncer) completeSyncAndRunHook(
 	syncID int64,
 	historyID string,
 	source *store.Source,
+	mailboxChanged bool,
 ) error {
 	publishSourceCursor := source.SourceType != sourceTypeGmail ||
 		(s.opts.Query == "" && s.opts.Limit == 0)
@@ -266,7 +267,7 @@ func (s *Syncer) completeSyncAndRunHook(
 	); err != nil {
 		return err
 	}
-	s.runSuccessfulSyncHook(ctx, source, true)
+	s.runSuccessfulSyncHook(ctx, source, mailboxChanged)
 	return nil
 }
 
@@ -1322,7 +1323,7 @@ func (s *Syncer) full(
 			"history_id", historyIDStr)
 	}
 	// Mark sync complete before running best-effort provider maintenance.
-	if err := s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source); err != nil {
+	if err := s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source, true); err != nil {
 		return nil, err
 	}
 

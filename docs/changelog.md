@@ -149,6 +149,10 @@ All notable changes to msgvault, grouped by release.
 
 **Bug fixes**
 
+- Incremental Gmail sync retries raw-message fetch failures from the previous
+  completed incremental run, carries repeated fetch failures forward, and treats
+  messages gone before replay as handled skips. Replay requires a recorded
+  incremental run type; older untyped runs and full-sync failures are excluded.
 - Deduplication now derives missing RFC822 Message-ID metadata only after the
   user confirms the reviewed plan, applies the exact derivation plan atomically,
   rescans, and refuses duplicate hiding when the actionable plan changes. Its

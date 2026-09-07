@@ -44,6 +44,13 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("invalid history ID %q: %w", source.SyncCursor.String, err)
 	}
 
+	// Read the prior run's fetch debt before a new run exists, so a ledger error
+	// cannot fail a run and the completed run stays visible for the next attempt.
+	pendingReplayIDs, err := s.pendingFetchReplayIDs(source.ID)
+	if err != nil {
+		return nil, fmt.Errorf("find pending fetch replays: %w", err)
+	}
+
 	// Start sync
 	syncID, err := s.startSync(ctx, execution, "incremental", "")
 	if err != nil {
@@ -87,7 +94,7 @@ func (s *Syncer) incremental(
 	// change while a mailbox is idle, so the post-completion hook still runs,
 	// flagged as a no-op so it only reaches for the provider when a refresh is
 	// owed (never succeeded, previously failed, or stale).
-	if startHistoryID >= profile.HistoryID {
+	if startHistoryID >= profile.HistoryID && len(pendingReplayIDs) == 0 {
 		s.logger.Info("already up to date")
 		if err := s.completeSyncWithoutHook(
 			ctx, syncID, source.ID, strconv.FormatUint(profile.HistoryID, 10), true,
@@ -108,160 +115,189 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
-	// Process history
 	checkpoint := &store.Checkpoint{}
-	pageToken := ""
 	var discoveryHealth pageDiscoveryHealth
 
-	for {
-		historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
+	// Retry the prior run's absent fetches inside this scoped run, before history
+	// selection, so an idle mailbox still works off its durable debt.
+	if len(pendingReplayIDs) > 0 {
+		replayedIDs, err := s.replayFetchFailures(
+			ctx, syncID, source.ID, pendingReplayIDs, labelMap, checkpoint, summary,
+		)
 		if err != nil {
-			// Check for 404 - history too old
-			if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
-				s.logger.Info("gmail history expired; full sync required")
-				_ = s.store.FailSync(syncID, "history too old")
-				// Callers fall back to a full sync on ErrHistoryExpired.
-				return nil, ErrHistoryExpired
+			if checkpointErr := s.store.UpdateSyncCheckpoint(syncID, checkpoint); checkpointErr != nil {
+				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
 			}
-			_ = s.store.FailSync(syncID, err.Error())
-			return nil, fmt.Errorf("list history: %w", err)
-		}
-
-		// Collect all message IDs referenced in this page for a single batch existence check
-		allIDs := make(map[string]bool)
-		for _, record := range historyResp.History {
-			for _, msg := range record.MessagesAdded {
-				allIDs[msg.Message.ID] = true
-			}
-			for _, item := range record.LabelsAdded {
-				allIDs[item.Message.ID] = true
-			}
-			for _, item := range record.LabelsRemoved {
-				allIDs[item.Message.ID] = true
-			}
-		}
-		idList := make([]string, 0, len(allIDs))
-		for id := range allIDs {
-			idList = append(idList, id)
-		}
-		existingMap, err := s.store.MessageExistsBatch(source.ID, idList)
-		if err != nil {
-			_ = s.store.FailSync(syncID, err.Error())
-			return nil, fmt.Errorf("check existing messages: %w", err)
-		}
-
-		// Collect new message IDs to batch-fetch and deleted IDs to batch-mark
-		newMsgThreads := make(map[string]string) // deduplicates by ID
-		deletedSet := make(map[string]bool)
-		updatedExisting := make(map[string]struct{})
-		identityDiscoverySet := make(map[string]struct{})
-
-		for _, record := range historyResp.History {
-			for _, msg := range record.MessagesAdded {
-				if _, exists := existingMap[msg.Message.ID]; !exists {
-					newMsgThreads[msg.Message.ID] = msg.Message.ThreadID
-				} else {
-					identityDiscoverySet[msg.Message.ID] = struct{}{}
-				}
-			}
-			for _, msg := range record.MessagesDeleted {
-				deletedSet[msg.Message.ID] = true
-			}
-		}
-		for _, record := range historyResp.History {
-			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary)
-		}
-		checkpoint.MessagesUpdated += int64(len(updatedExisting))
-		checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
-		newMsgIDs := make([]string, 0, len(newMsgThreads))
-		for id := range newMsgThreads {
-			newMsgIDs = append(newMsgIDs, id)
-		}
-		deletedIDs := make([]string, 0, len(deletedSet))
-		for id := range deletedSet {
-			deletedIDs = append(deletedIDs, id)
-		}
-
-		// Batch-fetch and ingest new messages
-		if len(newMsgIDs) > 0 {
-			rawMessages, fetchErr := s.getMessagesRawBatchWithDiagnostics(ctx, newMsgIDs)
-			if fetchErr != nil {
-				s.logger.Warn("failed to batch fetch messages", "error", fetchErr)
-				for _, id := range newMsgIDs {
-					s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
-				}
-				checkpoint.ErrorsCount += int64(len(newMsgIDs))
-			} else {
-				for i, fetch := range rawMessages {
-					raw := fetch.Message
-					if raw == nil {
-						if isGmailNotFound(fetch.Err) {
-							s.logger.Debug("skipping message deleted before fetch", "id", newMsgIDs[i])
-							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
-							continue
-						}
-						errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
-						s.logger.Warn("failed to fetch message", "id", newMsgIDs[i], "error", errMsg)
-						s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
-						checkpoint.ErrorsCount++
-						continue
-					}
-					threadID := newMsgThreads[newMsgIDs[i]]
-					if _, err := s.ingestMessage(
-						ctx, source.ID, raw, threadID, labelMap,
-					); err != nil {
-						s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
-						s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
-						checkpoint.ErrorsCount++
-						continue
-					}
-					checkpoint.MessagesAdded++
-					summary.BytesDownloaded += int64(len(raw.Raw))
-					identityDiscoverySet[newMsgIDs[i]] = struct{}{}
-				}
-
-				// Newly-persisted messages get embed_gen = NULL by column
-				// default, so the scan-and-fill embed worker picks them up
-				// automatically — no sync-time enqueue step is needed.
-			}
-		}
-
-		// Batch-mark deleted messages
-		if len(deletedIDs) > 0 {
-			if err := s.store.MarkMessagesDeletedBatch(source.ID, deletedIDs); err != nil {
-				s.logger.Warn("failed to batch mark messages deleted", "error", err)
-				for _, id := range deletedIDs {
-					s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
-				}
-				checkpoint.ErrorsCount += int64(len(deletedIDs))
-			}
-		}
-
-		identityDiscoveryIDs := make([]string, 0, len(identityDiscoverySet))
-		for id := range identityDiscoverySet {
-			identityDiscoveryIDs = append(identityDiscoveryIDs, id)
-		}
-		sort.Strings(identityDiscoveryIDs)
-		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, identityDiscoveryIDs))
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
 			s.failStoppedSync(syncID, err)
 			return nil, err
 		}
-
-		// Report progress
-		s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, 0)
-
-		// Save checkpoint
-		pageToken = historyResp.NextPageToken
-		checkpoint.PageToken = pageToken
-		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
-			s.logger.Warn("failed to save checkpoint", "error", err)
+		if len(replayedIDs) > 0 {
+			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayedIDs))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err := fmt.Errorf("sync canceled during replay identity discovery: %w", ctxErr)
+				s.failStoppedSync(syncID, err)
+				return nil, err
+			}
 		}
+		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+			s.logger.Warn("failed to save replay checkpoint", "error", err)
+		}
+	}
 
-		// No more pages
-		if pageToken == "" {
-			break
+	if startHistoryID < profile.HistoryID {
+		// Process history
+		pageToken := ""
+
+		for {
+			historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
+			if err != nil {
+				// Check for 404 - history too old
+				if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
+					s.logger.Info("gmail history expired; full sync required")
+					_ = s.store.FailSync(syncID, "history too old")
+					// Callers fall back to a full sync on ErrHistoryExpired.
+					return nil, ErrHistoryExpired
+				}
+				_ = s.store.FailSync(syncID, err.Error())
+				return nil, fmt.Errorf("list history: %w", err)
+			}
+
+			// Collect all message IDs referenced in this page for a single batch existence check
+			allIDs := make(map[string]bool)
+			for _, record := range historyResp.History {
+				for _, msg := range record.MessagesAdded {
+					allIDs[msg.Message.ID] = true
+				}
+				for _, item := range record.LabelsAdded {
+					allIDs[item.Message.ID] = true
+				}
+				for _, item := range record.LabelsRemoved {
+					allIDs[item.Message.ID] = true
+				}
+			}
+			idList := make([]string, 0, len(allIDs))
+			for id := range allIDs {
+				idList = append(idList, id)
+			}
+			existingMap, err := s.store.MessageExistsBatch(source.ID, idList)
+			if err != nil {
+				_ = s.store.FailSync(syncID, err.Error())
+				return nil, fmt.Errorf("check existing messages: %w", err)
+			}
+
+			// Collect new message IDs to batch-fetch and deleted IDs to batch-mark
+			newMsgThreads := make(map[string]string) // deduplicates by ID
+			deletedSet := make(map[string]bool)
+			updatedExisting := make(map[string]struct{})
+			identityDiscoverySet := make(map[string]struct{})
+
+			for _, record := range historyResp.History {
+				for _, msg := range record.MessagesAdded {
+					if _, exists := existingMap[msg.Message.ID]; !exists {
+						newMsgThreads[msg.Message.ID] = msg.Message.ThreadID
+					} else {
+						identityDiscoverySet[msg.Message.ID] = struct{}{}
+					}
+				}
+				for _, msg := range record.MessagesDeleted {
+					deletedSet[msg.Message.ID] = true
+				}
+			}
+			for _, record := range historyResp.History {
+				s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary)
+			}
+			checkpoint.MessagesUpdated += int64(len(updatedExisting))
+			checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
+			newMsgIDs := make([]string, 0, len(newMsgThreads))
+			for id := range newMsgThreads {
+				newMsgIDs = append(newMsgIDs, id)
+			}
+			deletedIDs := make([]string, 0, len(deletedSet))
+			for id := range deletedSet {
+				deletedIDs = append(deletedIDs, id)
+			}
+
+			// Batch-fetch and ingest new messages
+			if len(newMsgIDs) > 0 {
+				rawMessages, fetchErr := s.getMessagesRawBatchWithDiagnostics(ctx, newMsgIDs)
+				if fetchErr != nil {
+					s.logger.Warn("failed to batch fetch messages", "error", fetchErr)
+					for _, id := range newMsgIDs {
+						s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
+					}
+					checkpoint.ErrorsCount += int64(len(newMsgIDs))
+				} else {
+					for i, fetch := range rawMessages {
+						raw := fetch.Message
+						if raw == nil {
+							if isGmailNotFound(fetch.Err) {
+								s.logger.Debug("skipping message deleted before fetch", "id", newMsgIDs[i])
+								s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+								continue
+							}
+							errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
+							s.logger.Warn("failed to fetch message", "id", newMsgIDs[i], "error", errMsg)
+							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+							checkpoint.ErrorsCount++
+							continue
+						}
+						threadID := newMsgThreads[newMsgIDs[i]]
+						if _, err := s.ingestMessage(
+							ctx, source.ID, raw, threadID, labelMap,
+						); err != nil {
+							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
+							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+							checkpoint.ErrorsCount++
+							continue
+						}
+						checkpoint.MessagesAdded++
+						summary.BytesDownloaded += int64(len(raw.Raw))
+						identityDiscoverySet[newMsgIDs[i]] = struct{}{}
+					}
+
+					// Newly-persisted messages get embed_gen = NULL by column
+					// default, so the scan-and-fill embed worker picks them up
+					// automatically — no sync-time enqueue step is needed.
+				}
+			}
+
+			// Batch-mark deleted messages
+			if len(deletedIDs) > 0 {
+				if err := s.store.MarkMessagesDeletedBatch(source.ID, deletedIDs); err != nil {
+					s.logger.Warn("failed to batch mark messages deleted", "error", err)
+					for _, id := range deletedIDs {
+						s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
+					}
+					checkpoint.ErrorsCount += int64(len(deletedIDs))
+				}
+			}
+
+			identityDiscoveryIDs := make([]string, 0, len(identityDiscoverySet))
+			for id := range identityDiscoverySet {
+				identityDiscoveryIDs = append(identityDiscoveryIDs, id)
+			}
+			sort.Strings(identityDiscoveryIDs)
+			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, identityDiscoveryIDs))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
+				s.failStoppedSync(syncID, err)
+				return nil, err
+			}
+
+			// Report progress
+			s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, summary.MessagesSkipped)
+
+			// Save checkpoint
+			pageToken = historyResp.NextPageToken
+			checkpoint.PageToken = pageToken
+			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+				s.logger.Warn("failed to save checkpoint", "error", err)
+			}
+
+			// No more pages
+			if pageToken == "" {
+				break
+			}
 		}
 	}
 
@@ -273,7 +309,7 @@ func (s *Syncer) incremental(
 
 	// Always advance the cursor so a single permanently-failing
 	// message doesn't block all future incremental syncs.
-	// Failed messages can be recovered via full sync.
+	// Failed fetches carry forward to the next incremental run.
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",
@@ -281,7 +317,8 @@ func (s *Syncer) incremental(
 			"history_id", historyIDStr)
 	}
 	// Mark sync complete before running best-effort provider maintenance.
-	if err := s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source); err != nil {
+	mailboxChanged := startHistoryID < profile.HistoryID || checkpoint.MessagesAdded > 0
+	if err := s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source, mailboxChanged); err != nil {
 		return nil, err
 	}
 
@@ -294,8 +331,104 @@ func (s *Syncer) incremental(
 	summary.Errors = checkpoint.ErrorsCount
 	summary.FinalHistoryID = profile.HistoryID
 
+	s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, summary.MessagesSkipped)
 	s.progress.OnComplete(summary)
 	return summary, nil
+}
+
+// replayFetchFailures re-fetches the IDs a prior completed incremental run
+// failed to read, skipping any that already reached the archive. Reads and
+// local ingest only; a repeated failure becomes this run's fetch error and
+// carries the ID to the next run.
+func (s *Syncer) replayFetchFailures(
+	ctx context.Context,
+	syncID, sourceID int64,
+	messageIDs []string,
+	labelMap map[string]int64,
+	checkpoint *store.Checkpoint,
+	summary *gmail.SyncSummary,
+) ([]string, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+
+	existing, err := s.store.MessageExistsBatch(sourceID, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("check replay messages: %w", err)
+	}
+	fetchIDs := make([]string, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if _, ok := existing[messageID]; !ok {
+			fetchIDs = append(fetchIDs, messageID)
+		}
+	}
+	if len(fetchIDs) == 0 {
+		return nil, nil
+	}
+
+	batchSize := 10
+	if s.opts.BatchSize > 0 {
+		batchSize = s.opts.BatchSize
+	}
+	successfulIDs := make([]string, 0, len(fetchIDs))
+	for batchStart := 0; batchStart < len(fetchIDs); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(fetchIDs))
+		batchIDs := fetchIDs[batchStart:batchEnd]
+		checkpoint.MessagesProcessed += int64(len(batchIDs))
+		results, fetchErr := s.getMessagesRawBatchWithDiagnostics(ctx, batchIDs)
+		if fetchErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+				return nil, fetchErr
+			}
+			s.logger.Warn("failed to batch fetch replay messages", "error", fetchErr)
+			for _, messageID := range batchIDs {
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
+			}
+			checkpoint.ErrorsCount += int64(len(batchIDs))
+			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+				return nil, fmt.Errorf("checkpoint replay batch: %w", err)
+			}
+			continue
+		}
+		for i, messageID := range batchIDs {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			result := results[i]
+			if result.Message == nil {
+				if kind, gone := messageGoneKind(result.Err); gone {
+					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, result.Err)
+					summary.MessagesSkipped++
+					continue
+				}
+				errMsg := syncItemErrorMessage(result.Err, errRawBatchMissing.Error())
+				err := errors.New(errMsg)
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+
+			if _, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap); err != nil {
+				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
+					return nil, err
+				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			checkpoint.MessagesAdded++
+			summary.BytesDownloaded += int64(len(result.Message.Raw))
+			successfulIDs = append(successfulIDs, messageID)
+		}
+		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
+		}
+	}
+
+	return successfulIDs, nil
 }
 
 // processLabelChanges handles label additions and removals for messages.
