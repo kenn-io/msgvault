@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -142,6 +143,19 @@ func historicalPersonProviderProfile(
 	withCheck bool,
 	withActiveConsent bool,
 ) peoplesweep.ProviderProfile {
+	return historicalPersonProviderProfileWithMutation(
+		t, st, profile, "", nil, withCheck, withActiveConsent)
+}
+
+func historicalPersonProviderProfileWithMutation(
+	t *testing.T,
+	st *store.Store,
+	profile peoplesweep.ProviderProfile,
+	oldProgram string,
+	mutate func(*peoplesweep.ProviderProfile),
+	withCheck bool,
+	withActiveConsent bool,
+) peoplesweep.ProviderProfile {
 	t.Helper()
 	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(t, err)
@@ -157,11 +171,23 @@ func historicalPersonProviderProfile(
 		require.NoError(t, err)
 	}
 	historical := profile
-	historical.ProgramFingerprint = strings.Repeat("a", len(profile.ProgramFingerprint))
-	historical.PolicyJSON = bytes.Replace(
-		profile.PolicyJSON, []byte(profile.ProgramFingerprint), []byte(historical.ProgramFingerprint), 1)
+	if mutate != nil {
+		mutate(&historical)
+	}
+	historical.PolicyJSON = testProviderPolicyJSON(t, historical)
+	variantFingerprintDigest := sha256.Sum256(historical.PolicyJSON)
+	historical.Fingerprint = hex.EncodeToString(variantFingerprintDigest[:])
+	if oldProgram == "" {
+		oldProgram = strings.Repeat("a", len(profile.ProgramFingerprint))
+	}
+	historical.ProgramFingerprint = oldProgram
+	historical.PolicyJSON = testProviderPolicyJSON(t, historical)
 	digest := sha256.Sum256(historical.PolicyJSON)
 	historical.Fingerprint = hex.EncodeToString(digest[:])
+	allowedSources, err := json.Marshal(historical.AllowedSources)
+	require.NoError(t, err)
+	disclosedFields, err := json.Marshal(historical.DisclosedPacketFields)
+	require.NoError(t, err)
 	if withCheck {
 		_, err = st.DB().Exec(st.Rebind(`
 			DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`), profile.Fingerprint)
@@ -174,9 +200,25 @@ func historicalPersonProviderProfile(
 	}
 	_, err = st.DB().Exec(st.Rebind(`
 		UPDATE person_inference_profiles
-		SET fingerprint = ?, program_fingerprint = ?, policy_json = ?
-		WHERE fingerprint = ?`), historical.Fingerprint, historical.ProgramFingerprint,
-		string(historical.PolicyJSON), profile.Fingerprint)
+		SET fingerprint = ?, provider_kind = ?, endpoint = ?, model = ?,
+			api_key_env = ?, allow_anonymous = ?, auth_scheme = ?,
+			credential_source = ?, credential_ref = ?, output_mode = ?,
+			token_limit_parameter = ?, reasoning_effort = ?, reasoning_mode = ?,
+			driver_version = ?, retention_posture = ?, training_posture = ?,
+			allowed_sources = ?, source_since = ?, source_until = NULLIF(?, ''),
+			allow_sensitive = ?, execution_boundary = ?, packet_renderer_policy = ?,
+			program_fingerprint = ?, disclosed_packet_fields = ?, policy_json = ?
+		WHERE fingerprint = ?`), historical.Fingerprint, string(historical.Protocol),
+		historical.Endpoint, historical.Model, historical.CredentialRef,
+		historical.Auth == peoplesweep.AuthNone, string(historical.Auth),
+		string(historical.Credential), historical.CredentialRef,
+		string(historical.OutputMode), historical.TokenLimitParameter,
+		historical.ReasoningEffort, historical.ReasoningMode, historical.DriverVersion,
+		historical.RetentionPosture, historical.TrainingPosture, string(allowedSources),
+		historical.SourceSince, historical.SourceUntil, historical.AllowSensitive,
+		historical.ExecutionBoundary, historical.PacketRendererPolicy,
+		historical.ProgramFingerprint, string(disclosedFields), string(historical.PolicyJSON),
+		profile.Fingerprint)
 	require.NoError(t, err)
 	if withCheck {
 		_, err = st.DB().Exec(st.Rebind(`
@@ -193,6 +235,33 @@ func historicalPersonProviderProfile(
 		require.NoError(t, err)
 	}
 	return historical
+}
+
+func testProviderPolicyJSON(
+	t *testing.T,
+	profile peoplesweep.ProviderProfile,
+) json.RawMessage {
+	t.Helper()
+	typeOfProfile := reflect.TypeOf(profile)
+	value := reflect.ValueOf(profile)
+	fields := make([]reflect.StructField, 0, value.NumField()-2)
+	values := make([]reflect.Value, 0, value.NumField()-2)
+	for index := range value.NumField() {
+		field := typeOfProfile.Field(index)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "fingerprint" || name == "" || name == "-" {
+			continue
+		}
+		fields = append(fields, field)
+		values = append(values, value.Field(index))
+	}
+	policy := reflect.New(reflect.StructOf(fields)).Elem()
+	for index, fieldValue := range values {
+		policy.Field(index).Set(fieldValue)
+	}
+	encoded, err := json.Marshal(policy.Interface())
+	require.NoError(t, err)
+	return encoded
 }
 
 func semanticPersonProviderTestConfig() vector.Config {
@@ -319,7 +388,7 @@ func TestPersonProviderStatusReportsStaleProgram(t *testing.T) {
 
 	human, err := executePersonProviderCommand(t, deps, "status", "default")
 	require.NoError(err)
-	assert.Contains(human, "earlier extraction program")
+	assert.Contains(human, "different extraction program")
 	assert.Contains(human, "msgvault person provider reverify <name> --yes")
 	jsonOutput, err := executePersonProviderCommand(t, deps, "status", "default", "--json")
 	require.NoError(err)
@@ -371,6 +440,64 @@ func TestPersonProviderStatusStaleProgramNegativeSpace(t *testing.T) {
 	require.NoError(err)
 	assert.NotContains(output, "stale_program_check")
 	assert.NotContains(output, "stale_program_consent")
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*peoplesweep.ProviderProfile)
+	}{
+		{name: "endpoint", mutate: func(profile *peoplesweep.ProviderProfile) {
+			profile.Endpoint = "https://changed.example/v1"
+		}},
+		{name: "source scope", mutate: func(profile *peoplesweep.ProviderProfile) {
+			profile.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+		}},
+		{name: "renderer", mutate: func(profile *peoplesweep.ProviderProfile) {
+			profile.PacketRendererPolicy = "changed-renderer"
+		}},
+		{name: "disclosed fields", mutate: func(profile *peoplesweep.ProviderProfile) {
+			profile.DisclosedPacketFields = []string{"person_id"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			current, err := personProviderTestConfig().Profile()
+			require.NoError(err)
+			historicalPersonProviderProfileWithMutation(
+				t, st, current, "", test.mutate, true, true)
+			deps := localPersonProviderDeps(personProviderTestConfig(), st, nil)
+			output, err := executePersonProviderCommand(t, deps, "status", "default", "--json")
+			require.NoError(err)
+			assert.NotContains(output, "stale_program_check")
+			assert.NotContains(output, "stale_program_consent")
+		})
+	}
+
+	st = testutil.NewSQLiteTestStore(t)
+	current, err = personProviderTestConfig().Profile()
+	require.NoError(err)
+	historical := historicalPersonProviderProfile(t, st, current, true, true)
+	_, err = st.RevokePersonInferenceConsent(t.Context(), historical.Fingerprint, "cli")
+	require.NoError(err)
+	deps = localPersonProviderDeps(personProviderTestConfig(), st, nil)
+	output, err = executePersonProviderCommand(t, deps, "status", "default", "--json")
+	require.NoError(err)
+	var revoked map[string]any
+	require.NoError(json.Unmarshal([]byte(output), &revoked))
+	assert.Equal(true, revoked["stale_program_check"])
+	assert.NotContains(output, "stale_program_consent")
+
+	st = testutil.NewSQLiteTestStore(t)
+	current, err = personProviderTestConfig().Profile()
+	require.NoError(err)
+	historicalPersonProviderProfileWithMutation(
+		t, st, current, strings.Repeat("a", len(current.ProgramFingerprint)), nil, true, true)
+	historicalPersonProviderProfileWithMutation(
+		t, st, current, strings.Repeat("b", len(current.ProgramFingerprint)), nil, true, true)
+	deps = localPersonProviderDeps(personProviderTestConfig(), st, nil)
+	output, err = executePersonProviderCommand(t, deps, "status", "default", "--json")
+	require.NoError(err)
+	assert.Contains(output, `"stale_program_check":true`)
+	assert.Contains(output, `"stale_program_consent":true`)
 }
 
 func TestPersonProviderReverifyRequiresConfirmation(t *testing.T) {

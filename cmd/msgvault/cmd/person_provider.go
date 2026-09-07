@@ -1907,7 +1907,7 @@ func writePersonProviderStatus(
 			output.Check.CheckedAt.Format(time.RFC3339), output.Check.ModelVersion)
 	}
 	if output.StaleProgramCheck {
-		_, _ = fmt.Fprintln(w, "Check: a matching record uses an earlier extraction program; run msgvault person provider reverify <name> --yes")
+		_, _ = fmt.Fprintln(w, "Check: a matching record uses a different extraction program; run msgvault person provider reverify <name> --yes")
 	}
 	state := "inactive"
 	if output.Consent.Active {
@@ -1917,7 +1917,7 @@ func writePersonProviderStatus(
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
 	if output.StaleProgramConsent {
-		_, _ = fmt.Fprintln(w, "Consent: a matching grant uses an earlier extraction program; run msgvault person provider reverify <name> --yes")
+		_, _ = fmt.Fprintln(w, "Consent: a matching grant uses a different extraction program; run msgvault person provider reverify <name> --yes")
 	}
 	if output.CodexIsolation != nil {
 		availability := "unavailable"

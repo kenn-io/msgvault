@@ -1497,8 +1497,9 @@ shipped definitions and complete workflow.
 Show the exact people inference provider policy and its check and consent state.
 The JSON output adds `stale_program_check` or `stale_program_consent` when a
 verified historical record matches every policy field except the extraction
-program and supplies a missing current gate. Human output gives the same
-recovery command without provider credentials or response content.
+program and supplies a missing current gate. Human output identifies a
+different extraction program and gives the recovery command without provider
+credentials or response content.
 
 ```bash
 msgvault person provider status [name] [--json]

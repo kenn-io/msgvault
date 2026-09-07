@@ -569,13 +569,6 @@ func (p ProviderProfile) Validate() error {
 	return nil
 }
 
-// ValidateStoredProviderProfile validates an immutable policy without
-// replacing fields that were part of the policy when it was persisted.
-func (p ProviderProfile) ValidateStoredProviderProfile() error {
-	_, err := CanonicalStoredProviderProfile(p)
-	return err
-}
-
 // CanonicalStoredProviderProfile verifies and canonicalizes an immutable
 // policy while preserving its historical program and disclosure fields.
 func CanonicalStoredProviderProfile(p ProviderProfile) (ProviderProfile, error) {

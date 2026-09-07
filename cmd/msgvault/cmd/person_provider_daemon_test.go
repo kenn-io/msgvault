@@ -244,6 +244,9 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	_, err := executePersonProviderCommand(t, deps, "reverify", "default", "--yes")
 	require.NoError(err)
 	captured := <-requests
+	consentOutput, err := executePersonProviderCommand(t, deps, "consent", "--yes", "--json")
+	require.NoError(err)
+	assert.Contains(consentOutput, `"active":true`)
 	output, err := executePersonProviderCommand(t, deps, "check", "--json")
 	require.NoError(err)
 	assert.JSONEq(`{

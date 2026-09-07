@@ -428,7 +428,8 @@ func TestStoredProviderProfilePreservesHistoricalProgramPolicy(t *testing.T) {
 		profile.PolicyJSON, []byte(profile.ProgramFingerprint), []byte(oldProgram), 1)
 	digest := sha256.Sum256(historical.PolicyJSON)
 	historical.Fingerprint = hex.EncodeToString(digest[:])
-	require.NoError(historical.ValidateStoredProviderProfile())
+	_, err = peoplesweep.CanonicalStoredProviderProfile(historical)
+	require.NoError(err)
 	require.Error(historical.Validate())
 
 	for _, mutate := range []func(*peoplesweep.ProviderProfile){
@@ -439,7 +440,8 @@ func TestStoredProviderProfilePreservesHistoricalProgramPolicy(t *testing.T) {
 	} {
 		changed := historical
 		mutate(&changed)
-		assert.Error(changed.ValidateStoredProviderProfile())
+		_, err = peoplesweep.CanonicalStoredProviderProfile(changed)
+		assert.Error(err)
 	}
 }
 

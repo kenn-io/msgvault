@@ -258,8 +258,7 @@ func (p *personInferenceProfileProjection) profile() (peoplesweep.ProviderProfil
 	}
 	canonical, err := peoplesweep.CanonicalStoredProviderProfile(profile)
 	if err != nil {
-		return peoplesweep.ProviderProfile{}, errors.New(
-			"stored people inference profile does not match its immutable policy")
+		return peoplesweep.ProviderProfile{}, err
 	}
 	if !equalJSON(profile.PolicyJSON, canonical.PolicyJSON) {
 		return peoplesweep.ProviderProfile{}, errors.New(
