@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/remoteimage"
 )
 
 // fakePNG is a minimal PNG signature — enough for a byte-identity check; the
@@ -75,12 +76,9 @@ func (s *remoteImageSeams) dialedAddresses() []string {
 func newRemoteImageTestServer(t *testing.T, seams *remoteImageSeams) *Server {
 	t.Helper()
 	srv, _ := newTestServerWithMockStore(t)
-	srv.remoteImages = &remoteImageFetcher{
-		lookupNetIP:  seams.lookup,
-		dialContext:  seams.dial,
-		maxBytes:     remoteImageMaxBytes,
-		maxRedirects: remoteImageMaxRedirects,
-	}
+	srv.remoteImages = remoteimage.NewFetcher()
+	srv.remoteImages.LookupNetIP = seams.lookup
+	srv.remoteImages.DialContext = seams.dial
 	return srv
 }
 
@@ -140,7 +138,7 @@ func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
 		{"javascript scheme", "javascript:alert(1)", "invalid_url"},
 		{"userinfo", "http://user:pass@images.example/a.png", "invalid_url"},
 		{"empty host", "http:///a.png", "invalid_url"},
-		{"overlong url", "http://images.example/" + strings.Repeat("a", remoteImageMaxURLBytes), "invalid_url"},
+		{"overlong url", "http://images.example/" + strings.Repeat("a", 4096), "invalid_url"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,12 +256,9 @@ func TestRemoteImageSessionCSRFEnforcement(t *testing.T) {
 				answers:  map[string][]netip.Addr{"images.example": {netip.MustParseAddr("203.0.113.7")}},
 				upstream: upstream.Listener.Addr().String(),
 			}
-			srv.remoteImages = &remoteImageFetcher{
-				lookupNetIP:  seams.lookup,
-				dialContext:  seams.dial,
-				maxBytes:     remoteImageMaxBytes,
-				maxRedirects: remoteImageMaxRedirects,
-			}
+			srv.remoteImages = remoteimage.NewFetcher()
+			srv.remoteImages.LookupNetIP = seams.lookup
+			srv.remoteImages.DialContext = seams.dial
 
 			login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
 				[]byte(`{"api_key":"`+testSessionAPIKey+`"}`), nil, false)
@@ -401,7 +396,7 @@ func TestRemoteImageHappyPathPinsValidatedAddress(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Empty(r.Header.Get("Cookie"), "no cookies may travel outbound")
 		assert.Equal("image/*", r.Header.Get("Accept"))
-		assert.Equal(remoteImageUserAgent, r.Header.Get("User-Agent"))
+		assert.Equal("msgvault-image-proxy", r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(fakePNG)
 	}))
@@ -518,7 +513,7 @@ func TestRemoteImageRedirectChainIsCapped(t *testing.T) {
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "too_many_redirects")
-	assert.Equal(remoteImageMaxRedirects+1, seams.dialCount(),
+	assert.Equal(srv.remoteImages.MaxRedirects+1, seams.dialCount(),
 		"the chain must stop after the redirect cap")
 }
 
@@ -574,7 +569,7 @@ func TestRemoteImageEnforcesByteCapWhileStreaming(t *testing.T) {
 		upstream: upstream.Listener.Addr().String(),
 	}
 	srv := newRemoteImageTestServer(t, seams)
-	srv.remoteImages.maxBytes = 1024
+	srv.remoteImages.MaxBytes = 1024
 
 	resp := postRemoteImage(t, srv, "http://images.example/huge.png")
 
@@ -610,12 +605,9 @@ func TestRemoteImageRequiresAuthentication(t *testing.T) {
 		nil, nil, testLogger(),
 	)
 	seams := &remoteImageSeams{answers: map[string][]netip.Addr{}}
-	srv.remoteImages = &remoteImageFetcher{
-		lookupNetIP:  seams.lookup,
-		dialContext:  seams.dial,
-		maxBytes:     remoteImageMaxBytes,
-		maxRedirects: remoteImageMaxRedirects,
-	}
+	srv.remoteImages = remoteimage.NewFetcher()
+	srv.remoteImages.LookupNetIP = seams.lookup
+	srv.remoteImages.DialContext = seams.dial
 
 	resp := postRemoteImage(t, srv, "http://images.example/chart.png")
 

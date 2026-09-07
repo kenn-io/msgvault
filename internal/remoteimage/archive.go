@@ -166,7 +166,7 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 			result.Errors = append(result.Errors, errors.New("remote image total bytes exceeds limit"))
 			break
 		}
-		fetchCtx, fetchCancel := context.WithTimeout(ctx, remoteImageTimeout)
+		fetchCtx, fetchCancel := context.WithTimeout(ctx, Timeout)
 		contentType, body, fetchErr := f.Fetch(fetchCtx, target)
 		fetchCancel()
 		if fetchErr != nil {
@@ -177,6 +177,9 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 		if total > maxArchiveBytes {
 			result.Errors = append(result.Errors, errors.New("remote image total bytes exceeds limit"))
 			break
+		}
+		if contentType == "image/jpg" {
+			contentType = "image/jpeg"
 		}
 		if !permittedRaster(contentType, body) {
 			result.Errors = append(result.Errors, errors.New("remote content is not a supported raster image"))

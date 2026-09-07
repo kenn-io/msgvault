@@ -585,11 +585,19 @@ messages, not mail already in the archive. To process existing mail explicitly:
 msgvault archive-remote-images --allow-tracking
 ```
 
+For large initial syncs or imports, leave this setting off and run the backfill
+command afterward. Images are fetched sequentially, with a 15-second timeout
+per fetch and a 60-second budget per message, so slow image hosts can
+substantially delay mail ingestion.
+
 Downloaded PNG, JPEG, GIF, and WebP images are stored locally and displayed
 offline in message and conversation views. Raw MIME and stored HTML are left
 unchanged. Disabling the setting stops automatic downloads without removing
 images already archived. Missing images remain subject to the reader's existing
 remote-image consent control.
+
+Archived images count as inline attachments, including small logos and tracking
+pixels. They affect attachment counts and filters and appear in the Files view.
 
 Archiving handles HTTP(S) `<img src>` URLs, including protocol-relative URLs.
 It does not fetch CSS backgrounds, `srcset` candidates, linked pages, or external

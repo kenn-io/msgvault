@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -376,7 +377,7 @@ type Server struct {
 	// remoteImages is the SSRF-hardened fetcher behind
 	// POST /api/v1/content/remote-image. Tests replace it to inject a fake
 	// resolver and dialer.
-	remoteImages *remoteImageFetcher
+	remoteImages *remoteimage.Fetcher
 	// inlineCache parses each message's raw MIME once and serves every cid: from
 	// that result, collapsing the per-cid fan-out (see inline_cache.go).
 	inlineCache *inlineParseCache
@@ -563,7 +564,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:            importContext,
 		cancelImports:            cancelImports,
 		blobStore:                opts.BlobStore,
-		remoteImages:             newRemoteImageFetcher(),
+		remoteImages:             remoteimage.NewFetcher(),
 		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
 		spaHandler:               opts.SPAHandler,
 		sessions:                 newSessionStore(defaultSessionTTL),

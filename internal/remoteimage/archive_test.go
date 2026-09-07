@@ -1,9 +1,11 @@
 package remoteimage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -91,12 +93,17 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	savedRaw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Equal(raw, savedRaw)
-	backfill, err := f.Backfill(t.Context(), st, dir, src.ID, 1)
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	backfill, err := f.Backfill(t.Context(), st, dir, src.ID, 1, log)
 	require.NoError(err)
 	assert.Equal(1, backfill.Messages)
 	assert.Zero(backfill.Downloaded)
 	assert.Equal(2, backfill.Reused)
 	assert.Equal(1, backfill.Errors)
+	assert.Contains(logs.String(), "level=WARN")
+	assert.Contains(logs.String(), fmt.Sprintf("message=%d", id))
+	assert.Contains(logs.String(), "Remote image host returned status 404")
 	replacement := []store.AttachmentWrite{}
 	_, err = st.PersistMessage(&store.MessagePersistData{
 		Message:  &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conversation, MessageType: "email"},
@@ -167,14 +174,14 @@ func TestBackfillHonorsSourceAndLimitAndSkipsNonEmail(t *testing.T) {
 			})
 			require.NoError(err)
 		}
-		result, err := NewFetcher().Backfill(t.Context(), st, t.TempDir(), src.ID, 1)
+		result, err := NewFetcher().Backfill(t.Context(), st, t.TempDir(), src.ID, 1, slog.Default())
 		require.NoError(err)
 		assert.Equal(1, result.Messages)
-		result, err = NewFetcher().Backfill(t.Context(), st, t.TempDir(), src.ID, 0)
+		result, err = NewFetcher().Backfill(t.Context(), st, t.TempDir(), src.ID, 0, slog.Default())
 		require.NoError(err)
 		assert.Equal(2, result.Messages)
 	}
-	result, err := NewFetcher().Backfill(t.Context(), st, t.TempDir(), 0, 0)
+	result, err := NewFetcher().Backfill(t.Context(), st, t.TempDir(), 0, 0, slog.Default())
 	require.NoError(err)
 	assert.Equal(4, result.Messages)
 }
@@ -194,4 +201,53 @@ func TestArchiveCancellationAndEmptyStorageDoNotFetch(t *testing.T) {
 	require.ErrorIs(result.Errors[0], context.Canceled)
 	result = f.Archive(t.Context(), st, "", 1, `<img src="http://images.example/a">`)
 	require.NotEmpty(result.Errors)
+}
+
+func TestArchiveJPEGContentTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType string
+		body              []byte
+		wantDownloaded    int
+	}{
+		{"jpeg", "image/jpeg", []byte("\xff\xd8\xffsynthetic"), 1},
+		{"jpg", "image/jpg", []byte("\xff\xd8\xffsynthetic"), 1},
+		{"jpg with non-JPEG bytes", "image/jpg", []byte("\x89PNG\r\n\x1a\nsynthetic"), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("eml", "user@example.com")
+			require.NoError(t, err)
+			conv, err := st.EnsureConversation(src.ID, "thread", "Images")
+			require.NoError(t, err)
+			id, err := st.PersistMessage(&store.MessagePersistData{
+				Message: &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email"},
+			})
+			require.NoError(t, err)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write(tc.body)
+			}))
+			defer upstream.Close()
+			f := NewFetcher()
+			f.LookupNetIP = func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			}
+			f.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
+			}
+			dir := t.TempDir()
+			result := f.Archive(t.Context(), st, dir, id, `<img src="http://images.example/photo">`)
+			require.Equal(t, tc.wantDownloaded, result.Downloaded)
+			refs, err := st.MessageRemoteImages(id)
+			require.NoError(t, err)
+			require.Len(t, refs, tc.wantDownloaded)
+			for _, ref := range refs {
+				assert.Equal(t, "image/jpeg", ref.MimeType)
+				assert.Equal(t, ".jpg", filepath.Ext(ref.Filename))
+				body, err := os.ReadFile(filepath.Join(dir, ref.StoragePath))
+				require.NoError(t, err)
+				assert.Equal(t, tc.body, body)
+			}
+		})
+	}
 }

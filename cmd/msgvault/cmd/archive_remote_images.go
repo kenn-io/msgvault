@@ -41,7 +41,7 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 			defer cleanup()
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted.")
 			defer stop()
-			result, err := remoteimage.NewFetcher().Backfill(ctx, st, cfg.AttachmentsDir(), sourceID, limit)
+			result, err := remoteimage.NewFetcher().Backfill(ctx, st, cfg.AttachmentsDir(), sourceID, limit, logger)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Messages: %d\nDownloaded: %d images\nAlready archived: %d images\nErrors: %d\n", result.Messages, result.Downloaded, result.Reused, result.Errors)
 			if result.Errors > 0 {
 				err = errors.Join(err, fmt.Errorf("%d remote image errors; successful downloads were preserved", result.Errors))

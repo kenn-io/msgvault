@@ -3,10 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/netip"
-	"time"
 
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/remoteimage"
@@ -15,48 +13,11 @@ import (
 const (
 	remoteImagePath = "/api/v1/content/remote-image"
 
-	remoteImageMaxBytes        = 10 << 20 // 10 MiB hard cap on the proxied body
-	remoteImageTimeout         = 15 * time.Second
-	remoteImageMaxRedirects    = 3
-	remoteImageMaxURLBytes     = 4096
 	remoteImageMaxRequestBytes = 16 << 10 // JSON body carries one bounded URL
-	remoteImageUserAgent       = "msgvault-image-proxy"
 )
 
 // prohibitedRemoteIP retains the proxy's policy-test seam.
 func prohibitedRemoteIP(addr netip.Addr) bool { return netguard.ProhibitedIP(addr) }
-
-// remoteImageFetchError is a fetch failure mapped to an API error response.
-// The fetched bytes are never echoed on error.
-type remoteImageFetchError struct {
-	status  int
-	code    string
-	message string
-}
-
-// remoteImageFetcher performs the hardened fetch. The resolver and dialer
-// are injectable so tests can simulate DNS rebinding and private resolution
-// without real DNS; production uses the default resolver and a plain dialer.
-type remoteImageFetcher struct {
-	lookupNetIP  func(ctx context.Context, host string) ([]netip.Addr, error)
-	dialContext  func(ctx context.Context, network, address string) (net.Conn, error)
-	maxBytes     int64
-	maxRedirects int
-}
-
-func newRemoteImageFetcher() *remoteImageFetcher {
-	f := remoteimage.NewFetcher()
-	return &remoteImageFetcher{f.LookupNetIP, f.DialContext, f.MaxBytes, f.MaxRedirects}
-}
-
-func (f *remoteImageFetcher) fetch(ctx context.Context, url string) (string, []byte, *remoteImageFetchError) {
-	shared := &remoteimage.Fetcher{LookupNetIP: f.lookupNetIP, DialContext: f.dialContext, MaxBytes: f.maxBytes, MaxRedirects: f.maxRedirects}
-	ct, body, err := shared.Fetch(ctx, url)
-	if err != nil {
-		return "", nil, &remoteImageFetchError{err.Status, err.Code, err.Message}
-	}
-	return ct, body, nil
-}
 
 // RemoteImageRequest is the JSON body of POST /api/v1/content/remote-image.
 type RemoteImageRequest struct {
@@ -82,13 +43,13 @@ func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
 	}
 	fetcher := s.remoteImages
 	if fetcher == nil {
-		fetcher = newRemoteImageFetcher()
+		fetcher = remoteimage.NewFetcher()
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), remoteImageTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), remoteimage.Timeout)
 	defer cancel()
-	contentType, body, ferr := fetcher.fetch(ctx, req.URL)
+	contentType, body, ferr := fetcher.Fetch(ctx, req.URL)
 	if ferr != nil {
-		writeError(w, ferr.status, ferr.code, ferr.message)
+		writeError(w, ferr.Status, ferr.Code, ferr.Message)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)

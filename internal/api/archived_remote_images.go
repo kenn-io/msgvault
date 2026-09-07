@@ -66,12 +66,12 @@ func (s *Server) serveArchivedRemoteImage(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "not_found", "Archived image bytes unavailable")
 		return
 	}
-	body, readErr := io.ReadAll(io.LimitReader(stream, remoteImageMaxBytes+1))
+	body, readErr := io.ReadAll(io.LimitReader(stream, remoteimage.MaxImageBytes+1))
 	if err := errors.Join(readErr, stream.Close()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Cannot read archived image")
 		return
 	}
-	if len(body) > remoteImageMaxBytes {
+	if len(body) > remoteimage.MaxImageBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Archived image exceeds size cap")
 		return
 	}

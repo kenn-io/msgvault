@@ -21,8 +21,6 @@ import (
 // Callers own consent; a successful fetch must not imply permission to fetch
 // another URL or enable automatic archiving.
 const (
-	remoteImageMaxBytes     = 10 << 20 // 10 MiB hard cap on the proxied body
-	remoteImageTimeout      = 15 * time.Second
 	remoteImageMaxRedirects = 3
 	remoteImageMaxURLBytes  = 4096
 	remoteImageUserAgent    = "msgvault-image-proxy"
@@ -36,6 +34,12 @@ const (
 	remoteImageErrTooLarge        = "image_too_large"
 	remoteImageErrUnsupportedType = "unsupported_type"
 )
+
+// MaxImageBytes caps each downloaded or locally served remote image at 10 MiB.
+const MaxImageBytes = 10 << 20
+
+// Timeout bounds each remote image fetch in the proxy and archiver.
+const Timeout = 15 * time.Second
 
 // prohibitedRemoteIP and prohibitedRemoteHostname retain the package-private
 // wrappers used by the image proxy while the shared policy lives in netguard.
@@ -72,7 +76,7 @@ func NewFetcher() *Fetcher {
 			return addrs, nil
 		},
 		DialContext:  dialer.DialContext,
-		MaxBytes:     remoteImageMaxBytes,
+		MaxBytes:     MaxImageBytes,
 		MaxRedirects: remoteImageMaxRedirects,
 	}
 }

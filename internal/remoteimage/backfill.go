@@ -3,6 +3,7 @@ package remoteimage
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -16,7 +17,7 @@ type BackfillResult struct {
 
 // Backfill archives remote images in existing email. Callers must obtain
 // explicit tracking consent and the normal archive mutation gate first.
-func (f *Fetcher) Backfill(ctx context.Context, st *store.Store, dir string, sourceID int64, limit int) (BackfillResult, error) {
+func (f *Fetcher) Backfill(ctx context.Context, st *store.Store, dir string, sourceID int64, limit int, logger *slog.Logger) (BackfillResult, error) {
 	var result BackfillResult
 	if sourceID < 0 || limit < 0 {
 		return result, errors.New("source ID and limit must not be negative")
@@ -50,6 +51,9 @@ func (f *Fetcher) Backfill(ctx context.Context, st *store.Store, dir string, sou
 			result.Downloaded += archived.Downloaded
 			result.Reused += archived.Reused
 			result.Errors += len(archived.Errors)
+			for _, imageErr := range archived.Errors {
+				logger.Warn("failed to archive remote image", "message", id, "error", imageErr)
+			}
 			after = id
 			if err := ctx.Err(); err != nil {
 				return result, err
