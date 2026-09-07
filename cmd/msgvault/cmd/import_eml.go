@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,16 +24,20 @@ type importEMLFlags struct {
 }
 
 func newImportEMLCommand() *cobra.Command {
+	return newImportRawDirectoryCommand("eml", importer.ImportEMLDir)
+}
+
+func newImportRawDirectoryCommand(format string, runImport func(context.Context, *store.Store, string, importer.EMLImportOptions) (*importer.EMLImportSummary, error)) *cobra.Command {
 	var flags importEMLFlags
 	cmd := &cobra.Command{
-		Use:   "import-eml <mail-dir>",
+		Use:   "import-" + format + " <mail-dir>",
 		Short: "Import a tree of RFC 5322 .eml files",
 		Long: `Import RFC 5322 .eml files stored in MailMate-style .mailbox
 directories. Nested mailbox names become slash-separated labels, and exact
 duplicate messages receive every mailbox label where they appear.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return usageErr(cmd, errors.New("import-eml requires exactly 1 arg: <mail-dir>"))
+				return usageErr(cmd, fmt.Errorf("import-%s requires exactly 1 arg: <mail-dir>", format))
 			}
 			return nil
 		},
@@ -57,7 +62,7 @@ duplicate messages receive every mailbox label where they appear.`,
 				attachmentsDir = ""
 			}
 			dbPath := cfg.DatabaseDSN()
-			summary, importErr := importer.ImportEMLDir(ctx, st, args[0], importer.EMLImportOptions{
+			summary, importErr := runImport(ctx, st, args[0], importer.EMLImportOptions{
 				SourceType:         flags.sourceType,
 				Identifier:         flags.identifier,
 				NoResume:           flags.noResume,
@@ -91,8 +96,19 @@ duplicate messages receive every mailbox label where they appear.`,
 		},
 	}
 
+	if format == "maildir" {
+		cmd.Short = "Import a Maildir or Maildir++ archive"
+		cmd.Long = `Import raw MIME messages from Maildir cur and new directories.
+Nested folders become slash-separated labels. Exact duplicate messages collect
+all folder and flag labels. The importer never modifies mailbox files and
+ignores tmp directories and symlinks. Import a stable mailbox snapshot.
+
+Example:
+  msgvault import-maildir ~/Maildir --identifier you@example.com`
+	}
+
 	cmd.Flags().StringVar(&flags.identifier, "identifier", "", "Account identifier for imported messages (required)")
-	cmd.Flags().StringVar(&flags.sourceType, "source-type", "eml", "Source type stored for imported messages")
+	cmd.Flags().StringVar(&flags.sourceType, "source-type", format, "Source type stored for imported messages")
 	cmd.Flags().BoolVar(&flags.noResume, "no-resume", false, "Start a new import instead of resuming an active checkpoint")
 	cmd.Flags().IntVar(&flags.checkpointInterval, "checkpoint-interval", 200, "Save progress after this many messages")
 	cmd.Flags().BoolVar(&flags.noAttachments, "no-attachments", false, "Do not write attachment files")

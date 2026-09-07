@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-03"
+last_edited: "2026-09-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -744,6 +744,46 @@ The export file may be a plain mbox file (any extension) or a `.zip` containing 
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
 
 See [Importing Local Email](/docs/usage/importing/) for usage examples.
+
+---
+
+## import-maildir
+
+Import a Maildir archive without changing its files:
+
+```bash
+msgvault import-maildir ~/Maildir --identifier you@example.com
+```
+
+Reads regular message files in `cur` and `new`; skips `tmp`, symlinks, and
+mailbox bookkeeping files. The root mailbox receives the `INBOX` label.
+Nested directories and Maildir++ folders such as `.Projects.Go` become
+slash-separated labels (`Projects/Go`). Use a stable snapshot of the mailbox
+so delivery and flag renames cannot race the import.
+
+Stores raw MIME, bodies, recipients, and attachments. As with other local email
+imports, attachment-write failures are logged; the original attachment bytes
+remain in raw MIME, but a rerun does not retry those writes. Exact duplicate raw
+messages within the same source are stored once and collect all folder and
+flag labels. Rerunning the import adds missing messages and labels; it does
+not remove archived messages or labels. Moving a message from `new` to `cur`
+or changing its filename flags does not create another copy.
+
+Maildir flags become `DRAFT`, `STARRED`, `PASSED`, `REPLIED`, and `TRASH`
+labels. Messages without the seen (`S`) flag receive `UNREAD`. Trashed
+messages are still archived.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--identifier` | — | Required account identifier |
+| `--source-type` | `maildir` | Source type stored for the archive |
+| `--no-resume` | `false` | Start a fresh run instead of resuming a checkpoint |
+| `--checkpoint-interval` | `200` | Save progress after this many messages |
+| `--no-attachments` | `false` | Skip writing attachment files |
+| `--no-default-identity` | `false` | Skip confirming the identifier as the source identity |
+
+Interrupted imports resume by rescanning the tree and skipping stored messages.
+Messages larger than 128 MiB are reported as errors and left unimported.
 
 ---
 

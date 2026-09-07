@@ -211,6 +211,7 @@ func TestImportEMLDirResumesFailedCheckpoint(t *testing.T) {
 	latest, err := st.GetLatestSync(resumed.SourceID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusCompleted, latest.Status)
+	assert.Zero(latest.ErrorsCount, "a fully recovered scan must be classified as successful")
 }
 
 func TestImportEMLDirRejectsConcurrentSourceExecution(t *testing.T) {

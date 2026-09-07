@@ -1645,6 +1645,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"export-messages",
 		"gc",
 		"import",
+		"import-maildir",
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",

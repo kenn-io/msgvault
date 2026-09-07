@@ -39,7 +39,7 @@ type EMLImportOptions struct {
 	Logger *slog.Logger
 }
 
-// EMLImportSummary reports the result of an EML tree import.
+// EMLImportSummary reports the result of a directory tree import.
 type EMLImportSummary struct {
 	SourceID          int64
 	WasResumed        bool
@@ -68,12 +68,44 @@ func ImportEMLDir(
 	st *store.Store,
 	root string,
 	opts EMLImportOptions,
+) (*EMLImportSummary, error) {
+	return importRawDirectory(ctx, st, root, opts, rawDirectoryLayout{
+		sourceType: "eml",
+		discover: func(root string) ([]directoryMailbox, error) {
+			boxes, err := eml.DiscoverMailboxes(root)
+			result := make([]directoryMailbox, len(boxes))
+			for i, box := range boxes {
+				result[i] = directoryMailbox(box)
+			}
+			return result, err
+		},
+		read: readEMLFile,
+	})
+}
+
+type directoryMailbox struct {
+	Path  string
+	Label string
+	Files []string
+}
+
+type rawDirectoryLayout struct {
+	sourceType string
+	discover   func(string) ([]directoryMailbox, error)
+	labels     func(string) []string
+	read       func(string, int64) ([]byte, error)
+}
+
+// importRawDirectory owns the shared source lease, checkpoint, and ingestion
+// lifecycle for directory-based raw MIME formats.
+func importRawDirectory(ctx context.Context, st *store.Store, root string,
+	opts EMLImportOptions, layout rawDirectoryLayout,
 ) (retSummary *EMLImportSummary, retErr error) {
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
 	}
 	if opts.SourceType == "" {
-		opts.SourceType = "eml"
+		opts.SourceType = layout.sourceType
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -91,19 +123,19 @@ func ImportEMLDir(
 	}
 
 	started := time.Now()
-	mailboxes, err := eml.DiscoverMailboxes(root)
+	mailboxes, err := layout.discover(root)
 	if err != nil {
-		return nil, fmt.Errorf("discover EML mailboxes: %w", err)
+		return nil, fmt.Errorf("discover directory mailboxes: %w", err)
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, fmt.Errorf("resolve EML root: %w", err)
+		return nil, fmt.Errorf("resolve directory root: %w", err)
 	}
 	summary := &EMLImportSummary{MailboxesTotal: len(mailboxes)}
 
 	source, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
-		return nil, fmt.Errorf("get or create EML source: %w", err)
+		return nil, fmt.Errorf("get or create directory source: %w", err)
 	}
 	summary.SourceID = source.ID
 	ownershipCtx := context.WithoutCancel(ctx)
@@ -121,31 +153,32 @@ func ImportEMLDir(
 		startBox   int
 	)
 	if !opts.NoResume {
-		resumable, err := st.GetLatestCheckpointedSyncByType(source.ID, "import-eml")
+		resumable, err := st.GetLatestCheckpointedSyncByType(source.ID, "import-"+layout.sourceType)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("find resumable EML import: %w", err)
+			return nil, fmt.Errorf("find resumable directory import: %w", err)
 		}
 		if resumable != nil {
 			var saved emlCheckpoint
 			if err := json.Unmarshal([]byte(resumable.CursorBefore.String), &saved); err != nil {
-				return nil, fmt.Errorf("decode EML checkpoint: %w", err)
+				return nil, fmt.Errorf("decode directory checkpoint: %w", err)
 			}
 			if saved.RootDir != absRoot {
 				return nil, fmt.Errorf(
-					"saved EML import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
+					"saved directory import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
 					saved.RootDir, absRoot,
 				)
 			}
 			if saved.MailboxIndex < 0 || saved.MailboxIndex >= len(mailboxes) {
-				return nil, fmt.Errorf("EML checkpoint mailbox index %d is out of range", saved.MailboxIndex)
+				return nil, fmt.Errorf("directory checkpoint mailbox index %d is out of range", saved.MailboxIndex)
 			}
 			if saved.MailboxPath != "" && mailboxes[saved.MailboxIndex].Path != saved.MailboxPath {
-				return nil, fmt.Errorf("EML mailbox tree changed at checkpoint index %d", saved.MailboxIndex)
+				return nil, fmt.Errorf("directory mailbox tree changed at checkpoint index %d", saved.MailboxIndex)
 			}
 			checkpoint.MessagesProcessed = resumable.MessagesProcessed
 			checkpoint.MessagesAdded = resumable.MessagesAdded
 			checkpoint.MessagesUpdated = resumable.MessagesUpdated
-			checkpoint.ErrorsCount = resumable.ErrorsCount
+			// Errors belong to this generation: the full rescan below retries
+			// every failed file and counts any failures that remain.
 			// Resume rescans the full tree. Raw-content IDs make successful
 			// files idempotent, while a rescan also finds files inserted or
 			// changed before the last lexical checkpoint.
@@ -153,9 +186,9 @@ func ImportEMLDir(
 			summary.WasResumed = true
 		}
 	}
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-eml", "")
+	syncID, err = execution.StartSyncContext(ownershipCtx, "import-"+layout.sourceType, "")
 	if err != nil {
-		return nil, fmt.Errorf("start EML import: %w", err)
+		return nil, fmt.Errorf("start directory import: %w", err)
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 
@@ -172,17 +205,18 @@ func ImportEMLDir(
 	lastFile := ""
 	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 		failSync(err.Error())
-		return nil, fmt.Errorf("save initial EML checkpoint: %w", err)
+		return nil, fmt.Errorf("save initial directory checkpoint: %w", err)
 	}
 
 	hardErrors := false
 	checkpointBlocked := false
+	flagLabelIDs := make(map[string]int64)
 	for boxIndex := startBox; boxIndex < len(mailboxes); boxIndex++ {
 		mailbox := mailboxes[boxIndex]
 		labelID, err := st.EnsureLabel(source.ID, mailbox.Label, mailbox.Label, "user")
 		if err != nil {
 			failSync(err.Error())
-			return nil, fmt.Errorf("ensure EML label %q: %w", mailbox.Label, err)
+			return nil, fmt.Errorf("ensure directory label %q: %w", mailbox.Label, err)
 		}
 
 		for _, filename := range mailbox.Files {
@@ -191,46 +225,61 @@ func ImportEMLDir(
 			}
 			checkpoint.MessagesProcessed++
 			summary.MessagesProcessed++
-			raw, err := readEMLFile(filename, opts.MaxMessageBytes)
+			raw, err := layout.read(filename, opts.MaxMessageBytes)
 			if err != nil {
 				checkpoint.ErrorsCount++
 				summary.Errors++
 				hardErrors = true
 				checkpointBlocked = true
-				log.Warn("failed to read EML message", "file", filename, "error", err)
+				log.Warn("failed to read directory message", "file", filename, "error", err)
 				continue
 			}
 
+			labelIDs := []int64{labelID}
+			if layout.labels != nil {
+				for _, label := range layout.labels(filename) {
+					id, ok := flagLabelIDs[label]
+					if !ok {
+						id, err = st.EnsureLabel(source.ID, label, label, "system")
+						if err != nil {
+							failSync(err.Error())
+							return nil, fmt.Errorf("ensure message flag label: %w", err)
+						}
+						flagLabelIDs[label] = id
+					}
+					labelIDs = append(labelIDs, id)
+				}
+			}
 			hash := sha256.Sum256(raw)
 			rawHash := hex.EncodeToString(hash[:])
-			sourceMessageID := "eml-" + rawHash
+			sourceMessageID := layout.sourceType + "-" + rawHash
 			existing, err := st.MessageExistsWithRawBatch(source.ID, []string{sourceMessageID})
 			if err != nil {
 				failSync(err.Error())
-				return nil, fmt.Errorf("check existing EML message: %w", err)
+				return nil, fmt.Errorf("check existing directory message: %w", err)
 			}
 			if messageID, ok := existing[sourceMessageID]; ok {
-				if err := st.AddMessageLabels(messageID, []int64{labelID}); err != nil {
+				if err := st.AddMessageLabels(messageID, labelIDs); err != nil {
 					failSync(err.Error())
-					return nil, fmt.Errorf("add EML label to existing message: %w", err)
+					return nil, fmt.Errorf("add directory label to existing message: %w", err)
 				}
 				summary.MessagesSkipped++
 			} else {
 				existingAny, err := st.MessageExistsBatch(source.ID, []string{sourceMessageID})
 				if err != nil {
 					failSync(err.Error())
-					return nil, fmt.Errorf("check EML message metadata: %w", err)
+					return nil, fmt.Errorf("check directory message metadata: %w", err)
 				}
 				_, updating := existingAny[sourceMessageID]
 				if err := ingestFn(
 					ctx, st, source.ID, opts.Identifier, opts.AttachmentsDir,
-					[]int64{labelID}, sourceMessageID, rawHash, raw, time.Time{}, log,
+					labelIDs, sourceMessageID, rawHash, raw, time.Time{}, log,
 				); err != nil {
 					checkpoint.ErrorsCount++
 					summary.Errors++
 					hardErrors = true
 					checkpointBlocked = true
-					log.Warn("failed to ingest EML message", "file", filename, "error", err)
+					log.Warn("failed to ingest directory message", "file", filename, "error", err)
 					continue
 				}
 				if updating {
@@ -249,7 +298,7 @@ func ImportEMLDir(
 				if checkpoint.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
 					if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 						failSync(err.Error())
-						return nil, fmt.Errorf("save EML checkpoint: %w", err)
+						return nil, fmt.Errorf("save directory checkpoint: %w", err)
 					}
 				}
 			}
@@ -264,19 +313,19 @@ func ImportEMLDir(
 	summary.HardErrors = hardErrors
 	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 		failSync(err.Error())
-		return nil, fmt.Errorf("save final EML checkpoint: %w", err)
+		return nil, fmt.Errorf("save final directory checkpoint: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return summary, err
 	}
 	if hardErrors {
 		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", checkpoint.ErrorsCount)); err != nil {
-			return nil, fmt.Errorf("fail EML import: %w", err)
+			return nil, fmt.Errorf("fail directory import: %w", err)
 		}
 		return summary, nil
 	}
 	if err := st.CompleteSync(syncID, fmt.Sprintf("mailboxes:%d messages:%d", summary.MailboxesImported, summary.MessagesAdded)); err != nil {
-		return nil, fmt.Errorf("complete EML import: %w", err)
+		return nil, fmt.Errorf("complete directory import: %w", err)
 	}
 	return summary, nil
 }

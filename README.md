@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-30"
+last_edited: "2026-09-07"
 ---
 
 <p align="center">
@@ -31,7 +31,7 @@ Your messages are yours. Decades of correspondence, attachments, and history sho
 
 Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, CardDAV,
 Granola, Circleback, Notion AI Meeting Notes, Beeper Desktop, and IMAP sync,
-plus offline imports from Slackdump, MBOX exports, Apple Mail (`.emlx`)
+plus offline imports from Slackdump, MBOX exports, Maildir archives, Apple Mail (`.emlx`)
 directories, PST archives, and common chat/text export formats.
 
 ## Features
@@ -48,7 +48,7 @@ directories, PST archives, and common chat/text export formats.
 - **CardDAV contacts**: pull address books, explicitly publish curated people, and resolve conflicts without losing remote card data
 - **Provider-neutral people sweeps**: maintain consented profile fields through explicit OpenAI Chat, OpenAI Responses, Anthropic Messages, or Gemini protocol profiles
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
-- **MBOX / Apple Mail / PST import**: import email from local export formats
+- **MBOX / Maildir / Apple Mail / PST import**: import email from local export formats
 - **First-party web UI**: dense, keyboard-driven search and grouping across people, domains, mailing lists, time, source, and modality, plus file, source, and deletion workspaces served directly by the daemon
 - **Interactive TUI**: drill-down analytics over your entire message history, powered by DuckDB over Parquet — connects to a remote `msgvault serve` instance or runs locally
 - **Full-text search**: FTS5 with Gmail-like query syntax (`from:`, `list:` / `list-id:`, `has:attachment`, date ranges)
@@ -162,6 +162,7 @@ available with `msgvault tui`.
 | `verify EMAIL` | Verify archive integrity against Gmail |
 | `export-eml` | Export a message as `.eml` |
 | `import-mbox` | Import email from an MBOX export or `.zip` of MBOX files |
+| `import-maildir` | Import email from Maildir and Maildir++ archives |
 | `import-emlx` | Import email from an Apple Mail directory tree |
 | `build-cache` | Rebuild the Parquet analytics cache |
 | `update` | Update msgvault to the latest version |
@@ -191,14 +192,15 @@ A separate MCP tool, `find_similar_messages`, returns nearest neighbors for a se
 
 Large archives can scope an embedding generation with `[vector.embed.scope] message_types = ["sms", "mms"]`. Scoped vector and hybrid searches must include a matching `message_type` filter so a partial index is never used as if it covered the whole archive.
 
-## Importing from MBOX or Apple Mail
+## Importing from MBOX, Maildir, or Apple Mail
 
-Import email from providers that offer MBOX exports or from a local Apple Mail data directory:
+Import email from MBOX exports, Maildir archives, or a local Apple Mail data directory:
 
 ```bash
 msgvault init-db
 msgvault import-mbox you@example.com /path/to/export.mbox
 msgvault import-mbox you@example.com /path/to/export.zip   # zip of MBOX files
+msgvault import-maildir ~/Maildir --identifier you@example.com
 msgvault import-emlx                                        # auto-discover Apple Mail accounts
 msgvault import-emlx you@example.com ~/Library/Mail/V10     # explicit path
 ```
