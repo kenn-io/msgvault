@@ -333,7 +333,7 @@ func TestImportApplePushNameFallbacks(t *testing.T) {
 		FROM participants
 		WHERE phone_number IN (
 			'+15555550101', '+15555550103', '+15555550105',
-			'+15555550106', '+15555550107'
+			'+15555550106', '+15555550107', '+15555550108'
 		)
 	`)
 	need.NoError(err)
@@ -349,12 +349,19 @@ func TestImportApplePushNameFallbacks(t *testing.T) {
 	check.Empty(names["+15555550105"])
 	check.Empty(names["+15555550106"])
 	check.Equal("Later Legacy", names["+15555550107"])
+	check.Empty(names["+15555550108"])
 
 	var unmatched int
 	need.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM participants WHERE phone_number = '+15555550199'`,
 	).Scan(&unmatched))
 	check.Zero(unmatched)
+
+	var unresolved int
+	need.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM participants WHERE display_name = 'Ignored Unresolved LID'`,
+	).Scan(&unresolved))
+	check.Zero(unresolved)
 }
 
 func TestImportApplePushNameErrors(t *testing.T) {
@@ -518,13 +525,15 @@ func createApplePushNameFallbackFixture(t *testing.T) string {
 			(Z_PK, ZCONTACTJID, ZPARTNERNAME, ZSESSIONTYPE, ZLASTMESSAGEDATE)
 		VALUES
 			(5, '120363000000000001@g.us', 'Future Group', 1, 700000100),
-			(6, '15555550107@s.whatsapp.net', 'Later Legacy', 0, 700000050);
+			(6, '15555550107@s.whatsapp.net', 'Later Legacy', 0, 700000050),
+			(7, '15555550108@s.whatsapp.net', '', 0, 700000040);
 		INSERT INTO ZWAGROUPMEMBER
 			(Z_PK, ZCHATSESSION, ZMEMBERJID, ZCONTACTNAME, ZFIRSTNAME, ZISADMIN)
 		VALUES
 			(11, 2, '15555550105@s.whatsapp.net', '', '', 0),
 			(12, 2, '15555550106@s.whatsapp.net', '', '', 0),
-			(13, 5, '15555550107@s.whatsapp.net', '', '', 0);
+			(13, 5, '15555550107@s.whatsapp.net', '', '', 0),
+			(14, 2, '777777777777777@lid', '', '', 0);
 		CREATE TABLE ZWAPROFILEPUSHNAME (
 			Z_PK INTEGER PRIMARY KEY,
 			Z_ENT INTEGER,
@@ -539,7 +548,9 @@ func createApplePushNameFallbackFixture(t *testing.T) string {
 			(3, 1, 1, '15555550106@s.whatsapp.net', ''),
 			(4, 1, 1, '15555550107@s.whatsapp.net', 'Push Early'),
 			(5, 1, 1, '15555550101@s.whatsapp.net', 'Ignored Direct'),
-			(6, 1, 1, '15555550199@s.whatsapp.net', 'Unmatched');
+			(6, 1, 1, '15555550199@s.whatsapp.net', 'Unmatched'),
+			(7, 1, 1, '15555550108@s.whatsapp.net', 'Ignored Blank Direct'),
+			(8, 1, 1, '777777777777777@lid', 'Ignored Unresolved LID');
 	`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
