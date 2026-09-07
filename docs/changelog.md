@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Apply curated person display names to people analytics, search, and exported authors. Add `export-messages --person-id` to select messages through bound participants.
+- Add an opt-in local CSV to PDF conversion path for standalone document indexing. The provider receives generated PDF bytes while the archive retains CSV source identity and conversion provenance.
 
 **Breaking changes**
 

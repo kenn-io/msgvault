@@ -49,6 +49,18 @@ func TestFingerprintBindsDocumentExtractionAndEmbeddingPolicy(t *testing.T) {
 	check.NotEqual(baseline, requireFingerprint(t, "extract-v2", config))
 }
 
+func TestRawEmbeddingRecipeKeepsDocbankV014Identity(t *testing.T) {
+	require := require.New(t)
+	recipe, err := NewRecipe(RecipeConfig{Mode: RepresentationRaw, MaxInputRunes: 8192})
+	require.NoError(err)
+	encoded, err := recipe.CanonicalJSON()
+	require.NoError(err)
+	//nolint:testifylint // Canonical JSON bytes are part of the compatibility contract.
+	assert.Equal(t,
+		`{"version":1,"input_format_version":1,"mode":"raw","max_input_runes":8192,"max_filename_runes":256,"max_title_runes":512,"max_heading_runes":512}`,
+		string(encoded))
+}
+
 func TestFingerprintExcludesMessageCorpusAndCredentials(t *testing.T) {
 	config := vector.Config{Embeddings: vector.EmbeddingsConfig{
 		Endpoint:  "https://embeddings.example.test/v1",

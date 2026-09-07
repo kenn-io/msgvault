@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/csvpdf"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/ocr"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -49,6 +52,7 @@ type MistralWorkerConfig struct {
 	ReplaceCurrent   bool
 	Policy           mistral.Policy
 	CapabilityPolicy mistral.CapabilityManifest
+	InputPolicy      ResolvedInputPolicy
 }
 
 type MistralProcessor interface {
@@ -62,6 +66,21 @@ type MistralProcessor interface {
 type authorizedFormat struct {
 	format        mistral.CandidateFormat
 	authorization mistral.FormatAuthorization
+	conversion    *csvpdf.Policy
+}
+
+type closeOnceReadCloser struct {
+	io.ReadCloser
+
+	once sync.Once
+	err  error
+}
+
+func (r *closeOnceReadCloser) Close() error {
+	r.once.Do(func() {
+		r.err = r.ReadCloser.Close()
+	})
+	return r.err
 }
 
 type MistralWorker struct {
@@ -106,13 +125,14 @@ func NewMistralWorker(
 	if _, err := config.Policy.CanonicalJSON(config.CapabilityPolicy); err != nil {
 		return nil, fmt.Errorf("validate Mistral capability policy: %w", err)
 	}
-	formats := make(map[string]authorizedFormat)
-	for _, format := range mistral.CandidateFormats() {
-		authorization, err := config.Policy.Authorize(config.CapabilityPolicy, format.ID)
-		if err != nil {
-			continue
+	if config.InputPolicy.Routes == nil {
+		return nil, errors.New("mistral document worker requires a resolved input policy")
+	}
+	formats := make(map[string]authorizedFormat, len(config.InputPolicy.Routes))
+	for mediaType, route := range config.InputPolicy.Routes {
+		formats[mediaType] = authorizedFormat{
+			format: route.Format, authorization: route.Authorization, conversion: route.Conversion,
 		}
-		formats[format.MediaType] = authorizedFormat{format: format, authorization: authorization}
 	}
 	if len(formats) == 0 {
 		return nil, errors.New("no format has authorized upload authority; run the authenticated capability probe and supply its manifest")
@@ -177,6 +197,9 @@ func (w *MistralWorker) ProcessCandidate(
 		cancelRenewal()
 		<-renewalDone
 	}()
+	// A conversion receipt exists only after local CSV conversion succeeds.
+	// Every later failure records it so the generated upload stays auditable.
+	var conversion *store.DocumentExtractionConversion
 	failPreparation := func(cause error) error {
 		preparationErr := fmt.Errorf("%w: %w", errDocumentPreparation, cause)
 		if renewErr := readRenewalError(renewalErr); renewErr != nil {
@@ -184,7 +207,7 @@ func (w *MistralWorker) ProcessCandidate(
 		}
 		return errors.Join(
 			preparationErr,
-			w.recordFailureAfterError(ctx, claim, preparationErr, mistral.RequestMetrics{}),
+			w.recordFailureAfterError(ctx, claim, preparationErr, mistral.RequestMetrics{}, conversion),
 		)
 	}
 	if candidate.Size <= 0 || candidate.Size > w.config.Policy.Values().MaxDocumentBytes {
@@ -200,11 +223,49 @@ func (w *MistralWorker) ProcessCandidate(
 			errors.New("document attachment size no longer matches reconciled metadata"), closeErr,
 		))
 	}
-	prepared, err := mistral.Prepare(workCtx, source, w.config.Policy, mistral.PrepareOptions{
-		Directory: w.config.SpoolDirectory, DeclaredMediaType: candidate.MIMEType,
-		ExpectedSize: authoritativeSize, ExpectedSHA256: candidate.CanonicalBlobHash,
-		MaxSpoolBytes: w.config.MaxSpoolBytes, MinFreeBytes: w.config.MinFreeBytes,
-	})
+	var prepared *mistral.PreparedDocument
+	if authorized.conversion != nil {
+		csvContent := &closeOnceReadCloser{ReadCloser: source}
+		csvSource, sourceErr := ocr.NewSource(csvContent, candidate.MIMEType, authoritativeSize, candidate.CanonicalBlobHash)
+		if sourceErr != nil {
+			return result, failPreparation(errors.Join(sourceErr, csvContent.Close()))
+		}
+		// csvpdf.Convert closes its source, while the wrapper keeps the underlying stream single-close.
+		converted, convertErr := csvpdf.Convert(workCtx, csvSource, *authorized.conversion)
+		closeErr := csvContent.Close()
+		if convertErr != nil {
+			return result, failPreparation(errors.Join(convertErr, closeErr))
+		}
+		if closeErr != nil {
+			return result, failPreparation(closeErr)
+		}
+		receipt := converted.Receipt()
+		conversion = &store.DocumentExtractionConversion{
+			SourceSHA256: receipt.SourceSHA256, SourceBytes: receipt.SourceBytes,
+			ProviderMediaType: "application/pdf", PDFSHA256: receipt.PDFSHA256,
+			PDFBytes: receipt.PDFBytes, Pages: receipt.Pages,
+			PolicyFingerprint: receipt.PolicyFingerprint, ConverterVersion: receipt.ConverterVersion,
+			Spans: make([]store.DocumentExtractionConversionSpan, len(receipt.Spans)),
+		}
+		for index, span := range receipt.Spans {
+			conversion.Spans[index] = store.DocumentExtractionConversionSpan{Page: span.Page, Record: span.Record, Cell: span.Cell}
+		}
+		generated, sourceErr := converted.Source()
+		if sourceErr != nil {
+			return result, failPreparation(sourceErr)
+		}
+		prepared, err = mistral.Prepare(workCtx, generated.Content, w.config.Policy, mistral.PrepareOptions{
+			Directory: w.config.SpoolDirectory, DeclaredMediaType: "application/pdf",
+			ExpectedSize: receipt.PDFBytes, ExpectedSHA256: receipt.PDFSHA256,
+			MaxSpoolBytes: w.config.MaxSpoolBytes, MinFreeBytes: w.config.MinFreeBytes,
+		})
+	} else {
+		prepared, err = mistral.Prepare(workCtx, source, w.config.Policy, mistral.PrepareOptions{
+			Directory: w.config.SpoolDirectory, DeclaredMediaType: candidate.MIMEType,
+			ExpectedSize: authoritativeSize, ExpectedSHA256: candidate.CanonicalBlobHash,
+			MaxSpoolBytes: w.config.MaxSpoolBytes, MinFreeBytes: w.config.MinFreeBytes,
+		})
+	}
 	if err != nil {
 		return result, failPreparation(err)
 	}
@@ -226,11 +287,11 @@ func (w *MistralWorker) ProcessCandidate(
 		if renewErr := readRenewalError(renewalErr); renewErr != nil {
 			err = errors.Join(err, renewErr)
 		}
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics, conversion))
 		return result, err
 	}
 	if renewErr := readRenewalError(renewalErr); renewErr != nil {
-		err = errors.Join(renewErr, w.recordFailureAfterError(ctx, claim, renewErr, providerMetrics))
+		err = errors.Join(renewErr, w.recordFailureAfterError(ctx, claim, renewErr, providerMetrics, conversion))
 		return result, err
 	}
 	if providerMetrics.Requests == 0 {
@@ -242,18 +303,20 @@ func (w *MistralWorker) ProcessCandidate(
 	providerResult.Metrics = providerMetrics
 	normalized, err := document.NormalizeDocument(providerResult.Document, w.config.Policy.NormalizePolicy())
 	if err != nil {
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics, conversion))
 		return result, err
 	}
 	publication, err := publicationFromNormalized(claim, providerResult, normalized)
 	if err != nil {
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics, conversion))
 		return result, err
 	}
+	publication.SourceBytes = claim.LocalBytes
+	publication.Conversion = conversion
 	cancelRenewal()
 	<-renewalDone
 	if renewErr := readRenewalError(renewalErr); renewErr != nil {
-		err = errors.Join(renewErr, w.recordFailureAfterError(ctx, claim, renewErr, providerMetrics))
+		err = errors.Join(renewErr, w.recordFailureAfterError(ctx, claim, renewErr, providerMetrics, conversion))
 		return result, err
 	}
 	renewCtx, cancelRenew := context.WithTimeout(workCtx, documentFailureCleanupTimeout)
@@ -263,12 +326,12 @@ func (w *MistralWorker) ProcessCandidate(
 	cancelRenew()
 	if err != nil {
 		err = fmt.Errorf("%w: %w", errDocumentLeaseRenewal, err)
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics, conversion))
 		return result, err
 	}
 	if err := w.catalog.PublishDocumentExtraction(workCtx, publication); err != nil {
 		err = fmt.Errorf("%w: %w", errDocumentPublication, err)
-		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics))
+		err = errors.Join(err, w.recordFailureAfterError(ctx, claim, err, providerMetrics, conversion))
 		return result, err
 	}
 	result = DocumentExtractionResult{
@@ -329,6 +392,7 @@ func (w *MistralWorker) recordFailureAfterError(
 	claim store.DocumentExtractionClaim,
 	cause error,
 	metrics mistral.RequestMetrics,
+	conversion *store.DocumentExtractionConversion,
 ) error {
 	failureCtx := ctx
 	cancel := func() {}
@@ -336,7 +400,7 @@ func (w *MistralWorker) recordFailureAfterError(
 		failureCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), documentFailureCleanupTimeout)
 	}
 	defer cancel()
-	return w.recordFailure(failureCtx, claim, cause, metrics)
+	return w.recordFailure(failureCtx, claim, cause, metrics, conversion)
 }
 
 func (w *MistralWorker) recordFailure(
@@ -344,12 +408,13 @@ func (w *MistralWorker) recordFailure(
 	claim store.DocumentExtractionClaim,
 	cause error,
 	metrics mistral.RequestMetrics,
+	conversion *store.DocumentExtractionConversion,
 ) error {
 	terminal, reason := classifyDocumentExtractionFailure(cause)
 	failure := store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: reason, Terminal: terminal,
 		RequestCount: metrics.Requests, RetryCount: metrics.Retries,
-		ProviderLatencyMS: requestLatencyMillis(metrics.Latency),
+		ProviderLatencyMS: requestLatencyMillis(metrics.Latency), Conversion: conversion,
 	}
 	if !terminal {
 		failure.RetryAt = time.Now().UTC().Add(w.config.RetryDelay)

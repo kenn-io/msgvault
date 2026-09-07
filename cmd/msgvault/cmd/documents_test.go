@@ -111,6 +111,7 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	cfg = config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.Conversion.CSV.Enabled = true
 	cfg.Attachments.Documents.RetentionPosture = documentindex.RetentionStandard
 	cfg.Attachments.Documents.TrainingPosture = documentindex.TrainingOptedOut
 	cfg.Attachments.Documents.EstimatedCostUSDPerKUnits = 4
@@ -149,7 +150,8 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	unconfirmedConsent.SetErr(&bytes.Buffer{})
 	unconfirmedConsent.SetArgs([]string{"consent-mistral", "--capabilities", manifestPath})
 	require.ErrorContains(unconfirmedConsent.ExecuteContext(t.Context()), "requires --yes")
-	assert.Contains(disclosureOutput.String(), "Complete original document bytes")
+	assert.Contains(disclosureOutput.String(), "source text/csv is converted locally; generated application/pdf bytes are sent")
+	assert.Contains(disclosureOutput.String(), "original application/pdf bytes and media type are sent")
 	assert.Contains(disclosureOutput.String(), "retention=standard, training=opted-out")
 	assert.Contains(disclosureOutput.String(), "local archive database")
 	assert.Contains(disclosureOutput.String(), "does not enable hosted document text embeddings")
@@ -173,7 +175,7 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	build.SetArgs([]string{documentBuildSubcommand, "--capabilities", manifestPath, "--limit", "5"})
 	require.ErrorContains(build.ExecuteContext(t.Context()), "requires --yes")
 	assert.Contains(buildOutput.String(), "Document build upload preflight")
-	assert.Contains(buildOutput.String(), "Complete original document bytes")
+	assert.Contains(buildOutput.String(), "source text/csv is converted locally; generated application/pdf bytes are sent")
 	assert.False(attachmentOpened)
 	assert.Zero(processor.calls)
 
@@ -251,7 +253,7 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	require.NoError(statusJSON.ExecuteContext(t.Context()))
 	var structuredStatus documentStatusOutput
 	require.NoError(json.Unmarshal(statusJSONOutput.Bytes(), &structuredStatus))
-	assert.Equal(1, structuredStatus.AuthenticatedFormats)
+	assert.Equal(2, structuredStatus.AuthenticatedFormats)
 	assert.True(structuredStatus.Status.ExactConsent)
 	assert.Equal(int64(1), structuredStatus.Status.ReadyOwners)
 	assert.Equal(int64(1), structuredStatus.Status.EligibleOwners)
@@ -310,6 +312,54 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 	purge.SetArgs([]string{"purge-derived", "--hash", digest, "--yes"})
 	require.NoError(purge.ExecuteContext(t.Context()))
 	assert.Contains(purgeOutput.String(), "Purged 2 extraction(s) and 1 current head(s)")
+}
+
+func TestDocumentBuildPreflightNamesCSVSourceBytesSeparately(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	documentsConfig := documentindex.DefaultDocumentsConfig()
+	documentsConfig.Conversion.CSV.Enabled = true
+	csvPolicy, err := documentsConfig.CSVPolicy()
+	require.NoError(err)
+	inputPolicy := documentindex.ResolvedInputPolicy{
+		AllowedMediaTypes: []string{"text/csv"},
+		Routes: map[string]documentindex.InputRoute{
+			"text/csv": {Conversion: &csvPolicy},
+		},
+	}
+	var output bytes.Buffer
+	printDocumentBuildPreflight(&output, &documentsConfig, store.DocumentExtractionProfile{}, inputPolicy,
+		store.DocumentIndexStatus{EligibleOccurrences: 1, EligibleOwners: 1, EligibleBytes: 32}, 1,
+		documentBuildIncremental)
+
+	assert.Contains(output.String(), "32B of source bytes")
+	assert.Contains(output.String(), "generated PDF upload bytes are recorded after each request")
+	assert.NotContains(output.String(), "of original bytes")
+}
+
+func TestDocumentConsentDisclosureListsResolvedUploadRoutes(t *testing.T) {
+	require := require.New(t)
+	config := documentindex.DefaultDocumentsConfig()
+	config.Conversion.CSV.Enabled = true
+	csvPolicy, err := config.CSVPolicy()
+	require.NoError(err)
+	pdf, found := mistral.CandidateFormatByID("pdf")
+	require.True(found)
+	inputPolicy := documentindex.ResolvedInputPolicy{
+		AllowedMediaTypes: []string{pdf.MediaType, "text/csv"},
+		Routes: map[string]documentindex.InputRoute{
+			pdf.MediaType: {Format: pdf},
+			"text/csv":    {Format: pdf, Conversion: &csvPolicy},
+		},
+	}
+	var output bytes.Buffer
+	printDocumentConsentDisclosure(&output, &config, store.DocumentExtractionProfile{
+		Endpoint: "https://example.invalid", Region: "eu",
+	}, inputPolicy)
+
+	assert := assert.New(t)
+	assert.Contains(output.String(), "original application/pdf bytes and media type are sent")
+	assert.Contains(output.String(), "source text/csv is converted locally; generated application/pdf bytes are sent")
 }
 
 func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
@@ -683,7 +733,7 @@ func TestDocumentBuildRecordsOversizedCandidateAndContinues(t *testing.T) {
 	manifestPath := writeCommandCapabilityManifest(t, documentsConfig.MaxPagesPerDocument)
 	manifest, err := loadDocumentCapabilityManifest(manifestPath)
 	require.NoError(err)
-	allowed, profile, err := documentProfileForConfig(&documentsConfig, manifest)
+	inputPolicy, profile, err := documentProfileForConfig(&documentsConfig, manifest)
 	require.NoError(err)
 	_, err = fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(err)
@@ -695,7 +745,7 @@ func TestDocumentBuildRecordsOversizedCandidateAndContinues(t *testing.T) {
 	result, err := executeDocumentBuild(
 		t.Context(), fixture.Store, testOperationPassScope("document:oversized"),
 		fixture.Store, commandAttachmentMapOpener{contents: contents},
-		&commandBuildProcessor{}, &documentsConfig, manifest, allowed, profile, 2,
+		&commandBuildProcessor{}, &documentsConfig, manifest, inputPolicy.AllowedMediaTypes, profile, 2,
 		"documents-isolation-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorContains(err, "1 extraction failure")
@@ -802,7 +852,7 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	manifestPath := writeCommandCapabilityManifest(t, documentsConfig.MaxPagesPerDocument)
 	manifest, err := loadDocumentCapabilityManifest(manifestPath)
 	require.NoError(err)
-	allowed, profile, err := documentProfileForConfig(&documentsConfig, manifest)
+	inputPolicy, profile, err := documentProfileForConfig(&documentsConfig, manifest)
 	require.NoError(err)
 	_, err = fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(err)
@@ -815,7 +865,7 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	result, err := executeDocumentBuild(
 		ctx, fixture.Store, testOperationPassScope("document:cancelled"),
 		fixture.Store, commandAttachmentMapOpener{contents: map[string][]byte{digest: content}},
-		commandCancelingProcessor{cancel: cancel}, &documentsConfig, manifest, allowed, profile, 1,
+		commandCancelingProcessor{cancel: cancel}, &documentsConfig, manifest, inputPolicy.AllowedMediaTypes, profile, 1,
 		"documents-cancellation-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorIs(err, context.Canceled)
@@ -859,7 +909,7 @@ func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 	manifestPath := writeCommandCapabilityManifest(t, documentsConfig.MaxPagesPerDocument)
 	manifest, err := loadDocumentCapabilityManifest(manifestPath)
 	require.NoError(err)
-	allowed, profile, err := documentProfileForConfig(&documentsConfig, manifest)
+	inputPolicy, profile, err := documentProfileForConfig(&documentsConfig, manifest)
 	require.NoError(err)
 	_, err = fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(err)
@@ -872,7 +922,7 @@ func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 		t.Context(), fixture.Store, testOperationPassScope("document:timeout"),
 		fixture.Store, commandAttachmentMapOpener{contents: contents},
 		&commandBuildProcessor{firstErr: context.DeadlineExceeded},
-		&documentsConfig, manifest, allowed, profile, 2,
+		&documentsConfig, manifest, inputPolicy.AllowedMediaTypes, profile, 2,
 		"documents-timeout-test", t.TempDir(), documentBuildIncremental, nil,
 	)
 	require.ErrorContains(err, "1 extraction failure")

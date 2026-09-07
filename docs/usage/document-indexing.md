@@ -9,10 +9,17 @@ OCR, store deterministic normalized chunks locally, and expose them through
 full-text search. The feature is opt-in and fail-closed: configuration alone
 cannot upload a document.
 
-The provider receives the complete original document bytes and media type.
+The provider receives complete original bytes for each directly authorized format.
 Message provenance, normalized text, chunks, indexes, orchestration, consent, and
 backups remain owned by Msgvault. Raw provider JSON and full provider Markdown
 are transient.
+
+Standalone CSV attachments use a local conversion step when enabled. Msgvault
+retains the CSV source hash and `text/csv` occurrence identity, then sends only
+the generated `application/pdf` bytes to Mistral. The conversion receipt stores
+the generated PDF hash, byte count, page count, converter version, policy
+fingerprint, and one based page, record, and cell spans. The generated PDF never
+becomes an attachment.
 
 ## Safety gates
 
@@ -32,9 +39,11 @@ not contact Mistral.
 
 !!! note
 
-    The first capability contract authorizes at most PDF for production upload.
-    Other formats are still probed for extraction support, but remain blocked
-    until Msgvault can enforce their provider-unit limits before upload.
+    The authenticated capability manifest determines the directly authorized
+    formats and their upload bounds. Raw CSV has no enforceable Mistral unit bound,
+    so the resolver excludes it while conversion is disabled. Enabling CSV
+    conversion adds a source route that sends generated PDF bytes after local
+    conversion.
 
 Provider uploads are manual-only. `msgvault serve` performs weekly local
 reconciliation and derivative cleanup when document indexing is enabled, but it
@@ -74,6 +83,9 @@ message_types = ["email"]
 [attachments.documents.index]
 lexical = true
 store_chunk_text = true
+
+[attachments.documents.conversion.csv]
+enabled = true
 ```
 
 Set the key in the named environment variable only when running an
@@ -83,8 +95,18 @@ authenticated operation:
 export MISTRAL_API_KEY="..."
 ```
 
+Direct formats authorized by the capability manifest retain their original bytes
+and media type for upload. CSV conversion uses Docbank's defaults,
+tightened by `max_file_bytes`, `max_response_bytes`, and `max_pages_per_document`.
+Docbank accepts UTF-8 CSV
+cells containing Latin, Greek, Cyrillic, and common Unicode characters that its
+embedded monospaced font supports. Control characters, combining marks,
+formatting characters, unsupported scripts, and characters absent from that
+font fail locally as `invalid_local_source`. Enabling CSV or changing an
+effective bound changes the exact profile fingerprint and requires fresh consent.
+
 See the [configuration reference](/docs/configuration/#attachmentsdocuments) for
-all policy and run limits.
+the complete policy and run limits.
 
 ## Build and validate the synthetic fixtures
 

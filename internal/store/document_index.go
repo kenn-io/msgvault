@@ -569,8 +569,10 @@ func (s *Store) GetDocumentIndexStatus(ctx context.Context, profileID string) (D
 		       (SELECT COALESCE(SUM(request_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(retry_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(provider_latency_ms), 0) FROM document_extractions WHERE profile_id = ?),
-		       (SELECT COALESCE(SUM(CASE WHEN request_count > 0 THEN local_bytes ELSE 0 END), 0)
-		        FROM document_extractions WHERE profile_id = ?),
+		       (SELECT COALESCE(SUM(CASE WHEN e.request_count > 0 THEN COALESCE(c.pdf_bytes, e.local_bytes) ELSE 0 END), 0)
+		        FROM document_extractions e
+		        LEFT JOIN document_extraction_conversions c ON c.extraction_id = e.id
+		        WHERE e.profile_id = ?),
 		       (SELECT COALESCE(SUM(units_processed), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(provider_bytes), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COUNT(*) FROM document_extractions
@@ -623,22 +625,30 @@ func (s *Store) GetDocumentIndexStatusForScope(
 	}
 	err = s.db.QueryRowContext(ctx, s.dialect.Rebind(`
 		WITH eligible_occurrences AS (
-			SELECT o.canonical_blob_hash, COALESCE(a.size, 0) AS owner_size
+			SELECT o.canonical_blob_hash, o.occurrence_key, COALESCE(o.mime_type, '') AS mime_type,
+			       COALESCE(a.size, 0) AS owner_size
 			FROM document_occurrences o
 			JOIN attachments a ON a.id = o.attachment_id
 			JOIN messages m ON m.id = o.message_id
 			WHERE `+scopeSQL+`
 		), eligible AS (
-			SELECT canonical_blob_hash, MAX(owner_size) AS owner_size
+			SELECT canonical_blob_hash, MAX(owner_size) AS owner_size,
+			       MIN(occurrence_key) AS representative_key
 			FROM eligible_occurrences
 			GROUP BY canonical_blob_hash
+		), representatives AS (
+			SELECT e.canonical_blob_hash, e.owner_size, r.mime_type
+			FROM eligible e
+			JOIN eligible_occurrences r ON r.occurrence_key = e.representative_key
 		), classified AS (
 			SELECT e.canonical_blob_hash, e.owner_size,
 			       CASE
 			         WHEN EXISTS (
 			             SELECT 1 FROM document_extraction_heads h
+			             JOIN document_extractions he ON he.id = h.extraction_id
 			             WHERE h.profile_id = ? AND h.extraction_input_key = ?
 			               AND h.canonical_blob_hash = e.canonical_blob_hash
+			               AND `+documentHeadRouteMatchesSQL("he", "e")+`
 			         ) THEN 'ready'
 			         WHEN EXISTS (
 			             SELECT 1 FROM document_extractions x
@@ -658,7 +668,7 @@ func (s *Store) GetDocumentIndexStatusForScope(
 			         ) THEN 'terminal'
 			         ELSE 'missing'
 			       END AS coverage_state
-			FROM eligible e
+			FROM representatives e
 		)
 		SELECT (SELECT COUNT(*) FROM eligible_occurrences),
 		       COUNT(*), COALESCE(SUM(owner_size), 0),
@@ -1216,9 +1226,11 @@ func (s *Store) ListDocumentExtractionCandidates(
 		ownerStateFilter = `
 		  AND NOT EXISTS (
 		      SELECT 1 FROM document_extraction_heads h
+		      JOIN document_extractions he ON he.id = h.extraction_id
 		      WHERE h.profile_id = p.id
 		        AND h.canonical_blob_hash = o.canonical_blob_hash
 		        AND h.extraction_input_key = ?
+		        AND ` + documentHeadRouteMatchesSQL("he", "o") + `
 		  )
 		  AND NOT EXISTS (
 		      SELECT 1 FROM document_extractions e
@@ -1288,6 +1300,17 @@ func (s *Store) ListDocumentExtractionCandidates(
 		return nil, fmt.Errorf("iterate pending document extractions: %w", err)
 	}
 	return candidates, nil
+}
+
+// documentHeadRouteMatchesSQL is true when a served extraction was produced
+// through the upload route the representative occurrence selects now. An
+// extraction recorded before routes were tracked counts as matching. A head
+// through another route no longer covers its owner, so any scope change that
+// selects a different representative reaches the next candidate scan without
+// reconcile-time bookkeeping.
+func documentHeadRouteMatchesSQL(extractionAlias, occurrenceAlias string) string {
+	return "(" + extractionAlias + ".source_media_type IS NULL OR " +
+		extractionAlias + ".source_media_type = COALESCE(" + occurrenceAlias + ".mime_type, ''))"
 }
 
 func documentOccurrenceScopeSQL(

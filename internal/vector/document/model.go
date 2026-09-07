@@ -62,12 +62,12 @@ func ParseSearchMode(value string) (SearchMode, error) {
 }
 
 // EmbeddingRecipe returns the shared raw preparation recipe used by this PR.
-func EmbeddingRecipe(cfg vector.Config) (docembedding.Recipe, error) {
-	recipe, err := docembedding.NewRecipe(docembedding.RecipeConfig{
-		Mode: docembedding.RepresentationRaw, MaxInputRunes: cfg.Embeddings.MaxInputChars,
+func EmbeddingRecipe(cfg vector.Config) (Recipe, error) {
+	recipe, err := NewRecipe(RecipeConfig{
+		Mode: RepresentationRaw, MaxInputRunes: cfg.Embeddings.MaxInputChars,
 	})
 	if err != nil {
-		return docembedding.Recipe{}, fmt.Errorf(
+		return Recipe{}, fmt.Errorf(
 			"construct document embedding recipe from vector.embeddings.max_input_chars=%d: %w",
 			cfg.Embeddings.MaxInputChars, err,
 		)

@@ -2998,6 +2998,10 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     rebuild_id            TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL,
     canonical_blob_hash   TEXT NOT NULL CHECK (length(canonical_blob_hash) = 64),
     extraction_input_key  TEXT NOT NULL DEFAULT 'original',
+    -- Media type of the occurrence the claim uploaded through. A head only
+    -- covers its owner while the representative occurrence still selects
+    -- this route; NULL predates route tracking and always matches.
+    source_media_type     TEXT,
     state                 TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'terminal', 'tombstoned')),
     lease_owner           TEXT,
     lease_fence           BIGINT NOT NULL DEFAULT 0,
@@ -3032,6 +3036,17 @@ CREATE INDEX IF NOT EXISTS idx_document_extractions_lease
     ON document_extractions(state, lease_until);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_document_extractions_vector_identity
     ON document_extractions(id, profile_id, canonical_blob_hash, extraction_input_key, source_sequence);
+
+CREATE TABLE IF NOT EXISTS document_extraction_conversions (
+    extraction_id        TEXT PRIMARY KEY REFERENCES document_extractions(id) ON DELETE CASCADE,
+    provider_media_type TEXT NOT NULL,
+    pdf_sha256           TEXT NOT NULL CHECK (length(pdf_sha256) = 64),
+    pdf_bytes            BIGINT NOT NULL CHECK (pdf_bytes > 0),
+    pages                INTEGER NOT NULL CHECK (pages > 0),
+    policy_fingerprint   TEXT NOT NULL,
+    converter_version    TEXT NOT NULL,
+    spans                JSONB NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS document_extraction_claims (
     profile_id            TEXT NOT NULL REFERENCES document_extraction_profiles(id) ON DELETE CASCADE,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/csvpdf"
 	"go.kenn.io/docbank/document/mistral"
 )
 
@@ -79,28 +80,48 @@ type AttachmentsConfig struct {
 // DocumentsConfig controls hosted Mistral extraction and local indexing.
 // Supplying an API key or setting Enabled never records provider consent.
 type DocumentsConfig struct {
-	Enabled                   bool          `toml:"enabled"`
-	Provider                  string        `toml:"provider"`
-	Region                    string        `toml:"region"`
-	APIKeyEnv                 string        `toml:"api_key_env"`
-	Model                     string        `toml:"model"`
-	RetentionPosture          string        `toml:"retention_posture"`
-	TrainingPosture           string        `toml:"training_posture"`
-	MaxFileBytes              int64         `toml:"max_file_bytes"`
-	MaxPagesPerDocument       int           `toml:"max_pages_per_document"`
-	MaxResponseBytes          int64         `toml:"max_response_bytes"`
-	MaxNormalizedChars        int           `toml:"max_normalized_chars"`
-	MaxSpoolBytes             int64         `toml:"max_spool_bytes"`
-	MinFreeSpaceBytes         int64         `toml:"min_free_space_bytes"`
-	RequestTimeout            time.Duration `toml:"request_timeout"`
-	MaxRetries                int           `toml:"max_retries"`
-	MaxPagesPerRun            int           `toml:"max_pages_per_run"`
-	MaxEstimatedCostUSDPerRun float64       `toml:"max_estimated_cost_usd_per_run"`
-	EstimatedCostUSDPerKUnits float64       `toml:"estimated_cost_usd_per_1000_units"`
-	PricingAssumptionOn       string        `toml:"pricing_assumption_on"`
-	Scope                     ScopeConfig   `toml:"scope"`
-	Index                     IndexConfig   `toml:"index"`
+	Enabled                   bool             `toml:"enabled"`
+	Provider                  string           `toml:"provider"`
+	Region                    string           `toml:"region"`
+	APIKeyEnv                 string           `toml:"api_key_env"`
+	Model                     string           `toml:"model"`
+	RetentionPosture          string           `toml:"retention_posture"`
+	TrainingPosture           string           `toml:"training_posture"`
+	MaxFileBytes              int64            `toml:"max_file_bytes"`
+	MaxPagesPerDocument       int              `toml:"max_pages_per_document"`
+	MaxResponseBytes          int64            `toml:"max_response_bytes"`
+	MaxNormalizedChars        int              `toml:"max_normalized_chars"`
+	MaxSpoolBytes             int64            `toml:"max_spool_bytes"`
+	MinFreeSpaceBytes         int64            `toml:"min_free_space_bytes"`
+	RequestTimeout            time.Duration    `toml:"request_timeout"`
+	MaxRetries                int              `toml:"max_retries"`
+	MaxPagesPerRun            int              `toml:"max_pages_per_run"`
+	MaxEstimatedCostUSDPerRun float64          `toml:"max_estimated_cost_usd_per_run"`
+	EstimatedCostUSDPerKUnits float64          `toml:"estimated_cost_usd_per_1000_units"`
+	PricingAssumptionOn       string           `toml:"pricing_assumption_on"`
+	Scope                     ScopeConfig      `toml:"scope"`
+	Index                     IndexConfig      `toml:"index"`
+	Conversion                ConversionConfig `toml:"conversion"`
 	defaultsApplied           bool
+}
+
+type ConversionConfig struct {
+	CSV CSVConversionConfig `toml:"csv"`
+}
+
+type CSVConversionConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
+type InputRoute struct {
+	Format        mistral.CandidateFormat
+	Authorization mistral.FormatAuthorization
+	Conversion    *csvpdf.Policy
+}
+
+type ResolvedInputPolicy struct {
+	AllowedMediaTypes []string
+	Routes            map[string]InputRoute
 }
 
 // ScopeConfig limits extraction to selected message families. Empty includes
@@ -308,6 +329,64 @@ func (c *DocumentsConfig) MistralPolicy() (mistral.Policy, error) {
 	return policy, nil
 }
 
+func (c *DocumentsConfig) CSVPolicy() (csvpdf.Policy, error) {
+	limits := csvpdf.DefaultLimits()
+	limits.MaxSourceBytes = min(limits.MaxSourceBytes, c.MaxFileBytes)
+	limits.MaxPDFBytes = min(limits.MaxPDFBytes, c.MaxResponseBytes, c.MaxFileBytes)
+	limits.MaxPages = min(limits.MaxPages, c.MaxPagesPerDocument)
+	policy, err := csvpdf.NewPolicy(limits)
+	if err != nil {
+		return csvpdf.Policy{}, fmt.Errorf("construct CSV conversion policy: %w", err)
+	}
+	return policy, nil
+}
+
+func ResolveInputPolicy(c *DocumentsConfig, manifest mistral.CapabilityManifest) (ResolvedInputPolicy, error) {
+	if c == nil {
+		return ResolvedInputPolicy{}, errors.New("document input policy requires configuration")
+	}
+	policy, err := c.MistralPolicy()
+	if err != nil {
+		return ResolvedInputPolicy{}, err
+	}
+	routes := make(map[string]InputRoute)
+	for _, format := range mistral.CandidateFormats() {
+		// Raw CSV has no enforceable Mistral unit bound. The enabled conversion
+		// route below transfers CSV's bound to the authorized PDF upload.
+		if format.ID == "csv" {
+			continue
+		}
+		authorization, authorizeErr := policy.Authorize(manifest, format.ID)
+		if authorizeErr == nil {
+			routes[format.MediaType] = InputRoute{Format: format, Authorization: authorization}
+		}
+	}
+	if c.Conversion.CSV.Enabled {
+		pdfFormat, found := mistral.CandidateFormatByID("pdf")
+		if !found {
+			return ResolvedInputPolicy{}, errors.New("document input policy cannot find PDF format")
+		}
+		pdfAuthorization, authorizeErr := policy.Authorize(manifest, pdfFormat.ID)
+		if authorizeErr != nil {
+			return ResolvedInputPolicy{}, fmt.Errorf("CSV conversion requires PDF upload authority: %w", authorizeErr)
+		}
+		csvPolicy, policyErr := c.CSVPolicy()
+		if policyErr != nil {
+			return ResolvedInputPolicy{}, fmt.Errorf("configure CSV conversion policy: %w", policyErr)
+		}
+		routes["text/csv"] = InputRoute{Format: pdfFormat, Authorization: pdfAuthorization, Conversion: &csvPolicy}
+	}
+	if len(routes) == 0 {
+		return ResolvedInputPolicy{}, errors.New("no format has authorized upload authority; run the authenticated capability probe and supply its manifest")
+	}
+	allowed := make([]string, 0, len(routes))
+	for mediaType := range routes {
+		allowed = append(allowed, mediaType)
+	}
+	slices.Sort(allowed)
+	return ResolvedInputPolicy{AllowedMediaTypes: allowed, Routes: routes}, nil
+}
+
 // ResolveAPIKey is called only by an explicit provider operation. Merely
 // loading configuration never resolves or validates the secret.
 func (c *DocumentsConfig) ResolveAPIKey() (string, error) {
@@ -387,6 +466,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 		MaxChunkRunes             int      `json:"max_chunk_runes"`
 		ChunkOverlap              int      `json:"chunk_overlap"`
 		MaxChunks                 int      `json:"max_chunks"`
+		CSVConversion             any      `json:"csv_conversion,omitempty"`
 	}{
 		Version: profilePolicyVersion, Provider: values.Provider, Endpoint: values.Endpoint,
 		Model: values.Model, Retention: values.Retention, Training: values.Training,
@@ -405,6 +485,21 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 		MaxMetadataSourceBytes: normalizePolicy.MaxMetadataSourceBytes, MaxLinkChars: normalizePolicy.MaxLinkChars,
 		MaxChunkRunes: normalizePolicy.MaxChunkRunes, ChunkOverlap: normalizePolicy.ChunkOverlap,
 		MaxChunks: normalizePolicy.MaxChunks,
+	}
+	if c.Conversion.CSV.Enabled {
+		csvPolicy, err := c.CSVPolicy()
+		if err != nil {
+			return nil, fmt.Errorf("configure CSV conversion policy: %w", err)
+		}
+		payload.CSVConversion = struct {
+			SourceMediaType   string `json:"source_media_type"`
+			ProviderMediaType string `json:"provider_media_type"`
+			PolicyFingerprint string `json:"policy_fingerprint"`
+			ConverterVersion  string `json:"converter_version"`
+		}{
+			SourceMediaType: "text/csv", ProviderMediaType: "application/pdf",
+			PolicyFingerprint: csvPolicy.Fingerprint(), ConverterVersion: csvpdf.ConverterVersion,
+		}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

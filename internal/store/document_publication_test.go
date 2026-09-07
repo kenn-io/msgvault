@@ -158,6 +158,177 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 	assert.Equal(t, "staging", state)
 }
 
+func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-csv-receipt", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-csv-receipt", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	publication := publicationFor(t, claim, "csv608sentinel", strings.Repeat("f", 64))
+	publication.SourceBytes = 128
+	publication.Conversion = &store.DocumentExtractionConversion{
+		SourceSHA256: hash, SourceBytes: 128, ProviderMediaType: "application/pdf",
+		PDFSHA256: strings.Repeat("d", 64), PDFBytes: 256, Pages: 1,
+		PolicyFingerprint: strings.Repeat("e", 64), ConverterVersion: "csvpdf-v1-fpdf-0.9.0",
+		Spans: []store.DocumentExtractionConversionSpan{{Page: 1, Record: 1, Cell: 1}},
+	}
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publication))
+
+	var providerMedia, pdfHash string
+	var pdfBytes, pages int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT provider_media_type, pdf_sha256, pdf_bytes, pages
+		FROM document_extraction_conversions WHERE extraction_id = ?`), claim.ExtractionID).Scan(
+		&providerMedia, &pdfHash, &pdfBytes, &pages))
+	assert.Equal("application/pdf", providerMedia)
+	assert.Equal(strings.Repeat("d", 64), pdfHash)
+	assert.Equal(int64(256), pdfBytes)
+	assert.Equal(int64(1), pages)
+	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.Equal(int64(256), status.VerifiedUploadBytes)
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "csv608sentinel"})
+	require.NoError(err)
+	require.Len(response.Results, 1)
+	assert.Equal(hash, response.Results[0].CanonicalBlobHash)
+	assert.Equal("text/csv", response.Results[0].MIMEType)
+}
+
+func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-csv-conflict", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-csv-conflict", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		INSERT INTO document_extraction_conversions
+			(extraction_id, provider_media_type, pdf_sha256, pdf_bytes, pages,
+			 policy_fingerprint, converter_version, spans)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+		claim.ExtractionID, "application/pdf", strings.Repeat("c", 64), 256, 1,
+		strings.Repeat("e", 64), "csvpdf-v1-fpdf-0.9.0", `[ {"page":1,"record":1,"cell":1} ]`)
+	require.NoError(err)
+
+	publication := publicationFor(t, claim, "csv conflict", strings.Repeat("f", 64))
+	publication.SourceBytes = 128
+	publication.Conversion = &store.DocumentExtractionConversion{
+		SourceSHA256: hash, SourceBytes: 128, ProviderMediaType: "application/pdf",
+		PDFSHA256: strings.Repeat("d", 64), PDFBytes: 256, Pages: 1,
+		PolicyFingerprint: strings.Repeat("e", 64), ConverterVersion: "csvpdf-v1-fpdf-0.9.0",
+		Spans: []store.DocumentExtractionConversionSpan{{Page: 1, Record: 1, Cell: 1}},
+	}
+	require.ErrorContains(f.Store.PublishDocumentExtraction(t.Context(), publication), "conflicts with existing evidence")
+
+	var state string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT state FROM document_extractions WHERE id = ?`), claim.ExtractionID).Scan(&state))
+	require.Equal("staging", state)
+	var units int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT COUNT(*) FROM document_units WHERE extraction_id = ?`), claim.ExtractionID).Scan(&units))
+	require.Zero(units)
+}
+
+func TestDocumentExtractionPublicationAcceptsIdenticalCSVReceipt(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-csv-idempotent", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-csv-idempotent", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	receiptSpans := `[ {"page":1,"record":1,"cell":1} ]`
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		INSERT INTO document_extraction_conversions
+			(extraction_id, provider_media_type, pdf_sha256, pdf_bytes, pages,
+			 policy_fingerprint, converter_version, spans)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+		claim.ExtractionID, "application/pdf", strings.Repeat("d", 64), 256, 1,
+		strings.Repeat("e", 64), "csvpdf-v1-fpdf-0.9.0", receiptSpans)
+	require.NoError(err)
+
+	publication := publicationFor(t, claim, "csv idempotent", strings.Repeat("f", 64))
+	publication.SourceBytes = 128
+	publication.Conversion = &store.DocumentExtractionConversion{
+		SourceSHA256: hash, SourceBytes: 128, ProviderMediaType: "application/pdf",
+		PDFSHA256: strings.Repeat("d", 64), PDFBytes: 256, Pages: 1,
+		PolicyFingerprint: strings.Repeat("e", 64), ConverterVersion: "csvpdf-v1-fpdf-0.9.0",
+		Spans: []store.DocumentExtractionConversionSpan{{Page: 1, Record: 1, Cell: 1}},
+	}
+	require.NoError(f.Store.PublishDocumentExtraction(t.Context(), publication))
+}
+
+func TestFailDocumentExtractionPersistsCSVReceipt(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-csv-failure-receipt", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-csv-failure-receipt", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	receipt := &store.DocumentExtractionConversion{
+		SourceSHA256: hash, SourceBytes: 128, ProviderMediaType: "application/pdf",
+		PDFSHA256: strings.Repeat("d", 64), PDFBytes: 256, Pages: 1,
+		PolicyFingerprint: strings.Repeat("e", 64), ConverterVersion: "csvpdf-v1-fpdf-0.9.0",
+		Spans: []store.DocumentExtractionConversionSpan{{Page: 1, Record: 1, Cell: 1}},
+	}
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_transient", RetryAt: time.Now().UTC().Add(time.Hour),
+		Conversion: receipt,
+	}))
+
+	var providerMedia, pdfHash string
+	var pdfBytes int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT provider_media_type, pdf_sha256, pdf_bytes
+		FROM document_extraction_conversions WHERE extraction_id = ?`), claim.ExtractionID).Scan(
+		&providerMedia, &pdfHash, &pdfBytes))
+	assert.Equal(t, "application/pdf", providerMedia)
+	assert.Equal(t, strings.Repeat("d", 64), pdfHash)
+	assert.Equal(t, int64(256), pdfBytes)
+}
+
 func TestDocumentExtractionPublicationRequiresNormalizedIdentity(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -696,6 +867,15 @@ func seedDocumentPublicationAuthority(
 	f *storetest.Fixture,
 ) (store.DocumentExtractionProfile, string) {
 	t.Helper()
+	return seedDocumentPublicationAuthorityForMediaTypes(t, f, []string{"application/pdf"})
+}
+
+func seedDocumentPublicationAuthorityForMediaTypes(
+	t *testing.T,
+	f *storetest.Fixture,
+	allowedMediaTypes []string,
+) (store.DocumentExtractionProfile, string) {
+	t.Helper()
 	require := require.New(t)
 	fingerprint := strings.Repeat("a", 64)
 	profile := store.DocumentExtractionProfile{
@@ -703,7 +883,7 @@ func seedDocumentPublicationAuthority(
 		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
 		Region: "eu", Model: "mistral-ocr-4-0",
 		RetentionPosture: "standard", TrainingPosture: "opted-out",
-		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
+		AllowedMediaTypes: allowedMediaTypes, PolicyJSON: []byte(`{"policy":1}`),
 	}
 	_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(err)

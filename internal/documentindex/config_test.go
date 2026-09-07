@@ -3,12 +3,14 @@ package documentindex
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/csvpdf"
 	"go.kenn.io/docbank/document/mistral"
 )
 
@@ -59,6 +61,20 @@ func TestDocumentsConfigAllowsNamedEmbeddingProfileWithLexicalFallback(t *testin
 	require.NoError(t, config.Validate())
 	assert.True(t, config.LexicalEnabled())
 	assert.True(t, config.StoresChunkText())
+}
+
+func TestCSVPolicyCapsGeneratedPDFAtFileLimit(t *testing.T) {
+	config := DefaultDocumentsConfig()
+	config.MaxFileBytes = 1 << 20
+	policy, err := config.CSVPolicy()
+	require.NoError(t, err)
+
+	limits := csvpdf.DefaultLimits()
+	limits.MaxSourceBytes = 1 << 20
+	limits.MaxPDFBytes = 1 << 20
+	expected, err := csvpdf.NewPolicy(limits)
+	require.NoError(t, err)
+	assert.Equal(t, expected.Fingerprint(), policy.Fingerprint())
 }
 
 func TestDocumentsConfigRejectsUnknownEmbeddingProfile(t *testing.T) {
@@ -223,6 +239,43 @@ func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
 	require.NoError(err)
 	digest := sha256.Sum256([]byte(expected))
 	assert.Equal(hex.EncodeToString(digest[:]), fingerprint)
+}
+
+func TestCSVConversionIsOptInAndBindsPDFRouteAndProfile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	require.NoError(err)
+	manifest := testCapabilityManifest(t, policy)
+
+	disabled, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	require.NoError(err)
+	resolved, err := ResolveInputPolicy(&config, manifest)
+	require.NoError(err)
+	assert.NotContains(resolved.AllowedMediaTypes, "text/csv")
+	var disabledPayload map[string]any
+	require.NoError(json.Unmarshal(disabled, &disabledPayload))
+	assert.NotContains(disabledPayload, "csv_conversion")
+
+	config.Conversion.CSV.Enabled = true
+	resolved, err = ResolveInputPolicy(&config, manifest)
+	require.NoError(err)
+	assert.Contains(resolved.AllowedMediaTypes, "application/pdf")
+	assert.Contains(resolved.AllowedMediaTypes, "text/csv")
+	assert.Equal("application/pdf", resolved.Routes["text/csv"].Authorization.Format().MediaType)
+	require.NotNil(resolved.Routes["text/csv"].Conversion)
+
+	enabled, err := config.ProfilePolicyJSON(manifest, resolved.AllowedMediaTypes)
+	require.NoError(err)
+	var enabledPayload map[string]any
+	require.NoError(json.Unmarshal(enabled, &enabledPayload))
+	csvConversion, ok := enabledPayload["csv_conversion"].(map[string]any)
+	require.True(ok)
+	assert.Equal("text/csv", csvConversion["source_media_type"])
+	assert.NotEqual(string(disabled), string(enabled))
 }
 
 func TestDocumentsConfigResolvesAPIKeyOnlyOnDemand(t *testing.T) {

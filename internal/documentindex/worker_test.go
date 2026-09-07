@@ -17,10 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/csvpdf"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/mistral/mistraltest"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type workerCatalog struct {
@@ -89,29 +91,51 @@ func (c *workerCatalog) FailDocumentExtraction(
 }
 
 type workerOpener struct {
-	content []byte
-	opened  int
+	content  []byte
+	opened   int
+	closed   *atomic.Int32
+	closeErr error
 }
 
 func (o *workerOpener) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
 	o.opened++
-	return io.NopCloser(bytes.NewReader(o.content)), int64(len(o.content)), nil
+	return &workerReadCloser{Reader: bytes.NewReader(o.content), closed: o.closed, closeErr: o.closeErr}, int64(len(o.content)), nil
+}
+
+type workerReadCloser struct {
+	*bytes.Reader
+
+	closed   *atomic.Int32
+	closeErr error
+}
+
+func (r *workerReadCloser) Close() error {
+	if r.closed != nil {
+		r.closed.Add(1)
+	}
+	return r.closeErr
 }
 
 type workerProcessor struct {
-	result mistral.Result
-	err    error
-	calls  int
-	cancel context.CancelFunc
-	block  <-chan struct{}
+	result            mistral.Result
+	err               error
+	calls             int
+	cancel            context.CancelFunc
+	block             <-chan struct{}
+	preparedMediaType string
+	preparedSHA256    string
+	preparedSize      int64
 }
 
 func (p *workerProcessor) Process(
 	ctx context.Context,
-	_ *mistral.PreparedDocument,
+	prepared *mistral.PreparedDocument,
 	_ mistral.FormatAuthorization,
 ) (mistral.Result, error) {
 	p.calls++
+	p.preparedMediaType = prepared.MediaType()
+	p.preparedSHA256 = prepared.SHA256()
+	p.preparedSize = prepared.Size()
 	if p.cancel != nil {
 		p.cancel()
 	}
@@ -123,6 +147,224 @@ func (p *workerProcessor) Process(
 		}
 	}
 	return p.result, p.err
+}
+
+func TestMistralWorkerConvertsCSVAndPublishesSourceBoundReceipt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := []byte("name,value\nalice,csv608sentinel\n")
+	hash := sha256.Sum256(content)
+	catalog := &workerCatalog{}
+	processor := &workerProcessor{result: successfulWorkerResult("csv608sentinel")}
+	closed := &atomic.Int32{}
+	worker := newCSVTestMistralWorker(t, catalog, &workerOpener{content: content, closed: closed}, processor)
+
+	result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "text/csv",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.NoError(err)
+	require.NotNil(catalog.publication)
+	require.NotNil(catalog.publication.Conversion)
+	assert.Equal(hex.EncodeToString(hash[:]), catalog.claimInput.CanonicalBlobHash)
+	assert.Equal("original", catalog.claimInput.ExtractionInputKey)
+	assert.Equal("text/csv", catalog.publication.OccurrenceMIMEType)
+	assert.Equal("application/pdf", catalog.publication.Conversion.ProviderMediaType)
+	assert.Equal(catalog.publication.Conversion.PDFSHA256, processor.preparedSHA256)
+	assert.Equal(catalog.publication.Conversion.PDFBytes, processor.preparedSize)
+	assert.Equal("application/pdf", processor.preparedMediaType)
+	assert.Equal(hex.EncodeToString(hash[:]), catalog.publication.Conversion.SourceSHA256)
+	assert.Equal(int64(len(content)), catalog.publication.Conversion.SourceBytes)
+	assert.Equal("original", catalog.publication.ExtractionInputKey)
+	assert.Equal(1, result.Units)
+	assert.Equal(int32(1), closed.Load())
+}
+
+func TestMistralWorkerConvertsCSVAndPublishesThroughStore(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	content := []byte("name,value\nalice,csv608store\n")
+	hashBytes := sha256.Sum256(content)
+	hash := hex.EncodeToString(hashBytes[:])
+	profile := store.DocumentExtractionProfile{
+		ID: "profile-test", Fingerprint: strings.Repeat("a", 64),
+		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
+		Region: "eu", Model: "mistral-ocr-4-0", RetentionPosture: "standard",
+		TrainingPosture: "opted-out", AllowedMediaTypes: []string{"text/csv", "application/pdf"},
+		PolicyJSON: []byte(`{"policy":1}`),
+	}
+	_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+	messageID := f.CreateMessage("document-worker-store")
+	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "data.csv", MIMEType: "text/csv", Size: int64(len(content)),
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: "part:1",
+	}))
+	var attachmentID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT id FROM attachments WHERE message_id = ? AND content_hash = ?`), messageID, hash).Scan(&attachmentID))
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
+	require.NoError(err)
+	require.True(eligible)
+
+	processor := &workerProcessor{result: successfulWorkerResult("csv608store")}
+	worker := newCSVTestMistralWorker(t, f.Store, &workerOpener{content: content}, processor)
+	result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: attachmentID, CanonicalBlobHash: hash, MIMEType: "text/csv",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
+	})
+
+	require.NoError(err)
+	assert.Equal(1, result.Units)
+	assert.Equal("application/pdf", processor.preparedMediaType)
+	var providerMedia string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT provider_media_type FROM document_extraction_conversions
+		WHERE extraction_id = ?`), result.ExtractionID).Scan(&providerMedia))
+	assert.Equal("application/pdf", providerMedia)
+	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "csv608store"})
+	require.NoError(err)
+	require.Len(response.Results, 1)
+	assert.Equal(hash, response.Results[0].CanonicalBlobHash)
+	assert.Equal("text/csv", response.Results[0].MIMEType)
+}
+
+func TestMistralWorkerSendsDirectPDFWithoutConversion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := mistraltest.MinimalPDF("direct PDF")
+	hash := sha256.Sum256(content)
+	catalog := &workerCatalog{}
+	processor := &workerProcessor{result: successfulWorkerResult("direct PDF")}
+	worker := newTestMistralWorker(t, catalog, &workerOpener{content: content}, processor)
+
+	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.NoError(err)
+	require.NotNil(catalog.publication)
+	assert.Equal("application/pdf", processor.preparedMediaType)
+	assert.Equal(hex.EncodeToString(hash[:]), processor.preparedSHA256)
+	assert.Equal(int64(len(content)), processor.preparedSize)
+	assert.Nil(catalog.publication.Conversion)
+}
+
+func TestMistralWorkerPersistsCSVReceiptOnProviderFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := []byte("name,value\nalice,csv608failure\n")
+	hash := sha256.Sum256(content)
+	catalog := &workerCatalog{}
+	worker := newCSVTestMistralWorker(t, catalog, &workerOpener{content: content}, &workerProcessor{err: mistral.ErrTransientResponse})
+
+	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "text/csv",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.ErrorIs(err, mistral.ErrTransientResponse)
+	require.NotNil(catalog.failure)
+	require.NotNil(catalog.failure.Conversion)
+	assert.Equal(hex.EncodeToString(hash[:]), catalog.failure.Conversion.SourceSHA256)
+	assert.Equal("application/pdf", catalog.failure.Conversion.ProviderMediaType)
+}
+
+func TestMistralWorkerClassifiesMalformedCSVAsInvalidLocalSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	catalog := &workerCatalog{}
+	content := []byte("name,value\n\"unterminated\n")
+	hash := sha256.Sum256(content)
+	processor := &workerProcessor{result: successfulWorkerResult("unreachable")}
+	closed := &atomic.Int32{}
+	worker := newCSVTestMistralWorker(t, catalog, &workerOpener{content: content, closed: closed}, processor)
+
+	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "text/csv",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.ErrorContains(err, "CSV source has invalid record syntax")
+	require.NotNil(catalog.failure)
+	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
+	assert.Zero(processor.calls)
+	assert.Equal(int32(1), closed.Load())
+}
+
+func TestMistralWorkerClosesCSVSourceWhenMetadataIsInvalid(t *testing.T) {
+	require := require.New(t)
+	closed := &atomic.Int32{}
+	catalog := &workerCatalog{}
+	content := []byte("name,value\nalice,closed\n")
+	hash := sha256.Sum256(content)
+	worker := newCSVTestMistralWorker(t, catalog, &workerOpener{content: content, closed: closed}, &workerProcessor{})
+	worker.formats["text/csv; charset=utf-8"] = worker.formats["text/csv"]
+
+	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "text/csv; charset=utf-8",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.ErrorContains(err, "OCR source media type must be canonical")
+	require.Equal(int32(1), closed.Load())
+}
+
+func TestMistralWorkerRecordsCSVSourceCloseFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	closed := &atomic.Int32{}
+	catalog := &workerCatalog{}
+	content := []byte("name,value\nalice,close-error\n")
+	hash := sha256.Sum256(content)
+	processor := &workerProcessor{result: successfulWorkerResult("unreachable")}
+	worker := newCSVTestMistralWorker(t, catalog, &workerOpener{content: content, closed: closed, closeErr: errors.New("synthetic source close failure")}, processor)
+
+	_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "text/csv",
+		Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+
+	require.ErrorContains(err, "synthetic source close failure")
+	require.NotNil(catalog.failure)
+	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
+	assert.Zero(processor.calls)
+	assert.Equal(int32(1), closed.Load())
+}
+
+func newCSVTestMistralWorker(
+	t *testing.T, catalog DocumentExtractionCatalog, opener DocumentAttachmentOpener, processor MistralProcessor,
+) *MistralWorker {
+	t.Helper()
+	spoolDirectory := filepath.Join(t.TempDir(), "spool")
+	require.NoError(t, fileutil.SecureMkdirAll(spoolDirectory, 0o700))
+	policy := testMistralPolicy(t)
+	manifest := testCapabilityManifest(t, policy)
+	pdfFormat, found := mistral.CandidateFormatByID("pdf")
+	require.True(t, found)
+	authorization, err := policy.Authorize(manifest, pdfFormat.ID)
+	require.NoError(t, err)
+	csvPolicy, err := csvpdf.NewPolicy(csvpdf.DefaultLimits())
+	require.NoError(t, err)
+	worker, err := NewMistralWorker(catalog, opener, processor, MistralWorkerConfig{
+		ProfileID: "profile-test", LeaseOwner: "worker-test", LeaseDuration: 30 * time.Minute,
+		RetryDelay: 5 * time.Minute, SpoolDirectory: spoolDirectory,
+		MaxSpoolBytes: 2 << 20, MinFreeBytes: 1, Policy: policy, CapabilityPolicy: manifest,
+		InputPolicy: ResolvedInputPolicy{Routes: map[string]InputRoute{
+			"text/csv": {Format: pdfFormat, Authorization: authorization, Conversion: &csvPolicy},
+		}},
+	})
+	require.NoError(t, err)
+	return worker
 }
 
 func TestMistralWorkerPublishesOnlyNormalizedDerivatives(t *testing.T) {
@@ -376,9 +618,22 @@ func newTestMistralWorker(
 		RetryDelay: 5 * time.Minute, SpoolDirectory: spoolDirectory,
 		MaxSpoolBytes: 2 << 20, MinFreeBytes: 1,
 		Policy: policy, CapabilityPolicy: testCapabilityManifest(t, policy),
+		InputPolicy: testPDFInputPolicy(t, policy),
 	})
 	require.NoError(t, err)
 	return worker
+}
+
+func testPDFInputPolicy(t *testing.T, policy mistral.Policy) ResolvedInputPolicy {
+	t.Helper()
+	manifest := testCapabilityManifest(t, policy)
+	pdfFormat, found := mistral.CandidateFormatByID("pdf")
+	require.True(t, found)
+	authorization, err := policy.Authorize(manifest, pdfFormat.ID)
+	require.NoError(t, err)
+	return ResolvedInputPolicy{Routes: map[string]InputRoute{
+		pdfFormat.MediaType: {Format: pdfFormat, Authorization: authorization},
+	}}
 }
 
 func testMistralPolicy(t *testing.T) mistral.Policy {

@@ -677,12 +677,18 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 	}, personResults[0].PersonProvenance)
 }
 
-func TestResolveDocumentVectorSearchOccurrencesBoundsUnicodeExcerpt(t *testing.T) {
+func TestResolveDocumentVectorSearchOccurrencesForCSV(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, strings.Repeat("界", 400), "semantic-excerpt")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
 		Fingerprint: strings.Repeat("f", 64), TargetExtractionProfileID: profile.ID,
 		EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 3,

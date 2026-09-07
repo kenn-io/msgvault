@@ -394,6 +394,20 @@ document.
 | `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
 | `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
 | `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
+
+#### CSV conversion
+
+| Key | Default | Description |
+|---|---:|---|
+| `enabled` | `false` | Convert standalone `text/csv` attachments locally to PDF before the authorized PDF upload; disabled conversion leaves raw CSV outside the provider-authorized scope |
+
+CSV conversion uses Docbank's default record, cell, cell byte, and PDF limits,
+tightened by the configured original file, response, and page ceilings. The
+generated PDF is transient. The archive keeps the original CSV hash and MIME
+type plus the conversion receipt and page, record, and cell provenance. The
+conversion declaration participates in the exact consent fingerprint only when
+enabled.
+
 Provider uploads are manual-only: `msgvault serve` does not schedule document
 extraction. Each `documents build` or `documents resume` receives its capability
 manifest explicitly and displays its upload and cost preflight before requiring

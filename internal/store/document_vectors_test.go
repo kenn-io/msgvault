@@ -1416,6 +1416,12 @@ func TestDocumentVectorChunkCandidatesUseCurrentLiveAuthority(t *testing.T) {
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, "vector candidate evidence", "vector-candidate")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
+	require.NoError(err)
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
 		Fingerprint: strings.Repeat("7", 64), TargetExtractionProfileID: profile.ID,
 		EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 768,

@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	docbankdocument "go.kenn.io/docbank/document"
-	docembedding "go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -54,7 +53,7 @@ type WorkerDeps struct {
 	HeartbeatInterval time.Duration
 	RetryDelay        time.Duration
 	MaxAttempts       int
-	Recipe            docembedding.Recipe
+	Recipe            Recipe
 	// ContextualDocuments keeps each durable extraction chunk in its own stable
 	// provider document. A worker batch must never redefine contextual scope.
 	ContextualDocuments bool
@@ -64,7 +63,7 @@ type WorkerDeps struct {
 	AfterGenerationID GenerationID
 	AfterChunkID      int64
 	Now               func() time.Time
-	prepareInputs     func(context.Context, Ledger, docembedding.Recipe, []*store.DocumentVectorChunkClaim) (map[string]string, error)
+	prepareInputs     func(context.Context, Ledger, Recipe, []*store.DocumentVectorChunkClaim) (map[string]string, error)
 }
 
 // RunResult reports only locally observable accounting. Provider token usage
@@ -215,8 +214,8 @@ func NewWorker(deps WorkerDeps) *Worker {
 		deps.Now = func() time.Time { return time.Now().UTC() }
 	}
 	if deps.Recipe.Fingerprint() == "" && deps.MaxInputChars > 0 {
-		deps.Recipe, _ = docembedding.NewRecipe(docembedding.RecipeConfig{
-			Mode: docembedding.RepresentationRaw, MaxInputRunes: deps.MaxInputChars,
+		deps.Recipe, _ = NewRecipe(RecipeConfig{
+			Mode: RepresentationRaw, MaxInputRunes: deps.MaxInputChars,
 		})
 	}
 	if deps.prepareInputs == nil {
@@ -386,7 +385,7 @@ func (w *Worker) validate(generationID GenerationID) error {
 		(w.deps.AfterGenerationID == 0) != (w.deps.AfterChunkID == 0) {
 		return errors.New("document vector worker policy is invalid")
 	}
-	if w.deps.Recipe.Fingerprint() == "" || w.deps.Recipe.Values().Mode != docembedding.RepresentationRaw {
+	if w.deps.Recipe.Fingerprint() == "" || w.deps.Recipe.Values().Mode != RepresentationRaw {
 		return errors.New("document vector worker requires a valid raw Docbank embedding recipe")
 	}
 	return nil
@@ -397,7 +396,7 @@ type normalizedDocumentLedger interface {
 }
 
 func prepareDocbankClaimInputs(
-	ctx context.Context, ledger Ledger, recipe docembedding.Recipe,
+	ctx context.Context, ledger Ledger, recipe Recipe,
 	claims []*store.DocumentVectorChunkClaim,
 ) (map[string]string, error) {
 	source, ok := ledger.(normalizedDocumentLedger)
@@ -405,7 +404,7 @@ func prepareDocbankClaimInputs(
 		return nil, errors.New("document vector ledger cannot load normalized documents")
 	}
 	inputsByToken := make(map[string]string, len(claims))
-	plans := make(map[string]map[string]docembedding.EmbeddingInput)
+	plans := make(map[string]map[string]RawEmbeddingInput)
 	for _, claim := range claims {
 		byChunk := plans[claim.ExtractionID]
 		if byChunk == nil {
@@ -413,23 +412,18 @@ func prepareDocbankClaimInputs(
 			if err != nil {
 				return nil, fmt.Errorf("load normalized document for embedding: %w", err)
 			}
-			plan, err := docembedding.BuildEmbeddingPlan(
-				normalized, docembedding.DocumentContext{}, recipe, nil,
-			)
+			inputs, err := RawEmbeddingInputs(normalized, recipe)
 			if err != nil {
 				return nil, fmt.Errorf("build document embedding plan: %w", err)
 			}
-			byChunk = make(map[string]docembedding.EmbeddingInput, len(plan.Inputs))
-			for _, input := range plan.Inputs {
-				if input.Kind != docembedding.RepresentationKindRaw || len(input.SourceRefs) != 1 {
-					return nil, errors.New("raw document embedding plan returned an invalid input")
-				}
-				byChunk[input.SourceRefs[0].ChunkKey] = input
+			byChunk = make(map[string]RawEmbeddingInput, len(inputs))
+			for _, input := range inputs {
+				byChunk[input.ChunkKey] = input
 			}
 			plans[claim.ExtractionID] = byChunk
 		}
 		input, ok := byChunk[claim.ChunkKey]
-		if !ok || len(input.SourceRefs) != 1 || input.SourceRefs[0].ChunkChecksum != claim.ChunkChecksum {
+		if !ok || input.ChunkChecksum != claim.ChunkChecksum {
 			return nil, fmt.Errorf("document embedding plan does not match claimed chunk %q", claim.ChunkKey)
 		}
 		inputsByToken[claim.Token] = input.Text
