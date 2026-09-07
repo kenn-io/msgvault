@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,13 +19,24 @@ type resources struct {
 	available uint64
 }
 
+const (
+	processProcs      = 2
+	remainderParallel = 4
+	processMemory     = 2 << 30
+)
+
 // Zero selects the existing sequential package schedule. Wider execution needs
 // both CPU and memory headroom, with an upper bound even on very large hosts.
-func shardBudget(r resources) int {
-	if r.cpus < 32 || r.available < 64<<30 {
+func shardBudget(r resources, packages int) int {
+	if r.cpus < 32 || r.available < 64<<30 || packages < 1 {
 		return 0
 	}
-	return min(16, r.cpus/4, int(min(uint64(16), r.available/(8<<30))))
+	// Reserve the remainder first, then divide the remaining process slots
+	// across all concurrent shard groups. Memory is a planning allowance, not
+	// an enforced per-process limit (in particular for native allocations).
+	cpuShards := (r.cpus/processProcs - remainderParallel) / packages
+	memoryShards := (r.available/processMemory - remainderParallel) / uint64(packages)
+	return min(16, cpuShards, int(min(uint64(16), memoryShards)))
 }
 
 func limitCgroup(fsys fs.FS, group string, r resources) (resources, error) {
@@ -117,11 +129,14 @@ func detect() (resources, error) {
 }
 
 func main() {
+	packages := flag.Int("packages", 4, "number of concurrent sharded packages")
+	flag.Parse()
 	r, err := detect()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Resource detection unavailable; using standard test scheduling")
-		fmt.Println(0)
-		return
+		r = resources{}
 	}
-	fmt.Println(shardBudget(r))
+	// Emit the settings together so make uses the same per-process budget and
+	// remainder concurrency that the shard calculation reserves.
+	fmt.Println(shardBudget(r, *packages), processProcs, remainderParallel)
 }

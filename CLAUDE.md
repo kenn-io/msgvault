@@ -368,10 +368,17 @@ go vet ./...                   # Check for issues
 
 `make test` automatically overlaps the CLI, store, API, and query package shards
 with the remaining SQLite packages when at least 32 CPUs and 64 GiB of available
-memory are detected. Each large package gets the smallest of 16 shards, one
-quarter of the CPU budget, or one shard per 8 GiB of available memory. The
-concurrent profile uses `GOMAXPROCS=4` per process to limit nested Go parallelism.
-This changes scheduling, not test coverage.
+memory are detected. The planner reserves four test-process slots for the
+unsharded remainder, then divides the remaining slots across the sharded
+packages, up to 16 shards each. Each slot budgets two Go execution threads
+(`GOMAXPROCS=2`) and a 2 GiB memory allowance. For four sharded packages, a
+32-CPU budget permits three shards per package; 128 CPUs permits fifteen,
+provided memory also permits them. This changes scheduling, not test coverage.
+
+The planner emits the per-process and remainder settings with its shard count,
+so execution uses the same aggregate budget. Shard builds use `go -p=1`; the
+remainder uses `go test -p=4`. Memory allowances guide scheduling and do not
+enforce per-process limits, including native allocations.
 
 Detection accounts for CPU affinity and `GOMAXPROCS`. On Linux it also accounts
 for visible cgroup v2 ancestor CPU quotas and remaining memory under both hard

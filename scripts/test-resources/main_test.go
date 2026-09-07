@@ -18,18 +18,20 @@ func TestShardBudget(t *testing.T) {
 		{"small CPU budget", 8, 256, 0},
 		{"small memory budget", 128, 32, 0},
 		{"unknown memory", 128, 0, 0},
-		{"CPU limited", 32, 256, 8},
-		{"memory limited", 128, 64, 8},
-		{"large budget", 128, 256, 16},
+		{"CPU limited", 32, 256, 3},
+		{"memory limited", 128, 64, 7},
+		{"large budget", 128, 256, 15},
 		{"cap very large budgets", 512, 1024, 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, shardBudget(resources{tc.cpus, tc.gib << 30}))
+			assert.Equal(t, tc.want, shardBudget(resources{tc.cpus, tc.gib << 30}, 4))
 		})
 	}
 }
 
 func TestCgroupAncestorLimits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	files := fstest.MapFS{
 		"parent/child/cpu.max":        {Data: []byte("max 100000\n")},
 		"parent/child/memory.max":     {Data: []byte("max\n")},
@@ -41,18 +43,35 @@ func TestCgroupAncestorLimits(t *testing.T) {
 		"parent/memory.current":       {Data: []byte("4294967296\n")},  // 4 GiB
 	}
 	got, err := limitCgroup(files, "parent/child", resources{128, 256 << 30})
-	require.NoError(t, err)
-	assert.Equal(t, resources{2, 12 << 30}, got)
-	assert.Zero(t, shardBudget(got))
+	require.NoError(err)
+	assert.Equal(resources{2, 12 << 30}, got)
+	assert.Zero(shardBudget(got, 4))
 
 	// A soft memory limit can already be exceeded; subtraction must not wrap.
 	files["parent/memory.current"].Data = []byte("21474836480\n")
 	got, err = limitCgroup(files, "parent/child", resources{128, 256 << 30})
-	require.NoError(t, err)
-	assert.Zero(t, got.available)
+	require.NoError(err)
+	assert.Zero(got.available)
+}
+
+func TestAggregateBudgetIncludesRemainder(t *testing.T) {
+	assert := assert.New(t)
+	for _, r := range []resources{{32, 64 << 30}, {64, 64 << 30}, {128, 256 << 30}, {512, 1024 << 30}} {
+		for packages := 1; packages <= 16; packages++ {
+			shards := shardBudget(r, packages)
+			if shards == 0 {
+				continue
+			}
+			processes := packages*shards + remainderParallel
+			assert.LessOrEqual(processes*processProcs, r.cpus, "CPU budget, %d groups", packages)
+			assert.LessOrEqual(uint64(processes)*processMemory, r.available, "memory allowance, %d groups", packages)
+		}
+	}
 }
 
 func TestCgroupRootLimits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	// A cgroup namespace may expose its container's limits at the mount root.
 	files := fstest.MapFS{
 		"cpu.max":        {Data: []byte("6400000 100000\n")},
@@ -61,12 +80,12 @@ func TestCgroupRootLimits(t *testing.T) {
 		"memory.current": {Data: []byte("68719476736\n")},
 	}
 	got, err := limitCgroup(files, ".", resources{128, 256 << 30})
-	require.NoError(t, err)
-	assert.Equal(t, resources{64, 64 << 30}, got)
-	assert.Equal(t, 8, shardBudget(got))
+	require.NoError(err)
+	assert.Equal(resources{64, 64 << 30}, got)
+	assert.Equal(7, shardBudget(got, 4))
 	files["cpu.max"].Data = []byte("bad quota")
 	_, err = limitCgroup(files, ".", resources{128, 256 << 30})
-	require.Error(t, err)
+	require.Error(err)
 }
 
 func TestCgroupMissingOrInvalidPath(t *testing.T) {

@@ -125,12 +125,14 @@ test:
 	@case "$(TEST_PROFILE)" in auto|standard) ;; *) echo "TEST_PROFILE must be auto or standard" >&2; exit 1 ;; esac; \
 	shards=0; \
 	if [ "$(TEST_PROFILE)" = auto ] && [ "$(origin TEST_SHARDS)" = file ] && [ -z "$(MSGVAULT_TEST_DB)" ]; then \
-		shards=$$(go run ./scripts/test-resources) || exit $$?; \
+		profile=$$(go run ./scripts/test-resources -packages $(words $(SQLITE_SHARDED_TEST_PKGS))) || exit $$?; \
+		set -- $$profile; shards=$$1; \
 	fi; \
 	if [ "$$shards" -gt 0 ]; then \
 		echo "SQLite tests: concurrent packages, $$shards shards per large package"; \
-		GOMAXPROCS=4 $(MAKE) -j5 test-unsharded $(SQLITE_SHARD_TARGETS) \
-			SHARDED_TEST_PKGS="$(SQLITE_SHARDED_TEST_PKGS)" TEST_SHARDS=$$shards; \
+		$(MAKE) -j$$(($(words $(SQLITE_SHARDED_TEST_PKGS)) + 1)) GOMAXPROCS=$$2 GOFLAGS="$(GOFLAGS) -p=1" \
+			test-unsharded $(SQLITE_SHARD_TARGETS) SHARDED_TEST_PKGS="$(SQLITE_SHARDED_TEST_PKGS)" \
+			TEST_SHARDS=$$shards TEST_REMAINDER_PARALLEL=$$3; \
 	else \
 		echo "Tests: standard package schedule, $(TEST_SHARDS) shards"; \
 		$(MAKE) test-standard; \
@@ -150,7 +152,7 @@ $(SQLITE_SHARD_TARGETS): test-sqlite-shard/%:
 # sharded jobs; together they cover exactly what `make test` covers.
 test-unsharded:
 	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
-	go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+	go test -timeout $(TEST_TIMEOUT) $(if $(TEST_REMAINDER_PARALLEL),-p $(TEST_REMAINDER_PARALLEL),) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
 
 # SHARDED_TEST_PKGS, each as TEST_SHARDS concurrent processes. Same binary,
 # same tests, same per-package timeout; only the process boundary is new.
