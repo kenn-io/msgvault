@@ -121,7 +121,13 @@ func ImportEmlxDir(
 	// Discover mailboxes.
 	mailboxes, err := emlx.DiscoverMailboxes(rootDir)
 	if err != nil {
-		return nil, fmt.Errorf("discover mailboxes: %w", err)
+		discoveryErr, ok := errors.AsType[*emlx.DiscoveryError](err)
+		if len(mailboxes) == 0 || !ok {
+			return nil, fmt.Errorf("discover mailboxes: %w", err)
+		}
+		summary.Errors = int64(len(discoveryErr.Errors))
+		log.Warn("partial mailbox discovery", "error", discoveryErr,
+			"errors", summary.Errors)
 	}
 	summary.MailboxesTotal = len(mailboxes)
 	if len(mailboxes) == 0 {
@@ -224,6 +230,10 @@ func ImportEmlxDir(
 		}
 	}
 
+	// Like message/checkpoint failures, discovery failures count per attempt.
+	// The checkpoint is cumulative across resumes; summary.Errors reports only
+	// this invocation. Skipping this on resume would lose newly denied paths.
+	cp.ErrorsCount += summary.Errors
 	syncID, err = execution.StartSyncContext(ownershipCtx, "import-emlx", "")
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)

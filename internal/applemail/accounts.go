@@ -195,8 +195,10 @@ func V10AccountDir(mailDir, guid string) (string, error) {
 		if firstMatch == "" {
 			firstMatch = candidate
 		}
-		mailboxes, discErr := emlx.DiscoverMailboxes(candidate)
-		if discErr == nil && len(mailboxes) > 0 {
+		mailboxes, _ := emlx.DiscoverMailboxes(candidate)
+		// Readable mailboxes still prove this version is populated. Import
+		// performs discovery again and reports any partial-discovery errors.
+		if len(mailboxes) > 0 {
 			return candidate, nil
 		}
 	}
