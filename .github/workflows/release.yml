@@ -98,7 +98,8 @@ jobs:
       - name: Install Go
         run: |
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
-          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
