@@ -46,7 +46,7 @@ All notable changes to msgvault, grouped by release.
   report `index_stale` until a full rebuild completes:
   `msgvault embeddings build --full-rebuild --yes`. This includes older
   fingerprints such as v0.14's, even with unchanged configuration. See
-  [Vector Search: Upgrading an existing archive](/usage/vector-search/#upgrading-an-existing-archive).
+  [Vector Search: Upgrading an existing archive](usage/vector-search.md#upgrading-an-existing-archive).
 
 **Features**
 
