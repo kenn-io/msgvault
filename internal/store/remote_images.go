@@ -11,7 +11,8 @@ func (s *Store) MessageRemoteImages(messageID int64) (map[string]AttachmentRef, 
 // RemoteImageBackfillMessageIDs pages email identities without scanning body
 // storage. Bodies are subsequently read by message primary key.
 func (s *Store) RemoteImageBackfillMessageIDs(ctx context.Context, after, sourceID int64, limit int) ([]int64, error) {
-	query := "SELECT id FROM messages WHERE id > ? AND message_type = 'email' AND deleted_at IS NULL"
+	// Match IsEmailMessageType: legacy NULL and empty types also denote email.
+	query := "SELECT id FROM messages WHERE id > ? AND COALESCE(message_type, '') IN ('', 'email') AND deleted_at IS NULL"
 	args := []any{after}
 	if sourceID != 0 {
 		query += " AND source_id = ?"

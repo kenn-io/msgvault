@@ -214,15 +214,16 @@ func TestArchiveJPEGContentTypes(t *testing.T) {
 		{"jpg with non-JPEG bytes", "image/jpg", []byte("\x89PNG\r\n\x1a\nsynthetic"), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("eml", "user@example.com")
-			require.NoError(t, err)
+			require.NoError(err)
 			conv, err := st.EnsureConversation(src.ID, "thread", "Images")
-			require.NoError(t, err)
+			require.NoError(err)
 			id, err := st.PersistMessage(&store.MessagePersistData{
 				Message: &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email"},
 			})
-			require.NoError(t, err)
+			require.NoError(err)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", tc.contentType)
 				_, _ = w.Write(tc.body)
@@ -237,16 +238,16 @@ func TestArchiveJPEGContentTypes(t *testing.T) {
 			}
 			dir := t.TempDir()
 			result := f.Archive(t.Context(), st, dir, id, `<img src="http://images.example/photo">`)
-			require.Equal(t, tc.wantDownloaded, result.Downloaded)
+			require.Equal(tc.wantDownloaded, result.Downloaded)
 			refs, err := st.MessageRemoteImages(id)
-			require.NoError(t, err)
-			require.Len(t, refs, tc.wantDownloaded)
+			require.NoError(err)
+			require.Len(refs, tc.wantDownloaded)
 			for _, ref := range refs {
-				assert.Equal(t, "image/jpeg", ref.MimeType)
-				assert.Equal(t, ".jpg", filepath.Ext(ref.Filename))
+				assert.Equal("image/jpeg", ref.MimeType)
+				assert.Equal(".jpg", filepath.Ext(ref.Filename))
 				body, err := os.ReadFile(filepath.Join(dir, ref.StoragePath))
-				require.NoError(t, err)
-				assert.Equal(t, tc.body, body)
+				require.NoError(err)
+				assert.Equal(tc.body, body)
 			}
 		})
 	}
