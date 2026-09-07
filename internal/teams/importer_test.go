@@ -3003,3 +3003,64 @@ func TestSyncImportsSelfChat(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(0, to)
 }
+
+func TestSelfChatProbeFailureReporting(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		status     int
+		body       string
+		wantErrors int
+	}{
+		{name: "absent", status: http.StatusNotFound},
+		{name: "empty", status: http.StatusOK, body: `{"value":[]}`},
+		{name: "service failure", status: http.StatusServiceUnavailable, wantErrors: 1},
+		{name: "unauthorized", status: http.StatusUnauthorized, wantErrors: 1},
+		{name: "forbidden", status: http.StatusForbidden, wantErrors: 1},
+		{name: "bad request", status: http.StatusBadRequest, wantErrors: 1},
+		{name: "invalid response", status: http.StatusOK, body: `{`, wantErrors: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/me/chats":
+					_, _ = w.Write([]byte(`{"value":[{"id":"chat-1","chatType":"oneOnOne"}]}`))
+				case "/me/chats/48:notes/messages":
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				case "/chats/chat-1/members", "/me/chats/chat-1/messages":
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000))
+			sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com"})
+			require.NoError(t, err)
+			assert.EqualValues(t, tt.wantErrors, sum.Errors)
+			assert.EqualValues(t, 1, sum.ChatsProcessed, "ordinary chats must still sync")
+		})
+	}
+}
+
+func TestSelfChatProbeCancellationStopsSync(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/me/chats/48:notes/messages" {
+			cancel()
+		}
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000))
+	sum, err := imp.Import(ctx, ImportOptions{Email: "me@example.com"})
+	require.ErrorIs(t, err, context.Canceled)
+	last, err := st.GetLastSuccessfulSync(sum.SourceID)
+	require.ErrorIs(t, err, store.ErrSyncRunNotFound)
+	assert.Nil(t, last, "a canceled probe must not complete the sync")
+}

@@ -18,6 +18,8 @@ import (
 // ErrMediaTooLarge classifies hosted media that exceeds its configured cap.
 var ErrMediaTooLarge = errors.New("teams hosted media exceeds the configured size cap")
 
+var errGraphNotFound = errors.New("graph resource not found")
+
 const (
 	maxRetries    = 8
 	maxRetryAfter = httpretry.ProviderMaxRetryAfter
@@ -100,6 +102,8 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 				return nil, ErrMediaTooLarge
 			}
 			return body, nil
+		case resp.StatusCode == http.StatusNotFound:
+			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errGraphNotFound)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
 			timer := time.NewTimer(wait)

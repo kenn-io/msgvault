@@ -196,7 +196,13 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 	if err != nil {
 		return err
 	}
-	selfChat, selfMembers := imp.selfChat(ctx)
+	selfChat, selfMembers, err := imp.selfChat(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		sum.Errors++
+	}
 	chats = append(chats, selfChat...)
 	total := len(chats)
 	for idx, ch := range chats {
@@ -320,10 +326,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 }
 
 // selfChat reports the chat a user holds with themselves, which Graph does not
-// list under /me/chats, together with its roster. It is read once here because
-// the thread is undocumented: an account that has never used it, and a tenant
-// where it is unavailable, both answer this probe and are then left alone
-// rather than counted as a sync failure.
+// list under /me/chats, together with its roster. An empty result or a 404
+// means the thread is absent. Other probe errors are reported so a failed read
+// cannot silently omit the chat from the archive.
 //
 // Graph also rejects a members read on the thread, so the roster is taken from
 // the probed message instead. The chat's only member is the signed-in user,
@@ -331,16 +336,22 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // object ID a members read would have returned. Resolution therefore takes the
 // same path as every other chat member, down to the participant cache key that
 // mention resolution reads.
-func (imp *Importer) selfChat(ctx context.Context) ([]Chat, []ChatMember) {
+func (imp *Importer) selfChat(ctx context.Context) ([]Chat, []ChatMember, error) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 1)
-	if err != nil || len(msgs) == 0 {
-		return nil, nil
+	if errors.Is(err, errGraphNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(msgs) == 0 {
+		return nil, nil, nil
 	}
 	var members []ChatMember
 	if from := msgs[0].From; from != nil && from.User != nil && from.User.ID != "" {
 		members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName}}
 	}
-	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, members
+	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, members, nil
 }
 
 // chatMembers reads a chat's roster, using the roster selfChat already resolved
