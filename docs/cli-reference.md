@@ -2032,6 +2032,10 @@ exclusive, and `--ids` is also mutually exclusive with `--source-id`.
 | `--source-id ID` | Restrict staging to one exact source ID |
 | `--ids IDS` | Stage positive, unique, comma-separated internal message IDs instead of a query |
 
+Query staging requires daemon API schema 2.18.0 or newer so the preflight
+reports the exact deletable subset. Upgrade the daemon if the CLI rejects its
+schema version.
+
 The query resolves with the same search semantics as `msgvault search`, and
 `--dry-run` prints the set that staging would create.
 

@@ -56,6 +56,21 @@ function listResponse() {
 afterEach(() => document.body.replaceChildren());
 
 describe('DeletionsWorkspace', () => {
+  it('requires the deletable-count contract before offering staging', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/explore/preflight')) {
+        return Response.json(preflight({ deletable_count: undefined }));
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit, reviewOnMount: true });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Upgrade the daemon and review again.');
+    expect(screen.queryByRole('button', { name: 'Stage deletion' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('preflights, dry-runs, and explicitly confirms an exact selection before staging', async () => {
     const requests: Request[] = [];
     let deletionPosts = 0;

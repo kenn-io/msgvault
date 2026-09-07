@@ -29,7 +29,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/explore/preflight', (route) => {
     preflights.push(route.request().postDataJSON());
     return route.fulfill({ json: {
-      count: 1, estimated_bytes: 20, cache_revision: 'cache-management', search_provenance: {},
+      count: 1, deletable_count: 1, estimated_bytes: 20, cache_revision: 'cache-management', search_provenance: {},
       unavailable_actions: [{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }],
       action_targets: [{ action: 'export', message_id: 1, filename: 'message-1.eml' }],
       operation_token: 'operation-1', expires_at: '2026-07-19T10:05:00Z'

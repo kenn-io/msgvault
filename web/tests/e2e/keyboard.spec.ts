@@ -51,7 +51,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
     cache_revision: 'keyboard-100k', search_provenance: {}
   } }));
   await page.route('**/api/v1/explore/preflight', (route) => route.fulfill({ json: {
-    count: 1, estimated_bytes: 20, cache_revision: 'keyboard-100k', search_provenance: {},
+    count: 1, deletable_count: 1, estimated_bytes: 20, cache_revision: 'keyboard-100k', search_provenance: {},
     unavailable_actions: [], action_targets: [], operation_token: 'keyboard-operation',
     expires_at: '2026-01-03T12:05:00Z'
   } }));

@@ -272,7 +272,10 @@ import (
 // closed when an older daemon ignores an additive source scope instead of
 // widening the result to all sources. Text search also accepts source_id
 // and confirms it with applied_source_id.
-const APISchemaVersion = "2.17.0"
+// 2.18.0 adds deletable_count to selection preflight and matched/skipped
+// counts to deletion staging. Query staging accepts the deletable subset of
+// mixed selections; clients can disclose that subset before confirmation.
+const APISchemaVersion = "2.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

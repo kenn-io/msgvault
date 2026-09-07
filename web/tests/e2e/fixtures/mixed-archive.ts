@@ -152,6 +152,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
     route.fulfill({
       json: {
         count: 1,
+        deletable_count: 1,
         estimated_bytes: 2048,
         cache_revision: 'mixed-100k',
         search_provenance: {},

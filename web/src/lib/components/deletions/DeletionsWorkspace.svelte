@@ -116,6 +116,9 @@
     try {
       const { data, error: responseError } = await generatedPreflightExploreSelection({ selection: candidate }, client);
       if (!data) throw new Error(messageFor(responseError, 'Unable to review this selection.'));
+      if (typeof data.deletable_count !== 'number') {
+        throw new Error('Deletion review requires daemon API schema 2.18.0 or newer. Upgrade the daemon and review again.');
+      }
       if (candidateFingerprint !== fingerprint(selection)) {
         throw new Error('The selection changed while it was being reviewed. Review it again.');
       }

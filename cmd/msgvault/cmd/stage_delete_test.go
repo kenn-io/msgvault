@@ -195,6 +195,8 @@ func TestStageDeleteCommand(t *testing.T) {
 	t.Run("cache_unavailable_reports_recovery", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
+			case "/api/v1/health":
+				writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"status": "ok", "api_schema_version": "2.18.0"})
 			case "/api/v1/cli/search":
 				writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"results": []any{}})
 			case "/api/v1/explore":
@@ -246,6 +248,8 @@ func TestStageDeleteCommand(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
+					case "/api/v1/health":
+						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"status": "ok", "api_schema_version": "2.18.0"})
 					case "/api/v1/cli/search":
 						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"results": []any{}})
 					case "/api/v1/explore":
@@ -311,6 +315,8 @@ func TestStageDeleteCommand(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
+					case "/api/v1/health":
+						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"status": "ok", "api_schema_version": "2.18.0"})
 					case "/api/v1/cli/search":
 						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"results": []any{}})
 					case "/api/v1/explore":
@@ -359,6 +365,8 @@ func TestStageDeleteCommand(t *testing.T) {
 		exploreRequests := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
+			case "/api/v1/health":
+				writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{"status": "ok", "api_schema_version": "2.18.0"})
 			case "/api/v1/cli/search":
 				writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
 					"results":     []any{},
@@ -384,11 +392,12 @@ func TestStageDeleteCommand(t *testing.T) {
 		assert.Zero(t, exploreRequests, "an incomplete search index must block staging before Explore")
 	})
 
-	t.Run("list_id_rejects_old_daemon_before_explore", func(t *testing.T) {
+	t.Run("query_staging_rejects_old_daemon_before_explore", func(t *testing.T) {
 		for _, tt := range []struct {
 			name  string
 			query string
 		}{
+			{name: "ordinary", query: "subject:receipt"},
 			{name: "list", query: "list:announce.example.org"},
 			{name: "list_id", query: "list-id:announce.example.org"},
 		} {
@@ -399,7 +408,7 @@ func TestStageDeleteCommand(t *testing.T) {
 					case "/api/v1/health":
 						writeStageDeleteJSON(t, w, http.StatusOK, map[string]any{
 							"status":             "ok",
-							"api_schema_version": "2.13.0",
+							"api_schema_version": "2.17.0",
 						})
 					case "/api/v1/explore":
 						exploreRequests++
@@ -417,13 +426,13 @@ func TestStageDeleteCommand(t *testing.T) {
 				root.SetArgs([]string{"stage-delete", tt.query})
 				err := root.Execute()
 
-				require.ErrorContains(t, err, "List-ID filter requires daemon API schema 2.14.0 or newer")
-				assert.Zero(t, exploreRequests, "an older daemon must reject List-ID queries before Explore")
+				require.ErrorContains(t, err, "query staging requires daemon API schema 2.18.0 or newer")
+				assert.Zero(t, exploreRequests, "an older daemon must reject query staging before Explore")
 			})
 		}
 	})
 
-	t.Run("list_id_capability_probe_failures_before_explore", func(t *testing.T) {
+	t.Run("query_staging_capability_probe_failures_before_explore", func(t *testing.T) {
 		for _, tt := range []struct {
 			name          string
 			status        int
@@ -468,7 +477,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
 				err := root.Execute()
 
-				require.ErrorContains(t, err, "check daemon List-ID filter capability")
+				require.ErrorContains(t, err, "check daemon query staging capability")
 				assert.Equal(t, tt.wantHealthReq, healthRequests)
 				assert.Zero(t, exploreRequests, "a failed capability probe must happen before Explore")
 			})
@@ -477,7 +486,7 @@ func TestStageDeleteCommand(t *testing.T) {
 
 	t.Run("newer_daemon_and_ordinary_query", func(t *testing.T) {
 		t.Run("newer_daemon", func(t *testing.T) {
-			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "list:announce.example.org", false, http.StatusCreated, "2.15.0")
+			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "list:announce.example.org", false, http.StatusCreated, "2.18.0")
 			withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
@@ -490,8 +499,8 @@ func TestStageDeleteCommand(t *testing.T) {
 				"the stage-delete gate and the search-index probe each verify List-ID capability")
 		})
 
-		t.Run("ordinary_query_skips_probe", func(t *testing.T) {
-			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "subject:test", false, http.StatusCreated, "2.15.0")
+		t.Run("ordinary_query_checks_contract", func(t *testing.T) {
+			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "subject:test", false, http.StatusCreated, "2.18.0")
 			withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
@@ -500,7 +509,7 @@ func TestStageDeleteCommand(t *testing.T) {
 			root.SetArgs([]string{"stage-delete", "subject:test"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
-			assert.Zero(t, *healthRequests)
+			assert.Equal(t, 1, *healthRequests)
 		})
 	})
 }
@@ -514,7 +523,7 @@ func boolFlag(enabled bool, flag string) []string {
 
 func newStageDeleteTestServer(t *testing.T, wantQuery string, dryRun bool, stageStatus int, wantSourceID ...int64) (*httptest.Server, *[]string) {
 	t.Helper()
-	server, routes, _ := newStageDeleteTestServerWithSchema(t, wantQuery, dryRun, stageStatus, "2.14.0", wantSourceID...)
+	server, routes, _ := newStageDeleteTestServerWithSchema(t, wantQuery, dryRun, stageStatus, "2.18.0", wantSourceID...)
 	return server, routes
 }
 
