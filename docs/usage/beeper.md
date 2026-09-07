@@ -137,14 +137,19 @@ cursors are untouched, so it is idempotent.
 
 Media that arrives as a forwarded link preview — an Instagram reel, an x.com
 post — is recorded with the URL it previews in `attachments.attachment_metadata`
-(`{"shared_url": "..."}`), while media a sender composed has none. This tells a
+(`{"shared_url": "..."}`). Voice note transcripts can also appear there under
+`source_transcript`, so the shared URL field identifies previews. This tells a
 photo a friend took apart from a public post they forwarded, which matters
 because forwarded previews can dominate an Instagram archive's bytes while
 remaining recoverable from the URL. Downloads are unaffected: everything is
-still archived. To see the split:
+still archived. The metadata copy of `source_transcript.text` is capped at 32
+KiB on a UTF-8 boundary. A clipped value includes `"truncated": true`; the
+field is omitted when the complete transcript fits. The full transcript stays
+in the searchable message body. To see the split:
 
 ```sql
-SELECT COALESCE(a.attachment_metadata IS NOT NULL, 0) AS is_share,
+SELECT CASE WHEN COALESCE(json_extract_string(a.attachment_metadata, '$.shared_url'), '') <> ''
+            THEN 1 ELSE 0 END AS is_share,
        COUNT(*), SUM(a.size)
 FROM attachments a
 JOIN messages m ON m.id = a.message_id

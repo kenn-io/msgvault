@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,12 +11,124 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestAttachmentMetadataPreservesSharedURLAndBoundsSourceTranscript(t *testing.T) {
+	assert := assert.New(t)
+	longTranscript := strings.Repeat("あ", 11_000) + "x"
+	m := &Message{
+		Type: typeImage, Text: "https://example.com/shared", Attachments: []Attachment{{
+			IsVoiceNote: true, Transcription: &Transcription{Transcription: longTranscript},
+		}},
+	}
+	var metadata struct {
+		SharedURL        string `json:"shared_url"`
+		SourceTranscript struct {
+			Provider  string `json:"provider"`
+			Text      string `json:"text"`
+			Truncated bool   `json:"truncated"`
+		} `json:"source_transcript"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(attachmentMetadataJSON(m, &m.Attachments[0])), &metadata))
+	assert.Equal("https://example.com/shared", metadata.SharedURL)
+	assert.Equal(sourceTypeBeeper, metadata.SourceTranscript.Provider)
+	assert.True(metadata.SourceTranscript.Truncated)
+	assert.LessOrEqual(len(metadata.SourceTranscript.Text), maxSourceTranscriptMetadataBytes)
+	assert.True(utf8.ValidString(metadata.SourceTranscript.Text))
+	assert.Equal(0, len([]byte(metadata.SourceTranscript.Text))%3)
+	assert.Contains(bodyText(m), longTranscript)
+
+	exact := &Attachment{Transcription: &Transcription{Transcription: strings.Repeat("é", 16_384)}}
+	var exactMetadata struct {
+		SourceTranscript struct {
+			Text      string `json:"text"`
+			Truncated bool   `json:"truncated"`
+		} `json:"source_transcript"`
+	}
+	exactMetadataJSON := attachmentMetadataJSON(&Message{Attachments: []Attachment{{}}}, exact)
+	require.NoError(t, json.Unmarshal([]byte(exactMetadataJSON), &exactMetadata))
+	assert.Len([]byte(exactMetadata.SourceTranscript.Text), maxSourceTranscriptMetadataBytes)
+	assert.False(exactMetadata.SourceTranscript.Truncated)
+	assert.NotContains(exactMetadataJSON, `"truncated":false`)
+	t.Logf("metadata boundary bytes: %d", len([]byte(exactMetadata.SourceTranscript.Text)))
+}
+
+func TestAttachmentMetadataEmptyAndTranscriptAbsentStayNull(t *testing.T) {
+	assert.Empty(t, attachmentMetadataJSON(&Message{Type: typeImage, Attachments: []Attachment{{}}}, &Attachment{}))
+	assert.JSONEq(t, `{"shared_url":"https://example.com"}`, attachmentMetadataJSON(
+		&Message{Text: "https://example.com", Attachments: []Attachment{{}}}, &Attachment{}))
+}
+
+func TestImportAndRepairPreserveAttachmentTranscriptMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaTranscriptChat()
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/voice1", []byte("voice bytes"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var body, metadata string
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT m.id, b.body_text, COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM messages m
+		JOIN message_bodies b ON b.message_id = m.id
+		JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_message_id = ? AND a.source_attachment_id = ?`),
+		"voice1", "beeper:mxc://beeper.local/voice1").Scan(&messageID, &body, &metadata))
+	assert.Equal("https://example.com\n🎤 transcript: source words", body)
+	assert.JSONEq(`{"shared_url":"https://example.com","source_transcript":{"provider":"beeper","text":"source words"}}`, metadata)
+
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "stale.ogg", MIMEType: "audio/ogg", StoragePath: "stale/path",
+		ContentHash: strings.Repeat("b", 64), Size: 12, SourceAttachmentID: "beeper:stale",
+		MediaType: "audio", State: attachmentpolicy.StateStored,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = ? WHERE source_attachment_id = ?`),
+		`{"source_transcript":{"provider":"beeper","text":"stale"}}`, "beeper:stale")
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = NULL WHERE source_attachment_id = ?`), "beeper:mxc://beeper.local/voice1")
+	require.NoError(err)
+	_, err = imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM attachments a WHERE a.source_attachment_id = ?`), "beeper:mxc://beeper.local/voice1").Scan(&metadata))
+	assert.JSONEq(`{"shared_url":"https://example.com","source_transcript":{"provider":"beeper","text":"source words"}}`, metadata)
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM attachments a WHERE a.source_attachment_id = ?`), "beeper:stale").Scan(&metadata))
+	assert.Empty(metadata)
+}
+
+func mediaTranscriptChat() *fakeChat {
+	ch := mediaChat()
+	ch.ID = "!transcript:beeper.local"
+	ch.Msgs[0].ID = "voice1"
+	ch.Msgs[0].Type = "VOICE"
+	ch.Msgs[0].Text = "https://example.com"
+	ch.Msgs[0].Attachments = []map[string]any{{
+		"id": "mxc://beeper.local/voice1", "type": "audio", "isVoiceNote": true,
+		"mimeType": "audio/ogg", "fileName": "voice.ogg", "fileSize": 11,
+		"transcription": map[string]any{"transcription": "source words"},
+	}}
+	return ch
+}
 
 // mediaChat builds a chat with one image message whose asset may or may not
 // be present on the fake server.
@@ -64,7 +177,9 @@ func TestImportDownloadsAttachment(t *testing.T) {
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
-	f.addChat(mediaChat())
+	ch := mediaChat()
+	ch.Msgs[0].Attachments[0]["transcription"] = map[string]any{"transcription": "stored words"}
+	f.addChat(ch)
 	f.setAsset("mxc://beeper.local/photo1", []byte("hello bytes"))
 	imp, st, done := newTestImporter(t, f)
 	defer done()
@@ -112,11 +227,13 @@ func TestImportDownloadsAttachment(t *testing.T) {
 	}
 
 	// Metadata folded into the attachment row survives the re-persist.
-	var keptMediaType string
+	var keptMediaType, keptMetadata string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT a.media_type FROM attachments a JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = ?`), "p0").Scan(&keptMediaType))
+		SELECT a.media_type, COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&keptMediaType, &keptMetadata))
 	assert.Equal("image", keptMediaType)
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"stored words"}}`, keptMetadata)
 }
 
 func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
@@ -154,6 +271,57 @@ func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
 	}
 }
 
+func TestPersistAttachmentsPreservesReusedMediaFields(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	f.setAsset("mxc://beeper.local/photo1", []byte("photo bytes"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "p0").Scan(&messageID))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE attachments
+		SET filename = 'old.jpg', mime_type = 'image/jpeg', width = 32, height = 24,
+			duration_ms = 400, media_type = 'sticker', attachment_metadata = ?,
+			attachment_role = 'sticker', role_source = 'provider_explicit'
+		WHERE source_attachment_id = ?`),
+		`{"source_transcript":{"provider":"beeper","text":"old words"}}`, "beeper:mxc://beeper.local/photo1")
+	// The projection refreshes metadata while preserving optional fields that
+	// the current payload does not authoritatively replace.
+	require.NoError(err)
+
+	imp.persistAttachments(context.Background(), 0, messageID, &Message{
+		Attachments: []Attachment{{
+			ID: "mxc://beeper.local/photo1", Type: "audio", MimeType: "audio/ogg",
+			FileName: "voice.ogg", FileSize: 11,
+			Transcription: &Transcription{Transcription: "new words"},
+		}},
+	}, opts, &ImportSummary{})
+	var filename, mimeType, mediaType, role, roleSource, metadata string
+	var width, height, durationMS int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT filename, mime_type, width, height, duration_ms, media_type, attachment_role, role_source,
+			COALESCE(CAST(attachment_metadata AS TEXT), '')
+		FROM attachments WHERE source_attachment_id = ?`), "beeper:mxc://beeper.local/photo1").Scan(
+		&filename, &mimeType, &width, &height, &durationMS, &mediaType, &role, &roleSource, &metadata))
+	assert.Equal("old.jpg", filename)
+	assert.Equal("image/jpeg", mimeType)
+	assert.EqualValues(32, width)
+	assert.EqualValues(24, height)
+	assert.EqualValues(400, durationMS)
+	assert.Equal("sticker", mediaType)
+	assert.Equal("standalone", role)
+	assert.Equal("importer_semantics", roleSource)
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"new words"}}`, metadata)
+}
+
 func TestImportMediaPolicySkipsWithoutFetching(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -188,7 +356,9 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
-	f.addChat(mediaChat())
+	ch := mediaChat()
+	ch.Msgs[0].Attachments[0]["transcription"] = map[string]any{"transcription": "pending words"}
+	f.addChat(ch)
 	// Asset intentionally missing: download fails, message still archives.
 	imp, st, done := newTestImporter(t, f)
 	defer done()
@@ -213,6 +383,16 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 		WHERE m.source_message_id = ?`), "p0").Scan(&storagePath, &sourceAttID))
 	assert.Equal("mxc://beeper.local/photo1", storagePath)
 	assert.Equal("beeper:mxc://beeper.local/photo1", sourceAttID)
+	var markerMetadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM attachments a WHERE a.source_attachment_id = ?`), sourceAttID).Scan(&markerMetadata))
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"pending words"}}`, markerMetadata)
+	beforeRevision, err := st.DerivedDataRevision()
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = ? WHERE source_attachment_id = ?`),
+		`{"source_transcript":{"provider":"beeper","text":"stale"}}`, sourceAttID)
+	require.NoError(err)
 
 	// Error recorded per item.
 	var itemCount int
@@ -237,6 +417,13 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 		WHERE m.source_message_id = ?`), "p0").Scan(&attCount, &contentHash))
 	assert.Equal(1, attCount, "marker replaced, not duplicated")
 	assert.NotEmpty(contentHash)
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM attachments a WHERE a.source_attachment_id = ?`), sourceAttID).Scan(&markerMetadata))
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"pending words"}}`, markerMetadata)
+	afterRevision, err := st.DerivedDataRevision()
+	require.NoError(err)
+	assert.Equal(beforeRevision+1, afterRevision, "backfill metadata refresh invalidates the analytics cache")
 
 	// Nothing pending anymore: a second backfill visits no messages.
 	bsum, err = imp.BackfillMedia(context.Background(), ImportOptions{

@@ -2,11 +2,14 @@ package beeper
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -24,12 +27,41 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	f.addChat(ch)
 	f.setAsset("mxc://x/share1", []byte("share-preview-bytes"))
 	f.setAsset("mxc://x/photo1", []byte("photo-bytes"))
+	f.setAsset("mxc://x/sticker1", []byte("sticker-bytes"))
+	ch.Msgs[0].Attachments = []map[string]any{{
+		"id": "mxc://x/sticker1", "type": beeperAttachmentTypeImage, "isSticker": true,
+		"mimeType": "image/webp", "fileName": "sticker.webp", "fileSize": 13,
+	}}
 
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
 	require.NoError(err)
+	var htmlMessageID int64
+	require.NoError(st.DB().QueryRow(`
+		SELECT id FROM messages WHERE source_message_id = 'html1'`).Scan(&htmlMessageID))
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), htmlMessageID, store.AttachmentWrite{
+		Filename: "stale.ogg", MIMEType: "audio/ogg", StoragePath: "stale/path",
+		ContentHash: strings.Repeat("a", 64), Size: 12, SourceAttachmentID: "beeper:stale",
+		MediaType: "audio", State: attachmentpolicy.StateStored,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = ? WHERE source_attachment_id = ?`),
+		`{"source_transcript":{"provider":"beeper","text":"stale"}}`, "beeper:stale")
+	require.NoError(err)
+	reconciler, err := documentindex.NewReconciler(st, documentindex.ReconcilerConfig{
+		AttachmentPageSize: 10, ChangePageSize: 10,
+	})
+	require.NoError(err)
+	_, err = reconciler.Reconcile(t.Context())
+	require.NoError(err)
+	var staleOccurrenceKey string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT o.occurrence_key
+		FROM document_occurrences o
+		JOIN attachments a ON a.id = o.attachment_id
+		WHERE a.source_attachment_id = ?`), "beeper:stale").Scan(&staleOccurrenceKey))
 
 	// Simulate rows written by an older build: raw HTML in the body and no
 	// share classification on the attachments.
@@ -41,7 +73,8 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 		UPDATE attachments
 		SET attachment_metadata = NULL,
 		    attachment_role = 'standalone',
-		    role_source = 'importer_semantics'`)
+		    role_source = 'importer_semantics'
+		WHERE source_attachment_id <> 'beeper:stale'`)
 	require.NoError(err)
 
 	sum, err := imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)
@@ -72,6 +105,26 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	assert.Equal("preview", shareRole)
 	assert.Empty(photoMeta, "media the sender composed is not a share")
 	assert.Equal("standalone", photoRole)
+	var staleMeta, staleRole, staleRoleSource string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source
+		FROM attachments WHERE source_attachment_id = ?`), "beeper:stale").Scan(&staleMeta, &staleRole, &staleRoleSource))
+	assert.Empty(staleMeta, "repair clears classifications for attachments removed from the archived payload")
+	assert.Equal("unknown", staleRole)
+	assert.Equal("unknown", staleRoleSource)
+	var stickerRole, stickerSource string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT attachment_role, role_source
+		FROM attachments WHERE source_attachment_id = ?`), "beeper:mxc://x/sticker1").Scan(&stickerRole, &stickerSource))
+	assert.Equal("sticker", stickerRole)
+	assert.Equal("provider_explicit", stickerSource)
+	result, err := reconciler.Reconcile(t.Context())
+	require.NoError(err)
+	assert.Positive(result.ChangesConsumed)
+	var occurrenceCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM document_occurrences WHERE occurrence_key = ?`), staleOccurrenceKey).Scan(&occurrenceCount))
+	assert.Zero(occurrenceCount, "the existing reconciler removes the now-ineligible occurrence")
 
 	// Re-running must be a no-op: nothing left differing from the archive.
 	again, err := imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)

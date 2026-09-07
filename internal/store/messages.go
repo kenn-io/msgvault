@@ -5336,49 +5336,56 @@ func (s *Store) replaceMessageAttachmentsWhere(
 	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	return s.withTx(func(tx *loggedTx) error {
-		args := append([]any{messageID}, deleteArgs...)
-		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, args...); err != nil {
+		return s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, requireHash, refs, deleteArgs...)
+	})
+}
+
+func (s *Store) replaceMessageAttachmentsWhereTx(
+	tx *loggedTx, messageID int64, deleteWhere string, requireHash bool,
+	refs []AttachmentRef, deleteArgs ...any,
+) error {
+	args := append([]any{messageID}, deleteArgs...)
+	if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, args...); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+			continue
+		}
+		write := AttachmentWrite{
+			Filename:           ref.Filename,
+			MIMEType:           ref.MimeType,
+			StoragePath:        ref.StoragePath,
+			ContentHash:        ref.ContentHash,
+			Size:               int64(ref.Size),
+			SourceAttachmentID: ref.SourceAttachmentID,
+			MediaType:          ref.MediaType,
+			Width:              ref.Width,
+			Height:             ref.Height,
+			DurationMS:         ref.DurationMS,
+			Metadata:           ref.Metadata,
+			Role:               ref.Role,
+			RoleSource:         ref.RoleSource,
+			SourcePartKey:      ref.SourcePartKey,
+			ContentID:          ref.ContentID,
+			State:              ref.State,
+			SkipReason:         ref.SkipReason,
+		}.normalized()
+		if write.SourcePartKey == "" && write.SourceAttachmentID != "" {
+			// Provider attachment IDs are already namespaced by every caller of
+			// this replacement path. They are the stable occurrence identity;
+			// unlike a content hash, they preserve two source parts with the
+			// same bytes and keep hashless pending rows distinct.
+			write.SourcePartKey = write.SourceAttachmentID
+		}
+		if err := write.validate(); err != nil {
 			return err
 		}
-		for _, ref := range refs {
-			if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
-				continue
-			}
-			write := AttachmentWrite{
-				Filename:           ref.Filename,
-				MIMEType:           ref.MimeType,
-				StoragePath:        ref.StoragePath,
-				ContentHash:        ref.ContentHash,
-				Size:               int64(ref.Size),
-				SourceAttachmentID: ref.SourceAttachmentID,
-				MediaType:          ref.MediaType,
-				Width:              ref.Width,
-				Height:             ref.Height,
-				DurationMS:         ref.DurationMS,
-				Metadata:           ref.Metadata,
-				Role:               ref.Role,
-				RoleSource:         ref.RoleSource,
-				SourcePartKey:      ref.SourcePartKey,
-				ContentID:          ref.ContentID,
-				State:              ref.State,
-				SkipReason:         ref.SkipReason,
-			}.normalized()
-			if write.SourcePartKey == "" && write.SourceAttachmentID != "" {
-				// Provider attachment IDs are already namespaced by every caller of
-				// this replacement path. They are the stable occurrence identity;
-				// unlike a content hash, they preserve two source parts with the
-				// same bytes and keep hashless pending rows distinct.
-				write.SourcePartKey = write.SourceAttachmentID
-			}
-			if err := write.validate(); err != nil {
-				return err
-			}
-			if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
-				return err
-			}
+		if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func nullIfEmpty(s string) sql.NullString {
@@ -5424,7 +5431,77 @@ func (s *Store) MessageTeamsInlineAttachments(messageID int64) (map[string]Attac
 // pending-download markers whose storage_path holds the source asset URL, so
 // a later retry pass can find and repair them.
 func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageProviderAttachments(messageID, "beeper:", refs)
+	return s.withTx(func(tx *loggedTx) error {
+		metadataChanged, err := s.beeperAttachmentMetadataChangedTx(tx, messageID, refs)
+		if err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, false, refs, "beeper:%"); err != nil {
+			return err
+		}
+		if metadataChanged {
+			if err := s.bumpDerivedDataRevision(tx); err != nil {
+				return fmt.Errorf("advance Beeper attachment cache revision: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) beeperAttachmentMetadataChangedTx(
+	tx *loggedTx, messageID int64, refs []AttachmentRef,
+) (bool, error) {
+	incoming := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		if ref.StoragePath == "" || !strings.HasPrefix(ref.SourceAttachmentID, "beeper:") {
+			continue
+		}
+		incoming[ref.SourceAttachmentID] = ref.Metadata
+	}
+	rows, err := tx.Query(`
+		SELECT source_attachment_id
+		FROM attachments
+		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%'`, messageID)
+	if err != nil {
+		return false, fmt.Errorf("list existing Beeper attachment metadata: %w", err)
+	}
+	var existingIDs []string
+	for rows.Next() {
+		var sourceAttachmentID string
+		if err := rows.Scan(&sourceAttachmentID); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan existing Beeper attachment metadata: %w", err)
+		}
+		existingIDs = append(existingIDs, sourceAttachmentID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate existing Beeper attachment metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close existing Beeper attachment metadata: %w", err)
+	}
+	if len(existingIDs) != len(incoming) {
+		return true, nil
+	}
+	for _, sourceAttachmentID := range existingIDs {
+		metadata, ok := incoming[sourceAttachmentID]
+		if !ok {
+			return true, nil
+		}
+		var same int
+		if err := tx.QueryRow(fmt.Sprintf(`
+			SELECT COUNT(*) FROM attachments
+			WHERE message_id = ? AND source_attachment_id = ?
+			  AND NOT (%s)`, s.dialect.JSONIsDistinctExpr("attachment_metadata")),
+			messageID, sourceAttachmentID, nullIfEmpty(metadata)).Scan(&same); err != nil {
+			return false, fmt.Errorf("compare existing Beeper attachment metadata: %w", err)
+		}
+		if same == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // MessageBeeperAttachments returns the message's existing Beeper-managed
@@ -5486,47 +5563,6 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 		out = append(out, item)
 	}
 	return out, rows.Err()
-}
-
-// SetBeeperAttachmentClassification refreshes link-preview metadata and role
-// on a message's Beeper-managed attachment rows. Sticker is explicit provider
-// evidence and takes precedence over the message-level preview shape.
-func (s *Store) SetBeeperAttachmentClassification(
-	messageID int64,
-	metadata string,
-	isPreview bool,
-) (int64, error) {
-	role := AttachmentRoleStandalone
-	if isPreview {
-		role = AttachmentRolePreview
-	}
-	res, err := s.db.Exec(s.Rebind(fmt.Sprintf(`
-		UPDATE attachments
-		SET attachment_metadata = %s,
-		    attachment_role = CASE
-		        WHEN attachment_role = 'sticker' THEN attachment_role
-		        ELSE ?
-		    END,
-		    role_source = CASE
-		        WHEN attachment_role = 'sticker' THEN role_source
-		        ELSE 'importer_semantics'
-		    END
-		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%%'
-		  AND (
-		      %s
-		      OR (attachment_role != 'sticker' AND attachment_role != ?)
-		      OR (attachment_role != 'sticker' AND role_source != 'importer_semantics')
-		  )
-	`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))),
-		nullIfEmpty(metadata), string(role), messageID, nullIfEmpty(metadata), string(role))
-	if err != nil {
-		return 0, fmt.Errorf("set beeper attachment classification: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("set beeper attachment classification: rows affected: %w", err)
-	}
-	return n, nil
 }
 
 // UpdateMessageDerivedText atomically updates the text fields derived from one

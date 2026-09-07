@@ -98,6 +98,13 @@ func placeholderBody(m *Message) string {
 	}
 }
 
+func sourceTranscript(att *Attachment) string {
+	if att == nil || att.Transcription == nil {
+		return ""
+	}
+	return strings.TrimSpace(att.Transcription.Transcription)
+}
+
 // bodyText renders the plain-text body: the message text (or a placeholder
 // for text-less media), plus any voice-note transcriptions so they are
 // visible to FTS and embeddings.
@@ -109,8 +116,8 @@ func bodyText(m *Message) string {
 		parts = append(parts, ph)
 	}
 	for _, att := range m.Attachments {
-		if att.Transcription != nil && strings.TrimSpace(att.Transcription.Transcription) != "" {
-			parts = append(parts, "🎤 transcript: "+strings.TrimSpace(att.Transcription.Transcription))
+		if transcript := sourceTranscript(&att); transcript != "" {
+			parts = append(parts, "🎤 transcript: "+transcript)
 		}
 	}
 	return strings.Join(parts, "\n")

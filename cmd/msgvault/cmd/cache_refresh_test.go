@@ -412,7 +412,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	initialState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.Equal(query.CacheSchemaVersion, initialState.SchemaVersion)
-	assert.Zero(initialState.DerivedDataRevision)
+	assert.Equal(int64(1), initialState.DerivedDataRevision)
 
 	readCached := func() (string, any) {
 		t.Helper()
@@ -452,11 +452,86 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	require.NoError(rebuildCacheAfterWrite(dbPath))
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
-	assert.Equal(int64(1), repairedState.DerivedDataRevision)
+	assert.Equal(int64(3), repairedState.DerivedDataRevision,
+		"initial attachment, classification commit, and completed rederive ledger each advance the existing revision")
 	afterSnippet, afterMetadata := readCached()
 	assert.Equal("https://example.com/post", afterSnippet)
 	require.NotNil(afterMetadata)
 	assert.JSONEq(`{"shared_url":"https://example.com/post"}`, fmt.Sprint(afterMetadata))
+}
+
+func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	analyticsDir := cfg.AnalyticsDir()
+
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "!mixed:example.org", "direct_chat", "Mixed")
+	require.NoError(err)
+	insertMessage := func(id string, sentAt time.Time) int64 {
+		messageID, insertErr := st.UpsertMessage(&store.Message{
+			ConversationID: conversationID, SourceID: source.ID, SourceMessageID: id,
+			MessageType: "beeper", SentAt: sql.NullTime{Time: sentAt, Valid: true},
+			ReceivedAt: sql.NullTime{Time: sentAt, Valid: true}, HasAttachments: true, AttachmentCount: 1,
+		})
+		require.NoError(insertErr)
+		return messageID
+	}
+	oldMessageID := insertMessage("mixed-old", time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	require.NoError(st.ReplaceMessageBeeperAttachments(oldMessageID, []store.AttachmentRef{{
+		StoragePath: "aa/" + strings.Repeat("a", 64), SourceAttachmentID: "beeper:old",
+		Metadata:  `{"source_transcript":{"provider":"beeper","text":"old"}}`,
+		MediaType: "voice_note", Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}}))
+	require.NoError(st.Close())
+	require.NoError(func() error { _, buildErr := buildCache(dbPath, analyticsDir, true); return buildErr }())
+
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	newMessageID := insertMessage("mixed-new", time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
+	require.NoError(st.ReplaceMessageBeeperAttachments(newMessageID, []store.AttachmentRef{{
+		StoragePath: "bb/" + strings.Repeat("b", 64), SourceAttachmentID: "beeper:new",
+		Metadata:  `{"source_transcript":{"provider":"beeper","text":"new"}}`,
+		MediaType: "voice_note", Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}}))
+	require.NoError(st.ReplaceMessageBeeperAttachments(oldMessageID, []store.AttachmentRef{{
+		StoragePath: "aa/" + strings.Repeat("a", 64), SourceAttachmentID: "beeper:old",
+		Metadata:  `{"source_transcript":{"provider":"beeper","text":"refreshed"}}`,
+		MediaType: "voice_note", Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}}))
+	require.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(staleness.NeedsBuild)
+	assert.True(staleness.HasDerivedDataDrift)
+	assert.True(staleness.FullRebuild)
+	require.NoError(rebuildCacheAfterWrite(dbPath))
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err)
+	result, err := engine.QuerySQL(context.Background(), `
+		SELECT m.source_message_id, a.attachment_metadata
+		FROM messages m JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_message_id IN ('mixed-old', 'mixed-new')
+		ORDER BY m.source_message_id`)
+	require.NoError(err)
+	require.NoError(engine.Close())
+	require.Len(result.Rows, 2)
+	assert.Equal("mixed-new", fmt.Sprint(result.Rows[0][0]))
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"new"}}`, fmt.Sprint(result.Rows[0][1]))
+	assert.Equal("mixed-old", fmt.Sprint(result.Rows[1][0]))
+	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"refreshed"}}`, fmt.Sprint(result.Rows[1][1]))
 }
 
 func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {

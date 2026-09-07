@@ -2377,6 +2377,8 @@ func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
 			require.NoError(err, "add attachment metadata column")
 			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"shared_url":"https://example.com/post"}' WHERE id = 1`)
 			require.NoError(err, "set link-preview metadata")
+			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"source_transcript":{"provider":"beeper","text":"voice note"}}' WHERE id = 2`)
+			require.NoError(err, "set transcript metadata")
 			_, err = db.Exec(`UPDATE messages SET message_type = 'beeper' WHERE id = 2`)
 			require.NoError(err, "mark fixture message as Beeper")
 			require.NoError(db.Close(), "close SQLite fixture")
@@ -2388,14 +2390,14 @@ func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
 			defer func() { _ = engine.Close() }()
 
 			result, err := engine.QuerySQL(context.Background(), `
-				SELECT COALESCE(a.attachment_metadata IS NOT NULL, 0) AS is_share,
+				SELECT CASE WHEN COALESCE(json_extract_string(a.attachment_metadata, '$.shared_url'), '') <> '' THEN 1 ELSE 0 END AS is_share,
 				       COUNT(*), SUM(a.size)
 				FROM attachments a
 				JOIN messages m ON m.id = a.message_id
 				WHERE m.message_type = 'beeper'
 				GROUP BY is_share
 				ORDER BY is_share`)
-			require.NoError(err, "run documented link-preview query")
+			require.NoError(err, "run documented shared URL query")
 			assert.Equal([]string{"is_share", "count_star()", "sum(a.size)"}, result.Columns)
 			require.Len(result.Rows, 2)
 			assert.Equal("0", fmt.Sprint(result.Rows[0][0]))

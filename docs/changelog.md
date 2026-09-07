@@ -42,6 +42,9 @@ All notable changes to msgvault, grouped by release.
   view. Multi-source collections offer Fast search only, and deletion staging
   requires the selected messages to belong to one source.
 
+- Preserve bounded provider transcript details in Beeper attachment metadata and
+  repair stale attachment classifications from archived payloads.
+
 - Web Directory workspace: browse and search promoted durable people, filter
   by contact state, category, organization, and last contact, and maintain a
   person's profile, custom fields, employment, typed relationships, tracking,

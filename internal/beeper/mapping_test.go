@@ -139,13 +139,13 @@ func TestSharedLink(t *testing.T) {
 func TestShareMetadata(t *testing.T) {
 	assert := assert.New(t)
 	att := []Attachment{{FileName: "image.jpg"}}
-	assert.Empty(shareMetadata(&Message{Type: typeImage, Attachments: att}))
+	assert.Empty(attachmentMetadataJSON(&Message{Type: typeImage, Attachments: att}, &att[0]))
 	assert.JSONEq(
 		`{"shared_url":"https://www.instagram.com/p/ABC/"}`,
-		shareMetadata(&Message{Type: typeImage, Text: "https://www.instagram.com/p/ABC/", Attachments: att}),
+		attachmentMetadataJSON(&Message{Type: typeImage, Text: "https://www.instagram.com/p/ABC/", Attachments: att}, &att[0]),
 	)
 	// A URL carrying a quote must not be able to break out of the JSON value.
-	meta := shareMetadata(&Message{Type: typeImage, Text: `https://x.example/"+evil`, Attachments: att})
+	meta := attachmentMetadataJSON(&Message{Type: typeImage, Text: `https://x.example/"+evil`, Attachments: att}, &att[0])
 	assert.NotEmpty(meta)
 	assert.JSONEq(`{"shared_url":"https://x.example/\"+evil"}`, meta)
 }

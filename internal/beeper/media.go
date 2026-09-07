@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
@@ -86,19 +88,50 @@ func recordOverCap(sum *ImportSummary, size int64, lowerBound bool) {
 	}
 }
 
-// shareMetadata renders the attachment_metadata JSON marking media that came
-// in as a link preview rather than as something the sender composed, recording
-// the URL it previews. Returns "" for ordinary media, which stores NULL.
-func shareMetadata(m *Message) string {
-	link := sharedLink(m)
-	if link == "" {
+const maxSourceTranscriptMetadataBytes = 32 * 1024
+
+type sourceTranscriptMetadata struct {
+	Provider  string `json:"provider"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type attachmentMetadata struct {
+	SharedURL        string                    `json:"shared_url,omitempty"`
+	SourceTranscript *sourceTranscriptMetadata `json:"source_transcript,omitempty"`
+}
+
+func truncateUTF8(s string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 {
+		return "", len(s) > 0
+	}
+	s = strings.ToValidUTF8(s, "\uFFFD")
+	if len(s) <= maxBytes {
+		return s, false
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut], true
+}
+
+func attachmentMetadataJSON(m *Message, att *Attachment) string {
+	metadata := attachmentMetadata{SharedURL: sharedLink(m)}
+	if transcript := sourceTranscript(att); transcript != "" {
+		text, truncated := truncateUTF8(transcript, maxSourceTranscriptMetadataBytes)
+		metadata.SourceTranscript = &sourceTranscriptMetadata{
+			Provider:  sourceTypeBeeper,
+			Text:      text,
+			Truncated: truncated,
+		}
+	}
+	if metadata.SharedURL == "" && metadata.SourceTranscript == nil {
 		return ""
 	}
-	// Marshal rather than concatenate: the URL is untrusted remote input and
-	// must not be able to break out of the JSON value.
-	b, err := json.Marshal(struct {
-		SharedURL string `json:"shared_url"`
-	}{SharedURL: link})
+	// Marshal rather than concatenate: provider values are untrusted input and
+	// must not be able to break out of a JSON value.
+	b, err := json.Marshal(metadata)
 	if err != nil {
 		return ""
 	}
@@ -133,8 +166,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	}
 	policy := opts.MediaPolicy
 	policy.MaxBytes = maxBytes
-	shareMeta := shareMetadata(m)
-	isPreview := shareMeta != ""
+	isPreview := sharedLink(m) != ""
 	refs := make([]store.AttachmentRef, 0, len(m.Attachments))
 	for i := range m.Attachments {
 		att := &m.Attachments[i]
@@ -146,9 +178,9 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		previous, hadPrevious := existing[sourceAttID]
 		if hadPrevious && previous.ContentHash != "" {
 			// Re-persisting already-downloaded media: keep the blob as-is but
-			// refresh the share marker, so re-running over an existing archive
-			// classifies rows stored before this was recorded.
-			previous.Metadata = shareMeta
+			// refresh current provider metadata, so re-running over an existing
+			// archive classifies rows stored before this was recorded.
+			previous.Metadata = attachmentMetadataJSON(m, att)
 			setBeeperAttachmentRole(&previous, att, isPreview)
 			refs = append(refs, previous)
 			continue
@@ -159,7 +191,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			StoragePath:        ref,
 			Size:               declaredSize(att),
 			SourceAttachmentID: sourceAttID,
-			Metadata:           shareMeta,
+			Metadata:           attachmentMetadataJSON(m, att),
 			State:              attachmentpolicy.StatePending,
 		}
 		if hadPrevious && previous.Size > marker.Size {
@@ -254,7 +286,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			SourceAttachmentID: sourceAttID,
 			MediaType:          mediaTypeOf(att),
 			DurationMS:         int64(att.Duration * 1000),
-			Metadata:           shareMeta,
+			Metadata:           attachmentMetadataJSON(m, att),
 			State:              attachmentpolicy.StateStored,
 		}
 		setBeeperAttachmentRole(&stored, att, isPreview)
