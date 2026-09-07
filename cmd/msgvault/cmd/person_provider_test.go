@@ -111,6 +111,19 @@ type fixedPersonProviderChecker struct {
 	calls    atomic.Int64
 }
 
+type grantFailingPersonProviderStore struct {
+	personProviderStore
+	err error
+}
+
+func (s *grantFailingPersonProviderStore) GrantPersonInferenceConsent(
+	context.Context,
+	string,
+	string,
+) (*store.PersonInferenceConsent, bool, error) {
+	return nil, false, s.err
+}
+
 func (c *fixedPersonProviderChecker) Check(context.Context) (peoplesweep.StructuredResponse, error) {
 	c.calls.Add(1)
 	return c.response, c.err
@@ -441,6 +454,26 @@ func TestPersonProviderStatusStaleProgramNegativeSpace(t *testing.T) {
 	assert.NotContains(output, "stale_program_check")
 	assert.NotContains(output, "stale_program_consent")
 
+	st = testutil.NewSQLiteTestStore(t)
+	current, err = personProviderTestConfig().Profile()
+	require.NoError(err)
+	historicalPersonProviderProfile(t, st, current, false, true)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), current)
+	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: current.Fingerprint, CheckedAt: time.Now().UTC(),
+		DriverVersion: current.DriverVersion, OutputMode: current.OutputMode,
+		ModelVersion: "current-model-v1",
+	}))
+	deps = localPersonProviderDeps(personProviderTestConfig(), st, nil)
+	output, err = executePersonProviderCommand(t, deps, "status", "default", "--json")
+	require.NoError(err)
+	var checkPresent map[string]any
+	require.NoError(json.Unmarshal([]byte(output), &checkPresent))
+	_, hasStaleCheck := checkPresent["stale_program_check"]
+	assert.False(hasStaleCheck)
+	assert.Equal(true, checkPresent["stale_program_consent"])
+
 	for _, test := range []struct {
 		name   string
 		mutate func(*peoplesweep.ProviderProfile)
@@ -581,6 +614,33 @@ func TestPersonProviderReverifyRunsCheckThenGrantsExactConsent(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(output), &status))
 	assert.Equal(firstConsentID, status.Consent.Consent.ID)
 	assert.Equal(int64(2), checker.calls.Load())
+}
+
+func TestPersonProviderReverifyReturnsGrantFailureAfterCheck(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	config := personProviderTestConfig()
+	profile, err := config.Profile()
+	require.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
+		ProviderRequestID: "req-reverify", ProviderVersion: profile.DriverVersion,
+		ModelVersion: "current-model-v1",
+	}}
+	grantErr := errors.New("synthetic consent grant failed")
+	wrapped := &grantFailingPersonProviderStore{personProviderStore: st, err: grantErr}
+	deps := localPersonProviderDeps(config, wrapped, checker)
+
+	_, err = executePersonProviderCommand(t, deps, "reverify", "default", "--yes")
+	require.ErrorIs(err, grantErr)
+	assert.Equal(int64(1), checker.calls.Load())
+	check, err := st.GetPersonInferenceCheck(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	require.NotNil(check)
+	assert.Equal("current-model-v1", check.ModelVersion)
+	consent, err := st.GetPersonInferenceConsentStatus(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(consent.Active)
 }
 
 func TestPersonProviderReverifySelectsDisabledNamedProfile(t *testing.T) {
