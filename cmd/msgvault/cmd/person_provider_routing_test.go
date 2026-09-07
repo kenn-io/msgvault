@@ -71,6 +71,8 @@ func TestPersonProviderFrontendRoutesExactCommandsAndCredential(t *testing.T) {
 			wantArgs: []string{"person", "provider", "consent", "--semantic-embeddings", "--yes"}},
 		{name: "check", args: []string{"check", "--json"},
 			wantArgs: []string{"person", "provider", "check", "--json"}},
+		{name: "reverify", args: []string{"reverify", "default", "--yes", "--json"},
+			wantArgs: []string{"person", "provider", "reverify", "--json", "--yes", "default"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

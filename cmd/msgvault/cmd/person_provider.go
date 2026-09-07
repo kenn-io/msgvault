@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -83,10 +84,12 @@ type personProviderCommandDeps struct {
 }
 
 type personProviderStatusOutput struct {
-	Profile        peoplesweep.ProviderProfile         `json:"profile"`
-	Check          *store.PersonInferenceCheck         `json:"check,omitempty"`
-	Consent        store.PersonInferenceConsentStatus  `json:"consent"`
-	CodexIsolation *personProviderCodexIsolationStatus `json:"codex_isolation,omitempty"`
+	Profile             peoplesweep.ProviderProfile         `json:"profile"`
+	Check               *store.PersonInferenceCheck         `json:"check,omitempty"`
+	Consent             store.PersonInferenceConsentStatus  `json:"consent"`
+	StaleProgramCheck   bool                                `json:"stale_program_check,omitempty"`
+	StaleProgramConsent bool                                `json:"stale_program_consent,omitempty"`
+	CodexIsolation      *personProviderCodexIsolationStatus `json:"codex_isolation,omitempty"`
 }
 
 type personProviderUseOutput struct {
@@ -319,6 +322,7 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 		newPersonProviderUseCommand(deps),
 		newPersonProviderStatusCommand(deps),
 		newPersonProviderConsentCommand(deps),
+		newPersonProviderReverifyCommand(deps),
 		newPersonProviderRevokeCommand(deps),
 		newPersonProviderHistoryCommand(deps),
 		newPersonProviderCheckCommand(deps),
@@ -326,6 +330,29 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 		newPersonProviderModelsCommand(deps),
 	)
 	return provider
+}
+
+func newPersonProviderReverifyCommand(deps personProviderCommandDeps) *cobra.Command {
+	var confirmed bool
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "reverify <name>",
+		Short: "Re-run the exact provider check and consent",
+		Args:  exactPersonProviderNameArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			if !deps.isDaemonSubprocess() {
+				return deps.proxy(command, args, nil)
+			}
+			runDeps, err := personProviderDepsForName(deps, args[0], false)
+			if err != nil {
+				return err
+			}
+			return runPersonProviderReverify(command, runDeps, confirmed, jsonOutput)
+		},
+	}
+	command.Flags().BoolVar(&confirmed, "yes", false, "Confirm the disclosed provider policy")
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
+	return command
 }
 
 func exactPersonProviderNameArgs(command *cobra.Command, args []string) error {
@@ -1241,6 +1268,12 @@ func runPersonProviderStatus(
 		return err
 	}
 	output.CodexIsolation = codexIsolation
+	output.StaleProgramCheck, output.StaleProgramConsent, err = personProviderStaleProgramState(
+		command.Context(), st, profile, output,
+	)
+	if err != nil {
+		return err
+	}
 	return writePersonProviderStatus(command.OutOrStdout(), output, jsonOutput)
 }
 
@@ -1525,6 +1558,44 @@ func runPersonProviderCheck(
 	return writePersonProviderCheckOutput(command.OutOrStdout(), output, jsonOutput)
 }
 
+func runPersonProviderReverify(
+	command *cobra.Command,
+	deps personProviderCommandDeps,
+	confirmed bool,
+	jsonOutput bool,
+) error {
+	profile, err := deps.config().Profile()
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		printPersonProviderDisclosure(command.OutOrStdout(), profile)
+		return errors.New("people inference reverify requires --yes after reviewing the provider disclosure")
+	}
+	if _, err := checkPersonProvider(command, deps, ""); err != nil {
+		return err
+	}
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if _, _, err := st.GrantPersonInferenceConsent(
+		command.Context(), profile.Fingerprint, personProviderConsentActor,
+	); err != nil {
+		return err
+	}
+	if jsonOutput {
+		output, err := personProviderStatusFor(command.Context(), st, profile)
+		if err != nil {
+			return err
+		}
+		return writePersonProviderStatus(command.OutOrStdout(), output, true)
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(), "People inference provider reverified (fingerprint=%s).\n", profile.Fingerprint)
+	return nil
+}
+
 // checkPersonProvider runs the synthetic capability check for one exact
 // profile and records it. It performs no consent grant.
 func checkPersonProvider(
@@ -1768,6 +1839,58 @@ func personProviderStatusFor(
 	return personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}, nil
 }
 
+func personProviderStaleProgramState(
+	ctx context.Context,
+	st personProviderStore,
+	current peoplesweep.ProviderProfile,
+	status personProviderStatusOutput,
+) (bool, bool, error) {
+	profiles, err := st.ListPersonInferenceProfiles(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	staleCheck, staleConsent := false, false
+	for _, historical := range profiles {
+		if historical.ProgramFingerprint == current.ProgramFingerprint ||
+			historical.Fingerprint == current.Fingerprint ||
+			!samePersonProviderPolicyExceptProgram(current, historical) {
+			continue
+		}
+		historicalCheck, err := st.GetPersonInferenceCheck(ctx, historical.Fingerprint)
+		if err != nil {
+			return false, false, err
+		}
+		historicalConsent, err := st.GetPersonInferenceConsentStatus(ctx, historical.Fingerprint)
+		if err != nil {
+			return false, false, err
+		}
+		if historicalCheck != nil && status.Check == nil {
+			staleCheck = true
+		}
+		if historicalConsent != nil && historicalConsent.Active && !status.Consent.Active {
+			staleConsent = true
+		}
+	}
+	return staleCheck, staleConsent, nil
+}
+
+func samePersonProviderPolicyExceptProgram(
+	left, right peoplesweep.ProviderProfile,
+) bool {
+	leftValue, rightValue := reflect.ValueOf(left), reflect.ValueOf(right)
+	typeOfProfile := leftValue.Type()
+	for index := range typeOfProfile.NumField() {
+		name := typeOfProfile.Field(index).Name
+		if name == "Fingerprint" || name == "PolicyJSON" || name == "ProgramFingerprint" {
+			continue
+		}
+		if !reflect.DeepEqual(leftValue.Field(index).Interface(), rightValue.Field(index).Interface()) {
+			return false
+		}
+	}
+	return true
+}
+
 func writePersonProviderStatus(
 	w io.Writer,
 	output personProviderStatusOutput,
@@ -1783,6 +1906,9 @@ func writePersonProviderStatus(
 		_, _ = fmt.Fprintf(w, "Check: %s (model_version=%s)\n",
 			output.Check.CheckedAt.Format(time.RFC3339), output.Check.ModelVersion)
 	}
+	if output.StaleProgramCheck {
+		_, _ = fmt.Fprintln(w, "Check: a matching record uses an earlier extraction program; run msgvault person provider reverify <name> --yes")
+	}
 	state := "inactive"
 	if output.Consent.Active {
 		state = "active"
@@ -1790,6 +1916,9 @@ func writePersonProviderStatus(
 		state = "revoked"
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
+	if output.StaleProgramConsent {
+		_, _ = fmt.Fprintln(w, "Consent: a matching grant uses an earlier extraction program; run msgvault person provider reverify <name> --yes")
+	}
 	if output.CodexIsolation != nil {
 		availability := "unavailable"
 		if output.CodexIsolation.Available {

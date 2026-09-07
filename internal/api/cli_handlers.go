@@ -1717,6 +1717,10 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 		maxPositionals = 1
 		boolFlags["json"] = true
 		valueFlags["if-fingerprint"] = true
+	case "reverify":
+		maxPositionals = 1
+		boolFlags["yes"] = true
+		boolFlags["json"] = true
 	default:
 		return false
 	}
@@ -1774,6 +1778,9 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 		return false
 	}
 	if guardedRevoke && positionals != 1 {
+		return false
+	}
+	if operation == "reverify" && positionals != 1 {
 		return false
 	}
 	return true

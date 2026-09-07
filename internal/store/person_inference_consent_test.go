@@ -1,8 +1,12 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -200,6 +204,64 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
+}
+
+func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	current := inferenceTestProfile(t)
+	_, err := st.EnsurePersonInferenceProfile(t.Context(), current)
+	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: current.Fingerprint, CheckedAt: time.Now().UTC(),
+		DriverVersion: current.DriverVersion, OutputMode: current.OutputMode,
+		ModelVersion: "test-model-v1",
+	}))
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), current.Fingerprint, "cli")
+	require.NoError(err)
+	historical := current
+	historical.ProgramFingerprint = strings.Repeat("b", len(current.ProgramFingerprint))
+	historical.PolicyJSON = bytes.Replace(
+		current.PolicyJSON, []byte(current.ProgramFingerprint), []byte(historical.ProgramFingerprint), 1)
+	digest := sha256.Sum256(historical.PolicyJSON)
+	historical.Fingerprint = hex.EncodeToString(digest[:])
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`), current.Fingerprint)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM person_inference_consents WHERE profile_fingerprint = ?`), current.Fingerprint)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE person_inference_profiles
+		SET fingerprint = ?, program_fingerprint = ?, policy_json = ?
+		WHERE fingerprint = ?`),
+		historical.Fingerprint, historical.ProgramFingerprint, string(historical.PolicyJSON), current.Fingerprint)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO person_inference_checks
+			(profile_fingerprint, checked_at, driver_version, output_mode, model_version)
+		VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`), historical.Fingerprint,
+		historical.DriverVersion, historical.OutputMode, "test-model-v1")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO person_inference_consents (profile_fingerprint, granted_by)
+		VALUES (?, ?)`), historical.Fingerprint, "cli")
+	require.NoError(err)
+
+	profiles, err := st.ListPersonInferenceProfiles(t.Context())
+	require.NoError(err)
+	require.Len(profiles, 1)
+	assert.Equal(historical.Fingerprint, profiles[0].Fingerprint)
+	assert.Equal(historical.ProgramFingerprint, profiles[0].ProgramFingerprint)
+	assert.Equal(historical.DisclosedPacketFields, profiles[0].DisclosedPacketFields)
+	assert.JSONEq(string(historical.PolicyJSON), string(profiles[0].PolicyJSON))
+	check, err := st.GetPersonInferenceCheck(t.Context(), historical.Fingerprint)
+	require.NoError(err)
+	require.NotNil(check)
+	consent, err := st.GetPersonInferenceConsentStatus(t.Context(), historical.Fingerprint)
+	require.NoError(err)
+	assert.True(consent.Active)
 }
 
 func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {

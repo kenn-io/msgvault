@@ -50,6 +50,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 		}, want: true},
 		{name: "check", args: []string{"person", "provider", "check", "--json"}, want: true},
 		{name: "named check", args: []string{"person", "provider", "check", "alpha", "--json"}, want: true},
+		{name: "named reverify", args: []string{"person", "provider", "reverify", "alpha", "--yes", "--json"}, want: true},
 		{name: "guarded check", args: []string{
 			"person", "provider", "check", "alpha", "--if-fingerprint", strings.Repeat("a", 64),
 		}, want: true},
@@ -69,6 +70,10 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 			"person", "provider", "revoke", "--if-fingerprint", strings.Repeat("a", 64),
 		}},
 		{name: "extra positional smuggling", args: []string{"person", "provider", "check", "alpha", "beta"}},
+		{name: "reverify missing name", args: []string{"person", "provider", "reverify", "--yes"}},
+		{name: "reverify extra positional", args: []string{"person", "provider", "reverify", "alpha", "beta", "--yes"}},
+		{name: "reverify semantic flag", args: []string{"person", "provider", "reverify", "alpha", "--semantic-embeddings", "--yes"}},
+		{name: "reverify credential smuggling", args: []string{"person", "provider", "reverify", "alpha", "--api-key=secret-canary", "--yes"}},
 		{name: "list positional smuggling", args: []string{"person", "provider", "list", "alpha"}},
 		{name: "missing operation", args: []string{"person", "provider"}},
 		{name: "unknown operation", args: []string{"person", "provider", "run"}},

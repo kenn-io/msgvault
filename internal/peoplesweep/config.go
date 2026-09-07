@@ -569,19 +569,70 @@ func (p ProviderProfile) Validate() error {
 	return nil
 }
 
+// ValidateStoredProviderProfile validates an immutable policy without
+// replacing fields that were part of the policy when it was persisted.
+func (p ProviderProfile) ValidateStoredProviderProfile() error {
+	_, err := CanonicalStoredProviderProfile(p)
+	return err
+}
+
+// CanonicalStoredProviderProfile verifies and canonicalizes an immutable
+// policy while preserving its historical program and disclosure fields.
+func CanonicalStoredProviderProfile(p ProviderProfile) (ProviderProfile, error) {
+	provider := providerConfigForProfile(p)
+	if err := (Config{Enabled: true}).validateProvider(provider); err != nil {
+		return ProviderProfile{}, err
+	}
+	switch p.Credential {
+	case CredentialStored:
+		if err := ValidateProviderProfileName(p.CredentialRef); err != nil {
+			return ProviderProfile{}, err
+		}
+	case CredentialNone:
+		if p.CredentialRef != "" {
+			return ProviderProfile{}, errors.New("stored people inference provider profile has an unexpected credential reference")
+		}
+	}
+	if p.ProgramFingerprint == "" {
+		return ProviderProfile{}, errors.New("stored people inference provider profile has no program fingerprint")
+	}
+	if p.PacketRendererPolicy == "" {
+		return ProviderProfile{}, errors.New("stored people inference provider profile has no packet renderer policy")
+	}
+	if len(p.DisclosedPacketFields) == 0 {
+		return ProviderProfile{}, errors.New("stored people inference provider profile has no disclosed packet fields")
+	}
+	canonical := p
+	canonical.Model = strings.TrimSpace(canonical.Model)
+	canonical.ReasoningEffort = strings.TrimSpace(canonical.ReasoningEffort)
+	canonical.RetentionPosture = strings.TrimSpace(canonical.RetentionPosture)
+	canonical.TrainingPosture = strings.TrimSpace(canonical.TrainingPosture)
+	canonical.AllowedSources = slices.Clone(canonical.AllowedSources)
+	slices.Sort(canonical.AllowedSources)
+	canonical.DisclosedPacketFields = slices.Clone(canonical.DisclosedPacketFields)
+	if canonical.Protocol != ProtocolCodexAppServer {
+		endpoint, _, err := validateEndpoint(canonical.Endpoint)
+		if err != nil {
+			return ProviderProfile{}, err
+		}
+		canonical.Endpoint = canonicalEndpoint(endpoint)
+	}
+	policyJSON, err := policyJSONForProviderProfile(canonical)
+	if err != nil {
+		return ProviderProfile{}, fmt.Errorf("encode stored people inference provider policy: %w", err)
+	}
+	digest := sha256.Sum256(policyJSON)
+	if p.Fingerprint != hex.EncodeToString(digest[:]) {
+		return ProviderProfile{}, errors.New("stored people inference provider profile fingerprint does not match policy")
+	}
+	canonical.PolicyJSON = policyJSON
+	return canonical, nil
+}
+
 // CanonicalProviderProfile rebuilds a profile through the validated config path.
 func CanonicalProviderProfile(p ProviderProfile) (ProviderProfile, error) {
 	name := "profile"
-	provider := ProviderConfig{
-		Protocol: p.Protocol, Endpoint: p.Endpoint, Model: p.Model, Auth: p.Auth,
-		Credential: p.Credential, OutputMode: p.OutputMode,
-		TokenLimitParameter: p.TokenLimitParameter, ReasoningEffort: p.ReasoningEffort,
-		ReasoningMode: p.ReasoningMode, DriverVersion: p.DriverVersion,
-		RetentionPosture: p.RetentionPosture, TrainingPosture: p.TrainingPosture,
-		AllowedSources: slices.Clone(p.AllowedSources), SourceSince: p.SourceSince,
-		SourceUntil: p.SourceUntil, AllowSensitive: p.AllowSensitive,
-		ExecutionBoundary: p.ExecutionBoundary, RequestTimeout: time.Second,
-	}
+	provider := providerConfigForProfile(p)
 	switch p.Credential {
 	case CredentialEnv:
 		provider.CredentialEnv = p.CredentialRef
@@ -596,6 +647,23 @@ func CanonicalProviderProfile(p ProviderProfile) (ProviderProfile, error) {
 	}
 	config.ApplyDefaults()
 	return config.Profile()
+}
+
+func providerConfigForProfile(p ProviderProfile) ProviderConfig {
+	provider := ProviderConfig{
+		Protocol: p.Protocol, Endpoint: p.Endpoint, Model: p.Model, Auth: p.Auth,
+		Credential: p.Credential, OutputMode: p.OutputMode,
+		TokenLimitParameter: p.TokenLimitParameter, ReasoningEffort: p.ReasoningEffort,
+		ReasoningMode: p.ReasoningMode, DriverVersion: p.DriverVersion,
+		RetentionPosture: p.RetentionPosture, TrainingPosture: p.TrainingPosture,
+		AllowedSources: slices.Clone(p.AllowedSources), SourceSince: p.SourceSince,
+		SourceUntil: p.SourceUntil, AllowSensitive: p.AllowSensitive,
+		ExecutionBoundary: p.ExecutionBoundary, RequestTimeout: time.Second,
+	}
+	if p.Credential == CredentialEnv {
+		provider.CredentialEnv = p.CredentialRef
+	}
+	return provider
 }
 
 func policyJSONForProviderProfile(profile ProviderProfile) ([]byte, error) {

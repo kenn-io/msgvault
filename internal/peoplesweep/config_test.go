@@ -2,6 +2,8 @@ package peoplesweep_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -412,6 +414,33 @@ func TestProviderProfileProjectionRoundTrip(t *testing.T) {
 	assert.NotContains(string(profile.PolicyJSON), "credential-value-must-not-persist")
 	assert.NotContains(string(profile.PolicyJSON), "request_timeout")
 	assert.NoError(profile.Validate())
+}
+
+func TestStoredProviderProfilePreservesHistoricalProgramPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	profile, err := validConfig().Profile()
+	require.NoError(err)
+	oldProgram := strings.Repeat("a", len(profile.ProgramFingerprint))
+	historical := profile
+	historical.ProgramFingerprint = oldProgram
+	historical.PolicyJSON = bytes.Replace(
+		profile.PolicyJSON, []byte(profile.ProgramFingerprint), []byte(oldProgram), 1)
+	digest := sha256.Sum256(historical.PolicyJSON)
+	historical.Fingerprint = hex.EncodeToString(digest[:])
+	require.NoError(historical.ValidateStoredProviderProfile())
+	require.Error(historical.Validate())
+
+	for _, mutate := range []func(*peoplesweep.ProviderProfile){
+		func(p *peoplesweep.ProviderProfile) { p.Model = "changed-model" },
+		func(p *peoplesweep.ProviderProfile) { p.Endpoint = "https://changed.example/v1" },
+		func(p *peoplesweep.ProviderProfile) { p.PacketRendererPolicy = "changed-renderer" },
+		func(p *peoplesweep.ProviderProfile) { p.DisclosedPacketFields = []string{"different"} },
+	} {
+		changed := historical
+		mutate(&changed)
+		assert.Error(changed.ValidateStoredProviderProfile())
+	}
 }
 
 func TestProviderConfigTOMLValuesUseTaggedOptionalFields(t *testing.T) {

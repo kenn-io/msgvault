@@ -241,8 +241,9 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	t.Setenv("TEST_PROVIDER_KEY", environmentSecretCanary)
 	deps := defaultPersonProviderCommandDeps()
 
-	_, err := executePersonProviderCommand(t, deps, "consent", "--yes", "--json")
+	_, err := executePersonProviderCommand(t, deps, "reverify", "default", "--yes")
 	require.NoError(err)
+	captured := <-requests
 	output, err := executePersonProviderCommand(t, deps, "check", "--json")
 	require.NoError(err)
 	assert.JSONEq(`{
@@ -252,7 +253,6 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 		"usage":{"input_tokens":9,"output_tokens":2}
 	}`, output)
 
-	captured := <-requests
 	assert.Equal("Bearer "+environmentSecretCanary, captured.Authorization)
 	assert.Equal("/v1/chat/completions", captured.Path)
 	assert.Equal("test-model", captured.Body["model"])
@@ -272,6 +272,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	}
 	assert.NotContains(output, environmentSecretCanary)
 	assert.NotContains(daemonLogs.String(), environmentSecretCanary)
+	_ = <-requests
 
 	_, err = executePersonProviderCommand(t, deps, "revoke", "--json")
 	require.NoError(err)
@@ -283,7 +284,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 		"model":"test-model",
 		"usage":{"input_tokens":9,"output_tokens":2}
 	}`, output)
-	assert.Equal(int64(2), requestCount.Load(), "synthetic checks bypass archive consent")
+	assert.Equal(int64(3), requestCount.Load(), "synthetic checks bypass archive consent")
 }
 
 func TestPersonProviderStoredCheckKeepsSecretOutOfDaemonMetadata(t *testing.T) {
