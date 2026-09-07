@@ -37,6 +37,10 @@ PG_TEST_PARALLEL ?= 4
 # `make test` and `make test-pg-shipped` still run every package.
 SHARDED_TEST_PKGS := ./cmd/msgvault/cmd ./internal/store ./internal/api
 TEST_SHARDS ?= 4
+TEST_PROFILE ?= auto
+# Only the automatic SQLite profile adds query and overlaps package jobs.
+SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
+SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.7.0
 GO_INSTALL_BIN := $(shell go env GOBIN)
@@ -115,12 +119,32 @@ clean:
 	rm -f msgvault msgvault.exe mimeshootout
 	rm -rf bin/
 
-# Run the full SQLite suite. The three largest packages run as shards after the
-# unsharded remainder so one test binary cannot set the full wall clock. CI runs
-# the same two parts as separate jobs.
+# Scale the SQLite suite when both CPU and memory budgets allow it. An explicit
+# TEST_SHARDS, a database URL, or TEST_PROFILE=standard keeps the existing layout.
 test:
+	@case "$(TEST_PROFILE)" in auto|standard) ;; *) echo "TEST_PROFILE must be auto or standard" >&2; exit 1 ;; esac; \
+	shards=0; \
+	if [ "$(TEST_PROFILE)" = auto ] && [ "$(origin TEST_SHARDS)" = file ] && [ -z "$(MSGVAULT_TEST_DB)" ]; then \
+		shards=$$(go run ./scripts/test-resources) || exit $$?; \
+	fi; \
+	if [ "$$shards" -gt 0 ]; then \
+		echo "SQLite tests: concurrent packages, $$shards shards per large package"; \
+		GOMAXPROCS=4 $(MAKE) -j5 test-unsharded $(SQLITE_SHARD_TARGETS) \
+			SHARDED_TEST_PKGS="$(SQLITE_SHARDED_TEST_PKGS)" TEST_SHARDS=$$shards; \
+	else \
+		echo "Tests: standard package schedule, $(TEST_SHARDS) shards"; \
+		$(MAKE) test-standard; \
+	fi
+
+.PHONY: test-standard $(SQLITE_SHARD_TARGETS)
+test-standard:
 	$(MAKE) test-unsharded
 	$(MAKE) test-shards
+
+# These explicit goals let make own job waiting and error propagation. The
+# regular test-shards target remains sequential, including PostgreSQL callers.
+$(SQLITE_SHARD_TARGETS): test-sqlite-shard/%:
+	scripts/test-package-shards.sh $* $(TEST_SHARDS) "$(BUILD_TAGS)" $(TEST_TIMEOUT)
 
 # Everything except SHARDED_TEST_PKGS. CI's test lane runs this alongside the
 # sharded jobs; together they cover exactly what `make test` covers.
@@ -452,7 +476,7 @@ help:
 	@echo "  build-release  - Release build (optimized, stripped)"
 	@echo "  install        - Install to ~/.local/bin or GOPATH"
 	@echo ""
-	@echo "  test           - Run tests"
+	@echo "  test           - Run SQLite tests with automatic CPU/memory scaling (TEST_PROFILE=standard disables)"
 	@echo "  test-v         - Run tests (verbose)"
 	@echo "  test-shards    - Run SHARDED_TEST_PKGS as TEST_SHARDS concurrent processes each"
 	@echo "  test-unsharded - Run every package except SHARDED_TEST_PKGS (CI's test lane)"

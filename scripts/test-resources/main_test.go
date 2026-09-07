@@ -1,0 +1,77 @@
+package main
+
+import (
+	"testing"
+	"testing/fstest"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestShardBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cpus int
+		gib  uint64
+		want int
+	}{
+		{"small CPU budget", 8, 256, 0},
+		{"small memory budget", 128, 32, 0},
+		{"unknown memory", 128, 0, 0},
+		{"CPU limited", 32, 256, 8},
+		{"memory limited", 128, 64, 8},
+		{"large budget", 128, 256, 16},
+		{"cap very large budgets", 512, 1024, 16},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shardBudget(resources{tc.cpus, tc.gib << 30}))
+		})
+	}
+}
+
+func TestCgroupAncestorLimits(t *testing.T) {
+	files := fstest.MapFS{
+		"parent/child/cpu.max":        {Data: []byte("max 100000\n")},
+		"parent/child/memory.max":     {Data: []byte("max\n")},
+		"parent/child/memory.high":    {Data: []byte("max\n")},
+		"parent/child/memory.current": {Data: []byte("0\n")},
+		"parent/cpu.max":              {Data: []byte("250000 100000\n")},
+		"parent/memory.max":           {Data: []byte("34359738368\n")}, // 32 GiB
+		"parent/memory.high":          {Data: []byte("17179869184\n")}, // 16 GiB
+		"parent/memory.current":       {Data: []byte("4294967296\n")},  // 4 GiB
+	}
+	got, err := limitCgroup(files, "parent/child", resources{128, 256 << 30})
+	require.NoError(t, err)
+	assert.Equal(t, resources{2, 12 << 30}, got)
+	assert.Zero(t, shardBudget(got))
+
+	// A soft memory limit can already be exceeded; subtraction must not wrap.
+	files["parent/memory.current"].Data = []byte("21474836480\n")
+	got, err = limitCgroup(files, "parent/child", resources{128, 256 << 30})
+	require.NoError(t, err)
+	assert.Zero(t, got.available)
+}
+
+func TestCgroupRootLimits(t *testing.T) {
+	// A cgroup namespace may expose its container's limits at the mount root.
+	files := fstest.MapFS{
+		"cpu.max":        {Data: []byte("6400000 100000\n")},
+		"memory.max":     {Data: []byte("137438953472\n")},
+		"memory.high":    {Data: []byte("max\n")},
+		"memory.current": {Data: []byte("68719476736\n")},
+	}
+	got, err := limitCgroup(files, ".", resources{128, 256 << 30})
+	require.NoError(t, err)
+	assert.Equal(t, resources{64, 64 << 30}, got)
+	assert.Equal(t, 8, shardBudget(got))
+	files["cpu.max"].Data = []byte("bad quota")
+	_, err = limitCgroup(files, ".", resources{128, 256 << 30})
+	require.Error(t, err)
+}
+
+func TestCgroupMissingOrInvalidPath(t *testing.T) {
+	for _, group := range []string{"missing", "../outside"} {
+		_, err := limitCgroup(fstest.MapFS{}, group, resources{128, 256 << 30})
+		require.Error(t, err)
+	}
+}

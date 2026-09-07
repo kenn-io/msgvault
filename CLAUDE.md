@@ -349,6 +349,7 @@ automatically:
 ```bash
 make install-hooks             # Install pre-commit hook via prek
 make test                      # Run tests (SQLite default)
+make test TEST_PROFILE=standard # Keep sequential package jobs and four shards
 make test-pg-both              # Both PostgreSQL configurations, needs MSGVAULT_TEST_DB
 make test-pg                   # PostgreSQL, pgvector build only
 make test-pg-shipped           # PostgreSQL, shipped build only
@@ -362,6 +363,27 @@ go vet ./...                   # Check for issues
 - Default gofmt configuration
 - Use `error` return values, wrap with context using `fmt.Errorf`
 - Table-driven tests
+
+### Local test scheduling
+
+`make test` automatically overlaps the CLI, store, API, and query package shards
+with the remaining SQLite packages when at least 32 CPUs and 64 GiB of available
+memory are detected. Each large package gets the smallest of 16 shards, one
+quarter of the CPU budget, or one shard per 8 GiB of available memory. The
+concurrent profile uses `GOMAXPROCS=4` per process to limit nested Go parallelism.
+This changes scheduling, not test coverage.
+
+Detection accounts for CPU affinity and `GOMAXPROCS`. On Linux it also accounts
+for visible cgroup v2 ancestor CPU quotas and remaining memory under both hard
+and soft limits. macOS uses available system memory. Smaller budgets, cgroup v1,
+other platforms, and unreadable limits retain the standard schedule. Detection
+is a snapshot, not a reservation of resources against other workloads.
+
+Use `TEST_PROFILE=standard` to disable automatic scaling. Setting `TEST_SHARDS`
+explicitly also retains sequential package jobs with the requested shard count.
+The PostgreSQL targets keep their existing connection-oriented concurrency
+limits; setting `MSGVAULT_TEST_DB` disables automatic scaling in `make test` too.
+CI's explicit `test-unsharded` and package-shard jobs keep their existing layout.
 
 ## Code Conventions
 
