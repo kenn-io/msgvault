@@ -3158,6 +3158,11 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
+	// Start at noon UTC on the day after the fixture messages. Keep the
+	// importer and new replies on one clock so the burst cannot cross midnight.
+	start := tsBase.Truncate(24 * time.Hour).Add(36 * time.Hour)
+	now := start
+	imp.now = func() time.Time { return now }
 
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
@@ -3173,14 +3178,14 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	bigRoot := f.conv("C09").findRoot(rootTS)
 	for i := range 101 {
 		bigRoot.Replies = append(bigRoot.Replies,
-			fakeMsg{TS: tsFresh(i), ThreadTS: rootTS, User: "UME", Text: "burst " + strconv.Itoa(i)})
+			fakeMsg{TS: tsFormat(start.Add(time.Duration(2+i) * time.Second)), ThreadTS: rootTS, User: "UME", Text: "burst " + strconv.Itoa(i)})
 	}
-	beyondWalk := tsFresh(110)
+	beyondWalk := tsFormat(start.Add(112 * time.Second))
 	other := f.conv("C09").findRoot(ts(0))
 	other.Replies = append(other.Replies, fakeMsg{TS: beyondWalk, ThreadTS: ts(0), User: "UME", Text: "past the page walk"})
 	f.mu.Unlock()
 
-	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	now = start.Add(5 * time.Minute)
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "a day the pager cannot fully consume must fail loudly, not certify past unserved hits")
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -3190,9 +3195,9 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 
 	// The catch-up walk recovers the reply the pager could never serve;
 	// once the day is behind the boundary the sweep runs clean again.
-	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	now = start.Add(25 * time.Hour)
 	_, _ = imp.Import(context.Background(), opts)
-	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
+	now = start.Add(26 * time.Hour)
 	_, err = imp.Import(context.Background(), opts)
 	require.NoError(err)
 	var n int
