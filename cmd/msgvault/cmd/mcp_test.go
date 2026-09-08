@@ -227,6 +227,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) {
+	assert := assert.New(t)
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -244,15 +245,15 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 		case "/api/v1/multimodal/status":
 			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
 		default:
-			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+			assert.Failf("unexpected request", "%s %s", r.Method, r.URL.Path)
 		}
 	})
 
 	opts, err := daemonMCPServeOptions(t.Context(), client)
 	require.NoError(t, err)
-	assert.Nil(t, opts.PeopleBackend)
-	assert.Nil(t, opts.DirectoryBackend)
-	assert.Contains(t, logs.String(), "people tools disabled")
+	assert.Nil(opts.PeopleBackend)
+	assert.Nil(opts.DirectoryBackend)
+	assert.Contains(logs.String(), "people tools disabled")
 }
 
 func TestDaemonMCPServeOptionsUsesOnePeopleCapabilityProbe(t *testing.T) {
