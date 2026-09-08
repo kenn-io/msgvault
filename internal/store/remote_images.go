@@ -1,6 +1,24 @@
 package store
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// UpsertRemoteImageAttachment stores a distinct remote URL occurrence. Matching
+// bytes never establish that a legacy MIME attachment is the same occurrence.
+func (s *Store) UpsertRemoteImageAttachment(ctx context.Context, messageID int64, write AttachmentWrite) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	if write.SourcePartKey == "" {
+		return errors.New("remote image attachment requires a source-part key")
+	}
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		return s.upsertAttachmentRecordWithPolicy(q, messageID, write, preserveLegacyAttachmentRows)
+	})
+}
 
 // MessageRemoteImages returns only this message's archived remote images.
 // The namespace survives MIME repair, which replaces MIME-owned rows only.

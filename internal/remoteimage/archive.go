@@ -191,7 +191,7 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 			result.Errors = append(result.Errors, fmt.Errorf("store remote image bytes: %w", err))
 			continue
 		}
-		err = st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+		err = st.UpsertRemoteImageAttachment(ctx, messageID, store.AttachmentWrite{
 			Filename: "remote-image-" + strings.TrimPrefix(key, "remote-image:") + rasterExtension(contentType),
 			MIMEType: contentType, StoragePath: receipt.StoragePath, ContentHash: receipt.ContentHash, Size: int64(len(body)),
 			SourceAttachmentID: key, SourcePartKey: key, ContentID: key, MediaType: "image",

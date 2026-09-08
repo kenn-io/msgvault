@@ -216,6 +216,7 @@ type attachmentConflictPolicy int
 const (
 	updateAttachmentConflicts attachmentConflictPolicy = iota
 	preserveProviderAttachmentConflicts
+	preserveLegacyAttachmentRows
 )
 
 func (s *Store) upsertAttachmentRecord(q querier, messageID int64, write AttachmentWrite) error {
@@ -232,7 +233,7 @@ func (s *Store) upsertAttachmentRecordWithPolicy(
 		keyedConflictPredicate = " WHERE attachments.source_attachment_id IS NULL"
 	}
 
-	if write.SourcePartKey != "" && write.ContentHash != "" {
+	if conflictPolicy != preserveLegacyAttachmentRows && write.SourcePartKey != "" && write.ContentHash != "" {
 		// Upgrade the pre-provenance row in place when a resync supplies a
 		// stable source occurrence for the same bytes. This preserves its row
 		// identity and prevents a later raw-MIME repair from colliding with a

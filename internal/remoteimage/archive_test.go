@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -60,6 +62,15 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(upstream.URL, "http://"))
 	}
 	dir := t.TempDir()
+	legacyBytes, err := export.StoreAttachmentFileDurable(dir, &mime.Attachment{ContentType: "image/png", Content: image})
+	require.NoError(err)
+	require.NoError(st.UpsertAttachment(id, "receipt.png", "image/png", legacyBytes.StoragePath, legacyBytes.ContentHash, len(image)))
+	var legacyID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&legacyID))
+	legacy, err := st.GetFileMetadata(t.Context(), legacyID)
+	require.NoError(err)
+	require.NotNil(legacy)
+
 	result := f.Archive(t.Context(), st, dir, id, original)
 	assert.Equal(2, result.Downloaded)
 	require.Len(result.Errors, 1)
@@ -93,6 +104,12 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	savedRaw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Equal(raw, savedRaw)
+	preservedLegacy, err := st.GetFileMetadata(t.Context(), legacyID)
+	require.NoError(err)
+	assert.Equal(legacy, preservedLegacy, "remote image downloads must not relabel a MIME attachment with identical bytes")
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&attachmentCount))
+	assert.Equal(3, attachmentCount, "the MIME part and both remote URL occurrences must coexist after retry")
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 	backfill, err := f.Backfill(t.Context(), st, dir, src.ID, 1, log)
