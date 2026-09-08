@@ -92,6 +92,9 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	assert.Equal(3, strings.Count(rendered, `src="cid:remote-image:`))
 	assert.Contains(rendered, `src="http://images.example/missing"`)
 	assert.Contains(rendered, `src="cid:original"`)
+	// Attachment rows can persist before the separate statistics update.
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET attachment_count = 0, has_attachments = FALSE WHERE id = ?`), id)
+	require.NoError(err)
 	result = f.Archive(t.Context(), st, dir, id, original)
 	assert.Zero(result.Downloaded)
 	assert.Equal(2, result.Reused)
@@ -101,6 +104,10 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	saved, err := st.GetMessage(id)
 	require.NoError(err)
 	assert.Equal(original, saved.BodyHTML)
+	assert.True(saved.HasAttachments, "reusing archived images must repair the attachment flag")
+	var storedAttachmentCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&storedAttachmentCount))
+	assert.Equal(3, storedAttachmentCount, "reusing archived images must recount all attachment occurrences")
 	savedRaw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Equal(raw, savedRaw)
