@@ -223,6 +223,11 @@ export class PersonBriefController {
         this.enrollmentError = enrollmentErrorMessage(error, response.status);
         return failed;
       }
+      // Reads started under the previous enrollment are no longer current.
+      this.briefGeneration += 1;
+      this.briefAbort?.abort();
+      this.briefAbort = undefined;
+      this.briefLoading = false;
       this.enrollment = state;
       this.announcement = enrolled ? 'Brief enrollment enabled.' : 'Brief enrollment disabled.';
       if (!enrolled) {
@@ -234,7 +239,6 @@ export class PersonBriefController {
         this.versionsError = null;
         return confirmed;
       }
-      this.endMutation(context, mutation, personID, abort);
       await this.loadBrief(personID);
       return confirmed;
     } catch {

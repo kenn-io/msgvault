@@ -262,6 +262,66 @@ describe('PersonBriefController', () => {
     controller.destroy();
   });
 
+  it('ignores a brief response that arrives after unenrollment', async () => {
+    const read = deferredResponse();
+    let briefRequest: Request | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (request.method === 'PUT') return Response.json(enrollment(false));
+      if (new URL(request.url).pathname.endsWith('/brief-enrollment')) return Response.json(enrollment(true));
+      briefRequest = request;
+      return read.promise;
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    const loading = controller.setPerson(7);
+    await vi.waitFor(() => expect(briefRequest).toBeDefined());
+
+    expect(await controller.setEnrolled(false, false)).toEqual({ kind: 'confirmed' });
+    read.resolve(Response.json(brief()));
+    await loading;
+
+    expect(controller.enrollment?.enrolled).toBe(false);
+    expect(controller.brief).toBeUndefined();
+    expect(controller.briefError).toBeNull();
+    expect(controller.briefLoading).toBe(false);
+    expect(briefRequest?.signal.aborted).toBe(true);
+    controller.destroy();
+  });
+
+  it.each([200, 500])('keeps enrollment pending until its brief reload settles (%s)', async (status) => {
+    const read = deferredResponse();
+    let briefReads = 0;
+    let writes = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (request.method === 'PUT') {
+        writes += 1;
+        return Response.json(enrollment(true));
+      }
+      if (new URL(request.url).pathname.endsWith('/brief-enrollment')) return Response.json(enrollment(false));
+      briefReads += 1;
+      return read.promise;
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    const enrolling = controller.setEnrolled(true, false);
+    await vi.waitFor(() => expect(briefReads).toBe(1));
+
+    const pending = controller.pending;
+    const duplicate = await controller.setEnrolled(false, false);
+    read.resolve(Response.json(status === 200 ? brief() : { error: 'internal' }, { status }));
+    await enrolling;
+
+    expect(pending).toBe('enrollment');
+    expect(duplicate).toEqual({ kind: 'ignored' });
+    expect(writes).toBe(1);
+    expect(controller.pending).toBeNull();
+    expect(controller.briefLoading).toBe(false);
+    expect(controller.brief?.version).toBe(status === 200 ? 2 : undefined);
+    expect(controller.briefError).toBe(status === 200 ? null : 'Unable to load the brief.');
+    controller.destroy();
+  });
+
   it('maps person_brief_not_tracked to the track option instead of the daemon CLI sentence', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
