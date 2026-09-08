@@ -99,7 +99,9 @@
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+    /* Even a tiny transition leaves inherited label colors one frame behind
+     * a changed button surface. Apply both colors immediately. */
+    transition-duration: 0s !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
