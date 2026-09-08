@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-04
+last_edited: 2026-09-07
 title: Changelog
 description: Release history for msgvault
 ---
@@ -187,6 +187,9 @@ All notable changes to msgvault, grouped by release.
 
 **Bug fixes**
 
+- WhatsApp Apple ChatStorage imports use profile push names for unnamed group
+  participants, message senders, and direct-chat participants, while preserving
+  existing contact names.
 - Incremental Gmail sync retries raw-message fetch failures from the previous
   completed incremental run, carries repeated fetch failures forward, and treats
   messages gone before replay as handled skips. Replay requires a recorded

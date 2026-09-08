@@ -249,6 +249,11 @@ func (imp *Importer) importApple(
 			if err != nil {
 				return summary, err
 			}
+			if strings.TrimSpace(chat.Name) == "" {
+				if pushName := applePushNameFor(pushNames, chat.RawJID); pushName != "" {
+					pendingPushNames[phone] = pushName
+				}
+			}
 			if err := imp.store.EnsureConversationParticipant(
 				conversationID, participantID, "member",
 			); err != nil {

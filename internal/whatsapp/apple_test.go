@@ -300,16 +300,11 @@ func TestImportApplePushNames(t *testing.T) {
 	check.Equal("+15555550104", senderPhone)
 
 	t.Run("message_pushname_not_used", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		assert.NotContains(names, "IAA=")
-		assert.NotEqual("IAA=", names["+15555550103"])
-		assert.NotEqual("IAA=", names["+15555550104"])
 		var badNameCount int
-		require.NoError(st.DB().QueryRow(
+		require.NoError(t, st.DB().QueryRow(
 			`SELECT COUNT(*) FROM participants WHERE display_name = 'IAA='`,
 		).Scan(&badNameCount))
-		assert.Zero(badNameCount)
+		assert.Zero(t, badNameCount)
 	})
 }
 
@@ -349,7 +344,7 @@ func TestImportApplePushNameFallbacks(t *testing.T) {
 	check.Empty(names["+15555550105"])
 	check.Empty(names["+15555550106"])
 	check.Equal("Later Legacy", names["+15555550107"])
-	check.Empty(names["+15555550108"])
+	check.Equal("Push Direct", names["+15555550108"])
 
 	var unmatched int
 	need.NoError(st.DB().QueryRow(
@@ -549,7 +544,7 @@ func createApplePushNameFallbackFixture(t *testing.T) string {
 			(4, 1, 1, '15555550107@s.whatsapp.net', 'Push Early'),
 			(5, 1, 1, '15555550101@s.whatsapp.net', 'Ignored Direct'),
 			(6, 1, 1, '15555550199@s.whatsapp.net', 'Unmatched'),
-			(7, 1, 1, '15555550108@s.whatsapp.net', 'Ignored Blank Direct'),
+			(7, 1, 1, '15555550108@s.whatsapp.net', 'Push Direct'),
 			(8, 1, 1, '777777777777777@lid', 'Ignored Unresolved LID');
 	`)
 	require.NoError(t, err)
