@@ -34,9 +34,11 @@ func ParseGoogleGroupsHeaders(raw []byte, fallbackGroup string) GoogleGroupsHead
 	if group == "" {
 		return GoogleGroupsHeaders{}
 	}
-	// Use the same public group identity for headers and archive identifiers.
-	if local, domain, ok := strings.Cut(group, "@"); ok && local != "" && strings.EqualFold(domain, "googlegroups.com") {
-		group = local
+	// Bare group names and public addresses share a case-insensitive identity.
+	if local, domain, ok := strings.Cut(group, "@"); !ok {
+		group = strings.ToLower(group)
+	} else if local != "" && strings.EqualFold(domain, "googlegroups.com") {
+		group = strings.ToLower(local)
 	}
 	result := GoogleGroupsHeaders{Group: strings.ToValidUTF8(group, "\uFFFD")}
 	thread := strings.TrimSpace(firstHeader(headers, "x-gm-thrid"))

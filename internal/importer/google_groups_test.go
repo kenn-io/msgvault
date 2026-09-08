@@ -99,26 +99,27 @@ func TestImportMbox_GoogleGroupsHeadersInOrdinaryMail(t *testing.T) {
 }
 
 func TestImportMbox_GoogleGroupsHeaderFallbackKeepsThread(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	var data strings.Builder
 	for i, header := range []string{
-		"X-Google-Groups: test-group\r\n",
-		"X-BeenThere: test-group@googlegroups.com\r\n",
+		"X-Google-Groups: TeSt-GrOuP\r\n",
+		"X-BeenThere: Test-Group@googlegroups.com\r\n",
 		"",
 	} {
 		fmt.Fprintf(&data, "From synthetic@example.invalid Mon Jan 1 12:00:00 +0000 2024\r\nFrom: Alice <alice@example.com>\r\nMessage-ID: <message-%d@example.com>\r\nX-GM-THRID: 123\r\n%sSubject: Topic\r\n\r\nSynthetic message.\r\n\r\n", i, header)
 	}
 	path := filepath.Join(t.TempDir(), "topics.mbox")
-	require.NoError(t, os.WriteFile(path, []byte(data.String()), 0600))
+	require.NoError(os.WriteFile(path, []byte(data.String()), 0600))
 	summary, err := ImportMbox(t.Context(), st, path, MboxImportOptions{
-		SourceType: "google-groups", Identifier: "test-group@GoogleGroups.com",
+		SourceType: "google-groups", Identifier: "TEST-GROUP@GoogleGroups.com",
 	})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), summary.MessagesAdded)
+	require.NoError(err)
+	require.Equal(int64(3), summary.MessagesAdded)
 	var conversations int
-	require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
-	assert.Equal(t, 1, conversations, "header and fallback identities must share a thread")
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
+	assert.Equal(1, conversations, "header and fallback identities must share a thread")
 	var groupLabels int
-	require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id WHERE l.name = 'test-group'").Scan(&groupLabels))
-	assert.Equal(t, 3, groupLabels, "every message must retain the same group label")
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id WHERE l.name = 'test-group'").Scan(&groupLabels))
+	assert.Equal(3, groupLabels, "every message must retain the same group label")
 }
