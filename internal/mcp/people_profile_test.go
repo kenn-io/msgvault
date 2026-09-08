@@ -138,7 +138,131 @@ func TestMCPGetPersonProfileReturnsOverviewAndExcludesSensitiveData(t *testing.T
 	date := firstStructuredRow(t, structured, "dates")
 	assert.Equal("--04-12", date["date"])
 	assert.Equal([]any{"people"}, structured["categories"])
-	assert.Equal([]any{"sensitive_attributes", "notes", "addresses", "media"}, structured["excluded"])
+	assert.Equal([]any{"sensitive_attributes", "notes", "media"}, structured["excluded"])
+}
+
+func TestMCPGetPersonProfileReportsEmailsPhonesAndAddress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{
+		Person: store.Person{ID: 12, VCardUID: "person-12"},
+		ContactPoints: []peoplebrowser.PersonContactPointSummary{
+			{Kind: "email", Value: "alice@example.com", NormalizedValue: "alice@example.com", TypeLabel: "work", Source: store.ProvenanceVCardImport},
+			{Kind: "phone", Value: "+15555550100", NormalizedValue: "+15555550100", Preferred: true, Source: store.ProvenanceUser},
+			{Kind: "email", Value: "alice.home@example.com", NormalizedValue: "alice.home@example.com", Preferred: true, Source: store.ProvenanceUser},
+			{Kind: "email", Value: "ALICE@example.com", NormalizedValue: "alice@example.com", Source: store.ProvenanceExtraction},
+			{Kind: "email", Value: "alice.handle@example.com", NormalizedValue: "alice.handle@example.com", ServiceSlug: "imessage", Source: store.ProvenanceExtraction},
+			{Kind: "phone", Value: "+1 555 555 0100", NormalizedValue: "+15555550100", ServiceSlug: "sms", Source: store.ProvenanceExtraction},
+			{Kind: "phone", Value: "+15555550188", NormalizedValue: "+15555550188", ServiceSlug: "signal", Source: store.ProvenanceUser},
+			{Kind: "username", Value: "alice", ServiceSlug: "chat", Source: store.ProvenanceUser},
+		},
+		Addresses: []peoplebrowser.PersonAddressSummary{
+			{
+				Kind: "birth_place", Locality: "Example Town", OriginalValue: ";;;Example Town;;;",
+				Preferred: true, Source: store.ProvenanceVCardImport,
+			},
+			{
+				Kind: "postal", StreetAddress: "2 Example Avenue", Locality: "Example City",
+				OriginalValue: ";;2 Example Avenue;Example City;;;", Source: store.ProvenanceExtraction,
+			},
+			{
+				Kind: "postal", Label: "Home", StreetAddress: "1 Example Street", Locality: "Example City",
+				Region: "EX", PostalCode: "12345", CountryName: "Exampleland", CountryCode: "EX",
+				OriginalValue: ";;1 Example Street;Example City;EX;12345;Exampleland",
+				Preferred:     true, Source: store.ProvenanceUser,
+			},
+		},
+	}}
+
+	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{"person_id": 12})
+	assert.NotEqual(true, result["isError"], "result: %#v", result)
+	structured := toolStructuredContent(t, result)
+	assert.Equal([]any{"alice.home@example.com", "alice@example.com"}, structured["emails"],
+		"preferred first, one entry per distinct address, and no service-scoped handle")
+	assert.Equal([]any{"+15555550100", "+15555550188"}, structured["phones"],
+		"numbers collapse on their normalized form, and a number carried by a service still reaches the person")
+
+	address, ok := structured["address"].(map[string]any)
+	require.True(ok, "address: %#v", structured["address"])
+	assert.Equal("postal", address["kind"], "a preferred postal address is the primary one")
+	assert.Equal("Home", address["label"])
+	assert.Equal("1 Example Street", address["street_address"])
+	assert.Equal("Example City", address["locality"])
+	assert.Equal("EX", address["region"])
+	assert.Equal("12345", address["postal_code"])
+	assert.Equal("Exampleland", address["country_name"])
+	assert.Equal("EX", address["country_code"])
+	assert.Equal(";;1 Example Street;Example City;EX;12345;Exampleland", address["original_value"])
+	assert.Equal(true, address["preferred"])
+	assert.Equal(string(store.ProvenanceUser), address["source"])
+	assert.NotContains(address, "post_office_box", "components the source did not carry stay out")
+
+	points, ok := structured["contact_points"].([]any)
+	require.True(ok, "contact_points: %#v", structured["contact_points"])
+	assert.Len(points, 8, "the new fields summarize contact points instead of replacing them")
+}
+
+func TestMCPGetPersonProfileAddressSkipsBirthAndDeathPlaces(t *testing.T) {
+	birthPlace := peoplebrowser.PersonAddressSummary{
+		Kind: "birth_place", Locality: "Example Town", OriginalValue: ";;;Example Town;;;",
+		Preferred: true, Source: store.ProvenanceVCardImport,
+	}
+	deathPlace := peoplebrowser.PersonAddressSummary{
+		Kind: "death_place", Locality: "Example Village", OriginalValue: ";;;Example Village;;;",
+		Preferred: true, Source: store.ProvenanceVCardImport,
+	}
+	postal := peoplebrowser.PersonAddressSummary{
+		Kind: "postal", StreetAddress: "1 Example Street", Locality: "Example City",
+		OriginalValue: ";;1 Example Street;Example City;;;", Source: store.ProvenanceUser,
+	}
+	tests := []struct {
+		name       string
+		addresses  []peoplebrowser.PersonAddressSummary
+		wantStreet string
+	}{
+		{name: "birth place only", addresses: []peoplebrowser.PersonAddressSummary{birthPlace}},
+		{name: "death place only", addresses: []peoplebrowser.PersonAddressSummary{deathPlace}},
+		{
+			name:       "preferred birth place listed before a postal address",
+			addresses:  []peoplebrowser.PersonAddressSummary{birthPlace, postal},
+			wantStreet: "1 Example Street",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{
+				Person: store.Person{ID: 14, VCardUID: "person-14"}, Addresses: test.addresses,
+			}}
+			result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{"person_id": 14})
+			assert.NotEqual(true, result["isError"], "result: %#v", result)
+			structured := toolStructuredContent(t, result)
+			if test.wantStreet == "" {
+				assert.Nil(structured["address"], "a birth or death place is not where the person lives")
+				return
+			}
+			address, ok := structured["address"].(map[string]any)
+			require.True(t, ok, "address: %#v", structured["address"])
+			assert.Equal("postal", address["kind"])
+			assert.Equal(test.wantStreet, address["street_address"])
+		})
+	}
+}
+
+func TestMCPGetPersonProfileWithoutEmailsPhonesOrAddress(t *testing.T) {
+	assert := assert.New(t)
+	backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{
+		Person: store.Person{ID: 13, VCardUID: "person-13"},
+		ContactPoints: []peoplebrowser.PersonContactPointSummary{
+			{Kind: "username", Value: "alice", ServiceSlug: "chat", Source: store.ProvenanceUser},
+		},
+	}}
+	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{"person_id": 13})
+	assert.NotEqual(true, result["isError"], "result: %#v", result)
+	structured := toolStructuredContent(t, result)
+	assert.Equal([]any{}, structured["emails"])
+	assert.Equal([]any{}, structured["phones"])
+	assert.Nil(structured["address"])
 }
 
 // firstStructuredRow returns the only row of a structured list field.
@@ -169,6 +293,9 @@ func TestMCPGetPersonProfileDegradesWithoutContactStateAndTracking(t *testing.T)
 	assert.Equal([]any{}, structured["employments"])
 	assert.Equal([]any{}, structured["relationships"])
 	assert.Equal([]any{}, structured["contact_points"])
+	assert.Equal([]any{}, structured["emails"])
+	assert.Equal([]any{}, structured["phones"])
+	assert.Nil(structured["address"])
 	assert.Equal([]any{}, structured["dates"])
 	assert.Equal([]any{}, structured["categories"])
 }

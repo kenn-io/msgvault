@@ -392,3 +392,110 @@ max_requests_per_day = 100
 	checks.Equal(15*time.Minute, provider.MaxJobAge)
 	checks.Equal(5, provider.MaxRetries)
 }
+
+func TestPeopleSweepBriefDefaults(t *testing.T) {
+	assert := assert.New(t)
+	brief := NewDefaultConfig().People.Sweep.Brief
+	assert.True(brief.IsEnabled(), "the row-presence enrollment is the opt-in, so the lane defaults on")
+	assert.Equal(168*time.Hour, brief.MinInterval)
+	assert.Equal(72*time.Hour, brief.PreCallWindow)
+	assert.Equal(40, brief.MaxItems)
+	assert.Equal(65536, brief.MaxBytes)
+	assert.Equal(8, brief.OverlapItems)
+	assert.Equal(int64(2048), brief.MaxOutputTokens)
+	assert.Equal(560, brief.MaxRenderedRunes)
+}
+
+func TestLoadPeopleSweepBriefConfig(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[people.sweep]
+enabled = true
+provider = "primary"
+
+[people.sweep.brief]
+enabled = false
+min_interval = "24h"
+pre_call_window = "12h"
+max_items = 12
+max_bytes = 4096
+overlap_items = 2
+max_output_tokens = 1024
+max_rendered_runes = 320
+
+[people.sweep.providers.primary]
+protocol = "openai_chat"
+endpoint = "https://api.example.test/v1/"
+model = "gpt-test"
+auth = "bearer"
+credential = "env"
+credential_env = "TEST_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+allow_sensitive = true
+`), 0o600))
+
+	loaded, err := Load(path, "")
+	require.NoError(t, err)
+	brief := loaded.People.Sweep.Brief
+	assert.False(brief.IsEnabled(), "an explicit false must survive default application")
+	assert.Equal(24*time.Hour, brief.MinInterval)
+	assert.Equal(12*time.Hour, brief.PreCallWindow)
+	assert.Equal(12, brief.MaxItems)
+	assert.Equal(4096, brief.MaxBytes)
+	assert.Equal(2, brief.OverlapItems)
+	assert.Equal(int64(1024), brief.MaxOutputTokens)
+	assert.Equal(320, brief.MaxRenderedRunes)
+}
+
+func TestLoadRejectsInvalidPeopleSweepBriefConfig(t *testing.T) {
+	// A zero in the file is indistinguishable from an omitted key, so
+	// ApplyDefaults fills it; only negatives and out-of-range values reach
+	// validation.
+	for name, table := range map[string]string{
+		"min_interval":       `min_interval = "-1h"`,
+		"pre_call_window":    `pre_call_window = "-1h"`,
+		"max_items":          `max_items = -1`,
+		"max_bytes":          `max_bytes = -1`,
+		"overlap_items":      `overlap_items = -1`,
+		"overlap above cap":  "max_items = 4\noverlap_items = 5",
+		"max_output_tokens":  `max_output_tokens = -1`,
+		"output cap":         `max_output_tokens = 16001`,
+		"max_rendered_runes": `max_rendered_runes = -1`,
+		"rendered cap floor": `max_rendered_runes = 239`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte(`
+[people.sweep]
+enabled = true
+provider = "primary"
+
+[people.sweep.brief]
+`+table+`
+
+[people.sweep.providers.primary]
+protocol = "openai_chat"
+endpoint = "https://api.example.test/v1/"
+model = "gpt-test"
+auth = "bearer"
+credential = "env"
+credential_env = "TEST_KEY"
+output_mode = "native_json_schema"
+token_limit_parameter = "max_completion_tokens"
+retention_posture = "zero_retention"
+training_posture = "no_training"
+allowed_sources = ["conversation_text"]
+source_since = "2025-01-01"
+allow_sensitive = true
+`), 0o600))
+			_, err := Load(path, "")
+			require.ErrorContains(t, err, "[people.sweep.brief]")
+		})
+	}
+}

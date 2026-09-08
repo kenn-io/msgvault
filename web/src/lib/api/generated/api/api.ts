@@ -109,6 +109,7 @@ import type {
   FilterMessagesParams,
   FilteredMessagesResponse,
   FindSimilarMessagesParams,
+  GeneratePersonBriefPathParameters,
   GetActivityDayParams,
   GetActivityDayPathParameters,
   GetAggregatesParams,
@@ -143,6 +144,8 @@ import type {
   GetParticipantPathParameters,
   GetPersonActivityDayParams,
   GetPersonActivityDayPathParameters,
+  GetPersonBriefEnrollmentPathParameters,
+  GetPersonBriefPathParameters,
   GetPersonContactStatePathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
@@ -193,6 +196,8 @@ import type {
   ListPersonActivityDaysPathParameters,
   ListPersonAttributesParams,
   ListPersonAttributesPathParameters,
+  ListPersonBriefVersionsParams,
+  ListPersonBriefVersionsPathParameters,
   ListPersonEmploymentsParams,
   ListPersonEmploymentsPathParameters,
   ListPersonFactClaimsParams,
@@ -254,6 +259,10 @@ import type {
   Person,
   PersonAttributeWrite,
   PersonAttributesResponse,
+  PersonBrief,
+  PersonBriefEnrollment,
+  PersonBriefRun,
+  PersonBriefVersionsResponse,
   PersonDayPage,
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
@@ -283,12 +292,15 @@ import type {
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
   PutOrganizationProfilePathParameters,
+  PutPersonBriefEnrollmentRequest,
   PutPersonTrackingRequest,
   PutSettingsPersonEnrichmentProviderPathParameters,
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
   QueryResult,
   RejectIdentityMatchCandidatePathParameters,
+  RejectPersonBriefPathParameters,
+  RejectPersonBriefRequest,
   RelationshipReviewsResponse,
   RelationshipType,
   RelationshipTypesResponse,
@@ -310,6 +322,7 @@ import type {
   SetPersonAttributeParams,
   SetPersonAttributePathParameters,
   SetPersonAttributeRequest,
+  SetPersonBriefEnrollmentPathParameters,
   SetPersonFactPinPathParameters,
   SetPersonFactPinRequest,
   SetPersonTrackingPathParameters,
@@ -2277,6 +2290,104 @@ export const setPersonAttribute = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonAttributeRequest,
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get a person's current brief version
+ */
+export const getPersonBrief = (
+  { id }: GetPersonBriefPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonBrief>>,
+) => {
+  return orvalFetch<PersonBrief>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Get a person's brief enrollment
+ */
+export const getPersonBriefEnrollment = (
+  { id }: GetPersonBriefEnrollmentPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonBriefEnrollment>>,
+) => {
+  return orvalFetch<PersonBriefEnrollment>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief-enrollment`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Replace a person's brief enrollment
+ */
+export const setPersonBriefEnrollment = (
+  { id }: SetPersonBriefEnrollmentPathParameters,
+  putPersonBriefEnrollmentRequest: PutPersonBriefEnrollmentRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonBriefEnrollment>>,
+) => {
+  return orvalFetch<PersonBriefEnrollment>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief-enrollment`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: putPersonBriefEnrollmentRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Generate a person's brief now
+ */
+export const generatePersonBrief = (
+  { id }: GeneratePersonBriefPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonBriefRun>>,
+) => {
+  return orvalFetch<PersonBriefRun>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief/generate`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Reject a person's current brief version
+ */
+export const rejectPersonBrief = (
+  { id }: RejectPersonBriefPathParameters,
+  rejectPersonBriefRequest: RejectPersonBriefRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonBrief>>,
+) => {
+  return orvalFetch<PersonBrief>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief/reject`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: rejectPersonBriefRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List a person's brief version history
+ */
+export const listPersonBriefVersions = (
+  { id }: ListPersonBriefVersionsPathParameters,
+  params?: ListPersonBriefVersionsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonBriefVersionsResponse>>,
+) => {
+  return orvalFetch<PersonBriefVersionsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/brief/versions`,
+      method: "GET",
       params,
     },
     options,

@@ -1965,6 +1965,58 @@ type SetPersonAttributeErrorResponseJSON409 = PersonAttributeConflictResponse
 
 type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
 
+type GetPersonBriefResponse = PersonBrief
+
+type GetPersonBriefErrorResponse = ErrorResponse
+
+type GetPersonBriefErrorResponseJSON = ErrorResponse
+
+type GetPersonBriefErrorResponseJSON503 = ErrorResponse
+
+type GetPersonBriefEnrollmentResponse = PersonBriefEnrollment
+
+type GetPersonBriefEnrollmentErrorResponse = ErrorResponse
+
+type GetPersonBriefEnrollmentErrorResponseJSON = ErrorResponse
+
+type GetPersonBriefEnrollmentErrorResponseJSON503 = ErrorResponse
+
+type SetPersonBriefEnrollmentResponse = PersonBriefEnrollment
+
+type SetPersonBriefEnrollmentErrorResponse = ErrorResponse
+
+type SetPersonBriefEnrollmentErrorResponseJSON = ErrorResponse
+
+type SetPersonBriefEnrollmentErrorResponseJSON409 = ErrorResponse
+
+type SetPersonBriefEnrollmentErrorResponseJSON503 = ErrorResponse
+
+type GeneratePersonBriefResponse = PersonBriefRun
+
+type GeneratePersonBriefErrorResponse = ErrorResponse
+
+type GeneratePersonBriefErrorResponseJSON = ErrorResponse
+
+type GeneratePersonBriefErrorResponseJSON409 = ErrorResponse
+
+type GeneratePersonBriefErrorResponseJSON503 = ErrorResponse
+
+type RejectPersonBriefResponse = PersonBrief
+
+type RejectPersonBriefErrorResponse = ErrorResponse
+
+type RejectPersonBriefErrorResponseJSON = ErrorResponse
+
+type RejectPersonBriefErrorResponseJSON503 = ErrorResponse
+
+type ListPersonBriefVersionsResponse = PersonBriefVersionsResponse
+
+type ListPersonBriefVersionsErrorResponse = ErrorResponse
+
+type ListPersonBriefVersionsErrorResponseJSON = ErrorResponse
+
+type ListPersonBriefVersionsErrorResponseJSON503 = ErrorResponse
+
 type GetPersonContactStateResponse = ContactState
 
 type GetPersonContactStateErrorResponse = ErrorResponse
@@ -4396,6 +4448,68 @@ type SetPersonAttributeResp struct {
 	JSON404      *SetPersonAttributeErrorResponseJSON
 	JSON409      *SetPersonAttributeErrorResponseJSON409
 	JSON503      *SetPersonAttributeErrorResponseJSON503
+}
+
+type GetPersonBriefResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonBriefResponse
+	JSON400      *GetPersonBriefErrorResponse
+	JSON404      *GetPersonBriefErrorResponseJSON
+	JSON503      *GetPersonBriefErrorResponseJSON503
+}
+
+type GetPersonBriefEnrollmentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonBriefEnrollmentResponse
+	JSON400      *GetPersonBriefEnrollmentErrorResponse
+	JSON404      *GetPersonBriefEnrollmentErrorResponseJSON
+	JSON503      *GetPersonBriefEnrollmentErrorResponseJSON503
+}
+
+type SetPersonBriefEnrollmentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetPersonBriefEnrollmentResponse
+	JSON400      *SetPersonBriefEnrollmentErrorResponse
+	JSON404      *SetPersonBriefEnrollmentErrorResponseJSON
+	JSON409      *SetPersonBriefEnrollmentErrorResponseJSON409
+	JSON503      *SetPersonBriefEnrollmentErrorResponseJSON503
+}
+
+type GeneratePersonBriefResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GeneratePersonBriefResponse
+	JSON400      *GeneratePersonBriefErrorResponse
+	JSON404      *GeneratePersonBriefErrorResponseJSON
+	JSON409      *GeneratePersonBriefErrorResponseJSON409
+	JSON503      *GeneratePersonBriefErrorResponseJSON503
+}
+
+type RejectPersonBriefResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RejectPersonBriefResponse
+	JSON400      *RejectPersonBriefErrorResponse
+	JSON404      *RejectPersonBriefErrorResponseJSON
+	JSON503      *RejectPersonBriefErrorResponseJSON503
+}
+
+type ListPersonBriefVersionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonBriefVersionsResponse
+	JSON400      *ListPersonBriefVersionsErrorResponse
+	JSON404      *ListPersonBriefVersionsErrorResponseJSON
+	JSON503      *ListPersonBriefVersionsErrorResponseJSON503
 }
 
 type GetPersonContactStateResp struct {

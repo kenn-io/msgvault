@@ -402,6 +402,11 @@ type Server struct {
 	taskLinkOperations       TaskLinkOperations
 	taskIdentityResolver     TaskIdentityResolver
 	fastmailInventoryFactory provideridentity.Factory
+	// personBriefGenerator runs one manual, forced person brief through the
+	// daemon's people sweep worker. Nil in every process that does not own the
+	// worker, which makes POST /people/{id}/brief/generate report unavailable.
+	personBriefGeneratorMu sync.RWMutex
+	personBriefGenerator   PersonBriefGenerator
 	// listenerBound is set true once StartOnListener binds a real listener
 	// (the sole production serve path). It stays false for direct-handler unit
 	// tests that drive s.Router() without starting a listener, leaving the
@@ -410,6 +415,20 @@ type Server struct {
 	// listenPort is the actual TCP port StartOnListener bound. The keyless-
 	// loopback Host guard requires the request authority's port to match it.
 	listenPort int
+}
+
+// SetPersonBriefGenerator installs the daemon's manual brief runner. The
+// daemon calls it once at startup when the people sweep is enabled.
+func (s *Server) SetPersonBriefGenerator(generate PersonBriefGenerator) {
+	s.personBriefGeneratorMu.Lock()
+	s.personBriefGenerator = generate
+	s.personBriefGeneratorMu.Unlock()
+}
+
+func (s *Server) personBriefGeneratorFunc() PersonBriefGenerator {
+	s.personBriefGeneratorMu.RLock()
+	defer s.personBriefGeneratorMu.RUnlock()
+	return s.personBriefGenerator
 }
 
 // clockNow returns the current wall time, honoring the test-injected clock.
@@ -1147,8 +1166,35 @@ func isLongDaemonRequest(path string) bool {
 		"/api/v1/cli/verify":
 		return true
 	default:
+		return isPersonBriefGeneratePath(path)
+	}
+}
+
+// isPersonBriefGeneratePath matches POST /api/v1/people/{id}/brief/generate.
+// A manual brief runs a provider call (and, when the person's cursors are
+// already caught up, one bounded extraction page), so it must not be cut off
+// by the standard per-request deadline. The operation gate still serializes it.
+func isPersonBriefGeneratePath(path string) bool {
+	const prefix = "/api/v1/people/"
+	const suffix = "/brief/generate"
+	// The length guard comes first because prefix and suffix are the same
+	// length: "/api/v1/people/brief/generate" satisfies both HasPrefix and
+	// HasSuffix while being shorter than the two together, so slicing it
+	// would cross its own bounds. Requiring more than both also guarantees a
+	// non-empty ID below.
+	if len(path) <= len(prefix)+len(suffix) {
 		return false
 	}
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	id := path[len(prefix) : len(path)-len(suffix)]
+	for _, digit := range id {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // loggerMiddleware logs HTTP requests on completion and, for requests that

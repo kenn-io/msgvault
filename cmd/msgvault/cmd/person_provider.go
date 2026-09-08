@@ -2045,6 +2045,13 @@ func writePersonSemanticProviderStatuses(
 	return nil
 }
 
+// personBriefProviderDisclosureLine names the second thing this consent covers:
+// the "last time we talked" brief sends recent archive text the person wrote to
+// the same provider, under the same profile and the same consent.
+const personBriefProviderDisclosureLine = "Person brief: recent verbatim messages the " +
+	"person wrote, from the conversation lane only, are sent to the same " +
+	"provider under this consent"
+
 func printPersonProviderDisclosure(w io.Writer, profile peoplesweep.ProviderProfile) {
 	dateRange := profile.SourceSince + " through " + profile.SourceUntil
 	if profile.SourceUntil == "" {
@@ -2079,6 +2086,7 @@ func printPersonProviderDisclosure(w io.Writer, profile peoplesweep.ProviderProf
 	_, _ = fmt.Fprintf(w, "Sensitive content: %s\n", sensitive)
 	_, _ = fmt.Fprintf(w, "Packet renderer: %s\n", profile.PacketRendererPolicy)
 	_, _ = fmt.Fprintf(w, "Extraction program fingerprint: %s\n", profile.ProgramFingerprint)
+	_, _ = fmt.Fprintln(w, personBriefProviderDisclosureLine)
 	_, _ = fmt.Fprintln(w, "Disclosed packet field classes:")
 	for _, field := range profile.DisclosedPacketFields {
 		_, _ = fmt.Fprintf(w, "- %s\n", field)

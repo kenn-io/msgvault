@@ -372,6 +372,15 @@ func (m Model) peopleContactStatus() (string, bool) {
 		if m.peopleState.attributesLoading {
 			return "Loading notes...", true
 		}
+		if m.peopleState.briefCommandRunning {
+			return m.peopleState.briefNotice, true
+		}
+		if m.peopleState.briefNotice != "" {
+			return m.peopleState.briefNotice, false
+		}
+		if m.peopleState.briefLoading {
+			return "Loading brief...", true
+		}
 		if m.peopleState.relationshipErr != nil {
 			return m.peopleState.relationshipErr.Error() + " [r retry]", false
 		}
@@ -475,6 +484,9 @@ func (m Model) peopleContactTabLines() []string {
 	if m.peopleState.tab != peopleTabOverview {
 		return []string{peopleTabLabels[m.peopleState.tab] + " will load when selected."}
 	}
+	if m.peopleState.briefStructured {
+		return m.peopleBriefStructuredLines()
+	}
 	profile := "Observed only; no durable profile"
 	if contact.Profile != nil {
 		profile = "Curated profile"
@@ -500,6 +512,7 @@ func (m Model) peopleContactTabLines() []string {
 		" Latest interaction: " + formatPeopleTime(contact.LastAt),
 		" Profile: " + profile,
 	}
+	lines = append(lines, m.peopleOverviewBriefLines()...)
 	lines = append(lines, m.peopleOverviewRelationshipLines()...)
 	return append(lines, m.peopleOverviewNotesLines()...)
 }
@@ -840,14 +853,17 @@ func pluralSuffix(count int) string {
 }
 
 func (m Model) peopleFooterView() string {
-	keys := []string{"↑/k", "↓/j", helpLabelEnter, "/ search", "m mode", helpLabelHelp}
+	keys := []string{"↑/k", "↓/j", helpLabelEnter, "/ search", helpLabelMode, helpLabelHelp}
 	if m.peopleState.level == peopleLevelDirectory && m.peopleState.searchActive {
 		keys = []string{"↑/↓ suggest", "Tab accept", "Enter open", "Esc cancel", helpLabelHelp}
 	}
 	if m.peopleState.level != peopleLevelDirectory {
-		keys = []string{"Tab/Shift-Tab", "p promote", helpLabelBack, "m mode", helpLabelHelp}
+		keys = []string{"Tab/Shift-Tab", "p promote", helpLabelBack, helpLabelMode, helpLabelHelp}
 		if m.peopleState.tab == peopleTabOverview {
-			keys = []string{"[ / ] year", "n notes", "p promote", "Tab/Shift-Tab", helpLabelBack, "m mode", helpLabelHelp}
+			keys = []string{"[ / ] year", "n notes", "p promote", "Tab/Shift-Tab", helpLabelBack, helpLabelMode, helpLabelHelp}
+			if m.peopleState.briefStructured {
+				keys = []string{helpLabelVertical, "b/Esc overview", ": brief commands", helpLabelMode, helpLabelHelp}
+			}
 		}
 		if m.peopleState.tab == peopleTabAttributes {
 			keys = []string{helpLabelVertical, "Enter add", "e edit", "n field", "p promote", "Tab", helpLabelEsc}
@@ -861,19 +877,19 @@ func (m Model) peopleFooterView() string {
 			if m.peopleContentTabRetryAvailable() {
 				keys = append(keys, "r retry")
 			}
-			keys = append(keys, "Tab/Shift-Tab", helpLabelBack, "m mode", helpLabelHelp)
+			keys = append(keys, "Tab/Shift-Tab", helpLabelBack, helpLabelMode, helpLabelHelp)
 		}
 		if m.peopleState.level >= peopleLevelInboxTypes {
-			keys = []string{helpLabelVertical, helpLabelEnter, helpLabelBack, "r retry", "m mode", helpLabelHelp}
+			keys = []string{helpLabelVertical, helpLabelEnter, helpLabelBack, "r retry", helpLabelMode, helpLabelHelp}
 		}
 		if m.peopleState.level == peopleLevelMessage {
-			keys = []string{"↑/↓ scroll", "/ find", helpLabelBack, "r retry", "m mode", helpLabelHelp}
+			keys = []string{"↑/↓ scroll", "/ find", helpLabelBack, "r retry", helpLabelMode, helpLabelHelp}
 		}
 		if m.peopleState.level == peopleLevelMeetingDetail {
-			keys = []string{"↑/↓ scroll", "/ find", "r retry", helpLabelBack, "m mode", helpLabelHelp}
+			keys = []string{"↑/↓ scroll", "/ find", "r retry", helpLabelBack, helpLabelMode, helpLabelHelp}
 		}
 		if m.peopleState.level == peopleLevelActivityMessage {
-			keys = []string{"↑/↓ scroll", "/ find", "r retry", helpLabelBack, "m mode", helpLabelHelp}
+			keys = []string{"↑/↓ scroll", "/ find", "r retry", helpLabelBack, helpLabelMode, helpLabelHelp}
 		}
 	}
 	if m.width < 60 {
@@ -886,6 +902,9 @@ func (m Model) peopleFooterView() string {
 			keys = []string{"Tab", "p", helpLabelEsc, "m", "?"}
 			if m.peopleState.tab == peopleTabOverview {
 				keys = []string{"[ / ] year", "n", "p", "Tab", helpLabelEsc, "m", "?"}
+				if m.peopleState.briefStructured {
+					keys = []string{helpLabelVertical, "b", ":", helpLabelEsc, "m", "?"}
+				}
 			}
 			if m.peopleState.tab == peopleTabAttributes {
 				keys = []string{helpLabelVertical, helpLabelEnter, "e", "n", "p", "Tab", helpLabelEsc}

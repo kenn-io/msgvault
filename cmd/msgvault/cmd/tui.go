@@ -162,11 +162,16 @@ func tuiSemanticSearcher(
 	return searcher
 }
 
+// tuiPeopleBackend returns the People backend for the selected daemon, or nil
+// when the daemon is too old to serve People at all. The brief routes arrived
+// later than People itself, so a daemon between the two schema versions gets a
+// backend without the brief surfaces: the People browser then hides the brief
+// rather than reporting a failed read on every contact.
 func tuiPeopleBackend(
 	ctx context.Context,
 	client *daemonclient.Client,
 	engine *daemonclient.Engine,
-) *daemonclient.PeopleBrowser {
+) peoplebrowser.Backend {
 	if client == nil || engine == nil {
 		return nil
 	}
@@ -174,13 +179,19 @@ func tuiPeopleBackend(
 	if err != nil || !compatible {
 		return nil
 	}
-	return daemonclient.NewPeopleBrowser(engine)
+	browser := daemonclient.NewPeopleBrowser(engine)
+	briefs, err := client.SupportsAPISchemaVersion(ctx, briefMinAPISchemaVersion)
+	if err != nil || !briefs {
+		return daemonclient.NewPeopleBrowserWithoutBriefs(browser)
+	}
+	return browser
 }
 
 const (
 	semanticSearchMinAPISchemaVersion   = "2.7.0"
 	peopleMinAPISchemaVersion           = "2.10.0"
 	collectionScopesMinAPISchemaVersion = "2.17.0"
+	briefMinAPISchemaVersion            = "2.20.0"
 	tuiSemanticMessageType              = "email"
 )
 

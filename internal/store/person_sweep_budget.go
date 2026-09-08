@@ -18,7 +18,11 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
-const personSweepBatchStatusRunning = "running"
+const (
+	personSweepBatchStatusRunning   = "running"
+	personSweepBatchStatusFailed    = "failed"
+	personSweepBatchStatusCancelled = "cancelled"
+)
 
 func (s *Store) StartPersonSweepRun(
 	ctx context.Context, input peoplesweep.StartRun,
@@ -470,8 +474,27 @@ func addPersonSweepUsage(left, right peoplesweep.Usage) (peoplesweep.Usage, erro
 }
 
 func validPersonSweepCallCoordinate(callOrdinal int, purpose string) bool {
-	return (callOrdinal == 0 && purpose == peoplesweep.ProviderCallPurposePrimary) ||
-		(callOrdinal == 1 && purpose == peoplesweep.ProviderCallPurposeRepair)
+	switch purpose {
+	case peoplesweep.ProviderCallPurposePrimary, peoplesweep.ProviderCallPurposeBrief:
+		return callOrdinal == 0
+	case peoplesweep.ProviderCallPurposeRepair, peoplesweep.ProviderCallPurposeBriefRepair:
+		return callOrdinal == 1
+	default:
+		return false
+	}
+}
+
+// personSweepRepairPurpose names the only repair purpose that may share a batch
+// ordinal with the given lead call. An unknown lead purpose has no partner.
+func personSweepRepairPurpose(leadPurpose string) (string, bool) {
+	switch leadPurpose {
+	case peoplesweep.ProviderCallPurposePrimary:
+		return peoplesweep.ProviderCallPurposeRepair, true
+	case peoplesweep.ProviderCallPurposeBrief:
+		return peoplesweep.ProviderCallPurposeBriefRepair, true
+	default:
+		return "", false
+	}
 }
 
 func validatePersonSweepCallPredecessorTx(
@@ -480,20 +503,27 @@ func validatePersonSweepCallPredecessorTx(
 	input peoplesweep.BudgetReservationRequest,
 ) error {
 	if input.CallOrdinal == 1 {
-		primary, found, err := loadPersonSweepBatchTx(
+		lead, found, err := loadPersonSweepBatchTx(
 			ctx, tx, input.AttemptID, input.BatchOrdinal, 0, false)
 		if err != nil {
 			return err
 		}
-		if !found || primary.purpose != peoplesweep.ProviderCallPurposePrimary ||
-			(primary.status != personSweepBatchStatusRunning && primary.status != "succeeded") {
-			return errors.New("reserve person sweep budget: repair call requires a started primary call")
+		if !found {
+			return errors.New("reserve person sweep budget: repair call requires a started lead call")
+		}
+		repairPurpose, _ := personSweepRepairPurpose(lead.purpose)
+		if repairPurpose != input.Purpose ||
+			(lead.status != personSweepBatchStatusRunning && lead.status != "succeeded") {
+			return errors.New("reserve person sweep budget: repair call requires a started lead call of the same kind")
 		}
 		return nil
 	}
 	if input.BatchOrdinal == 0 {
 		return nil
 	}
+	// A brief batch closes the attempt, so every lead call — extraction or
+	// brief — must follow an extraction batch. That admits at most one brief
+	// and keeps its ordinal above every extraction ordinal in the attempt.
 	previous, found, err := loadPersonSweepBatchTx(
 		ctx, tx, input.AttemptID, input.BatchOrdinal-1, 0, false)
 	if err != nil {
@@ -691,7 +721,7 @@ func (s *Store) ReleasePersonSweepBudget(
 		if !found || !batch.matches(reservation.Request) {
 			return errors.New("release person sweep budget: reservation is not authentic")
 		}
-		if batch.status == "cancelled" {
+		if batch.status == personSweepBatchStatusCancelled {
 			return nil
 		}
 		if batch.status != "reserved" {
@@ -962,13 +992,13 @@ func (s *Store) FinalizePersonSweepFailure(
 				}
 				continue
 			}
-			if batch.status == "failed" {
+			if batch.status == personSweepBatchStatusFailed {
 				if didComplete {
 					return errors.New("finalize person sweep failure: failed batch cannot become completed")
 				}
 				continue
 			}
-			if batch.status == "cancelled" {
+			if batch.status == personSweepBatchStatusCancelled {
 				if didComplete {
 					return errors.New("finalize person sweep failure: cancelled batch cannot become completed")
 				}
@@ -979,7 +1009,7 @@ func (s *Store) FinalizePersonSweepFailure(
 				if err != nil {
 					return err
 				}
-				status := "failed"
+				status := personSweepBatchStatusFailed
 				if didComplete {
 					status = "succeeded"
 				}
@@ -1114,18 +1144,30 @@ func completedUsageCoordinate(input peoplesweep.CompletedUsage) peoplesweep.Prov
 		CallOrdinal: input.CallOrdinal, Purpose: input.Purpose}
 }
 
+// validatePersonSweepCallCoordinateSet accepts a contiguous run of extraction
+// batches, each a primary call with at most one repair on the same ordinal,
+// optionally closed by one brief batch with at most one brief_repair. The brief
+// ordinal is therefore greater than every extraction ordinal in the attempt.
 func validatePersonSweepCallCoordinateSet(coordinates []personSweepBatchCoordinate) error {
 	expectedBatch := 0
+	briefSeen := false
 	for index := 0; index < len(coordinates); {
-		primary := coordinates[index]
-		if primary.ordinal != expectedBatch || primary.callOrdinal != 0 ||
-			primary.purpose != peoplesweep.ProviderCallPurposePrimary {
+		lead := coordinates[index]
+		repairPurpose, known := personSweepRepairPurpose(lead.purpose)
+		if lead.ordinal != expectedBatch || lead.callOrdinal != 0 || !known ||
+			(briefSeen && lead.purpose != peoplesweep.ProviderCallPurposeBrief) {
 			return errors.New("provider calls contain a gap or missing primary")
+		}
+		if lead.purpose == peoplesweep.ProviderCallPurposeBrief {
+			if briefSeen {
+				return errors.New("provider calls contain more than one brief")
+			}
+			briefSeen = true
 		}
 		index++
 		if index < len(coordinates) && coordinates[index].ordinal == expectedBatch {
 			repair := coordinates[index]
-			if repair.callOrdinal != 1 || repair.purpose != peoplesweep.ProviderCallPurposeRepair {
+			if repair.callOrdinal != 1 || repair.purpose != repairPurpose {
 				return errors.New("provider calls contain a duplicate or mismatched repair")
 			}
 			index++

@@ -888,7 +888,7 @@ func (s *Store) restorePersonSplitRowsTx(
 			}
 			continue
 		}
-		replaced, err := s.personSplitTrackingRowReplacedTx(ctx, tx, row)
+		replaced, err := s.personSplitPresenceRowReplacedTx(ctx, tx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -1975,24 +1975,34 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 	return nil
 }
 
-func (s *Store) personSplitTrackingRowReplacedTx(
+// personSplitPresenceRowColumns names the row-presence opt-in tables and the
+// columns that identify one grant. A grant whose columns differ from the
+// post-merge state was replaced after the merge, so an exact split inserts the
+// snapshot row for the new person instead of moving the live grant back.
+var personSplitPresenceRowColumns = map[string][]string{
+	"person_tracking":          {"tracked_at"},
+	"person_brief_enrollments": {"enabled_at", "actor"},
+}
+
+func (s *Store) personSplitPresenceRowReplacedTx(
 	ctx context.Context, tx *loggedTx, journal personSplitJournalRow,
 ) (bool, error) {
-	if journal.tableName != "person_tracking" || !journal.postMergeJSON.Valid {
+	columns, presence := personSplitPresenceRowColumns[journal.tableName]
+	if !presence || !journal.postMergeJSON.Valid {
 		return false, nil
 	}
 	var post personMergeSnapshotRow
 	if err := json.Unmarshal([]byte(journal.postMergeJSON.String), &post); err != nil {
-		return false, fmt.Errorf("%w: decode tracking post-merge row: %w",
-			ErrPersonMergeSnapshotCorrupt, err)
+		return false, fmt.Errorf("%w: decode %s post-merge row: %w",
+			ErrPersonMergeSnapshotCorrupt, journal.tableName, err)
 	}
-	spec := personMergeTableRegistry["person_tracking"]
+	spec := personMergeTableRegistry[journal.tableName]
 	where, args, err := personSplitCurrentRowWhere(spec, journal)
 	if err != nil {
 		return false, err
 	}
 	current, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
-		`SELECT * FROM person_tracking WHERE `+where, args, 0)
+		`SELECT * FROM `+personSplitIdentifier(journal.tableName)+` WHERE `+where, args, 0)
 	if err != nil {
 		return false, err
 	}
@@ -2000,12 +2010,17 @@ func (s *Store) personSplitTrackingRowReplacedTx(
 		return false, nil
 	}
 	if len(current) != 1 {
-		return false, fmt.Errorf("%w: current person_tracking row is ambiguous",
-			ErrPersonSplitParticipants)
+		return false, fmt.Errorf("%w: current %s row is ambiguous",
+			ErrPersonSplitParticipants, journal.tableName)
 	}
 	currentColumns := personSplitSnapshotColumnsByName(current[0].Columns)
 	postColumns := personSplitSnapshotColumnsByName(post.Columns)
-	return !reflect.DeepEqual(currentColumns["tracked_at"], postColumns["tracked_at"]), nil
+	for _, column := range columns {
+		if !reflect.DeepEqual(currentColumns[column], postColumns[column]) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Store) personSplitRestoredRowLocatorTx(

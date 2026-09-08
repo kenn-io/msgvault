@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-08-09"
+last_edited: "2026-09-07"
 title: Interactive TUI
 description: Terminal interface for exploring email, text messages, and meeting transcripts.
 ---
@@ -90,6 +90,18 @@ Press `a` from any aggregate view to show all individual messages in that view. 
     <figcaption style="font-size: 0.8rem; color: #888; margin-top: 0.3rem;">Message detail</figcaption>
   </figure>
 </div>
+
+## Person briefs
+
+In the People browser, a person's Overview tab shows their **Last time we
+talked** brief: a short summary to read before your next conversation. Press
+`b` for its details and sources, then `b` or `Esc` to return.
+
+Press `:` to enter `brief enroll`, `brief generate`, or `brief reject <reason>`.
+Enrollment also enables tracking. Generation sends eligible message text to
+your consented provider and spends its budget. A person needs a saved profile
+first; see [person briefs](/docs/usage/people/#catch-up-before-your-next-conversation)
+for setup and supported sources.
 
 ## View Modes
 

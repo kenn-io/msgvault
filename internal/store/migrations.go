@@ -81,6 +81,13 @@ const (
 	// ledgered because previous-release writers can reintroduce unkeyed rows
 	// at any time (see ensureAccountIdentityAddressKeys).
 	migrationAccountIdentityAddressKeyIndex = "account_identities_address_key_index_v1"
+	// v2: the provider call journal accepts the person brief purposes
+	// alongside the extraction pair.
+	migrationPersonSweepBatchPurposeV2 = "person_sweep_batch_purpose_v2"
+	// The fact ledger records a claim the person brief proposed with its own
+	// origin, and an attempt records why a brief call produced no version.
+	migrationPersonFactClaimOriginBrief     = "person_fact_claim_origin_brief_v1"
+	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
 )
 
 func (s *Store) backfillSyncRunResumeMetadata(

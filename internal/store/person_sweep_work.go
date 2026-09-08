@@ -166,9 +166,9 @@ func (s *Store) finalizeReclaimedPersonSweepAttempt(
 			continue
 		}
 		actual := peoplesweep.Usage{}
-		status := "cancelled"
-		if batch.status == "running" {
-			status = "failed"
+		status := personSweepBatchStatusCancelled
+		if batch.status == personSweepBatchStatusRunning {
+			status = personSweepBatchStatusFailed
 			actual = batch.reserved
 		}
 		_, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE person_sweep_batches SET
@@ -571,6 +571,7 @@ func (s *Store) ReconcilePersonSweepWorkContext(
 			return err
 		}
 		result.PeopleScanned = len(people)
+		result.PersonIDs = people
 		if len(people) == 0 {
 			return nil
 		}
@@ -727,6 +728,8 @@ func (s *Store) upsertPersonSweepWorkTxMode(
 	if s.IsPostgreSQL() {
 		maxExpr = "GREATEST(person_sweep_work.dirty_through_sequence, excluded.dirty_through_sequence)"
 	}
+	// New activity advances the high water, but must not cancel an active
+	// failure delay. Only an explicit force bypasses retry backoff.
 	now := s.dialect.Now()
 	_, err = tx.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
 		INSERT INTO person_sweep_work
@@ -738,11 +741,49 @@ func (s *Store) upsertPersonSweepWorkTxMode(
 			dirty_through_sequence = %s,
 			available_at = CASE
 				WHEN ? THEN %s
+				WHEN person_sweep_work.last_failure_class <> '' AND person_sweep_work.available_at > %s
+				THEN person_sweep_work.available_at
 				WHEN excluded.dirty_through_sequence > person_sweep_work.dirty_through_sequence
 				THEN %s ELSE person_sweep_work.available_at END,
-			updated_at = %s`, now, now, now, maxExpr, now, now, now)), personID, dirtyThrough, forceAvailable)
+			updated_at = %s`, now, now, now, maxExpr, now, now, now, now)), personID, dirtyThrough, forceAvailable)
 	if err != nil {
 		return fmt.Errorf("upsert person sweep work: %w", err)
 	}
 	return nil
+}
+
+// EnsurePersonSweepWork publishes a work row for one tracked person. When
+// forceAvailable is true it also clears retry backoff. A person whose journal
+// has no dirty work has no work row, so a due brief would otherwise find
+// nothing to claim. It reports false when the person is not
+// tracked, because tracking is the outer boundary the sweep never crosses.
+//
+// The published dirty-through sequence is the person's current lane high water,
+// which is what ReconcilePersonSweepWorkContext would have published; an
+// existing row keeps the greater of the two.
+func (s *Store) EnsurePersonSweepWork(ctx context.Context, personID int64, forceAvailable bool) (bool, error) {
+	if personID <= 0 {
+		return false, errors.New("ensure person sweep work: person ID must be positive")
+	}
+	published := false
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var dirtyThrough int64
+		if err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes WHERE person_id = ?`),
+			personID).Scan(&dirtyThrough); err != nil {
+			return fmt.Errorf("read person sweep high water: %w", err)
+		}
+		// Manual generation clears retry backoff; automatic brief scheduling
+		// preserves it just like extraction reconciliation does.
+		if err := s.upsertPersonSweepWorkTxMode(ctx, tx, personID, dirtyThrough, forceAvailable); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, s.Rebind(
+			`SELECT EXISTS (SELECT 1 FROM person_sweep_work WHERE person_id = ?)`),
+			personID).Scan(&published)
+	})
+	if err != nil {
+		return false, fmt.Errorf("ensure person sweep work: %w", err)
+	}
+	return published, nil
 }

@@ -53,7 +53,7 @@ func (a *assemblyContextArchive) SearchPersonSweepMessages(_ context.Context, re
 	return append([]EvidenceItem(nil), a.items...), nil
 }
 
-func (a *assemblyContextArchive) HydratePersonSweepMessages(context.Context, int64, []int64) ([]EvidenceItem, error) {
+func (a *assemblyContextArchive) HydratePersonSweepMessages(context.Context, int64, []int64, int64) ([]EvidenceItem, error) {
 	return []EvidenceItem{}, nil
 }
 

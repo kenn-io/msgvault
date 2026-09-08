@@ -98,6 +98,12 @@ func (s *Store) applyPersonSweepWithAligner(
 	if err != nil {
 		return peoplesweep.ApplyResult{}, fmt.Errorf("prepare person sweep generation: %w", err)
 	}
+	// Brief evidence is aligned exactly like claim evidence, and outside the
+	// transaction for the same reason: alignment reads the archive.
+	briefEvidence, err := preparePersonSweepBriefEvidence(ctx, request, aligner)
+	if err != nil {
+		return peoplesweep.ApplyResult{}, err
+	}
 
 	var result peoplesweep.ApplyResult
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -161,6 +167,24 @@ func (s *Store) applyPersonSweepWithAligner(
 			VCardRevisionBumped:        facts.vcardRevisionBumped,
 		}
 
+		if request.Brief != nil {
+			briefIDs, evidenceErr := s.insertPersonSweepBriefEvidenceTx(
+				ctx, tx, request.Lease.PersonID, briefEvidence)
+			if evidenceErr != nil {
+				return evidenceErr
+			}
+			brief, briefErr := s.applyPersonBriefTx(ctx, tx, personBriefInsertFromResult(
+				request, generation.GenerationID, briefIDs))
+			if briefErr != nil {
+				return briefErr
+			}
+			result.Mutations.BriefVersion = brief.Version
+			result.Mutations.BriefEvidenceRowsInserted = len(briefIDs)
+			if err := personSweepApplyStage(ctx, "brief"); err != nil {
+				return err
+			}
+		}
+
 		batchCount, err := s.reconcilePersonSweepSuccessBatchesTx(ctx, tx, request)
 		if err != nil {
 			return err
@@ -180,9 +204,11 @@ func (s *Store) applyPersonSweepWithAligner(
 		}
 
 		attemptResult, err := tx.ExecContext(ctx, `UPDATE person_sweep_attempts SET
-			status = 'succeeded', failure_class = '', generation_id = ?, generation_key = ?,
+			status = 'succeeded', failure_class = '', brief_failure_class = ?,
+			generation_id = ?, generation_key = ?,
 			claim_count = ?, decision_count = ?, projected_write_count = ?, completed_at = ?
-			WHERE id = ? AND status = 'running'`, generation.GenerationID,
+			WHERE id = ? AND status = 'running'`, request.BriefFailureClass,
+			generation.GenerationID,
 			generation.GenerationKey, len(request.Generation.Claims), len(generation.Decisions),
 			result.Mutations.ProjectionRowsWritten, s.dialect.TimestampParam(request.CompletedAt),
 			request.AttemptID)
@@ -220,6 +246,9 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 	if request.Usage.Requests < 0 || request.Usage.InputTokens < 0 ||
 		request.Usage.OutputTokens < 0 || request.Usage.EstimatedCostMicroUSD < 0 {
 		return errors.New("apply person sweep usage must not be negative")
+	}
+	if err := validatePersonSweepApplyBrief(request); err != nil {
+		return err
 	}
 	statusOnly := len(request.Batches) == 0
 	if statusOnly {
@@ -279,6 +308,38 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 	return nil
 }
 
+// validatePersonSweepApplyBrief keeps the brief's result and retry fields consistent.
+// A stored version requires a completed brief call in the same attempt, and a
+// brief failure class and a stored version are mutually exclusive: the class
+// exists precisely to say that no version was produced.
+func validatePersonSweepApplyBrief(request peoplesweep.ApplyRequest) error {
+	if request.BriefFailureClass != "" && !validPersonSweepFailureClass(request.BriefFailureClass) {
+		return errors.New("apply person sweep brief failure class is not a known class")
+	}
+	if request.BriefFailureClass != "" {
+		if !request.BriefRetryAt.After(request.CompletedAt) {
+			return errors.New("apply person sweep brief failure requires a future retry time")
+		}
+	} else if !request.BriefRetryAt.IsZero() {
+		return errors.New("apply person sweep brief retry time requires a failure")
+	}
+	if request.Brief == nil {
+		return nil
+	}
+	if request.BriefFailureClass != "" {
+		return errors.New("apply person sweep cannot both store a brief and record a brief failure")
+	}
+	if err := peoplesweep.ValidateBriefResult(request.Lease.PersonID, request.Brief); err != nil {
+		return fmt.Errorf("apply person sweep: %w", err)
+	}
+	for _, batch := range request.Batches {
+		if batch.Purpose == peoplesweep.ProviderCallPurposeBrief {
+			return nil
+		}
+	}
+	return errors.New("apply person sweep brief has no completed brief call")
+}
+
 func (s *Store) verifyPersonSweepAttemptBindingTx(
 	ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest,
 	attempt personSweepBudgetAttempt,
@@ -329,19 +390,44 @@ func (s *Store) personSweepApplyBatchCoordinatesTx(
 	if err != nil {
 		return nil, err
 	}
-	if len(coordinates) != len(request.Batches) {
-		return nil, errors.New("apply person sweep batches do not exactly cover durable reservations")
+	if err := verifyPersonSweepApplyCoverage(request, coordinates); err != nil {
+		return nil, err
 	}
+	return coordinates, nil
+}
+
+// verifyPersonSweepApplyCoverage requires the applied calls to cover every
+// durable reservation, with one exception: a brief call the attempt recorded a
+// failure class for may be left uncovered, because a brief that failed after
+// the extraction batches succeeded does not roll back the extraction. Those
+// rows are terminalized as failed and refunded by
+// reconcilePersonSweepSuccessBatchesTx.
+func verifyPersonSweepApplyCoverage(
+	request peoplesweep.ApplyRequest, coordinates []personSweepBatchCoordinate,
+) error {
 	calls := make(map[peoplesweep.ProviderCallCoordinate]struct{}, len(request.Batches))
 	for _, batch := range request.Batches {
 		calls[completedBatchCoordinate(batch)] = struct{}{}
 	}
+	covered := 0
 	for _, coordinate := range coordinates {
-		if _, ok := calls[coordinate.providerCoordinate()]; !ok {
-			return nil, errors.New("apply person sweep batches do not exactly cover durable reservations")
+		if _, ok := calls[coordinate.providerCoordinate()]; ok {
+			covered++
+			continue
+		}
+		if !personSweepBriefPurpose(coordinate.purpose) || request.BriefFailureClass == "" {
+			return errors.New("apply person sweep batches do not exactly cover durable reservations")
 		}
 	}
-	return coordinates, nil
+	if covered != len(request.Batches) {
+		return errors.New("apply person sweep batches do not exactly cover durable reservations")
+	}
+	return nil
+}
+
+func personSweepBriefPurpose(purpose string) bool {
+	return purpose == peoplesweep.ProviderCallPurposeBrief ||
+		purpose == peoplesweep.ProviderCallPurposeBriefRepair
 }
 
 func completedBatchCoordinate(batch peoplesweep.CompletedBatch) peoplesweep.ProviderCallCoordinate {
@@ -420,26 +506,27 @@ func (s *Store) reconcilePersonSweepSuccessBatchesTx(
 	if err != nil {
 		return 0, err
 	}
-	if len(coordinates) != len(request.Batches) {
-		return 0, errors.New("apply person sweep batches do not exactly cover durable reservations")
+	if err := verifyPersonSweepApplyCoverage(request, coordinates); err != nil {
+		return 0, err
 	}
 	byCoordinate := make(map[peoplesweep.ProviderCallCoordinate]peoplesweep.CompletedBatch,
 		len(request.Batches))
 	for _, completed := range request.Batches {
 		byCoordinate[completedBatchCoordinate(completed)] = completed
 	}
-	for _, coordinate := range coordinates {
-		if _, ok := byCoordinate[coordinate.providerCoordinate()]; !ok {
-			return 0, errors.New("apply person sweep batches do not exactly cover durable reservations")
-		}
-	}
 	actualTotal := peoplesweep.Usage{}
 	for _, coordinate := range coordinates {
-		completed := byCoordinate[coordinate.providerCoordinate()]
+		completed, applied := byCoordinate[coordinate.providerCoordinate()]
 		batch, found, err := loadPersonSweepBatchTx(ctx, tx, request.AttemptID,
 			coordinate.ordinal, coordinate.callOrdinal, s.IsPostgreSQL())
 		if err != nil {
 			return 0, err
+		}
+		if !applied {
+			if err := s.failPersonSweepBriefBatchTx(ctx, tx, request, batch, found, coordinate); err != nil {
+				return 0, err
+			}
+			continue
 		}
 		if !found || batch.status != "running" || batch.reservationID != completed.ReservationID ||
 			batch.inputHash != completed.InputHash {
@@ -636,9 +723,20 @@ func (s *Store) finishPersonSweepWorkTx(
 		return 0, fmt.Errorf("check remaining person sweep work: %w", err)
 	}
 	var result sql.Result
-	if remaining {
+	if request.BriefFailureClass != "" {
+		// Extraction has committed, but the brief still needs a retry. Keep its
+		// delay and failure count on the existing work row so reconciliation
+		// cannot immediately publish the same brief again.
+		result, err = tx.ExecContext(ctx, `UPDATE person_sweep_work
+			SET available_at = ?, attempt_count = attempt_count + 1,
+			last_failure_class = ?, lease_owner = '', lease_until = NULL,
+			updated_at = `+s.dialect.Now()+`
+			WHERE person_id = ? AND lease_owner = ? AND lease_fence = ?`,
+			s.dialect.TimestampParam(request.BriefRetryAt), request.BriefFailureClass,
+			request.Lease.PersonID, request.Lease.WorkerID, request.Lease.Fence)
+	} else if remaining {
 		result, err = tx.ExecContext(ctx, `UPDATE person_sweep_work SET available_at = `+s.dialect.Now()+`,
-			lease_owner = '', lease_until = NULL, last_failure_class = '', updated_at = `+s.dialect.Now()+`
+			lease_owner = '', lease_until = NULL, attempt_count = 0, last_failure_class = '', updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND lease_owner = ? AND lease_fence = ?`, request.Lease.PersonID,
 			request.Lease.WorkerID, request.Lease.Fence)
 	} else {
@@ -654,4 +752,154 @@ func (s *Store) finishPersonSweepWorkTx(
 		return 0, peoplesweep.ErrLeaseLost
 	}
 	return int(changed), nil
+}
+
+// preparedBriefEvidence is one cited archive item that survived alignment,
+// keyed the same way claim evidence is keyed.
+type preparedBriefEvidence struct {
+	key   string
+	input personfacts.EvidenceInput
+}
+
+// preparePersonSweepBriefEvidence aligns the evidence the brief's structure
+// cites through the same aligner and the same validation claim evidence uses,
+// so a pointer can only reference an archive item that still says what the
+// packet said. An item that no longer aligns is dropped rather than failing the
+// attempt: the pointer list is keyed by content, not by position, so a missing
+// pointer costs one expandable citation and never misattributes a sentence.
+func preparePersonSweepBriefEvidence(
+	ctx context.Context, request peoplesweep.ApplyRequest, aligner personfacts.EvidenceAligner,
+) ([]preparedBriefEvidence, error) {
+	if request.Brief == nil {
+		return nil, nil
+	}
+	if err := peoplesweep.ValidateBriefResult(request.Lease.PersonID, request.Brief); err != nil {
+		return nil, fmt.Errorf("apply person sweep brief: %w", err)
+	}
+	if aligner == nil {
+		return nil, errors.New("apply person sweep brief: archive evidence aligner is required")
+	}
+	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
+	seen := make(map[string]struct{}, len(request.Brief.Evidence))
+	for _, input := range request.Brief.Evidence {
+		if input.SourceClass != personfacts.EvidenceArchive {
+			return nil, errors.New("apply person sweep brief: evidence must use archive class")
+		}
+		input.EventTime = personFactPortableTime(input.EventTime)
+		input.RecordedTime = personFactPortableTime(input.RecordedTime)
+		result, err := aligner.Align(ctx, input)
+		if err != nil {
+			if errors.Is(err, peoplesweep.ErrSourceTextUnavailable) {
+				continue
+			}
+			return nil, fmt.Errorf("align person brief evidence: %w", err)
+		}
+		if !result.Accepted {
+			continue
+		}
+		input.SourceVersion = result.SourceVersion
+		input.ContentSHA256 = result.ContentSHA256
+		key, err := personfacts.EvidenceKey(input)
+		if err != nil {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		prepared = append(prepared, preparedBriefEvidence{key: key, input: input})
+	}
+	return prepared, nil
+}
+
+// insertPersonSweepBriefEvidenceTx writes the aligned evidence rows and returns
+// their IDs in citation order. The insert is the same idempotent path claim
+// evidence takes, so an item the brief and a claim both cite is one row.
+func (s *Store) insertPersonSweepBriefEvidenceTx(
+	ctx context.Context, tx *loggedTx, personID int64, prepared []preparedBriefEvidence,
+) ([]int64, error) {
+	ids := make([]int64, 0, len(prepared))
+	for _, item := range prepared {
+		evidence, err := s.insertPersonFactEvidenceTx(ctx, tx, personID, item.key, item.input)
+		if err != nil {
+			return nil, fmt.Errorf("insert person brief evidence: %w", err)
+		}
+		ids = append(ids, evidence.ID)
+	}
+	return ids, nil
+}
+
+func personBriefInsertFromResult(
+	request peoplesweep.ApplyRequest, generationID int64, evidenceIDs []int64,
+) PersonBriefInsert {
+	brief := request.Brief
+	return PersonBriefInsert{
+		PersonID: request.Lease.PersonID, GenerationID: generationID,
+		ProgramID: brief.ProgramID, ProgramVersion: brief.ProgramVersion,
+		ProgramFingerprint:        brief.ProgramFingerprint,
+		Provider:                  request.Generation.Provider,
+		ProviderVersion:           request.Generation.ProviderVersion,
+		Model:                     request.Generation.Model,
+		ModelVersion:              request.Generation.ModelVersion,
+		ProviderPolicyFingerprint: request.Generation.Policy.ProviderPolicyFingerprint,
+		Boundary:                  personBriefBoundaryJSON(brief.Boundary),
+		Structured:                brief.Structured,
+		RenderedText:              brief.Rendered.Text,
+		RendererPolicy:            brief.Rendered.Policy,
+		DroppedItemCount:          brief.DroppedItemCount,
+		GeneratedAt:               brief.GeneratedAt,
+		EvidenceIDs:               evidenceIDs,
+	}
+}
+
+func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) json.RawMessage {
+	encoded, err := json.Marshal(boundary.Canonical())
+	if err != nil {
+		// BriefBoundary holds only strings, integers, and times, so marshalling
+		// cannot fail; an empty object keeps the column valid JSON if it ever does.
+		return json.RawMessage(`{}`)
+	}
+	return encoded
+}
+
+// failPersonSweepBriefBatchTx terminalizes a brief reservation whose call never
+// produced a usable response, charging the reservation conservatively exactly
+// as failure finalization would. The attempt still succeeds: the brief is what
+// failed, not the extraction.
+func (s *Store) failPersonSweepBriefBatchTx(
+	ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest,
+	batch personSweepBatch, found bool, coordinate personSweepBatchCoordinate,
+) error {
+	if !found {
+		return errors.New("apply person sweep brief batch is missing")
+	}
+	if batch.budgetFingerprint != personSweepBudgetFingerprint(request.Budget) {
+		return errors.New("apply person sweep brief batch budget does not match its reservation")
+	}
+	if batch.status != "reserved" && batch.status != personSweepBatchStatusRunning {
+		return errors.New("apply person sweep brief batch is not an open reservation")
+	}
+	actual := peoplesweep.Usage{}
+	status := personSweepBatchStatusCancelled
+	if batch.status == personSweepBatchStatusRunning {
+		status = personSweepBatchStatusFailed
+		actual = batch.reserved
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE person_sweep_batches SET status = ?,
+		actual_requests = ?, actual_input_tokens = ?, actual_output_tokens = ?,
+		actual_cost_micro_usd = ?, failure_class = ?, completed_at = ?
+		WHERE attempt_id = ? AND batch_ordinal = ? AND call_ordinal = ? AND status = ?`,
+		status, actual.Requests, actual.InputTokens, actual.OutputTokens,
+		actual.EstimatedCostMicroUSD, request.BriefFailureClass,
+		s.dialect.TimestampParam(request.CompletedAt), request.AttemptID,
+		coordinate.ordinal, coordinate.callOrdinal, batch.status)
+	if err != nil {
+		return fmt.Errorf("fail person sweep brief batch: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return errors.New("apply person sweep brief batch lost its reservation state")
+	}
+	return s.adjustPersonSweepDailyUsage(ctx, tx, batch.day,
+		negatePersonSweepUsage(batch.reserved), actual)
 }

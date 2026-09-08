@@ -142,6 +142,7 @@ const (
 	RelationInvalid                  ClaimRelation        = "invalid"
 	OriginExtraction                 ClaimOrigin          = "extraction"
 	OriginEnrichment                 ClaimOrigin          = "enrichment"
+	OriginBrief                      ClaimOrigin          = "brief"
 	OriginSystem                     ClaimOrigin          = "system"
 	OriginInvalid                    ClaimOrigin          = "invalid"
 	DecisionApplied                  DecisionAction       = "applied"

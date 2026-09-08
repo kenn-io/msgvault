@@ -1550,6 +1550,30 @@ profile can be disabled in configuration, and this command still selects it for 
 
 ---
 
+## person brief
+
+Read a short summary before your next conversation with someone, or generate a
+new one from their recent supported chat and text messages.
+
+```bash
+msgvault person brief enroll <person-id> [--track] [--json]
+msgvault person brief generate <person-id> [--json]
+msgvault person brief show <person-id> [--json]
+msgvault person brief history <person-id> [--limit 20] [--json]
+msgvault person brief reject <person-id> [--reason "..."] [--json]
+msgvault person brief unenroll <person-id> [--json]
+```
+
+Enrollment requires tracking; `--track` enables both. Generation uses the
+consented provider and its budget. History accepts limits from 1 to 200;
+rejection hides the current version but preserves it in history. Unenrolling
+stops future generation without deleting saved versions.
+
+See [person briefs](/docs/usage/people/#catch-up-before-your-next-conversation)
+for provider setup, supported sources, and a first-run example.
+
+---
+
 ## person provider set
 
 Update the mutable policy fields of an existing named people inference provider

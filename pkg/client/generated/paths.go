@@ -443,6 +443,36 @@ func (s SetPersonAttributePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetPersonBriefPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonBriefEnrollmentPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type SetPersonBriefEnrollmentPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type GeneratePersonBriefPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type RejectPersonBriefPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonBriefVersionsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonContactStatePath struct {
 	// ID Positive durable identifier
 	ID int64 `json:"id" validate:"gte=1"`

@@ -102,7 +102,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 	}
 	switch request.Lane {
 	case peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText:
-		items, found, hydrateErr := s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, messageIDs)
+		items, found, hydrateErr := s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, messageIDs, 0)
 		if hydrateErr != nil {
 			return window, hydrateErr
 		}
@@ -165,7 +165,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 			for _, change := range reconcileChanges {
 				ids = append(ids, change.MessageID)
 			}
-			reconcile, _, err = s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, ids)
+			reconcile, _, err = s.hydratePersonSweepMessageSet(ctx, request.PersonID, request.Lane, ids, 0)
 		}
 		if err != nil {
 			return window, err
@@ -385,7 +385,37 @@ func resolvePersonSweepScope(ctx context.Context, s *Store, personID int64) (per
 		IncludeUnclassifiedRosterRows: true}, nil
 }
 
-func (s *Store) hydratePersonSweepMessageSet(ctx context.Context, personID int64, lane peoplesweep.SourceClass, ids []int64) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
+// personSweepJournalBoundPredicate restricts a message query to rows the
+// person's change journal had committed at or before throughSequence. A brief
+// records that sequence as its boundary and the next run regenerates only when
+// the journal holds a later row, so retrieval must not admit a message the
+// journal will never report as new relative to that boundary.
+//
+// A message with no journal row for the person at all is admitted: messages
+// imported before the journal existed, or before the person was tracked, are
+// never journaled, so excluding them would hide old history forever while
+// including them can never cause a missed regeneration. A zero sequence means
+// unbounded and adds nothing.
+func personSweepJournalBoundPredicate(personID, throughSequence int64) (string, []any) {
+	if throughSequence <= 0 {
+		return "", nil
+	}
+	return ` AND (NOT EXISTS (
+			SELECT 1 FROM person_sweep_changes bound
+			WHERE bound.person_id = ? AND bound.message_id = m.id
+		) OR EXISTS (
+			SELECT 1 FROM person_sweep_changes bound
+			WHERE bound.person_id = ? AND bound.message_id = m.id AND bound.sequence <= ?
+		))`, []any{personID, personID, throughSequence}
+}
+
+// hydratePersonSweepMessageSet reads the requested messages in one lane.
+// throughSequence, when positive, drops messages the person's journal first
+// saw after that sequence; see personSweepJournalBoundPredicate.
+func (s *Store) hydratePersonSweepMessageSet(
+	ctx context.Context, personID int64, lane peoplesweep.SourceClass, ids []int64,
+	throughSequence int64,
+) ([]peoplesweep.EvidenceItem, map[int64]bool, error) {
 	found := make(map[int64]bool)
 	if len(ids) == 0 {
 		return []peoplesweep.EvidenceItem{}, found, nil
@@ -409,11 +439,13 @@ func (s *Store) hydratePersonSweepMessageSet(ctx context.Context, personID int64
 	if lane == peoplesweep.SourceMeetingText {
 		laneSQL = "m.message_type = 'meeting_transcript'"
 	}
-	args := make([]any, 0, len(queryIDs)+len(scopeArgs))
+	boundSQL, boundArgs := personSweepJournalBoundPredicate(personID, throughSequence)
+	args := make([]any, 0, len(queryIDs)+len(scopeArgs)+len(boundArgs))
 	for _, id := range queryIDs {
 		args = append(args, id)
 	}
 	args = append(args, scopeArgs...)
+	args = append(args, boundArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
 		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
@@ -421,8 +453,9 @@ func (s *Store) hydratePersonSweepMessageSet(ctx context.Context, personID int64
 		FROM messages m JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources s ON s.id = m.source_id
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
-		WHERE m.id IN (%s) AND %s AND %s AND (%s)
-		ORDER BY m.id`, placeholders, LiveMessagesWhere("m", true), laneSQL, predicate)), args...)
+		WHERE m.id IN (%s) AND %s AND %s AND (%s)%s
+		ORDER BY m.id`, placeholders, LiveMessagesWhere("m", true), laneSQL, predicate,
+		boundSQL)), args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read person sweep messages: %w", err)
 	}
@@ -676,34 +709,11 @@ func (s *Store) ListPersonSweepHistoricalCandidates(
 	if request.Limit <= 0 {
 		return []int64{}, nil
 	}
-	if request.Limit > maxPersonSweepEvidenceRows {
-		request.Limit = maxPersonSweepEvidenceRows
-	}
-	resolution, err := resolvePersonSweepScope(ctx, s, request.PersonID)
+	query, args, err := s.personSweepHistoricalCandidatesQuery(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	after, before, err := sweepDateBounds(request.SourceSince, request.SourceUntil)
-	if err != nil {
-		return nil, err
-	}
-	predicate, args := personscope.MessagePredicate(resolution, "m", "c")
-	lanePredicate := personSweepHistoricalLanePredicate(request.SourceClasses)
-	eventTime := "COALESCE(m.sent_at,m.received_at,m.internal_date,m.archived_at)"
-	datePredicate := ""
-	if after != nil {
-		datePredicate += " AND " + eventTime + " >= ?"
-		args = append(args, *after)
-	}
-	if before != nil {
-		datePredicate += " AND " + eventTime + " < ?"
-		args = append(args, *before)
-	}
-	args = append(args, request.Limit)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT m.id FROM messages m
-		JOIN conversations c ON c.id=m.conversation_id WHERE %s AND (%s) AND (%s)%s
-		ORDER BY %s DESC,m.id DESC LIMIT ?`, LiveMessagesWhere("m", true), predicate,
-		lanePredicate, datePredicate, eventTime)), args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list person sweep historical candidates: %w", err)
 	}
@@ -717,6 +727,64 @@ func (s *Store) ListPersonSweepHistoricalCandidates(
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// personSweepHistoricalCandidatesQuery builds the newest-first candidate
+// listing. It is separate from the read so a test can ask the planner about the
+// exact statement the store runs.
+func (s *Store) personSweepHistoricalCandidatesQuery(
+	ctx context.Context, request peoplesweep.HistoricalCandidateRequest,
+) (string, []any, error) {
+	if request.Limit > maxPersonSweepEvidenceRows {
+		request.Limit = maxPersonSweepEvidenceRows
+	}
+	resolution, err := resolvePersonSweepScope(ctx, s, request.PersonID)
+	if err != nil {
+		return "", nil, err
+	}
+	after, before, err := sweepDateBounds(request.SourceSince, request.SourceUntil)
+	if err != nil {
+		return "", nil, err
+	}
+	if request.AuthoredByPerson {
+		// personscope's FromPerson direction is the same relation
+		// PersonProvenanceForMessages reports as RoleFrom: the person is the
+		// message's sender_id or its envelope 'from' recipient. Restricting the
+		// scope to it, together with the authenticated-source predicate below,
+		// reproduces personSweepAuthorship's subject decision in SQL.
+		resolution.Directions = []personscope.Direction{personscope.FromPerson}
+	}
+	predicate, args := personscope.MessagePredicate(resolution, "m", "c")
+	lanePredicate := personSweepHistoricalLanePredicate(request.SourceClasses)
+	authorshipPredicate := ""
+	if request.AuthoredByPerson {
+		sourceTypes := personSweepAuthenticatedSenderSourceTypes()
+		authorshipPredicate = ` AND EXISTS (
+			SELECT 1 FROM sources authored_src
+			WHERE authored_src.id = m.source_id
+			  AND LOWER(TRIM(authored_src.source_type)) IN (` +
+			strings.TrimSuffix(strings.Repeat("?,", len(sourceTypes)), ",") + `))`
+		for _, sourceType := range sourceTypes {
+			args = append(args, sourceType)
+		}
+	}
+	eventTime := "COALESCE(m.sent_at,m.received_at,m.internal_date,m.archived_at)"
+	datePredicate := ""
+	if after != nil {
+		datePredicate += " AND " + eventTime + " >= ?"
+		args = append(args, *after)
+	}
+	if before != nil {
+		datePredicate += " AND " + eventTime + " < ?"
+		args = append(args, *before)
+	}
+	boundSQL, boundArgs := personSweepJournalBoundPredicate(request.PersonID, request.ThroughSequence)
+	args = append(args, boundArgs...)
+	args = append(args, request.Limit)
+	return s.Rebind(fmt.Sprintf(`SELECT m.id FROM messages m
+		JOIN conversations c ON c.id=m.conversation_id WHERE %s AND (%s) AND (%s)%s%s%s
+		ORDER BY %s DESC,m.id DESC LIMIT ?`, LiveMessagesWhere("m", true), predicate,
+		lanePredicate, authorshipPredicate, datePredicate, boundSQL, eventTime)), args, nil
 }
 
 func personSweepHistoricalLanePredicate(classes []peoplesweep.SourceClass) string {
@@ -745,18 +813,29 @@ func personSweepHistoricalLanePredicate(classes []peoplesweep.SourceClass) strin
 	return strings.Join(clauses, " OR ")
 }
 
-func (s *Store) HydratePersonSweepMessages(ctx context.Context, personID int64, messageIDs []int64) ([]peoplesweep.EvidenceItem, error) {
-	conversation, foundConversation, err := s.hydratePersonSweepMessageSet(ctx, personID, peoplesweep.SourceConversationText, messageIDs)
+// HydratePersonSweepMessages reads the named messages as evidence items. A
+// positive throughSequence filters membership only: a message whose earliest
+// journal row for the person is past the sequence is reported like one outside
+// scope, because the journal had not recorded it at the bound. A message that
+// passes hydrates to its current text, not the text as of the bound; an edit
+// after the bound writes a later journal row, so the next run regenerates.
+func (s *Store) HydratePersonSweepMessages(
+	ctx context.Context, personID int64, messageIDs []int64, throughSequence int64,
+) ([]peoplesweep.EvidenceItem, error) {
+	conversation, foundConversation, err := s.hydratePersonSweepMessageSet(
+		ctx, personID, peoplesweep.SourceConversationText, messageIDs, throughSequence)
 	if err != nil {
 		return nil, err
 	}
-	meeting, foundMeeting, err := s.hydratePersonSweepMessageSet(ctx, personID, peoplesweep.SourceMeetingText, messageIDs)
+	meeting, foundMeeting, err := s.hydratePersonSweepMessageSet(
+		ctx, personID, peoplesweep.SourceMeetingText, messageIDs, throughSequence)
 	if err != nil {
 		return nil, err
 	}
 	for _, id := range messageIDs {
 		if !foundConversation[id] && !foundMeeting[id] {
-			return nil, fmt.Errorf("message %d is outside person sweep scope or lacks durable text", id)
+			return nil, fmt.Errorf("message %d at sequence %d: %w",
+				id, throughSequence, peoplesweep.ErrPersonSweepMessageUnavailable)
 		}
 	}
 	items := append(slices.Clone(conversation), meeting...)
@@ -774,17 +853,19 @@ func (s *Store) SearchPersonSweepMessages(ctx context.Context, request peopleswe
 		ids, err = s.ListPersonSweepHistoricalCandidates(ctx, peoplesweep.HistoricalCandidateRequest{
 			PersonID: request.PersonID, SourceClasses: request.SourceClasses,
 			SourceSince: request.SourceSince, SourceUntil: request.SourceUntil,
-			Limit: maxPersonSweepEvidenceRows,
+			ThroughSequence: request.ThroughSequence, Limit: maxPersonSweepEvidenceRows,
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
-	conversation, _, err := s.hydratePersonSweepMessageSet(ctx, request.PersonID, peoplesweep.SourceConversationText, ids)
+	conversation, _, err := s.hydratePersonSweepMessageSet(
+		ctx, request.PersonID, peoplesweep.SourceConversationText, ids, request.ThroughSequence)
 	if err != nil {
 		return nil, err
 	}
-	meeting, _, err := s.hydratePersonSweepMessageSet(ctx, request.PersonID, peoplesweep.SourceMeetingText, ids)
+	meeting, _, err := s.hydratePersonSweepMessageSet(
+		ctx, request.PersonID, peoplesweep.SourceMeetingText, ids, request.ThroughSequence)
 	if err != nil {
 		return nil, err
 	}
@@ -961,7 +1042,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 	if ref.SourceLane == peoplesweep.SourceDocumentText {
 		current, err = a.Store.alignDocumentItem(ctx, input.PersonID, ref, input.Excerpt)
 	} else {
-		items, _, loadErr := a.Store.hydratePersonSweepMessageSet(ctx, input.PersonID, ref.SourceLane, []int64{ref.MessageID})
+		items, _, loadErr := a.Store.hydratePersonSweepMessageSet(ctx, input.PersonID, ref.SourceLane, []int64{ref.MessageID}, 0)
 		err = loadErr
 		if err == nil && len(items) == 1 {
 			current = items[0]
@@ -1032,14 +1113,24 @@ func personSweepAuthorship(
 	return nil, personfacts.DirectOther
 }
 
+// personSweepAuthenticatedSenderSourceTypes lists the source types whose
+// sender field is set by the platform rather than by the message's author, so
+// a message the person sent there is attributed to them as its subject. It is
+// the single list behind personSweepSourceAuthenticatesSender and the SQL
+// authorship predicate, so the two can never disagree.
+func personSweepAuthenticatedSenderSourceTypes() []string {
+	return []string{"apple_messages", "beeper", "discord", "facebook_messenger",
+		"google_messages", "imessage", "slack", "slackdump", "synctech-sms",
+		"synctech_sms", "teams", "whatsapp"}
+}
+
+// personSweepSourceAuthenticatesSender is the Go twin of the SQL authorship
+// predicate, which compares LOWER(TRIM(source_type)). SQL TRIM removes spaces
+// only, so this side trims only spaces too rather than all Unicode
+// whitespace; the two must admit exactly the same source rows.
 func personSweepSourceAuthenticatesSender(sourceType string) bool {
-	switch strings.ToLower(strings.TrimSpace(sourceType)) {
-	case "apple_messages", "beeper", "discord", "facebook_messenger", "google_messages",
-		"imessage", "slack", "slackdump", "synctech-sms", "synctech_sms", "teams", "whatsapp":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(personSweepAuthenticatedSenderSourceTypes(),
+		strings.ToLower(strings.Trim(sourceType, " ")))
 }
 
 func samePersonSweepSubject(left, right *int64) bool {

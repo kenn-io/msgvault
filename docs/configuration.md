@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-07
+last_edited: "2026-09-07"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -287,6 +287,48 @@ into msgvault, so a compromised catalog cannot redirect your key. A successful c
 `msgvault person provider consent <name> --yes` is a separate explicit step.
 Live credential checks are optional developer or operator verification and are
 never CI requirements.
+
+### `[people.sweep.brief]`
+
+Control how often enrolled people receive a "Last time we talked" brief and
+how much text each generation uses. Briefs use the selected sweep provider and
+share its budgets. The profile must permit sensitive content and include
+`conversation_text` in `allowed_sources`.
+
+Only supported chat and text-message sources supply brief evidence; email,
+meeting transcripts, documents, and your own replies are excluded. See the
+[brief guide](/docs/usage/people/#catch-up-before-your-next-conversation) for
+supported sources and enrollment instructions.
+
+Generation is enabled here by default, but each person must be enrolled
+separately. These settings apply to everyone; there are no per-person overrides.
+Restart the daemon after changing them.
+
+```toml
+[people.sweep.brief]
+enabled = true
+min_interval = "168h"
+pre_call_window = "72h"
+max_items = 40
+max_bytes = 65536
+overlap_items = 8
+max_output_tokens = 2048
+max_rendered_runes = 560
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Generate briefs for enrolled people when the sweep runs. `false` stops generation for everyone without removing enrollments. |
+| `min_interval` | `168h` | Minimum age of the current version before a scheduled run regenerates it. A rejected current version counts as no brief and is replaced on the next eligible run. `msgvault person brief generate` bypasses this. Must be positive. |
+| `pre_call_window` | `72h` | Regenerate this far ahead of a due contact cadence, so the brief is current before you reach out. Must be positive. |
+| `max_items` | `40` | Maximum archive items admitted to one brief window. Must be positive. |
+| `max_bytes` | `65536` | Maximum packet size for one brief window. Must be positive. |
+| `overlap_items` | `8` | Items already covered by the previous brief's window that may be re-admitted so a continued thread is recognizable. Must not be negative or exceed `max_items`. |
+| `max_output_tokens` | `2048` | Output cap for the brief call. Must be positive and must not exceed `[people.sweep.budgets] max_output_tokens_per_person`, because a brief is one more call against the same per-person ceiling. |
+| `max_rendered_runes` | `560` | Maximum length of the rendered paragraph, in Unicode runes. Msgvault enforces it after the model answers by dropping structured items from the tail: uncertainties first, then follow-ups, then highlights, never the last-interaction sentence and never mid-sentence. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
+
+An invalid value fails configuration validation with the offending key named,
+rather than being clamped.
 
 ### Codex app-server profiles
 

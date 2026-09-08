@@ -28,6 +28,9 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 			}`)
 		case "/api/v1/people/51/tracking":
 			writePeopleBrowserJSON(t, w, http.StatusOK, `{"person_id":51,"tracked":true,"tracked_at":"2026-08-21T09:00:00Z"}`)
+		case "/api/v1/people/51/brief":
+			writePeopleBrowserJSON(t, w, http.StatusNotFound,
+				`{"error":"person_brief_not_found","message":"Person brief not found"}`)
 		case "/api/v1/people/51/contact-state":
 			writePeopleBrowserJSON(t, w, http.StatusOK, `{
 				"person_id":51,"first_contact_at":"2025-01-02T03:04:05Z","first_contact_ref":"message:1",
@@ -94,7 +97,20 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 				 "envelope":{"id":3,"ordinal":0,"source":"user","created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],
 				"categories":[{"person_id":51,"original_value":"people","normalized_value":"people",
 				 "envelope":{"id":4,"ordinal":0,"source":"user","created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],
-				"addresses":[],"media":[],"names":[]
+				"addresses":[
+					{"person_id":51,"address_kind":"birth_place","original_value":";;;Example Town;;;","locality":"Example Town",
+					 "envelope":{"id":4,"ordinal":0,"source":"vcard_import",
+					  "created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}},
+					{"person_id":51,"address_kind":"postal","original_value":";;1 Example Street;Example City;EX;12345;Exampleland",
+					 "street_address":"1 Example Street","locality":"Example City","region":"EX","postal_code":"12345",
+					 "country_name":"Exampleland","country_code":"EX","label":"Home",
+					 "envelope":{"id":5,"ordinal":0,"source":"user","pref":1,
+					  "created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}},
+					{"person_id":51,"address_kind":"postal","original_value":";;2 Example Avenue;;;;","street_address":"2 Example Avenue",
+					 "envelope":{"id":6,"ordinal":1,"source":"vcard_import","active_until":"2026-01-01T00:00:00Z",
+					  "created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}
+				],
+				"media":[],"names":[]
 			}`)
 		default:
 			http.NotFound(w, r)
@@ -117,6 +133,7 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 	assert.Equal(int64(42), profile.ContactState.InteractionCount)
 	assert.Equal("message:9", profile.ContactState.LastContactRef)
 	assert.Equal("ok", profile.ContactState.CadenceStatus)
+	assert.Nil(profile.Brief, "a person with no brief version keeps the rest of the profile")
 
 	require.Len(profile.Attributes, 1)
 	assert.True(profile.Attributes[0].Definition.IsSensitive, "definitions keep their sensitivity flag for the caller to filter")
@@ -140,8 +157,21 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 	}}, profile.Relationships)
 
 	assert.Equal([]peoplebrowser.PersonContactPointSummary{{
-		Kind: "email", Value: "alice@example.com", TypeLabel: "work", Preferred: true, Source: store.ProvenanceVCardImport,
+		Kind: "email", Value: "alice@example.com", NormalizedValue: "alice@example.com",
+		TypeLabel: "work", Preferred: true, Source: store.ProvenanceVCardImport,
 	}}, profile.ContactPoints, "ended contact points are dropped")
+	assert.Equal([]peoplebrowser.PersonAddressSummary{
+		{
+			Kind: "birth_place", Locality: "Example Town", OriginalValue: ";;;Example Town;;;",
+			Source: store.ProvenanceVCardImport,
+		},
+		{
+			Kind: "postal", Label: "Home", StreetAddress: "1 Example Street", Locality: "Example City",
+			Region: "EX", PostalCode: "12345", CountryName: "Exampleland", CountryCode: "EX",
+			OriginalValue: ";;1 Example Street;Example City;EX;12345;Exampleland",
+			Preferred:     true, Source: store.ProvenanceUser,
+		},
+	}, profile.Addresses, "ended addresses are dropped, and every current kind is carried for the caller to filter")
 	assert.Equal([]peoplebrowser.PersonDateSummary{{Kind: "birthday", Date: "--04-12", Source: store.ProvenanceUser}}, profile.Dates)
 	assert.Equal([]string{"people"}, profile.Categories)
 }
@@ -160,6 +190,8 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 			writePeopleBrowserJSON(t, w, http.StatusServiceUnavailable, `{"error":"unavailable","message":"tracking store unavailable"}`)
 		case "/api/v1/people/51/contact-state":
 			writePeopleBrowserJSON(t, w, http.StatusNotFound, `{"error":"not_found","message":"resource not found"}`)
+		case "/api/v1/people/51/brief":
+			writePeopleBrowserJSON(t, w, http.StatusServiceUnavailable, `{"error":"unavailable","message":"brief store unavailable"}`)
 		case "/api/v1/people/51/attributes":
 			writePeopleBrowserJSON(t, w, http.StatusServiceUnavailable, `{"error":"unavailable","message":"attribute store unavailable"}`)
 		case "/api/v1/people/51/employments":
@@ -177,12 +209,14 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(profile.Tracked)
 	assert.Nil(profile.ContactState)
+	assert.Nil(profile.Brief, "an unavailable brief store degrades like the other sub-resources")
 	// An unavailable attribute store degrades to an empty set like the other
 	// sub-resources instead of failing the whole profile.
 	assert.Empty(profile.Attributes)
 	assert.Equal([]peoplebrowser.PersonEmployment{}, profile.Employments)
 	assert.Equal([]peoplebrowser.PersonRelationshipSummary{}, profile.Relationships)
 	assert.Nil(profile.ContactPoints)
+	assert.Nil(profile.Addresses)
 	assert.Nil(profile.Dates)
 	assert.Nil(profile.Categories)
 }

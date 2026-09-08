@@ -295,7 +295,7 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 	parityPinProjectionTimes(t, f)
 
 	parityEditMessage(t, f, "Chat remains the preferred channel after correction.")
-	edited, err := f.store.HydratePersonSweepMessages(ctx, f.personID, []int64{f.messageID})
+	edited, err := f.store.HydratePersonSweepMessages(ctx, f.personID, []int64{f.messageID}, 0)
 	require.NoError(err)
 	require.Len(edited, 1)
 	f.editedItem = edited[0]
@@ -442,7 +442,7 @@ func newProductionPersonSweepParityFixture(t *testing.T) *personSweepParityFixtu
 		time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC), f.messageID)
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, "parity-imported"))
-	items, err := f.store.HydratePersonSweepMessages(t.Context(), f.personID, []int64{f.messageID})
+	items, err := f.store.HydratePersonSweepMessages(t.Context(), f.personID, []int64{f.messageID}, 0)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	f.initialItem = items[0]

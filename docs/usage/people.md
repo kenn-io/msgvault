@@ -1,23 +1,22 @@
 ---
-last_edited: "2026-09-03"
+last_edited: "2026-09-07"
 title: People, Profiles, and Source Identities
-description: Discover the addresses that mean you inside each source, curate stable person profiles, and store typed profile attributes.
+description: Keep person profiles, prepare for conversations with recent-message briefs, and identify your own accounts.
 ---
 
-Msgvault keeps three related concepts separate so archive evidence is not
-mistaken for user-curated data:
+Keep a person's contact details, relationships, and profile facts together,
+and [read a recent-message brief](#catch-up-before-your-next-conversation)
+before your next conversation. Use the Web Directory, TUI, or commands on this
+page to manage profiles through your local or remote daemon.
 
-- A **source identity** is an address or handle that means you inside one
-  ingestion source. It drives sent-message classification and deduplication.
-- An **observed person** is an identity cluster assembled from explicit archive
-  links. Equal display names alone never merge people.
-- A **durable person profile** is an observed cluster you explicitly promote.
-  It has a stable numeric ID and vCard UID, so curated data survives later
-  identity-link changes.
+Three kinds of record connect the archive to those profiles:
 
-The Web UI's People and Relationships workspaces use observed identity
-evidence. The commands on this page add explicit source identities and durable
-profile data through the selected local or remote daemon.
+- A **source identity** is an address or handle that belongs to you in one
+  source. It helps msgvault recognize messages you sent.
+- An **observed person** groups addresses and handles linked by archive
+  evidence. Matching display names alone do not combine people.
+- A **person profile** is a person you explicitly promote to a saved record.
+  Its stable ID keeps your curated details attached when archive links change.
 
 ## Configure provider-backed person sweeps
 
@@ -67,6 +66,7 @@ Review the saved policy, then consent explicitly and run a bounded sweep:
 msgvault person provider status glm
 msgvault person provider consent glm --yes
 msgvault person provider use glm
+msgvault daemon restart
 msgvault person sweep run --limit 5
 msgvault person sweep status
 ```
@@ -87,9 +87,10 @@ can decide the next step without parsing prose.
 where you run them, so run them on the daemon host; against a configured
 remote daemon they refuse rather than edit a config file that daemon never
 reads. A running daemon keeps the people sweep configuration it started
-with: manual and proxied commands re-read `config.toml`, but scheduled
-sweeps keep the startup selection until you run `msgvault daemon restart`,
-which both operations remind you about on success.
+with. Run `msgvault daemon restart` after changing the selected provider or
+enabling sweeps so scheduled sweeps and `person brief generate` use the new
+configuration. The `person sweep run` command reads the current configuration
+separately.
 
 Use `--api-key-stdin` during `provider add` to store a profile-specific key
 outside `config.toml`, or `--credential-env NAME` to store only an environment
@@ -114,6 +115,113 @@ Msgvault never switches providers automatically. A locally invalid response
 may receive one repair call on the same resolved profile, credential, endpoint,
 and model. Any profile edit needs a fresh exact check and consent. Live
 credential checks are useful operator verification but are not CI tests.
+
+## Catch up before your next conversation
+
+A person brief gives you a short summary of what someone recently shared,
+with references to the archived messages behind it. Read it before a call or
+message to remember what was going on and what you might ask about next.
+
+Briefs currently use the person's own messages from supported chat and text
+sources: Apple Messages/iMessage, Beeper, Discord, Facebook Messenger, Google
+Messages, Slack/Slackdump, SyncTech SMS, Teams, and WhatsApp. Email, meeting
+transcripts, documents, and your own replies are excluded. An email-only
+contact cannot receive a brief yet.
+
+### Generate your first brief
+
+First, [configure a provider](#configure-provider-backed-person-sweeps), consent
+to sending it archive text, and restart the daemon after enabling sweeps or
+changing the selected provider. The profile must allow sensitive content and
+include `conversation_text` in its allowed sources.
+
+Find the person's stable profile ID with `msgvault person list`. If they do not
+have a profile yet, [promote them](#promote-a-durable-person) first. Replace `7`
+below with that profile ID:
+
+```bash
+msgvault person brief enroll 7 --track
+msgvault person brief generate 7
+msgvault person brief show 7
+```
+
+Enrollment enables briefs for that person. `--track` also turns on profile
+tracking if needed; without it, enrollment requires the person to be tracked
+already. Tracking alone does not enable briefs.
+
+Generation sends eligible archive text to your selected provider and spends
+its configured budget. The separate profile extraction step may update facts
+from a limited set of messages. Attributes suggested by the brief stay in its
+saved structure for your review; they do not change profile facts. The command
+waits for the attempt to finish. If no eligible messages
+exist within the profile's source and date limits, it produces no brief.
+
+If brief generation fails, profile extraction still commits. Automatic retries
+use the sweep's retry delay instead of repeating the brief on every daemon tick.
+Running `person brief generate` again bypasses that delay.
+
+### Read and manage briefs
+
+In the Web UI, open **Directory**, select the person, and find **Last time we
+talked** on the Overview tab. Enroll or generate there, expand a sentence to see
+its sources, and use the history to inspect version dates and status. To read
+earlier paragraphs and sources, run `msgvault person brief history 7 --json`. If a source cannot
+be tied to an individual sentence, the card labels it as a source for the whole
+brief. Turning enrollment off hides the brief and history in this card; saved
+versions remain available through the CLI and API.
+
+In the TUI People browser, the Overview tab shows the brief. Press `b` to read
+its details and sources, then `b` or `Esc` to return. Press `:` to enter
+`brief enroll`, `brief generate`, or `brief reject <reason>`. TUI enrollment also
+turns on tracking.
+
+| Command | Effect |
+|---|---|
+| `msgvault person brief show 7` | Read the current brief |
+| `msgvault person brief history 7 --limit 5` | List the five newest versions with their dates and status |
+| `msgvault person brief history 7 --json` | Read saved paragraphs and sources as JSON |
+| `msgvault person brief generate 7` | Generate now, using provider budget |
+| `msgvault person brief reject 7 --reason "merges two different threads"` | Remove the current brief from view and let the next eligible run replace it; the reason is optional |
+| `msgvault person brief unenroll 7` | Stop future generation while keeping saved versions |
+
+Every command accepts `--json` to print the daemon's response. MCP assistants
+can read the current brief with `get_person_profile`; MCP does not generate,
+reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
+and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
+
+### When briefs refresh
+
+Scheduled sweeps generate a brief for an enrolled, tracked person who has none,
+or whose latest brief was rejected. Otherwise, they wait for new activity and
+either a brief at least seven days old or a planned contact date within three
+days. The sweep checks these conditions even when profile extraction has
+already caught up with the archive.
+
+`generate` bypasses those timing and new-activity checks. It still requires
+enrollment, an enabled provider with consent, eligible messages, and available
+budget. Regeneration saves a new dated version and keeps earlier versions in
+history. Rejecting a brief hides it until a replacement is generated.
+
+The default paragraph limit is 560 characters. You can change generation timing,
+input limits, and output limits in
+[brief configuration](/docs/configuration/#peoplesweepbrief), or disable
+brief generation for everyone without removing enrollments.
+
+### Sources and saved versions
+
+Each retained statement cites archive items. If a source is later deleted,
+edited, or reassigned, its citation is marked unsupported. Msgvault trims whole
+items to fit the paragraph limit; `dropped_item_count` records those removals
+and content rejected during validation.
+
+Saved briefs live in your archive. They are not published to CardDAV or included
+in people search. Generating one sends message text to your consented provider;
+reading an existing one makes no provider call. Suggested profile facts pass
+through the same evidence checks as other automatically extracted facts.
+
+Merging profiles keeps the surviving person's brief history. The other
+person's versions are removed, and their enrollment transfers only if the
+survivor was not already enrolled.
 
 ## Discover source identities
 

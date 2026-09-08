@@ -800,6 +800,11 @@ type SetPersonAttributeQuery struct {
 	DryRun *bool `json:"dry_run,omitempty"`
 }
 
+type ListPersonBriefVersionsQuery struct {
+	// Limit Maximum versions to return (default 20, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+}
+
 type ListPersonActivityDaysQuery struct {
 	// From Inclusive first local calendar date
 	From *string `json:"from,omitempty"`

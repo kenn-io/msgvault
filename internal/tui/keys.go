@@ -36,6 +36,7 @@ const (
 	helpLabelBack      = "Esc back"
 	helpLabelEsc       = "Esc"
 	helpLabelEnter     = "Enter"
+	helpLabelMode      = "m mode"
 	sourceTypeWhatsApp = "whatsapp"
 )
 

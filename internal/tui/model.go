@@ -1271,6 +1271,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePeoplePromoted(msg)
 	case peopleAttributesLoadedMsg:
 		return m.handlePeopleAttributesLoaded(msg)
+	case peopleBriefLoadedMsg:
+		return m.handlePeopleBriefLoaded(msg)
+	case peopleBriefCommandMsg:
+		return m.handlePeopleBriefCommand(msg)
 	case peopleFieldCreatedMsg:
 		return m.handlePeopleFieldCreated(msg)
 	case peopleAttributeSetMsg:

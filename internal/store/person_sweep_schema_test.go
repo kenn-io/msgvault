@@ -21,6 +21,7 @@ func TestPersonSweepSchemaParity(t *testing.T) {
 	for _, indexName := range []string{
 		"idx_person_sweep_changes_person_sequence",
 		"idx_person_sweep_changes_source_sequence",
+		"idx_person_sweep_changes_person_message",
 	} {
 		var count int
 		if f.store.IsPostgreSQL() {

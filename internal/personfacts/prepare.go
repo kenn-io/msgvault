@@ -123,7 +123,7 @@ func prepareClaim(
 		claim.Relation != RelationSupersede {
 		prepared.Relation = RelationInvalid
 	}
-	if claim.Origin != OriginExtraction && claim.Origin != OriginEnrichment && claim.Origin != OriginSystem {
+	if !validClaimOrigin(claim.Origin) {
 		prepared.Origin = OriginInvalid
 	}
 	prepared.ValidFrom = portableFactTimePointer(prepared.ValidFrom)
@@ -324,13 +324,25 @@ func validateClaimEnvelope(
 	return nil
 }
 
+// validClaimOrigin is the closed claim-origin vocabulary. The person brief
+// proposes attributes through the same resolver as extraction, so "brief" is a
+// first-class origin rather than a second write path.
+func validClaimOrigin(origin ClaimOrigin) bool {
+	switch origin {
+	case OriginExtraction, OriginEnrichment, OriginBrief, OriginSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 func invalidClaimVocabularyDetail(claim ProposedClaim) string {
 	details := make([]string, 0, 2)
 	if claim.Relation != RelationSupport && claim.Relation != RelationContradict &&
 		claim.Relation != RelationSupersede {
 		details = append(details, fmt.Sprintf("relation %q", claim.Relation))
 	}
-	if claim.Origin != OriginExtraction && claim.Origin != OriginEnrichment && claim.Origin != OriginSystem {
+	if !validClaimOrigin(claim.Origin) {
 		details = append(details, fmt.Sprintf("origin %q", claim.Origin))
 	}
 	if len(details) == 0 {

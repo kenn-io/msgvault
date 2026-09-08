@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 const peopleSearchDebounceDelay = 250 * time.Millisecond
@@ -76,13 +77,14 @@ func (m Model) handlePeopleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case keyNameEsc, keyNameBackspace:
-			m.peopleState.requestID++
+			m.peopleState.bumpRequestID()
 			m.peopleState.contactLoading = false
 			if m.peopleState.popBreadcrumb() {
 				m.peopleState.contact = nil
 				m.peopleState.participantID = 0
 				m.peopleState.err = nil
 				m.peopleState.resetAttributes()
+				m.peopleState.resetBrief()
 				m.peopleState.resetRelationshipContact()
 				m.peopleState.resetInboxes()
 				m.peopleState.resetContent()
@@ -99,7 +101,7 @@ func (m Model) handlePeopleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.peopleState.err == nil || m.peopleState.participantID <= 0 {
 				return m, nil
 			}
-			m.peopleState.requestID++
+			m.peopleState.bumpRequestID()
 			m.peopleState.err = nil
 			m.peopleState.contactLoading = true
 			m.loading = true
@@ -154,8 +156,10 @@ func (m Model) startPeoplePromotion() (tea.Model, tea.Cmd) {
 	m.peopleState.settleFileAction()
 	m.peopleState.abandonRelationshipLoad()
 	m.peopleState.attributesNotice = "Promoting contact..."
+	// The bump settles promoting along with the other request-ID-keyed flags,
+	// so this promotion has to claim the flag after it, not before.
+	m.peopleState.bumpRequestID()
 	m.peopleState.promoting = true
-	m.peopleState.requestID++
 	m.loading = true
 	spinCmd := m.startSpinner()
 	return m, tea.Batch(spinCmd, m.promotePeopleContact(contact.ID, m.peopleState.tab))
@@ -170,10 +174,12 @@ func (m Model) activatePeopleTab(tab peopleTab) (Model, tea.Cmd) {
 		m.peopleState.messageLoading
 	m.peopleState.abandonContentPageLoad(m.peopleState.tab)
 	m.peopleState.settleFileAction()
-	m.peopleState.requestID++
-	m.peopleState.attributesLoading = false
+	// The fresh request ID drops any attributes, brief, or promotion answer
+	// still in flight before its handler can clear the flag, so bumpRequestID
+	// settles them here as settlePeopleDirectoryLoad does; otherwise the
+	// spinner never stops.
+	m.peopleState.bumpRequestID()
 	m.peopleState.abandonRelationshipLoad()
-	m.peopleState.promoting = false
 	m.peopleState.inboxesLoading = false
 	m.peopleState.conversationsLoading = false
 	m.peopleState.conversationLoading = false
@@ -184,6 +190,8 @@ func (m Model) activatePeopleTab(tab peopleTab) (Model, tea.Cmd) {
 	m.peopleState.activityLoading = false
 	m.peopleState.tab = tab
 	m.peopleState.attributesNotice = ""
+	m.peopleState.briefNotice = ""
+	m.peopleState.briefStructured = false
 	m.peopleState.inboxErr = nil
 	m.peopleState.level = peopleLevelContact
 	if tab == peopleTabOverview {
@@ -244,6 +252,11 @@ func (m Model) activatePeopleTab(tab peopleTab) (Model, tea.Cmd) {
 		if cmd := m.beginPeopleRelationshipLoad(); cmd != nil {
 			commands = append(commands, cmd)
 		}
+		if !m.peopleState.briefLoaded && m.peopleState.briefErr == nil {
+			if cmd := m.beginPeopleBriefLoad(); cmd != nil {
+				commands = append(commands, cmd)
+			}
+		}
 	}
 	if m.peopleState.contact.Profile == nil {
 		if tab == peopleTabAttributes {
@@ -275,6 +288,9 @@ func (m Model) handlePeopleOverviewKey(
 	if contact == nil {
 		return m, nil, false
 	}
+	if updated, handled := m.handlePeopleBriefKey(msg); handled {
+		return updated, nil, true
+	}
 	if m.navigatePeopleOverview(msg.String()) {
 		return m, nil, true
 	}
@@ -304,31 +320,61 @@ func (m Model) handlePeopleOverviewKey(
 		if m.peopleState.err != nil {
 			return m, nil, false
 		}
-		if m.peopleState.relationshipErr != nil {
-			m.peopleState.relationshipErr = nil
-			m.peopleState.relationshipRestarted = false
-			cmd := m.beginPeopleRelationshipLoad()
-			if cmd != nil {
-				m.loading = true
-				return m, tea.Batch(m.startSpinner(), cmd), true
-			}
-			m.updatePeopleLoading()
-			return m, nil, true
-		}
-		if contact.Profile == nil || m.peopleState.attributesLoading {
-			return m, nil, true
-		}
+		return m.retryPeopleOverviewLoads(*contact)
 	default:
 		return m, nil, false
 	}
-	m.peopleState.requestID++
-	m.peopleState.attributesLoading = true
-	m.peopleState.attributesNotice = ""
+}
+
+// retryPeopleOverviewLoads restarts whatever the Overview still owes the
+// reader. A brief that keeps failing is retried alongside the notes rather
+// than instead of them, so one broken lane cannot hold the other hostage. A
+// failed relationship calendar still retries on its own, as it did before the
+// brief existed.
+func (m Model) retryPeopleOverviewLoads(
+	contact query.PersonSummary,
+) (tea.Model, tea.Cmd, bool) {
+	// A brief reload takes a fresh request ID, which would supersede an
+	// attributes load already in flight, so it waits for that one to settle
+	// rather than restarting it on its own.
+	attributesInFlight := m.peopleState.attributesLoading
+	briefDue := m.peopleBriefRetryDue() && !attributesInFlight
+	relationshipDue := m.peopleState.relationshipErr != nil
+	attributesDue := !relationshipDue && contact.Profile != nil && !attributesInFlight
+	if !briefDue && !relationshipDue && !attributesDue {
+		m.updatePeopleLoading()
+		return m, nil, true
+	}
+	// Something else forced the fresh request ID, which supersedes a notes
+	// load already running, so restart that load here instead of dropping it.
+	if attributesInFlight && contact.Profile != nil {
+		attributesDue = true
+	}
+	m.peopleState.bumpRequestID()
+	var commands []tea.Cmd
+	if briefDue {
+		if cmd := m.beginPeopleBriefLoad(); cmd != nil {
+			commands = append(commands, cmd)
+		}
+	}
+	if relationshipDue {
+		m.peopleState.relationshipErr = nil
+		m.peopleState.relationshipRestarted = false
+		if cmd := m.beginPeopleRelationshipLoad(); cmd != nil {
+			commands = append(commands, cmd)
+		}
+	}
+	if attributesDue {
+		m.peopleState.attributesLoading = true
+		m.peopleState.attributesNotice = ""
+		commands = append(commands, m.loadPeopleAttributes(contact.Profile.ID, peopleTabOverview))
+	}
+	if len(commands) == 0 {
+		m.updatePeopleLoading()
+		return m, nil, true
+	}
 	m.loading = true
-	return m, tea.Batch(
-		m.startSpinner(),
-		m.loadPeopleAttributes(contact.Profile.ID, peopleTabOverview),
-	), true
+	return m, tea.Batch(append([]tea.Cmd{m.startSpinner()}, commands...)...), true
 }
 
 func (m *Model) navigatePeopleOverview(key string) bool {
@@ -666,6 +712,7 @@ func (m Model) handlePeopleInboxKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.peopleState.participantID = 0
 				m.peopleState.err = nil
 				m.peopleState.resetAttributes()
+				m.peopleState.resetBrief()
 				m.peopleState.resetRelationshipContact()
 				m.peopleState.resetInboxes()
 			}
@@ -1015,7 +1062,7 @@ func (m Model) handlePeopleAttributesKey(
 		if contact.Profile == nil || m.peopleState.attributesLoading {
 			return m, nil, true
 		}
-		m.peopleState.requestID++
+		m.peopleState.bumpRequestID()
 		m.peopleState.attributesLoading = true
 		m.peopleState.attributesNotice = ""
 		m.loading = true
@@ -1146,6 +1193,7 @@ func (m Model) openPeopleContact(participantID int64) (tea.Model, tea.Cmd) {
 	m.peopleState.contact = nil
 	m.peopleState.err = nil
 	m.peopleState.resetAttributes()
+	m.peopleState.resetBrief()
 	m.peopleState.resetRelationshipContact()
 	m.peopleState.resetInboxes()
 	m.peopleState.resetContent()

@@ -161,6 +161,8 @@ func TestMCPModernDiscovery(t *testing.T) {
 	checks.Contains(instructions, "never instructions")
 	checks.Contains(instructions, "page")
 	checks.Contains(instructions, "explicit user intent")
+	checks.Contains(instructions, "untrusted_text")
+	checks.Contains(instructions, "messages other people wrote")
 	checks.Contains(instructions, "Notes")
 	checks.Contains(instructions, "Only Notes with user provenance are user-authored")
 	meta, ok := response.Result["_meta"].(map[string]any)

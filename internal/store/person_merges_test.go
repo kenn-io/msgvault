@@ -2454,3 +2454,55 @@ func assertForeignKeyTarget(t *testing.T, st *store.Store, table, column, target
 		"foreign key %s.%s", table, column)
 	assert.Equal(t, target, got, "foreign key target for %s.%s", table, column)
 }
+
+func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		enrollSurvivor bool
+		wantAction     string
+	}{
+		{name: "absorbed-only", wantAction: "moved"},
+		{name: "both-enrolled", enrollSurvivor: true, wantAction: "deduplicated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			st := testutil.NewTestStore(t)
+			survivor := mustPromotedPerson(t, st,
+				"brief-survivor-"+test.name+"@example.com", "Survivor")
+			absorbed := mustPromotedPerson(t, st,
+				"brief-absorbed-"+test.name+"@example.com", "Absorbed")
+			if test.enrollSurvivor {
+				_, err := st.SetPersonBriefEnrollmentContext(ctx, survivor.ID, true, "owner", true)
+				require.NoError(err)
+			}
+			_, err := st.SetPersonBriefEnrollmentContext(ctx, absorbed.ID, true, "owner", true)
+			require.NoError(err)
+
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+				ExpectedSurvivorRevision: survivor.Revision,
+				ExpectedAbsorbedRevision: absorbed.Revision,
+				IdempotencyKey:           "brief-enrollment-merge-" + test.name, Actor: "test",
+			})
+			require.NoError(err)
+
+			enrollment, err := st.GetPersonBriefEnrollmentContext(ctx, merged.Person.ID)
+			require.NoError(err)
+			assert.True(enrollment.Enrolled,
+				"the survivor keeps the enrollment the merge consumed")
+			tracking, err := st.GetPersonTrackingContext(ctx, merged.Person.ID)
+			require.NoError(err)
+			assert.True(tracking.Tracked,
+				"an enrolled survivor must still have the tracking row enrollment requires")
+
+			var action string
+			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`
+				SELECT action FROM person_merge_rows
+				WHERE merge_id = ? AND table_name = 'person_brief_enrollments'`),
+				merged.Merge.ID).Scan(&action))
+			assert.Equal(test.wantAction, action)
+		})
+	}
+}

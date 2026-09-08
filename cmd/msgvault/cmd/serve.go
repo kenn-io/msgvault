@@ -635,6 +635,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	if cfg.People.Sweep.Enabled {
+		// The daemon owns the people sweep worker, so it owns manual brief
+		// generation: POST /api/v1/people/{id}/brief/generate reports
+		// unavailable in every process that does not.
+		apiServer.SetPersonBriefGenerator(newPersonBriefManualRun(cfg, s))
+	}
 
 	// Start API server in goroutine
 	apiAddr := apiListener.Addr().String()
@@ -1224,6 +1230,7 @@ var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
+var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -2335,6 +2342,42 @@ func (a *storeAPIAdapter) SetPersonTrackingContext(
 	ctx context.Context, id int64, tracked bool,
 ) (*store.PersonTracking, error) {
 	return a.store.SetPersonTrackingContext(ctx, id, tracked)
+}
+
+func (a *storeAPIAdapter) GetPersonBriefContext(
+	ctx context.Context, personID int64, version int,
+) (*store.PersonBrief, error) {
+	return a.store.GetPersonBriefContext(ctx, personID, version)
+}
+
+func (a *storeAPIAdapter) ListPersonBriefVersionsContext(
+	ctx context.Context, personID int64, limit int,
+) ([]store.PersonBrief, error) {
+	return a.store.ListPersonBriefVersionsContext(ctx, personID, limit)
+}
+
+func (a *storeAPIAdapter) ListPersonBriefEvidenceContext(
+	ctx context.Context, briefID int64,
+) ([]store.PersonBriefEvidencePointer, error) {
+	return a.store.ListPersonBriefEvidenceContext(ctx, briefID)
+}
+
+func (a *storeAPIAdapter) RejectPersonBriefContext(
+	ctx context.Context, personID int64, reason string, at time.Time,
+) (*store.PersonBrief, error) {
+	return a.store.RejectPersonBriefContext(ctx, personID, reason, at)
+}
+
+func (a *storeAPIAdapter) GetPersonBriefEnrollmentContext(
+	ctx context.Context, personID int64,
+) (*store.PersonBriefEnrollment, error) {
+	return a.store.GetPersonBriefEnrollmentContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) SetPersonBriefEnrollmentContext(
+	ctx context.Context, personID int64, enabled bool, actor string, track bool,
+) (*store.PersonBriefEnrollment, error) {
+	return a.store.SetPersonBriefEnrollmentContext(ctx, personID, enabled, actor, track)
 }
 
 func (a *storeAPIAdapter) BuildPersonFactCatalogContext(

@@ -280,7 +280,13 @@ import (
 // status identifiers. It adds GET /api/v1/documents/status/current to resolve
 // status for the selected durable document profile. These Operations response
 // changes remain within the unreleased 2.x contract.
-const APISchemaVersion = "2.19.0"
+// 2.20.0 adds the "last time we talked" person brief: the current version, the
+// version history, owner rejection, manual generation, and the brief enrollment
+// opt-in at /api/v1/people/{id}/brief*. A brief version reports its
+// renderer_policy, and each sentence carries evidence_ordinals naming the
+// entries of that version's evidence list the sentence cites. Additive (minor
+// bump): every existing person route and response is unchanged.
+const APISchemaVersion = "2.20.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -696,17 +702,26 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
-	if tracking := schemas["PersonTracking"]; tracking != nil {
-		if trackedAt := tracking.Properties["tracked_at"]; trackedAt != nil {
-			if trackedAt.Extensions == nil {
-				trackedAt.Extensions = map[string]any{}
+	nullableSchemaProperty(schemas["PersonTracking"], "tracked_at")
+	// The brief's structure and input boundary are raw JSON documents the
+	// client hands back untouched; without this the generator emits struct{}.
+	if brief := schemas["PersonBrief"]; brief != nil {
+		for _, propertyName := range []string{"structured", "boundary"} {
+			property := brief.Properties[propertyName]
+			if property == nil {
+				continue
 			}
-			trackedAt.Extensions["x-omitempty"] = false
-			trackedAt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
-				"validate": "omitempty",
+			if property.Extensions == nil {
+				property.Extensions = map[string]any{}
 			}
+			property.Extensions["x-go-type"] = "json.RawMessage"
+			property.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json"}
+		}
+		for _, propertyName := range []string{"rejected_at", "superseded_at"} {
+			nullableSchemaProperty(brief, propertyName)
 		}
 	}
+	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
 	if response := schemas["PersonMergeSnapshotResponse"]; response != nil {
 		if snapshot := response.Properties["snapshot"]; snapshot != nil {
 			if snapshot.Extensions == nil {
@@ -1014,4 +1029,24 @@ func schemaChildren(schema *huma.Schema) []*huma.Schema {
 	children = append(children, schema.AnyOf...)
 	children = append(children, schema.AllOf...)
 	return children
+}
+
+// nullableSchemaProperty keeps an always-present nullable property present in
+// the generated Go client: no omitempty, and validated as optional rather than
+// required, so a null timestamp round-trips instead of disappearing.
+func nullableSchemaProperty(schema *huma.Schema, propertyName string) {
+	if schema == nil {
+		return
+	}
+	property := schema.Properties[propertyName]
+	if property == nil {
+		return
+	}
+	if property.Extensions == nil {
+		property.Extensions = map[string]any{}
+	}
+	property.Extensions["x-omitempty"] = false
+	property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+		"validate": "omitempty",
+	}
 }

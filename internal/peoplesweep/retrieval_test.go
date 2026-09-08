@@ -23,7 +23,7 @@ func (f retrievalArchive) ListPersonSweepHistoricalCandidates(context.Context, H
 func (f retrievalArchive) SearchPersonSweepMessages(context.Context, ContextRequest) ([]EvidenceItem, error) {
 	return f.lexical, nil
 }
-func (f retrievalArchive) HydratePersonSweepMessages(_ context.Context, _ int64, ids []int64) ([]EvidenceItem, error) {
+func (f retrievalArchive) HydratePersonSweepMessages(_ context.Context, _ int64, ids []int64, _ int64) ([]EvidenceItem, error) {
 	items := make([]EvidenceItem, 0, len(ids))
 	for _, id := range ids {
 		if item, ok := f.hydrated[id]; ok {

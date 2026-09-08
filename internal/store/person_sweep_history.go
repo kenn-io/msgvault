@@ -157,7 +157,7 @@ func (s *Store) ListPersonSweepAttempts(
 		(filter.ProviderFingerprint != "" && !validLowerSHA256(filter.ProviderFingerprint)) {
 		return nil, errors.New("list person sweep attempts: limit must be 1-200 and person ID nonnegative")
 	}
-	query := `SELECT id, run_id, person_id, status, failure_class,
+	query := `SELECT id, run_id, person_id, status, failure_class, brief_failure_class,
 	                 cursor_envelope_json, envelope_hash, program_fingerprint,
 	                 catalog_fingerprint, provider_fingerprint, generation_id,
 	                 generation_key, seed_count, context_count, claim_count,
@@ -196,7 +196,8 @@ func (s *Store) ListPersonSweepAttempts(
 		var generationID sql.NullInt64
 		var latencyMS int64
 		if err := rows.Scan(&attempt.ID, &attempt.RunID, &attempt.PersonID,
-			&attempt.Status, &attempt.FailureClass, &envelope, &attempt.EnvelopeHash,
+			&attempt.Status, &attempt.FailureClass, &attempt.BriefFailureClass,
+			&envelope, &attempt.EnvelopeHash,
 			&attempt.ProgramFingerprint, &attempt.CatalogFingerprint,
 			&attempt.ProviderFingerprint, &generationID, &attempt.GenerationKey,
 			&attempt.SeedCount, &attempt.ContextCount, &attempt.ClaimCount,

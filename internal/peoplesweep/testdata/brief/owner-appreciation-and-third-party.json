@@ -1,0 +1,143 @@
+{
+  "name": "owner appreciation and a third-party fact; the meeting transcript stays out of the window",
+  "allow_sensitive": false,
+  "max_items": 8,
+  "max_bytes": 65536,
+  "overlap_items": 2,
+  "through_sequence": 1300,
+  "messages": [
+    {
+      "key": "m0",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-07-10T11:00:00Z",
+      "excerpt": "Being straight with you about the timeline was easier than I expected."
+    },
+    {
+      "key": "m1",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-07-14T11:00:00Z",
+      "excerpt": "My partner just started at a new lab across town."
+    },
+    {
+      "key": "b0",
+      "lane": "conversation_text",
+      "author": "other",
+      "event_time": "2026-07-16T11:00:00Z",
+      "excerpt": "Bob here, adding a note that nobody asked for."
+    },
+    {
+      "key": "m2",
+      "lane": "meeting_text",
+      "author": "person",
+      "event_time": "2026-07-18T16:00:00Z",
+      "excerpt": "In the sync I said we are hiring two more engineers."
+    }
+  ],
+  "last_contact": {
+    "message": "m1",
+    "channel": "chat"
+  },
+  "provider": {
+    "last_meaningful_interaction": {
+      "evidence": "m1",
+      "summary": "you talked through their partner's new job"
+    },
+    "highlights": [
+      {
+        "text": "their partner started at a new lab",
+        "speaker": "person",
+        "evidence": [
+          "m1"
+        ],
+        "observed_at": "2026-07-14",
+        "confidence_basis_points": 880
+      },
+      {
+        "text": "the new lab is across town",
+        "speaker": "other",
+        "evidence": [
+          "m1"
+        ],
+        "observed_at": "2026-07-14",
+        "confidence_basis_points": 800
+      },
+      {
+        "text": "you asked about the timeline",
+        "speaker": "owner",
+        "evidence": [
+          "m0"
+        ],
+        "observed_at": null,
+        "confidence_basis_points": 750
+      }
+    ],
+    "follow_ups": [
+      {
+        "question": "how their partner's new lab is going",
+        "why": "the job had just started",
+        "highlight_index": 0,
+        "evidence": [
+          "m1"
+        ]
+      }
+    ],
+    "appreciations": [
+      {
+        "text": "how candid they were about the timeline",
+        "evidence": [
+          "m0"
+        ]
+      }
+    ],
+    "uncertainties": [],
+    "possible_attributes": []
+  },
+  "expected": {
+    "window_messages": [
+      "m1",
+      "m0"
+    ],
+    "lanes": [
+      "conversation_text"
+    ],
+    "from_event_time": "2026-07-10T11:00:00Z",
+    "through_event_time": "2026-07-14T11:00:00Z",
+    "dropped_item_count": 3,
+    "evidence_order": [
+      "m1"
+    ],
+    "output": {
+      "last_meaningful_interaction": {
+        "evidence": "m1",
+        "summary": "you talked through their partner's new job"
+      },
+      "highlights": [
+        {
+          "text": "their partner started at a new lab",
+          "speaker": "person",
+          "evidence": [
+            "m1"
+          ],
+          "observed_at": "2026-07-14",
+          "confidence_basis_points": 880
+        }
+      ],
+      "follow_ups": [
+        {
+          "question": "how their partner's new lab is going",
+          "why": "the job had just started",
+          "highlight_index": 0,
+          "evidence": [
+            "m1"
+          ]
+        }
+      ],
+      "appreciations": [],
+      "uncertainties": [],
+      "possible_attributes": []
+    },
+    "rendered_text": "Last time you talked (Jul 14, chat): you talked through their partner's new job. They said their partner started at a new lab. You may want to ask how their partner's new lab is going."
+  }
+}

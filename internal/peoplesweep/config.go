@@ -106,9 +106,30 @@ type Config struct {
 	RetryBase            time.Duration             `toml:"retry_base"`
 	RetryMax             time.Duration             `toml:"retry_max"`
 	Budgets              BudgetConfig              `toml:"budgets"`
+	Brief                BriefConfig               `toml:"brief"`
 	Provider             ProviderSelection         `toml:"provider"`
 	Providers            map[string]ProviderConfig `toml:"providers"`
 }
+
+// BriefConfig bounds the "last time we talked" person brief. Enrollment is the
+// real opt-in, so the lane defaults on; this table lets an operator turn the
+// feature off globally without unenrolling anybody.
+//
+// Enabled is a pointer so a nil value still means "default"; an explicit
+// enabled = false in the file survives ApplyDefaults.
+type BriefConfig struct {
+	Enabled          *bool         `toml:"enabled"`
+	MinInterval      time.Duration `toml:"min_interval"`
+	PreCallWindow    time.Duration `toml:"pre_call_window"`
+	MaxItems         int           `toml:"max_items"`
+	MaxBytes         int           `toml:"max_bytes"`
+	OverlapItems     int           `toml:"overlap_items"`
+	MaxOutputTokens  int64         `toml:"max_output_tokens"`
+	MaxRenderedRunes int           `toml:"max_rendered_runes"`
+}
+
+// IsEnabled reports whether briefs may be generated. An unset value is enabled.
+func (b BriefConfig) IsEnabled() bool { return b.Enabled == nil || *b.Enabled }
 
 // BudgetConfig caps hosted-inference usage. Costs are integer micro-USD so
 // accounting stays exact without floating-point conversions.
@@ -231,6 +252,17 @@ func (c *Config) ApplyDefaults() {
 	setDefaultInt(&c.Budgets.MaxRequestsPerDay, 500)
 	setDefaultInt64(&c.Budgets.MaxInputTokensPerDay, 5_000_000)
 	setDefaultInt64(&c.Budgets.MaxOutputTokensPerDay, 800_000)
+	if c.Brief.Enabled == nil {
+		enabled := true
+		c.Brief.Enabled = &enabled
+	}
+	setDefaultDuration(&c.Brief.MinInterval, 168*time.Hour)
+	setDefaultDuration(&c.Brief.PreCallWindow, 72*time.Hour)
+	setDefaultInt(&c.Brief.MaxItems, 40)
+	setDefaultInt(&c.Brief.MaxBytes, 65_536)
+	setDefaultInt(&c.Brief.OverlapItems, 8)
+	setDefaultInt64(&c.Brief.MaxOutputTokens, briefMaxOutputTokens)
+	setDefaultInt(&c.Brief.MaxRenderedRunes, briefDefaultMaxRenderedRunes)
 
 	if c.Provider.Name == "" && len(c.Providers) == 0 {
 		c.Provider.Name = "default"
@@ -358,6 +390,9 @@ func (c Config) validateOperationalConfig() error {
 	}
 	if c.Budgets.MaxOutputTokensPerPerson < extractionMaxOutputTokens {
 		return fmt.Errorf("invalid [people.sweep.budgets] max_output_tokens_per_person: must be at least %d", extractionMaxOutputTokens)
+	}
+	if err := c.Brief.validate(c.Budgets); err != nil {
+		return err
 	}
 	if c.Budgets.MaxEstimatedCostMicroUSDPerRun < 0 || c.Budgets.MaxEstimatedCostMicroUSDPerDay < 0 ||
 		c.Budgets.InputCostMicroUSDPerMillionTokens < 0 || c.Budgets.OutputCostMicroUSDPerMillionTokens < 0 {
@@ -679,6 +714,52 @@ func policyJSONForProviderProfile(profile ProviderProfile) ([]byte, error) {
 		policy.Field(index).Set(fieldValue)
 	}
 	return json.Marshal(policy.Interface())
+}
+
+// validate rejects a brief lane that cannot run inside the person budget. The
+// output cap is checked against max_output_tokens_per_person because a brief
+// call is one more call against the same per-person ceiling.
+func (b BriefConfig) validate(budgets BudgetConfig) error {
+	for _, value := range []struct {
+		name  string
+		value time.Duration
+	}{{"min_interval", b.MinInterval}, {"pre_call_window", b.PreCallWindow}} {
+		if value.value <= 0 {
+			return fmt.Errorf("invalid [people.sweep.brief] %s: must be positive", value.name)
+		}
+	}
+	for _, value := range []struct {
+		name  string
+		value int
+	}{{"max_items", b.MaxItems}, {"max_bytes", b.MaxBytes}} {
+		if value.value <= 0 {
+			return fmt.Errorf("invalid [people.sweep.brief] %s: must be positive", value.name)
+		}
+	}
+	if b.OverlapItems < 0 {
+		return errors.New("invalid [people.sweep.brief] overlap_items: must not be negative")
+	}
+	if b.OverlapItems > b.MaxItems {
+		return errors.New("invalid [people.sweep.brief] overlap_items: must not exceed max_items")
+	}
+	if b.MaxOutputTokens <= 0 {
+		return errors.New("invalid [people.sweep.brief] max_output_tokens: must be positive")
+	}
+	if b.MaxOutputTokens > budgets.MaxOutputTokensPerPerson {
+		return fmt.Errorf(
+			"invalid [people.sweep.brief] max_output_tokens: must not exceed max_output_tokens_per_person (%d)",
+			budgets.MaxOutputTokensPerPerson)
+	}
+	// The floor is the interaction summary's own schema maximum. It bounds what
+	// an operator may configure rather than promising the paragraph fits: the
+	// rendered sentence prepends a header, and a paragraph still over the cap
+	// once every droppable item is gone is stored as it is, not truncated.
+	if b.MaxRenderedRunes < briefMinRenderedRunes {
+		return fmt.Errorf(
+			"invalid [people.sweep.brief] max_rendered_runes: must be at least %d",
+			briefMinRenderedRunes)
+	}
+	return nil
 }
 
 func setDefaultString(target *string, value string) {

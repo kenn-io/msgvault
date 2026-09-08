@@ -370,6 +370,7 @@ func TestPersonProviderStatusReportsExactPolicyWithoutMutation(t *testing.T) {
 	assert.Contains(human, "Sensitive content: denied")
 	assert.Contains(human, "Packet renderer: person-sweep-packet-v1")
 	assert.Contains(human, "Extraction program fingerprint: "+peoplesweep.ProgramFingerprint())
+	assert.Contains(human, personBriefProviderDisclosureLine)
 	assert.Contains(human, "Disclosed packet field classes:")
 	for _, field := range []string{
 		"person_id", "program_identity", "catalog", "current_projection",

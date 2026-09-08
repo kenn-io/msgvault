@@ -93,6 +93,13 @@ type peopleState struct {
 	attributesNotice             string
 	attributesLoadErr            error
 	attributesLoadErrTab         peopleTab
+	brief                        *peoplebrowser.PersonBrief
+	briefLoaded                  bool
+	briefLoading                 bool
+	briefErr                     error
+	briefNotice                  string
+	briefCommandRunning          bool
+	briefStructured              bool
 	relationshipCalendar         *query.RelationshipCalendarResponse
 	relationshipCalendars        map[peopleRelationshipCacheKey]*query.RelationshipCalendarResponse
 	relationshipYear             int
@@ -159,6 +166,24 @@ type peopleState struct {
 	form                         peopleFormState
 	breadcrumbs                  []peopleNavSnapshot
 	err                          error
+}
+
+// bumpRequestID invalidates every load the contact path keys on the request
+// ID. Those loads are settled only by a handler that matches the ID it was
+// started with, so a bump drops the answer before it can clear the flag; the
+// flag has to be cleared here or updatePeopleLoading keeps the spinner armed
+// until a tab switch or a return to the directory. A caller that starts a
+// fresh load sets its own flag again after the bump.
+//
+// Add any new request-ID-keyed contact flag to this list. The content tabs
+// (meetings, files, activity, inboxes) settle their own flags where they bump,
+// because those lanes restart the load in the same statement.
+func (p *peopleState) bumpRequestID() {
+	p.requestID++
+	p.attributesLoading = false
+	p.briefLoading = false
+	p.briefCommandRunning = false
+	p.promoting = false
 }
 
 func (p *peopleState) clearCompletions() {
@@ -246,6 +271,8 @@ func (m *Model) settlePeopleDirectoryLoad() {
 	m.peopleState.loadingMore = false
 	m.peopleState.completionLoading = false
 	m.peopleState.attributesLoading = false
+	m.peopleState.briefLoading = false
+	m.peopleState.briefCommandRunning = false
 	m.peopleState.abandonRelationshipLoad()
 	m.peopleState.promoting = false
 	m.peopleState.inboxesLoading = false
@@ -290,6 +317,18 @@ func (p *peopleState) resetAttributes() {
 	p.attributesLoadErrTab = peopleTabOverview
 	p.promoting = false
 	p.form.close()
+}
+
+// resetBrief drops the brief a previous contact loaded. It is separate from
+// resetAttributes because the brief has its own daemon read and its own view.
+func (p *peopleState) resetBrief() {
+	p.brief = nil
+	p.briefLoaded = false
+	p.briefLoading = false
+	p.briefErr = nil
+	p.briefNotice = ""
+	p.briefCommandRunning = false
+	p.briefStructured = false
 }
 
 func (p *peopleState) resetInboxes() {

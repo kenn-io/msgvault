@@ -385,6 +385,7 @@ func (m Model) handlePeopleContactLoaded(msg peopleContactLoadedMsg) (tea.Model,
 			m.peopleState.participantID = 0
 			m.peopleState.breadcrumbs = nil
 			m.peopleState.resetAttributes()
+			m.peopleState.resetBrief()
 			m.peopleState.resetRelationshipContact()
 			m.peopleState.resetInboxes()
 			m.peopleState.resetContent()
@@ -405,9 +406,12 @@ func (m Model) handlePeopleContactLoaded(msg peopleContactLoadedMsg) (tea.Model,
 		m.initializePeopleRelationshipYears(&contact)
 		if m.peopleState.tab == peopleTabOverview || m.peopleState.tab == peopleTabAttributes {
 			var commands []tea.Cmd
-			m.peopleState.requestID++
+			m.peopleState.bumpRequestID()
 			if m.peopleState.tab == peopleTabOverview {
 				if cmd := m.beginPeopleRelationshipLoad(); cmd != nil {
+					commands = append(commands, cmd)
+				}
+				if cmd := m.beginPeopleBriefLoad(); cmd != nil {
 					commands = append(commands, cmd)
 				}
 			}
@@ -1474,10 +1478,19 @@ func (m Model) handlePeoplePromoted(msg peoplePromotedMsg) (tea.Model, tea.Cmd) 
 	m.peopleState.attributesLoaded = false
 	m.peopleState.attributesLoadErr = nil
 	m.peopleState.attributesNotice = "Contact promoted. Loading attributes..."
-	m.peopleState.requestID++
+	m.peopleState.bumpRequestID()
 	m.peopleState.attributesLoading = true
 	m.loading = true
-	return m, m.loadPeopleAttributes(msg.person.ID, msg.tab)
+	commands := []tea.Cmd{m.loadPeopleAttributes(msg.person.ID, msg.tab)}
+	// The contact only just acquired a person ID, so this is the first moment
+	// its brief can be read. Without it the Overview would claim the brief
+	// failed to load, and r could not restart it until attributes settled.
+	if msg.tab == peopleTabOverview {
+		if cmd := m.beginPeopleBriefLoad(); cmd != nil {
+			commands = append(commands, cmd)
+		}
+	}
+	return m, tea.Batch(commands...)
 }
 
 func (m Model) handlePeopleAttributesLoaded(
@@ -1545,7 +1558,7 @@ func (m Model) handlePeopleFieldCreated(msg peopleFieldCreatedMsg) (tea.Model, t
 		return m, nil
 	}
 	m.peopleState.form = newPeopleValueForm(*msg.definition, nil, 0)
-	m.peopleState.requestID++
+	m.peopleState.bumpRequestID()
 	m.peopleState.attributesLoading = true
 	m.loading = true
 	return m, m.loadPeopleAttributes(msg.personID, msg.tab)
@@ -1566,7 +1579,7 @@ func (m Model) handlePeopleAttributeSet(msg peopleAttributeSetMsg) (tea.Model, t
 			m.peopleState.form.staleConflict = true
 			m.peopleState.form.staleReloadPending = true
 			m.peopleState.form.notice = "Value changed on the server. Reloading the current server value; draft preserved."
-			m.peopleState.requestID++
+			m.peopleState.bumpRequestID()
 			m.peopleState.attributesLoading = true
 			m.loading = true
 			return m, m.loadPeopleAttributes(msg.personID, msg.tab)
@@ -1579,7 +1592,7 @@ func (m Model) handlePeopleAttributeSet(msg peopleAttributeSetMsg) (tea.Model, t
 	_ = msg.write
 	m.peopleState.form.close()
 	m.peopleState.attributesNotice = "Value saved. Reloading attributes..."
-	m.peopleState.requestID++
+	m.peopleState.bumpRequestID()
 	m.peopleState.attributesLoading = true
 	m.loading = true
 	return m, m.loadPeopleAttributes(msg.personID, msg.tab)
@@ -1591,6 +1604,7 @@ func (m *Model) updatePeopleLoading() {
 	}
 	m.loading = m.peopleState.directoryLoading || m.peopleState.contactLoading ||
 		m.peopleState.attributesLoading || m.peopleState.relationshipLoading ||
+		m.peopleState.briefLoading || m.peopleState.briefCommandRunning ||
 		m.peopleState.promoting ||
 		m.peopleState.inboxesLoading || m.peopleState.conversationsLoading ||
 		m.peopleState.conversationLoading || m.peopleState.messageLoading ||

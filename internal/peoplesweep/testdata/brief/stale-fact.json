@@ -1,0 +1,143 @@
+{
+  "name": "a stale fact lands in uncertainties; the meeting transcript stays out of the window",
+  "allow_sensitive": false,
+  "max_items": 8,
+  "max_bytes": 65536,
+  "overlap_items": 2,
+  "through_sequence": 1400,
+  "messages": [
+    {
+      "key": "m0",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-06-02T10:00:00Z",
+      "excerpt": "We are moving to a new city in the autumn."
+    },
+    {
+      "key": "m1",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-08-28T10:00:00Z",
+      "excerpt": "Settling into the new place, slowly."
+    },
+    {
+      "key": "m2",
+      "lane": "meeting_text",
+      "author": "person",
+      "event_time": "2026-08-30T14:00:00Z",
+      "excerpt": "I mentioned the team is still fully distributed."
+    }
+  ],
+  "last_contact": {
+    "message": "m1",
+    "channel": "chat"
+  },
+  "provider": {
+    "last_meaningful_interaction": {
+      "evidence": "m1",
+      "summary": "you compared notes after their move"
+    },
+    "highlights": [
+      {
+        "text": "they were still unpacking the new place",
+        "speaker": "person",
+        "evidence": [
+          "m1"
+        ],
+        "observed_at": "2026-08-28",
+        "confidence_basis_points": 720
+      },
+      {
+        "text": "they were still planning the move",
+        "speaker": "person",
+        "evidence": [
+          "m1"
+        ],
+        "observed_at": "2026-05-30",
+        "confidence_basis_points": 500
+      }
+    ],
+    "follow_ups": [],
+    "appreciations": [],
+    "uncertainties": [
+      {
+        "text": "the move to a new city was mentioned in June and may have changed",
+        "kind": "stale",
+        "evidence": [
+          "m0"
+        ]
+      }
+    ],
+    "possible_attributes": [
+      {
+        "target_slug": "location",
+        "relation": "support",
+        "value": "Riverton",
+        "evidence": [
+          "m0"
+        ],
+        "valid_from": null,
+        "valid_until": null,
+        "confidence_basis_points": 600
+      }
+    ]
+  },
+  "expected": {
+    "window_messages": [
+      "m1",
+      "m0"
+    ],
+    "lanes": [
+      "conversation_text"
+    ],
+    "from_event_time": "2026-06-02T10:00:00Z",
+    "through_event_time": "2026-08-28T10:00:00Z",
+    "dropped_item_count": 1,
+    "evidence_order": [
+      "m1",
+      "m0"
+    ],
+    "output": {
+      "last_meaningful_interaction": {
+        "evidence": "m1",
+        "summary": "you compared notes after their move"
+      },
+      "highlights": [
+        {
+          "text": "they were still unpacking the new place",
+          "speaker": "person",
+          "evidence": [
+            "m1"
+          ],
+          "observed_at": "2026-08-28",
+          "confidence_basis_points": 720
+        }
+      ],
+      "follow_ups": [],
+      "appreciations": [],
+      "uncertainties": [
+        {
+          "text": "the move to a new city was mentioned in June and may have changed",
+          "kind": "stale",
+          "evidence": [
+            "m0"
+          ]
+        }
+      ],
+      "possible_attributes": [
+        {
+          "target_slug": "location",
+          "relation": "support",
+          "value": "Riverton",
+          "evidence": [
+            "m0"
+          ],
+          "valid_from": null,
+          "valid_until": null,
+          "confidence_basis_points": 600
+        }
+      ]
+    },
+    "rendered_text": "Last time you talked (Aug 28, chat): you compared notes after their move. They said they were still unpacking the new place. Check before assuming: the move to a new city was mentioned in June and may have changed."
+  }
+}

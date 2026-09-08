@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-07
+last_edited: "2026-09-07"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -19,7 +19,7 @@ All notable changes to msgvault, grouped by release.
 
 - The HTTP API separates observed participant analytics from durable curated
   people, crossing the API schema 2.0 compatibility boundary at 2.1.0. The
-  current unreleased API schema is 2.19.0. Version 2.14.0 also replaces the CardDAV
+  current unreleased API schema is 2.20.0. Version 2.14.0 also replaces the CardDAV
   publication and conflict response shapes with bounded projections that
   omit raw vCards and resource hrefs. The
   analytical routes formerly under `/api/v1/people/*` (search, detail,
@@ -67,6 +67,13 @@ All notable changes to msgvault, grouped by release.
 
 - Preserve bounded provider transcript details in Beeper attachment metadata and
   repair stale attachment classifications from archived payloads.
+
+- Catch up before your next conversation with a "Last time we talked" person
+  brief: a short summary of the person's recent chat and text messages, with
+  sources and version history. Enroll and generate through the CLI, TUI, Web
+  Directory, or API; MCP assistants can read the saved brief. Generation uses
+  your consented provider and its budget. Email and meeting transcripts are
+  not supported yet. See the [brief guide](/docs/usage/people/#catch-up-before-your-next-conversation).
 
 - Web Directory workspace: browse and search promoted durable people, filter
   by contact state, category, organization, and last contact, and maintain a
@@ -161,9 +168,11 @@ All notable changes to msgvault, grouped by release.
   the deterministic contact state (first and last contact, last inbound and
   outbound, interaction count, inferred channel), the curated
   `primary_channel`, non-sensitive attributes, current employment, typed
-  relationships, contact points, dates, and categories, all from local
-  derived state. Sensitive attributes, private Notes, addresses, and media
-  are excluded, and the tool makes no provider calls.
+  relationships, contact points, `emails` and `phones` with preferred entries
+  first, the primary postal `address`, dates, and categories, all from local
+  derived state. Email-shaped service handles stay in `contact_points`, and a
+  birth or death place is never returned as the address. Sensitive attributes, private Notes, and media are excluded,
+  and the tool makes no provider calls.
 
 - Person profile catalog and tracking foundation: eleven reconciled system
   profile attributes (location, birthplace, membership, religion, politics,

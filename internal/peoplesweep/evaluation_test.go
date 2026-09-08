@@ -528,7 +528,7 @@ func insertEvaluationEvidence(
 			VALUES (?, ?, 'to', 'alice@example.test')`), messageID, f.ScopedParticipant)
 		require.NoError(t, err)
 	}
-	items, err := f.Store.HydratePersonSweepMessages(t.Context(), f.PersonID, []int64{messageID})
+	items, err := f.Store.HydratePersonSweepMessages(t.Context(), f.PersonID, []int64{messageID}, 0)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, step.Excerpt, items[0].Excerpt)

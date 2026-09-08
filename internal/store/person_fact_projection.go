@@ -2220,7 +2220,7 @@ func personFactEmploymentActiveFrom(employment Employment) time.Time {
 
 func personFactEmploymentProvenance(origin personfacts.ClaimOrigin) (Provenance, error) {
 	switch origin {
-	case personfacts.OriginExtraction:
+	case personfacts.OriginExtraction, personfacts.OriginBrief:
 		return ProvenanceExtraction, nil
 	case personfacts.OriginEnrichment:
 		return ProvenanceEnrichment, nil

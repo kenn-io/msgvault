@@ -1272,6 +1272,24 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep call journal: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepBatchPurposeV2, 1, false,
+		s.migratePersonSweepBatchPurposeV2,
+	); err != nil {
+		return fmt.Errorf("migrate person sweep call journal purposes: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonFactClaimOriginBrief, 1, false,
+		s.migratePersonFactClaimOriginBrief,
+	); err != nil {
+		return fmt.Errorf("migrate person fact claim origins: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepAttemptBriefFailure, 1, false,
+		s.migratePersonSweepAttemptBriefFailure,
+	); err != nil {
+		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}

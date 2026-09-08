@@ -186,8 +186,7 @@ func (r Resolver) prepareCandidate(
 		}
 		return candidate, nil
 	}
-	if claim.Claim.Origin != OriginExtraction && claim.Claim.Origin != OriginEnrichment &&
-		claim.Claim.Origin != OriginSystem {
+	if !validClaimOrigin(claim.Claim.Origin) {
 		candidate.decision = Decision{
 			PersonID: input.PersonID, ClaimKey: claim.ClaimKey,
 			Action: DecisionInvalid, Reason: ReasonMalformedValue,

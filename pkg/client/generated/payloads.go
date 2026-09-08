@@ -136,6 +136,10 @@ type PatchPersonBody = PatchPersonRequest
 
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
+type SetPersonBriefEnrollmentBody = PutPersonBriefEnrollmentRequest
+
+type RejectPersonBriefBody = RejectPersonBriefRequest
+
 type SetPersonFactPinBody = SetPersonFactPinRequest
 
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest

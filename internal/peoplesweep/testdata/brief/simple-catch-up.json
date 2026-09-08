@@ -1,0 +1,130 @@
+{
+  "name": "simple catch-up; the meeting transcript stays out of the window",
+  "allow_sensitive": false,
+  "max_items": 8,
+  "max_bytes": 65536,
+  "overlap_items": 2,
+  "through_sequence": 1200,
+  "messages": [
+    {
+      "key": "m0",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-08-20T09:00:00Z",
+      "excerpt": "Wrapping up the quarter and heading to the coast next week."
+    },
+    {
+      "key": "m1",
+      "lane": "meeting_text",
+      "author": "person",
+      "event_time": "2026-08-25T15:00:00Z",
+      "excerpt": "In the review I said the migration is on track for October."
+    },
+    {
+      "key": "m2",
+      "lane": "conversation_text",
+      "author": "person",
+      "event_time": "2026-08-29T08:30:00Z",
+      "excerpt": "Back from the coast and catching up on everything."
+    }
+  ],
+  "last_contact": {
+    "message": "m2",
+    "channel": "chat"
+  },
+  "provider": {
+    "last_meaningful_interaction": {
+      "evidence": "m2",
+      "summary": "you caught up after their week at the coast"
+    },
+    "highlights": [
+      {
+        "text": "they are catching up after the coast",
+        "speaker": "person",
+        "evidence": [
+          "m2"
+        ],
+        "observed_at": "2026-08-29",
+        "confidence_basis_points": 900
+      },
+      {
+        "text": "the coast trip was a good reset",
+        "speaker": "person",
+        "evidence": [
+          "m0"
+        ],
+        "observed_at": null,
+        "confidence_basis_points": 700
+      }
+    ],
+    "follow_ups": [
+      {
+        "question": "what piled up while they were away",
+        "why": "they were still catching up",
+        "highlight_index": 0,
+        "evidence": [
+          "m2"
+        ]
+      }
+    ],
+    "appreciations": [],
+    "uncertainties": [],
+    "possible_attributes": []
+  },
+  "expected": {
+    "window_messages": [
+      "m2",
+      "m0"
+    ],
+    "lanes": [
+      "conversation_text"
+    ],
+    "from_event_time": "2026-08-20T09:00:00Z",
+    "through_event_time": "2026-08-29T08:30:00Z",
+    "dropped_item_count": 0,
+    "evidence_order": [
+      "m2",
+      "m0"
+    ],
+    "output": {
+      "last_meaningful_interaction": {
+        "evidence": "m2",
+        "summary": "you caught up after their week at the coast"
+      },
+      "highlights": [
+        {
+          "text": "they are catching up after the coast",
+          "speaker": "person",
+          "evidence": [
+            "m2"
+          ],
+          "observed_at": "2026-08-29",
+          "confidence_basis_points": 900
+        },
+        {
+          "text": "the coast trip was a good reset",
+          "speaker": "person",
+          "evidence": [
+            "m0"
+          ],
+          "observed_at": null,
+          "confidence_basis_points": 700
+        }
+      ],
+      "follow_ups": [
+        {
+          "question": "what piled up while they were away",
+          "why": "they were still catching up",
+          "highlight_index": 0,
+          "evidence": [
+            "m2"
+          ]
+        }
+      ],
+      "appreciations": [],
+      "uncertainties": [],
+      "possible_attributes": []
+    },
+    "rendered_text": "Last time you talked (Aug 29, chat): you caught up after their week at the coast. They said they are catching up after the coast. They said the coast trip was a good reset. You may want to ask what piled up while they were away."
+  }
+}

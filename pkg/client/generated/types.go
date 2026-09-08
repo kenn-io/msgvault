@@ -6692,6 +6692,162 @@ func (p PersonAttributesResponse) Validate() error {
 	return errors
 }
 
+type PersonBrief struct {
+	Boundary         json.RawMessage              `json:"boundary"`
+	DroppedItemCount int64                        `json:"dropped_item_count"`
+	Evidence         []PersonBriefEvidencePointer `json:"evidence" validate:"required"`
+	GeneratedAt      time.Time                    `json:"generated_at" validate:"required"`
+	Model            string                       `json:"model" validate:"required"`
+	ProgramID        string                       `json:"program_id" validate:"required"`
+	ProgramVersion   string                       `json:"program_version" validate:"required"`
+	Provider         string                       `json:"provider" validate:"required"`
+	RejectedAt       *time.Time                   `json:"rejected_at" validate:"omitempty"`
+	RejectedReason   string                       `json:"rejected_reason" validate:"required"`
+	RenderedText     string                       `json:"rendered_text" validate:"required"`
+	RendererPolicy   string                       `json:"renderer_policy" validate:"required"`
+	Sentences        []PersonBriefSentence        `json:"sentences" validate:"required"`
+	Status           string                       `json:"status" validate:"required"`
+	Structured       json.RawMessage              `json:"structured"`
+	SupersededAt     *time.Time                   `json:"superseded_at" validate:"omitempty"`
+	Version          int64                        `json:"version"`
+}
+
+func (p PersonBrief) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Boundary).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Boundary", err)
+		}
+	}
+	for i, item := range p.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	if err := typesValidator.Var(p.Model, "required"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if err := typesValidator.Var(p.ProgramID, "required"); err != nil {
+		errors = errors.Append("ProgramID", err)
+	}
+	if err := typesValidator.Var(p.ProgramVersion, "required"); err != nil {
+		errors = errors.Append("ProgramVersion", err)
+	}
+	if err := typesValidator.Var(p.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if p.RejectedAt != nil {
+		if err := typesValidator.Var(p.RejectedAt, "required"); err != nil {
+			errors = errors.Append("RejectedAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.RejectedReason, "required"); err != nil {
+		errors = errors.Append("RejectedReason", err)
+	}
+	if err := typesValidator.Var(p.RenderedText, "required"); err != nil {
+		errors = errors.Append("RenderedText", err)
+	}
+	if err := typesValidator.Var(p.RendererPolicy, "required"); err != nil {
+		errors = errors.Append("RendererPolicy", err)
+	}
+	for i, item := range p.Sentences {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sentences[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if v, ok := any(p.Structured).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Structured", err)
+		}
+	}
+	if p.SupersededAt != nil {
+		if err := typesValidator.Var(p.SupersededAt, "required"); err != nil {
+			errors = errors.Append("SupersededAt", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonBriefEnrollment struct {
+	Actor     string     `json:"actor" validate:"required"`
+	EnabledAt *time.Time `json:"enabled_at" validate:"omitempty"`
+	Enrolled  bool       `json:"enrolled"`
+	PersonID  int64      `json:"person_id"`
+}
+
+func (p PersonBriefEnrollment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonBriefEvidencePointer struct {
+	Directness        string    `json:"directness" validate:"required"`
+	EventTime         time.Time `json:"event_time" validate:"required"`
+	EvidenceID        int64     `json:"evidence_id"`
+	EvidenceKey       string    `json:"evidence_key" validate:"required"`
+	EvidenceSupported bool      `json:"evidence_supported"`
+	Ordinal           int64     `json:"ordinal"`
+	SourceRef         string    `json:"source_ref" validate:"required"`
+	SourceURL         string    `json:"source_url" validate:"required"`
+}
+
+func (p PersonBriefEvidencePointer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonBriefRun struct {
+	AttemptID         string `json:"attempt_id" validate:"required"`
+	BriefFailureClass string `json:"brief_failure_class" validate:"required"`
+	BriefVersion      int64  `json:"brief_version"`
+	RunID             string `json:"run_id" validate:"required"`
+}
+
+func (p PersonBriefRun) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonBriefSentence struct {
+	EvidenceOrdinals []int64 `json:"evidence_ordinals" validate:"required"`
+	Index            int64   `json:"index"`
+	Kind             string  `json:"kind" validate:"required"`
+	Text             string  `json:"text" validate:"required"`
+}
+
+func (p PersonBriefSentence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonBriefVersionsResponse struct {
+	Versions []PersonBrief `json:"versions" validate:"required"`
+}
+
+func (p PersonBriefVersionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Versions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Versions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonCategory struct {
 	Envelope        ValueEnvelope `json:"envelope"`
 	NormalizedValue string        `json:"normalized_value" validate:"required"`
@@ -8841,6 +8997,11 @@ type ProviderUsage struct {
 	UsageAvailable bool    `json:"usage_available"`
 }
 
+type PutPersonBriefEnrollmentRequest struct {
+	Enrolled bool  `json:"enrolled"`
+	Track    *bool `json:"track,omitempty"`
+}
+
 type PutPersonTrackingRequest struct {
 	Tracked bool `json:"tracked"`
 }
@@ -8861,6 +9022,10 @@ type QueryResult struct {
 
 func (q QueryResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(q))
+}
+
+type RejectPersonBriefRequest struct {
+	Reason *string `json:"reason,omitempty"`
 }
 
 type RejectedCandidate struct {

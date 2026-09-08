@@ -139,6 +139,9 @@ type workerFailureStore struct {
 	marked       []BudgetReservation
 	markedLeases []Lease
 	renewCalls   atomic.Int64
+
+	renewFailure    error
+	failNextRenewal atomic.Bool
 }
 
 func (s *workerFailureStore) StartPersonSweepRun(context.Context, StartRun) (Run, error) {
@@ -173,6 +176,9 @@ func (s *workerFailureStore) ClaimPersonSweep(context.Context, ClaimRequest) (*L
 }
 func (s *workerFailureStore) RenewPersonSweep(_ context.Context, lease Lease, _ time.Duration) (*Lease, error) {
 	s.renewCalls.Add(1)
+	if s.failNextRenewal.CompareAndSwap(true, false) {
+		return nil, s.renewFailure
+	}
 	return &lease, nil
 }
 func (s *workerFailureStore) EnsurePersonSweepCursors(_ context.Context, keys []CursorKey) ([]Cursor, error) {
@@ -231,7 +237,7 @@ func (workerFailureSource) ListPersonSweepHistoricalCandidates(context.Context, 
 func (workerFailureSource) SearchPersonSweepMessages(context.Context, ContextRequest) ([]EvidenceItem, error) {
 	return nil, nil
 }
-func (workerFailureSource) HydratePersonSweepMessages(context.Context, int64, []int64) ([]EvidenceItem, error) {
+func (workerFailureSource) HydratePersonSweepMessages(context.Context, int64, []int64, int64) ([]EvidenceItem, error) {
 	return nil, nil
 }
 func (workerFailureSource) SearchPersonSweepDocuments(context.Context, DocumentContextRequest) ([]EvidenceItem, error) {
@@ -369,7 +375,7 @@ func (s *workerProductionSource) SearchPersonSweepMessages(_ context.Context, re
 	s.searches = append(s.searches, request)
 	return append([]EvidenceItem(nil), s.context...), nil
 }
-func (*workerProductionSource) HydratePersonSweepMessages(context.Context, int64, []int64) ([]EvidenceItem, error) {
+func (*workerProductionSource) HydratePersonSweepMessages(context.Context, int64, []int64, int64) ([]EvidenceItem, error) {
 	return nil, nil
 }
 func (*workerProductionSource) SearchPersonSweepDocuments(context.Context, DocumentContextRequest) ([]EvidenceItem, error) {
@@ -481,7 +487,7 @@ func (d *workerRepairDriver) GeneratePrepared(
 	return response, nil
 }
 
-func newWorkerRepairRunner(t *testing.T, config Config, driver *workerRepairDriver) *Runner {
+func newWorkerRepairRunner(t *testing.T, config Config, driver StructuredDriver) *Runner {
 	t.Helper()
 	return newWorkerRepairRunnerWithDependencies(t, config, driver, workerRepairAuthority{},
 		NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
@@ -490,7 +496,7 @@ func newWorkerRepairRunner(t *testing.T, config Config, driver *workerRepairDriv
 func newWorkerRepairRunnerWithDependencies(
 	t *testing.T,
 	config Config,
-	driver *workerRepairDriver,
+	driver StructuredDriver,
 	authority ProviderAuthority,
 	resolver CredentialResolver,
 ) *Runner {
@@ -851,7 +857,10 @@ func (r *workerProductionRunner) RunStructured(context.Context, StructuredReques
 
 type workerProductionSink struct {
 	requests []ApplyRequest
-	err      error
+	// briefVersion is the version number a real store would report for a
+	// stored brief; zero leaves the applied result without one.
+	briefVersion int
+	err          error
 }
 
 func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request ApplyRequest) (ApplyResult, error) {
@@ -859,7 +868,11 @@ func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request App
 		return ApplyResult{}, err
 	}
 	s.requests = append(s.requests, request)
-	return ApplyResult{Mutations: ApplyMutationMetadata{ProjectionRowsWritten: 1}}, s.err
+	mutations := ApplyMutationMetadata{ProjectionRowsWritten: 1}
+	if request.Brief != nil {
+		mutations.BriefVersion = s.briefVersion
+	}
+	return ApplyResult{Mutations: mutations}, s.err
 }
 
 func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {

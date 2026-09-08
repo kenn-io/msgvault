@@ -242,8 +242,8 @@ func canonicalPacket(packet EvidencePacket) (EvidencePacket, error) {
 	if packet.PersonID <= 0 {
 		return EvidencePacket{}, errors.New("person sweep packet requires a positive person ID")
 	}
-	if packet.ProgramID != ExtractionProgramID || packet.ProgramVersion != ExtractionProgramVersion {
-		return EvidencePacket{}, errors.New("person sweep packet does not use the frozen extraction program")
+	if !frozenPacketProgram(packet.ProgramID, packet.ProgramVersion) {
+		return EvidencePacket{}, errors.New("person sweep packet does not use a frozen program")
 	}
 	canonical := packet
 	canonical.Catalog.Targets = append([]personfacts.TargetDescriptor(nil), packet.Catalog.Targets...)
@@ -331,6 +331,13 @@ func canonicalPacket(packet EvidencePacket) (EvidencePacket, error) {
 		return EvidencePacket{}, err
 	}
 	return canonical, nil
+}
+
+// frozenPacketProgram admits the two frozen programs that share the canonical
+// packet wire: fact extraction and the person brief.
+func frozenPacketProgram(programID, programVersion string) bool {
+	return programID == ExtractionProgramID && programVersion == ExtractionProgramVersion ||
+		programID == BriefProgramID && programVersion == BriefProgramVersion
 }
 
 func rejectAmbiguousEvidenceIDs(groups ...[]EvidenceItem) error {

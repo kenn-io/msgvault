@@ -43,7 +43,15 @@ type ExtractedClaim struct {
 	ConfidenceBasisPoints int             `json:"confidence_basis_points"`
 }
 
-var extractionSchema = json.RawMessage(`{"type":"object","properties":{"claims":{"type":"array","maxItems":256,"items":{"type":"object","properties":{"target_key":{"type":"string","minLength":1,"maxLength":256},"relation":{"type":"string","enum":["support","contradict","supersede"]},"value":{},"evidence_ids":{"type":"array","minItems":1,"maxItems":200,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128}},"valid_from":{"type":["string","null"],"format":"date-time"},"valid_until":{"type":["string","null"],"format":"date-time"},"confidence_basis_points":{"type":"integer","minimum":0,"maximum":1000}},"required":["target_key","relation","value","evidence_ids","valid_from","valid_until","confidence_basis_points"],"additionalProperties":false}}},"required":["claims"],"additionalProperties":false}`)
+// evidenceIDsSchema is the frozen citation array shared by the extraction
+// claim schema and every person brief item schema.
+const evidenceIDsSchema = `{"type":"array","minItems":1,"maxItems":200,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128}}`
+
+// extractionClaimSchema is the frozen claim item. The brief program reuses it
+// verbatim for possible_attributes, so the two programs cannot drift.
+const extractionClaimSchema = `{"type":"object","properties":{"target_key":{"type":"string","minLength":1,"maxLength":256},"relation":{"type":"string","enum":["support","contradict","supersede"]},"value":{},"evidence_ids":` + evidenceIDsSchema + `,"valid_from":{"type":["string","null"],"format":"date-time"},"valid_until":{"type":["string","null"],"format":"date-time"},"confidence_basis_points":{"type":"integer","minimum":0,"maximum":1000}},"required":["target_key","relation","value","evidence_ids","valid_from","valid_until","confidence_basis_points"],"additionalProperties":false}`
+
+var extractionSchema = json.RawMessage(`{"type":"object","properties":{"claims":{"type":"array","maxItems":256,"items":` + extractionClaimSchema + `}},"required":["claims"],"additionalProperties":false}`)
 
 func ExtractionJSONSchema() json.RawMessage {
 	return append(json.RawMessage(nil), extractionSchema...)
@@ -114,23 +122,31 @@ func ParseExtraction(
 		return nil, errors.New("person fact extraction output contains trailing JSON")
 	}
 
-	targets := make(map[string]personfacts.TargetDescriptor, len(packet.Catalog.Targets))
-	for _, target := range packet.Catalog.Targets {
-		if target.Key == "" {
-			return nil, errors.New("person fact extraction packet contains an empty target key")
-		}
-		if _, exists := targets[target.Key]; exists {
-			return nil, fmt.Errorf("person fact extraction packet contains duplicate target %q", target.Key)
-		}
-		targets[target.Key] = target
+	targets, err := packetTargetsByKey(packet)
+	if err != nil {
+		return nil, err
 	}
 	evidence, err := extractionEvidenceByID(packet)
 	if err != nil {
 		return nil, err
 	}
 
-	claims := make([]personfacts.ProposedClaim, 0, len(extracted.Claims))
-	for _, extractedClaim := range extracted.Claims {
+	return proposedClaims(extracted.Claims, targets, evidence, profile, personfacts.OriginExtraction)
+}
+
+// proposedClaims validates the frozen claim item shape shared by the extraction
+// program and the person brief's possible_attributes. Every failure is a
+// validation failure, not a drop: a candidate that cites an unknown target or
+// unknown evidence is repairable exactly as extraction output is.
+func proposedClaims(
+	extracted []ExtractedClaim,
+	targets map[string]personfacts.TargetDescriptor,
+	evidence map[string]EvidenceItem,
+	profile ProviderProfile,
+	origin personfacts.ClaimOrigin,
+) ([]personfacts.ProposedClaim, error) {
+	claims := make([]personfacts.ProposedClaim, 0, len(extracted))
+	for _, extractedClaim := range extracted {
 		target, exists := targets[extractedClaim.TargetKey]
 		if !exists {
 			return nil, fmt.Errorf("person fact extraction cites unknown target %q", extractedClaim.TargetKey)
@@ -177,7 +193,7 @@ func ParseExtraction(
 			Target: target, Relation: relation,
 			SubmittedValue: append(json.RawMessage(nil), extractedClaim.Value...),
 			Evidence:       inputs, ValidFrom: validFrom, ValidUntil: validUntil,
-			Origin:     personfacts.OriginExtraction,
+			Origin:     origin,
 			Confidence: personfacts.ConfidenceInputs{ReportedScore: extractedClaim.ConfidenceBasisPoints},
 		})
 	}
@@ -221,6 +237,20 @@ func validateExtractionOutput(output json.RawMessage) error {
 		return errors.New("person fact extraction output does not match the closed schema")
 	}
 	return nil
+}
+
+func packetTargetsByKey(packet EvidencePacket) (map[string]personfacts.TargetDescriptor, error) {
+	targets := make(map[string]personfacts.TargetDescriptor, len(packet.Catalog.Targets))
+	for _, target := range packet.Catalog.Targets {
+		if target.Key == "" {
+			return nil, errors.New("person fact extraction packet contains an empty target key")
+		}
+		if _, exists := targets[target.Key]; exists {
+			return nil, fmt.Errorf("person fact extraction packet contains duplicate target %q", target.Key)
+		}
+		targets[target.Key] = target
+	}
+	return targets, nil
 }
 
 func extractionEvidenceByID(packet EvidencePacket) (map[string]EvidenceItem, error) {

@@ -288,6 +288,19 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_fact_pin_events", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
+	// Brief enrollment is profile state, like tracking, and moves to the
+	// survivor. Brief versions belong to the fact generation that produced
+	// them, so they cascade with an absorbed root exactly as the ledger does;
+	// person_brief_evidence has no person reference and cascades with its
+	// version.
+	"person_brief_enrollments": {
+		TableName: "person_brief_enrollments", KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_briefs": {
+		TableName: "person_briefs", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
 	"person_names": {
 		TableName: "person_names", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},

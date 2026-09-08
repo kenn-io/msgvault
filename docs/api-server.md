@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-01"
+last_edited: "2026-09-07"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -13,7 +13,7 @@ background sync scheduler to keep accounts up to date on a cron-based schedule.
 The complete UI is embedded in the release binary; see [Web UI](/docs/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.19.0. Within the unreleased 2.x line, 2.14.0 replaces the CardDAV publication and conflict response shapes with bounded projections that omit raw vCards and resource hrefs. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.20.0. Within the unreleased 2.x line, 2.14.0 replaces the CardDAV publication and conflict response shapes with bounded projections that omit raw vCards and resource hrefs. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
 
 Schema 2.19.0 extends operation history with durable worker runs, date filters,
 filter-bound pagination, fixed error codes, and supported actions. It also adds
@@ -114,6 +114,197 @@ when it has no qualifying connections.
 
 Invalid depths return `400`; an unknown durable person returns `404`. The
 projection has no ETag because it is not a mutation resource.
+
+---
+
+### Person brief enrollment {#get-apiv1peopleidbrief-enrollment}
+
+**Endpoint:** `GET /api/v1/people/{id}/brief-enrollment`
+
+Read whether a durable person is enrolled in the "last time we talked" brief.
+Enrollment enables brief generation for that person when eligible messages
+and provider budget are available.
+
+```json
+{"person_id": 7, "enrolled": true, "enabled_at": "2026-08-14T09:12:03Z", "actor": "api"}
+```
+
+`enrolled` is `false` with a `null` `enabled_at` and an empty `actor` when the
+person has no enrollment row. An unknown durable person returns `404` /
+`person_profile_not_found`.
+
+---
+
+### Replace person brief enrollment {#put-apiv1peopleidbrief-enrollment}
+
+**Endpoint:** `PUT /api/v1/people/{id}/brief-enrollment`
+
+**Request:**
+
+```json
+{"enrolled": true, "track": true}
+```
+
+`enrolled` is required. Enrollment requires a tracking row: `track: true` adds
+one in the same transaction, and without it an untracked person is refused with
+`409` / `person_brief_not_tracked`. `track` is ignored when `enrolled` is
+`false`. The response is the same shape as the read above.
+
+---
+
+### Current person brief {#get-apiv1peopleidbrief}
+
+**Endpoint:** `GET /api/v1/people/{id}/brief`
+
+Return the person's current brief version. A person with no stored version
+returns `404` / `person_brief_not_found`.
+
+```json
+{
+  "version": 2,
+  "status": "current",
+  "generated_at": "2026-08-29T18:44:02Z",
+  "rendered_text": "Last time you talked (Aug 29, chat): they were preparing for a role change. They said they were learning to cook on weekends. You may want to ask how the transition went.",
+  "renderer_policy": "person-brief-render-v1",
+  "sentences": [
+    {"kind": "last_interaction", "index": 0, "text": "Last time you talked (Aug 29, chat): they were preparing for a role change.", "evidence_ordinals": [0]},
+    {"kind": "highlight", "index": 0, "text": "They said they were learning to cook on weekends.", "evidence_ordinals": [0]},
+    {"kind": "follow_up", "index": 0, "text": "You may want to ask how the transition went.", "evidence_ordinals": [0]}
+  ],
+  "structured": {
+    "last_meaningful_interaction": {"evidence_id": "evidence:...", "summary": "they were preparing for a role change"},
+    "highlights": [
+      {"text": "they were learning to cook on weekends", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700}
+    ],
+    "follow_ups": [
+      {"question": "how the transition went", "why": "the change was still pending", "highlight_index": 0, "evidence_ids": ["evidence:..."]}
+    ],
+    "appreciations": [],
+    "uncertainties": [],
+    "possible_attributes": []
+  },
+  "evidence": [
+    {
+      "ordinal": 0,
+      "evidence_id": 4411,
+      "evidence_key": "9c2f...",
+      "source_ref": "person-sweep/v1:...",
+      "source_url": "",
+      "directness": "direct-self",
+      "event_time": "2026-08-29T18:41:55Z",
+      "evidence_supported": true
+    }
+  ],
+  "boundary": {
+    "lanes": ["conversation_text"],
+    "from_event_time": "2026-07-01T00:00:00Z",
+    "through_event_time": "2026-08-29T18:41:55Z",
+    "through_sequence": 184233,
+    "item_count": 31,
+    "input_bytes": 48211,
+    "packet_sha256": "..."
+  },
+  "dropped_item_count": 1,
+  "program_id": "msgvault-person-brief",
+  "program_version": "v1",
+  "provider": "glm",
+  "model": "glm-5.3",
+  "rejected_at": null,
+  "rejected_reason": "",
+  "superseded_at": null
+}
+```
+
+`structured` is the validated record; `rendered_text` is derived from it.
+`sentences` maps each rendered sentence back to the structured item it came
+from; it is rebuilt on read and is empty for a version stored under a renderer
+policy this build does not know, which `renderer_policy` names. Each sentence's
+`evidence_ordinals` are the `ordinal` values in this response's `evidence` array
+that the sentence itself cites, so a client can expand one sentence to its own
+citations. The list is empty when the citation order behind the version cannot
+be accounted for exactly, and a client falls back to the whole `evidence` array
+rather than attributing a citation it is not sure of. `evidence` cites the
+archive items the brief as a whole used, with `evidence_supported: false` once a
+later status event invalidated an item's source. `dropped_item_count` counts
+structured items msgvault refused. Responses are `Cache-Control: no-store`. The
+brief never contains an excerpt of the archive text it was derived from.
+
+---
+
+### Person brief version history {#get-apiv1peopleidbriefversions}
+
+**Endpoint:** `GET /api/v1/people/{id}/brief/versions`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | integer | `20` | Versions to return, 1 to 200. Out-of-range values return `400` / `invalid_limit` |
+
+Newest-first history under a `versions` array, each entry shaped exactly like
+the current-brief response. Versions are immutable: a regeneration inserts the
+next version as `current` and marks the previous one `superseded`.
+
+---
+
+### Reject a person brief {#post-apiv1peopleidbriefreject}
+
+**Endpoint:** `POST /api/v1/people/{id}/brief/reject`
+
+**Request:**
+
+```json
+{"reason": "merges two different threads"}
+```
+
+Marks the current version `rejected` and returns it in the same shape as the
+current-brief response, with `rejected_at` and `rejected_reason` set. `reason`
+is optional. The version stays readable in history, and the next eligible run
+produces a replacement without waiting out `min_interval`. A person with no
+current version returns `404` / `person_brief_not_found`, and so does
+`GET /api/v1/people/{id}/brief` after a rejection, until a replacement version
+is generated.
+
+---
+
+### Generate a person brief {#post-apiv1peopleidbriefgenerate}
+
+**Endpoint:** `POST /api/v1/people/{id}/brief/generate`
+
+Runs one forced sweep attempt for that person and waits for it. The request has
+no body.
+
+```json
+{"run_id": "9d1c...", "attempt_id": "5f20...", "brief_version": 3, "brief_failure_class": ""}
+```
+
+`brief_version` is the version the attempt stored, or `0` when it stored none;
+`brief_failure_class` identifies a brief-generation failure when the overall
+attempt succeeded. It can also be empty with version `0`: no eligible evidence
+is a successful attempt that produces no brief. For example, an email-only
+person has no supported brief evidence.
+The forced run bypasses the minimum interval and the new-activity check but
+still requires enrollment, a consented provider profile with
+`allow_sensitive = true`, and available budget. It spends provider budget for
+every call it makes, and on a person whose cursors are already caught up it may
+also run one bounded extraction page.
+
+Generation reports these conditions before running:
+
+| Status | Code | Meaning |
+|---|---|---|
+| `409` | `person_brief_not_enrolled` | Enroll the person first |
+| `409` | `person_brief_lane_disabled` | `[people.sweep.brief] enabled` is `false` |
+| `409` | `person_brief_policy_refused` | The provider profile does not allow sensitive content |
+| `409` | `person_brief_no_supported_lane` | The provider profile does not allow `conversation_text` |
+| `409` | `person_brief_busy` | Another worker holds the person's sweep lease; retry after it finishes |
+| `503` | `brief_generation_unavailable` | The daemon started without the people sweep worker, for example with `[people.sweep] enabled = false` |
+
+Briefs use only supported chat and text-message sources within
+`conversation_text`; email, meeting transcripts, documents, and owner-authored
+messages are excluded. A scheduled sweep skips brief generation when the
+profile does not permit its sources or sensitive content.
+
+Restart the daemon after enabling sweeps or changing the selected provider.
+Manual brief generation uses the configuration loaded at daemon startup.
 
 ---
 

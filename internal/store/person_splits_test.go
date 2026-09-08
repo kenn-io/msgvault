@@ -2888,3 +2888,94 @@ func assertPersonSplitConcurrencyState(t *testing.T, st *store.Store, wantSplits
 	assert.Zero(orphanParticipants)
 	assertSQLiteForeignKeysClean(t, st)
 }
+
+func TestSplitPersonMerge_ExactReversalRestoresBriefEnrollment(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		enrollSurvivor   bool
+		wantSourceEnroll bool
+	}{
+		{name: "absorbed-only", wantSourceEnroll: false},
+		{name: "both-profiles", enrollSurvivor: true, wantSourceEnroll: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			st := testutil.NewTestStore(t)
+			survivor := mustPromotedPerson(t, st,
+				"brief-split-survivor-"+test.name+"@example.com", "Survivor")
+			absorbed := mustPromotedPerson(t, st,
+				"brief-split-absorbed-"+test.name+"@example.com", "Absorbed")
+			if test.enrollSurvivor {
+				_, err := st.SetPersonBriefEnrollmentContext(ctx, survivor.ID, true, "owner", true)
+				require.NoError(err)
+			}
+			_, err := st.SetPersonBriefEnrollmentContext(ctx, absorbed.ID, true, "owner", true)
+			require.NoError(err)
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+				ExpectedSurvivorRevision: survivor.Revision,
+				ExpectedAbsorbedRevision: absorbed.Revision,
+				IdempotencyKey:           "brief-enrollment-split-merge-" + test.name, Actor: "test",
+			})
+			require.NoError(err)
+
+			split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+				SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+				ParticipantIDs:         absorbed.ParticipantIDs,
+				ExpectedSourceRevision: merged.Person.Revision,
+				IdempotencyKey:         "brief-enrollment-split-" + test.name, Actor: "test",
+			})
+			require.NoError(err)
+			require.True(split.ExactReversal)
+			sourceEnrollment, err := st.GetPersonBriefEnrollmentContext(ctx, split.SourcePerson.ID)
+			require.NoError(err)
+			newEnrollment, err := st.GetPersonBriefEnrollmentContext(ctx, split.NewPerson.ID)
+			require.NoError(err)
+			assert.Equal(test.wantSourceEnroll, sourceEnrollment.Enrolled)
+			assert.True(newEnrollment.Enrolled)
+			assert.Equal("owner", newEnrollment.Actor)
+		})
+	}
+}
+
+func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	survivor := mustPromotedPerson(t, st, "brief-replaced-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t, st, "brief-replaced-absorbed@example.com", "Absorbed")
+	_, err := st.SetPersonBriefEnrollmentContext(ctx, absorbed.ID, true, "owner", true)
+	require.NoError(err)
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "brief-replaced-merge", Actor: "test",
+	})
+	require.NoError(err)
+	// The owner unenrolls and re-enrolls after the merge, so the live row is a
+	// replacement rather than the row the merge moved.
+	_, err = st.SetPersonBriefEnrollmentContext(ctx, merged.Person.ID, false, "owner", false)
+	require.NoError(err)
+	_, err = st.SetPersonBriefEnrollmentContext(ctx, merged.Person.ID, true, "reviewer", false)
+	require.NoError(err)
+
+	split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         absorbed.ParticipantIDs,
+		ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey:         "brief-replaced-split", Actor: "test",
+	})
+	require.NoError(err)
+	sourceEnrollment, err := st.GetPersonBriefEnrollmentContext(ctx, split.SourcePerson.ID)
+	require.NoError(err)
+	newEnrollment, err := st.GetPersonBriefEnrollmentContext(ctx, split.NewPerson.ID)
+	require.NoError(err)
+	assert.True(sourceEnrollment.Enrolled, "the replacement enrollment stays with the source")
+	assert.Equal("reviewer", sourceEnrollment.Actor)
+	assert.True(newEnrollment.Enrolled, "the snapshot enrollment is restored for the new person")
+	assert.Equal("owner", newEnrollment.Actor)
+}

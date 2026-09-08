@@ -11,6 +11,7 @@
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import RelationshipsTab from './RelationshipsTab.svelte';
   import PersonTrackingControl from './PersonTrackingControl.svelte';
+  import PersonBriefCard from './PersonBriefCard.svelte';
   import CardDAVPublicationControl from './CardDAVPublicationControl.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
 
@@ -211,6 +212,7 @@
       {#if bundle.contactState}
         <section><h3>Contact state</h3><p>{bundle.contactState.cadence_status} · {bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {bundle.contactState.last_contact_at}{/if}</p></section>
       {/if}
+      <PersonBriefCard {client} {personID} {onAnnounce} />
       {#if bundle.activity}
         <section><h3>Activity</h3><p>{bundle.activity.total_count} recorded days</p></section>
       {/if}

@@ -7228,6 +7228,181 @@ components:
         - person_id
         - attributes
       type: object
+    PersonBrief:
+      properties:
+        boundary:
+          x-go-type: json.RawMessage
+          x-go-type-import:
+            path: encoding/json
+        dropped_item_count:
+          format: int64
+          type: integer
+        evidence:
+          items:
+            $ref: "#/components/schemas/PersonBriefEvidencePointer"
+          type: array
+        generated_at:
+          format: date-time
+          type: string
+        model:
+          type: string
+        program_id:
+          type: string
+        program_version:
+          type: string
+        provider:
+          type: string
+        rejected_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        rejected_reason:
+          type: string
+        rendered_text:
+          type: string
+        renderer_policy:
+          type: string
+        sentences:
+          items:
+            $ref: "#/components/schemas/PersonBriefSentence"
+          type: array
+        status:
+          type: string
+        structured:
+          x-go-type: json.RawMessage
+          x-go-type-import:
+            path: encoding/json
+        superseded_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - status
+        - generated_at
+        - rendered_text
+        - renderer_policy
+        - sentences
+        - structured
+        - evidence
+        - boundary
+        - dropped_item_count
+        - program_id
+        - program_version
+        - provider
+        - model
+        - rejected_at
+        - rejected_reason
+        - superseded_at
+      type: object
+    PersonBriefEnrollment:
+      properties:
+        actor:
+          type: string
+        enabled_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        enrolled:
+          type: boolean
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - enrolled
+        - enabled_at
+        - actor
+      type: object
+    PersonBriefEvidencePointer:
+      properties:
+        directness:
+          type: string
+        event_time:
+          format: date-time
+          type: string
+        evidence_id:
+          format: int64
+          type: integer
+        evidence_key:
+          type: string
+        evidence_supported:
+          type: boolean
+        ordinal:
+          format: int64
+          type: integer
+        source_ref:
+          type: string
+        source_url:
+          type: string
+      required:
+        - ordinal
+        - evidence_id
+        - evidence_key
+        - source_ref
+        - source_url
+        - directness
+        - event_time
+        - evidence_supported
+      type: object
+    PersonBriefRun:
+      properties:
+        attempt_id:
+          type: string
+        brief_failure_class:
+          type: string
+        brief_version:
+          format: int64
+          type: integer
+        run_id:
+          type: string
+      required:
+        - run_id
+        - attempt_id
+        - brief_version
+        - brief_failure_class
+      type: object
+    PersonBriefSentence:
+      properties:
+        evidence_ordinals:
+          items:
+            format: int64
+            type: integer
+          type: array
+        index:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        text:
+          type: string
+      required:
+        - kind
+        - index
+        - text
+        - evidence_ordinals
+      type: object
+    PersonBriefVersionsResponse:
+      properties:
+        versions:
+          items:
+            $ref: "#/components/schemas/PersonBrief"
+          type: array
+      required:
+        - versions
+      type: object
     PersonCategory:
       properties:
         envelope:
@@ -9210,6 +9385,16 @@ components:
         - billed_units
         - usage_available
       type: object
+    PutPersonBriefEnrollmentRequest:
+      additionalProperties: false
+      properties:
+        enrolled:
+          type: boolean
+        track:
+          type: boolean
+      required:
+        - enrolled
+      type: object
     PutPersonTrackingRequest:
       additionalProperties: false
       properties:
@@ -9245,6 +9430,12 @@ components:
         - columns
         - rows
         - row_count
+      type: object
+    RejectPersonBriefRequest:
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
       type: object
     RejectedCandidate:
       properties:
@@ -11593,7 +11784,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.19.0
+  version: 2.20.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -19714,6 +19905,317 @@ paths:
       security:
         - apiKey: []
       summary: Set a person's attribute value
+      tags:
+        - API
+  /api/v1/people/{id}/brief:
+    get:
+      operationId: getPersonBrief
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBrief"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's current brief version
+      tags:
+        - API
+  /api/v1/people/{id}/brief-enrollment:
+    get:
+      operationId: getPersonBriefEnrollment
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBriefEnrollment"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's brief enrollment
+      tags:
+        - API
+    put:
+      operationId: setPersonBriefEnrollment
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutPersonBriefEnrollmentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBriefEnrollment"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace a person's brief enrollment
+      tags:
+        - API
+  /api/v1/people/{id}/brief/generate:
+    post:
+      operationId: generatePersonBrief
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBriefRun"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Generate a person's brief now
+      tags:
+        - API
+  /api/v1/people/{id}/brief/reject:
+    post:
+      operationId: rejectPersonBrief
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectPersonBriefRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBrief"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Reject a person's current brief version
+      tags:
+        - API
+  /api/v1/people/{id}/brief/versions:
+    get:
+      operationId: listPersonBriefVersions
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum versions to return (default 20, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBriefVersionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's brief version history
       tags:
         - API
   /api/v1/people/{id}/contact-state:

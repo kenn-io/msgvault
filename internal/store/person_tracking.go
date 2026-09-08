@@ -74,98 +74,108 @@ func (s *Store) SetPersonTrackingContext(
 ) (*PersonTracking, error) {
 	var state *PersonTracking
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if s.personEnrichmentTxBarrier != nil {
-			s.personEnrichmentTxBarrier("tracking_before_authority_lock")
-		}
-		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
-			return err
-		}
-		if err := s.lockProfileIdentityKeyTxContext(
-			ctx, tx, "person-fact-generation", personID); err != nil {
-			return err
-		}
-		_, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("track person %d: %w", personID, ErrPersonNotFound)
-		}
-		if err != nil {
-			return err
-		}
-		if s.personEnrichmentTxBarrier != nil {
-			s.personEnrichmentTxBarrier("tracking_person_locked")
-		}
-
-		trackingAdded := false
-		trackingGeneration := ""
-		if tracked {
-			var result sql.Result
-			result, err = tx.ExecContext(ctx, `
-				INSERT INTO person_tracking (person_id, tracked_at)
-				VALUES (?, ?)
-				ON CONFLICT (person_id) DO NOTHING
-			`, personID, time.Now().UTC())
-			var inserted int64
-			if err == nil {
-				inserted, err = result.RowsAffected()
-				trackingAdded = inserted == 1
-				if trackingAdded {
-					trackingGeneration = "enrollment:" + uuid.NewString()
-				}
-			}
-			if err == nil && inserted == 1 {
-				_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
-					SET reconcile_upper_key = '', reconcile_after_key = '',
-					    optimistic_document_key = '', reconcile_document_key = '',
-					    backstop_upper_key = '', backstop_after_key = '', backstop_document_key = '',
-					    reconciliation_complete = FALSE, last_backstop_at = NULL,
-					    updated_at = ?
-					WHERE person_id = ?`, time.Now().UTC(), personID)
-			}
-			if err == nil && inserted == 1 {
-				var highWater int64
-				err = tx.QueryRowContext(ctx, `
-					SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`,
-				).Scan(&highWater)
-				if err == nil {
-					err = s.upsertPersonSweepWorkTx(ctx, tx, personID, highWater)
-				}
-			}
-		} else {
-			// Delete enrollment first. PostgreSQL publishers hold a key-share
-			// lock on this row through their work upsert, so tracking-off waits
-			// for that publication and then removes any row it committed.
-			if _, err = tx.ExecContext(ctx,
-				`DELETE FROM person_tracking WHERE person_id = ?`, personID); err == nil {
-				_, err = tx.ExecContext(ctx,
-					`DELETE FROM person_sweep_work WHERE person_id = ?`, personID)
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("set person %d tracking to %t: %w", personID, tracked, err)
-		}
-		if tracked {
-			if trackingAdded {
-				if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
-					personenrichment.TriggerTracked, trackingGeneration,
-					s.personEnrichmentTime()); err != nil {
-					return err
-				}
-			}
-		} else {
-			if s.personEnrichmentTxBarrier != nil {
-				s.personEnrichmentTxBarrier("untrack_authority_removed")
-			}
-			if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, personID); err != nil {
-				return err
-			}
-		}
-		state, err = s.getPersonTrackingTx(ctx, tx, personID)
+		var err error
+		state, err = s.setPersonTrackingTx(ctx, tx, personID, tracked)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return state, nil
+}
+
+// setPersonTrackingTx is the tracking transition itself. A caller that must
+// track and do something else atomically — brief enrollment with --track —
+// shares this transaction instead of opening a second one.
+func (s *Store) setPersonTrackingTx(
+	ctx context.Context, tx *loggedTx, personID int64, tracked bool,
+) (*PersonTracking, error) {
+	if s.personEnrichmentTxBarrier != nil {
+		s.personEnrichmentTxBarrier("tracking_before_authority_lock")
+	}
+	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := s.lockProfileIdentityKeyTxContext(
+		ctx, tx, "person-fact-generation", personID); err != nil {
+		return nil, err
+	}
+	_, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("track person %d: %w", personID, ErrPersonNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if s.personEnrichmentTxBarrier != nil {
+		s.personEnrichmentTxBarrier("tracking_person_locked")
+	}
+
+	trackingAdded := false
+	trackingGeneration := ""
+	if tracked {
+		var result sql.Result
+		result, err = tx.ExecContext(ctx, `
+			INSERT INTO person_tracking (person_id, tracked_at)
+			VALUES (?, ?)
+			ON CONFLICT (person_id) DO NOTHING
+		`, personID, time.Now().UTC())
+		var inserted int64
+		if err == nil {
+			inserted, err = result.RowsAffected()
+			trackingAdded = inserted == 1
+			if trackingAdded {
+				trackingGeneration = "enrollment:" + uuid.NewString()
+			}
+		}
+		if err == nil && inserted == 1 {
+			_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
+				SET reconcile_upper_key = '', reconcile_after_key = '',
+				    optimistic_document_key = '', reconcile_document_key = '',
+				    backstop_upper_key = '', backstop_after_key = '', backstop_document_key = '',
+				    reconciliation_complete = FALSE, last_backstop_at = NULL,
+				    updated_at = ?
+				WHERE person_id = ?`, time.Now().UTC(), personID)
+		}
+		if err == nil && inserted == 1 {
+			var highWater int64
+			err = tx.QueryRowContext(ctx, `
+				SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`,
+			).Scan(&highWater)
+			if err == nil {
+				err = s.upsertPersonSweepWorkTx(ctx, tx, personID, highWater)
+			}
+		}
+	} else {
+		// Delete enrollment first. PostgreSQL publishers hold a key-share
+		// lock on this row through their work upsert, so tracking-off waits
+		// for that publication and then removes any row it committed.
+		if _, err = tx.ExecContext(ctx,
+			`DELETE FROM person_tracking WHERE person_id = ?`, personID); err == nil {
+			_, err = tx.ExecContext(ctx,
+				`DELETE FROM person_sweep_work WHERE person_id = ?`, personID)
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("set person %d tracking to %t: %w", personID, tracked, err)
+	}
+	if tracked {
+		if trackingAdded {
+			if err := s.publishPersonEnrichmentTx(ctx, tx, personID,
+				personenrichment.TriggerTracked, trackingGeneration,
+				s.personEnrichmentTime()); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		if s.personEnrichmentTxBarrier != nil {
+			s.personEnrichmentTxBarrier("untrack_authority_removed")
+		}
+		if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, personID); err != nil {
+			return nil, err
+		}
+	}
+	return s.getPersonTrackingTx(ctx, tx, personID)
 }
 
 func (s *Store) getPersonTrackingTx(

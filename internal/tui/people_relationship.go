@@ -154,7 +154,7 @@ func (m Model) handlePeopleRelationshipLoaded(msg peopleRelationshipLoadedMsg) (
 		m.peopleState.relationshipIdentityRevision = 0
 		if !m.peopleState.relationshipRestarted {
 			m.peopleState.relationshipRestarted = true
-			m.peopleState.requestID++
+			m.peopleState.bumpRequestID()
 			m.peopleState.contactLoading = true
 			m.loading = true
 			return m, tea.Batch(m.startSpinner(), m.loadPeopleContact(m.peopleState.participantID))

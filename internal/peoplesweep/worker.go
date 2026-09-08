@@ -70,10 +70,23 @@ type ApplyRequest struct {
 	Budget             BudgetConfig
 	CursorAdvances     []CursorAdvance
 	DeferredCursorWork bool
-	CompletedAt        time.Time
+	// Brief is the version this attempt generated, or nil when the attempt ran
+	// no brief call or the call produced nothing storable.
+	Brief *BriefResult
+	// BriefFailureClass records why a brief call produced no version while the
+	// attempt itself succeeded. It is empty when no brief was attempted or the
+	// brief succeeded, and it licenses the apply to reconcile a brief
+	// reservation that never completed.
+	BriefFailureClass FailureClass
+	// BriefRetryAt retains the work item after a brief-only failure.
+	BriefRetryAt time.Time
+	CompletedAt  time.Time
 }
 
 type ApplyMutationMetadata struct {
+	// BriefVersion is the person brief version this apply stored, or zero.
+	BriefVersion               int
+	BriefEvidenceRowsInserted  int
 	GenerationInserted         bool
 	ClaimRowsInserted          int
 	EvidenceStatusRowsInserted int
@@ -368,28 +381,46 @@ type RunRequest struct {
 	Mode     RunMode
 	PersonID int64
 	Limit    int
+	// Brief selects how this run treats the person brief step. The zero value
+	// is auto, which follows the configured cadence.
+	Brief BriefMode
 }
 type RunResult struct {
 	RunID                                             string
 	PeopleAttempted, PeopleSucceeded, ProjectedWrites int
 	Usage                                             Usage
+	// People carries one entry per person this run applied, in claim order, so
+	// a caller that asked for one person gets that person's attempt ID and
+	// brief outcome without querying the attempt journal. A person whose
+	// attempt failed has no entry; the returned error describes that case.
+	People []PersonRunResult
 }
 type PersonRunResult struct {
 	PersonID        int64
 	AttemptID       string
 	ProjectedWrites int
-	CursorAdvances  []CursorAdvance
-	Usage           Usage
+	// BriefVersion is the version number this attempt stored, or zero when it
+	// stored none.
+	BriefVersion int
+	// BriefFailureClass is why a brief call produced no version while the
+	// attempt succeeded. Empty when no brief ran or the brief was stored.
+	BriefFailureClass FailureClass
+	CursorAdvances    []CursorAdvance
+	Usage             Usage
 }
 
 type Worker struct {
-	Config   Config
-	Store    WorkStore
-	Source   AssemblySource
-	Context  ContextRetriever
-	Sink     ClaimSink
-	Runner   StructuredRunner
-	Catalog  CatalogSource
+	Config  Config
+	Store   WorkStore
+	Source  AssemblySource
+	Context ContextRetriever
+	Sink    ClaimSink
+	Runner  StructuredRunner
+	Catalog CatalogSource
+	// Brief and Archive carry the person brief step. Both nil turns the step
+	// off entirely, which is what a caller that predates the brief gets.
+	Brief    BriefStore
+	Archive  BriefArchive
 	Clock    func() time.Time
 	NewID    func() string
 	WorkerID string
@@ -419,6 +450,18 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 	if request.Mode != RunIncremental && request.Mode != RunBackstop {
 		return RunResult{}, errors.New("person sweep worker requires a valid run mode")
 	}
+	if !request.Brief.valid() {
+		return RunResult{}, errors.New("person sweep worker requires a valid brief mode")
+	}
+	// A manual forced brief that the lane, the profile policy, or the person's
+	// enrollment already rules out can never produce one, so it is refused
+	// before the run row exists and before reconciliation publishes any work.
+	// The caller gets a typed error to map to a 4xx.
+	if w.forcedSinglePersonBrief(request) {
+		if err := w.refuseForcedBrief(ctx, request.PersonID, profile); err != nil {
+			return RunResult{}, err
+		}
+	}
 	limit := request.Limit
 	if limit <= 0 || limit > w.Config.WorkBatchSize {
 		limit = w.Config.WorkBatchSize
@@ -435,11 +478,23 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 		return RunResult{}, err
 	}
 	result := RunResult{RunID: runID}
-	if err := w.reconcile(ctx, profile, catalog, now, request.Mode); err != nil {
+	if err := w.reconcile(ctx, profile, catalog, now, request); err != nil {
 		cleanupCtx, cancel := personSweepCleanupContext(ctx)
 		defer cancel()
 		finishErr := w.Store.FinishPersonSweepRun(cleanupCtx, runID, RunFailed, w.now())
 		return result, errors.Join(err, finishErr)
+	}
+	// A forced brief for one person must produce a claim even when the journal
+	// has no dirty work: a successful sweep deletes the work row, so nothing
+	// would otherwise be claimable and the manual request would silently do
+	// nothing. Enrollment was already required above.
+	if w.forcedSinglePersonBrief(request) {
+		if _, err := w.Brief.EnsurePersonSweepWork(ctx, request.PersonID, true); err != nil {
+			cleanupCtx, cancel := personSweepCleanupContext(ctx)
+			defer cancel()
+			finishErr := w.Store.FinishPersonSweepRun(cleanupCtx, runID, RunFailed, w.now())
+			return result, errors.Join(err, finishErr)
+		}
 	}
 	var firstErr error
 	for result.PeopleAttempted < limit {
@@ -452,6 +507,14 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			break
 		}
 		if lease == nil {
+			// A forced brief published its own work above, so an empty claim
+			// here means another worker holds the person's lease. The run has
+			// not generated anything, and a 200 that says "no new version"
+			// would be a lie; refuse with a retryable typed error instead of
+			// waiting on the other worker's lease.
+			if w.forcedSinglePersonBrief(request) && result.PeopleAttempted == 0 {
+				firstErr = fmt.Errorf("person %d: %w", request.PersonID, ErrPersonBriefBusy)
+			}
 			break
 		}
 		if request.PersonID > 0 && lease.PersonID != request.PersonID {
@@ -459,7 +522,8 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			break
 		}
 		result.PeopleAttempted++
-		person, personErr := w.runPerson(ctx, runID, *lease, request.Mode, profile, catalog, now)
+		person, personErr := w.runPerson(ctx, runID, *lease, request.Mode, request.Brief,
+			profile, catalog, now)
 		if personErr != nil {
 			if firstErr == nil {
 				firstErr = personErr
@@ -467,6 +531,7 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			continue
 		}
 		result.PeopleSucceeded++
+		result.People = append(result.People, person)
 		result.ProjectedWrites += person.ProjectedWrites
 		result.Usage, err = addUsage(result.Usage, person.Usage)
 		if err != nil {
@@ -491,11 +556,23 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 func (w *Worker) RunPerson(
 	ctx context.Context, runID string, lease Lease, mode RunMode,
 ) (PersonRunResult, error) {
+	return w.RunPersonBrief(ctx, runID, lease, mode, BriefModeAuto)
+}
+
+// RunPersonBrief runs one leased person with an explicit brief mode. It is the
+// single-person entry point a manual "generate this person's brief now" takes.
+func (w *Worker) RunPersonBrief(
+	ctx context.Context, runID string, lease Lease, mode RunMode, brief BriefMode,
+) (PersonRunResult, error) {
 	profile, catalog, resolvedAt, err := w.ready(ctx)
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
-	return w.runPerson(ctx, runID, lease, mode, profile, catalog, resolvedAt)
+	if !brief.valid() {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "",
+			errors.New("person sweep worker requires a valid brief mode"))
+	}
+	return w.runPerson(ctx, runID, lease, mode, brief, profile, catalog, resolvedAt)
 }
 
 func (w *Worker) runPerson(
@@ -503,10 +580,15 @@ func (w *Worker) runPerson(
 	runID string,
 	lease Lease,
 	mode RunMode,
+	briefMode BriefMode,
 	profile ProviderProfile,
 	catalog personfacts.Catalog,
 	resolvedAt time.Time,
 ) (PersonRunResult, error) {
+	plan, err := w.planPersonBrief(ctx, lease.PersonID, briefMode, profile, resolvedAt)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
 	keys := make([]CursorKey, 0, len(profile.AllowedSources))
 	for _, lane := range profile.AllowedSources {
 		keys = append(keys, CursorKey{PersonID: lease.PersonID, SourceLane: lane,
@@ -516,14 +598,18 @@ func (w *Worker) runPerson(
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
+	// The brief does not shrink the extraction batch budget: a smaller batch
+	// cap can make an assembly unschedulable outright, and a brief that cannot
+	// be reserved defers to the next run instead of failing the attempt.
 	maxBatches := min(w.Config.Budgets.MaxRequestsPerPerson,
 		int(w.Config.Budgets.MaxOutputTokensPerPerson/extractionMaxOutputTokens))
 	assemblyRequest := AssemblyRequest{PersonID: lease.PersonID, Cursors: cursors, Catalog: catalog,
 		Profile: profile, Now: resolvedAt, BackstopInterval: w.Config.BackstopInterval,
 		ForceBackstop: mode == RunBackstop}
-	buildAssembly := func(selected []Cursor, maxProgressWindows int) (Assembly, error) {
+	buildAssembly := func(selected []Cursor, maxProgressWindows int, forceBackstop bool) (Assembly, error) {
 		request := assemblyRequest
 		request.Cursors = selected
+		request.ForceBackstop = request.ForceBackstop || forceBackstop
 		return (Assembler{Source: w.Source, Context: w.Context,
 			MaxBytes: w.Config.EvidenceMaxBytes,
 			MaxItems: w.Config.EvidenceMaxItems, WindowLimit: w.Config.ChangeBatchSize,
@@ -531,15 +617,31 @@ func (w *Worker) runPerson(
 			ContextPerTarget:     w.Config.ContextPerTarget,
 			HistoricalMessageCap: w.Config.HistoricalMessageCap}).Build(ctx, request)
 	}
-	assembly, err := buildAssembly(cursors, 0)
+	assembly, err := buildAssembly(cursors, 0, false)
 	if err != nil && !errors.Is(err, ErrNoChangedSeed) {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	// forcedBackstop records that the assembly below came from the brief's
+	// fallback, so the batch-narrowing loop rebuilds it the same way.
+	forcedBackstop := false
+	if len(assembly.CursorEnvelope) == 0 && plan.run {
+		// A person whose sweep is fully caught up has no cursor progress to
+		// bind a generation to, and every generation must name a source range.
+		// Re-reading one bounded backstop page gives the attempt a real range
+		// without inventing one, which is what lets a manual brief run on a
+		// person the scheduled sweep already finished. The store bounds an
+		// empty archive with its zero source key, so that attempt can still
+		// succeed without a provider call or a new brief version.
+		if forced, forcedErr := buildAssembly(cursors, 1, true); forcedErr == nil &&
+			len(forced.CursorEnvelope) > 0 {
+			assembly, forcedBackstop = forced, true
+		}
 	}
 	deferredCursorWork := false
 	if len(assembly.Batches) > maxBatches {
 		bounded := false
 		for index := range cursors {
-			candidate, candidateErr := buildAssembly(cursors[index:index+1], 0)
+			candidate, candidateErr := buildAssembly(cursors[index:index+1], 0, forcedBackstop)
 			if candidateErr != nil && !errors.Is(candidateErr, ErrNoChangedSeed) {
 				return PersonRunResult{}, w.failClaim(ctx, lease, "", candidateErr)
 			}
@@ -547,7 +649,7 @@ func (w *Worker) runPerson(
 				continue
 			}
 			if len(candidate.Batches) > maxBatches {
-				candidate, candidateErr = buildAssembly(cursors[index:index+1], 1)
+				candidate, candidateErr = buildAssembly(cursors[index:index+1], 1, forcedBackstop)
 				if candidateErr != nil && !errors.Is(candidateErr, ErrNoChangedSeed) {
 					return PersonRunResult{}, w.failClaim(ctx, lease, "", candidateErr)
 				}
@@ -592,22 +694,10 @@ func (w *Worker) runPerson(
 		return PersonRunResult{}, w.failClaim(ctx, lease, attemptID, err)
 	}
 
-	reservations := make([]BudgetReservation, 0, len(assembly.Batches))
-	type admittedBatch struct {
-		batch         PacketBatch
-		prepared      PreparedStructuredRequest
-		estimate      TokenUsage
-		estimatedCost int64
-		reservation   BudgetReservation
-		callOrdinal   int
-		purpose       string
-	}
-	admitted := make([]admittedBatch, 0, len(assembly.Batches))
-	completedUsage := make([]CompletedUsage, 0, len(assembly.Batches)*2)
-	completedBatches := make([]CompletedBatch, 0, len(assembly.Batches)*2)
+	reservations := make([]BudgetReservation, 0, len(assembly.Batches)+2)
+	admitted := make([]sweepProviderCall, 0, len(assembly.Batches))
+	accounting := &sweepCallAccounting{budget: w.Config.Budgets}
 	claims := make([]personfacts.ProposedClaim, 0)
-	totalUsage := Usage{}
-	providerVersion, modelVersion := "", ""
 	// Prepare and reserve the whole immutable request set before the first paid
 	// provider call. A later batch must never discover a run/person/day budget
 	// violation after an earlier batch has already crossed the network boundary.
@@ -615,28 +705,28 @@ func (w *Worker) runPerson(
 		renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
 		if renewErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, renewErr, resolvedAt)
+				accounting.completedUsage, renewErr, resolvedAt)
 		}
 		if renewed == nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, ErrLeaseLost, resolvedAt)
+				accounting.completedUsage, ErrLeaseLost, resolvedAt)
 		}
 		lease = *renewed
 		prepared, prepareErr := w.Runner.PrepareStructured(ctx, batch.Request)
 		if prepareErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, prepareErr, resolvedAt)
+				accounting.completedUsage, prepareErr, resolvedAt)
 		}
 		estimate, estimateErr := EstimateWireTokenReservation(
 			prepared.WireRequest(), batch.Request.MaxOutputTokens)
 		if estimateErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, estimateErr, resolvedAt)
+				accounting.completedUsage, estimateErr, resolvedAt)
 		}
 		estimatedCost, estimateErr := EstimateCostMicroUSD(estimate, w.Config.Budgets)
 		if estimateErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, estimateErr, resolvedAt)
+				accounting.completedUsage, estimateErr, resolvedAt)
 		}
 		reservation, reserveErr := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
 			RunID: runID, AttemptID: attemptID, BatchOrdinal: batch.Ordinal, CallOrdinal: 0,
@@ -649,10 +739,10 @@ func (w *Worker) runPerson(
 		})
 		if reserveErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID, reservations,
-				completedUsage, reserveErr, resolvedAt)
+				accounting.completedUsage, reserveErr, resolvedAt)
 		}
 		reservations = append(reservations, reservation)
-		admitted = append(admitted, admittedBatch{batch: batch, prepared: prepared,
+		admitted = append(admitted, sweepProviderCall{batch: batch, prepared: prepared,
 			estimate: estimate, estimatedCost: estimatedCost, reservation: reservation,
 			callOrdinal: 0, purpose: ProviderCallPurposePrimary})
 	}
@@ -662,59 +752,15 @@ func (w *Worker) runPerson(
 		execution, beginErr := w.Runner.BeginStructuredExecution(ctx, admitted[index].prepared)
 		if beginErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID,
-				reservations, completedUsage, beginErr, resolvedAt)
+				reservations, accounting.completedUsage, beginErr, resolvedAt)
 		}
 		primaryCall, callErr := execution.PrimaryCall(admitted[index].prepared)
 		if callErr != nil {
 			return PersonRunResult{}, w.finalizePreflightFailure(ctx, lease, attemptID,
-				reservations, completedUsage, callErr, resolvedAt)
+				reservations, accounting.completedUsage, callErr, resolvedAt)
 		}
 		executions[index] = execution
 		primaryCalls[index] = primaryCall
-	}
-	recordCompletedCall := func(call admittedBatch, response StructuredResponse, latency time.Duration) error {
-		// Validate and account before recording anything. A response rejected
-		// below is untrusted, and a completed usage record derived from it would
-		// either fail failure finalization outright (stranding the attempt and
-		// lease until expiry) or write untrusted values into durable history.
-		// Finalizing without a record lets the store conservatively charge the
-		// reservation instead.
-		if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 {
-			return invalidOutputError{errors.New("provider returned negative token usage")}
-		}
-		if !canonicalProviderIdentity(response.ProviderVersion) ||
-			!canonicalProviderIdentity(response.ModelVersion) ||
-			!IsSafeProviderMetadata(response.ProviderRequestID) {
-			return invalidOutputError{errors.New("provider returned unsafe identity metadata")}
-		}
-		if providerVersion == "" {
-			providerVersion, modelVersion = response.ProviderVersion, response.ModelVersion
-		} else if providerVersion != response.ProviderVersion || modelVersion != response.ModelVersion {
-			return invalidOutputError{errors.New("provider call identities differ")}
-		}
-		accounted, actualCost, accountErr := accountCompletedProviderCall(
-			response, call.estimate, call.estimatedCost, w.Config.Budgets)
-		if accountErr != nil {
-			return accountErr
-		}
-		accountedTotal, accountErr := addUsage(totalUsage, accounted)
-		if accountErr != nil {
-			return accountErr
-		}
-		completedUsage = append(completedUsage, CompletedUsage{
-			BatchOrdinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
-			ProviderRequestID: response.ProviderRequestID, Usage: accountableTokenUsage(response.Usage),
-			UsageKnown: response.UsageKnown, Latency: latency,
-		})
-		completedBatches = append(completedBatches, CompletedBatch{
-			Ordinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
-			ReservationID: call.reservation.ID, InputHash: call.prepared.WireSHA256(),
-			ProviderRequestID: response.ProviderRequestID, ProviderVersion: response.ProviderVersion,
-			ModelVersion: response.ModelVersion, Usage: accountableTokenUsage(response.Usage),
-			UsageKnown: response.UsageKnown, ActualCostMicroUSD: actualCost, Latency: latency,
-		})
-		totalUsage = accountedTotal
-		return nil
 	}
 	for primaryIndex, primary := range admitted {
 		execution := executions[primaryIndex]
@@ -724,11 +770,11 @@ func (w *Worker) runPerson(
 			renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
 			if renewErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, renewErr, resolvedAt)
+					accounting.completedUsage, renewErr, resolvedAt)
 			}
 			if renewed == nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, ErrLeaseLost, resolvedAt)
+					accounting.completedUsage, ErrLeaseLost, resolvedAt)
 			}
 			lease = *renewed
 			started := w.now()
@@ -746,13 +792,13 @@ func (w *Worker) runPerson(
 			if !marked {
 				_ = w.Store.ReleasePersonSweepBudget(ctx, call.reservation)
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, runErr, resolvedAt)
+					accounting.completedUsage, runErr, resolvedAt)
 			}
 			latency := max(time.Duration(0), w.now().Sub(started))
 			if structuredResponseCompleted(response) {
-				if recordErr := recordCompletedCall(call, response, latency); recordErr != nil {
+				if recordErr := accounting.record(call, response, latency); recordErr != nil {
 					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-						completedUsage, recordErr, resolvedAt)
+						accounting.completedUsage, recordErr, resolvedAt)
 				}
 			}
 
@@ -760,7 +806,7 @@ func (w *Worker) runPerson(
 			if runErr != nil {
 				if !errors.As(runErr, &failure) || call.callOrdinal != 0 || failure.repair {
 					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-						completedUsage, runErr, resolvedAt)
+						accounting.completedUsage, runErr, resolvedAt)
 				}
 			} else {
 				parsed, parseErr := ParseExtraction(response.Output, call.batch, profile)
@@ -772,12 +818,12 @@ func (w *Worker) runPerson(
 					failure = newValidationFailure(response.Output,
 						"candidate failed extraction semantics", true)
 					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-						completedUsage, failure, resolvedAt)
+						accounting.completedUsage, failure, resolvedAt)
 				}
 				semanticFailure, semanticErr := execution.SemanticValidationFailure(response)
 				if semanticErr != nil {
 					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-						completedUsage, semanticErr, resolvedAt)
+						accounting.completedUsage, semanticErr, resolvedAt)
 				}
 				failure = &semanticFailure
 			}
@@ -785,23 +831,23 @@ func (w *Worker) runPerson(
 			repair, repairErr := execution.PrepareRepair(*failure)
 			if repairErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, repairErr, resolvedAt)
+					accounting.completedUsage, repairErr, resolvedAt)
 			}
 			repairCall, repairErr := execution.RepairCall(repair)
 			if repairErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, repairErr, resolvedAt)
+					accounting.completedUsage, repairErr, resolvedAt)
 			}
 			repairEstimate, estimateErr := EstimateWireTokenReservation(
 				repair.WireRequest(), primary.batch.Request.MaxOutputTokens)
 			if estimateErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, estimateErr, resolvedAt)
+					accounting.completedUsage, estimateErr, resolvedAt)
 			}
 			repairCost, estimateErr := EstimateCostMicroUSD(repairEstimate, w.Config.Budgets)
 			if estimateErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, estimateErr, resolvedAt)
+					accounting.completedUsage, estimateErr, resolvedAt)
 			}
 			repairReservation, reserveErr := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
 				RunID: runID, AttemptID: attemptID, BatchOrdinal: primary.batch.Ordinal,
@@ -815,17 +861,36 @@ func (w *Worker) runPerson(
 			})
 			if reserveErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-					completedUsage, reserveErr, resolvedAt)
+					accounting.completedUsage, reserveErr, resolvedAt)
 			}
 			reservations = append(reservations, repairReservation)
-			call = admittedBatch{batch: primary.batch, prepared: repair, estimate: repairEstimate,
+			call = sweepProviderCall{batch: primary.batch, prepared: repair, estimate: repairEstimate,
 				estimatedCost: repairCost, reservation: repairReservation,
 				callOrdinal: 1, purpose: ProviderCallPurposeRepair}
 			preparedCall = repairCall
 		}
 	}
+	// The brief closes the attempt: it summarizes the person's most recent
+	// stretch of interaction, so it runs after every extraction batch and takes
+	// the next batch ordinal. A brief failure never rolls back the extraction.
+	var brief *BriefResult
+	var briefFailure FailureClass
+	if plan.run {
+		var fatal error
+		brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
+			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
+			catalog: catalog, resolvedAt: resolvedAt, plan: plan,
+			batchOrdinal: len(assembly.Batches),
+		}, accounting, &reservations)
+		if fatal != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
+				accounting.completedUsage, fatal, resolvedAt)
+		}
+	}
+
 	provider, model := string(profile.Protocol), profile.Model
-	if len(completedBatches) == 0 {
+	providerVersion, modelVersion := accounting.providerVersion, accounting.modelVersion
+	if len(accounting.completedBatches) == 0 {
 		provider, providerVersion = StatusOnlyProvider, StatusOnlyProviderVersion
 		model, modelVersion = StatusOnlyModel, StatusOnlyModelVersion
 		claims = nil
@@ -841,30 +906,43 @@ func (w *Worker) runPerson(
 	renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
 	if renewErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-			completedUsage, renewErr, resolvedAt)
+			accounting.completedUsage, renewErr, resolvedAt)
 	}
 	if renewed == nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-			completedUsage, ErrLeaseLost, resolvedAt)
+			accounting.completedUsage, ErrLeaseLost, resolvedAt)
 	}
 	lease = *renewed
+	completedAt := w.now()
+	var briefRetryAt time.Time
+	if briefFailure != "" {
+		briefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0,
+			w.Config.RetryBase, w.Config.RetryMax))
+	}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
-		Batches: completedBatches, Usage: totalUsage, Budget: w.Config.Budgets, CursorAdvances: advances,
-		DeferredCursorWork: deferredCursorWork, CompletedAt: w.now()})
+		Batches: accounting.completedBatches, Usage: accounting.totalUsage,
+		Budget: w.Config.Budgets, CursorAdvances: advances,
+		DeferredCursorWork: deferredCursorWork, Brief: brief, BriefFailureClass: briefFailure,
+		BriefRetryAt: briefRetryAt, CompletedAt: completedAt})
 	if applyErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-			completedUsage, applyErr, resolvedAt)
+			accounting.completedUsage, applyErr, resolvedAt)
 	}
 	return PersonRunResult{PersonID: lease.PersonID, AttemptID: attemptID,
-		ProjectedWrites: apply.Mutations.ProjectionRowsWritten,
-		CursorAdvances:  advances, Usage: totalUsage}, nil
+		ProjectedWrites: apply.Mutations.ProjectionRowsWritten, BriefVersion: apply.Mutations.BriefVersion,
+		BriefFailureClass: briefFailure,
+		CursorAdvances:    advances, Usage: accounting.totalUsage}, nil
 }
 
 type leaseHeartbeatResult struct {
 	lease Lease
 	err   error
 }
+
+// errLeaseHeartbeat distinguishes renewal failures from provider call errors.
+// Even a transient store error leaves lease ownership uncertain for this attempt.
+var errLeaseHeartbeat = errors.New("person sweep lease heartbeat failed")
 
 func (w *Worker) runPreparedWithLeaseHeartbeat(
 	ctx context.Context,
@@ -908,7 +986,7 @@ func (w *Worker) runPreparedWithLeaseHeartbeat(
 	cancel()
 	heartbeat := <-result
 	if heartbeat.err != nil {
-		return heartbeat.lease, response, heartbeat.err
+		return heartbeat.lease, response, fmt.Errorf("%w: %w", errLeaseHeartbeat, heartbeat.err)
 	}
 	return heartbeat.lease, response, runErr
 }
@@ -936,7 +1014,7 @@ func (w *Worker) ready(ctx context.Context) (ProviderProfile, personfacts.Catalo
 func (w *Worker) now() time.Time { return w.Clock().UTC() }
 
 func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
-	catalog personfacts.Catalog, now time.Time, mode RunMode,
+	catalog personfacts.Catalog, now time.Time, request RunRequest,
 ) error {
 	after := int64(0)
 	for {
@@ -944,13 +1022,47 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 			ProgramFingerprint: ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint,
 			SourceLanes: profile.AllowedSources, AfterPersonID: after,
 			Limit: w.Config.WorkBatchSize, Now: now, BackstopInterval: w.Config.BackstopInterval,
-			ForceBackstop: mode == RunBackstop,
+			ForceBackstop: request.Mode == RunBackstop,
 		})
 		if err != nil {
 			return err
 		}
 		if page.PeopleScanned == 0 || page.NextPersonID <= after {
 			return nil
+		}
+		// Brief cadence and enrollment can become due without an extraction
+		// cursor gap. Reuse this tracked-person page to publish eligible work,
+		// leaving the bounded backstop fallback to the person actually claimed.
+		if w.Config.Brief.IsEnabled() && w.Brief != nil && w.Archive != nil &&
+			request.Brief.normalized() != BriefModeSkip && !w.forcedSinglePersonBrief(request) {
+			for _, personID := range page.PersonIDs {
+				if request.PersonID > 0 && personID != request.PersonID {
+					continue
+				}
+				plan, err := w.planPersonBrief(ctx, personID, request.Brief, profile, now)
+				if err != nil {
+					return fmt.Errorf("plan person %d brief work: %w", personID, err)
+				}
+				if plan.run {
+					// An enrolled person with no admissible text never produces a
+					// version. Check the bounded window before publishing work so
+					// such a person does not repeat backstop extraction every tick.
+					_, err := BuildBriefWindow(ctx, w.Archive,
+						w.briefWindowRequest(personID, catalog, profile, plan, 0))
+					if errors.Is(err, ErrNoBriefEvidence) {
+						continue
+					}
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					// Other window failures belong to this person's attempt. The
+					// normal brief call records them without blocking extraction
+					// for everyone else in the run.
+					if _, err := w.Brief.EnsurePersonSweepWork(ctx, personID, false); err != nil {
+						return fmt.Errorf("publish person %d brief work: %w", personID, err)
+					}
+				}
+			}
 		}
 		after = page.NextPersonID
 	}
@@ -1158,4 +1270,75 @@ func addUsage(left, right Usage) (Usage, error) {
 		return Usage{}, ErrBudgetOverflow
 	}
 	return result, nil
+}
+
+// sweepProviderCall is one admitted provider call: the batch it summarizes, the
+// exact prepared request, the reservation it holds, and its call coordinate.
+type sweepProviderCall struct {
+	batch         PacketBatch
+	prepared      PreparedStructuredRequest
+	estimate      TokenUsage
+	estimatedCost int64
+	reservation   BudgetReservation
+	callOrdinal   int
+	purpose       string
+}
+
+// sweepCallAccounting is the usage every call in one attempt contributes to.
+// The extraction batches and the brief share it so the attempt reports one
+// provider identity and one usage total.
+type sweepCallAccounting struct {
+	budget           BudgetConfig
+	completedUsage   []CompletedUsage
+	completedBatches []CompletedBatch
+	totalUsage       Usage
+	providerVersion  string
+	modelVersion     string
+}
+
+// record validates and accounts a completed call before recording anything. A
+// response rejected below is untrusted, and a completed usage record derived
+// from it would either fail failure finalization outright (stranding the
+// attempt and lease until expiry) or write untrusted values into durable
+// history. Finalizing without a record lets the store conservatively charge the
+// reservation instead.
+func (a *sweepCallAccounting) record(
+	call sweepProviderCall, response StructuredResponse, latency time.Duration,
+) error {
+	if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 {
+		return invalidOutputError{errors.New("provider returned negative token usage")}
+	}
+	if !canonicalProviderIdentity(response.ProviderVersion) ||
+		!canonicalProviderIdentity(response.ModelVersion) ||
+		!IsSafeProviderMetadata(response.ProviderRequestID) {
+		return invalidOutputError{errors.New("provider returned unsafe identity metadata")}
+	}
+	if a.providerVersion == "" {
+		a.providerVersion, a.modelVersion = response.ProviderVersion, response.ModelVersion
+	} else if a.providerVersion != response.ProviderVersion || a.modelVersion != response.ModelVersion {
+		return invalidOutputError{errors.New("provider call identities differ")}
+	}
+	accounted, actualCost, err := accountCompletedProviderCall(
+		response, call.estimate, call.estimatedCost, a.budget)
+	if err != nil {
+		return err
+	}
+	accountedTotal, err := addUsage(a.totalUsage, accounted)
+	if err != nil {
+		return err
+	}
+	a.completedUsage = append(a.completedUsage, CompletedUsage{
+		BatchOrdinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
+		ProviderRequestID: response.ProviderRequestID, Usage: accountableTokenUsage(response.Usage),
+		UsageKnown: response.UsageKnown, Latency: latency,
+	})
+	a.completedBatches = append(a.completedBatches, CompletedBatch{
+		Ordinal: call.batch.Ordinal, CallOrdinal: call.callOrdinal, Purpose: call.purpose,
+		ReservationID: call.reservation.ID, InputHash: call.prepared.WireSHA256(),
+		ProviderRequestID: response.ProviderRequestID, ProviderVersion: response.ProviderVersion,
+		ModelVersion: response.ModelVersion, Usage: accountableTokenUsage(response.Usage),
+		UsageKnown: response.UsageKnown, ActualCostMicroUSD: actualCost, Latency: latency,
+	})
+	a.totalUsage = accountedTotal
+	return nil
 }

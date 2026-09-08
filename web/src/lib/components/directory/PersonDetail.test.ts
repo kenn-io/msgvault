@@ -6,13 +6,21 @@ import { DirectoryEntityController } from '../../directory/entity-controller.sve
 import type { DirectoryReadBundle } from '../../directory/models';
 import PersonDetail from './PersonDetail.svelte';
 
-function profileMaintenanceResponse(request: Request): Response | undefined {
+// The Overview panel mounts three self-loading cards. This answers the reads
+// they make on mount so each test only has to state what it is actually about.
+// An unenrolled brief enrollment is the quiet default: the brief card then
+// makes no further request.
+function overviewCardResponse(request: Request): Response | undefined {
   const path = new URL(request.url).pathname;
   if (path === '/api/v1/people/7/tracking') {
     return Response.json({ person_id: 7, tracked: false, tracked_at: null });
   }
   if (path === '/api/v1/person-fact-targets') {
     return Response.json({ version: 'v1', fingerprint: 'not-rendered', targets: [] });
+  }
+  const brief = /^\/api\/v1\/people\/(\d+)\/brief-enrollment$/.exec(path);
+  if (brief) {
+    return Response.json({ person_id: Number(brief[1]), enrolled: false, enabled_at: null, actor: '' });
   }
   return undefined;
 }
@@ -24,8 +32,8 @@ describe('PersonDetail', () => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
       requestPaths.push(path);
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       if (path.endsWith('/merges')) return Response.json({ merges: [], limit: 100, offset: 0 });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [{ id: 3, person_id: 7, organization_id: 2, is_current: true, is_primary: true, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', title: 'Engineer' }], projection: { employment_id: 3, organization_id: 2, organization_name: 'Example Org', vcard: {} } });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [
@@ -82,8 +90,8 @@ describe('PersonDetail', () => {
   it('does not claim an organization name for an employment outside the primary projection', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/people/7/employments') return Response.json({
         employments: [{ id: 4, person_id: 7, organization_id: 9, is_current: true, is_primary: false, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', role: 'Contributor' }],
@@ -116,8 +124,8 @@ describe('PersonDetail', () => {
   it('implements roving keyboard tabs with linked tabpanels', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [], limit: 100, offset: 0 });
       if (new URL(request.url).pathname.endsWith('/network')) return Response.json({
         root_person_id: 7, depth: 1, truncated: false,
@@ -174,8 +182,8 @@ describe('PersonDetail', () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       if (path.endsWith('/network')) return Response.json({
         root_person_id: 7, depth: 1, truncated: false,
         nodes: [
@@ -220,6 +228,9 @@ describe('PersonDetail', () => {
       if (path === '/api/v1/person-fact-targets') return Response.json({
         version: 'v1', fingerprint: 'not-rendered', targets: []
       });
+      if (path === '/api/v1/people/7/brief-enrollment') {
+        return Response.json({ person_id: 7, enrolled: false, enabled_at: null, actor: '' });
+      }
       if (path === '/api/v1/carddav/publications/7') {
         return Response.json({ error: 'carddav_unavailable', message: 'not rendered' }, { status: 503 });
       }
@@ -250,8 +261,8 @@ describe('PersonDetail', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       if (path === '/api/v1/carddav/publications/7') return Response.json({
         person_id: 7,
         state: 'conflict',
@@ -285,13 +296,74 @@ describe('PersonDetail', () => {
     expect(onAnnounce).not.toHaveBeenCalled();
   });
 
+  it('mounts the brief card in Overview under contact state without adding a tab', async () => {
+    const paths: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      paths.push(path);
+      const overview = overviewCardResponse(request);
+      if (overview && path !== '/api/v1/people/7/brief-enrollment') return overview;
+      if (path === '/api/v1/people/7/brief-enrollment') {
+        return Response.json({ person_id: 7, enrolled: true, enabled_at: '2026-08-01T00:00:00Z', actor: 'api' });
+      }
+      if (path === '/api/v1/people/7/brief') return Response.json({
+        version: 2, status: 'current', generated_at: '2026-08-29T18:42:10Z',
+        rendered_text: 'Last time you talked (Aug 29, chat): they were preparing for a role change.',
+        sentences: [{
+          kind: 'last_interaction', index: 0,
+          text: 'Last time you talked (Aug 29, chat): they were preparing for a role change.'
+        }],
+        structured: {
+          last_meaningful_interaction: { evidence_id: 'e1', summary: 'They were preparing for a role change.' },
+          highlights: [], follow_ups: [], appreciations: [], uncertainties: [], possible_attributes: []
+        },
+        evidence: [{
+          ordinal: 0, evidence_id: 11, evidence_key: 'not-rendered', source_ref: 'message:1',
+          source_url: 'https://not-rendered.example.test/message/1', directness: 'direct-other',
+          event_time: '2026-08-29T17:00:00Z', evidence_supported: true
+        }],
+        boundary: { item_count: 3 }, dropped_item_count: 0,
+        program_id: 'msgvault-person-brief', program_version: 'v1',
+        provider: 'openai_chat', model: 'gpt-test',
+        rejected_at: null, rejected_reason: '', superseded_at: null
+      });
+      if (path === '/api/v1/people/7/carddav-publication' || path === '/api/v1/carddav/publications/7') {
+        return Response.json({ error: 'carddav_unavailable', message: 'not rendered' }, { status: 503 });
+      }
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [], limit: 100, offset: 0 });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    render(PersonDetail, {
+      client: createAPIClient(fetchFn), personID: 7,
+      bundle: {
+        contactState: {
+          person_id: 7, cadence_status: 'active', computed_at: '2026-08-29T00:00:00Z',
+          interaction_count: 4, stale: false, last_contact_at: '2026-08-29T17:00:00Z'
+        },
+        etags: {}, errors: {}
+      }
+    });
+
+    const brief = await screen.findByRole('heading', { name: 'Last time we talked' });
+    const contactState = screen.getByText('Contact state');
+    expect(contactState.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await screen.findByRole('button', {
+      name: 'Last time you talked (Aug 29, chat): they were preparing for a role change.'
+    })).toBeDefined();
+    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(screen.queryByRole('tab', { name: /brief/i })).toBeNull();
+    expect(paths).toContain('/api/v1/people/7/brief');
+    expect(document.body.innerHTML).not.toContain('not-rendered.example.test');
+  });
+
   it('renders unconfigured CardDAV publication as an optional Settings handoff without an operational alert', async () => {
     const onOpenCardDAVSettings = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      const maintenance = profileMaintenanceResponse(request);
-      if (maintenance) return maintenance;
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
       if (path === '/api/v1/carddav/publications/7') {
         return Response.json({
           error: 'carddav_unavailable',

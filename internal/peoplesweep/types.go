@@ -109,8 +109,11 @@ type GapRequest struct {
 // GapResult reports the durable work produced by one bounded pass.
 type GapResult struct {
 	PeopleScanned int
-	WorkCreated   int
-	NextPersonID  int64
+	// PersonIDs is the bounded tracked-person page, including people without
+	// extraction gaps, so other sweep work can use the same scan.
+	PersonIDs    []int64
+	WorkCreated  int
+	NextPersonID int64
 }
 
 // ClaimRequest identifies a worker and its requested lease duration.
@@ -229,9 +232,14 @@ type StartAttempt struct {
 	StartedAt      time.Time
 }
 
+// Provider call purposes. Extraction spends a primary call and at most one
+// repair call on the same batch ordinal; the person brief spends a brief call
+// and at most one brief_repair call on its own, later, batch ordinal.
 const (
-	ProviderCallPurposePrimary = "primary"
-	ProviderCallPurposeRepair  = "repair"
+	ProviderCallPurposePrimary     = "primary"
+	ProviderCallPurposeRepair      = "repair"
+	ProviderCallPurposeBrief       = "brief"
+	ProviderCallPurposeBriefRepair = "brief_repair"
 )
 
 type ProviderCallCoordinate struct {
@@ -315,11 +323,15 @@ type RunSummary struct {
 }
 
 type AttemptSummary struct {
-	ID                  string
-	RunID               string
-	PersonID            int64
-	Status              AttemptStatus
-	FailureClass        FailureClass
+	ID           string
+	RunID        string
+	PersonID     int64
+	Status       AttemptStatus
+	FailureClass FailureClass
+	// BriefFailureClass is why the attempt's person brief call produced no
+	// version while the attempt itself succeeded. It is empty when the attempt
+	// ran no brief call, or when the brief was stored.
+	BriefFailureClass   FailureClass
 	CursorEnvelope      []GenerationCursor
 	EnvelopeHash        string
 	ProgramFingerprint  string
@@ -428,6 +440,11 @@ type ContextRequest struct {
 	SourceUntil              string
 	HistoricalCandidateLimit int
 	Limit                    int
+	// ThroughSequence, when positive, excludes messages the person's change
+	// journal first recorded after that sequence, so a caller that records the
+	// sequence as its boundary never sees archive state the boundary omits.
+	// Messages with no journal row for the person are always admitted.
+	ThroughSequence int64
 }
 
 type HistoricalCandidateRequest struct {
@@ -436,6 +453,24 @@ type HistoricalCandidateRequest struct {
 	SourceSince   string
 	SourceUntil   string
 	Limit         int
+	// ThroughSequence bounds the listing by journal position exactly as
+	// ContextRequest.ThroughSequence does.
+	ThroughSequence int64
+	// AuthoredByPerson keeps only messages the person sent on a source that
+	// authenticates its sender, which is exactly the evidence hydration marks
+	// with the person as its own subject. The brief admits nothing else, so a
+	// listing without this filter can spend its whole limit on the owner's
+	// side of a conversation and never reach the person's older messages.
+	AuthoredByPerson bool
 }
 
 var ErrSourceTextUnavailable = errors.New("person sweep source has no durable text")
+
+// ErrPersonSweepMessageUnavailable reports that a requested message cannot be
+// hydrated as evidence for the person: it is deleted, outside the person's
+// scope, carries no durable text, or the person's journal first recorded it
+// after the requested sequence. It is the one hydration failure a caller may
+// treat as "the message is missing"; every other error is operational and
+// must propagate.
+var ErrPersonSweepMessageUnavailable = errors.New(
+	"person sweep message is unavailable: deleted, out of scope, without durable text, or past the sequence")

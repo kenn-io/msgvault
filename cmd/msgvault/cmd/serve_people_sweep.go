@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -43,6 +44,47 @@ func newPeopleSweepScheduledRun(
 	}
 }
 
+// newPersonBriefManualRun is the daemon's manual brief runner: one forced,
+// single-person sweep attempt through the same production worker the schedule
+// uses. It still requires enrollment, consent, and budget; it bypasses only the
+// minimum interval and the new-activity check.
+func newPersonBriefManualRun(
+	cfg *config.Config, st *store.Store,
+) func(context.Context, int64) (api.PersonBriefRun, error) {
+	return func(ctx context.Context, personID int64) (api.PersonBriefRun, error) {
+		worker, err := newProductionPersonSweepWorker(cfg, st)
+		if err != nil {
+			return api.PersonBriefRun{}, err
+		}
+		result, err := worker.Run(ctx, peoplesweep.RunRequest{
+			Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+			PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeForce,
+		})
+		if err != nil {
+			return api.PersonBriefRun{}, err
+		}
+		return personBriefRunResult(personID, result), nil
+	}
+}
+
+// personBriefRunResult projects the run onto the one person the route asked
+// about. A run that claimed no attempt for that person reports the run ID only.
+func personBriefRunResult(
+	personID int64, result peoplesweep.RunResult,
+) api.PersonBriefRun {
+	run := api.PersonBriefRun{RunID: result.RunID}
+	for _, person := range result.People {
+		if person.PersonID != personID {
+			continue
+		}
+		run.AttemptID = person.AttemptID
+		run.BriefVersion = person.BriefVersion
+		run.BriefFailureClass = string(person.BriefFailureClass)
+		break
+	}
+	return run
+}
+
 func newProductionPersonSweepWorker(
 	cfg *config.Config, st *store.Store,
 ) (*peoplesweep.Worker, error) {
@@ -60,7 +102,8 @@ func newProductionPersonSweepWorker(
 	return &peoplesweep.Worker{
 		Config: sweepConfig, Store: st, Source: st,
 		Context: peoplesweep.NewContextRetriever(st), Sink: st,
-		Runner: runner, Catalog: st, Clock: time.Now, NewID: uuid.NewString,
+		Runner: runner, Catalog: st, Brief: st, Archive: st,
+		Clock: time.Now, NewID: uuid.NewString,
 		WorkerID: peopleSweepJobName + "-" + uuid.NewString(),
 	}, nil
 }

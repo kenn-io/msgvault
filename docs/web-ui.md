@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-28
+last_edited: "2026-09-07"
 title: Web UI
 description: Use and securely deploy msgvault's daemon-served analytical interface.
 ---
@@ -153,6 +153,13 @@ Profiles, and Source Identities](/docs/usage/people/).
 
 Directory is the curated durable-person workspace. Its person detail keeps
 Overview, Organizations, Relationships, Network, and Media & Files together.
+The Overview tab's **Last time we talked** card summarizes the person's recent
+chat and text messages. Enroll the person, generate a brief, and expand a
+sentence to check its sources. You can reject a brief or inspect the dates and status of earlier
+versions. Generation requires a consented provider and uses its budget; see
+[person briefs](/docs/usage/people/#catch-up-before-your-next-conversation)
+for setup and supported sources.
+
 The Network tab can request one, two, or three hops and optionally include
 ended records. It visualizes at most 250 nodes and 500 connections, while an
 always-present list groups the same connections by hop for keyboard and screen

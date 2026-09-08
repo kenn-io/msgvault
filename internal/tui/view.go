@@ -1294,6 +1294,8 @@ func (m Model) activeHelpLines() []string {
 					addition := []string{
 						"  [           Previous relationship year",
 						"  ]           Next relationship year",
+						"  b           Brief structured view (Esc returns)",
+						"  :           Brief commands: enroll, generate, reject",
 					}
 					lines = append(lines[:i], append(addition, lines[i:]...)...)
 					break
