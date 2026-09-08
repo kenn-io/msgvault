@@ -346,13 +346,13 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // cannot silently omit the chat from the archive.
 //
 // Graph also rejects a members read on the thread, so the roster is taken from
-// the probed message instead. The chat's only member is the signed-in user,
-// who is the sender of every message in it, and that identity carries the same
-// object ID a members read would have returned. Resolution therefore takes the
-// same path as every other chat member, down to the participant cache key that
-// mention resolution reads.
+// a user-authored message in a bounded probe instead. System and application
+// messages do not identify the chat's sole member. A user sender carries the
+// same object ID a members read would have returned, preserving the participant
+// cache key that sender and mention resolution read. If the probe finds no
+// user, chatMembers leaves the roster unresolved so a later sync can retry it.
 func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []ChatMember, error) {
-	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 1)
+	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 50)
 	if errors.Is(err, errGraphNotFound) {
 		return nil, nil, nil
 	}
@@ -363,8 +363,11 @@ func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []Chat
 		return nil, nil, nil
 	}
 	var members []ChatMember
-	if from := msgs[0].From; from != nil && from.User != nil && from.User.ID != "" {
-		members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName, Email: email}}
+	for _, msg := range msgs {
+		if from := msg.From; from != nil && from.User != nil && from.User.ID != "" {
+			members = []ChatMember{{UserID: from.User.ID, DisplayName: from.User.DisplayName, Email: email}}
+			break
+		}
 	}
 	return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, members, nil
 }
@@ -374,6 +377,9 @@ func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []Chat
 // with unknown membership and fail media policy closed against it.
 func (imp *Importer) chatMembers(ctx context.Context, chatID string, self []ChatMember) ([]ChatMember, error) {
 	if chatID == SelfChatID {
+		if len(self) == 0 {
+			return nil, errors.New("self-chat probe found no user identity")
+		}
 		return self, nil
 	}
 	return imp.client.ListChatMembers(ctx, chatID)

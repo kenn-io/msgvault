@@ -2964,7 +2964,10 @@ func TestSyncImportsSelfChat(t *testing.T) {
 			memberCalls.Add(1)
 			http.Error(w, `{"error":{"code":"BadRequest"}}`, http.StatusBadRequest)
 		case strings.Contains(r.URL.Path, "48:notes") && strings.HasSuffix(r.URL.Path, "/messages"):
-			_, _ = w.Write([]byte(`{"value":[{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me","userIdentityType":"aadUser"}},"body":{"contentType":"text","content":"note to self"}}]}`))
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"s1","createdDateTime":"2026-01-03T00:00:00Z","lastModifiedDateTime":"2026-01-03T00:00:00Z","messageType":"systemEventMessage","from":null,"body":{"contentType":"html","content":"<systemEventMessage/>"}},
+				{"id":"n1","createdDateTime":"2026-01-02T00:00:00Z","lastModifiedDateTime":"2026-01-02T00:00:00Z","messageType":"message","from":{"user":{"id":"u-me","displayName":"Me","userIdentityType":"aadUser"}},"body":{"contentType":"text","content":"note to self"}}
+			]}`))
 		case r.URL.Path == "/users/u-me":
 			http.Error(w, "directory lookup denied", http.StatusForbidden)
 		default:
@@ -2978,7 +2981,7 @@ func TestSyncImportsSelfChat(t *testing.T) {
 	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
-	assert.EqualValues(1, sum.MessagesAdded)
+	assert.EqualValues(2, sum.MessagesAdded)
 	assert.EqualValues(0, sum.Errors)
 	assert.EqualValues(0, memberCalls.Load())
 
@@ -3001,6 +3004,40 @@ func TestSyncImportsSelfChat(t *testing.T) {
 	to, err := st.InspectRecipientCount(sourceMessageID, "to")
 	require.NoError(err)
 	assert.Equal(0, to)
+}
+
+func TestSelfChatWithoutUserKeepsRosterUnresolved(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case "/me/chats/48:notes/messages":
+			_, _ = w.Write([]byte(`{"value":[{"id":"s1","createdDateTime":"2026-01-03T00:00:00Z","lastModifiedDateTime":"2026-01-03T00:00:00Z","messageType":"systemEventMessage","from":null,"body":{"contentType":"html","content":"<systemEventMessage/>"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000))
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com"})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesAdded, "unresolved membership must not prevent archiving messages")
+	assert.EqualValues(1, sum.Errors)
+	ref, err := st.MessageExistsBatch(sum.SourceID, []string{chatSourceMessageID(SelfChatID, "s1")})
+	require.NoError(err)
+	messageID, ok := ref[chatSourceMessageID(SelfChatID, "s1")]
+	require.True(ok)
+	membership, err := st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.False(membership.RosterArchived, "a missing user is not a known empty roster")
+	run, err := st.GetLastSuccessfulSync(sum.SourceID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.Empty(state.ChatCursor(SelfChatID), "retry messages after the roster resolves")
 }
 
 func TestSelfChatProbeFailureReporting(t *testing.T) {
