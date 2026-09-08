@@ -42,10 +42,18 @@ one or more .mbox files.
 This is useful for email providers that offer an export but no IMAP/POP access.
 The importer stores raw MIME, bodies, recipients, and optional attachments.
 
+For Google Groups Takeout exports, use --source-type google-groups. Group
+labels, topic-state labels, and exported thread IDs are preserved. The identifier
+names the group or archive and is not automatically treated as your identity.
+Membership CSV files and group settings are not imported.
+
 Examples:
   msgvault init-db
   msgvault import-mbox you@example.com /path/to/export.mbox
   msgvault import-mbox you@example.com /path/to/export.zip
+
+  # Google Groups Takeout (MBOX or ZIP)
+  msgvault import-mbox test-group@googlegroups.com takeout.zip --source-type google-groups
 
   # HEY.com export (still MBOX)
   msgvault import-mbox you@hey.com hey-export.zip --source-type hey --label hey
@@ -305,7 +313,8 @@ Examples:
 		// ran the migration first and confirmDefaultIdentity later,
 		// which suppressed the source's own account identifier
 		// whenever the legacy [identity] block had populated rows.
-		if ctx.Err() == nil && !hadHardErrors && !noDefaultIdentityImportMbox {
+		// A Google Groups identifier names a shared archive, not its owner.
+		if ctx.Err() == nil && !hadHardErrors && !noDefaultIdentityImportMbox && importMboxSourceType != "google-groups" {
 			if sourceID != 0 {
 				confirmDefaultIdentity(cmd.OutOrStdout(), st, sourceID, identifier, identifier, "account-identifier")
 			}
@@ -368,7 +377,7 @@ Examples:
 func init() {
 	rootCmd.AddCommand(importMboxCmd)
 
-	importMboxCmd.Flags().StringVar(&importMboxSourceType, "source-type", "mbox", "Source type to record in the database (e.g. mbox, hey)")
+	importMboxCmd.Flags().StringVar(&importMboxSourceType, "source-type", "mbox", "Source type to record in the database (e.g. mbox, hey, google-groups)")
 	importMboxCmd.Flags().StringSliceVar(&importMboxLabels, "label", nil, "Label(s) to apply to imported messages (repeatable, or comma-separated)")
 	importMboxCmd.Flags().BoolVar(&importMboxNoResume, "no-resume", false, "Do not resume from an interrupted import")
 	importMboxCmd.Flags().IntVar(&importMboxCheckpointInterval, "checkpoint-interval", 200, "Save progress every N messages")

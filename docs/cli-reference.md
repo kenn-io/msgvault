@@ -763,12 +763,17 @@ The export file may be a plain mbox file (any extension) or a `.zip` containing 
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source-type` | `mbox` | Source type recorded in database (e.g., `hey` for HEY.com) |
+| `--source-type` | `mbox` | Source type recorded in database (e.g., `hey` or `google-groups`) |
 | `--label` | — | Label(s) to apply to imported messages (repeatable, or comma-separated) |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
+
+For Google Groups Takeout, use `--source-type google-groups`. This preserves
+Groups thread IDs and labels, and does not auto-confirm the group identifier as
+"me". Import a Groups-only ZIP or an extracted group MBOX; non-message files are
+skipped.
 
 See [Importing Local Email](/docs/usage/importing/) for usage examples.
 

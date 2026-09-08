@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-07
 title: Importing Local Email
 description: Import PST archives, MBOX archives, and Apple Mail exports into msgvault.
 ---
@@ -84,6 +85,23 @@ Most email providers offer an MBOX export option:
 - **HEY.com**: Export from Settings, downloads as a `.zip` of MBOX files
 - **Thunderbird**: Use the ImportExportTools NG add-on to export folders as MBOX
 - **Fastmail, ProtonMail, Yahoo**: Check your provider's export/download settings
+
+### Google Groups
+
+Export groups you own with [Google Takeout](https://support.google.com/groups/answer/9975859?hl=en), then import the downloaded ZIP or an extracted group MBOX:
+
+```bash
+msgvault import-mbox test-group@googlegroups.com takeout.zip --source-type google-groups
+msgvault import-mbox test-group@googlegroups.com topics.mbox --source-type google-groups
+```
+
+Select only Google Groups when creating the ZIP. A ZIP import reads every MBOX inside it, so a combined Gmail and Groups export would also import the Gmail files into this source. For a combined export, extract it first and import the individual group MBOX files. Localized MBOX filenames work too.
+
+Messages retain their senders, recipients, dates, bodies, raw MIME, and attachments. Groups headers supply group labels and topic-state labels, including localized labels. Exported thread IDs keep replies together even when reply headers are absent; different groups remain separate. Without an exported thread ID, normal email reply threading applies.
+
+The identifier names the group or archive. It is used as the group label when Groups headers are missing, and is not automatically added as your personal identity. For a ZIP containing several groups, use a stable archive name as the identifier; message headers provide each group label. Reuse the same identifier and source type when resuming or reimporting.
+
+Membership CSV files, group settings, favorites, and other non-message export data are skipped. Google only includes archived group messages when the exporting account has access to download them; an export containing only personal Groups activity is not a message archive.
 
 ### Supported formats
 

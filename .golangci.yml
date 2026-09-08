@@ -106,6 +106,10 @@ linters:
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
+    misspell:
+      ignore-rules:
+        - thrid # Google exports use the literal X-GM-THRID header.
+
     errorlint:
       comparison: true
       asserts: true

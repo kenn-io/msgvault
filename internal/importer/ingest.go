@@ -35,14 +35,14 @@ func IngestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger,
 ) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil)
+	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "")
 }
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
 func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images)
+		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "")
 	}
 }
 
@@ -51,7 +51,7 @@ func ingestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger, images *remoteimage.Fetcher,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
 ) error {
 	parsed, _ := mime.ParseWithRecovery(raw, "(MIME parse error)")
 
@@ -99,7 +99,9 @@ func ingestRawMessage(
 		}
 	}
 
-	threadID := threadKey(parsed, rawHash)
+	if threadID == "" {
+		threadID = threadKey(parsed, rawHash)
+	}
 
 	convSubject := subject
 	if convSubject == "" {
