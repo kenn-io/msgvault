@@ -775,10 +775,9 @@ func TestPersonSweepWorkerForcesABackstopWhenABriefHasNoCursorProgress(t *testin
 	assert.NotNil(applied.Brief)
 }
 
-// Without a planned brief the same caught-up person keeps today's behavior:
-// nothing is claimed, nothing is spent, and the attempt fails for lack of
-// cursor progress.
-func TestPersonSweepWorkerKeepsNoCursorProgressFailureWithoutABrief(t *testing.T) {
+// A caught-up person with no planned brief has nothing left to retry.
+func TestPersonSweepWorkerCompletesIdleWorkWithoutABrief(t *testing.T) {
+	assert := assert.New(t)
 	config, catalog := workerTestConfig(t)
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	store := &workerFailureStore{cursor: Cursor{ReconciliationComplete: true, LastBackstopAt: &now}}
@@ -793,7 +792,10 @@ func TestPersonSweepWorkerKeepsNoCursorProgressFailureWithoutABrief(t *testing.T
 
 	_, err := worker.RunPerson(t.Context(), "run-no-progress", Lease{PersonID: 7,
 		WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}, RunIncremental)
-	require.ErrorContains(t, err, "no cursor progress")
+	require.NoError(t, err)
+	assert.Len(store.idleCompleted, 1)
+	assert.Empty(store.started, "idle work creates no inference attempt")
+	assert.Empty(store.failed)
 }
 
 // Ruling R10: rejecting a version is the owner asking for a different brief, so

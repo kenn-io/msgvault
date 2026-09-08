@@ -251,6 +251,30 @@ func (s *Store) RenewPersonSweep(
 	return &renewed, nil
 }
 
+// CompleteIdlePersonSweep finishes a claim that has no planned brief or
+// extraction progress. Recheck durable work while holding the lease row so new
+// extraction work remains queued instead of being discarded with the old brief.
+func (s *Store) CompleteIdlePersonSweep(
+	ctx context.Context, lease peoplesweep.Lease, programFingerprint, catalogFingerprint string,
+) error {
+	if programFingerprint == "" || catalogFingerprint == "" {
+		return errors.New("complete idle person sweep: fingerprints are required")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		current, err := s.lockPersonSweepWorkRowTx(ctx, tx, lease)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return peoplesweep.ErrLeaseLost
+		}
+		_, err = s.finishPersonSweepWorkTx(ctx, tx, personSweepWorkCompletion{
+			Lease: lease, ProgramFingerprint: programFingerprint, CatalogFingerprint: catalogFingerprint,
+		})
+		return err
+	})
+}
+
 // FailPersonSweepWork releases exactly one fenced lease and schedules its
 // retry. Inference usage is intentionally not recorded by this operation.
 func (s *Store) FailPersonSweepWork(

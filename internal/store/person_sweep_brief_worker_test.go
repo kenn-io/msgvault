@@ -23,6 +23,8 @@ type scriptedBriefRunner struct {
 	t             *testing.T
 	briefRequests int
 	briefPackets  []map[string]any
+
+	extractionRequests int
 }
 
 func (r *scriptedBriefRunner) PrepareStructured(
@@ -59,6 +61,7 @@ func (r *scriptedBriefRunner) RunPreparedStructured(
 		UsageKnown: true,
 	}
 	if request.ProgramID != peoplesweep.BriefProgramID {
+		r.extractionRequests++
 		response.Output = json.RawMessage(`{"claims":[]}`)
 		return response, nil
 	}
@@ -713,5 +716,111 @@ func TestPersonSweepWorkerBriefAdmissionFailureKeepsOtherExtractionWork(t *testi
 			assert.Equal(f.journal.bobPersonID, person.PersonID)
 			assert.Empty(person.BriefFailureClass)
 		}
+	}
+}
+
+func TestPersonSweepWorkerDiscardsObsoleteBriefRetry(t *testing.T) {
+	for _, mode := range []string{"unenrolled", "disabled"} {
+		for _, newActivity := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/new_activity=%t", mode, newActivity), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := newBriefWorkerEndToEndFixture(t, "obsolete-brief")
+				st, personID := f.journal.store, f.journal.alicePersonID
+				f.worker.Clock = func() time.Time { return time.Now().UTC() }
+				ids := 0
+				f.worker.NewID = func() string {
+					ids++
+					return fmt.Sprintf("obsolete-brief-%d", ids)
+				}
+				f.worker.Config.Budgets.MaxRequestsPerPerson = 1
+				request := peoplesweep.RunRequest{Kind: peoplesweep.RunScheduled,
+					Mode: peoplesweep.RunIncremental, Limit: 1}
+				first, err := f.worker.Run(t.Context(), request)
+				require.NoError(err)
+				require.Len(first.People, 1)
+				require.Equal(peoplesweep.FailureBudget, first.People[0].BriefFailureClass)
+				profile, err := f.config.Profile()
+				require.NoError(err)
+				sweepCursorsToHighWater(t, st, personID, profile, time.Now().UTC())
+				if mode == "unenrolled" {
+					_, err = st.SetPersonBriefEnrollmentContext(t.Context(), personID, false, "", false)
+					require.NoError(err)
+				} else {
+					f.worker.Config.Brief.Enabled = new(false)
+				}
+				if newActivity {
+					message := f.journal.insertMessage(t, "after-brief-disabled", "chat", f.journal.aliceID, time.Now().UTC())
+					addSweepBody(t, f.journal, message, "The new role is going well")
+				}
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+					`UPDATE person_sweep_work SET available_at = ? WHERE person_id = ?`), time.Now().UTC().Add(-time.Hour), personID)
+				require.NoError(err)
+				callsBefore := f.runner.extractionRequests
+				result, err := f.worker.Run(t.Context(), request)
+				require.NoError(err, "obsolete brief work must finish without another retry")
+				assert.Equal(1, result.PeopleSucceeded)
+				assert.Zero(f.runner.briefRequests)
+				if newActivity {
+					assert.Greater(f.runner.extractionRequests, callsBefore, "real extraction work must still run")
+				} else {
+					assert.Equal(callsBefore, f.runner.extractionRequests, "idle work must not call the provider")
+				}
+				var remaining int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+					`SELECT COUNT(*) FROM person_sweep_work WHERE person_id = ?`), personID).Scan(&remaining))
+				assert.Zero(remaining)
+				next, err := f.worker.Run(t.Context(), request)
+				require.NoError(err)
+				assert.Zero(next.PeopleAttempted, "obsolete work must not recur on the next tick")
+			})
+		}
+	}
+}
+
+func TestCompleteIdlePersonSweepKeepsNewWorkAndRequiresCurrentLease(t *testing.T) {
+	for _, name := range []string{"idle", "new activity", "stale fence"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newBriefWorkerEndToEndFixture(t, "idle-completion")
+			st, personID := f.journal.store, f.journal.alicePersonID
+			profile, err := f.config.Profile()
+			require.NoError(err)
+			sweepCursorsToHighWater(t, st, personID, profile, time.Now().UTC())
+			catalog, err := st.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
+			require.NoError(err)
+			_, err = st.EnsurePersonSweepWork(t.Context(), personID, true)
+			require.NoError(err)
+			lease := claimPersonSweepFixture(t, st, "idle-completion")
+			switch name {
+			case "new activity":
+				message := f.journal.insertMessage(t, "after-idle-assembly", "chat", f.journal.aliceID, time.Now().UTC())
+				addSweepBody(t, f.journal, message, "The new role is going well")
+			case "stale fence":
+				lease.Fence--
+			}
+			err = st.CompleteIdlePersonSweep(t.Context(), *lease, peoplesweep.ProgramFingerprint(), catalog.Fingerprint)
+			if name == "stale fence" {
+				require.ErrorIs(err, peoplesweep.ErrLeaseLost)
+			} else {
+				require.NoError(err)
+			}
+			var count int
+			var owner string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+				`SELECT COUNT(*), COALESCE(MAX(lease_owner), '') FROM person_sweep_work WHERE person_id = ?`),
+				personID).Scan(&count, &owner))
+			switch name {
+			case "idle":
+				assert.Zero(count)
+			case "new activity":
+				assert.Equal(1, count, "activity arriving after assembly remains queued")
+				assert.Empty(owner, "new work can be claimed by the next run")
+			case "stale fence":
+				assert.Equal(1, count)
+				assert.Equal("idle-completion", owner, "a stale worker cannot release the current claim")
+			}
+		})
 	}
 }

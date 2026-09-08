@@ -285,7 +285,10 @@ func TestFinishPersonSweepWorkRequeuesDocumentContinuations(t *testing.T) {
 			must.NoError(err)
 			var changed int
 			must.NoError(f.store.withTxContext(t.Context(), func(tx *loggedTx) error {
-				changed, err = f.store.finishPersonSweepWorkTx(t.Context(), tx, f.request)
+				changed, err = f.store.finishPersonSweepWorkTx(t.Context(), tx, personSweepWorkCompletion{
+					Lease: f.request.Lease, ProgramFingerprint: f.request.Generation.ProgramFingerprint,
+					CatalogFingerprint: f.request.Generation.CatalogFingerprint,
+				})
 				return err
 			}))
 			checks.Equal(1, changed)

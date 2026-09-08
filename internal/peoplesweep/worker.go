@@ -364,6 +364,7 @@ type WorkStore interface {
 	ReservePersonSweepBudget(ctx context.Context, input BudgetReservationRequest) (BudgetReservation, error)
 	ReleasePersonSweepBudget(ctx context.Context, reservation BudgetReservation) error
 	MarkPersonSweepBudgetStarted(ctx context.Context, reservation BudgetReservation, lease Lease) error
+	CompleteIdlePersonSweep(ctx context.Context, lease Lease, programFingerprint, catalogFingerprint string) error
 	FailPersonSweepWork(ctx context.Context, failure WorkFailure) error
 	FinalizePersonSweepFailure(ctx context.Context, input FailureFinalization) error
 }
@@ -668,6 +669,15 @@ func (w *Worker) runPerson(
 		}
 	}
 	if len(assembly.CursorEnvelope) == 0 {
+		if !plan.run {
+			// A queued brief can become ineligible while waiting to retry. With
+			// extraction caught up, finish the idle claim without an inference
+			// attempt. The store preserves work that arrived during assembly.
+			if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint); err != nil {
+				return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+			}
+			return PersonRunResult{PersonID: lease.PersonID}, nil
+		}
 		return PersonRunResult{}, w.failClaim(ctx, lease, "",
 			errors.New("person sweep assembly has no cursor progress"))
 	}

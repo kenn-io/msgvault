@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -223,7 +224,12 @@ func (s *Store) applyPersonSweepWithAligner(
 		if err := s.refreshPersonSweepAttemptAndRunUsage(ctx, tx, request.AttemptID, request.RunID); err != nil {
 			return err
 		}
-		workCount, err := s.finishPersonSweepWorkTx(ctx, tx, request)
+		workCount, err := s.finishPersonSweepWorkTx(ctx, tx, personSweepWorkCompletion{
+			Lease: request.Lease, ProgramFingerprint: request.Generation.ProgramFingerprint,
+			CatalogFingerprint: request.Generation.CatalogFingerprint,
+			DeferredCursorWork: request.DeferredCursorWork, BriefFailureClass: request.BriefFailureClass,
+			BriefRetryAt: request.BriefRetryAt,
+		})
 		if err != nil {
 			return err
 		}
@@ -702,8 +708,19 @@ func personSweepCursorApplyOrder(mode peoplesweep.GenerationCursorMode) int {
 	}
 }
 
+// personSweepWorkCompletion releases a claim independently of whether it
+// produced an inference generation.
+type personSweepWorkCompletion struct {
+	Lease              peoplesweep.Lease
+	ProgramFingerprint string
+	CatalogFingerprint string
+	DeferredCursorWork bool
+	BriefFailureClass  peoplesweep.FailureClass
+	BriefRetryAt       time.Time
+}
+
 func (s *Store) finishPersonSweepWorkTx(
-	ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest,
+	ctx context.Context, tx *loggedTx, request personSweepWorkCompletion,
 ) (int, error) {
 	remaining := request.DeferredCursorWork
 	var err error
@@ -716,8 +733,8 @@ func (s *Store) finishPersonSweepWorkTx(
 		(c.reconciliation_complete = FALSE AND c.reconcile_after_key <> c.reconcile_upper_key) OR EXISTS (
 			SELECT 1 FROM person_sweep_changes ch WHERE ch.person_id = c.person_id
 			AND ch.source_lane = c.source_lane AND ch.sequence > c.optimistic_sequence)))`,
-			request.Lease.PersonID, request.Generation.ProgramFingerprint,
-			request.Generation.CatalogFingerprint).Scan(&remaining)
+			request.Lease.PersonID, request.ProgramFingerprint,
+			request.CatalogFingerprint).Scan(&remaining)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("check remaining person sweep work: %w", err)

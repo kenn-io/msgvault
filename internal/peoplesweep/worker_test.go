@@ -140,6 +140,8 @@ type workerFailureStore struct {
 	markedLeases []Lease
 	renewCalls   atomic.Int64
 
+	idleCompleted []Lease
+
 	renewFailure    error
 	failNextRenewal atomic.Bool
 }
@@ -204,6 +206,10 @@ func (s *workerFailureStore) ReleasePersonSweepBudget(_ context.Context, reserva
 func (s *workerFailureStore) MarkPersonSweepBudgetStarted(_ context.Context, reservation BudgetReservation, lease Lease) error {
 	s.marked = append(s.marked, reservation)
 	s.markedLeases = append(s.markedLeases, lease)
+	return nil
+}
+func (s *workerFailureStore) CompleteIdlePersonSweep(_ context.Context, lease Lease, _, _ string) error {
+	s.idleCompleted = append(s.idleCompleted, lease)
 	return nil
 }
 func (s *workerFailureStore) FailPersonSweepWork(ctx context.Context, failure WorkFailure) error {
