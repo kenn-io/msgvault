@@ -43,7 +43,8 @@ func (c *ActionController) SaveMessage(detail *query.MessageDetail) tea.Cmd {
 			return fail(errors.New("raw email is not available in the archive"))
 		}
 		// Use only the local numeric ID, never untrusted headers, in the name.
-		file, path, err := export.CreateExclusiveFile(filepath.Join(dir, fmt.Sprintf("message-%d.eml", id)), 0o600)
+		name := filepath.Join(dir, fmt.Sprintf("message-%d.eml", id))
+		file, path, err := export.CreateExclusiveFile(name, 0o600)
 		if err != nil {
 			return fail(fmt.Errorf("create message file: %w", err))
 		}

@@ -141,8 +141,10 @@ func TestSaveMessageKeyReportsWriteFailure(t *testing.T) {
 	m.actions = NewActionController(&querytest.MockEngine{RawMessages: map[int64][]byte{42: []byte("Subject: Test\r\n\r\nFull message")}}, "", nil)
 	_, cmd := m.Update(key('s'))
 	require.NotNil(cmd)
-	// Move the destination after queuing the save, before its I/O runs.
-	t.Chdir(parent)
+	// Move the destination after queuing the save, before its I/O runs. Leave
+	// with os.Chdir: t.Chdir would hold dir open, which blocks the rename on
+	// Windows. The first t.Chdir already restores the original directory.
+	require.NoError(os.Chdir(parent)) //nolint:usetesting // t.Chdir pins dir open
 	moved := dir + "-moved"
 	require.NoError(os.Rename(dir, moved))
 	t.Cleanup(func() { require.NoError(os.Rename(moved, dir)) })
