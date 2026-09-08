@@ -728,7 +728,7 @@ func (m Model) buildDetailLines() []string {
 
 	// Labels
 	if len(msg.Labels) > 0 {
-		lines = append(lines, "Labels: "+strings.Join(msg.Labels, ", "))
+		lines = append(lines, "Labels: "+textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
 	}
 
 	// Attachments

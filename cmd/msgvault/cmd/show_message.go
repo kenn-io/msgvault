@@ -125,7 +125,7 @@ func outputMessageText(msg *query.MessageDetail) error {
 
 	// Labels
 	if len(msg.Labels) > 0 {
-		fmt.Printf("Labels:  %s\n", strings.Join(msg.Labels, ", "))
+		fmt.Printf("Labels:  %s\n", textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
 	}
 	if msg.DeletedAt != nil {
 		fmt.Printf("Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
