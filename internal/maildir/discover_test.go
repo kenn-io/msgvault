@@ -23,7 +23,10 @@ func TestDiscoverReadsDeliveredMessagesAndNestedFolders(t *testing.T) {
 	makeMailbox(t, root)
 	makeMailbox(t, filepath.Join(root, ".Projects.Go"))
 	makeMailbox(t, filepath.Join(root, "Archive", "2024"))
-	for _, file := range []string{"cur/one", "new/two", "tmp/incomplete", ".Projects.Go/cur/three", "Archive/2024/new/four", "dovecot-uidlist"} {
+	for _, file := range []string{
+		"cur/one", "new/two", "tmp/incomplete", ".Projects.Go/cur/three", "Archive/2024/new/four",
+		"dovecot-uidlist", "cur/.DS_Store", "new/.nfs0001",
+	} {
 		require.NoError(os.WriteFile(filepath.Join(root, file), []byte("Subject: test\r\n\r\nbody"), 0600))
 	}
 	boxes, err := Discover(root)

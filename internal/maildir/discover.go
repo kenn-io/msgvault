@@ -16,7 +16,8 @@ type Mailbox struct {
 }
 
 // Discover finds standard and Maildir++ mailboxes below root. It never follows
-// symlinks or descends into cur, new, or tmp directories.
+// symlinks or descends into cur, new, or tmp directories, and it skips
+// dotfiles in cur and new because Maildir unique names never start with a dot.
 func Discover(root string) ([]Mailbox, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -75,6 +76,11 @@ func Discover(root string) ([]Mailbox, error) {
 				return err
 			}
 			for _, file := range entries {
+				// Unique names never start with a dot; such entries are
+				// bookkeeping files, not messages.
+				if strings.HasPrefix(file.Name(), ".") {
+					continue
+				}
 				info, err := file.Info()
 				if err != nil {
 					return fmt.Errorf("inspect Maildir entry: %w", err)
