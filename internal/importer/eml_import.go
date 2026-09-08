@@ -247,7 +247,12 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 						}
 						flagLabelIDs[label] = id
 					}
-					labelIDs = append(labelIDs, id)
+					// A folder named like a flag (for example TRASH) shares
+					// the flag's label row; listing it twice would violate
+					// the message_labels primary key.
+					if id != labelID {
+						labelIDs = append(labelIDs, id)
+					}
 				}
 			}
 			hash := sha256.Sum256(raw)

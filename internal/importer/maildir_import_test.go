@@ -151,3 +151,34 @@ func TestImportMaildirRecoveredFailureIsSuccessful(t *testing.T) {
 	assert.Equal("completed", run.Status)
 	assert.Zero(run.ErrorsCount, "a fully recovered scan must be classified as successful")
 }
+
+func TestImportMaildirFolderNamedLikeFlagLabel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "mail")
+	maildirFixture(t, root)
+	maildirFixture(t, filepath.Join(root, ".TRASH"))
+	trashedName := "one:2,T"
+	if runtime.GOOS == "windows" {
+		trashedName = "one-trashed"
+	}
+	raw := []byte("From: alice@example.com\r\nSubject: trashed\r\n\r\nbody\r\n")
+	require.NoError(os.WriteFile(filepath.Join(root, ".TRASH", "cur", trashedName), raw, 0600))
+	summary, err := ImportMaildir(t.Context(), st, root, MaildirImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Zero(summary.Errors)
+	assert.False(summary.HardErrors)
+	rows, err := st.DB().Query(`SELECT l.name FROM message_labels ml JOIN labels l ON l.id=ml.label_id ORDER BY l.name`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var labels []string
+	for rows.Next() {
+		var name string
+		require.NoError(rows.Scan(&name))
+		labels = append(labels, name)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"TRASH", "UNREAD"}, labels)
+}
