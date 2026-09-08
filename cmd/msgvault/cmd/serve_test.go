@@ -2213,6 +2213,29 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 	assert.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
 }
 
+func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope, flags string
+	}{
+		{"default", oauth.ScopeGmailModify, ""},
+		{"readonly", oauth.ScopeGmailReadonly, " --readonly"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// An expired token without a refresh token fails locally, without
+			// contacting Google or opening an authorization flow.
+			_, restore := seedTokenEnv(t, fmt.Sprintf(`{"access_token":"expired","expiry":"2000-01-01T00:00:00Z","scopes":[%q]}`, tc.scope))
+			defer restore()
+			mgr, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), logger)
+			require.NoError(t, err)
+			_, err = runScheduledGmailSync(t.Context(), scopeEscalationAccount, nil, nil,
+				func(string) (*oauth.Manager, error) { return mgr, nil })
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
+			assert.Contains(t, err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
+		})
+	}
+}
+
 // TestRunScheduledIMAPSync_NoCredentials verifies that the IMAP path
 // in runScheduledSync is reachable — i.e. an IMAP source row makes the
 // dispatcher build an IMAP client and surface a credentials error,
