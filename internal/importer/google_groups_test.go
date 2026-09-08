@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Groups exports may have thread IDs without References or In-Reply-To.
@@ -95,4 +96,29 @@ func TestImportMbox_GoogleGroupsHeadersInOrdinaryMail(t *testing.T) {
 	assert.Equal(t, 1, conversations, "on-list and off-list replies must retain ordinary email threading")
 	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM labels").Scan(&labels))
 	assert.Zero(t, labels, "Groups metadata must require an explicit Groups import")
+}
+
+func TestImportMbox_GoogleGroupsHeaderFallbackKeepsThread(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	var data strings.Builder
+	for i, header := range []string{
+		"X-Google-Groups: test-group\r\n",
+		"X-BeenThere: test-group@googlegroups.com\r\n",
+		"",
+	} {
+		fmt.Fprintf(&data, "From synthetic@example.invalid Mon Jan 1 12:00:00 +0000 2024\r\nFrom: Alice <alice@example.com>\r\nMessage-ID: <message-%d@example.com>\r\nX-GM-THRID: 123\r\n%sSubject: Topic\r\n\r\nSynthetic message.\r\n\r\n", i, header)
+	}
+	path := filepath.Join(t.TempDir(), "topics.mbox")
+	require.NoError(t, os.WriteFile(path, []byte(data.String()), 0600))
+	summary, err := ImportMbox(t.Context(), st, path, MboxImportOptions{
+		SourceType: "google-groups", Identifier: "test-group@GoogleGroups.com",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), summary.MessagesAdded)
+	var conversations int
+	require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
+	assert.Equal(t, 1, conversations, "header and fallback identities must share a thread")
+	var groupLabels int
+	require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id WHERE l.name = 'test-group'").Scan(&groupLabels))
+	assert.Equal(t, 3, groupLabels, "every message must retain the same group label")
 }

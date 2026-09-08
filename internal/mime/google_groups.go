@@ -29,12 +29,16 @@ func ParseGoogleGroupsHeaders(raw []byte, fallbackGroup string) GoogleGroupsHead
 		}
 	}
 	if group == "" {
-		group = fallbackGroup
+		group = strings.TrimSpace(fallbackGroup)
 	}
 	if group == "" {
 		return GoogleGroupsHeaders{}
 	}
-	result := GoogleGroupsHeaders{Group: strings.ToValidUTF8(strings.TrimSpace(group), "\uFFFD")}
+	// Use the same public group identity for headers and archive identifiers.
+	if local, domain, ok := strings.Cut(group, "@"); ok && local != "" && strings.EqualFold(domain, "googlegroups.com") {
+		group = local
+	}
+	result := GoogleGroupsHeaders{Group: strings.ToValidUTF8(group, "\uFFFD")}
 	thread := strings.TrimSpace(firstHeader(headers, "x-gm-thrid"))
 	if id, err := strconv.ParseUint(thread, 10, 64); err == nil && id != 0 {
 		result.ThreadID = strconv.FormatUint(id, 10)

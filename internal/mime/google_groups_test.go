@@ -15,6 +15,8 @@ func TestParseGoogleGroupsHeaders(t *testing.T) {
 		{name: "other mailing list remains ordinary", raw: "X-BeenThere: list@example.com\nX-GM-THRID: 123\n\nbody"},
 		{name: "lookalike domain remains ordinary", raw: "X-BeenThere: list@googlegroups.com.example.com\n\nbody"},
 		{name: "public group fallback", raw: "X-BeenThere: test-group@GoogleGroups.com\r\nX-GM-THRID: 000123\r\n\r\nbody", want: GoogleGroupsHeaders{Group: "test-group", ThreadID: "123", Labels: []string{"test-group"}}},
+		{name: "public archive identifier", raw: "X-GM-THRID: 123\n\nbody", fallback: " test-group@GoogleGroups.com ", want: GoogleGroupsHeaders{Group: "test-group", ThreadID: "123", Labels: []string{"test-group"}}},
+		{name: "public address in Groups header", raw: "X-Google-Groups: test-group@GoogleGroups.com\nX-GM-THRID: 123\n\nbody", want: GoogleGroupsHeaders{Group: "test-group", ThreadID: "123", Labels: []string{"test-group"}}},
 		{name: "explicit Workspace export", raw: "X-GM-THRID: 123\n\nbody", fallback: "team@example.com", want: GoogleGroupsHeaders{Group: "team@example.com", ThreadID: "123", Labels: []string{"team@example.com"}}},
 		{name: "headers beat archive identifier", raw: "X-Google-Groups: test-group\nX-BeenThere: other@googlegroups.com\nX-GM-THRID: 123\n\nbody", fallback: "archive", want: GoogleGroupsHeaders{Group: "test-group", ThreadID: "123", Labels: []string{"test-group"}}},
 		{name: "invalid thread uses email threading", raw: "X-Google-Groups: test-group\nX-GM-THRID: not-a-number\n\nbody", want: GoogleGroupsHeaders{Group: "test-group", Labels: []string{"test-group"}}},
