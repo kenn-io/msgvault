@@ -1495,8 +1495,8 @@ shipped definitions and complete workflow.
 ## person provider status
 
 Show the exact people inference provider policy and its check and consent state.
-The JSON output adds `stale_program_check` or `stale_program_consent` when a
-verified historical record matches every policy field except the extraction
+The JSON output includes the selected profile `name` and adds
+`stale_program_check` or `stale_program_consent` when a verified historical record matches every policy field except the extraction
 program and supplies a missing current gate. Human output identifies a
 different extraction program and gives the recovery command without provider
 credentials or response content.
@@ -1513,12 +1513,13 @@ granted. The command prints the provider disclosure and asks for confirmation
 unless `--yes` is supplied.
 
 ```bash
-msgvault person provider reverify <name> --yes [--json]
+msgvault person provider reverify [name] --yes [--json]
 ```
 
-`--yes` confirms the disclosure. `--json` returns the final exact check and
-consent status. The named profile can be disabled in configuration, and this
-command still selects it for the operation without enabling scheduled sweeps.
+Omit `name` to use the active provider, as with `check` and `consent`.
+`--yes` confirms the disclosure. Human output includes the disclosure even with
+`--yes`; `--json` returns the final exact check and consent status. The named
+profile can be disabled in configuration, and this command still selects it for the operation without enabling scheduled sweeps.
 
 ---
 

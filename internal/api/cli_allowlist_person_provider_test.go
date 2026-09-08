@@ -70,7 +70,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 			"person", "provider", "revoke", "--if-fingerprint", strings.Repeat("a", 64),
 		}},
 		{name: "extra positional smuggling", args: []string{"person", "provider", "check", "alpha", "beta"}},
-		{name: "reverify missing name", args: []string{"person", "provider", "reverify", "--yes"}},
+		{name: "active reverify", args: []string{"person", "provider", "reverify", "--yes"}, want: true},
 		{name: "reverify extra positional", args: []string{"person", "provider", "reverify", "alpha", "beta", "--yes"}},
 		{name: "reverify semantic flag", args: []string{"person", "provider", "reverify", "alpha", "--semantic-embeddings", "--yes"}},
 		{name: "reverify credential smuggling", args: []string{"person", "provider", "reverify", "alpha", "--api-key=secret-canary", "--yes"}},

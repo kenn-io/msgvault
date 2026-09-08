@@ -84,6 +84,7 @@ type personProviderCommandDeps struct {
 }
 
 type personProviderStatusOutput struct {
+	Name                string                              `json:"name,omitempty"`
 	Profile             peoplesweep.ProviderProfile         `json:"profile"`
 	Check               *store.PersonInferenceCheck         `json:"check,omitempty"`
 	Consent             store.PersonInferenceConsentStatus  `json:"consent"`
@@ -336,16 +337,20 @@ func newPersonProviderReverifyCommand(deps personProviderCommandDeps) *cobra.Com
 	var confirmed bool
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:   "reverify <name>",
+		Use:   "reverify [name]",
 		Short: "Re-run the exact provider check and consent",
-		Args:  exactPersonProviderNameArgs,
+		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
-			runDeps, err := personProviderDepsForName(deps, args[0])
-			if err != nil {
-				return err
+			runDeps := deps
+			if len(args) == 1 {
+				var err error
+				runDeps, err = personProviderDepsForName(deps, args[0])
+				if err != nil {
+					return err
+				}
 			}
 			return runPersonProviderReverify(command, runDeps, confirmed, jsonOutput)
 		},
@@ -1219,11 +1224,13 @@ func runPersonProviderStatus(
 		return runPersonSemanticProviderStatus(command, deps, all, jsonOutput)
 	}
 	var codexIsolation *personProviderCodexIsolationStatus
+	var profileName string
 	if !all {
-		_, provider, err := deps.config().ActiveProviderConfig()
+		name, provider, err := deps.config().ActiveProviderConfig()
 		if err != nil {
 			return err
 		}
+		profileName = name
 		if provider.Protocol == peoplesweep.ProtocolCodexAppServer {
 			boundary := provider.ExecutionBoundary
 			_, err := currentPersonProviderCodexClient(deps)
@@ -1267,6 +1274,7 @@ func runPersonProviderStatus(
 	if err != nil {
 		return err
 	}
+	output.Name = profileName
 	output.CodexIsolation = codexIsolation
 	output.StaleProgramCheck, output.StaleProgramConsent, err = personProviderStaleProgramState(
 		command.Context(), st, profile, output,
@@ -1592,6 +1600,7 @@ func runPersonProviderReverify(
 		}
 		return writePersonProviderStatus(command.OutOrStdout(), output, true)
 	}
+	printPersonProviderDisclosure(command.OutOrStdout(), profile)
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "People inference provider reverified (fingerprint=%s).\n", profile.Fingerprint)
 	return nil
 }
@@ -1901,7 +1910,7 @@ func writePersonProviderStatus(
 			output.Check.CheckedAt.Format(time.RFC3339), output.Check.ModelVersion)
 	}
 	if output.StaleProgramCheck {
-		_, _ = fmt.Fprintln(w, "Check: a matching record uses a different extraction program; run msgvault person provider reverify <name> --yes")
+		_, _ = fmt.Fprintf(w, "Check: a matching record uses a different extraction program; run msgvault person provider reverify %s --yes\n", output.Name)
 	}
 	state := "inactive"
 	if output.Consent.Active {
@@ -1911,7 +1920,7 @@ func writePersonProviderStatus(
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
 	if output.StaleProgramConsent {
-		_, _ = fmt.Fprintln(w, "Consent: a matching grant uses a different extraction program; run msgvault person provider reverify <name> --yes")
+		_, _ = fmt.Fprintf(w, "Consent: a matching grant uses a different extraction program; run msgvault person provider reverify %s --yes\n", output.Name)
 	}
 	if output.CodexIsolation != nil {
 		availability := "unavailable"

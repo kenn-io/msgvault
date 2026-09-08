@@ -1780,9 +1780,6 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 	if guardedRevoke && positionals != 1 {
 		return false
 	}
-	if operation == "reverify" && positionals != 1 {
-		return false
-	}
 	return true
 }
 

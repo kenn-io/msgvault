@@ -573,7 +573,7 @@ func (r *Runner) requireVerifiedAndConsented(ctx context.Context, fingerprint st
 		return fmt.Errorf("check exact people inference provider verification: %w", err)
 	}
 	if !verified {
-		return errors.New("people inference requires a successful check for the exact provider profile")
+		return errors.New("people inference requires a successful check for the exact provider profile; run msgvault person provider status")
 	}
 	active, err := r.authority.HasActivePersonInferenceConsent(ctx, fingerprint)
 	if err != nil {

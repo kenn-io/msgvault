@@ -241,8 +241,10 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	t.Setenv("TEST_PROVIDER_KEY", environmentSecretCanary)
 	deps := defaultPersonProviderCommandDeps()
 
-	_, err := executePersonProviderCommand(t, deps, "reverify", "default", "--yes")
+	reverifyOutput, err := executePersonProviderCommand(t, deps, "reverify", "--yes")
 	require.NoError(err)
+	assert.Contains(reverifyOutput, "People inference provider disclosure")
+	assert.Contains(reverifyOutput, provider.URL+"/v1")
 	captured := <-requests
 	consentOutput, err := executePersonProviderCommand(t, deps, "consent", "--yes", "--json")
 	require.NoError(err)
@@ -266,7 +268,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	require.True(ok)
 	assert.Equal("Return an object with ok set to true.", message["content"])
 	assert.NotContains(string(mustJSON(t, captured.Body)), "archive")
-	for range 2 {
+	for range 3 {
 		req := <-requestsToDaemon
 		wire := mustJSON(t, req)
 		assert.Empty(req.Env)

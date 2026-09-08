@@ -647,7 +647,7 @@ func TestRunnerFailsClosedBeforeCredentialOrTransport(t *testing.T) {
 		},
 		{
 			name: "missing verification", config: runnerTestConfig(), request: baseRequest,
-			unverified: true, wantVerified: 1, want: "successful check",
+			unverified: true, wantVerified: 1, want: "run msgvault person provider status",
 		},
 		{
 			name: "missing consent", config: runnerTestConfig(), request: baseRequest,

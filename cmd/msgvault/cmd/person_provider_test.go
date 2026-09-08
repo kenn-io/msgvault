@@ -189,9 +189,6 @@ func historicalPersonProviderProfileWithMutation(
 	if mutate != nil {
 		mutate(&historical)
 	}
-	historical.PolicyJSON = testProviderPolicyJSON(t, historical)
-	variantFingerprintDigest := sha256.Sum256(historical.PolicyJSON)
-	historical.Fingerprint = hex.EncodeToString(variantFingerprintDigest[:])
 	if oldProgram == "" {
 		oldProgram = strings.Repeat("a", len(profile.ProgramFingerprint))
 	}
@@ -401,14 +398,15 @@ func TestPersonProviderStatusReportsStaleProgram(t *testing.T) {
 	historicalPersonProviderProfile(t, st, current, true, true)
 	deps := localPersonProviderDeps(config, st, nil)
 
-	human, err := executePersonProviderCommand(t, deps, "status", "default")
+	human, err := executePersonProviderCommand(t, deps, "status")
 	require.NoError(err)
 	assert.Contains(human, "different extraction program")
-	assert.Contains(human, "msgvault person provider reverify <name> --yes")
-	jsonOutput, err := executePersonProviderCommand(t, deps, "status", "default", "--json")
+	assert.Contains(human, "msgvault person provider reverify default --yes")
+	jsonOutput, err := executePersonProviderCommand(t, deps, "status", "--json")
 	require.NoError(err)
 	var got map[string]any
 	require.NoError(json.Unmarshal([]byte(jsonOutput), &got))
+	assert.Equal("default", got["name"])
 	assert.Equal(true, got["stale_program_check"])
 	assert.Equal(true, got["stale_program_consent"])
 }
@@ -596,7 +594,7 @@ func TestPersonProviderReverifyRunsCheckThenGrantsExactConsent(t *testing.T) {
 		ProviderVersion: profile.DriverVersion, ModelVersion: "current-model-v1",
 	}}
 	deps := localPersonProviderDeps(config, st, checker)
-	output, err := executePersonProviderCommand(t, deps, "reverify", "default", "--yes", "--json")
+	output, err := executePersonProviderCommand(t, deps, "reverify", "--yes", "--json")
 	require.NoError(err)
 	var status personProviderStatusOutput
 	require.NoError(json.Unmarshal([]byte(output), &status))

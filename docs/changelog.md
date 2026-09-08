@@ -10,10 +10,10 @@ All notable changes to msgvault, grouped by release.
 
 - Apply curated person display names to people analytics, search, and exported authors. Add `export-messages --person-id` to select messages through bound participants.
 - Add an opt-in local CSV to PDF conversion path for standalone document indexing. The provider receives generated PDF bytes while the archive retains CSV source identity and conversion provenance.
-
 - Report provider checks and consent recorded for an earlier people extraction
-  program, and add `person provider reverify <name> --yes` to run the synthetic
-  check before granting current exact consent.
+  program, and add `person provider reverify [name] --yes` to run the synthetic
+  check before granting current exact consent. Keep historical profiles readable
+  after program changes so `status --all` and `revoke --all` continue to work.
 
 **Breaking changes**
 
