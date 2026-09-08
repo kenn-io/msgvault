@@ -22,9 +22,11 @@ import (
 
 const (
 	baseURL        = "https://gmail.googleapis.com/gmail/v1"
-	maxRetries     = 12  // Covers ~10 minutes of network outages
+	maxRetries     = 12  // Upper bound; the request deadline also limits retries
 	maxBackoff     = 600 // Max backoff in seconds
 	defaultTimeout = 30 * time.Second
+	// Raw MIME includes attachments and needs more time on slow connections.
+	rawRequestTimeout = 5 * time.Minute
 )
 
 // Client implements the Gmail API interface.
@@ -91,6 +93,19 @@ func (c *Client) Close() error {
 // request makes an HTTP request with rate limiting and retry logic.
 // bodyBytes can be nil for requests without a body.
 func (c *Client) request(ctx context.Context, op Operation, method, path string, bodyBytes []byte) ([]byte, error) {
+	// Share one budget across rate limiting, HTTP I/O and retry backoff.
+	// It bounds the Gmail request path once a token is available; tokens are
+	// fetched beforehand via the contextless TokenSource.Token(), so sources
+	// created by internal/oauth cap every token-endpoint call separately
+	// (oauth.refreshHTTPTimeout per call) instead of sharing this deadline.
+	// Any other TokenSource keeps its own refresh behavior.
+	timeout := defaultTimeout
+	if op == OpMessagesGetRaw {
+		timeout = rawRequestTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	// Acquire rate limit tokens
 	if err := c.rateLimiter.Acquire(ctx, op); err != nil {
 		return nil, fmt.Errorf("rate limit: %w", err)

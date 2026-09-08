@@ -255,8 +255,9 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (oauth2.TokenSo
 		return nil, fmt.Errorf("no valid token for %s: %w", email, err)
 	}
 
-	// Create a token source that auto-refreshes
-	ts := m.config.TokenSource(ctx, &tf.Token)
+	// Create a token source that auto-refreshes. The creation context
+	// bounds the token-endpoint client used by every later refresh.
+	ts := m.config.TokenSource(withRefreshHTTPClient(ctx), &tf.Token)
 
 	// Save refreshed token if it changed
 	newToken, err := ts.Token()
@@ -303,7 +304,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
 	// A token without an access token is never Valid, so the token source
 	// must hit the token endpoint with the refresh grant.
 	stale := &oauth2.Token{RefreshToken: tf.RefreshToken}
-	newToken, err := m.config.TokenSource(ctx, stale).Token()
+	newToken, err := m.config.TokenSource(withRefreshHTTPClient(ctx), stale).Token()
 	if err != nil {
 		return fmt.Errorf("refresh token: %w", err)
 	}
@@ -662,6 +663,36 @@ func (m *Manager) browserFlow(
 
 const resolveTimeout = 10 * time.Second
 
+// refreshHTTPTimeout caps each token-endpoint HTTP call (refresh grant or
+// service-account JWT exchange) made by token sources this package creates.
+// oauth2 sources take their HTTP client from the creation context, and later
+// refreshes run through the contextless TokenSource.Token() — invoked by
+// oauth2.Transport before dispatching an API request — so a stalled token
+// endpoint can only be bounded inside that client. The cap applies per call:
+// when x/oauth2 does not know the endpoint's auth style it retries once with
+// the other style, so one Token() performs at most two bounded calls. It is
+// independent of any caller's request deadline.
+const refreshHTTPTimeout = 30 * time.Second
+
+// withRefreshHTTPClient returns ctx carrying a token-endpoint client whose
+// Timeout is capped at refreshHTTPTimeout. The client already in ctx — or
+// http.DefaultClient, oauth2's fallback — is shallow-copied so Transport,
+// Jar and CheckRedirect are preserved and the original is never mutated; a
+// client whose Timeout is already refreshHTTPTimeout or less is kept as is.
+// The context's cancellation chain is untouched.
+func withRefreshHTTPClient(ctx context.Context) context.Context {
+	base := http.DefaultClient
+	if c, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok {
+		base = c
+	}
+	if base.Timeout > 0 && base.Timeout <= refreshHTTPTimeout {
+		return ctx
+	}
+	capped := *base
+	capped.Timeout = refreshHTTPTimeout
+	return context.WithValue(ctx, oauth2.HTTPClient, &capped)
+}
+
 // resolveTokenEmail calls a Google profile endpoint to confirm that
 // the token belongs to an account matching the expected email.
 // Returns the canonical Google account email when available,
@@ -675,7 +706,7 @@ func (m *Manager) resolveTokenEmail(
 	if m.profileURL != "" {
 		endpoint.url = m.profileURL
 	}
-	ts := m.config.TokenSource(ctx, token)
+	ts := m.config.TokenSource(withRefreshHTTPClient(ctx), token)
 	return fetchTokenProfileEmailFromEndpoint(ctx, ts, endpoint, email, tokenProfileErrorOAuth)
 }
 

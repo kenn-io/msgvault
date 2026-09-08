@@ -62,5 +62,7 @@ func (m *ServiceAccountManager) TokenSource(ctx context.Context, email string) (
 		return nil, fmt.Errorf("parse service account key: %w", err)
 	}
 	conf.Subject = email
-	return conf.TokenSource(ctx), nil
+	// The creation context carries a bounded token-endpoint client so the
+	// JWT exchange cannot stall the caller forever.
+	return conf.TokenSource(withRefreshHTTPClient(ctx)), nil
 }

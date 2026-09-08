@@ -17,6 +17,13 @@ import (
 
 func writeServiceAccountKey(t *testing.T, path string, perm os.FileMode) {
 	t.Helper()
+	writeServiceAccountKeyWithTokenURI(t, path, perm, "https://oauth2.googleapis.com/token")
+}
+
+// writeServiceAccountKeyWithTokenURI writes a service-account key whose
+// token_uri the test controls, so the JWT exchange targets a known endpoint.
+func writeServiceAccountKeyWithTokenURI(t *testing.T, path string, perm os.FileMode, tokenURI string) {
+	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	require.NoError(t, err, "GenerateKey")
@@ -34,7 +41,7 @@ func writeServiceAccountKey(t *testing.T, path string, perm os.FileMode) {
 		"private_key":    string(pemKey),
 		"client_email":   "svc@test-project.iam.gserviceaccount.com",
 		"client_id":      "123456789",
-		"token_uri":      "https://oauth2.googleapis.com/token",
+		"token_uri":      tokenURI,
 	})
 	require.NoError(t, err, "Marshal")
 	require.NoError(t, os.WriteFile(path, data, perm), "WriteFile")
