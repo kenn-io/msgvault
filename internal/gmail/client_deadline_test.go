@@ -84,7 +84,7 @@ func TestGetProfileRetryDeadline(t *testing.T) {
 	}
 }
 
-func TestGetProfileDeadlineIncludesRateLimitWait(t *testing.T) {
+func TestGetProfileCallerDeadlineBoundsRateLimitWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -99,9 +99,80 @@ func TestGetProfileDeadlineIncludesRateLimitWait(t *testing.T) {
 		start := time.Now()
 		_, err := c.GetProfile(ctx)
 		require.ErrorIs(err, context.DeadlineExceeded)
-		assert.Equal(30*time.Second, time.Since(start))
+		assert.Equal(time.Minute, time.Since(start))
 		assert.Zero(requests)
 	})
+}
+
+func TestGetProfileDeadlineStartsAfterRateLimitWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var httpStart time.Time
+		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			httpStart = time.Now()
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		c.rateLimiter.Throttle(time.Minute)
+		start := time.Now()
+		_, err := c.GetProfile(context.Background())
+		require.ErrorIs(err, context.DeadlineExceeded)
+		require.False(httpStart.IsZero(), "request must get through the quota wait")
+		assert.GreaterOrEqual(httpStart.Sub(start), time.Minute)
+		assert.Equal(30*time.Second, time.Since(httpStart))
+	})
+}
+
+func TestListMessagesAfterRawFetchQuotaRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		throttle time.Duration
+	}{
+		{"403 quota", http.StatusForbidden, time.Minute},
+		{"429 rate limit", http.StatusTooManyRequests, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				rawRequests := 0
+				c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+					switch r.URL.Path {
+					case "/gmail/v1/users/me/messages/msg-1":
+						rawRequests++
+						if rawRequests == 1 {
+							return deadlineResponse(tc.status,
+								string(NewGmailError(tc.status).WithReason(reasonRateLimitExceeded).Build())), nil
+						}
+						return deadlineResponse(http.StatusOK, `{"id":"msg-1","raw":"dGVzdA"}`), nil
+					case "/gmail/v1/users/me/messages":
+						// A quota wait must leave time for the next page to arrive.
+						select {
+						case <-r.Context().Done():
+							return nil, r.Context().Err()
+						case <-time.After(5 * time.Second):
+						}
+						return deadlineResponse(http.StatusOK, `{"messages":[{"id":"msg-2"}]}`), nil
+					default:
+						return deadlineResponse(http.StatusNotFound, ""), nil
+					}
+				})
+				start := time.Now()
+				message, err := c.GetMessageRaw(context.Background(), "msg-1")
+				require.NoError(err)
+				assert.Equal([]byte("test"), message.Raw)
+
+				page, err := c.ListMessages(context.Background(), "", "")
+				require.NoError(err)
+				require.Len(page.Messages, 1)
+				assert.Equal("msg-2", page.Messages[0].ID)
+				assert.GreaterOrEqual(time.Since(start), tc.throttle+5*time.Second,
+					"preserve the quota pause before fetching the next page")
+			})
+		})
+	}
 }
 
 type deadlineBody struct {

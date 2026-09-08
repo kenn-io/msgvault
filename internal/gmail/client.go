@@ -93,7 +93,13 @@ func (c *Client) Close() error {
 // request makes an HTTP request with rate limiting and retry logic.
 // bodyBytes can be nil for requests without a body.
 func (c *Client) request(ctx context.Context, op Operation, method, path string, bodyBytes []byte) ([]byte, error) {
-	// Share one budget across rate limiting, HTTP I/O and retry backoff.
+	// Quota pauses can exceed the request timeout. Wait using the caller's
+	// context so a previous request's throttle does not exhaust this budget.
+	if err := c.rateLimiter.Acquire(ctx, op); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
+	// Share one budget across HTTP I/O and retry backoff after acquiring tokens.
 	// It bounds the Gmail request path once a token is available; tokens are
 	// fetched beforehand via the contextless TokenSource.Token(), so sources
 	// created by internal/oauth cap every token-endpoint call separately
@@ -105,11 +111,6 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	// Acquire rate limit tokens
-	if err := c.rateLimiter.Acquire(ctx, op); err != nil {
-		return nil, fmt.Errorf("rate limit: %w", err)
-	}
 
 	reqURL := baseURL + path
 
