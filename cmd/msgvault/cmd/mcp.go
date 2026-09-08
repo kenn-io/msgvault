@@ -92,11 +92,15 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
 		DataDir:            cfg.Data.DataDir,
 	}
-	compatible, capabilityErr := st.SupportsAPISchemaVersion(ctx, peopleMinAPISchemaVersion)
+	schemaVersion, capabilityErr := st.APISchemaVersion(ctx)
 	if capabilityErr != nil {
 		logger.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
-	} else if compatible {
-		opts.PeopleBackend = daemonclient.NewPeopleBrowser(engine)
+	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, peopleMinAPISchemaVersion) {
+		people := daemonclient.NewPeopleBrowser(engine)
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, directoryPeopleMinAPISchemaVersion) {
+			opts.DirectoryBackend = people
+		}
+		opts.PeopleBackend = people
 	}
 
 	vectorAvailable, err := st.VectorSearchAvailable(ctx)

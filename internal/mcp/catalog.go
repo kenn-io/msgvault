@@ -33,6 +33,7 @@ type catalogCapabilities struct {
 	similarMessages bool
 	documentSearch  bool
 	people          bool
+	directoryPeople bool
 	visualSearch    bool
 }
 
@@ -108,6 +109,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
 		documentSearch:  opts.DocumentSearcher != nil,
 		people:          opts.PeopleBackend != nil,
+		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
 	}
 }
@@ -115,19 +117,20 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only sixty-four possible capability keys, which also keeps
+// request. There are only 128 possible capability keys, which also keeps
 // the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 64)
-	for mask := range 64 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 128)
+	for mask := range 128 {
 		capabilities := catalogCapabilities{
-			semanticSearch:  mask&0b100000 != 0,
-			vectorInMessage: mask&0b010000 != 0,
-			similarMessages: mask&0b001000 != 0,
-			documentSearch:  mask&0b000100 != 0,
-			people:          mask&0b000010 != 0,
+			directoryPeople: mask&0b1000000 != 0,
+			semanticSearch:  mask&0b0100000 != 0,
+			vectorInMessage: mask&0b0010000 != 0,
+			similarMessages: mask&0b0001000 != 0,
+			documentSearch:  mask&0b0000100 != 0,
+			people:          mask&0b0000010 != 0,
 			visualSearch:    mask&0b000001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
@@ -151,6 +154,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonRelationshipDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
+		listDirectoryPeopleDefinition(nil),
 		searchByDomainsDefinition(nil),
 		searchDocumentsDefinition(nil),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
@@ -229,6 +233,8 @@ func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMess
 func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSearch }
 
 func peopleAvailable(c catalogCapabilities) bool { return c.people }
+
+func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPeople }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false

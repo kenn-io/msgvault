@@ -42,6 +42,7 @@ const (
 	ToolSearchDocuments         = "search_document_attachments"
 	ToolSearchPersonFiles       = "search_person_files"
 	ToolSearchPeople            = "search_people"
+	ToolListDirectoryPeople     = "list_directory_people"
 	ToolGetPersonNotes          = "get_person_notes"
 	ToolGetPersonProfile        = "get_person_profile"
 	ToolGetPersonRelationship   = "get_person_relationship"
@@ -71,6 +72,7 @@ type ServeOptions struct {
 	DocumentSearcher   DocumentSearcher
 	PersonFileSearcher PersonFileSearcher
 	PeopleBackend      peoplebrowser.Backend
+	DirectoryBackend   peoplebrowser.DirectoryLister
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -206,6 +208,7 @@ func newMCPServerWithPolicy(
 		documentSearcher:   opts.DocumentSearcher,
 		personFileSearcher: opts.PersonFileSearcher,
 		peopleBackend:      opts.PeopleBackend,
+		directoryBackend:   opts.DirectoryBackend,
 		hybridEngine:       opts.HybridEngine,
 		vectorCfg:          opts.VectorCfg,
 		backend:            opts.Backend,

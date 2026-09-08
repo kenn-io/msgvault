@@ -190,6 +190,7 @@ func tuiPeopleBackend(
 const (
 	semanticSearchMinAPISchemaVersion   = "2.7.0"
 	peopleMinAPISchemaVersion           = "2.10.0"
+	directoryPeopleMinAPISchemaVersion  = "2.13.0"
 	collectionScopesMinAPISchemaVersion = "2.17.0"
 	briefMinAPISchemaVersion            = "2.20.0"
 	tuiSemanticMessageType              = "email"

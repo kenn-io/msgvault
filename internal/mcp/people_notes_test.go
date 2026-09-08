@@ -82,16 +82,24 @@ func (b *recordingPeopleBackend) AppendNote(_ context.Context, request peoplebro
 	return b.appendWrite, b.appendErr
 }
 
+func (b *recordingPeopleBackend) ListDirectoryPeople(_ context.Context, _ store.DirectoryPeopleQuery) (*store.DirectoryPeoplePage, error) {
+	return nil, codedPeopleError{code: "directory_people_not_implemented"}
+}
+
 type codedPeopleError struct{ code string }
 
 func (e codedPeopleError) Error() string        { return e.code }
 func (e codedPeopleError) APIErrorCode() string { return e.code }
 
 func peopleToolOptions(backend peoplebrowser.Backend) ServeOptions {
-	return ServeOptions{
+	opts := ServeOptions{
 		Engine: &querytest.MockEngine{}, PeopleBackend: backend,
 		AllowProfileWrites: true,
 	}
+	if lister, ok := backend.(peoplebrowser.DirectoryLister); ok {
+		opts.DirectoryBackend = lister
+	}
+	return opts
 }
 
 func toolStructuredContent(t *testing.T, result map[string]any) map[string]any {
@@ -109,18 +117,23 @@ func toolErrorTextFromResult(t *testing.T, result map[string]any) string {
 func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 	assert := assert.New(t)
 	withoutPeople := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, true))
-	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
+	for _, name := range []string{ToolSearchPeople, ToolListDirectoryPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
 		assert.NotContains(withoutPeople, name)
 	}
 
 	backend := &recordingPeopleBackend{}
 	readOnly := toolsByName(t, rawListTools(t, peopleToolOptions(backend), false))
 	assert.Contains(readOnly, ToolSearchPeople)
+	assert.Contains(readOnly, ToolListDirectoryPeople)
 	assert.Contains(readOnly, ToolGetPersonNotes)
 	assert.Contains(readOnly, ToolGetPersonProfile)
 	assert.Contains(readOnly, ToolGetPersonRelationship)
 	assert.NotContains(readOnly, ToolPromotePerson)
 	assert.NotContains(readOnly, ToolUpdatePersonNotes)
+
+	withoutDirectory := toolsByName(t, rawListTools(t, peopleToolOptions(&directoryCapabilityOnlyBackend{}), false))
+	assert.Contains(withoutDirectory, ToolSearchPeople)
+	assert.NotContains(withoutDirectory, ToolListDirectoryPeople)
 
 	defaultWrites := toolsByName(t, rawListTools(t, ServeOptions{
 		Engine: &querytest.MockEngine{}, PeopleBackend: backend,
@@ -130,15 +143,20 @@ func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 	assert.NotContains(defaultWrites, ToolUpdatePersonNotes)
 
 	writable := toolsByName(t, rawListTools(t, peopleToolOptions(backend), true))
-	for _, name := range []string{ToolSearchPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
+	for _, name := range []string{ToolSearchPeople, ToolListDirectoryPeople, ToolGetPersonNotes, ToolGetPersonProfile, ToolGetPersonRelationship, ToolPromotePerson, ToolUpdatePersonNotes} {
 		assert.Contains(writable, name)
 	}
 	assert.Equal([]string{"cursor", "limit", "query"}, toolPropertyNames(t, writable[ToolSearchPeople]))
+	assert.Equal([]string{"category", "contact_state", "cursor", "last_contact_after", "last_contact_before", "limit", "organization", "primary_channel", "query", "sort"}, toolPropertyNames(t, writable[ToolListDirectoryPeople]))
+	assert.Equal([]any{"name", "last_contact_desc", "last_contact_asc"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "sort")["enum"])
+	assert.Equal([]any{"active", "inactive"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "contact_state")["enum"])
+	assert.InDelta(float64(store.DefaultDirectoryPeopleLimit), toolInputProperty(t, writable[ToolListDirectoryPeople], "limit")["default"], 0)
 	assert.Equal([]string{"person_id"}, toolPropertyNames(t, writable[ToolGetPersonNotes]))
 	assert.Equal([]string{"participant_id", "timezone", "year"}, toolPropertyNames(t, writable[ToolGetPersonRelationship]))
 	assert.Equal([]string{"participant_id"}, toolPropertyNames(t, writable[ToolPromotePerson]))
 	assert.Equal([]string{"expected_value_id", "mode", "person_id", bodyFormatText}, toolPropertyNames(t, writable[ToolUpdatePersonNotes]))
 	assert.Equal(true, toolReadOnlyHint(t, writable[ToolSearchPeople]))
+	assert.Equal(true, toolReadOnlyHint(t, writable[ToolListDirectoryPeople]))
 	assert.Equal(true, toolReadOnlyHint(t, writable[ToolGetPersonNotes]))
 	assert.Equal(true, toolReadOnlyHint(t, writable[ToolGetPersonRelationship]))
 	for _, phrase := range []string{"emotional truth", "consent", "authorization"} {

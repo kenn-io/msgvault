@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Add the read-only `list_directory_people` MCP tool for durable Directory people, with last-contact ordering, inclusive RFC3339 or date-only bounds, and opaque cursor pagination. `search_people` remains the observed-contact and profile search.
 - Apply curated person display names to people analytics, search, and exported authors. Add `export-messages --person-id` to select messages through bound participants.
 - Add an opt-in local CSV to PDF conversion path for standalone document indexing. The provider receives generated PDF bytes while the archive retains CSV source identity and conversion provenance.
 - Report provider checks and consent recorded for an earlier people extraction

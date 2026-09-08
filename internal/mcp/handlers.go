@@ -136,6 +136,7 @@ type handlers struct {
 	documentSearcher   DocumentSearcher
 	personFileSearcher PersonFileSearcher
 	peopleBackend      peoplebrowser.Backend
+	directoryBackend   peoplebrowser.DirectoryLister
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

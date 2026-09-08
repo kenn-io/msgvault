@@ -448,7 +448,7 @@ const (
 )
 
 func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
-	version, err := c.daemonAPISchemaVersion(ctx)
+	version, err := c.APISchemaVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("check daemon source-ID sync capability: %w", err)
 	}
@@ -461,7 +461,9 @@ func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) daemonAPISchemaVersion(ctx context.Context) (string, error) {
+// APISchemaVersion fetches the daemon API schema version, or an empty string
+// when the daemon does not report one.
+func (c *Client) APISchemaVersion(ctx context.Context) (string, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetHealthResp, error) {
 		return client.GetHealthWithResponse(ctx)
 	})
@@ -479,7 +481,7 @@ func (c *Client) daemonAPISchemaVersion(ctx context.Context) (string, error) {
 // requested additive HTTP contract. Missing and malformed versions fail
 // closed, as do health-probe errors.
 func (c *Client) SupportsAPISchemaVersion(ctx context.Context, minimum string) (bool, error) {
-	version, err := c.daemonAPISchemaVersion(ctx)
+	version, err := c.APISchemaVersion(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -566,7 +568,7 @@ func (c *Client) RunCLIRepairMessageWithPreflight(
 	preflight func(context.Context) error,
 	output func(stream, data string) error,
 ) error {
-	version, err := c.daemonAPISchemaVersion(ctx)
+	version, err := c.APISchemaVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("check daemon repair-message capability: %w", err)
 	}
@@ -736,7 +738,7 @@ func (c *Client) CreateCLIDeletionManifest(
 		return nil, errors.New("missing deletion manifest")
 	}
 	if manifest.Version == 2 {
-		version, err := c.daemonAPISchemaVersion(ctx)
+		version, err := c.APISchemaVersion(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("check daemon deletion manifest capability: %w", err)
 		}
@@ -769,7 +771,7 @@ func (c *Client) PlanCLIDeduplicate(
 	ctx context.Context,
 	req CLIDeduplicatePlanRequest,
 ) (*CLIDeduplicatePlan, error) {
-	version, err := c.daemonAPISchemaVersion(ctx)
+	version, err := c.APISchemaVersion(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("check daemon deduplicate-plan capability: %w", err)
 	}
@@ -888,7 +890,7 @@ func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISe
 		return nil, err
 	}
 	if req.DeletionScope != "" {
-		version, err := c.daemonAPISchemaVersion(ctx)
+		version, err := c.APISchemaVersion(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("check daemon search deletion-scope capability: %w", err)
 		}
