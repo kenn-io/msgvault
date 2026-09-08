@@ -343,7 +343,7 @@ func newPersonProviderReverifyCommand(deps personProviderCommandDeps) *cobra.Com
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
-			runDeps, err := personProviderDepsForName(deps, args[0], false)
+			runDeps, err := personProviderDepsForName(deps, args[0])
 			if err != nil {
 				return err
 			}
@@ -390,7 +390,7 @@ func newPersonProviderStatusCommand(deps personProviderCommandDeps) *cobra.Comma
 					return errors.New("a named people provider cannot be combined with --all or --semantic-embeddings")
 				}
 				var err error
-				runDeps, err = personProviderDepsForName(deps, args[0], false)
+				runDeps, err = personProviderDepsForName(deps, args[0])
 				if err != nil {
 					return err
 				}
@@ -989,7 +989,7 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 					return errors.New("a named people provider cannot be combined with --semantic-embeddings")
 				}
 				var err error
-				runDeps, err = personProviderDepsForName(deps, args[0], false)
+				runDeps, err = personProviderDepsForName(deps, args[0])
 				if err != nil {
 					return err
 				}
@@ -1040,7 +1040,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 					return errors.New("a named people provider cannot be combined with --all or --semantic-embeddings")
 				}
 				var err error
-				runDeps, err = personProviderDepsForName(deps, args[0], false)
+				runDeps, err = personProviderDepsForName(deps, args[0])
 				if err != nil {
 					return err
 				}
@@ -1678,18 +1678,12 @@ func selectPersonProviderConfig(config peoplesweep.Config, name string) (peoples
 func personProviderDepsForName(
 	deps personProviderCommandDeps,
 	name string,
-	requireEnabled bool,
 ) (personProviderCommandDeps, error) {
 	selected, err := selectPersonProviderConfig(deps.config(), name)
 	if err != nil {
 		return personProviderCommandDeps{}, err
 	}
-	if requireEnabled && !selected.Enabled {
-		return personProviderCommandDeps{}, errors.New("people sweep provider is disabled")
-	}
-	if !requireEnabled {
-		selected.Enabled = true
-	}
+	selected.Enabled = true
 	deps.config = func() peoplesweep.Config { return selected }
 	return deps, nil
 }

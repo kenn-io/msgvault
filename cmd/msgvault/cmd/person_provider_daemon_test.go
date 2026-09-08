@@ -275,7 +275,7 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	}
 	assert.NotContains(output, environmentSecretCanary)
 	assert.NotContains(daemonLogs.String(), environmentSecretCanary)
-	_ = <-requests
+	<-requests
 
 	_, err = executePersonProviderCommand(t, deps, "revoke", "--json")
 	require.NoError(err)

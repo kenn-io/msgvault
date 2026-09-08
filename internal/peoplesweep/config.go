@@ -577,6 +577,7 @@ func CanonicalStoredProviderProfile(p ProviderProfile) (ProviderProfile, error) 
 		return ProviderProfile{}, err
 	}
 	switch p.Credential {
+	case CredentialEnv:
 	case CredentialStored:
 		if err := ValidateProviderProfileName(p.CredentialRef); err != nil {
 			return ProviderProfile{}, err

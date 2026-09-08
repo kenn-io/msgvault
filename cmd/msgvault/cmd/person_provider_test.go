@@ -113,6 +113,7 @@ type fixedPersonProviderChecker struct {
 
 type grantFailingPersonProviderStore struct {
 	personProviderStore
+
 	err error
 }
 
@@ -156,6 +157,7 @@ func historicalPersonProviderProfile(
 	withCheck bool,
 	withActiveConsent bool,
 ) peoplesweep.ProviderProfile {
+	t.Helper()
 	return historicalPersonProviderProfileWithMutation(
 		t, st, profile, "", nil, withCheck, withActiveConsent)
 }
