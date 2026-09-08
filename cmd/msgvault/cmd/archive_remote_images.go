@@ -46,6 +46,10 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 			if result.Errors > 0 {
 				err = errors.Join(err, fmt.Errorf("%d remote image errors; successful downloads were preserved", result.Errors))
 			}
+			// Attachment-only changes do not advance message or sync watermarks.
+			if result.Downloaded > 0 || result.Reused > 0 {
+				err = errors.Join(err, st.AdvanceDerivedDataRevision())
+			}
 			// Partial success and cancellation can still leave new attachments.
 			return errors.Join(err, rebuildCacheAfterWrite(cfg.DatabaseDSN()))
 		},
