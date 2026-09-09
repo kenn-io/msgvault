@@ -1,18 +1,22 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -386,5 +390,75 @@ func TestAppendDraftReplyRetainsFailureCause(t *testing.T) {
 			requirements.EqualError(coded.Err, tc.cause)
 			assertions.Equal([]api.CLIRunEvent{{Type: cliStreamStderr, Data: tc.code + "\n"}}, events)
 		})
+	}
+}
+
+func TestDraftReplyCLIFailureOutput(t *testing.T) {
+	for _, failure := range []string{"local persistence", "APPEND rejected", "no result"} {
+		for _, asJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", failure, asJSON), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				fixture := newDraftReplyFixture(t)
+				adapter := fixture.grantedAdapter()
+				switch failure {
+				case "local persistence":
+					// The remote accepts UID 1, but the archive already owns its key.
+					conversationID, err := fixture.store.EnsureConversation(fixture.source.ID, "stale", "Stale")
+					requirements.NoError(err)
+					_, err = fixture.store.PersistMessage(&store.MessagePersistData{
+						Message: &store.Message{
+							SourceID: fixture.source.ID, SourceMessageID: "Drafts|1",
+							ConversationID: conversationID,
+							MessageType:    store.MessageTypeEmail,
+						},
+						BodyText: sql.NullString{String: "stale", Valid: true},
+						RawMIME:  []byte("Subject: Stale\r\n\r\nstale\r\n"),
+					})
+					requirements.NoError(err)
+				case "APPEND rejected":
+					adapter.draftPolicy[0].Mailbox = "Missing"
+				case "no result":
+					adapter.draftPolicy = nil
+				}
+				server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+					Config: &config.Config{HomeDir: t.TempDir()},
+					Store:  adapter,
+					Logger: slog.New(slog.DiscardHandler),
+				}).Router())
+				t.Cleanup(server.Close)
+				configureRemoteDaemonForTest(t, server.URL)
+				root := &cobra.Command{Use: "msgvault"}
+				root.AddCommand(newDraftReplyCommand())
+				silenceUsageInRunE(root)
+				var stdout, stderr bytes.Buffer
+				root.SetOut(&stdout)
+				root.SetErr(&stderr)
+				args := []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "reply body"}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				root.SetArgs(args)
+				requirements.Error(root.ExecuteContext(t.Context()))
+				assertions.Empty(stdout.String())
+				assertions.Len(strings.Split(strings.TrimSpace(stderr.String()), "\n"), 1, stderr.String())
+				switch failure {
+				case "local persistence":
+					if asJSON {
+						var result draftReplyOutput
+						requirements.NoError(json.Unmarshal(stderr.Bytes(), &result), stderr.String())
+						assertions.Equal(draftReplyStatusLocalFailed, result.Status)
+						assertions.NotEmpty(result.OperationRef)
+					} else {
+						assertions.Contains(stderr.String(), "remote accepted; local persistence failed, inspect operation ")
+					}
+				case "APPEND rejected":
+					assertions.Equal("append_rejected\n", stderr.String())
+				case "no result":
+					assertions.Contains(stderr.String(), "Error:")
+					assertions.Contains(stderr.String(), "draft_disabled")
+				}
+			})
+		}
 	}
 }

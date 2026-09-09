@@ -84,6 +84,7 @@ func runDaemonCLICommandHTTPWithEnv(
 		cwd = ""
 	}
 
+	draftFailureReported := false
 	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{
 		Args: args, Env: env, Cwd: cwd, GrantDecided: grantDecided,
 	}, func(stream, data string) error {
@@ -96,9 +97,14 @@ func runDaemonCLICommandHTTPWithEnv(
 			if _, err := fmt.Fprint(cmd.ErrOrStderr(), data); err != nil {
 				return fmt.Errorf("write CLI stderr: %w", err)
 			}
+			draftFailureReported = api.IsCLIRunDraftReply(args) && data != ""
 		}
 		return nil
 	})
+	if runErr != nil && draftFailureReported {
+		// Draft stderr already contains the failure result or fixed code.
+		cmd.SilenceErrors = true
+	}
 	if runErr != nil && strings.Contains(runErr.Error(), cliSubprocessExitSentinel) {
 		// The daemon subprocess already streamed its real error to our
 		// stderr and exited non-zero. Propagate a non-zero exit without
