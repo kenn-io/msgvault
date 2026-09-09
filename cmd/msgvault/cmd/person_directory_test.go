@@ -380,15 +380,16 @@ func TestPersonDirectoryCLICancellation(t *testing.T) {
 }
 
 func TestPersonDirectoryCommandRejectsInvalidSortBeforeRequest(t *testing.T) {
+	assert := assert.New(t)
 	requests := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
 	output, err := runPersonDirectoryCommand(t.Context(), t, "--sort", "oldest", "--json")
 	require.ErrorContains(t, err, "--sort: must be name, last_contact_desc, or last_contact_asc")
-	assert.Empty(t, requests)
-	assert.Empty(t, output)
+	assert.Empty(requests)
+	assert.Empty(output)
 
 	cfg = nil
 	_, err = runPersonDirectoryCommand(t.Context(), t, "--sort", "oldest")
-	assert.ErrorContains(t, err, "--sort:")
+	assert.ErrorContains(err, "--sort:")
 }
 
 func TestPersonDirectoryCommandReturnsDaemonQueryErrors(t *testing.T) {
