@@ -335,8 +335,8 @@ func TestMapDiscordVoiceMessageMetadata(t *testing.T) {
 	mapped, err := mapMessage(voice, 10, 20)
 	require.NoError(err)
 	assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, string(mapped.Metadata))
-	assert.Equal(`{"discord":{}}`, mapped.Attachments[0].Metadata)
-	assert.Equal(`{"discord":{"waveform":"%%%"}}`, mapped.Attachments[1].Metadata)
+	assert.JSONEq(`{"discord":{}}`, mapped.Attachments[0].Metadata)
+	assert.JSONEq(`{"discord":{"waveform":"%%%"}}`, mapped.Attachments[1].Metadata)
 	assert.Equal("audio", mapped.Attachments[0].MediaType)
 	assert.Equal(int64(5940), mapped.Attachments[0].DurationMS)
 

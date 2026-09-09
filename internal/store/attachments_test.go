@@ -526,7 +526,7 @@ func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
 	assert.Equal(before.skipReason, after.skipReason)
 	assert.Equal(before.sourcePartKey, after.sourcePartKey)
 	assert.JSONEq(`{"discord":{"waveform":"new"}}`, after.metadata)
-	assert.Equal("", read("discord:stale").metadata)
+	assert.Empty(read("discord:stale").metadata)
 
 	changed, err = st.SetDiscordAttachmentMetadata(messageID, map[string]string{
 		"discord:keep": `{"discord":{"waveform":"new"}}`,
