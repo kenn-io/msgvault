@@ -58,6 +58,8 @@ Enable optional features after the archive is usable.
 
 ### People and relationships
 
+- Add `person directory` to browse promoted people by last contact, with inclusive date filters, selectable ordering, cursor pagination, and JSON page output. Preserve the existing `person list` behavior.
+
 - Maintain structured names, contact points, addresses, dates, categories,
   private notes, organizations, employment, and typed temporal relationships.
   Merge and split profiles with inspectable history and supported reversal.
