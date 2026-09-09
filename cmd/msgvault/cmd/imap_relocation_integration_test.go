@@ -2350,6 +2350,30 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			assert.NotContains(message.BodyText, draft.Body)
 			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			assert.Equal(1, count)
+
+			// Losing the Sent copy must only relocate the archive to Drafts,
+			// not replace its final content with the surviving stale draft.
+			require.Equal(sentMailbox.Name+"|1", message.SourceMessageID)
+			require.Len(queryScriptedRFC7162Memberships(t, st, source.ID), 2)
+			edited.Mailboxes[1].Messages = nil
+			edited.Mailboxes[1].HighestModSeq = 3
+			edited.Mailboxes[1].ChangedUIDs = nil
+			edited.Mailboxes[1].VanishedUIDs = []imapapi.UID{1}
+			for range 2 {
+				server.setSnapshot(edited)
+				client, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+				require.NoError(err)
+				require.NoError(client.Close())
+				message, err = st.GetMessage(id)
+				require.NoError(err)
+				assert.Equal("Drafts|1", message.SourceMessageID)
+				assert.Contains(message.BodyText, sent.Body)
+				assert.NotContains(message.BodyText, draft.Body)
+				raw, err = st.GetMessageRaw(id)
+				require.NoError(err)
+				assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
+				edited.Mailboxes[1].VanishedUIDs = nil
+			}
 		})
 	}
 }

@@ -36,7 +36,10 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 		raw == nil || raw.ID != target.NewSourceMessageID {
 		return errors.New("invalid IMAP relocation target")
 	}
-	if !s.relocationContentAuthorized(target.NewSourceMessageID) {
+	// A surviving Drafts copy may take over the location, but it must not
+	// replace the final snapshot from the lost Sent placement.
+	if !s.relocationContentAuthorized(target.NewSourceMessageID) ||
+		s.relocationSentOverDrafts(target.SourceMessageID, target.NewSourceMessageID) {
 		return s.adoptIMAPRelocationLocation(ctx, target, raw, labelMap)
 	}
 	prepared, err := s.prepareMessage(sourceID, raw, threadID, true)
@@ -53,10 +56,9 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 }
 
 // adoptIMAPRelocationLocation rekeys the guarded row to its surviving
-// location without refreshing the snapshot. The destination carries no
-// trusted outgoing placement — no unambiguous advertised \Sent or \Drafts
-// role and no explicit user configuration — so the fetched bytes, including a
-// forged RFC822 Message-ID, cannot replace archived content; the location is
+// location without refreshing the snapshot. The destination either lacks
+// trusted outgoing placement or is a Drafts copy superseded by Sent, so its
+// fetched bytes cannot replace archived content; the location is
 // still adopted with the pre-relocation rekey semantics. Identity is checked
 // with the tolerant parser so attacker-controlled MIME cannot strand the run
 // behind a strict-parse failure.
