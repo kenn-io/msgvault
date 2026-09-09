@@ -196,15 +196,31 @@ strings that aren't valid base64. An empty waveform still produces
 `{"discord":{}}`. Existing `attachments.duration_ms`, MIME, and generic media
 type fields keep their current meanings.
 
-Run this SQL against the archive database with a SQLite or PostgreSQL client.
-The `msgvault query` command reads the analytics cache, whose views don't
-include every archive column used here.
+Run these queries against the archive database with a SQLite or PostgreSQL
+client. The `msgvault query` command reads the analytics cache, whose views
+don't include every archive column used here.
+
+For SQLite:
 
 ```sql
 SELECT m.id AS message_id,
        json_extract(m.metadata, '$.discord_message_flags') AS message_flags,
        a.source_attachment_id,
        json_extract(a.attachment_metadata, '$.discord.waveform') AS waveform,
+       a.duration_ms, a.mime_type, a.media_type
+FROM messages AS m
+JOIN attachments AS a ON a.message_id = m.id
+WHERE m.message_type = 'discord'
+  AND a.source_attachment_id LIKE 'discord:%';
+```
+
+For PostgreSQL, use the JSONB operators:
+
+```sql
+SELECT m.id AS message_id,
+       m.metadata->>'discord_message_flags' AS message_flags,
+       a.source_attachment_id,
+       a.attachment_metadata->'discord'->>'waveform' AS waveform,
        a.duration_ms, a.mime_type, a.media_type
 FROM messages AS m
 JOIN attachments AS a ON a.message_id = m.id
