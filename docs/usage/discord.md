@@ -142,6 +142,9 @@ Use `--after` for an exclusive lower bound in `YYYY-MM-DD` or RFC3339 form:
 msgvault sync-discord 123456789012345678 --after 2025-01-01
 ```
 
+A bounded sync defers the full-source automatic metadata repair pass, so rows
+older than the bound remain untouched. Run `msgvault repair-derived --source-type discord` when historical metadata needs repair.
+
 Use `--full` to ignore normal completion cursors, re-fetch all available
 history, repair existing rows, and detect historical upstream deletions:
 

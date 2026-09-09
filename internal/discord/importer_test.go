@@ -269,6 +269,33 @@ func TestImporterReportsAutomaticDiscordMetadataRepair(t *testing.T) {
 	assert.Zero(summary.RepairErrors)
 }
 
+func TestImporterDefersAutomaticRepairForBoundedSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "501",
+		MessageType: discordMessageType,
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"501","channel_id":"300","type":0,"flags":8192,"attachments":[]}`), discordRawFormat))
+
+	summary, err := newTestImporter(st, newImporterFakeAPI(importerTestChannel("300", "general"))).Import(
+		t.Context(), ImportOptions{GuildID: "200", After: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+	)
+	require.NoError(err)
+	assert.False(summary.RepairRan)
+	assert.Zero(summary.MessageMetadataRepaired)
+	assert.Zero(summary.AttachmentsRetagged)
+	metadata, err := st.GetMessageMetadata(messageID)
+	require.NoError(err)
+	assert.False(metadata.Valid)
+}
+
 func TestImporterReportsPreSyncRepairCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

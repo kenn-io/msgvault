@@ -125,24 +125,28 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		SourceID:            source.ID,
 		processedMessageIDs: make(map[string]struct{}),
 	}
-	repairSummary, repairRan, repairErr := rederive.RunIfStale(
-		ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
-	)
-	summary.RepairRan = repairRan
-	if repairSummary != nil {
-		summary.MessageMetadataRepaired = repairSummary.MessageMetadataRewritten
-		summary.AttachmentsRetagged = repairSummary.AttachmentsTagged
-		summary.RepairUndecodable = repairSummary.Undecodable
-		summary.RepairErrors = repairSummary.Errors
-	}
-	if repairErr != nil {
-		return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
-	}
 	lowerBound := ""
 	if !opts.After.IsZero() {
 		lowerBound, err = SnowflakeFromTimestamp(opts.After)
 		if err != nil {
 			return nil, fmt.Errorf("convert Discord after bound: %w", err)
+		}
+	}
+	if lowerBound == "" {
+		// The automatic pass scans the complete source. Defer it for bounded
+		// imports so --after leaves earlier archive rows untouched.
+		repairSummary, repairRan, repairErr := rederive.RunIfStale(
+			ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
+		)
+		summary.RepairRan = repairRan
+		if repairSummary != nil {
+			summary.MessageMetadataRepaired = repairSummary.MessageMetadataRewritten
+			summary.AttachmentsRetagged = repairSummary.AttachmentsTagged
+			summary.RepairUndecodable = repairSummary.Undecodable
+			summary.RepairErrors = repairSummary.Errors
+		}
+		if repairErr != nil {
+			return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
 		}
 	}
 	state, hadBaseline, stateErr := imp.initialState(source.ID, opts.Full, lowerBound)
