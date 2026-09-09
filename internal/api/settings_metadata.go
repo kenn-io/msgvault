@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 )
 
@@ -222,68 +223,100 @@ var settingsMetadata = map[string]settingMetadata{
 }
 
 // settingsValidation carries format and range rules. A hint says how to
-// write a valid value; it never restates what the setting does.
+// write a valid value; it never restates what the setting does, and it
+// never spells out a bound that Minimum, Maximum, or Off already carry.
 var settingsValidation = map[string]SettingValidation{
-	"server.api_port":                numberValidation(0, new(float64(65_535)), "0 lets the daemon pick a free port."),
-	"server.daemon_idle_timeout":     {Hint: "Duration such as 30s, 15m, or 2h. 0 disables the timeout.", Required: true},
-	"analytics.min_rebuild_interval": {Hint: "Duration such as 15m or 2h. 0 allows back-to-back rebuilds.", Required: true},
-	"analytics.builder_memory_limit": {Hint: "Size such as 512MiB or 2GB. Empty means no limit."},
-	"analytics.builder_threads":      numberValidation(0, nil, "0 uses the engine default."),
-	"analytics.builder_temp_limit":   {Hint: "Size such as 1GiB or 10GB. Empty means no limit."},
-	"sync.rate_limit_qps":            numberValidation(1, nil, "At least 1."),
-	"log.sql_slow_ms":                numberValidation(0, nil, "0 uses the built-in threshold."),
+	"server.api_port":                withOff(numberRange(1, 65_535), "The daemon picks a free port", "8080"),
+	"server.daemon_idle_timeout":     withOffValue(durationValidation("30s, 15m, or 2h"), "0s", "Never stops for being idle", "20m"),
+	"analytics.min_rebuild_interval": withOffValue(durationValidation("15m or 2h"), "0s", "Rebuilds can run back to back", "15m"),
+	"analytics.builder_memory_limit": withOffValue(sizeValidation("512MiB or 2GB"), "", "No limit", "512MiB"),
+	"analytics.builder_threads":      withOff(atLeast(1), "Engine default", ""),
+	"analytics.builder_temp_limit":   withOffValue(sizeValidation("1GiB or 10GB"), "", "No limit", "1GiB"),
+	"sync.rate_limit_qps":            atLeast(1),
+	"log.sql_slow_ms":                withOff(atLeast(1), "Built-in threshold of 100 ms", "100"),
 
 	"vector.embeddings.endpoint": {
 		Hint: "HTTP or HTTPS URL without credentials, query, or fragment.", Required: true,
 	},
 	"vector.embeddings.model":           {Required: true},
-	"vector.embeddings.dimension":       numberValidation(1, nil, "At least 1."),
-	"vector.embeddings.batch_size":      numberValidation(1, nil, "At least 1."),
+	"vector.embeddings.dimension":       atLeast(1),
+	"vector.embeddings.batch_size":      atLeast(1),
 	"vector.embeddings.timeout":         {Hint: "Duration such as 30s or 2m.", Required: true},
-	"vector.embeddings.max_retries":     numberValidation(0, nil, "0 uses the built-in default."),
-	"vector.embeddings.max_input_chars": numberValidation(1, nil, "At least 1."),
-	"vector.embeddings.eta_window":      numberValidation(1, nil, "At least 1."),
+	"vector.embeddings.max_retries":     withOff(atLeast(1), "Built-in default of 3", "3"),
+	"vector.embeddings.max_input_chars": atLeast(1),
+	"vector.embeddings.eta_window":      atLeast(1),
 	"vector.people.retention_posture":   {Required: true},
 	"vector.people.training_posture":    {Required: true},
-	"vector.embed.schedule.cron":        {Hint: "Five-field cron expression. Leave empty to disable."},
+	"vector.embed.schedule.cron":        cronValidation(false),
 	"vector.embed.backstop_interval":    {Hint: "Duration. 0 uses the default. A negative value disables the backstop.", Required: true},
 	"vector.multimodal.endpoint": {
 		Hint: "Voyage HTTPS URL without credentials, query, or fragment.", Required: true,
 	},
 	"vector.multimodal.model":             {Required: true},
-	"vector.multimodal.dimension":         numberValidation(1024, new(float64(1024)), "Voyage visual models require 1024."),
-	"vector.multimodal.max_context_chars": numberValidation(1, nil, "At least 1."),
-	"vector.multimodal.schedule.cron":     {Hint: "Five-field cron expression. Leave empty to disable."},
-	"vector.search.rrf_k":                 numberValidation(1, nil, "At least 1."),
-	"vector.search.k_per_signal":          numberValidation(1, nil, "At least 1."),
-	"vector.search.subject_boost":         numberValidation(0, nil, "0 or more."),
-	"vector.search.max_page_size_hybrid":  numberValidation(0, nil, "0 removes the limit."),
+	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Voyage visual models require 1024."),
+	"vector.multimodal.max_context_chars": atLeast(1),
+	"vector.multimodal.schedule.cron":     cronValidation(false),
+	"vector.search.rrf_k":                 atLeast(1),
+	"vector.search.k_per_signal":          atLeast(1),
+	"vector.search.subject_boost":         atLeast(0),
+	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", "200"),
 
-	"beeper.schedule":                {Hint: "Five-field cron expression. Leave empty to disable."},
-	"slack.schedule":                 {Hint: "Five-field cron expression. Leave empty to disable."},
-	"beeper.rate_limit_qps":          numberValidation(0, nil, "0 uses the provider default."),
-	"beeper.media_max_participants":  numberValidation(0, nil, "0 means no limit."),
-	"slack.media_max_participants":   numberValidation(0, nil, "0 means no limit."),
-	"discord.media_max_participants": numberValidation(0, nil, "0 means no limit."),
-	"teams.media_max_participants":   numberValidation(0, nil, "0 means no limit."),
-	"beeper.max_media_mb":            numberValidation(0, nil, "0 uses the Beeper default of 100 MiB."),
-	"slack.max_media_mb":             numberValidation(0, nil, "0 uses the Slack default of 100 MiB."),
-	"discord.max_media_mb":           numberValidation(0, nil, "0 uses the Discord default of 50 MiB."),
-	"teams.max_media_mb":             numberValidation(0, nil, "0 uses the Teams default of 100 MiB."),
+	"beeper.schedule":                cronValidation(false),
+	"slack.schedule":                 cronValidation(false),
+	"beeper.rate_limit_qps":          withOff(atLeast(0), "Provider default", "5"),
+	"beeper.media_max_participants":  withOff(atLeast(1), "No limit", "20"),
+	"slack.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
+	"discord.media_max_participants": withOff(atLeast(1), "No limit", "20"),
+	"teams.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
+	"beeper.max_media_mb":            withOff(atLeast(1), "Beeper default of 100 MiB", "100"),
+	"slack.max_media_mb":             withOff(atLeast(1), "Slack default of 100 MiB", "100"),
+	"discord.max_media_mb":           withOff(atLeast(1), "Discord default of 50 MiB", "50"),
+	"teams.max_media_mb":             withOff(atLeast(1), "Teams default of 100 MiB", "100"),
 
 	"activity.timezone":                {Hint: "UTC or an IANA name such as America/New_York.", Required: true},
-	"activity.max_direct_counterparts": numberValidation(1, new(float64(10_000)), "1 to 10,000."),
-	"activity.batch_size":              numberValidation(1, new(float64(10_000)), "1 to 10,000."),
-	"activity.schedule":                {Hint: "Five-field cron expression. Leave empty to disable."},
-	"backup.zstd_level":                numberValidation(0, new(float64(19)), "1 to 19. 0 uses the encoder default."),
-	"people.enrichment.schedule":       {Hint: "Five-field cron expression.", Required: true},
-	"people.enrichment.batch_size":     numberValidation(1, nil, "At least 1."),
+	"activity.max_direct_counterparts": numberRange(1, 10_000),
+	"activity.batch_size":              numberRange(1, 10_000),
+	"activity.schedule":                cronValidation(false),
+	"backup.zstd_level":                withOff(numberRange(1, 19), "Encoder default", "3"),
+	"people.enrichment.schedule":       cronValidation(true),
+	"people.enrichment.batch_size":     atLeast(1),
 	"people.enrichment.lease_duration": {Hint: "Duration such as 5m or 1h.", Required: true},
 	"integrations.tasks.endpoint":      {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
 }
 
-func numberValidation(minimum float64, maximum *float64, hint string) SettingValidation {
-	return SettingValidation{Hint: hint, Minimum: new(minimum), Maximum: maximum}
+func atLeast(minimum float64) SettingValidation {
+	return SettingValidation{Minimum: new(minimum)}
+}
+
+func numberRange(minimum, maximum float64) SettingValidation {
+	return SettingValidation{Minimum: new(minimum), Maximum: new(maximum)}
+}
+
+func durationValidation(examples string) SettingValidation {
+	return SettingValidation{Hint: "Duration such as " + examples + ".", Required: true}
+}
+
+func sizeValidation(examples string) SettingValidation {
+	return SettingValidation{Hint: "Size such as " + examples + "."}
+}
+
+func cronValidation(required bool) SettingValidation {
+	return SettingValidation{Format: "cron", Required: required}
+}
+
+func withHint(validation SettingValidation, hint string) SettingValidation {
+	validation.Hint = hint
+	return validation
+}
+
+// withOff marks zero as the value that switches a numeric setting off.
+func withOff(validation SettingValidation, label, suggest string) SettingValidation {
+	return withOffValue(validation, "0", label, suggest)
+}
+
+func withOffValue(validation SettingValidation, value, label, suggest string) SettingValidation {
+	validation.Off = &SettingOff{Value: value, Label: label, Suggest: suggest}
+	return validation
 }
 
 func validationForSetting(key string) *SettingValidation {
@@ -309,6 +342,11 @@ func validateSettingBounds(key string, value any) error {
 		number = typed
 	default:
 		return nil
+	}
+	if validation.Off != nil {
+		if off, err := strconv.ParseFloat(validation.Off.Value, 64); err == nil && off == number {
+			return nil
+		}
 	}
 	if validation.Minimum != nil && number < *validation.Minimum {
 		return errors.New("below minimum")

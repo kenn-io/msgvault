@@ -349,10 +349,23 @@ Integrations, and CardDAV account. Larger categories split into titled
 sections, for example Search has separate sections for the text embedding
 provider, the embedding schedule, and visual attachment search.
 
-Each row shows the setting name and one sentence about what it does. A format
-hint, such as the accepted duration syntax, sits under the control. Rows you
-have changed carry an amber dot, the footer counts unsaved changes, and
-Discard throws them away. Save is disabled until something changes.
+Each row shows the setting name and one sentence about what it does. Limits
+live on the control itself: a number input carries its minimum and maximum,
+and a syntax hint such as the accepted duration format sits under the control
+only when the syntax needs one. Settings where zero means "off", such as an
+attachment size cap that falls back to the provider default, show a switch.
+Switch it off and the row states what happens instead; switch it on and a
+value input appears, starting from a suggested value. Rows you have changed
+carry an amber dot, the footer counts unsaved changes, and Discard throws them
+away. Save is disabled until something changes.
+
+Schedules use a cron field. The five fields are tinted and named (minute,
+hour, day, month, weekday), the line under the field says in plain English
+when the schedule runs, and a mistake names the field and the problem before
+you save. A Presets menu offers common schedules such as every hour, every
+day at 03:00, or weekdays at 09:00, and Off for schedules that can be empty.
+The CardDAV account form uses the same field, and the Sources and CardDAV
+status views describe stored schedules the same way.
 
 Each category states once how its changes take effect. Appearance settings
 apply right away. Every other category takes effect after the daemon

@@ -144,6 +144,13 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   plain language with no repeated text. Restart posture is stated once per
   category instead of on every row, host-managed values show a tag instead of
   an input, and the footer counts unsaved changes with a Discard action.
+- Move Web Settings limits into the controls. Number inputs carry their
+  bounds instead of "At least 1" hints, settings where zero means off publish
+  an `off` state (API schema adds `validation.off` with a label and suggested
+  value) and render as a switch beside the value, and cron schedules publish
+  `validation.format: "cron"` and use a cron field with tinted fields, a
+  plain-English description, inline validation, and presets. The CardDAV
+  account form, Sources, and CardDAV status describe schedules the same way.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.
   Multi-source collections offer Fast search only. Empty collections match

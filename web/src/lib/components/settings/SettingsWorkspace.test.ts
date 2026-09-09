@@ -302,11 +302,85 @@ describe('SettingsWorkspace', () => {
     await openSettingsCategory('Attachments');
     expect(await screen.findByText('Controls future downloads only; existing files are unchanged.')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Discord' })).toBeDefined();
-    const maximum = screen.getByLabelText('Discord maximum attachment size') as HTMLInputElement;
-    expect(maximum.min).toBe('0');
-    expect(screen.getByText('0 uses the Discord default of 50 MiB.')).toBeDefined();
-    expect(screen.getByLabelText('Discord participant limit')).toBeDefined();
+    expect(screen.getByText('Discord default of 50 MiB')).toBeDefined();
+    expect((screen.getByRole('switch', { name: 'Set Discord maximum attachment size' }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByLabelText('Discord maximum attachment size')).toBeNull();
+    expect(screen.queryByText(/0 uses/)).toBeNull();
+    const participants = screen.getByLabelText('Discord participant limit') as HTMLInputElement;
+    expect(participants.min).toBe('1');
+    expect(participants.value).toBe('20');
+    expect((screen.getByRole('switch', { name: 'Set Discord participant limit' }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole('combobox', { name: 'Discord attachment scope: All' })).toBeDefined();
+  });
+
+  it('switches an off value on from its suggestion and back to the daemon off value', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requests.push(request);
+      if (request.method === 'PATCH') {
+        const body = await request.clone().json();
+        const document = approvedSettingsDocument();
+        for (const update of body.updates as Array<{ key: string; value: { integer: number } }>) {
+          const target = document.settings.find((item) => item.key === update.key);
+          if (target) target.value = update.value;
+        }
+        return settingsResponse(document, '"config-b"', '"credential-a"');
+      }
+      return settingsResponse(approvedSettingsDocument(), '"config-a"', '"credential-a"');
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await openSettingsCategory('Attachments');
+    await screen.findByText('Discord default of 50 MiB');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Set Discord maximum attachment size' }));
+    const maximum = screen.getByLabelText('Discord maximum attachment size') as HTMLInputElement;
+    expect(maximum.value).toBe('50');
+    expect(maximum.min).toBe('1');
+    await fireEvent.input(maximum, { target: { value: '75' } });
+    await fireEvent.click(screen.getByRole('switch', { name: 'Set Discord participant limit' }));
+    expect(screen.getByText('No limit')).toBeDefined();
+    expect(screen.queryByLabelText('Discord participant limit')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(1));
+    const patch = await requests.find((request) => request.method === 'PATCH')!.clone().json();
+    expect(patch.updates).toEqual([
+      { key: 'discord.max_media_mb', value: { integer: 75 } },
+      { key: 'discord.media_max_participants', value: { integer: 0 } },
+    ]);
+  });
+
+  it('edits cron schedules with the cron field and its presets', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requests.push(request);
+      if (request.method === 'PATCH') {
+        return settingsResponse(approvedSettingsDocument(), '"config-b"', '"credential-a"');
+      }
+      return settingsResponse(approvedSettingsDocument(), '"config-a"', '"credential-a"');
+    });
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await openSettingsCategory('Search');
+    const schedule = (await screen.findByLabelText('Embedding schedule')) as HTMLInputElement;
+    expect(schedule.value).toBe('0 3 * * *');
+    expect(screen.getByText('At 03:00 every day')).toBeDefined();
+    expect(screen.queryByText(/Five-field cron/)).toBeNull();
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every 15 minutes');
+    expect(schedule.value).toBe('*/15 * * * *');
+    const status = () => document.getElementById(schedule.getAttribute('aria-describedby') ?? '')?.textContent;
+    expect(status()).toBe('Every 15 minutes');
+    await fireEvent.input(schedule, { target: { value: '0 3 * * 9' } });
+    expect(status()).toBe('Weekday: 9 is above the maximum of 6.');
+    await fireEvent.input(schedule, { target: { value: '0 2 * * 0' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(1));
+    const patch = await requests.find((request) => request.method === 'PATCH')!.clone().json();
+    expect(patch.updates).toEqual([{ key: 'vector.embed.schedule.cron', value: { string: '0 2 * * 0' } }]);
   });
 
   it('updates one stable-name enrichment provider without rewriting same-kind siblings', async () => {
@@ -960,6 +1034,9 @@ function approvedSettingsDocument() {
         secret: { configured: true, source: 'environment' }, credential_id: 'vector.embeddings'
       }),
       daemonSetting('vector.multimodal.enabled', 'search', 'Visual Voyage embeddings', 'Additional visual lane gate.', 'boolean', false),
+      daemonSetting('vector.embed.schedule.cron', 'search', 'Embedding schedule', 'When the daemon embeds new messages.', 'string', '0 3 * * *', {
+        validation: { format: 'cron' }
+      }),
       daemonSetting('vector.multimodal.api_key', 'search', 'Voyage API key', 'Write-only provider credential.', 'secret', undefined, {
         secret: { configured: false, source: 'none' }, credential_id: 'vector.multimodal'
       }),
@@ -967,11 +1044,11 @@ function approvedSettingsDocument() {
       daemonSetting('discord.media_scope', 'attachments', 'Discord attachment scope', 'Conversation scope.', 'string', 'all', {
         section: 'discord', options: ['all', 'direct', 'none']
       }),
-      daemonSetting('discord.media_max_participants', 'attachments', 'Discord participant limit', 'Skip conversations over this size.', 'integer', 0, {
-        section: 'discord', validation: { minimum: 0, hint: '0 means no participant limit.' }
+      daemonSetting('discord.media_max_participants', 'attachments', 'Discord participant limit', 'Skip conversations over this size.', 'integer', 20, {
+        section: 'discord', validation: { minimum: 1, off: { value: '0', label: 'No limit', suggest: '20' } }
       }),
       daemonSetting('discord.max_media_mb', 'attachments', 'Discord maximum attachment size', 'Maximum future file size.', 'integer', 0, {
-        section: 'discord', validation: { minimum: 0, hint: '0 uses the Discord default of 50 MiB.' }
+        section: 'discord', validation: { minimum: 1, off: { value: '0', label: 'Discord default of 50 MiB', suggest: '50' } }
       }),
       daemonSetting('people.enrichment.enabled', 'enrichment', 'Enable person enrichment', 'Global enrichment gate.', 'boolean', false)
     ],

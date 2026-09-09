@@ -10737,6 +10737,19 @@ components:
         - label
         - description
       type: object
+    SettingOff:
+      additionalProperties: true
+      properties:
+        label:
+          type: string
+        suggest:
+          type: string
+        value:
+          type: string
+      required:
+        - value
+        - label
+      type: object
     SettingSection:
       additionalProperties: true
       properties:
@@ -10765,6 +10778,10 @@ components:
     SettingValidation:
       additionalProperties: true
       properties:
+        format:
+          enum:
+            - cron
+          type: string
         hint:
           type: string
         maximum:
@@ -10773,6 +10790,8 @@ components:
         minimum:
           format: double
           type: number
+        "off":
+          $ref: "#/components/schemas/SettingOff"
         required:
           type: boolean
       type: object

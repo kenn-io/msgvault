@@ -34,6 +34,9 @@
     Toggle,
     type SettingsCategory,
   } from '@kenn-io/kit-ui';
+  import LockIcon from '@lucide/svelte/icons/lock';
+  import RotateCwIcon from '@lucide/svelte/icons/rotate-cw';
+  import ZapIcon from '@lucide/svelte/icons/zap';
   import { onMount, tick } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -44,6 +47,7 @@
   } from '../../api/generated/models';
   import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
+  import CronField from './CronField.svelte';
   import PersonEnrichmentProviderCard from './PersonEnrichmentProviderCard.svelte';
   import PersonEnrichmentProviderCreator from './PersonEnrichmentProviderCreator.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
@@ -70,7 +74,8 @@
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
-  type ControlSize = 'xs' | 'md' | 'lg';
+  type ControlSize = 'xs' | 'md' | 'lg' | 'cron';
+  type SettingOff = NonNullable<NonNullable<SettingState['validation']>['off']>;
   let {
     client,
     plainHTTPWarning = false,
@@ -264,6 +269,7 @@
     return setting.label || humanizeKey(setting.key);
   }
   function controlSize(setting: SettingState): ControlSize {
+    if (setting.validation?.format === 'cron') return 'cron';
     if (setting.kind === 'integer' || setting.kind === 'number') return 'xs';
     if (optionValues(setting).length > 0) return 'md';
     return 'lg';
@@ -273,7 +279,27 @@
   }
   function readOnlyValue(setting: SettingState): string {
     if (setting.kind === 'secret') return setting.secret?.configured ? 'Configured' : 'Not configured';
+    const off = setting.validation?.off;
+    if (off && stringValue(setting) === off.value) return off.label;
     return stringValue(setting) || 'Not set';
+  }
+  // A setting with an off value renders as a switch beside its control:
+  // off stores the daemon's off value, on starts from the suggested value.
+  function isSwitchedOff(setting: SettingState, off: SettingOff | undefined): boolean {
+    return off !== undefined && stringValue(setting) === off.value;
+  }
+  function switchSetting(setting: SettingState, off: SettingOff, on: boolean) {
+    const numeric = setting.kind === 'integer' || setting.kind === 'number';
+    if (!on) {
+      setDraft(setting.key, numeric ? Number(off.value) : off.value);
+      return;
+    }
+    if (numeric) {
+      const suggested = off.suggest === undefined || off.suggest === '' ? Number.NaN : Number(off.suggest);
+      setDraft(setting.key, Number.isNaN(suggested) ? (setting.validation?.minimum ?? 1) : suggested);
+      return;
+    }
+    setDraft(setting.key, off.suggest ?? '');
   }
   function postureText(posture: RestartPosture): string {
     switch (posture) {
@@ -393,6 +419,8 @@
   {@const flag = rowFlag(setting, group)}
   {@const readOnly = isReadOnly(setting)}
   {@const hint = readOnly ? '' : (setting.validation?.hint ?? '')}
+  {@const off = readOnly ? undefined : setting.validation?.off}
+  {@const switchedOff = isSwitchedOff(setting, off)}
   <div
     class="row"
     class:row--changed={isDirty(setting.key)}
@@ -465,44 +493,64 @@
             checked={Boolean(currentValue(setting))}
             onchange={(checked) => setDraft(setting.key, checked)}
           />
-        {:else if setting.kind === 'integer' || setting.kind === 'number'}
-          <label class="row__field" data-size="xs">
-            <span class="kit-sr-only">{label}</span>
-            <input
-              type="number"
-              data-mono
-              value={stringValue(setting)}
-              step={setting.kind === 'integer' ? '1' : 'any'}
-              min={setting.validation?.minimum}
-              max={setting.validation?.maximum}
-              required={setting.validation?.required}
-              oninput={(event) => setDraft(setting.key, Number(event.currentTarget.value))}
-            />
-          </label>
         {:else}
-          <label class="row__field" data-size="lg">
-            <span class="kit-sr-only">{label}</span>
-            <TextInput
-              value={stringValue(setting)}
-              block
-              oninput={(value) =>
-                setDraft(
-                  setting.key,
-                  setting.kind === 'string_array'
-                    ? value
-                        .split(',')
-                        .map((item) => item.trim())
-                        .filter(Boolean)
-                    : value,
-                )}
+          {#if off}
+            <Toggle
+              ariaLabel={`Set ${label}`}
+              checked={!switchedOff}
+              onchange={(on) => switchSetting(setting, off, on)}
             />
-          </label>
+          {/if}
+          {#if off && switchedOff}
+            <span class="row__value row__value--off">{off.label}</span>
+          {:else if setting.validation?.format === 'cron'}
+            <div class="row__field" data-size="cron">
+              <CronField
+                {label}
+                value={stringValue(setting)}
+                required={setting.validation?.required}
+                oninput={(value) => setDraft(setting.key, value)}
+              />
+            </div>
+          {:else if setting.kind === 'integer' || setting.kind === 'number'}
+            <label class="row__field" data-size="xs">
+              <span class="kit-sr-only">{label}</span>
+              <input
+                type="number"
+                data-mono
+                value={stringValue(setting)}
+                step={setting.kind === 'integer' ? '1' : 'any'}
+                min={setting.validation?.minimum}
+                max={setting.validation?.maximum}
+                required={setting.validation?.required}
+                oninput={(event) => setDraft(setting.key, Number(event.currentTarget.value))}
+              />
+            </label>
+          {:else}
+            <label class="row__field" data-size="lg">
+              <span class="kit-sr-only">{label}</span>
+              <TextInput
+                value={stringValue(setting)}
+                block
+                oninput={(value) =>
+                  setDraft(
+                    setting.key,
+                    setting.kind === 'string_array'
+                      ? value
+                          .split(',')
+                          .map((item) => item.trim())
+                          .filter(Boolean)
+                      : value,
+                  )}
+              />
+            </label>
+          {/if}
         {/if}
         {#if flag}
           <Chip size="xs" tone={flag === 'Needs restart' ? 'warning' : 'info'}>{flag}</Chip>
         {/if}
       </div>
-      {#if hint}<small class="row__format">{hint}</small>{/if}
+      {#if hint && !switchedOff}<small class="row__format">{hint}</small>{/if}
     </div>
   </div>
 {/snippet}
@@ -548,7 +596,16 @@
             <header class="category">
               <h2>{group.label}</h2>
               {#if group.description}<p>{group.description}</p>{/if}
-              <p class="posture" data-posture={posture}>{postureText(posture)}</p>
+              <p class="posture" data-posture={posture}>
+                {#if posture === 'live'}
+                  <ZapIcon size={12} aria-hidden="true" />
+                {:else if posture === 'none'}
+                  <LockIcon size={12} aria-hidden="true" />
+                {:else}
+                  <RotateCwIcon size={12} aria-hidden="true" />
+                {/if}
+                {postureText(posture)}
+              </p>
             </header>
 
             {#if group.sections.length > 0}
@@ -671,21 +728,15 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .posture::before {
-    content: '';
-    box-sizing: border-box;
-    width: 10px;
-    height: 10px;
-    border: 1.5px solid currentColor;
-    border-radius: 50%;
+  .posture :global(svg) {
+    flex-shrink: 0;
   }
-  .posture[data-posture='live']::before {
-    border-color: var(--accent-green);
-    background: var(--accent-green);
+  .posture[data-posture='live'] :global(svg) {
+    color: var(--accent-green);
   }
-  .posture[data-posture='restart']::before,
-  .posture[data-posture='mixed']::before {
-    border-right-color: transparent;
+  .posture[data-posture='restart'] :global(svg),
+  .posture[data-posture='mixed'] :global(svg) {
+    color: var(--accent-amber);
   }
 
   .rows {
@@ -757,7 +808,11 @@
     width: 13rem;
   }
   .row__field[data-size='lg'] {
-    width: 20rem;
+    width: 15rem;
+  }
+  .row__field[data-size='cron'] {
+    width: 100%;
+    max-width: 22rem;
   }
   .row__format {
     color: var(--text-muted);
@@ -769,7 +824,8 @@
     color: var(--text-primary);
     font-size: var(--font-size-sm);
   }
-  .row__value--unset {
+  .row__value--unset,
+  .row__value--off {
     color: var(--text-muted);
   }
   input[type='number'] {
@@ -797,7 +853,7 @@
   }
   .secret-control__field {
     display: block;
-    width: 14rem;
+    width: 13rem;
   }
   .provider-list {
     display: grid;

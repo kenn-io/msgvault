@@ -170,13 +170,21 @@ func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T
 
 	backupLevel, ok := byKey["backup.zstd_level"]["validation"].(map[string]any)
 	requirements.True(ok, "backup.zstd_level must publish validation metadata")
-	assertions.InDelta(float64(0), backupLevel["minimum"], 0)
+	assertions.InDelta(float64(1), backupLevel["minimum"], 0)
 	assertions.InDelta(float64(19), backupLevel["maximum"], 0)
+	backupOff, ok := backupLevel["off"].(map[string]any)
+	requirements.True(ok, "backup.zstd_level must publish zero as its off value")
+	assertions.Equal("0", backupOff["value"])
+	assertions.Equal("Encoder default", backupOff["label"])
+	assertions.Nil(backupLevel["hint"], "bounds belong on the control, not in hint text")
 
 	mediaSize, ok := byKey["discord.max_media_mb"]["validation"].(map[string]any)
 	requirements.True(ok, "attachment size controls must publish validation metadata")
-	assertions.InDelta(float64(0), mediaSize["minimum"], 0)
-	assertions.Contains(mediaSize["hint"], "0 uses the Discord default of 50 MiB")
+	assertions.InDelta(float64(1), mediaSize["minimum"], 0)
+	mediaOff, ok := mediaSize["off"].(map[string]any)
+	requirements.True(ok, "attachment size controls must publish their provider default as the off state")
+	assertions.Equal("Discord default of 50 MiB", mediaOff["label"])
+	assertions.Equal("50", mediaOff["suggest"])
 
 	embeddingEndpoint, ok := byKey["vector.embeddings.endpoint"]["validation"].(map[string]any)
 	requirements.True(ok, "provider endpoints must publish safe input guidance")
@@ -185,9 +193,12 @@ func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T
 
 	activitySchedule, ok := byKey["activity.schedule"]["validation"].(map[string]any)
 	requirements.True(ok, "schedules must identify their accepted format")
-	hint, ok := activitySchedule["hint"].(string)
+	assertions.Equal("cron", activitySchedule["format"])
+	assertions.NotEqual(true, activitySchedule["required"])
+	enrichmentSchedule, ok := byKey["people.enrichment.schedule"]["validation"].(map[string]any)
 	requirements.True(ok)
-	assertions.Contains(strings.ToLower(hint), "five-field cron")
+	assertions.Equal("cron", enrichmentSchedule["format"])
+	assertions.Equal(true, enrichmentSchedule["required"])
 	assertions.NotEqual(true, byKey["integrations.tasks.endpoint"]["testable"],
 		"the daemon has no provider endpoint test operation")
 }
@@ -616,8 +627,10 @@ max_media_mb = 30
 		}
 		if setting["key"] == "discord.max_media_mb" {
 			validation, ok := setting["validation"].(map[string]any)
-			requirements.True(ok, "discord.max_media_mb must publish its provider default as a hint")
-			assertions.Contains(validation["hint"], "0 uses the Discord default of 50 MiB")
+			requirements.True(ok, "discord.max_media_mb must publish its provider default as its off state")
+			off, ok := validation["off"].(map[string]any)
+			requirements.True(ok)
+			assertions.Equal("Discord default of 50 MiB", off["label"])
 		}
 	}
 
@@ -1730,6 +1743,37 @@ func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
 	for _, group := range settingsGroups {
 		for _, section := range group.Sections {
 			assertions.True(populated[group.ID][section.ID], "section %s/%s has no settings", group.ID, section.ID)
+		}
+	}
+}
+
+func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	requirements.NoError(validateSettingBounds("backup.zstd_level", 0), "the off value sits outside the on range")
+	requirements.NoError(validateSettingBounds("backup.zstd_level", 19))
+	requirements.Error(validateSettingBounds("backup.zstd_level", 20))
+	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
+	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
+	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
+	for key, validation := range settingsValidation {
+		if validation.Off == nil {
+			continue
+		}
+		assertions.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
+		assertions.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
+	}
+}
+
+func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {
+	assertions := assert.New(t)
+	for key, validation := range settingsValidation {
+		hint := strings.ToLower(validation.Hint)
+		for _, phrase := range []string{"at least", "or more", " to ", "between"} {
+			assertions.NotContains(hint, phrase, "%s spells out a bound in text; use minimum, maximum, or off", key)
+		}
+		if validation.Format != "" {
+			assertions.Empty(validation.Hint, "%s has a format; the control explains the syntax", key)
 		}
 	}
 }

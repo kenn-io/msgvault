@@ -8,6 +8,7 @@
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import type { SettingState } from '../../settings/catalog';
+  import CronField from './CronField.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
   type Action = 'test' | 'save';
   interface AccountSettingsSnapshot {
@@ -247,10 +248,10 @@
       />
     </label>
     <Toggle bind:checked={enabled} disabled={activeAction !== undefined} label="Enabled" />
-    <label>
-      Schedule
-      <TextInput bind:value={schedule} disabled={activeAction !== undefined} placeholder="0 2 * * *" block />
-    </label>
+    <div class="field">
+      <span class="field__label" aria-hidden="true">Schedule</span>
+      <CronField label="Schedule" bind:value={schedule} disabled={activeAction !== undefined} />
+    </div>
 
     <div class="actions">
       <Button
@@ -274,7 +275,8 @@
     display: grid;
     gap: var(--space-5);
   }
-  label {
+  label,
+  .field {
     display: grid;
     gap: var(--space-2);
     color: var(--text-secondary);

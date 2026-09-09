@@ -87,7 +87,8 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
     });
 
-    expect(await screen.findByText('0 */6 * * *')).toBeDefined();
+    expect(await screen.findByText('At :00 past every 6th hour')).toBeDefined();
+    expect(screen.getByText('0 */6 * * *')).toBeDefined();
     expect(screen.getByTitle('2026-07-19T18:00:00Z')).toBeDefined();
     expect(screen.queryByText('stale_last_result')).toBeNull();
     expect(screen.getByText('1 item error')).toBeDefined();

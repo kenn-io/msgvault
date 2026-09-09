@@ -2233,6 +2233,22 @@ func (s SettingKind) Validate() error {
 	}
 }
 
+type SettingValidationFormat string
+
+const (
+	Cron SettingValidationFormat = "cron"
+)
+
+// Validate checks if the SettingValidationFormat value is valid
+func (s SettingValidationFormat) Validate() error {
+	switch s {
+	case Cron:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingValidationFormat value, got: %v", s))
+	}
+}
+
 // TaskIntegrationStatusResponseState Current task integration state
 type TaskIntegrationStatusResponseState string
 

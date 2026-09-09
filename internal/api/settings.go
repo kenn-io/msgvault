@@ -53,6 +53,25 @@ type SettingValidation struct {
 	Required bool     `json:"required,omitempty"`
 	Minimum  *float64 `json:"minimum,omitempty"`
 	Maximum  *float64 `json:"maximum,omitempty"`
+	// Format names a structured syntax the client can check as the user
+	// types and render with a purpose-built control.
+	Format string `json:"format,omitempty" enum:"cron"`
+	// Off names the value that switches the setting off. Minimum and
+	// Maximum then bound only the "on" values; clients render a switch
+	// beside the value control.
+	Off *SettingOff `json:"off,omitempty"`
+}
+
+// SettingOff describes the one value outside a setting's normal range that
+// turns it off or hands it back to a default.
+type SettingOff struct {
+	// Value is the off value in the same text form the value control shows:
+	// "0" for a count, "0s" for a duration, "" for an optional size.
+	Value string `json:"value"`
+	// Label says what happens while the setting is off, such as "No limit".
+	Label string `json:"label"`
+	// Suggest is the value the control starts from when switched on.
+	Suggest string `json:"suggest,omitempty"`
 }
 
 // Setting describes one browser-managed allowlisted config value. ReadOnly
