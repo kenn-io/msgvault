@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,6 +234,119 @@ func TestImportAppleTextMessages(t *testing.T) {
 	assertStoreCount(t, st.DB(), "message_raw", 4)
 }
 
+func TestImportAppleType7TextMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleType7Fixture(t)
+	st := testutil.NewTestStore(t)
+	summary, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+		Phone:       "+15555550100",
+		DisplayName: "Test Owner",
+		BatchSize:   2,
+	})
+	require.NoError(err)
+	assert.Equal(int64(7), summary.MessagesProcessed)
+	assert.Equal(int64(3), summary.MessagesAdded)
+	assert.Equal(int64(4), summary.MessagesSkipped)
+	assert.Equal(int64(0), summary.Errors)
+
+	type messageRecord struct {
+		id     int64
+		fromMe bool
+		body   string
+	}
+	messages := make(map[string]messageRecord)
+	rows, err := st.DB().Query(`
+		SELECT id, source_message_id, is_from_me
+		FROM messages
+		ORDER BY source_message_id
+	`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	for rows.Next() {
+		var sourceMessageID string
+		var record messageRecord
+		require.NoError(rows.Scan(&record.id, &sourceMessageID, &record.fromMe))
+		record.body, err = st.GetMessageBodyText(record.id)
+		require.NoError(err)
+		messages[sourceMessageID] = record
+	}
+	require.NoError(rows.Err())
+	assert.Len(messages, 3)
+	assert.False(messages["type7-direct-in"].fromMe)
+	assert.Equal("apple type seven inbound body", messages["type7-direct-in"].body)
+	assert.True(messages["type7-direct-out"].fromMe)
+	assert.Equal("apple type seven outbound body", messages["type7-direct-out"].body)
+	assert.Equal("apple type zero body", messages["type0-direct-in"].body)
+	for _, sourceMessageID := range []string{"type1-image", "type8-unknown", "type7-blank", "   "} {
+		assert.NotContains(messages, sourceMessageID)
+	}
+
+	var messageID int64
+	var rawFormat string
+	require.NoError(st.DB().QueryRow(`
+		SELECT m.id, mr.raw_format
+		FROM messages m
+		JOIN message_raw mr ON mr.message_id = m.id
+		WHERE m.source_message_id = 'type7-direct-in'
+	`).Scan(&messageID, &rawFormat))
+	assert.Equal("whatsapp_apple_json", rawFormat)
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var rawMessage struct {
+		MessageType int `json:"message_type"`
+	}
+	require.NoError(json.Unmarshal(raw, &rawMessage))
+	assert.Equal(7, rawMessage.MessageType)
+
+	results, total, err := st.SearchMessages("apple type seven inbound body", 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(results, 1)
+	assert.Equal("type7-direct-in", results[0].SourceMessageID)
+	t.Logf(
+		"type literals accepted=[0 7] rejected=[1 8] invalid=[blank text blank stanza]; batch_size=2; summary processed=%d added=%d skipped=%d errors=%d; stored=%v; raw_format=%s raw_message_type=%d; fts_total=%d",
+		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesSkipped,
+		summary.Errors, messages, rawFormat, rawMessage.MessageType, total,
+	)
+}
+
+func TestImportAppleType7DuplicateStanzas(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleType7DuplicateFixture(t)
+	st := testutil.NewTestStore(t)
+	summary, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+		Phone:       "+15555550100",
+		DisplayName: "Test Owner",
+		BatchSize:   2,
+	})
+	require.NoError(err)
+	assert.Equal(int64(5), summary.MessagesProcessed)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Equal(int64(4), summary.MessagesSkipped)
+	assert.Equal(int64(1), summary.Errors)
+
+	var sourceMessageIDs []string
+	rows, err := st.DB().Query(`SELECT source_message_id FROM messages ORDER BY source_message_id`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	for rows.Next() {
+		var sourceMessageID string
+		require.NoError(rows.Scan(&sourceMessageID))
+		sourceMessageIDs = append(sourceMessageIDs, sourceMessageID)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"unique-type7"}, sourceMessageIDs)
+	t.Logf(
+		"duplicate literals type7/type7 and type0/type7 across chats; batch_size=2; summary processed=%d added=%d skipped=%d errors=%d; stored=%v",
+		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesSkipped,
+		summary.Errors, sourceMessageIDs,
+	)
+}
+
 func TestAppleMappingFallbacks(t *testing.T) {
 	assert := assert.New(t)
 
@@ -450,6 +564,59 @@ func createAppleChatFixture(t *testing.T) string {
 			(8, 2, 10, 'duplicate-text', 0, 700000007, 'second duplicate', 0, '120363000000000000@g.us'),
 			(9, 1, NULL, '   ', 0, 700000008, 'missing stanza', 0, '15555550101@s.whatsapp.net'),
 			(10, 1, NULL, 'empty-text', 0, 700000009, '   ', 0, '15555550101@s.whatsapp.net');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return path
+}
+
+func createAppleType7Fixture(t *testing.T) string {
+	t.Helper()
+	path := createAppleChatFixture(t)
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		DELETE FROM ZWAMESSAGE;
+		DELETE FROM ZWAGROUPMEMBER;
+		DELETE FROM ZWACHATSESSION;
+
+		INSERT INTO ZWACHATSESSION VALUES
+			(1, '15555550101@s.whatsapp.net', 'Alice Test', 0, 700000010);
+
+		INSERT INTO ZWAMESSAGE VALUES
+			(1, 1, NULL, 'type7-direct-in', 0, 700000000, 'apple type seven inbound body', 7, '15555550101@s.whatsapp.net'),
+			(2, 1, NULL, 'type7-direct-out', 1, 700000001, 'apple type seven outbound body', 7, ''),
+			(3, 1, NULL, 'type0-direct-in', 0, 700000002, 'apple type zero body', 0, '15555550101@s.whatsapp.net'),
+			(4, 1, NULL, 'type1-image', 0, 700000003, 'image caption', 1, '15555550101@s.whatsapp.net'),
+			(5, 1, NULL, 'type8-unknown', 0, 700000004, 'unknown type body', 8, '15555550101@s.whatsapp.net'),
+			(6, 1, NULL, 'type7-blank', 0, 700000005, '   ', 7, '15555550101@s.whatsapp.net'),
+			(7, 1, NULL, '   ', 0, 700000006, 'type seven missing stanza', 7, '15555550101@s.whatsapp.net');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return path
+}
+
+func createAppleType7DuplicateFixture(t *testing.T) string {
+	t.Helper()
+	path := createAppleChatFixture(t)
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		DELETE FROM ZWAMESSAGE;
+		DELETE FROM ZWAGROUPMEMBER;
+		DELETE FROM ZWACHATSESSION;
+
+		INSERT INTO ZWACHATSESSION VALUES
+			(1, '15555550101@s.whatsapp.net', 'Alice Test', 0, 700000010),
+			(2, '15555550102@s.whatsapp.net', 'Bob Test', 0, 700000010);
+
+		INSERT INTO ZWAMESSAGE VALUES
+			(1, 1, NULL, 'duplicate-type7', 0, 700000000, 'first type seven duplicate', 7, '15555550101@s.whatsapp.net'),
+			(2, 2, NULL, 'duplicate-type7', 0, 700000001, 'second type seven duplicate', 7, '15555550102@s.whatsapp.net'),
+			(3, 1, NULL, 'duplicate-mixed', 0, 700000002, 'type zero duplicate', 0, '15555550101@s.whatsapp.net'),
+			(4, 2, NULL, 'duplicate-mixed', 0, 700000003, 'type seven duplicate', 7, '15555550102@s.whatsapp.net'),
+			(5, 1, NULL, 'unique-type7', 0, 700000004, 'unique type seven body', 7, '15555550101@s.whatsapp.net');
 	`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())

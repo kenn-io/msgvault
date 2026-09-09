@@ -291,7 +291,9 @@ func (imp *Importer) importApple(
 			for _, sourceMessage := range messages {
 				afterRowID = sourceMessage.RowID
 				summary.MessagesProcessed++
-				if sourceMessage.MessageType != 0 ||
+				// iOS uses 0 for text and 7 for URL messages; these codes differ from Android.
+				// Keep this filter in sync with fetchDuplicateAppleTextStanzas.
+				if (sourceMessage.MessageType != 0 && sourceMessage.MessageType != 7) ||
 					!sourceMessage.Text.Valid || strings.TrimSpace(sourceMessage.Text.String) == "" ||
 					strings.TrimSpace(sourceMessage.StanzaID) == "" {
 					summary.MessagesSkipped++
@@ -494,11 +496,12 @@ func fetchDuplicateAppleTextStanzas(
 	ctx context.Context,
 	db *sql.DB,
 ) (map[string]struct{}, int64, error) {
+	// Match importApple's iOS text (0) and URL (7) message filter.
 	rows, err := db.QueryContext(ctx, `
 		SELECT m.ZSTANZAID, COUNT(*)
 		FROM ZWAMESSAGE m
 		JOIN ZWACHATSESSION c ON c.Z_PK = m.ZCHATSESSION
-		WHERE COALESCE(m.ZMESSAGETYPE, 0) = 0
+		WHERE COALESCE(m.ZMESSAGETYPE, 0) IN (0, 7)
 		  AND TRIM(COALESCE(m.ZSTANZAID, '')) <> ''
 		  AND TRIM(COALESCE(m.ZTEXT, '')) <> ''
 		  AND (
