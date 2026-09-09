@@ -126,6 +126,13 @@ type DuckDBOptions struct {
 	TempDirectory string
 	// OwnTempDirectory removes TempDirectory after DuckDB closes.
 	OwnTempDirectory bool
+	// MemoryLimit, Threads and MaxTempDirectorySize override the interactive
+	// DuckDB policy. Empty and zero values keep its defaults, which are sized
+	// for a laptop; a large archive must raise them or heavy queries fail with
+	// a DuckDB out-of-memory error once they spill past the cap.
+	MemoryLimit          string
+	Threads              int
+	MaxTempDirectorySize string
 	// DisableLegacyAnalyticalViews skips registration of the Parquet-backed
 	// SQL views. It is a test-only isolation option proving the unfiltered
 	// people/domain/relationship read paths need only the relationship
@@ -162,7 +169,14 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		ownTempDirectory = true
 	}
 
-	db, err := duckdbutil.Open(context.Background(), duckdbutil.InteractivePolicy(tempDirectory))
+	db, err := duckdbutil.Open(context.Background(), duckdbutil.InteractivePolicyWithOverrides(
+		tempDirectory,
+		duckdbutil.InteractiveOverrides{
+			MemoryLimit:          opt.MemoryLimit,
+			Threads:              opt.Threads,
+			MaxTempDirectorySize: opt.MaxTempDirectorySize,
+		},
+	))
 	if err != nil {
 		if ownTempDirectory {
 			_ = os.RemoveAll(tempDirectory)
