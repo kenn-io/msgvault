@@ -196,7 +196,9 @@ strings that aren't valid base64. An empty waveform still produces
 `{"discord":{}}`. Existing `attachments.duration_ms`, MIME, and generic media
 type fields keep their current meanings.
 
-Use the existing archive columns to inspect these fields:
+Run this SQL against the archive database with a SQLite or PostgreSQL client.
+The `msgvault query` command reads the analytics cache, whose views don't
+include every archive column used here.
 
 ```sql
 SELECT m.id AS message_id,

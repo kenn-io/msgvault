@@ -68,12 +68,27 @@ func TestDiscordRepairAddsVoiceMetadataAndPreservesStoredMedia(t *testing.T) {
 	_, err = st.SetDiscordAttachmentMetadata(invalidID, map[string]string{"discord:invalid": `{"old":4}`})
 	require.NoError(err)
 
+	emptyID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "empty-message",
+		MessageType: discordMessageType,
+		SentAt:      sql.NullTime{Time: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
+	emptyRaw := []byte(`{"id":"empty-message","channel_id":"repair-channel","type":0,"flags":0,"attachments":[]}`)
+	require.NoError(st.UpsertMessageRawWithFormat(emptyID, emptyRaw, discordRawFormat))
+	require.NoError(st.ReplaceMessageDiscordAttachments(emptyID, []store.AttachmentRef{{
+		SourceAttachmentID: "discord:stale-empty", StoragePath: "discord:pending:stale-empty",
+	}}))
+	_, err = st.SetDiscordAttachmentMetadata(emptyID, map[string]string{"discord:stale-empty": `{"old":5}`})
+	require.NoError(err)
+
 	sum, err := NewImporter(st, nil).RepairSource(t.Context(), source.ID, nil)
 	require.NoError(err)
-	assert.Equal(int64(2), sum.MessagesScanned)
+	assert.Equal(int64(3), sum.MessagesScanned)
+	assert.Equal(int64(2), sum.MessageMetadataRewritten)
 	assert.Equal(int64(1), sum.Undecodable)
 	assert.Equal(int64(0), sum.Errors)
-	assert.Equal(int64(3), sum.AttachmentsTagged)
+	assert.Equal(int64(4), sum.AttachmentsTagged)
 	metadata, err := st.GetMessageMetadata(voiceID)
 	require.NoError(err)
 	assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, metadata.String)
@@ -89,6 +104,9 @@ func TestDiscordRepairAddsVoiceMetadataAndPreservesStoredMedia(t *testing.T) {
 	assert.Equal(before["discord:voice-1"].Role, refs["discord:voice-1"].Role)
 	assert.Equal(before["discord:voice-1"].RoleSource, refs["discord:voice-1"].RoleSource)
 	assert.Equal(rawBefore, mustRaw(t, st, voiceID))
+	emptyRefs, err := st.MessageDiscordAttachments(emptyID)
+	require.NoError(err)
+	assert.Empty(emptyRefs["discord:stale-empty"].Metadata)
 	invalidRefs, err := st.MessageDiscordAttachments(invalidID)
 	require.NoError(err)
 	assert.JSONEq(`{"old":4}`, invalidRefs["discord:invalid"].Metadata)
@@ -96,6 +114,7 @@ func TestDiscordRepairAddsVoiceMetadataAndPreservesStoredMedia(t *testing.T) {
 	second, err := NewImporter(st, nil).RepairSource(t.Context(), source.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(0), second.AttachmentsTagged)
+	assert.Equal(int64(0), second.MessageMetadataRewritten)
 	assert.Equal(int64(0), second.Errors)
 }
 

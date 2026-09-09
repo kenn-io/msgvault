@@ -79,9 +79,6 @@ func (imp *Importer) repairMessage(
 	if imp.messageMetadataChanged(item.MessageID, mapped.Metadata, sum) {
 		return
 	}
-	if len(mapped.Attachments) == 0 {
-		return
-	}
 
 	attachmentMetadata := make(map[string]string, len(mapped.Attachments))
 	if message.Flags&discordVoiceMessageFlag != 0 {
@@ -114,6 +111,7 @@ func (imp *Importer) messageMetadataChanged(
 		sum.Errors++
 		return true
 	}
+	sum.MessageMetadataRewritten++
 	return false
 }
 

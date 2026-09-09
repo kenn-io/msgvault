@@ -449,6 +449,21 @@ func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []Attachm
 func (s *Store) SetDiscordAttachmentMetadata(
 	messageID int64, metadata map[string]string,
 ) (int64, error) {
+	if len(metadata) == 0 {
+		var exists bool
+		if err := s.db.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM attachments
+				WHERE message_id = ? AND source_attachment_id LIKE 'discord:%'
+			)
+		`, messageID).Scan(&exists); err != nil {
+			return 0, fmt.Errorf("check Discord attachment metadata: %w", err)
+		}
+		if !exists {
+			return 0, nil
+		}
+	}
+
 	var changed int64
 	err := s.withTx(func(tx *loggedTx) error {
 		resetQuery := fmt.Sprintf(`

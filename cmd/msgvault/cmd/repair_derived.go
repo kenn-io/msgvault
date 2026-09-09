@@ -77,10 +77,7 @@ Examples:
 						rebuildCacheAfterWrite(cfg.DatabaseDSN()),
 					)
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"%s: %d messages scanned, %d bodies rewritten, %d attachments tagged (%s)\n",
-					label, sum.MessagesScanned, sum.BodiesRewritten, sum.AttachmentsTagged,
-					sum.Duration.Round(time.Second))
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), formatRepairDerivedSummary(label, sum))
 				if sum.Undecodable > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %d archived payloads could not be decoded — left unchanged\n", sum.Undecodable)
 				}
@@ -97,6 +94,14 @@ Examples:
 	cmd.Flags().StringArrayVar(&repairDerivedIdentifiers, "identifier", nil,
 		"source identifier to repair (repeatable; default: all matching sources)")
 	return cmd
+}
+
+func formatRepairDerivedSummary(label string, sum *rederive.Summary) string {
+	return fmt.Sprintf(
+		"%s: %d messages scanned, %d message metadata rewritten, %d bodies rewritten, %d attachments tagged (%s)\n",
+		label, sum.MessagesScanned, sum.MessageMetadataRewritten, sum.BodiesRewritten,
+		sum.AttachmentsTagged, sum.Duration.Round(time.Second),
+	)
 }
 
 // repairDerivedTargets resolves the sources this run should repair: those whose

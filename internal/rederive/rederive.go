@@ -25,10 +25,11 @@ import (
 
 // Summary reports what a re-derivation pass changed.
 type Summary struct {
-	Duration          time.Duration
-	MessagesScanned   int64
-	BodiesRewritten   int64
-	AttachmentsTagged int64
+	Duration                 time.Duration
+	MessagesScanned          int64
+	MessageMetadataRewritten int64
+	BodiesRewritten          int64
+	AttachmentsTagged        int64
 	// Undecodable counts archived payloads that could not be parsed; they are
 	// left untouched.
 	Undecodable int64
@@ -41,6 +42,7 @@ func (s *Summary) Add(other *Summary) {
 		return
 	}
 	s.MessagesScanned += other.MessagesScanned
+	s.MessageMetadataRewritten += other.MessageMetadataRewritten
 	s.BodiesRewritten += other.BodiesRewritten
 	s.AttachmentsTagged += other.AttachmentsTagged
 	s.Undecodable += other.Undecodable
