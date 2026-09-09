@@ -233,6 +233,15 @@ instead of being truncated to one embedding input. Chunk boundaries
 prefer paragraph breaks, then sentence breaks, then word boundaries,
 falling back to a hard rune boundary only when needed.
 
+Size it to the context window rather than defensively low. The value
+is not only a correctness ceiling — it sets how many chunks each
+message becomes, and every chunk is a separate embedding input. Halving
+`max_input_chars` roughly doubles the chunk count for long messages, and
+`embeddings build` slows in proportion. On a large archive the
+difference between a conservative value and one matched to the model is
+the difference between hours and days, so it is worth confirming the
+real context window before starting a full rebuild.
+
 Practical guidance:
 
 - **2k-token embedding models:** start around `max_input_chars = 2000`
@@ -240,6 +249,15 @@ Practical guidance:
 - **8k-token embedding models:** start around `max_input_chars = 24000`.
 - **Self-hosted models:** match the actual context window exposed by
   your server, not just the upstream model card.
+
+!!! warning "Ollama truncates silently"
+    Ollama applies its own context limit (`num_ctx`, 2048 by default for
+    embedding models) and truncates longer inputs instead of returning an
+    error. Raising `max_input_chars` past that limit therefore does not
+    fail loudly — it quietly embeds only the beginning of each chunk and
+    degrades recall. Raise `num_ctx` on the served model first (via a
+    `Modelfile` or the API's `options`), confirm the larger window is
+    actually in effect, and only then raise `max_input_chars`.
 
 If `msgvault embeddings build` logs `HTTP 400`, msgvault now includes
 the response body from the embedder when available. Check both the
