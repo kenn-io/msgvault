@@ -131,6 +131,21 @@ func toolPropertyNames(t *testing.T, tool map[string]any) []string {
 	return names
 }
 
+func toolRequiredPropertyNames(t *testing.T, tool map[string]any) []string {
+	t.Helper()
+	schema, ok := tool["inputSchema"].(map[string]any)
+	require.True(t, ok, "inputSchema: %#v", tool["inputSchema"])
+	raw, ok := schema["required"].([]any)
+	require.True(t, ok, "required: %#v", schema)
+	names := make([]string, len(raw))
+	for i, value := range raw {
+		names[i], ok = value.(string)
+		require.True(t, ok, "required[%d]: %#v", i, value)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func toolInputProperty(t *testing.T, tool map[string]any, name string) map[string]any {
 	t.Helper()
 	schema, ok := tool["inputSchema"].(map[string]any)
@@ -174,7 +189,7 @@ func TestMCPModernDiscovery(t *testing.T) {
 }
 
 func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
-	assert.Len(t, stableOperationCatalogs, 128)
+	assert.Len(t, stableOperationCatalogs, 256)
 	backend := &fakeBackend{}
 	localHybrid := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
 	remoteHybrid := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
@@ -196,6 +211,7 @@ func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
 		{name: "1110", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}},
 		{name: "0001", opts: ServeOptions{Engine: &querytest.MockEngine{}, DocumentSearcher: documents}},
 		{name: "1111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend, DocumentSearcher: documents}},
+		{name: "0000_saved_views", opts: ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: &savedViewServiceFixture{}}},
 	}
 
 	for _, shape := range shapes {
@@ -232,6 +248,7 @@ func TestCatalogSchemas(t *testing.T) {
 		return &SimilarSearchResult{}, nil
 	})
 	documents := &recordingDocumentSearcher{}
+	savedViews := &savedViewServiceFixture{}
 
 	shapes := []struct {
 		name            string
@@ -240,6 +257,8 @@ func TestCatalogSchemas(t *testing.T) {
 		vectorInMessage bool
 		similar         bool
 		document        bool
+		savedViews      bool
+		directory       bool
 	}{
 		{name: "0000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
 		{name: "1000", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}, semantic: true},
@@ -247,7 +266,9 @@ func TestCatalogSchemas(t *testing.T) {
 		{name: "1010", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}, semantic: true, similar: true},
 		{name: "1110", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend}, semantic: true, vectorInMessage: true, similar: true},
 		{name: "0001", opts: ServeOptions{Engine: &querytest.MockEngine{}, DocumentSearcher: documents}, document: true},
-		{name: "1111", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend, DocumentSearcher: documents}, semantic: true, vectorInMessage: true, similar: true, document: true},
+		{name: "0000_saved_views", opts: ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: savedViews}, savedViews: true},
+		{name: "directory_and_saved_views", opts: ServeOptions{Engine: &querytest.MockEngine{}, DirectoryBackend: &directoryPeopleBackend{}, SavedViews: savedViews}, directory: true, savedViews: true},
+		{name: "1111_saved_views", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridEngine: localHybrid, Backend: backend, DocumentSearcher: documents, SavedViews: savedViews}, semantic: true, vectorInMessage: true, similar: true, document: true, savedViews: true},
 	}
 
 	for _, shape := range shapes {
@@ -284,8 +305,17 @@ func TestCatalogSchemas(t *testing.T) {
 				if shape.document {
 					expectedNames = append(expectedNames, ToolSearchDocuments)
 				}
+				if shape.savedViews {
+					expectedNames = append(expectedNames, ToolListSavedViews, ToolGetSavedView, ToolRunSavedView)
+				}
+				if shape.directory {
+					expectedNames = append(expectedNames, ToolListDirectoryPeople)
+				}
 				if allowWrites {
 					expectedNames = append(expectedNames, "export_attachment", "stage_deletion")
+				}
+				if allowWrites && shape.savedViews {
+					expectedNames = append(expectedNames, ToolCreateSavedView, ToolUpdateSavedView, ToolDeleteSavedView)
 				}
 				sort.Strings(expectedNames)
 				checks.Equal(expectedNames, names)
@@ -335,9 +365,12 @@ func TestCatalogSchemas(t *testing.T) {
 					checks.Equal("https://json-schema.org/draft/2020-12/schema", outputSchema["$schema"], "%s output dialect", tool["name"])
 					checks.Equal("object", outputSchema["type"], "%s output type", tool["name"])
 
-					readOnly := tool["name"] != ToolExportAttachment && tool["name"] != ToolStageDeletion
+					readOnly := tool["name"] != ToolCreateSavedView && tool["name"] != ToolDeleteSavedView &&
+						tool["name"] != ToolExportAttachment && tool["name"] != ToolStageDeletion &&
+						tool["name"] != ToolUpdateSavedView
+					destructive := tool["name"] == ToolDeleteSavedView
 					checks.Equal(map[string]any{
-						"destructiveHint": false,
+						"destructiveHint": destructive,
 						"idempotentHint":  false,
 						"openWorldHint":   false,
 						"readOnlyHint":    readOnly,
@@ -354,6 +387,10 @@ func TestCatalogSchemas(t *testing.T) {
 		name string
 	}{
 		{ToolGetMessage, "id"},
+		{ToolGetSavedView, "id"},
+		{ToolRunSavedView, "id"},
+		{ToolDeleteSavedView, "id"},
+		{ToolUpdateSavedView, "id"},
 		{ToolGetAttachment, "attachment_id"},
 		{ToolExportAttachment, "attachment_id"},
 		{ToolFindSimilarMessages, "message_id"},
@@ -367,6 +404,23 @@ func TestCatalogSchemas(t *testing.T) {
 		checks.InDelta(1, property["minimum"], 0, "%s.%s minimum", field.tool, field.name)
 		checks.InDelta(jsonSafeIntegerMax, property["maximum"], 0, "%s.%s maximum", field.tool, field.name)
 	}
+	checks.Equal(
+		[]string{"canonical_state", "description", "name", "schema_version"},
+		toolPropertyNames(t, tools[ToolCreateSavedView]),
+	)
+	checks.Equal(
+		[]string{"canonical_state", "name", "schema_version"},
+		toolRequiredPropertyNames(t, tools[ToolCreateSavedView]),
+	)
+	checks.Equal(
+		[]string{"canonical_state", "description", "id", "name", "revision", "schema_version"},
+		toolPropertyNames(t, tools[ToolUpdateSavedView]),
+	)
+	checks.Equal([]string{"id", "revision"}, toolRequiredPropertyNames(t, tools[ToolUpdateSavedView]))
+	checks.Equal([]string{"id", "revision"}, toolPropertyNames(t, tools[ToolDeleteSavedView]))
+	checks.Equal([]string{"id", "revision"}, toolRequiredPropertyNames(t, tools[ToolDeleteSavedView]))
+	checks.Equal([]string{"id"}, toolRequiredPropertyNames(t, tools[ToolGetSavedView]))
+	checks.Equal([]string{"id"}, toolRequiredPropertyNames(t, tools[ToolRunSavedView]))
 
 	for _, toolName := range []string{
 		ToolSearchMessages,
@@ -374,6 +428,7 @@ func TestCatalogSchemas(t *testing.T) {
 		ToolSearchMessageBodies,
 		ToolSemanticSearchMessages,
 		ToolListMessages,
+		ToolRunSavedView,
 	} {
 		limit := toolInputProperty(t, tools[toolName], "limit")
 		checks.Equal("integer", limit["type"], "%s.limit type", toolName)

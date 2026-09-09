@@ -9,6 +9,7 @@ export interface ExploreFilesHTTPResponse {
   candidate_snapshot_id?: string;
   files: ExploreFileFact[];
   next_cursor?: string;
+  search_deletion_scope?: string;
   search_provenance: SearchProvenance;
   total_count: number;
   [key: string]: unknown;

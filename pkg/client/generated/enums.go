@@ -1879,20 +1879,96 @@ func (r RemoveResultCacheState) Validate() error {
 	}
 }
 
+type RunSavedViewResponseResultKind string
+
+const (
+	RunSavedViewResponseResultKindEntries RunSavedViewResponseResultKind = "entries"
+	RunSavedViewResponseResultKindFiles   RunSavedViewResponseResultKind = "files"
+	RunSavedViewResponseResultKindGroups  RunSavedViewResponseResultKind = "groups"
+)
+
+// Validate checks if the RunSavedViewResponseResultKind value is valid
+func (r RunSavedViewResponseResultKind) Validate() error {
+	switch r {
+	case RunSavedViewResponseResultKindEntries, RunSavedViewResponseResultKindFiles, RunSavedViewResponseResultKindGroups:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RunSavedViewResponseResultKind value, got: %v", r))
+	}
+}
+
+type SavedViewFilterField string
+
+const (
+	SavedViewFilterFieldAfter         SavedViewFilterField = "after"
+	SavedViewFilterFieldBefore        SavedViewFilterField = "before"
+	SavedViewFilterFieldDeletion      SavedViewFilterField = "deletion"
+	SavedViewFilterFieldDomain        SavedViewFilterField = "domain"
+	SavedViewFilterFieldIdentity      SavedViewFilterField = "identity"
+	SavedViewFilterFieldMailingList   SavedViewFilterField = "mailing_list"
+	SavedViewFilterFieldMessageType   SavedViewFilterField = "message_type"
+	SavedViewFilterFieldParticipant   SavedViewFilterField = "participant"
+	SavedViewFilterFieldParticipantID SavedViewFilterField = "participant_id"
+	SavedViewFilterFieldSource        SavedViewFilterField = "source"
+	SavedViewFilterFieldSourceID      SavedViewFilterField = "source_id"
+)
+
+// Validate checks if the SavedViewFilterField value is valid
+func (s SavedViewFilterField) Validate() error {
+	switch s {
+	case SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterField value, got: %v", s))
+	}
+}
+
+type SavedViewFilterOperator string
+
+const (
+	SavedViewFilterOperatorEq SavedViewFilterOperator = "eq"
+	SavedViewFilterOperatorIn SavedViewFilterOperator = "in"
+)
+
+// Validate checks if the SavedViewFilterOperator value is valid
+func (s SavedViewFilterOperator) Validate() error {
+	switch s {
+	case SavedViewFilterOperatorEq, SavedViewFilterOperatorIn:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterOperator value, got: %v", s))
+	}
+}
+
 type SavedViewSortDirection string
 
 const (
-	Asc  SavedViewSortDirection = "asc"
 	Desc SavedViewSortDirection = "desc"
 )
 
 // Validate checks if the SavedViewSortDirection value is valid
 func (s SavedViewSortDirection) Validate() error {
 	switch s {
-	case Asc, Desc:
+	case Desc:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewSortDirection value, got: %v", s))
+	}
+}
+
+type SavedViewSortField string
+
+const (
+	SavedViewSortFieldOccurredAt SavedViewSortField = "occurred_at"
+)
+
+// Validate checks if the SavedViewSortField value is valid
+func (s SavedViewSortField) Validate() error {
+	switch s {
+	case SavedViewSortFieldOccurredAt:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewSortField value, got: %v", s))
 	}
 }
 
@@ -1911,6 +1987,69 @@ func (s SavedViewStateEnvelopePresentation) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopePresentation value, got: %v", s))
+	}
+}
+
+type SavedViewStateEnvelopeSearchMode string
+
+const (
+	SavedViewStateEnvelopeSearchModeFullText SavedViewStateEnvelopeSearchMode = "full_text"
+	SavedViewStateEnvelopeSearchModeHybrid   SavedViewStateEnvelopeSearchMode = "hybrid"
+	SavedViewStateEnvelopeSearchModeSemantic SavedViewStateEnvelopeSearchMode = "semantic"
+)
+
+// Validate checks if the SavedViewStateEnvelopeSearchMode value is valid
+func (s SavedViewStateEnvelopeSearchMode) Validate() error {
+	switch s {
+	case SavedViewStateEnvelopeSearchModeFullText, SavedViewStateEnvelopeSearchModeHybrid, SavedViewStateEnvelopeSearchModeSemantic:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopeSearchMode value, got: %v", s))
+	}
+}
+
+type SavedViewStateEnvelopeColumns string
+
+const (
+	SavedViewStateEnvelopeColumnsAttachments SavedViewStateEnvelopeColumns = "attachments"
+	SavedViewStateEnvelopeColumnsExcerpt     SavedViewStateEnvelopeColumns = "excerpt"
+	SavedViewStateEnvelopeColumnsKind        SavedViewStateEnvelopeColumns = "kind"
+	SavedViewStateEnvelopeColumnsPeople      SavedViewStateEnvelopeColumns = "people"
+	SavedViewStateEnvelopeColumnsSize        SavedViewStateEnvelopeColumns = "size"
+	SavedViewStateEnvelopeColumnsTime        SavedViewStateEnvelopeColumns = "time"
+	SavedViewStateEnvelopeColumnsTitle       SavedViewStateEnvelopeColumns = "title"
+)
+
+// Validate checks if the SavedViewStateEnvelopeColumns value is valid
+func (s SavedViewStateEnvelopeColumns) Validate() error {
+	switch s {
+	case SavedViewStateEnvelopeColumnsAttachments, SavedViewStateEnvelopeColumnsExcerpt, SavedViewStateEnvelopeColumnsKind, SavedViewStateEnvelopeColumnsPeople, SavedViewStateEnvelopeColumnsSize, SavedViewStateEnvelopeColumnsTime, SavedViewStateEnvelopeColumnsTitle:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopeColumns value, got: %v", s))
+	}
+}
+
+type SavedViewStateEnvelopeGrouping string
+
+const (
+	SavedViewStateEnvelopeGroupingDomain      SavedViewStateEnvelopeGrouping = "domain"
+	SavedViewStateEnvelopeGroupingKind        SavedViewStateEnvelopeGrouping = "kind"
+	SavedViewStateEnvelopeGroupingMailingList SavedViewStateEnvelopeGrouping = "mailing_list"
+	SavedViewStateEnvelopeGroupingMessageType SavedViewStateEnvelopeGrouping = "message_type"
+	SavedViewStateEnvelopeGroupingMonth       SavedViewStateEnvelopeGrouping = "month"
+	SavedViewStateEnvelopeGroupingParticipant SavedViewStateEnvelopeGrouping = "participant"
+	SavedViewStateEnvelopeGroupingSource      SavedViewStateEnvelopeGrouping = "source"
+	SavedViewStateEnvelopeGroupingYear        SavedViewStateEnvelopeGrouping = "year"
+)
+
+// Validate checks if the SavedViewStateEnvelopeGrouping value is valid
+func (s SavedViewStateEnvelopeGrouping) Validate() error {
+	switch s {
+	case SavedViewStateEnvelopeGroupingDomain, SavedViewStateEnvelopeGroupingKind, SavedViewStateEnvelopeGroupingMailingList, SavedViewStateEnvelopeGroupingMessageType, SavedViewStateEnvelopeGroupingMonth, SavedViewStateEnvelopeGroupingParticipant, SavedViewStateEnvelopeGroupingSource, SavedViewStateEnvelopeGroupingYear:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewStateEnvelopeGrouping value, got: %v", s))
 	}
 }
 

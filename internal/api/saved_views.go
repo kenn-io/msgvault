@@ -28,14 +28,15 @@ type SavedViewStore interface {
 }
 
 type SavedView struct {
-	ID             int64                        `json:"id"`
-	Name           string                       `json:"name"`
-	Description    *string                      `json:"description,omitempty"`
-	CanonicalState store.SavedViewStateEnvelope `json:"canonical_state"`
-	SchemaVersion  int                          `json:"schema_version"`
-	Revision       int64                        `json:"revision"`
-	CreatedAt      time.Time                    `json:"created_at"`
-	UpdatedAt      time.Time                    `json:"updated_at"`
+	IncompatibilityReason string          `json:"incompatibility_reason,omitempty" doc:"Definition validation error that prevents this Saved View from executing"`
+	ID                    int64           `json:"id"`
+	Name                  string          `json:"name"`
+	Description           *string         `json:"description,omitempty"`
+	CanonicalState        json.RawMessage `json:"canonical_state" doc:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
+	SchemaVersion         int             `json:"schema_version"`
+	Revision              int64           `json:"revision"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
 type SavedViewsResponse struct {
@@ -94,6 +95,8 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 		http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired,
 		http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, remove, s.handleDeleteSavedView)
+
+	s.registerRunSavedViewRoute(api)
 }
 
 func addSavedViewIDParameter(operation *huma.Operation) {
@@ -137,12 +140,8 @@ func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
 	}
 	response := SavedViewsResponse{SavedViews: make([]SavedView, 0, len(views))}
 	for i := range views {
-		view, err := savedViewResponse(&views[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
-			return
-		}
-		response.SavedViews = append(response.SavedViews, view)
+		_, err := prepareSavedView(views[i])
+		response.SavedViews = append(response.SavedViews, savedViewResponse(&views[i], err))
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -163,16 +162,18 @@ func (s *Server) handleCreateSavedView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := savedViewInput(request.Name, request.Description, canonicalState, request.SchemaVersion)
+	if _, err := prepareSavedView(store.SavedView{
+		CanonicalState: input.CanonicalState, SchemaVersion: input.SchemaVersion,
+	}); err != nil {
+		s.writeSavedViewError(w, err)
+		return
+	}
 	created, err := s.savedViewStore.CreateSavedView(r.Context(), input)
 	if err != nil {
 		s.writeSavedViewError(w, err)
 		return
 	}
-	response, err := savedViewResponse(created)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
-		return
-	}
+	response := savedViewResponse(created, nil)
 	w.Header().Set(etagHeaderName, savedViewETag(*created))
 	w.Header().Set("Location", savedViewsPath+"/"+strconv.FormatInt(created.ID, 10))
 	w.Header().Set("Cache-Control", "no-store")
@@ -192,11 +193,8 @@ func (s *Server) handleGetSavedView(w http.ResponseWriter, r *http.Request) {
 		s.writeSavedViewError(w, err)
 		return
 	}
-	response, err := savedViewResponse(view)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
-		return
-	}
+	_, incompatibility := prepareSavedView(*view)
+	response := savedViewResponse(view, incompatibility)
 	w.Header().Set(etagHeaderName, savedViewETag(*view))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -252,16 +250,18 @@ func (s *Server) handlePatchSavedView(w http.ResponseWriter, r *http.Request) {
 	if request.SchemaVersion != nil {
 		input.SchemaVersion = *request.SchemaVersion
 	}
+	if _, err := prepareSavedView(store.SavedView{
+		CanonicalState: input.CanonicalState, SchemaVersion: input.SchemaVersion,
+	}); err != nil {
+		s.writeSavedViewError(w, err)
+		return
+	}
 	updated, err := s.savedViewStore.UpdateSavedView(r.Context(), id, revision, input)
 	if err != nil {
 		s.writeSavedViewError(w, err)
 		return
 	}
-	response, err := savedViewResponse(updated)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "saved_view_read_failed", err.Error())
-		return
-	}
+	response := savedViewResponse(updated, nil)
 	w.Header().Set(etagHeaderName, savedViewETag(*updated))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -347,18 +347,20 @@ func normalizedDescription(description *string) *string {
 	return &value
 }
 
-func savedViewResponse(view *store.SavedView) (SavedView, error) {
-	var state store.SavedViewStateEnvelope
-	decoder := json.NewDecoder(strings.NewReader(string(view.CanonicalState)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&state); err != nil {
-		return SavedView{}, fmt.Errorf("decode Saved View %d canonical state: %w", view.ID, err)
+// savedViewResponse preserves the stored definition even when preparation failed.
+// Callers reuse their preparation result so constructing a response never validates
+// or decodes the definition again.
+func savedViewResponse(view *store.SavedView, incompatibility error) SavedView {
+	var reason string
+	if incompatibility != nil {
+		reason = incompatibility.Error()
 	}
 	return SavedView{
-		ID: view.ID, Name: view.Name, Description: view.Description,
-		CanonicalState: state, SchemaVersion: view.SchemaVersion, Revision: view.Revision,
+		IncompatibilityReason: reason,
+		ID:                    view.ID, Name: view.Name, Description: view.Description,
+		CanonicalState: view.CanonicalState, SchemaVersion: view.SchemaVersion, Revision: view.Revision,
 		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
-	}, nil
+	}
 }
 
 func savedViewID(w http.ResponseWriter, r *http.Request) (int64, bool) {

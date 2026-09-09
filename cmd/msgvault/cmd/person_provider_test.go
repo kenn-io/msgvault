@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -1908,35 +1909,38 @@ func TestPersonProviderModelsListsSupportedEfforts(t *testing.T) {
 func TestPersonProviderLoginAndModelsUseConfiguredTimeout(t *testing.T) {
 	for _, operation := range []string{"login", "models"} {
 		t.Run(operation, func(t *testing.T) {
-			checks := assert.New(t)
-			must := require.New(t)
-			starter := &commandCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer) error{
-				func(reader *bufio.Reader, _ io.Writer) error {
-					if _, err := reader.ReadBytes('\n'); err != nil {
-						return fmt.Errorf("read silent command Codex request: %w", err)
-					}
-					_, err := reader.ReadBytes('\n')
-					if err != nil {
-						return fmt.Errorf("wait for silent command Codex request: %w", err)
-					}
-					return nil
-				},
-			}}
-			var opens atomic.Int64
-			deps := codexCommandDeps(t, starter, &opens)
-			config := commandCodexConfig()
-			mutateConfiguredPersonProvider(&config, func(provider *peoplesweep.ProviderConfig) {
-				provider.RequestTimeout = 30 * time.Millisecond
+			// Advance deadlines only once the in-memory provider is waiting; real
+			// filesystem setup and runner scheduling must not consume the timeout.
+			synctest.Test(t, func(t *testing.T) {
+				checks := assert.New(t)
+				must := require.New(t)
+				starter := &commandCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer) error{
+					func(reader *bufio.Reader, _ io.Writer) error {
+						if _, err := reader.ReadBytes('\n'); err != nil {
+							return fmt.Errorf("read silent command Codex request: %w", err)
+						}
+						_, err := reader.ReadBytes('\n')
+						if err != nil {
+							return fmt.Errorf("wait for silent command Codex request: %w", err)
+						}
+						return nil
+					},
+				}}
+				var opens atomic.Int64
+				deps := codexCommandDeps(t, starter, &opens)
+				config := commandCodexConfig()
+				mutateConfiguredPersonProvider(&config, func(provider *peoplesweep.ProviderConfig) {
+					provider.RequestTimeout = 30 * time.Millisecond
+				})
+				deps.config = func() peoplesweep.Config { return config }
+				parentCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+				defer cancel()
+				_, err := executePersonProviderCommandContext(parentCtx, t, deps, operation)
+				must.ErrorIs(err, context.DeadlineExceeded)
+				must.NoError(parentCtx.Err(), "the provider deadline must expire before the parent deadline")
+				checks.Equal(int64(1), starter.starts.Load())
+				checks.Zero(opens.Load())
 			})
-			deps.config = func() peoplesweep.Config { return config }
-			parentCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-			defer cancel()
-			startedAt := time.Now()
-			_, err := executePersonProviderCommandContext(parentCtx, t, deps, operation)
-			must.ErrorIs(err, context.DeadlineExceeded)
-			checks.Less(time.Since(startedAt), 250*time.Millisecond)
-			checks.Equal(int64(1), starter.starts.Load())
-			checks.Zero(opens.Load())
 		})
 	}
 }

@@ -69,6 +69,8 @@ func TestSixtyfourAsyncLifecycleUsesExactWireAndSurvivesRestart(t *testing.T) {
 	defer server.Close()
 
 	config := sixtyfourConfig(server.URL+"/people-intelligence-async", server.URL+"/job-status")
+	// Bound the HTTP wait without making runner throughput part of the lifecycle contract.
+	config.RequestTimeout = 30 * time.Second
 	request := sixtyfourRequest(t)
 	provider, err := personenrichment.NewSixtyfourProvider(config, "test-key", server.Client())
 	requirements.NoError(err)

@@ -29,9 +29,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.20.0**.
+it is separate from the binary release version. The current schema is **2.21.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.21.0 adds Saved View execution at
+`POST /api/v1/saved-views/{id}/run`, publishes the accepted Saved View
+definition values, and includes incompatibility reasons when reading stored
+views. Explore file responses also declare when semantic search uses only
+active messages.
 
 Participant analytics live under `/api/v1/participants/*`; durable curated
 profiles live under `/api/v1/people/*`. CardDAV publication and conflict
@@ -1744,6 +1750,143 @@ after the explore response was produced, preflight fails with
 `409 archive_revision_changed` or `409 search_revision_changed` — re-run
 explore and preflight against the new revision. Staging repeats all of these
 checks.
+
+---
+
+### Saved Views {#saved-views}
+
+Saved Views are persistent, shared analytical definitions: a query, an
+explicit search mode, filters, a grouping chain, a presentation, a sort, the
+visible columns, and the inspector preference. Each record carries a schema
+version and a revision. The Web UI, the MCP server, and any API client read,
+edit, and run the same records, so a view saved in the browser can be executed
+by an agent without rebuilding its query.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/saved-views` | List every Saved View, ordered by name. |
+| `POST` | `/api/v1/saved-views` | Create a view. Returns `201` with an `ETag` and `Location` header. |
+| `GET` | `/api/v1/saved-views/{id}` | Read one view. Returns its `ETag`. |
+| `PATCH` | `/api/v1/saved-views/{id}` | Update only the supplied fields. Requires `If-Match`. |
+| `DELETE` | `/api/v1/saved-views/{id}` | Delete a view definition. Requires `If-Match`. Never touches archive messages. |
+| `POST` | `/api/v1/saved-views/{id}/run` | Execute a view through its canonical Explore definition. |
+
+`canonical_state` is a closed version-1 object. The daemon rejects a
+definition it could not execute, so every stored view can be opened by the
+Web UI and run by the API:
+
+| Field | Accepted values |
+|-------|-----------------|
+| `query` | Free text. Empty means no text search. |
+| `search_mode` | `full_text`, `semantic`, `hybrid`. Defaults to `full_text` when a query is present. |
+| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
+| `filters[].operator` | `eq` or `in`. |
+| `filters[].values` | One or more non-empty strings. Numeric identifiers are decimal strings so they survive JavaScript clients unchanged. |
+| `grouping` | A drill-down chain of Explore grouping dimensions: `source`, `participant`, `domain`, `message_type`, `mailing_list`, `kind`, `year`, `month`. |
+| `presentation` | `table`, `timeline`, or `files`. |
+| `sort` | Only `{"field": "occurred_at", "direction": "desc"}`. |
+| `columns` | `kind`, `people`, `title`, `excerpt`, `time`, `attachments`, `size`. Presentation only; never sent to Explore. |
+| `inspector_pinned` | Optional inspector pin metadata. API and MCP clients preserve explicit `true` and `false` values. The current Web UI keeps the inspector pinned and ignores this field. |
+
+Every field is optional, an explicit `null` is rejected, and unknown or
+transient workspace state such as selections and result rows is rejected.
+Values are checked with the rules Explore applies when the view runs: `source`
+and `participant` take positive integer IDs, `after` and `before` take one
+RFC3339 timestamp each and appear at most once, `deletion` takes `active` or
+`deleted`, an `identity` filter carries source ID, identifier, and direction
+next to a matching single-value `source` filter, and at most one `sort` entry
+is allowed. The same vocabulary is published as enums in the OpenAPI document,
+so generated clients validate it before a request is sent.
+
+Read responses preserve `canonical_state` as the original JSON, including
+definitions from older or unsupported schema versions. Check
+`incompatibility_reason` before treating that JSON as an executable definition.
+An incompatible view remains readable through the API and MCP so clients can
+explain the problem and offer removal.
+
+Mutations use the record revision as an optimistic-concurrency guard. Send
+the latest `ETag` (for example `"saved-view-7-r3"`) as `If-Match`; a stale tag
+returns `409 saved_view_revision_conflict`, so reload the view and review the
+latest revision instead of overwriting it. Other errors are
+`400 invalid_saved_view` for a definition outside the vocabulary or an
+unsupported schema version, `404 saved_view_not_found`,
+`409 saved_view_name_conflict`, `428 if_match_required`, and
+`400 invalid_if_match`.
+
+---
+
+### Run a Saved View {#post-apiv1saved-viewsidrun}
+
+**Endpoint:** `POST /api/v1/saved-views/{id}/run`
+
+Executes the stored definition through the Explore endpoint its definition
+selects, with the same validation, search resolution, and cursor pagination
+that endpoint applies:
+
+- A view with a `grouping` chain runs `POST /api/v1/explore/groups` at the
+  first level of the chain, the level the Web UI shows when it opens the view.
+- A view with `presentation: "files"` runs `POST /api/v1/explore/files`.
+- Every other view runs `POST /api/v1/explore` as a table. Timeline is a
+  client-side rendering of the same entry rows.
+
+```json
+{
+  "limit": 20,
+  "cursor": "eyJvZmZzZXQiOjIwLC..."
+}
+```
+
+`limit` is `1` to `100` and defaults to `100`. `cursor` is the opaque
+`next_cursor` from the previous page and is omitted for the first page. An
+empty object `{}` is a valid body.
+
+```json
+{
+  "saved_view": {
+    "id": 7,
+    "name": "Invoices",
+    "canonical_state": {
+      "query": "invoice",
+      "search_mode": "full_text",
+      "filters": [{"field": "source", "operator": "in", "values": ["1"]}],
+      "presentation": "table"
+    },
+    "schema_version": 1,
+    "revision": 3,
+    "created_at": "2026-07-19T10:00:00Z",
+    "updated_at": "2026-07-19T11:00:00Z"
+  },
+  "result_kind": "entries",
+  "rows": [
+    {"key": "message:42", "kind": "email", "title": "Quarterly invoice", "occurred_at": "2026-07-18T11:00:00Z"}
+  ],
+  "total_count": 2,
+  "next_cursor": "eyJvZmZzZXQiOjEsLi4u",
+  "cache_revision": "cache-9",
+  "search_provenance": {"lexical_index_revision": "fts-4"}
+}
+```
+
+`result_kind` names the populated array: `entries` carries `rows` in the
+`POST /api/v1/explore` row shape, `groups` carries `groups`, and `files`
+carries `files`. For semantic and hybrid searches, entry pages omit
+`total_count` and report `candidate_snapshot_id` and `candidate_pool_saturated`.
+Group and file pages retain Explore's `total_count`: the number of matching
+groups or files within the resolved candidate set, not an archive-wide semantic
+match count. These pages report `candidate_snapshot_id` and reject an incomplete
+candidate pool. `search_deletion_scope` is `active` when a semantic search
+narrowed an unrestricted deletion context. `next_cursor` is present while more
+results remain.
+
+A missing view returns `404 saved_view_not_found`, and a stored definition the
+current daemon cannot execute, such as one written under another schema
+version, returns `400 invalid_saved_view`. Every other failure is the Explore
+endpoint's own response passed through unchanged: `400 invalid_cursor` or
+`invalid_limit`, `409 archive_revision_changed` or `search_revision_changed`
+when pagination must restart, `503 vector_not_enabled` or another vector
+readiness error for semantic and hybrid views, and the analytical cache
+readiness response when the cache is unavailable. Semantic and hybrid views
+never fall back to full-text search.
 
 ---
 

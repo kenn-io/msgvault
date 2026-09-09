@@ -13,11 +13,14 @@ read Google credentials. Semantic searches call your configured embedding
 endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).
 
-By default, stdio clients can also export attachments and stage deletion
-manifests. Actual message deletion still requires the CLI
+By default, stdio clients can also manage Saved Views, export attachments,
+and stage deletion manifests. Actual message deletion still requires the CLI
 [deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
 need `--allow-profile-writes`. HTTP clients get read tools by default and need
 `--http-allow-writes` for any write tools. See [write controls](#write-controls).
+
+Saved View management changes only reusable definitions; deleting a Saved
+View never deletes archive messages.
 
 ## Setup
 
@@ -118,6 +121,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
+| `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
+| `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
+| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; currently `1`), `description` (string) |
+| `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
+| `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
@@ -215,6 +224,47 @@ top-level `mode`, `pool_saturated`, and `generation` fields. When
 `explain = true`, each item in `data` may include a `score` object with
 the fused ranking components.
 
+### Saved Views
+
+Saved Views are persistent, reusable query and presentation definitions
+shared with msgvault's Web UI through the selected daemon. Use
+`list_saved_views` to discover them and prefer `run_saved_view` over
+rebuilding a known view's query by hand. Each response identifies its
+`result_kind` as `entries`, `groups`, or `files` and carries the matching typed
+array. Request the next page by passing the opaque `next_cursor` as `cursor`;
+`run_saved_view` defaults to 20 results and caps each page at 50.
+
+The daemon executes the view. `run_saved_view` calls
+`POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
+same Explore endpoint the Web UI uses, so the query, search mode, filters,
+grouping, presentation, and sort run exactly as saved. A grouped view runs at
+the first level of its grouping chain, the level the Web UI shows when it
+opens that view, and a timeline view returns the same entry rows as a table.
+The tools are offered only when the daemon serves that endpoint (API schema
+2.21.0 or later); an older daemon omits them from the tool list.
+
+Semantic and hybrid Saved Views require configured, ready
+[vector search](/docs/usage/vector-search/). The tool returns the vector
+capability or index-state error when it is unavailable and never silently
+downgrades the view to full-text search.
+
+`create_saved_view` and `update_saved_view` take the same `canonical_state`
+object the API stores, and the tool schema lists the accepted values for every
+field. The daemon rejects any definition it could not execute, so a view an
+agent creates can always be opened in the Web UI; see the
+[Saved Views vocabulary](/docs/api-server/#saved-views) for the full list.
+Updates patch only the supplied fields. Pass the latest `revision` returned by
+list, get, create, or update; a stale revision returns
+`saved_view_revision_conflict` so the agent can reload before retrying. An
+empty `description` clears it.
+
+Stdio exposes these write-class tools, like attachment export and deletion
+staging, and the server instructs clients that they require explicit user
+intent. StreamableHTTP hides them by default; pass `--http-allow-writes` only
+for trusted clients to expose Saved View management, attachment export, and
+deletion staging over HTTP. Deleting a Saved View removes a query definition
+and never archive messages.
+
 ## Example Usage with Claude
 
 Once configured, you can ask Claude questions like:
@@ -276,7 +326,7 @@ instruction or as your consent to a write.
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Attachment export and deletion staging | Person promotion and Notes writes |
+| Transport | Saved View management, attachment export, and deletion staging | Person promotion and Notes writes |
 |---|---|---|
 | Stdio | Available by default | Add `--allow-profile-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` |
@@ -332,7 +382,7 @@ msgvault mcp --http 8080
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
-| `--http-allow-writes` | `false` | Expose attachment exports and deletion staging over HTTP; profile writes still need their separate flag. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment exports, and deletion staging over HTTP; profile writes still need their separate flag. |
 | `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 

@@ -226,8 +226,9 @@ context, including chronologically ordered related files.
 Saved Views persist useful analytical contexts in the daemon, so the same
 library is available from every authenticated browser connected to this
 single-user archive. A view records its query, explicit search mode, filters,
-grouping, presentation, sort, visible columns, and inspector preference.
-Selection is intentionally not saved.
+grouping, presentation, sort, and visible columns.
+Selection is intentionally not saved. The inspector stays pinned; the browser
+does not save or apply inspector pin preferences.
 
 Each record carries a schema version. An incompatible record remains visible,
 but cannot be opened or edited: automatic migration is not attempted. Remove it
@@ -235,6 +236,12 @@ after confirmation and save the current context again. Updates and deletion use
 the record revision as an optimistic-concurrency guard. If another browser
 changes the view first, msgvault reports a conflict and requires you to reload
 and review the latest revision instead of overwriting it.
+
+The daemon validates every definition against the version-1 vocabulary
+before saving it, so any stored view can be opened here, run by an API client
+through `POST /api/v1/saved-views/{id}/run`, or executed by an AI assistant
+with the [MCP server](/docs/usage/chat/#saved-views)'s `run_saved_view` tool.
+All three read the same records and see the same revisions.
 
 ## Sources and sync status
 

@@ -176,6 +176,8 @@ type CreateSavedViewBody = CreateSavedViewRequest
 
 type PatchSavedViewBody = PatchSavedViewRequest
 
+type RunSavedViewBody = RunSavedViewRequest
+
 type SearchVisualAttachmentsBody = VisualTextSearchRequest
 
 type GetSearchCoverageBody = SearchCoverageRequest

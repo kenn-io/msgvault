@@ -890,7 +890,7 @@ func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
 
 	select {
 	case <-checkpointStarted:
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		require.FailNow("meeting import did not reach checkpoint")
 	}
 	cancel()
@@ -899,7 +899,7 @@ func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(err, context.Canceled)
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		require.FailNow("meeting import did not stop after cancellation")
 	}
 

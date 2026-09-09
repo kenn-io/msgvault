@@ -83,7 +83,8 @@ describe('group context', () => {
     expect(filtersForGroup([], 'year', '20x6')).toBeUndefined();
     expect(filtersForGroup([], 'month', '2026-13')).toBeUndefined();
     expect(parseGroupSelection('group:domain:example.com')).toEqual({ dimension: 'domain', key: 'example.com' });
-    expect(parseGroupSelection('group:kind:email')).toBeUndefined();
+    expect(parseGroupSelection('group:kind:message')).toEqual({ dimension: 'kind', key: 'message' });
+    expect(filtersForGroup([], 'kind', 'message')).toBeUndefined();
     expect(parseGroupSelection('message:1')).toBeUndefined();
   });
 });

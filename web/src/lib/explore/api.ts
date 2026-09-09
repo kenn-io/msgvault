@@ -89,6 +89,7 @@ function normalizeFiles(data: ExploreFilesResponse): Extract<
     cacheRevision: data.cache_revision,
     searchProvenance: data.search_provenance,
     candidateSnapshotId: data.candidate_snapshot_id,
+    searchDeletionScope: data.search_deletion_scope,
     nextCursor: data.next_cursor,
   };
 }

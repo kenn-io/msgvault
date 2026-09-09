@@ -9,6 +9,7 @@ export type GroupingConcept =
   | 'time'
   | 'source'
   | 'modality'
+  | 'kind'
   | 'mailing_lists'
   | 'labels'
   | 'attachment_facts'
@@ -22,6 +23,7 @@ export interface GroupingCatalogEntry {
   family: GroupingFamily;
   keywords: string;
   requestable: boolean;
+  drillable: boolean;
   requestDimensions: readonly ExploreGroupDimension[];
   unavailableReason?: string;
 }
@@ -38,6 +40,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'people',
     keywords: 'person sender recipient email phone identity',
     requestable: true,
+    drillable: true,
     requestDimensions: ['participant']
   },
   {
@@ -46,6 +49,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'identifiers',
     keywords: 'email phone address account identity',
     requestable: false,
+    drillable: false,
     requestDimensions: [],
     unavailableReason: 'Identifier-level grouping is not in the analytical API yet.'
   },
@@ -55,6 +59,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'domains',
     keywords: 'organization host email domain',
     requestable: true,
+    drillable: true,
     requestDimensions: ['domain']
   },
   {
@@ -63,6 +68,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'time',
     keywords: 'year month date annual monthly',
     requestable: true,
+    drillable: true,
     requestDimensions: ['year', 'month']
   },
   {
@@ -71,6 +77,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'source',
     keywords: 'account archive provider',
     requestable: true,
+    drillable: true,
     requestDimensions: ['source']
   },
   {
@@ -79,7 +86,17 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'modality',
     keywords: 'type email chat text calendar meeting note',
     requestable: true,
+    drillable: true,
     requestDimensions: ['message_type']
+  },
+  {
+    concept: 'kind',
+    label: 'Entry kind',
+    family: 'kind',
+    keywords: 'entry kind message conversation',
+    requestable: true,
+    drillable: false, // The API groups by entry kind but has no matching filter.
+    requestDimensions: ['kind']
   },
   {
     concept: 'mailing_lists',
@@ -87,6 +104,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'mailing_lists',
     keywords: 'mailing list newsletter list id list-id',
     requestable: true,
+    drillable: true,
     requestDimensions: ['mailing_list']
   },
   {
@@ -95,6 +113,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'labels',
     keywords: 'tag category mailbox',
     requestable: false,
+    drillable: false,
     requestDimensions: [],
     unavailableReason: 'Label grouping is not in the analytical API yet.'
   },
@@ -104,6 +123,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'attachment_facts',
     keywords: 'file attachment size type extension',
     requestable: false,
+    drillable: false,
     requestDimensions: [],
     unavailableReason: 'Attachment-fact grouping is reserved for the Files workspace.'
   },
@@ -113,6 +133,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'conversation',
     keywords: 'thread chat logical entry',
     requestable: false,
+    drillable: false,
     requestDimensions: [],
     unavailableReason: 'Conversation grouping is not filterable in the analytical API yet.'
   }

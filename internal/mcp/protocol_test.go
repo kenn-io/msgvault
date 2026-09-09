@@ -679,6 +679,7 @@ func TestMCPHTTPPolicyWriteTools(t *testing.T) {
 			return []byte("content"), nil
 		}),
 		ManifestSaver: saver,
+		SavedViews:    &savedViewServiceFixture{},
 	}
 
 	listBody := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
@@ -688,6 +689,9 @@ func TestMCPHTTPPolicyWriteTools(t *testing.T) {
 	names := task3ToolNames(t, response)
 	assert.NotContains(names, ToolExportAttachment)
 	assert.NotContains(names, ToolStageDeletion)
+	assert.NotContains(names, ToolCreateSavedView)
+	assert.NotContains(names, ToolUpdateSavedView)
+	assert.NotContains(names, ToolDeleteSavedView)
 
 	writableHandler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
 	recorder, response = task3Serve(writableHandler, task3ModernRequest("tools/list", "", listBody))
@@ -695,6 +699,9 @@ func TestMCPHTTPPolicyWriteTools(t *testing.T) {
 	names = task3ToolNames(t, response)
 	assert.Contains(names, ToolExportAttachment)
 	assert.Contains(names, ToolStageDeletion)
+	assert.Contains(names, ToolCreateSavedView)
+	assert.Contains(names, ToolUpdateSavedView)
+	assert.Contains(names, ToolDeleteSavedView)
 
 	exportBody := task3ToolCallBody(
 		2,
@@ -712,6 +719,15 @@ func TestMCPHTTPPolicyWriteTools(t *testing.T) {
 	recorder, response = task3Serve(
 		readOnlyHandler,
 		task3ModernRequest("tools/call", ToolStageDeletion, stageBody),
+	)
+	assert.Equal(http.StatusBadRequest, recorder.Code, "response: %s", recorder.Body.String())
+	require.NotNil(response.Error, "response: %s", recorder.Body.String())
+
+	createBody := task3ToolCallBody(4, ToolCreateSavedView,
+		`{"name":"Hidden","canonical_state":{},"schema_version":1}`)
+	recorder, response = task3Serve(
+		readOnlyHandler,
+		task3ModernRequest("tools/call", ToolCreateSavedView, createBody),
 	)
 	assert.Equal(http.StatusBadRequest, recorder.Code, "response: %s", recorder.Body.String())
 	require.NotNil(response.Error, "response: %s", recorder.Body.String())

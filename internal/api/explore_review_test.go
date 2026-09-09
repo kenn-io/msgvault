@@ -1041,6 +1041,12 @@ func TestExploreSemanticNarrowsUnrestrictedDeletionToActive(t *testing.T) {
 	var groupsBody ExploreGroupsHTTPResponse
 	requirements.NoError(json.Unmarshal(groups.Body.Bytes(), &groupsBody))
 	assertions.Equal("active", groupsBody.SearchDeletionScope)
+
+	files := postExploreJSON(t, srv, "/api/v1/explore/files", `{"predicate":{"query":"alpha","search_mode":"semantic"}}`)
+	requirements.Equal(http.StatusOK, files.Code, files.Body.String())
+	var filesBody ExploreFilesHTTPResponse
+	requirements.NoError(json.Unmarshal(files.Body.Bytes(), &filesBody))
+	assertions.Equal("active", filesBody.SearchDeletionScope, "file pages declare the narrowing like entries and groups")
 }
 
 type recordingExploreEngine struct {

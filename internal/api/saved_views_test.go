@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestSavedViewsAuthenticatedCRUDAndSharedSessionVisibility(t *testing.T) {
@@ -302,4 +303,196 @@ func decodeSavedView(t *testing.T, response *httptest.ResponseRecorder) store.Sa
 	var view store.SavedView
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
 	return view
+}
+
+// TestSavedViewsAPIRejectDefinitionsExploreCannotRun pins that a definition
+// inside the store vocabulary but outside Explore's value rules is refused
+// when it is saved, not when it is finally run.
+func TestSavedViewsAPIRejectDefinitionsExploreCannotRun(t *testing.T) {
+	cases := map[string]string{
+		"non-numeric source ID":    `{"filters":[{"field":"source","operator":"in","values":["primary"]}]}`,
+		"invalid timestamp":        `{"filters":[{"field":"after","operator":"eq","values":["yesterday"]}]}`,
+		"duplicate timestamp":      `{"filters":[{"field":"after","operator":"eq","values":["2026-01-01T00:00:00Z"]},{"field":"after","operator":"eq","values":["2026-02-01T00:00:00Z"]}]}`,
+		"identity without source":  `{"filters":[{"field":"identity","operator":"eq","values":["1","me@example.com","sender"]}]}`,
+		"identity missing parts":   `{"filters":[{"field":"source","operator":"eq","values":["1"]},{"field":"identity","operator":"eq","values":["1"]}]}`,
+		"unknown deletion value":   `{"filters":[{"field":"deletion","operator":"eq","values":["purged"]}]}`,
+		"more than one sort entry": `{"sort":[{"field":"occurred_at","direction":"desc"},{"field":"occurred_at","direction":"desc"}]}`,
+		"query syntax":             `{"query":"invoice after:yesterday","search_mode":"full_text"}`,
+		"semantic deleted scope":   `{"query":"invoice","search_mode":"semantic","filters":[{"field":"deletion","operator":"eq","values":["deleted"]}]}`,
+		"hybrid without free text": `{"query":"from:alice@example.com","search_mode":"hybrid"}`,
+		"semantic empty query":     `{"search_mode":"semantic"}`,
+		"semantic blank query":     `{"query":" \t\n ","search_mode":"semantic"}`,
+		"hybrid empty query":       `{"search_mode":"hybrid"}`,
+		"hybrid blank query":       `{"query":" \t\n ","search_mode":"hybrid"}`,
+	}
+	for name, state := range cases {
+		t.Run("create "+name, func(t *testing.T) {
+			srv := newSavedViewTestServer(t)
+			session := loginSavedViewSession(t, srv)
+			response := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
+				[]byte(`{"name":"Invalid","canonical_state":`+state+`,"schema_version":1}`), session.mutationHeaders())
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "invalid_saved_view")
+		})
+	}
+
+	t.Run("patch keeps the stored definition", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		srv := newSavedViewTestServer(t)
+		session := loginSavedViewSession(t, srv)
+		created := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
+			[]byte(`{"name":"Valid","canonical_state":{"filters":[{"field":"source","operator":"eq","values":["1"]},{"field":"identity","operator":"eq","values":["1","me@example.com","sender"]}]},"schema_version":1}`),
+			session.mutationHeaders())
+		requirements.Equal(http.StatusCreated, created.Code, created.Body.String())
+		view := decodeSavedView(t, created)
+		itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
+
+		headers := session.mutationHeaders()
+		headers.Set("If-Match", savedViewETag(view))
+		patched := performSavedViewRequest(t, srv, http.MethodPatch, itemPath,
+			[]byte(`{"canonical_state":`+cases["non-numeric source ID"]+`}`), headers)
+		assertions.Equal(http.StatusBadRequest, patched.Code, patched.Body.String())
+		assertions.Contains(patched.Body.String(), "invalid_saved_view")
+
+		unchanged := performSavedViewRequest(t, srv, http.MethodGet, itemPath, nil, session.headers())
+		requirements.Equal(http.StatusOK, unchanged.Code, unchanged.Body.String())
+		assertions.Equal(int64(1), decodeSavedView(t, unchanged).Revision)
+	})
+
+	t.Run("metadata patch rejects an unsearchable stored definition", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		srv := newSavedViewTestServer(t)
+		session := loginSavedViewSession(t, srv)
+		view, err := srv.savedViewStore.CreateSavedView(t.Context(), store.SavedViewInput{
+			Name: "Old view", SchemaVersion: store.CurrentSavedViewSchemaVersion,
+			CanonicalState: json.RawMessage(cases["hybrid without free text"]),
+		})
+		requirements.NoError(err)
+		itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
+		headers := session.mutationHeaders()
+		headers.Set("If-Match", savedViewETag(*view))
+		patched := performSavedViewRequest(t, srv, http.MethodPatch, itemPath,
+			[]byte(`{"name":"Renamed"}`), headers)
+		assertions.Equal(http.StatusBadRequest, patched.Code, patched.Body.String())
+		var failure ErrorResponse
+		requirements.NoError(json.Unmarshal(patched.Body.Bytes(), &failure))
+		assertions.Equal("invalid_saved_view", failure.Error)
+
+		unchanged, err := srv.savedViewStore.GetSavedView(t.Context(), view.ID)
+		requirements.NoError(err)
+		assertions.Equal(view.Name, unchanged.Name)
+		assertions.Equal(view.Revision, unchanged.Revision)
+	})
+}
+
+func TestSavedViewsReadReportsIncompatibleDefinitions(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		for _, query := range []string{"", " \t\n ", "from:alice@example.com", "invoice"} {
+			t.Run(mode+"/"+query, func(t *testing.T) {
+				srv := newSavedViewTestServer(t)
+				session := loginSavedViewSession(t, srv)
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				state, err := json.Marshal(store.SavedViewStateEnvelope{Query: query, SearchMode: mode})
+				requirements.NoError(err)
+				view, err := srv.savedViewStore.CreateSavedView(t.Context(), store.SavedViewInput{
+					Name: mode + query, CanonicalState: state, SchemaVersion: store.CurrentSavedViewSchemaVersion,
+				})
+				requirements.NoError(err)
+				itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
+				response := performSavedViewRequest(t, srv, http.MethodGet, itemPath, nil, session.headers())
+				requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+				var item SavedView
+				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &item))
+				if query == "invoice" {
+					assertions.Empty(item.IncompatibilityReason)
+				} else {
+					assertions.Contains(item.IncompatibilityReason, "free text")
+				}
+				listed := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, session.headers())
+				requirements.Equal(http.StatusOK, listed.Code, listed.Body.String())
+				var library SavedViewsResponse
+				requirements.NoError(json.Unmarshal(listed.Body.Bytes(), &library))
+				requirements.Len(library.SavedViews, 1)
+				assertions.Equal(item.IncompatibilityReason, library.SavedViews[0].IncompatibilityReason)
+			})
+		}
+	}
+}
+
+func TestSavedViewsReadReportsUnsupportedSchema(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv := newSavedViewTestServer(t)
+	session := loginSavedViewSession(t, srv)
+	st, ok := srv.savedViewStore.(*store.Store)
+	requirements.True(ok)
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
+		Name: "Future view", CanonicalState: json.RawMessage(`{}`),
+		SchemaVersion: store.CurrentSavedViewSchemaVersion,
+	})
+	requirements.NoError(err)
+	// Simulate an archive containing a definition from another schema version.
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE saved_views SET schema_version = 2 WHERE id = ?", view.ID)
+	requirements.NoError(err)
+	itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
+	response := performSavedViewRequest(t, srv, http.MethodGet, itemPath, nil, session.headers())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var item SavedView
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &item))
+	assertions.Contains(item.IncompatibilityReason, "schema version 2")
+	listed := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, session.headers())
+	requirements.Equal(http.StatusOK, listed.Code, listed.Body.String())
+	var library SavedViewsResponse
+	requirements.NoError(json.Unmarshal(listed.Body.Bytes(), &library))
+	requirements.Len(library.SavedViews, 1)
+	assertions.Equal(item.IncompatibilityReason, library.SavedViews[0].IncompatibilityReason)
+}
+
+func TestSavedViewsReadPreservesIncompatibleDefinitions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version int
+		state   string
+	}{
+		{"older sort", 1, `{"sort":[{"field":"size","direction":"asc"}]}`},
+		{"future shape", 2, `{"query":{"text":"invoice"},"layout":"future"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			srv := newSavedViewTestServer(t)
+			session := loginSavedViewSession(t, srv)
+			st, ok := srv.savedViewStore.(*store.Store)
+			requirements.True(ok)
+			view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
+				Name: tc.name, CanonicalState: json.RawMessage(`{}`), SchemaVersion: 1,
+			})
+			requirements.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(),
+				"UPDATE saved_views SET canonical_state = ?, schema_version = ? WHERE id = ?", tc.state, tc.version, view.ID)
+			requirements.NoError(err)
+			path := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
+			response := performSavedViewRequest(t, srv, http.MethodGet, path, nil, session.headers())
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			var item generated.SavedView
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &item))
+			assertions.NoError(item.Validate())
+			requirements.NotNil(item.IncompatibilityReason)
+			assertions.NotEmpty(*item.IncompatibilityReason)
+			state, err := json.Marshal(item.CanonicalState)
+			requirements.NoError(err)
+			assertions.JSONEq(tc.state, string(state))
+
+			response = performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, session.headers())
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			var library generated.SavedViewsResponse
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &library))
+			assertions.NoError(library.Validate())
+			requirements.Len(library.SavedViews, 1)
+			assertions.Equal(item, library.SavedViews[0])
+		})
+	}
 }

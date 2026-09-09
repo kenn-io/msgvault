@@ -479,7 +479,9 @@
 
   function inspectGroup(row: ExploreGroupRow): void {
     const dimension = exploreState.current.groupingChain[0];
-    if (dimension) commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
+    if (dimension && groupingByDimension(dimension).drillable) {
+      commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
+    }
   }
 
   onDestroy(() => {
@@ -610,7 +612,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
+              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}

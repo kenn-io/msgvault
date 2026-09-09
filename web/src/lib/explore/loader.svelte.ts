@@ -244,6 +244,7 @@ export class ExploreLoader {
             cacheRevision: filesResult.cacheRevision,
             searchProvenance: filesResult.searchProvenance,
             candidateSnapshotId: filesResult.candidateSnapshotId,
+            searchDeletionScope: filesResult.searchDeletionScope,
             candidatePoolSaturated: false,
             nextCursor: filesResult.nextCursor
           };

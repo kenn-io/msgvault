@@ -710,6 +710,11 @@ type PatchSavedViewPath struct {
 	ID int64 `json:"id"`
 }
 
+type RunSavedViewPath struct {
+	// ID Saved View ID
+	ID int64 `json:"id"`
+}
+
 type PutSettingsPersonEnrichmentProviderPath struct {
 	Name string `json:"name" validate:"required"`
 }

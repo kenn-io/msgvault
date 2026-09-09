@@ -23,6 +23,10 @@ type ExploreFilesHTTPResponse struct {
 	SearchProvenance    query.SearchProvenance  `json:"search_provenance"`
 	NextCursor          string                  `json:"next_cursor,omitempty"`
 	CandidateSnapshotID string                  `json:"candidate_snapshot_id,omitempty"`
+	// SearchDeletionScope is "active" when a semantic or hybrid search
+	// narrowed an unrestricted deletion context to active messages only,
+	// matching the entry and group responses.
+	SearchDeletionScope string `json:"search_deletion_scope,omitempty"`
 }
 
 func (s *Server) registerExploreFilesRoute(api huma.API) {
@@ -98,6 +102,7 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 	response := ExploreFilesHTTPResponse{
 		Files: result.Files, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
+		SearchDeletionScope: predicate.searchDeletionScope,
 	}
 	if next := offset + len(result.Files); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{

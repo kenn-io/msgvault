@@ -902,7 +902,7 @@
   }
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension) return;
+    if (!dimension || !groupingByDimension(dimension).drillable) return;
     const filters = filtersForGroup(exploreState.current.filters, dimension, row.key);
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
@@ -1265,7 +1265,7 @@
           error={loader.error}
           pageError={loader.pageError}
           unavailable={loader.unavailable}
-          drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
+          drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
           focusedKey={exploreState.current.activeRow}
           inspectedKey={readingTargetKey}
           scrollAnchor={exploreState.current.scrollAnchor}

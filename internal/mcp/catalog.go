@@ -35,6 +35,7 @@ type catalogCapabilities struct {
 	people          bool
 	directoryPeople bool
 	visualSearch    bool
+	savedViews      bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -111,27 +112,29 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
+		savedViews:      opts.SavedViews != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 128 possible capability keys, which also keeps
+// request. There are only 256 possible capability keys, which also keeps
 // the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 128)
-	for mask := range 128 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 256)
+	for mask := range 256 {
 		capabilities := catalogCapabilities{
-			directoryPeople: mask&0b1000000 != 0,
-			semanticSearch:  mask&0b0100000 != 0,
-			vectorInMessage: mask&0b0010000 != 0,
-			similarMessages: mask&0b0001000 != 0,
-			documentSearch:  mask&0b0000100 != 0,
-			people:          mask&0b0000010 != 0,
-			visualSearch:    mask&0b000001 != 0,
+			directoryPeople: mask&0b10000000 != 0,
+			semanticSearch:  mask&0b01000000 != 0,
+			vectorInMessage: mask&0b00100000 != 0,
+			similarMessages: mask&0b00010000 != 0,
+			documentSearch:  mask&0b00001000 != 0,
+			people:          mask&0b00000100 != 0,
+			visualSearch:    mask&0b00000010 != 0,
+			savedViews:      mask&0b00000001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
@@ -145,6 +148,8 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		aggregateDefinition(nil),
+		createSavedViewDefinition(nil),
+		deleteSavedViewDefinition(nil),
 		exportAttachmentDefinition(nil),
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
@@ -152,9 +157,12 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonNotesDefinition(nil),
 		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
+		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
+		listSavedViewsDefinition(nil),
+		runSavedViewDefinition(nil),
 		searchByDomainsDefinition(nil),
 		searchDocumentsDefinition(nil),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
@@ -168,6 +176,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
 		updatePersonNotesDefinition(nil),
+		updateSavedViewDefinition(nil),
 	}
 
 	available := definitions[:0]
@@ -226,6 +235,17 @@ func profileWriteDefinition(
 	return definition
 }
 
+func destructiveWriteDefinition(
+	name, description string,
+	inputSchema, outputSchema *jsonschema.Schema,
+	handler catalogToolHandler,
+) toolDefinition {
+	definition := writeDefinition(name, description, inputSchema, outputSchema, handler)
+	trueValue := true
+	definition.annotations.DestructiveHint = &trueValue
+	return definition
+}
+
 func alwaysAvailable(catalogCapabilities) bool { return true }
 
 func similarMessagesAvailable(c catalogCapabilities) bool { return c.similarMessages }
@@ -235,6 +255,8 @@ func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSear
 func peopleAvailable(c catalogCapabilities) bool { return c.people }
 
 func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPeople }
+
+func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false

@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type recordingOperationGate struct {
@@ -739,8 +740,8 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
-// CardDAV account test, and participant completion endpoint are the pinned
-// non-Exploration entries. All three must remain registered POST routes for
+// CardDAV account test, participant completion, and Saved View run endpoints
+// are the pinned non-Exploration entries. They must remain registered POST routes for
 // their table entries to stay valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require := require.New(t)
@@ -758,7 +759,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(completion, "participant completion route must exist")
 	require.NotNil(completion.Post, "participant completion must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, "/api/v1/saved-views/{id}/run"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
@@ -883,12 +884,15 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 	require.True(ok, "occupy gate")
 	defer release()
 
+	st := testutil.NewSQLiteTestStore(t)
+	view := createRunTestView(t, st, "Everything", `{}`)
 	srv := NewServerWithOptions(ServerOptions{
-		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:         &gateFilesStore{mockStore: &mockStore{}},
-		Engine:        &gateAnalyticsEngine{MockEngine: &querytest.MockEngine{}},
-		Logger:        testLogger(),
-		OperationGate: gate,
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:          &gateFilesStore{mockStore: &mockStore{}},
+		Engine:         &gateAnalyticsEngine{MockEngine: &querytest.MockEngine{}},
+		Logger:         testLogger(),
+		OperationGate:  gate,
+		SavedViewStore: st,
 	})
 
 	readOnly := []string{
@@ -905,6 +909,10 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 		srv.Router().ServeHTTP(resp, req)
 		assert.Equal(http.StatusOK, resp.Code, "%s must succeed while the gate is held: %s", path, resp.Body.String())
 	}
+
+	run, page := runSavedView(t, srv, view.ID, `{}`)
+	assert.Equal(http.StatusOK, run.Code, run.Body.String())
+	assert.Equal(view.ID, page.SavedView.ID)
 
 	mutating := httptest.NewRequest(http.MethodPost, "/api/v1/deletions", strings.NewReader(`{}`))
 	mutating.Header.Set("Content-Type", "application/json")

@@ -20,7 +20,7 @@ included in 0.19.3. Follow the linked task guides for current usage details.
   outside your archive home. PostgreSQL users need their own database backup;
   see [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.20.0**. Old analytical
+  compatibility boundary; the current schema is **2.21.0**. Old analytical
   `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
   profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
   removed, not aliased. Local and remote clients reject incompatible daemons;
@@ -110,6 +110,16 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
 [document indexing](usage/document-indexing.md), and [remote images](usage/remote-images.md).
 
 ### Browser, terminal, and integrations
+
+- Saved Views for AI assistants: the MCP server exposes `list_saved_views`,
+  `get_saved_view`, and `run_saved_view` (read-only) plus `create_saved_view`,
+  `update_saved_view`, and `delete_saved_view` (write-class, hidden over
+  StreamableHTTP unless `--http-allow-writes` is set). A new
+  `POST /api/v1/saved-views/{id}/run` endpoint (API schema 2.21.0) executes a
+  view through the same Explore endpoint the Web UI uses, and the Saved View
+  schema now publishes the executable version-1 vocabulary as OpenAPI enums.
+  The daemon rejects definitions outside that vocabulary at save time, so
+  every stored view can be opened by the Web UI and run by any client.
 
 - Add Web Directory profile editing, identity and relationship review queues,
   merge/split workflows, CardDAV publication, and bounded curated networks.

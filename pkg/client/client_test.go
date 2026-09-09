@@ -573,8 +573,12 @@ func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t
 	assertions := assert.New(t)
 	assertions.Equal(generated.Pending, generated.ListPersonRelationshipReviewsQueryStatus("pending"))
 	assertions.Equal(generated.ImportJobResponseStatusPending, generated.ImportJobResponseStatus("pending"))
-	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))
 	assertions.Equal(generated.Desc, generated.SavedViewSortDirection("desc"))
+	require.Error(t, generated.SavedViewSortDirection("asc").Validate(),
+		"Saved Views publish only the executable entry sort")
+	assertions.Equal(generated.SavedViewSortFieldOccurredAt, generated.SavedViewSortField("occurred_at"))
+	assertions.Equal(generated.SavedViewFilterFieldSourceID, generated.SavedViewFilterField("source_id"))
+	assertions.Equal(generated.SavedViewFilterOperatorIn, generated.SavedViewFilterOperator("in"))
 	assertions.Equal(generated.IdentitySearchSortDirectionAsc, generated.IdentitySearchSortDirection("asc"))
 	assertions.Equal(generated.IdentitySearchSortDirectionDesc, generated.IdentitySearchSortDirection("desc"))
 	assertions.Equal(generated.Files, generated.SavedViewStateEnvelopePresentation("files"))

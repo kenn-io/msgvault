@@ -1016,7 +1016,7 @@ describe('ExploreState history ownership', () => {
     expect(state.current.groupingChain).toEqual(['domain', 'message_type']);
 
     state.commitGrouping('kind');
-    expect(state.current.groupingChain).toEqual(['domain', 'message_type']);
+    expect(state.current.groupingChain).toEqual(['domain', 'message_type', 'kind']);
 
     state.commitNavigation({ groupingChain: [] });
     state.commitGrouping('source');

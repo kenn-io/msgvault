@@ -6,6 +6,5 @@ export type SavedViewSortDirection =
   (typeof SavedViewSortDirection)[keyof typeof SavedViewSortDirection];
 
 export const SavedViewSortDirection = {
-  asc: "asc",
   desc: "desc",
 } as const;

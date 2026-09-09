@@ -306,6 +306,9 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
+  RunSavedViewPathParameters,
+  RunSavedViewRequest,
+  RunSavedViewResponse,
   SavedView,
   SavedViewsResponse,
   SchedulerStatusResponse,
@@ -3073,6 +3076,24 @@ export const patchSavedView = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: patchSavedViewRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Run a shared analytical Saved View through its canonical Explore definition
+ */
+export const runSavedView = (
+  { id }: RunSavedViewPathParameters,
+  runSavedViewRequest: RunSavedViewRequest,
+  options?: SecondParameter<typeof orvalFetch<RunSavedViewResponse>>,
+) => {
+  return orvalFetch<RunSavedViewResponse>(
+    {
+      url: `/api/v1/saved-views/${encodeURIComponent(String(id))}/run`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: runSavedViewRequest,
     },
     options,
   );

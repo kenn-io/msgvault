@@ -3727,6 +3727,8 @@ components:
           type: array
         next_cursor:
           type: string
+        search_deletion_scope:
+          type: string
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
         total_count:
@@ -9875,10 +9877,71 @@ components:
         - identifier
         - removed
       type: object
+    RunSavedViewRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 0
+          type: integer
+      type: object
+    RunSavedViewResponse:
+      properties:
+        cache_revision:
+          type: string
+        candidate_pool_saturated:
+          type: boolean
+        candidate_snapshot_id:
+          type: string
+        files:
+          items:
+            $ref: "#/components/schemas/ExploreFileFact"
+          type: array
+        groups:
+          items:
+            $ref: "#/components/schemas/ExploreGroupRow"
+          type: array
+        next_cursor:
+          type: string
+        result_kind:
+          enum:
+            - entries
+            - groups
+            - files
+          type: string
+          x-enum-names:
+            - RunSavedViewResponseResultKindEntries
+            - RunSavedViewResponseResultKindGroups
+            - RunSavedViewResponseResultKindFiles
+        rows:
+          items:
+            $ref: "#/components/schemas/EntryRow"
+          type: array
+        saved_view:
+          $ref: "#/components/schemas/SavedView"
+        search_deletion_scope:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - saved_view
+        - result_kind
+        - cache_revision
+        - search_provenance
+      type: object
     SavedView:
       properties:
         canonical_state:
-          $ref: "#/components/schemas/SavedViewStateEnvelope"
+          description: Stored definition, including incompatible values; check incompatibility_reason before execution
+          x-go-type: json.RawMessage
+          x-go-type-import:
+            path: encoding/json
         created_at:
           format: date-time
           type: string
@@ -9887,6 +9950,9 @@ components:
         id:
           format: int64
           type: integer
+        incompatibility_reason:
+          description: Definition validation error that prevents this Saved View from executing
+          type: string
         name:
           type: string
         revision:
@@ -9911,9 +9977,39 @@ components:
       additionalProperties: false
       properties:
         field:
+          enum:
+            - source
+            - identity
+            - participant
+            - domain
+            - mailing_list
+            - message_type
+            - after
+            - before
+            - deletion
+            - participant_id
+            - source_id
           type: string
+          x-enum-names:
+            - SavedViewFilterFieldSource
+            - SavedViewFilterFieldIdentity
+            - SavedViewFilterFieldParticipant
+            - SavedViewFilterFieldDomain
+            - SavedViewFilterFieldMailingList
+            - SavedViewFilterFieldMessageType
+            - SavedViewFilterFieldAfter
+            - SavedViewFilterFieldBefore
+            - SavedViewFilterFieldDeletion
+            - SavedViewFilterFieldParticipantID
+            - SavedViewFilterFieldSourceID
         operator:
+          enum:
+            - eq
+            - in
           type: string
+          x-enum-names:
+            - SavedViewFilterOperatorEq
+            - SavedViewFilterOperatorIn
         values:
           description: Exact filter values; numeric identifiers use decimal strings
           items:
@@ -9929,11 +10025,14 @@ components:
       properties:
         direction:
           enum:
-            - asc
             - desc
           type: string
         field:
+          enum:
+            - occurred_at
           type: string
+          x-enum-names:
+            - SavedViewSortFieldOccurredAt
       required:
         - field
         - direction
@@ -9943,7 +10042,23 @@ components:
       properties:
         columns:
           items:
+            enum:
+              - kind
+              - people
+              - title
+              - excerpt
+              - time
+              - attachments
+              - size
             type: string
+            x-enum-names:
+              - SavedViewStateEnvelopeColumnsKind
+              - SavedViewStateEnvelopeColumnsPeople
+              - SavedViewStateEnvelopeColumnsTitle
+              - SavedViewStateEnvelopeColumnsExcerpt
+              - SavedViewStateEnvelopeColumnsTime
+              - SavedViewStateEnvelopeColumnsAttachments
+              - SavedViewStateEnvelopeColumnsSize
           type: array
         filters:
           items:
@@ -9951,7 +10066,25 @@ components:
           type: array
         grouping:
           items:
+            enum:
+              - source
+              - participant
+              - domain
+              - message_type
+              - mailing_list
+              - kind
+              - year
+              - month
             type: string
+            x-enum-names:
+              - SavedViewStateEnvelopeGroupingSource
+              - SavedViewStateEnvelopeGroupingParticipant
+              - SavedViewStateEnvelopeGroupingDomain
+              - SavedViewStateEnvelopeGroupingMessageType
+              - SavedViewStateEnvelopeGroupingMailingList
+              - SavedViewStateEnvelopeGroupingKind
+              - SavedViewStateEnvelopeGroupingYear
+              - SavedViewStateEnvelopeGroupingMonth
           type: array
         inspector_pinned:
           type: boolean
@@ -9964,7 +10097,15 @@ components:
         query:
           type: string
         search_mode:
+          enum:
+            - full_text
+            - semantic
+            - hybrid
           type: string
+          x-enum-names:
+            - SavedViewStateEnvelopeSearchModeFullText
+            - SavedViewStateEnvelopeSearchModeSemantic
+            - SavedViewStateEnvelopeSearchModeHybrid
         sort:
           items:
             $ref: "#/components/schemas/SavedViewSort"
@@ -11784,7 +11925,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.20.0
+  version: 2.21.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -22987,6 +23128,67 @@ paths:
       security:
         - apiKey: []
       summary: Update a shared analytical Saved View
+      tags:
+        - API
+  /api/v1/saved-views/{id}/run:
+    post:
+      operationId: runSavedView
+      parameters:
+        - description: Saved View ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunSavedViewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunSavedViewResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run a shared analytical Saved View through its canonical Explore definition
       tags:
         - API
   /api/v1/scheduler/status:

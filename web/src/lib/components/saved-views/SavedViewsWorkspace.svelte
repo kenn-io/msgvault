@@ -12,8 +12,7 @@
     SavedView as GeneratedSavedView,
     SavedViewStateEnvelope as GeneratedSavedViewStateEnvelope,
   } from '../../api/generated/models';
-  import { DEFAULT_EXPLORE_COLUMNS, type ExploreColumn, type ExploreURLState } from '../../explore/models';
-  import { isGroupingDimension } from '../../grouping/catalog';
+  import { DEFAULT_EXPLORE_COLUMNS, type ExploreURLState } from '../../explore/models';
   type SavedView = GeneratedSavedView;
   type CanonicalState = GeneratedSavedViewStateEnvelope;
   const CURRENT_SCHEMA_VERSION = 1;
@@ -53,9 +52,9 @@
     }
   }
   function canonicalState(): CanonicalState {
+    const query = currentState.query.trim();
     return {
-      ...(currentState.query ? { query: currentState.query } : {}),
-      search_mode: currentState.searchMode,
+      ...(query ? { query, search_mode: currentState.searchMode } : {}),
       filters: currentState.filters.map((filter) => ({
         field: filter.dimension,
         operator: 'in',
@@ -155,7 +154,7 @@
   function open(view: SavedView): void {
     const incompatibility = incompatibilityFor(view);
     if (incompatibility) return;
-    const saved = view.canonical_state;
+    const saved = view.canonical_state as CanonicalState;
     const filters = (saved.filters ?? []).map((filter) => {
       const aliases: Record<string, ExploreURLState['filters'][number]['dimension']> = {
         source_id: 'source',
@@ -185,42 +184,7 @@
     if (view.schema_version !== CURRENT_SCHEMA_VERSION) {
       return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
     }
-    const saved = view.canonical_state;
-    const filterDimensions = new Set([
-      'source',
-      'participant',
-      'domain',
-      'message_type',
-      'after',
-      'before',
-      'deletion',
-    ]);
-    const filterAliases = new Set(['source_id', 'participant_id']);
-    for (const filter of saved.filters ?? []) {
-      if (!filterDimensions.has(filter.field) && !filterAliases.has(filter.field)) {
-        return `This view has an unsupported v1 filter field: ${filter.field}.`;
-      }
-      if (filter.operator !== 'eq' && filter.operator !== 'in') {
-        return `This view has an unsupported v1 filter operator: ${filter.operator}.`;
-      }
-      if (!Array.isArray(filter.values) || filter.values.length === 0 || filter.values.some((value) => !value)) {
-        return `This view has an unsupported v1 filter value for ${filter.field}.`;
-      }
-    }
-    if (saved.search_mode && !['full_text', 'semantic', 'hybrid'].includes(saved.search_mode)) {
-      return `This view has an unsupported v1 search mode: ${saved.search_mode}.`;
-    }
-    if ((saved.grouping ?? []).some((dimension) => !isGroupingDimension(dimension))) {
-      return 'This view has an unsupported v1 grouping dimension.';
-    }
-    if ((saved.sort ?? []).some((sort) => sort.field !== 'occurred_at' || sort.direction !== 'desc')) {
-      return 'This view has an unsupported v1 sort.';
-    }
-    const columns = new Set<ExploreColumn>(['kind', 'people', 'title', 'excerpt', 'time', 'attachments', 'size']);
-    if ((saved.columns ?? []).some((column) => !columns.has(column as ExploreColumn))) {
-      return 'This view has an unsupported v1 column.';
-    }
-    return '';
+    return view.incompatibility_reason ?? '';
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'

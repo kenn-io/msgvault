@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/explorecatalog"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // APISchemaVersion is the version stamped into the OpenAPI document
@@ -286,7 +288,14 @@ import (
 // renderer_policy, and each sentence carries evidence_ordinals naming the
 // entries of that version's evidence list the sentence cites. Additive (minor
 // bump): every existing person route and response is unchanged.
-const APISchemaVersion = "2.20.0"
+// 2.21.0 adds POST /api/v1/saved-views/{id}/run, which executes a Saved View
+// through the Explore surface its definition selects, and narrows the Saved
+// View schema enums to the executable version-1 vocabulary the store already
+// enforces. POST /api/v1/explore/files gains search_deletion_scope so file
+// pages declare a semantic narrowing the same way entry and group pages do.
+// Saved View responses include incompatibility_reason for invalid definitions.
+// Additive (minor bump): existing Saved View and Explore routes are unchanged.
+const APISchemaVersion = "2.21.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -531,13 +540,49 @@ func hardenSavedViewSchemas(doc *huma.OpenAPI) {
 	schemas := doc.Components.Schemas.Map()
 	if filter := schemas["SavedViewFilter"]; filter != nil {
 		filter.Properties["values"].Nullable = false
+		filter.Properties["field"].Enum = enumValues(store.SavedViewFilterFields())
+		filter.Properties["operator"].Enum = enumValues(store.SavedViewFilterOperators)
+	}
+	if sort := schemas["SavedViewSort"]; sort != nil {
+		sort.Properties["field"].Enum = enumValues([]string{explorecatalog.EntrySortField})
+		sort.Properties["direction"].Enum = enumValues([]string{explorecatalog.EntrySortDirection})
 	}
 	if state := schemas["SavedViewStateEnvelope"]; state != nil {
 		for _, name := range []string{"filters", "grouping", "sort", "columns"} {
 			state.Properties[name].Nullable = false
 		}
-		state.Properties["presentation"].Enum = []any{"table", "timeline", "files"}
+		state.Properties["search_mode"].Enum = enumValues(explorecatalog.SearchModes())
+		state.Properties["presentation"].Enum = enumValues(explorecatalog.Presentations())
+		state.Properties["grouping"].Items.Enum = enumValues(explorecatalog.GroupingDimensions())
+		state.Properties["columns"].Items.Enum = enumValues(store.SavedViewColumns)
 	}
+}
+
+// qualifiedEnumNames derives Go constant names for enum values so a new enum
+// never claims a bare name (Files, Desc) that generated clients already use.
+func qualifiedEnumNames(prefix string, values []string) []any {
+	names := make([]any, len(values))
+	for i, value := range values {
+		var name strings.Builder
+		name.WriteString(prefix)
+		for part := range strings.SplitSeq(value, "_") {
+			if part == "id" {
+				name.WriteString("ID")
+				continue
+			}
+			name.WriteString(strings.ToUpper(part[:1]) + part[1:])
+		}
+		names[i] = name.String()
+	}
+	return names
+}
+
+func enumValues(values []string) []any {
+	enum := make([]any, len(values))
+	for i, value := range values {
+		enum[i] = value
+	}
+	return enum
 }
 
 func hardenSettingsSchemas(doc *huma.OpenAPI) {
@@ -722,6 +767,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
+	// Read responses preserve definitions from any stored schema version.
+	if view := schemas["SavedView"]; view != nil {
+		state := view.Properties["canonical_state"]
+		state.Extensions = map[string]any{
+			"x-go-type":        "json.RawMessage",
+			"x-go-type-import": map[string]any{pathKey: "encoding/json"},
+		}
+	}
 	if response := schemas["PersonMergeSnapshotResponse"]; response != nil {
 		if snapshot := response.Properties["snapshot"]; snapshot != nil {
 			if snapshot.Extensions == nil {
@@ -785,6 +838,25 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if state := schemas["SavedViewStateEnvelope"]; state != nil {
+		setEnumNames(state.Properties["grouping"].Items,
+			qualifiedEnumNames("SavedViewStateEnvelopeGrouping", explorecatalog.GroupingDimensions()))
+		setEnumNames(state.Properties["columns"].Items,
+			qualifiedEnumNames("SavedViewStateEnvelopeColumns", store.SavedViewColumns))
+		setEnumNames(state.Properties["search_mode"],
+			qualifiedEnumNames("SavedViewStateEnvelopeSearchMode", explorecatalog.SearchModes()))
+	}
+	if filter := schemas["SavedViewFilter"]; filter != nil {
+		setEnumNames(filter.Properties["field"], qualifiedEnumNames("SavedViewFilterField", store.SavedViewFilterFields()))
+		setEnumNames(filter.Properties["operator"], qualifiedEnumNames("SavedViewFilterOperator", store.SavedViewFilterOperators))
+	}
+	if sort := schemas["SavedViewSort"]; sort != nil {
+		setEnumNames(sort.Properties["field"], qualifiedEnumNames("SavedViewSortField", []string{explorecatalog.EntrySortField}))
+	}
+	if run := schemas["RunSavedViewResponse"]; run != nil {
+		setEnumNames(run.Properties["result_kind"],
+			qualifiedEnumNames("RunSavedViewResponseResultKind", []string{"entries", "groups", "files"}))
 	}
 	setEnumNames(schemas["ExploreGroupDimension"], []any{
 		"ExploreGroupDimensionSource", "ExploreGroupDimensionParticipant", "ExploreGroupDimensionDomain",

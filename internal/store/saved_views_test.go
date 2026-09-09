@@ -17,8 +17,8 @@ var savedViewState = json.RawMessage(`{
 	"filters":[{"field":"source_id","operator":"in","values":["1"]}],
 	"grouping":["source"],
 	"presentation":"table",
-	"sort":[{"field":"count","direction":"desc"}],
-	"columns":["sender"],
+	"sort":[{"field":"occurred_at","direction":"desc"}],
+	"columns":["people"],
 	"inspector_pinned":true
 }`)
 
@@ -112,6 +112,29 @@ func TestSavedViewsRejectDuplicateNamesAndStaleRevisions(t *testing.T) {
 	requirements.ErrorIs(st.DeleteSavedView(ctx, created.ID, created.Revision), store.ErrSavedViewRevisionConflict)
 	requirements.NoError(st.DeleteSavedView(ctx, updated.ID, updated.Revision))
 	assertions.ErrorIs(st.DeleteSavedView(ctx, updated.ID, updated.Revision), store.ErrSavedViewNotFound)
+}
+
+func TestSavedViewsPreserveInspectorPreference(t *testing.T) {
+	for _, state := range []string{`{}`, `{"inspector_pinned":true}`, `{"inspector_pinned":false}`} {
+		t.Run(state, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			input := savedViewInput("Inspector preference")
+			input.CanonicalState = json.RawMessage(state)
+			created, err := st.CreateSavedView(t.Context(), input)
+			requirements.NoError(err)
+			assertions.JSONEq(state, string(created.CanonicalState))
+
+			loaded, err := st.GetSavedView(t.Context(), created.ID)
+			requirements.NoError(err)
+			assertions.JSONEq(state, string(loaded.CanonicalState))
+
+			updated, err := st.UpdateSavedView(t.Context(), loaded.ID, loaded.Revision, input)
+			requirements.NoError(err)
+			assertions.JSONEq(state, string(updated.CanonicalState))
+		})
+	}
 }
 
 func TestSavedViewsValidateCanonicalStateBeforePersistence(t *testing.T) {

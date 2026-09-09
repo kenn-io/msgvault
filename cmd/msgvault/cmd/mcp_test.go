@@ -181,15 +181,18 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 	tests := []struct {
-		name          string
-		schemaVersion string
-		wantPeople    bool
-		wantDirectory bool
+		name           string
+		schemaVersion  string
+		wantPeople     bool
+		wantDirectory  bool
+		wantSavedViews bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
 		{name: "directory schema", schemaVersion: "2.13.0", wantPeople: true, wantDirectory: true},
 		{name: "newer schema", schemaVersion: "2.14.0", wantPeople: true, wantDirectory: true},
+		{name: "schema before the Saved View run endpoint", schemaVersion: "2.20.0", wantPeople: true, wantDirectory: true},
+		{name: "saved view run schema", schemaVersion: "2.21.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -220,6 +223,11 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.NotNil(opts.PeopleBackend)
 			} else {
 				assert.Nil(opts.PeopleBackend)
+			}
+			if tt.wantSavedViews {
+				assert.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
+			} else {
+				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
 		})
@@ -256,7 +264,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	assert.Contains(logs.String(), "people tools disabled")
 }
 
-func TestDaemonMCPServeOptionsUsesOnePeopleCapabilityProbe(t *testing.T) {
+func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	assert := assert.New(t)
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
@@ -271,7 +279,7 @@ func TestDaemonMCPServeOptionsUsesOnePeopleCapabilityProbe(t *testing.T) {
 		case "/api/v1/health":
 			if healthRequests.Add(1) == 1 {
 				_ = json.NewEncoder(w).Encode(map[string]any{
-					"status": "ok", "api_schema_version": "2.13.0",
+					"status": "ok", "api_schema_version": "2.21.0",
 				})
 				return
 			}
@@ -289,6 +297,7 @@ func TestDaemonMCPServeOptionsUsesOnePeopleCapabilityProbe(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
+	assert.NotNil(opts.SavedViews)
 	assert.Equal(int32(1), healthRequests.Load())
 	assert.Empty(logs.String())
 }

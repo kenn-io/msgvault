@@ -3,15 +3,18 @@
  */
 import type { SavedViewFilter } from "./savedViewFilter";
 import type { SavedViewSort } from "./savedViewSort";
+import type { SavedViewStateEnvelopeColumnsItem } from "./savedViewStateEnvelopeColumnsItem";
+import type { SavedViewStateEnvelopeGroupingItem } from "./savedViewStateEnvelopeGroupingItem";
 import type { SavedViewStateEnvelopePresentation } from "./savedViewStateEnvelopePresentation";
+import type { SavedViewStateEnvelopeSearchMode } from "./savedViewStateEnvelopeSearchMode";
 
 export interface SavedViewStateEnvelope {
-  columns?: string[];
+  columns?: SavedViewStateEnvelopeColumnsItem[];
   filters?: SavedViewFilter[];
-  grouping?: string[];
+  grouping?: SavedViewStateEnvelopeGroupingItem[];
   inspector_pinned?: boolean;
   presentation?: SavedViewStateEnvelopePresentation;
   query?: string;
-  search_mode?: string;
+  search_mode?: SavedViewStateEnvelopeSearchMode;
   sort?: SavedViewSort[];
 }

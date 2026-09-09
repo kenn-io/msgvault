@@ -2585,6 +2585,52 @@ type PatchSavedViewErrorResponseJSON428 = ErrorResponse
 
 type PatchSavedViewErrorResponseJSON503 = ErrorResponse
 
+type RunSavedViewResponseJSON = RunSavedViewResponse
+
+type RunSavedViewErrorResponse = ErrorResponse
+
+type RunSavedViewErrorResponseJSON = ErrorResponse
+
+type RunSavedViewErrorResponseJSON409 = ErrorResponse
+
+type RunSavedViewErrorResponseJSON503 struct {
+	RunSavedView_ErrorResponse_503_AnyOf *RunSavedView_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (r RunSavedViewErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(r.RunSavedView_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("RunSavedView_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (r *RunSavedViewErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if r.RunSavedView_ErrorResponse_503_AnyOf == nil {
+		r.RunSavedView_ErrorResponse_503_AnyOf = &RunSavedView_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, r.RunSavedView_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("RunSavedView_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
 type GetSchedulerStatusResponse = SchedulerStatusResponse
 
 type GetSchedulerStatusErrorResponse = ErrorResponse
@@ -5073,6 +5119,17 @@ type PatchSavedViewResp struct {
 	JSON409      *PatchSavedViewErrorResponseJSON409
 	JSON428      *PatchSavedViewErrorResponseJSON428
 	JSON503      *PatchSavedViewErrorResponseJSON503
+}
+
+type RunSavedViewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RunSavedViewResponseJSON
+	JSON400      *RunSavedViewErrorResponse
+	JSON404      *RunSavedViewErrorResponseJSON
+	JSON409      *RunSavedViewErrorResponseJSON409
+	JSON503      *RunSavedViewErrorResponseJSON503
 }
 
 type GetSchedulerStatusResp struct {

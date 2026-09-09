@@ -686,6 +686,24 @@ func (g *GetRelationshipTimeline_ErrorResponse_503_AnyOf) Validate() error {
 	return nil
 }
 
+type RunSavedView_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (r *RunSavedView_ErrorResponse_503_AnyOf) Validate() error {
+	if r.IsA() {
+		if v, ok := any(r.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if r.IsB() {
+		if v, ok := any(r.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type SearchMessages_Response_OneOf struct {
 	runtime.Either[SearchResult, HybridSearchResponse]
 }

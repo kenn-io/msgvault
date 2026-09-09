@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { groupingByDimension } from '../../grouping/catalog';
 import GroupTable from './GroupTable.svelte';
 
 describe('GroupTable', () => {
@@ -260,7 +261,7 @@ describe('GroupTable', () => {
 
   it('removes the drill affordance for a non-filterable group dimension', async () => {
     const onDrill = vi.fn();
-    render(GroupTable, { rows, dimension: 'kind', drillable: false, onDrill });
+    render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
     const grid = screen.getByRole('grid', { name: 'Everything grouped by kind' });
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });

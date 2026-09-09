@@ -43,15 +43,15 @@ type ExploreFilter struct {
 
 // Explore filter dimension names, matching ExploreFilter.Dimension's enum tag.
 const (
-	exploreFilterSource      = "source"
-	exploreFilterParticipant = "participant"
-	exploreFilterDomain      = "domain"
-	exploreFilterMessageType = "message_type"
-	exploreFilterMailingList = "mailing_list"
-	exploreFilterAfter       = "after"
-	exploreFilterBefore      = "before"
-	exploreFilterDeletion    = "deletion"
-	exploreFilterIdentity    = "identity"
+	exploreFilterSource      = explorecatalog.FilterSource
+	exploreFilterParticipant = explorecatalog.FilterParticipant
+	exploreFilterDomain      = explorecatalog.FilterDomain
+	exploreFilterMessageType = explorecatalog.FilterMessageType
+	exploreFilterMailingList = explorecatalog.FilterMailingList
+	exploreFilterAfter       = explorecatalog.FilterAfter
+	exploreFilterBefore      = explorecatalog.FilterBefore
+	exploreFilterDeletion    = explorecatalog.FilterDeletion
+	exploreFilterIdentity    = explorecatalog.FilterIdentity
 )
 
 var (
@@ -1126,6 +1126,48 @@ func parseExploreIdentityFilter(filters []ExploreFilter) (exploreIdentityFilter,
 	}, nil
 }
 
+// exploreSearchDefinitionError is a search rule violation that depends only
+// on the request, so it carries the error code the Explore endpoints report.
+type exploreSearchDefinitionError struct {
+	code    string
+	message string
+}
+
+func (e *exploreSearchDefinitionError) Error() string { return e.message }
+
+// validateExploreSearchDefinition applies the search rules that depend only on
+// the request and not on the daemon's environment: query syntax, and for the
+// semantic and hybrid modes an active-only deletion scope and free text to
+// embed. The resolvers call it at run time; Saved View writes call it at save
+// time so a definition that can never search is refused before it is stored.
+// Index readiness and vector configuration stay with the resolvers.
+func validateExploreSearchDefinition(
+	request ExploreHTTPRequest, context query.Context,
+) (*search.Query, *exploreSearchDefinitionError) {
+	if request.SearchMode == "" {
+		return nil, nil
+	}
+	parsed := search.Parse(request.Query)
+	if err := parsed.Err(); err != nil {
+		return nil, &exploreSearchDefinitionError{code: "invalid_query", message: err.Error()}
+	}
+	if request.SearchMode == exploreSearchModeFullText {
+		return parsed, nil
+	}
+	if context.Deletion == query.DeletionDeleted {
+		return nil, &exploreSearchDefinitionError{
+			code:    "semantic_deletion_unsupported",
+			message: "Semantic and hybrid search cover active messages only; remove the deletion:deleted filter to search",
+		}
+	}
+	if strings.Join(parsed.TextTerms, " ") == "" {
+		return nil, &exploreSearchDefinitionError{
+			code: "missing_free_text", message: "Semantic and hybrid exploration require free text",
+		}
+	}
+	return parsed, nil
+}
+
 func validateExploreSearchPair(queryText, mode string) error {
 	if (queryText == "") != (mode == "") {
 		return errors.New("query and search_mode must be provided together")
@@ -1293,14 +1335,14 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 		writeError(w, http.StatusServiceUnavailable, "lexical_index_unavailable", "The full-text index is unavailable")
 		return query.SearchSpec{}, "", false
 	}
-	parsed := search.Parse(request.Query)
-	if err := parsed.Err(); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
-		return query.SearchSpec{}, "", false
-	}
 	filters, err := exploreContext(request.Filters)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return query.SearchSpec{}, "", false
+	}
+	parsed, failure := validateExploreSearchDefinition(request, filters)
+	if failure != nil {
+		writeError(w, http.StatusBadRequest, failure.code, failure.message)
 		return query.SearchSpec{}, "", false
 	}
 	// Candidate resolution must cover the same population the analytical
@@ -1510,14 +1552,14 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
 		return query.SearchSpec{}, "", false
 	}
-	parsed := search.Parse(request.Query)
-	if err := parsed.Err(); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
-		return query.SearchSpec{}, "", false
-	}
 	exploreCtx, err := exploreContext(request.Filters)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return query.SearchSpec{}, "", false
+	}
+	parsed, failure := validateExploreSearchDefinition(request, exploreCtx)
+	if failure != nil {
+		writeError(w, http.StatusBadRequest, failure.code, failure.message)
 		return query.SearchSpec{}, "", false
 	}
 	// Participant and domain filters are absent from the vector filter
@@ -1530,10 +1572,6 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 	// endpoints apply their participant/domain scope over semantic
 	// candidates the same way (see applyIdentityScope in
 	// handleExploreWithScope).
-	if exploreCtx.Deletion == query.DeletionDeleted {
-		writeError(w, http.StatusBadRequest, "semantic_deletion_unsupported", "Semantic and hybrid search cover active messages only; remove the deletion:deleted filter to search")
-		return query.SearchSpec{}, "", false
-	}
 	var lexicalSpec query.SearchSpec
 	if request.SearchMode == exploreSearchModeHybrid {
 		var ok bool
@@ -1554,10 +1592,6 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		}
 	}
 	freeText := strings.Join(parsed.TextTerms, " ")
-	if freeText == "" {
-		writeError(w, http.StatusBadRequest, "missing_free_text", "Semantic and hybrid exploration require free text")
-		return query.SearchSpec{}, "", false
-	}
 	// Mirror the lexical resolver's pushdown semantics: request source and
 	// message-type filters intersect with equivalent query operators, and
 	// date bounds only tighten. Because the vector backends OR the values

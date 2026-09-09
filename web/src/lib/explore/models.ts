@@ -240,6 +240,7 @@ export interface ExploreFilesResult {
   cacheRevision: string;
   searchProvenance: SearchProvenance;
   candidateSnapshotId?: string;
+  searchDeletionScope?: string;
   nextCursor?: string;
 }
 

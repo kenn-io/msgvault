@@ -18,6 +18,23 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it.each(['everything', 'files'] as const)('keeps non-filterable groups in %s visible without opening an unavailable inspector', async (workspace) => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      rows: [{ key: 'message', label: 'Messages', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+      total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+    }));
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace, groupingChain: ['kind'] });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const row = (await screen.findByText('Messages')).closest('[role="row"]')!;
+    await fireEvent.pointerDown(row);
+    expect(state.current.selectedRow).toBeNull();
+    expect(screen.queryByText('The selected group is not available in this context.')).toBeNull();
+    rendered.unmount();
+    state.destroy();
+  });
+
   function entry(index: number) {
     return {
       key: `message:${index}`,
@@ -2300,7 +2317,7 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
-  it('discloses the active-only semantic deletion scope for list and grouped results', async () => {
+  it.each(['semantic', 'hybrid'] as const)('discloses active-only scope for %s entry, group, and file results', async (searchMode) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2308,6 +2325,11 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/search/coverage')) return Response.json({
         status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
         vector_generation: 7, cache_revision: 'cache-1', actions: []
+      });
+      if (path.endsWith('/explore/files')) return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-1',
+        search_provenance: { vector_generation: 7 },
+        candidate_snapshot_id: 'snapshot-files', search_deletion_scope: 'active'
       });
       if (path.endsWith('/explore/groups')) return Response.json({
         rows: [{ key: '7', label: 'Example source', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
@@ -2323,7 +2345,7 @@ describe('EverythingWorkspace', () => {
       }));
     });
     const state = new ExploreState(window);
-    state.replaceSearchDraft('alpha', 'semantic');
+    state.replaceSearchDraft('alpha', searchMode);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     await screen.findByText('Synthetic subject 1');
@@ -2332,6 +2354,9 @@ describe('EverythingWorkspace', () => {
     state.commitNavigation({ groupingChain: ['source'] });
     await screen.findByText('Example source');
     expect(screen.getByText('Semantic search covers active messages only.')).toBeDefined();
+    state.commitNavigation({ groupingChain: [], presentation: 'files' });
+    await screen.findByText('No files match this view.');
+    expect(await screen.findByText('Semantic search covers active messages only.')).toBeDefined();
     rendered.unmount();
     state.destroy();
   });

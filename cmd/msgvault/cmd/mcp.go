@@ -31,7 +31,7 @@ var mcpCmd = &cobra.Command{
 
 This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, get_stats,
-aggregate, and stage_deletion.
+aggregate, list_saved_views, run_saved_view, and stage_deletion.
 
 Add to Claude Desktop config:
   {
@@ -81,6 +81,10 @@ Add to Claude Desktop config:
 	},
 }
 
+// savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
+// Views through POST /api/v1/saved-views/{id}/run.
+const savedViewsMinAPISchemaVersion = "2.21.0"
+
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
@@ -101,6 +105,13 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 			opts.DirectoryBackend = people
 		}
 		opts.PeopleBackend = people
+	}
+	// The daemon executes Saved Views itself, so the tools need a daemon that
+	// serves the run endpoint; an older daemon simply omits them.
+	if capabilityErr != nil {
+		logger.Warn("Saved View tools disabled because the daemon capability probe failed", "error", capabilityErr)
+	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, savedViewsMinAPISchemaVersion) {
+		opts.SavedViews = st
 	}
 
 	vectorAvailable, err := st.VectorSearchAvailable(ctx)
@@ -275,7 +286,7 @@ func init() {
 			"a trusted network boundary or authenticating reverse proxy.")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
-			"deletion manifests, and profile writes separately enabled with "+
+			"deletion manifests, Saved View management, and profile writes separately enabled with "+
 			"--allow-profile-writes; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+

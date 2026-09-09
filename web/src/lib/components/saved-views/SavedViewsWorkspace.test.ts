@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { ExploreGroupDimension } from '../../api/generated/models';
+import { defaultExploreURLState, parseExploreURLState, serializeExploreURLState } from '../../explore/state.svelte';
 import type { ExploreURLState } from '../../explore/models';
 import SavedViewsWorkspace from './SavedViewsWorkspace.svelte';
 
@@ -45,7 +47,45 @@ function savedView(overrides: Record<string, unknown> = {}) {
 }
 
 describe('SavedViewsWorkspace', () => {
-  it('creates from canonical analytical state without persisting selection tokens', async () => {
+  it.each(['semantic', 'hybrid'] as const)('saves filter-only views without a %s search mode', async (searchMode) => {
+    for (const query of ['', ' \t\n ']) {
+      const requests: Request[] = [];
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        requests.push(request);
+        return Response.json(request.method === 'GET' ? { saved_views: [] } : savedView());
+      });
+      const component = render(SavedViewsWorkspace, {
+        client: createAPIClient(fetchFn), currentState: { ...currentState, query, searchMode }
+      });
+      await screen.findByText('No Saved Views yet');
+      await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await screen.findByRole('heading', { name: 'Invoices' });
+      const { canonical_state: saved } = await requests[1]!.clone().json();
+      expect(saved).not.toHaveProperty('query');
+      expect(saved).not.toHaveProperty('search_mode');
+      expect(saved.filters).toEqual([{ field: 'source', operator: 'in', values: ['1'] }]);
+      component.unmount();
+    }
+  });
+
+  it('blocks opening a definition the server marks incompatible', async () => {
+    const onOpen = vi.fn();
+    render(SavedViewsWorkspace, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
+        canonical_state: { search_mode: 'semantic' },
+        incompatibility_reason: 'Semantic and hybrid exploration require free text'
+      })] }))), currentState, onOpen
+    });
+    expect((await screen.findByRole('alert')).textContent).toContain('require free text');
+    const open = screen.getByRole('button', { name: 'Open Invoices' }) as HTMLButtonElement;
+    expect(open.disabled).toBe(true);
+    await fireEvent.click(open);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it.each(['full_text', 'semantic', 'hybrid'] as const)('creates a %s query without persisting selection tokens', async (searchMode) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -54,7 +94,7 @@ describe('SavedViewsWorkspace', () => {
       return Response.json(savedView(), { status: 201 });
     });
     render(SavedViewsWorkspace, {
-      client: createAPIClient(fetchFn), currentState,
+      client: createAPIClient(fetchFn), currentState: { ...currentState, query: ' invoice ', searchMode },
       selection: { mode: 'all_matching', operationToken: 'session-secret' }
     });
 
@@ -68,7 +108,7 @@ describe('SavedViewsWorkspace', () => {
     expect(body).toEqual({
       name: 'Invoices', description: 'Quarterly review', schema_version: 1,
       canonical_state: {
-        query: 'invoice', search_mode: 'full_text',
+        query: 'invoice', search_mode: searchMode,
         filters: [{ field: 'source', operator: 'in', values: ['1'] }],
         grouping: ['domain'], presentation: 'table',
         sort: [{ field: 'occurred_at', direction: 'desc' }],
@@ -80,10 +120,12 @@ describe('SavedViewsWorkspace', () => {
     expect(JSON.stringify(body)).not.toContain('inspector_pinned');
   });
 
-  it('opens by replacing the exact analytical URL state and clears transient focus', async () => {
+  it.each(Object.values(ExploreGroupDimension))('opens %s grouping and preserves it in the analytical URL state', async (dimension) => {
     const onOpen = vi.fn();
     render(SavedViewsWorkspace, {
-      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView()] }))),
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
+        canonical_state: { ...savedView().canonical_state, grouping: [dimension] }
+      })] }))),
       currentState: { ...currentState, activeRow: 'message:9', selectedRow: 'message:9' }, onOpen
     });
 
@@ -91,11 +133,15 @@ describe('SavedViewsWorkspace', () => {
 
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
       workspace: 'everything', query: 'invoice', searchMode: 'full_text',
-      filters: [{ dimension: 'source', values: ['1'] }], groupingChain: ['domain'],
+      filters: [{ dimension: 'source', values: ['1'] }], groupingChain: [dimension],
       activeRow: null, selectedRow: null, scrollAnchor: null
     }));
     expect(onOpen.mock.calls[0]![0]).not.toHaveProperty('selection');
     expect(onOpen.mock.calls[0]![0]).not.toHaveProperty('inspectorPinned');
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState, ...onOpen.mock.calls[0]![0]
+    }));
+    expect(restored.groupingChain).toEqual([dimension]);
   });
 
   it('translates persisted v1 source identifiers and equality operators into current filters', async () => {
@@ -121,19 +167,32 @@ describe('SavedViewsWorkspace', () => {
     }));
   });
 
-  it('keeps compatible-schema views with unsupported fields or operators visibly blocked', async () => {
+  it('opens views filtered by every Explore dimension the daemon executes', async () => {
+    const onOpen = vi.fn();
+    const view = savedView({
+      canonical_state: {
+        filters: [
+          { field: 'identity', operator: 'in', values: ['1:me@example.com:sent'] },
+          { field: 'mailing_list', operator: 'eq', values: ['<dev@example.test>'] },
+          { field: 'participant_id', operator: 'in', values: ['42'] }
+        ],
+        presentation: 'table'
+      }
+    });
     render(SavedViewsWorkspace, {
-      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
-        canonical_state: {
-          filters: [{ field: 'subject', operator: 'contains', values: ['invoice'] }],
-          presentation: 'table'
-        }
-      })] }))),
-      currentState
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [view] }))),
+      currentState, onOpen
     });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('unsupported v1 filter');
-    expect((screen.getByRole('button', { name: 'Open Invoices' }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
+
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+      filters: [
+        { dimension: 'identity', values: ['1:me@example.com:sent'] },
+        { dimension: 'mailing_list', values: ['<dev@example.test>'] },
+        { dimension: 'participant', values: ['42'] }
+      ]
+    }));
   });
 
   it('updates with optimistic revision truth and explicitly confirms delete', async () => {
@@ -168,7 +227,7 @@ describe('SavedViewsWorkspace', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (request.method === 'DELETE') return new Response(null, { status: 204 });
-      return Response.json({ saved_views: [savedView({ schema_version: 99 })] });
+      return Response.json({ saved_views: [savedView({ schema_version: 99, incompatibility_reason: "unsupported schema", canonical_state: { query: { text: "future" } } })] });
     });
     render(SavedViewsWorkspace, {
       client: createAPIClient(fetchFn),

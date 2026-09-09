@@ -387,6 +387,7 @@ var operationGateExemptPaths = map[string]bool{
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
+	"/api/v1/saved-views/{id}/run",
 	remoteImagePath,
 	cardDAVAccountTestPath,
 	"/api/v1/explore",

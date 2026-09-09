@@ -883,6 +883,10 @@ type ClientInterface interface {
 	PatchSavedView(ctx context.Context, options *PatchSavedViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchSavedViewResponse, error)
 	PatchSavedViewWithResponse(ctx context.Context, options *PatchSavedViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchSavedViewResp, error)
 
+	// RunSavedView Run a shared analytical Saved View through its canonical Explore definition
+	RunSavedView(ctx context.Context, options *RunSavedViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedViewResponseJSON, error)
+	RunSavedViewWithResponse(ctx context.Context, options *RunSavedViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedViewResp, error)
+
 	// GetSchedulerStatus Get scheduler status
 	GetSchedulerStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetSchedulerStatusResponse, error)
 	GetSchedulerStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetSchedulerStatusResp, error)
@@ -14092,6 +14096,70 @@ func (c *Client) PatchSavedView(ctx context.Context, options *PatchSavedViewRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-views/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RunSavedView Run a shared analytical Saved View through its canonical Explore definition
+func (c *Client) RunSavedView(ctx context.Context, options *RunSavedViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedViewResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/saved-views/{id}/run",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunSavedViewResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RunSavedViewErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RunSavedViewErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RunSavedViewResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RunSavedViewResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-views/{id}/run")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

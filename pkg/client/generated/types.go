@@ -3299,6 +3299,7 @@ type ExploreFilesHTTPResponse struct {
 	CandidateSnapshotID *string           `json:"candidate_snapshot_id,omitempty"`
 	Files               []ExploreFileFact `json:"files" validate:"required"`
 	NextCursor          *string           `json:"next_cursor,omitempty"`
+	SearchDeletionScope *string           `json:"search_deletion_scope,omitempty"`
 	SearchProvenance    SearchProvenance  `json:"search_provenance"`
 	TotalCount          int64             `json:"total_count"`
 }
@@ -9452,15 +9453,90 @@ func (r RemoveResult) Validate() error {
 	return errors
 }
 
+type RunSavedViewRequest struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+}
+
+func (r RunSavedViewRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RunSavedViewResponse struct {
+	CacheRevision          string                         `json:"cache_revision" validate:"required"`
+	CandidatePoolSaturated *bool                          `json:"candidate_pool_saturated,omitempty"`
+	CandidateSnapshotID    *string                        `json:"candidate_snapshot_id,omitempty"`
+	Files                  []ExploreFileFact              `json:"files,omitempty"`
+	Groups                 []ExploreGroupRow              `json:"groups,omitempty"`
+	NextCursor             *string                        `json:"next_cursor,omitempty"`
+	ResultKind             RunSavedViewResponseResultKind `json:"result_kind" validate:"required"`
+	Rows                   []EntryRow                     `json:"rows,omitempty"`
+	SavedView              SavedView                      `json:"saved_view"`
+	SearchDeletionScope    *string                        `json:"search_deletion_scope,omitempty"`
+	SearchProvenance       SearchProvenance               `json:"search_provenance"`
+	TotalCount             *int64                         `json:"total_count,omitempty"`
+}
+
+func (r RunSavedViewResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	for i, item := range r.Files {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Files[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range r.Groups {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Groups[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(r.ResultKind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ResultKind", err)
+		}
+	}
+	for i, item := range r.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(r.SavedView).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SavedView", err)
+		}
+	}
+	if v, ok := any(r.SearchProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SearchProvenance", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type SavedView struct {
-	CanonicalState SavedViewStateEnvelope `json:"canonical_state"`
-	CreatedAt      time.Time              `json:"created_at" validate:"required"`
-	Description    *string                `json:"description,omitempty"`
-	ID             int64                  `json:"id"`
-	Name           string                 `json:"name" validate:"required"`
-	Revision       int64                  `json:"revision"`
-	SchemaVersion  int64                  `json:"schema_version"`
-	UpdatedAt      time.Time              `json:"updated_at" validate:"required"`
+	// CanonicalState Stored definition, including incompatible values; check incompatibility_reason before execution
+	CanonicalState json.RawMessage `json:"canonical_state"`
+	CreatedAt      time.Time       `json:"created_at" validate:"required"`
+	Description    *string         `json:"description,omitempty"`
+	ID             int64           `json:"id"`
+
+	// IncompatibilityReason Definition validation error that prevents this Saved View from executing
+	IncompatibilityReason *string   `json:"incompatibility_reason,omitempty"`
+	Name                  string    `json:"name" validate:"required"`
+	Revision              int64     `json:"revision"`
+	SchemaVersion         int64     `json:"schema_version"`
+	UpdatedAt             time.Time `json:"updated_at" validate:"required"`
 }
 
 func (s SavedView) Validate() error {
@@ -9486,20 +9562,37 @@ func (s SavedView) Validate() error {
 }
 
 type SavedViewFilter struct {
-	Field    string `json:"field" validate:"required"`
-	Operator string `json:"operator" validate:"required"`
+	Field    SavedViewFilterField    `json:"field" validate:"required"`
+	Operator SavedViewFilterOperator `json:"operator" validate:"required"`
 
 	// Values Exact filter values; numeric identifiers use decimal strings
 	Values []string `json:"values" validate:"required"`
 }
 
 func (s SavedViewFilter) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Field).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Field", err)
+		}
+	}
+	if v, ok := any(s.Operator).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Operator", err)
+		}
+	}
+	if err := typesValidator.Var(s.Values, "required"); err != nil {
+		errors = errors.Append("Values", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SavedViewSort struct {
 	Direction SavedViewSortDirection `json:"direction" validate:"required"`
-	Field     string                 `json:"field" validate:"required"`
+	Field     SavedViewSortField     `json:"field" validate:"required"`
 }
 
 func (s SavedViewSort) Validate() error {
@@ -9509,8 +9602,10 @@ func (s SavedViewSort) Validate() error {
 			errors = errors.Append("Direction", err)
 		}
 	}
-	if err := typesValidator.Var(s.Field, "required"); err != nil {
-		errors = errors.Append("Field", err)
+	if v, ok := any(s.Field).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Field", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -9519,18 +9614,25 @@ func (s SavedViewSort) Validate() error {
 }
 
 type SavedViewStateEnvelope struct {
-	Columns         []string                            `json:"columns,omitempty"`
+	Columns         []SavedViewStateEnvelopeColumns     `json:"columns,omitempty"`
 	Filters         []SavedViewFilter                   `json:"filters,omitempty"`
-	Grouping        []string                            `json:"grouping,omitempty"`
+	Grouping        []SavedViewStateEnvelopeGrouping    `json:"grouping,omitempty"`
 	InspectorPinned *bool                               `json:"inspector_pinned,omitempty"`
 	Presentation    *SavedViewStateEnvelopePresentation `json:"presentation,omitempty"`
 	Query           *string                             `json:"query,omitempty"`
-	SearchMode      *string                             `json:"search_mode,omitempty"`
+	SearchMode      *SavedViewStateEnvelopeSearchMode   `json:"search_mode,omitempty"`
 	Sort            []SavedViewSort                     `json:"sort,omitempty"`
 }
 
 func (s SavedViewStateEnvelope) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range s.Columns {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Columns[%d]", i), err)
+			}
+		}
+	}
 	for i, item := range s.Filters {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9538,10 +9640,24 @@ func (s SavedViewStateEnvelope) Validate() error {
 			}
 		}
 	}
+	for i, item := range s.Grouping {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Grouping[%d]", i), err)
+			}
+		}
+	}
 	if s.Presentation != nil {
 		if v, ok := any(s.Presentation).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Presentation", err)
+			}
+		}
+	}
+	if s.SearchMode != nil {
+		if v, ok := any(s.SearchMode).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SearchMode", err)
 			}
 		}
 	}
