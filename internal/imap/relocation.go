@@ -85,10 +85,20 @@ func (c *Client) addRelocationMessagesLocked(ctx context.Context, mailboxes []st
 	if err != nil {
 		return fmt.Errorf("load IMAP relocation candidates: %w", err)
 	}
-	// Prefer advertised All-Mail, then a stable mailbox/UID ordering. Internal
-	// IDs break ties without reselecting a row by its RFC822 identity.
+	// Recover content from trusted Sent before choosing an All-Mail mirror:
+	// only one candidate is forced, and an unchanged Sent copy may otherwise
+	// never be fetched. Other candidates retain All-Mail preference followed
+	// by stable mailbox/UID ordering. Internal IDs break ties.
 	slices.SortFunc(candidates, func(a, b RelocationCandidate) int {
 		if a.Mailbox != b.Mailbox {
+			aSent := c.isSentPlacementMailboxLocked(a.Mailbox) && c.isTrustedOutgoingMailboxLocked(a.Mailbox)
+			bSent := c.isSentPlacementMailboxLocked(b.Mailbox) && c.isTrustedOutgoingMailboxLocked(b.Mailbox)
+			if aSent != bSent {
+				if aSent {
+					return -1
+				}
+				return 1
+			}
 			if a.Mailbox == c.allMailFolder {
 				return -1
 			}

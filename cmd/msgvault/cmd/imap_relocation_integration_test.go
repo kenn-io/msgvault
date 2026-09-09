@@ -2645,3 +2645,71 @@ func TestIMAPRelocationRetainsOutgoingPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// An unchanged Sent membership must still supply the final content when a
+// lost Drafts canonical also has an All Mail survivor in the changed set.
+func TestIMAPRelocationUnchangedSentOutranksChangedAll(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newRelocationFixture(t)
+	rawSent := []byte(scriptedRFC7162RawMessage(f.sent))
+	rfc822 := "<" + f.sent.MessageID + ">"
+	// Keep the legacy draft snapshot and all three prior memberships. The
+	// next incremental sync loses Drafts and sees only an All Mail flag change.
+	require.NoError(f.st.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+		{
+			Mailbox: "Drafts",
+			State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 77, UIDNext: 2, HighestModSeq: 1},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Drafts", UIDValidity: 77, UID: 1, SourceMessageID: "Drafts|1",
+				RFC822MessageID: rfc822, Flags: []string{"\\Draft"},
+			}},
+		},
+		{
+			Mailbox: "Sent",
+			State:   store.IMAPFolderState{Mailbox: "Sent", UIDValidity: 88, UIDNext: 2, HighestModSeq: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Sent", UIDValidity: 88, UID: 1, SourceMessageID: "Sent|1",
+				RFC822MessageID: rfc822, RawSHA256: sha256.Sum256(rawSent), RawSize: int64(len(rawSent)), Flags: []string{"\\Seen"},
+			}},
+		},
+		{
+			Mailbox: "All Mail",
+			State:   store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 99, UIDNext: 2, HighestModSeq: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "All Mail", UIDValidity: 99, UID: 1, SourceMessageID: "All Mail|1",
+				RFC822MessageID: rfc822, RawSHA256: sha256.Sum256(rawSent), RawSize: int64(len(rawSent)), Flags: []string{"\\Seen"},
+			}},
+		},
+	}))
+	require.Len(queryScriptedRFC7162Memberships(t, f.st, f.source.ID), 3)
+	before, err := f.st.GetMessage(f.id)
+	require.NoError(err)
+	require.Equal("Drafts|1", before.SourceMessageID)
+	require.Contains(before.BodyText, f.draft.Body)
+	changed := f.sent
+	changed.Flags = []imapapi.Flag{imapapi.FlagSeen, imapapi.FlagFlagged}
+	f.final.Mailboxes = append(f.final.Mailboxes, scriptedRFC7162Mailbox{
+		Name: "All Mail", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrAll},
+		UIDValidity: 99, UIDNext: 2, HighestModSeq: 3,
+		ChangedUIDs: []imapapi.UID{1}, Messages: []scriptedRFC7162Message{changed},
+	})
+	for range 2 {
+		f.server.setSnapshot(f.final)
+		client, err := f.sync(t)
+		require.NoError(err)
+		require.NoError(client.Close())
+		after, err := f.st.GetMessage(f.id)
+		require.NoError(err)
+		assert.Contains(after.BodyText, f.sent.Body)
+		assert.NotContains(after.BodyText, f.draft.Body)
+		raw, err := f.st.GetMessageRaw(f.id)
+		require.NoError(err)
+		assert.Equal(rawSent, raw)
+		_, total, err := f.st.SearchMessagesQuery(&search.Query{TextTerms: []string{f.draft.Body}}, 0, 10)
+		require.NoError(err)
+		assert.Zero(total, "the obsolete draft must leave the search index")
+		f.final.Mailboxes[0].VanishedUIDs = nil
+		f.final.Mailboxes[2].ChangedUIDs = nil
+	}
+}
