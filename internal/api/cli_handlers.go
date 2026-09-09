@@ -1324,7 +1324,11 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
-		s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
+		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
+			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
+		} else {
+			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
+		}
 		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
 		}
@@ -1336,6 +1340,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if IsCLIRunDraftReply(args) {
+		return false
+	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
 		providerCall := args[1] == "provider" && args[2] == "check"
 		sweepCall := args[1] == "sweep" && args[2] == "run"
@@ -1573,6 +1580,9 @@ const cliRunPersonCommand = "person"
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
+	}
+	if IsCLIRunDraftReply(args) {
+		return len(args) >= 2
 	}
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"

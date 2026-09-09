@@ -232,6 +232,7 @@ func sanitizeArgs(args []string) []string {
 		"--access-token":   true,
 		"--refresh-token":  true,
 		"--client-secrets": true,
+		"--body":           true,
 	}
 	for _, a := range args {
 		if redactNext {

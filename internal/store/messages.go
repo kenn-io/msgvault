@@ -387,18 +387,19 @@ type ConversationPersistData struct {
 
 // Message represents a message in the database.
 type Message struct {
-	ID              int64
-	ConversationID  int64
-	SourceID        int64
-	SourceMessageID string
-	RFC822MessageID sql.NullString // RFC822 Message-ID header for cross-mailbox dedup
-	ListID          sql.NullString // RFC 2919 List-Id header for email list membership
-	MessageType     string         // "email"
-	SentAt          sql.NullTime
-	ReceivedAt      sql.NullTime
-	InternalDate    sql.NullTime
-	SenderID        sql.NullInt64
-	IsFromMe        bool
+	ID               int64
+	ConversationID   int64
+	SourceID         int64
+	SourceMessageID  string
+	RFC822MessageID  sql.NullString // RFC822 Message-ID header for cross-mailbox dedup
+	ListID           sql.NullString // RFC 2919 List-Id header for email list membership
+	MessageType      string         // "email"
+	SentAt           sql.NullTime
+	ReceivedAt       sql.NullTime
+	InternalDate     sql.NullTime
+	SenderID         sql.NullInt64
+	ReplyToMessageID sql.NullInt64
+	IsFromMe         bool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
 	// account identity rather than a source-native sent-by-me signal.
 	IdentityDerivedIsFromMe bool
@@ -1127,11 +1128,12 @@ func upsertMessageSQL(now string) string {
 		conversation_id, source_id, source_message_id,
 		rfc822_message_id, list_id, message_type,
 		sent_at, received_at, internal_date, sender_id,
+		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
 		has_attachments, attachment_count, archived_at
 	)
-	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
 	       ?, ?, ?, ?, ?, %s
@@ -1252,6 +1254,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.ConversationID, msg.SourceID, msg.SourceMessageID,
 		msg.RFC822MessageID, msg.ListID, msg.MessageType,
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
+		msg.ReplyToMessageID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
 		msg.HasAttachments, msg.AttachmentCount,
 	}
@@ -1519,12 +1522,17 @@ var ErrInvalidMessageRaw = errors.New("invalid message raw data")
 
 // GetMessageRaw retrieves and decompresses the raw MIME data for a message.
 func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
+	return s.GetMessageRawContext(context.Background(), messageID)
+}
+
+// GetMessageRawContext retrieves raw MIME using the caller's request context.
+func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
 
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT raw_data, compression FROM message_raw WHERE message_id = ?
-	`, messageID).Scan(&compressed, &compression)
+	`), messageID).Scan(&compressed, &compression)
 	if err != nil {
 		return nil, err
 	}

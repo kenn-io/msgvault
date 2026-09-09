@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -78,6 +79,9 @@ func runDaemonCLICommandHTTPWithEnv(
 	cwd, err := daemonCLIRunCwd(info, requiresLocalFiles)
 	if err != nil {
 		return err
+	}
+	if api.IsCLIRunDraftReply(args) {
+		cwd = ""
 	}
 
 	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{

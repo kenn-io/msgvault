@@ -50,6 +50,18 @@ type statusErrorSession struct {
 	mailbox string
 }
 
+type receiptlessAppendSession struct {
+	imapserver.Session
+}
+
+func (s *receiptlessAppendSession) Append(mailbox string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
+	_, err := s.Session.Append(mailbox, r, options)
+	if err != nil {
+		return nil, fmt.Errorf("append IMAP memory message: %w", err)
+	}
+	return nil, nil //nolint:nilnil // IMAP success without APPENDUID.
+}
+
 func (s *statusErrorSession) Status(
 	mailbox string,
 	options *imap.StatusOptions,
@@ -388,6 +400,24 @@ func StartIMAPMemServer(t *testing.T, messagesPerMailbox map[string]int) (string
 	return startIMAPMemServer(t, messagesPerMailbox, nil, "", 0, "", nil)
 }
 
+// IMAPDraftServerOptions controls the capabilities exposed by a draft test
+// server.
+type IMAPDraftServerOptions struct {
+	MessagesPerMailbox map[string]int
+	Caps               imap.CapSet
+	ReceiptlessAppend  bool
+}
+
+// StartIMAPMemServerForDrafts starts the in-memory server with explicit
+// capabilities so APPEND and UIDPLUS paths can be tested together.
+func StartIMAPMemServerForDrafts(t *testing.T, opts IMAPDraftServerOptions) (string, *imapmemserver.User) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	user := serveIMAPMemServerWithCaps(t, ln, opts.MessagesPerMailbox, nil, "", 0, "", nil, nil, opts.Caps, opts.ReceiptlessAppend)
+	return ln.Addr().String(), user
+}
+
 // ServeIMAPMemServer serves an in-memory IMAP server on the caller-supplied
 // listener and returns the user handle for later mutation.
 func ServeIMAPMemServer(
@@ -480,6 +510,23 @@ func serveIMAPMemServer(
 	startTLSConfig *tls.Config,
 ) *imapmemserver.User {
 	t.Helper()
+	return serveIMAPMemServerWithCaps(t, ln, messagesPerMailbox, specialUse, selectErrorMailbox, selectErrorCount, statusErrorMailbox, missingUID, startTLSConfig, nil, false)
+}
+
+func serveIMAPMemServerWithCaps(
+	t *testing.T,
+	ln net.Listener,
+	messagesPerMailbox map[string]int,
+	specialUse map[string][]imap.MailboxAttr,
+	selectErrorMailbox string,
+	selectErrorCount int,
+	statusErrorMailbox string,
+	missingUID *missingUIDConfig,
+	startTLSConfig *tls.Config,
+	caps imap.CapSet,
+	receiptlessAppend bool,
+) *imapmemserver.User {
+	t.Helper()
 	user := imapmemserver.NewUser(IMAPTestUsername, IMAPTestPassword)
 	mailboxes := make([]string, 0, len(messagesPerMailbox))
 	for mailbox, count := range messagesPerMailbox {
@@ -494,6 +541,7 @@ func serveIMAPMemServer(
 	memServer.AddUser(user)
 
 	server := imapserver.New(&imapserver.Options{
+		Caps: caps,
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			var session imapserver.Session
 			session = memServer.NewSession()
@@ -519,6 +567,9 @@ func serveIMAPMemServer(
 			}
 			if missingUID != nil {
 				session = &missingUIDSession{Session: session, config: missingUID}
+			}
+			if receiptlessAppend {
+				session = &receiptlessAppendSession{Session: session}
 			}
 			return session, nil, nil
 		},
