@@ -187,6 +187,39 @@ resolved and synced independently through the same importer as
   lives in another container, so the reply can appear as unavailable.
 - Attachment metadata and, within the configured cap, content-addressed bytes.
 
+Discord message metadata stores the complete nonzero message flag integer in
+`messages.metadata.discord_message_flags`. When that value contains `8192`,
+each attachment receives a `discord` object in
+`attachments.attachment_metadata`. A nonempty waveform remains the exact
+source string at `attachments.attachment_metadata.discord.waveform`, including
+strings that aren't valid base64. An empty waveform still produces
+`{"discord":{}}`. Existing `attachments.duration_ms`, MIME, and generic media
+type fields keep their current meanings.
+
+Use the existing archive columns to inspect these fields:
+
+```sql
+SELECT m.id AS message_id,
+       json_extract(m.metadata, '$.discord_message_flags') AS message_flags,
+       a.source_attachment_id,
+       json_extract(a.attachment_metadata, '$.discord.waveform') AS waveform,
+       a.duration_ms, a.mime_type, a.media_type
+FROM messages AS m
+JOIN attachments AS a ON a.message_id = m.id
+WHERE m.message_type = 'discord'
+  AND a.source_attachment_id LIKE 'discord:%';
+```
+
+On a fresh import or after a successful, decodable v1 repair, NULL
+`attachment_metadata` means the current mapper emitted no Discord voice
+metadata for that row. A pre-M2 voice row can also have NULL metadata because
+the old mapper omitted the field. Missing or undecodable raw data can leave a
+historical row unresolved. NULL alone therefore doesn't prove that a
+historical message is non-voice. Run `msgvault repair-derived --source-type
+discord`, or inspect the archived `discord_json`, before interpreting that
+value. Repair reads the archive and changes derived message and attachment
+metadata only. It doesn't download or rewrite media.
+
 Reaction metadata is stored as stable summaries such as `👍 12`, including
 custom emoji name, ID, animation state, and count. Version 1 does not fetch
 reactor identities or populate normalized reaction rows, so reaction-detail

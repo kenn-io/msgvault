@@ -206,23 +206,27 @@ func isLoopbackMediaHost(host string) bool {
 // before attempting binary work. Download, cap, cancellation, and filesystem
 // failures remain per-item pending outcomes and do not become message errors.
 func (m *MediaArchiver) PersistAttachments(
-	ctx context.Context, messageID int64, attachments []Attachment,
+	ctx context.Context, messageID int64, attachments []Attachment, messageFlags ...int,
 ) (MediaResult, error) {
-	return m.persistAttachments(ctx, messageID, attachments, true)
+	flags := 0
+	if len(messageFlags) > 0 {
+		flags = messageFlags[0]
+	}
+	return m.persistAttachments(ctx, messageID, attachments, true, flags)
 }
 
 // persistAttachments refreshes the complete observed attachment set. When
 // retryExisting is false, known pending rows get fresh metadata without a
 // duplicate download attempt; newly observed rows are still attempted.
 func (m *MediaArchiver) persistAttachments(
-	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool,
+	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool, messageFlags int,
 ) (MediaResult, error) {
 	existing, err := m.store.MessageDiscordAttachments(messageID)
 	if err != nil {
 		return MediaResult{}, fmt.Errorf("load Discord attachment metadata: %w", err)
 	}
 
-	refs := mapAttachments(attachments)
+	refs := mapAttachments(attachments, messageFlags)
 	if len(refs) != len(attachments) {
 		return MediaResult{}, errors.New("map Discord attachment metadata: attachment count changed")
 	}
@@ -424,7 +428,7 @@ func (m *MediaArchiver) BackfillMessage(
 			})
 			continue
 		}
-		ref := mapAttachments([]Attachment{attachment})[0]
+		ref := mapAttachments([]Attachment{attachment}, message.Flags)[0]
 		if reason := m.policy.Evaluate(m.conversation, attachment.Size); reason != "" {
 			ref.State = attachmentpolicy.StateSkipped
 			ref.SkipReason = reason

@@ -18,6 +18,7 @@ const (
 	discordConversationType = "channel"
 	discordMessageType      = "discord"
 	discordRawFormat        = "discord_json"
+	discordVoiceMessageFlag = 1 << 13
 )
 
 type mappedConversation struct {
@@ -99,6 +100,7 @@ type messageThreadMetadata struct {
 
 type messageMetadata struct {
 	DiscordMessageType  int                        `json:"discord_message_type"`
+	DiscordMessageFlags int                        `json:"discord_message_flags,omitempty"`
 	AuthorKind          string                     `json:"author_kind,omitempty"`
 	AuthorDisplayName   string                     `json:"author_display_name,omitempty"`
 	AuthorAvatar        string                     `json:"author_avatar,omitempty"`
@@ -131,7 +133,7 @@ func mapMessage(message *Message, conversationID, sourceID int64) (mappedMessage
 	if err != nil {
 		return mappedMessage{}, fmt.Errorf("marshal Discord message metadata: %w", err)
 	}
-	attachments := mapAttachments(message.Attachments)
+	attachments := mapAttachments(message.Attachments, message.Flags)
 	return mappedMessage{
 		Message: store.Message{
 			ConversationID:  conversationID,
@@ -158,14 +160,15 @@ func mapMessage(message *Message, conversationID, sourceID int64) (mappedMessage
 func buildMessageMetadata(message *Message) messageMetadata {
 	author := authorObservation(message)
 	metadata := messageMetadata{
-		DiscordMessageType: message.Type,
-		AuthorKind:         author.AuthorKind,
-		AuthorDisplayName:  author.PresentationDisplayName,
-		AuthorAvatar:       author.PresentationAvatar,
-		GuildNickname:      author.GuildNickname,
-		Automated:          author.Automated,
-		MentionEveryone:    message.MentionEveryone,
-		MentionedRoleIDs:   message.MentionRoles,
+		DiscordMessageType:  message.Type,
+		DiscordMessageFlags: message.Flags,
+		AuthorKind:          author.AuthorKind,
+		AuthorDisplayName:   author.PresentationDisplayName,
+		AuthorAvatar:        author.PresentationAvatar,
+		GuildNickname:       author.GuildNickname,
+		Automated:           author.Automated,
+		MentionEveryone:     message.MentionEveryone,
+		MentionedRoleIDs:    message.MentionRoles,
 	}
 	for _, channel := range message.MentionChannels {
 		metadata.MentionedChannels = append(metadata.MentionedChannels, mentionedChannelMetadata{
@@ -436,7 +439,25 @@ func renderSystemMessage(message *Message, content string) string {
 	}
 }
 
-func mapAttachments(attachments []Attachment) []store.AttachmentRef {
+type discordAttachmentMetadata struct {
+	Discord discordAttachmentMetadataDetails `json:"discord"`
+}
+
+type discordAttachmentMetadataDetails struct {
+	Waveform string `json:"waveform,omitempty"`
+}
+
+func discordAttachmentMetadataJSON(attachment Attachment) string {
+	metadata, err := json.Marshal(discordAttachmentMetadata{
+		Discord: discordAttachmentMetadataDetails{Waveform: attachment.Waveform},
+	})
+	if err != nil {
+		return ""
+	}
+	return string(metadata)
+}
+
+func mapAttachments(attachments []Attachment, messageFlags int) []store.AttachmentRef {
 	refs := make([]store.AttachmentRef, 0, len(attachments))
 	for _, attachment := range attachments {
 		ref := store.AttachmentRef{
@@ -448,6 +469,9 @@ func mapAttachments(attachments []Attachment) []store.AttachmentRef {
 			MediaType:          attachmentMediaType(attachment.ContentType),
 			DurationMS:         int64(math.Round(attachment.Duration * 1000)),
 			State:              attachmentpolicy.StatePending,
+		}
+		if messageFlags&discordVoiceMessageFlag != 0 {
+			ref.Metadata = discordAttachmentMetadataJSON(attachment)
 		}
 		if attachment.Width != nil {
 			ref.Width = int64(*attachment.Width)

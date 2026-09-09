@@ -71,7 +71,7 @@ func testDiscordAttachment(rawURL string, size int64) Attachment {
 }
 
 func pendingDiscordRef(rawURL string) store.AttachmentRef {
-	return mapAttachments([]Attachment{testDiscordAttachment(rawURL, 0)})[0]
+	return mapAttachments([]Attachment{testDiscordAttachment(rawURL, 0)}, 0)[0]
 }
 
 func requirePendingDiscordAttachment(t *testing.T, f mediaFixture, rawURL string) {
@@ -208,6 +208,41 @@ func TestMediaArchiverReuseKeepsStoredState(t *testing.T) {
 	assert.Len(candidates, 1, "reused stored media must remain eligible for policy purge")
 }
 
+func TestMediaArchiverRefreshesVoiceMetadataWithoutRefetching(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte("voice bytes"))
+	}))
+	t.Cleanup(cdn.Close)
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+	attachment := Attachment{
+		ID: mediaTestAttachmentID, Filename: "voice.ogg", ContentType: "audio/ogg",
+		Size: 11, URL: cdn.URL + "/attachments/301/401/voice.ogg", Waveform: "first",
+	}
+	_, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{attachment}, discordVoiceMessageFlag)
+	require.NoError(err)
+	before, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	beforeRef := before["discord:"+mediaTestAttachmentID]
+
+	attachment.Waveform = "%%%"
+	_, err = archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{attachment}, discordVoiceMessageFlag)
+	require.NoError(err)
+	after, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	afterRef := after["discord:"+mediaTestAttachmentID]
+	assert.Equal(int32(1), requests.Load())
+	assert.Equal(beforeRef.StoragePath, afterRef.StoragePath)
+	assert.Equal(beforeRef.ContentHash, afterRef.ContentHash)
+	assert.Equal(beforeRef.State, afterRef.State)
+	assert.Equal(beforeRef.SkipReason, afterRef.SkipReason)
+	assert.Equal(`{"discord":{"waveform":"%%%"}}`, afterRef.Metadata)
+}
+
 func TestMediaArchiverStoresEphemeralAttachment(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -329,7 +364,7 @@ func TestMediaArchiverRepeatedPayloadRefreshesSetWithoutRetryingKnownPendingRows
 	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 
 	first := []Attachment{{ID: "401", Filename: "old.bin", Size: 1}}
-	result, err := archiver.persistAttachments(context.Background(), f.messageID, first, true)
+	result, err := archiver.persistAttachments(context.Background(), f.messageID, first, true, 0)
 	require.NoError(err)
 	require.Len(result.Items, 1)
 	assert.Equal(MediaPending, result.Items[0].Outcome)
@@ -338,7 +373,7 @@ func TestMediaArchiverRepeatedPayloadRefreshesSetWithoutRetryingKnownPendingRows
 		{ID: "401", Filename: "renamed.bin", Size: 2},
 		{ID: "402", Filename: "new.bin", Size: 3},
 	}
-	result, err = archiver.persistAttachments(context.Background(), f.messageID, newer, false)
+	result, err = archiver.persistAttachments(context.Background(), f.messageID, newer, false, 0)
 	require.NoError(err)
 	require.Len(result.Items, 1, "only the newly observed attachment is attempted and reported")
 	assert.Equal("discord:402", result.Items[0].SourceAttachmentID)
@@ -374,7 +409,7 @@ func TestMediaArchiverRepeatedPayloadPreservesSuppressedOutcome(t *testing.T) {
 			archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 
 			result, err := archiver.persistAttachments(
-				context.Background(), f.messageID, []Attachment{testDiscordAttachment("", 0)}, false,
+				context.Background(), f.messageID, []Attachment{testDiscordAttachment("", 0)}, false, 0,
 			)
 			require.NoError(err)
 			assert.Empty(result.Items)
@@ -810,6 +845,52 @@ func TestMediaBackfillRefreshesSignedURLThroughMessageEndpoint(t *testing.T) {
 	stored, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(ref.StoragePath)))
 	require.NoError(err)
 	assert.Equal(content, stored)
+}
+
+func TestDiscordBackfillVoiceMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	oldURL := "https://cdn.discordapp.com/attachments/301/401/old.ogg"
+	require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{
+		pendingDiscordRef(oldURL),
+		{SourceAttachmentID: "discord:unmatched", StoragePath: "discord:pending:unmatched"},
+	}))
+	require.NoError(f.store.SetMessageMetadata(f.messageID, sql.NullString{
+		String: `{"keep":"message"}`, Valid: true,
+	}))
+	content := []byte("backfill voice bytes")
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(cdn.Close)
+	freshURL := cdn.URL + "/attachments/301/401/fresh.ogg"
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeDiscordJSON(w, http.StatusOK, map[string]any{
+			"id": mediaTestMessageID, "channel_id": mediaTestChannelID, "flags": discordVoiceMessageFlag,
+			"attachments": []map[string]any{{
+				"id": mediaTestAttachmentID, "filename": "fresh.ogg", "content_type": "audio/ogg",
+				"size": len(content), "url": freshURL, "waveform": "%%%", "duration_secs": 2.5,
+			}},
+		})
+	}))
+	t.Cleanup(apiServer.Close)
+	client, err := NewClient(apiServer.URL+"/api/v10", "synthetic-token")
+	require.NoError(err)
+	archiver := newTestArchiver(t, f, client, 1<<20, cdn)
+
+	result, err := archiver.BackfillMessage(t.Context(), f.messageID, mediaTestChannelID, mediaTestMessageID)
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal(MediaUnrecoverable, result.Items[0].Outcome)
+	assert.Equal(MediaDownloaded, result.Items[1].Outcome)
+	metadata, err := f.store.GetMessageMetadata(f.messageID)
+	require.NoError(err)
+	assert.Equal(`{"keep":"message"}`, metadata.String)
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.Equal(`{"discord":{"waveform":"%%%"}}`, refs["discord:"+mediaTestAttachmentID].Metadata)
+	assert.Equal("discord:pending:unmatched", refs["discord:unmatched"].StoragePath)
 }
 
 func TestMediaBackfillReturnsUnrecoverableOutcomeWhenSourceCannotRefresh(t *testing.T) {

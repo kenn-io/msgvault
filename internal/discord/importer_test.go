@@ -193,6 +193,54 @@ func newTestImporter(st *store.Store, api API) *Importer {
 	return importer
 }
 
+func TestImporterArchivesDiscordVoiceMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	voice := importerTestMessage("501", "300", "voice one")
+	voice.Flags = discordVoiceMessageFlag
+	voice.Attachments = []Attachment{{
+		ID: "attachment-one", Filename: "one.ogg", ContentType: "audio/ogg", Size: 12,
+		Duration: 5.940000057220459, Waveform: "%%%",
+	}}
+	second := importerTestMessage("502", "300", "voice two")
+	second.Flags = discordVoiceMessageFlag
+	second.Attachments = []Attachment{{
+		ID: "attachment-two", Filename: "two.ogg", ContentType: "audio/ogg", Size: 18,
+		Duration: 1.25, Waveform: "exact waveform",
+	}}
+	api.messages["300"] = []Message{voice, second}
+
+	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	for _, want := range []struct {
+		messageID, attachmentID, waveform string
+		duration                          int64
+	}{
+		{messageID: "501", attachmentID: "attachment-one", waveform: "%%%", duration: 5940},
+		{messageID: "502", attachmentID: "attachment-two", waveform: "exact waveform", duration: 1250},
+	} {
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+		), source.ID, want.messageID).Scan(&id))
+		metadata, err := st.GetMessageMetadata(id)
+		require.NoError(err)
+		assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192,"author_kind":"user","author_display_name":"user-`+want.messageID+`"}`, metadata.String)
+		attachments, err := st.MessageDiscordAttachments(id)
+		require.NoError(err)
+		ref, ok := attachments["discord:"+want.attachmentID]
+		require.True(ok)
+		assert.Equal(`{"discord":{"waveform":"`+want.waveform+`"}}`, ref.Metadata)
+		assert.Equal("audio/ogg", ref.MimeType)
+		assert.Equal("audio", ref.MediaType)
+		assert.Equal(want.duration, ref.DurationMS)
+	}
+}
+
 func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {
 	t.Helper()
 	lower, err := SnowflakeFromTimestamp(at)

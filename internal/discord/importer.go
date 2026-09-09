@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -113,6 +114,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	source, err := imp.store.GetOrCreateSource(sourceTypeDiscord, opts.GuildID)
 	if err != nil {
 		return nil, fmt.Errorf("get Discord source: %w", err)
+	}
+	if _, _, err := rederive.RunIfStale(
+		ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
+	); err != nil {
+		return nil, fmt.Errorf("repair Discord derived metadata: %w", err)
 	}
 	lowerBound := ""
 	if !opts.After.IsZero() {
@@ -1463,7 +1469,9 @@ func (imp *Importer) persistPage(
 				conversation.ParticipantCount = media.conversation.ParticipantCount
 			}
 			media.SetPolicy(media.policy, conversation)
-			result, err := media.persistAttachments(ctx, messageID, message.Attachments, !alreadyProcessed)
+			result, err := media.persistAttachments(
+				ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags,
+			)
 			if err != nil {
 				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
 			}
