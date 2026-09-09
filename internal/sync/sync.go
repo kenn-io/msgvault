@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -165,22 +166,6 @@ type sentPrecedencePlacement interface {
 	// IsDraftsPlacementMailbox reports whether the mailbox this composite
 	// source ID names is a Drafts placement and nothing stronger.
 	IsDraftsPlacementMailbox(messageID string) bool
-}
-
-// relocationSentOverDrafts reports whether the fetched copy at
-// destinationSourceMessageID is a Sent placement whose current canonical
-// location is only a Drafts placement. This is the one trusted-over-trusted
-// precedence: an edited Sent copy refreshes a stale archived draft even
-// while the old Drafts copy still exists. It never grants anything to
-// received placements, never lets one Sent placement outrank another, and
-// never lets a Drafts placement outrank anything.
-func (s *Syncer) relocationSentOverDrafts(
-	destinationSourceMessageID, canonicalSourceMessageID string,
-) bool {
-	precedence, ok := s.client.(sentPrecedencePlacement)
-	return ok &&
-		precedence.IsSentPlacementMailbox(destinationSourceMessageID) &&
-		precedence.IsDraftsPlacementMailbox(canonicalSourceMessageID)
 }
 
 // relocationContentAuthorized reports whether replacing an archived snapshot
@@ -1595,6 +1580,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
+	metadata          *sql.NullString
 	message           *store.Message
 	threadID          string
 	conversationType  string
@@ -1780,7 +1766,17 @@ func (s *Syncer) prepareMessage(
 		msg.SentAt = sql.NullTime{Time: resolvedDate, Valid: true}
 	}
 
+	var metadata *sql.NullString
+	if s.opts.SourceType == sourceTypeIMAP {
+		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: s.imapContentOrigin(raw.ID)})
+		if err != nil {
+			return nil, fmt.Errorf("encode IMAP content origin: %w", err)
+		}
+		metadata = &sql.NullString{String: string(encoded), Valid: true}
+	}
+
 	return &messageData{
+		metadata:          metadata,
 		message:           msg,
 		threadID:          threadID,
 		conversationType:  conversationType,
@@ -1836,6 +1832,7 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 	// Persist atomically
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
 		Message:    data.message,
+		Metadata:   data.metadata,
 		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
 		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
 		RawMIME:    data.rawMIME,
@@ -1985,24 +1982,19 @@ func (s *Syncer) ingestMessage(
 					errDeferredIMAPIdentity,
 				)
 			}
+			savedOrigin, err := s.savedIMAPContentOrigin(existingID)
+			if err != nil {
+				return false, err
+			}
+			destinationOrigin := s.imapContentOrigin(data.message.SourceMessageID)
+			canonicalOrigin := s.imapContentOrigin(oldSourceMessageID)
+
 			complete := s.labelsSnapshotComplete()
 			if matches {
 				if complete && oldSourceMessageID != data.message.SourceMessageID {
-					if (s.relocationContentAuthorized(data.message.SourceMessageID) &&
-						!s.relocationContentAuthorized(oldSourceMessageID)) ||
-						s.relocationSentOverDrafts(data.message.SourceMessageID, oldSourceMessageID) {
-						// The fetched copy sits in a mailbox trusted to hold only the
-						// account's own outgoing mail, while the current canonical does
-						// not: base rekey semantics redirected it to a mirror or
-						// received copy (for example an untrusted \All adoption that
-						// ran first). Refresh from the outgoing copy so a genuine Sent
-						// edit is not stranded behind it. Separately, an edited Sent
-						// copy outranks a canonical that is only a Drafts placement —
-						// the surviving Drafts copy is the earlier draft the account
-						// already superseded. Every other trusted canonical (Sent or
-						// configured placement) defers to the vanished-source flow, so
-						// Sent never churns against Sent and Drafts never outranks
-						// anything.
+					if destinationOrigin.canRefresh(savedOrigin, true) && destinationOrigin.canRefresh(canonicalOrigin, true) {
+						// Compare the fetched copy with the saved content's origin:
+						// adopting an All Mail location must not erase Sent priority.
 						expected := store.MessageIdentityGuard{
 							ID: existingID, SourceID: sourceID,
 							SourceMessageID: oldSourceMessageID,
@@ -2047,7 +2039,7 @@ func (s *Syncer) ingestMessage(
 				return dedupMutationResult(
 					changed, "reconcile validated dedup labels", nil)
 			}
-			if s.relocationContentAuthorized(data.message.SourceMessageID) {
+			if destinationOrigin.canRefresh(savedOrigin, false) && destinationOrigin.canRefresh(canonicalOrigin, false) {
 				expected := store.MessageIdentityGuard{
 					ID: existingID, SourceID: sourceID,
 					SourceMessageID: oldSourceMessageID,

@@ -54,7 +54,8 @@ func buildPreparedSnapshot(
 	}
 
 	return &store.MessagePersistData{
-		Message: &message,
+		Message:  &message,
+		Metadata: prepared.metadata,
 		Conversation: &store.ConversationPersistData{
 			SourceConversationID: prepared.threadID,
 			ConversationType:     prepared.conversationType,

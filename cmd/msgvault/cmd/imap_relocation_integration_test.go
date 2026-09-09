@@ -1094,7 +1094,6 @@ func TestIMAPRelocationAmbiguousRoleDeniesRefresh(t *testing.T) {
 // full rescan, matching the CLI's --noresume production wiring.
 func runScriptedRelocationResync(
 	t *testing.T, st *store.Store, identifier, addr string,
-	mod func(*msgsync.Options),
 ) (*imap.Client, error) {
 	t.Helper()
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
@@ -1103,9 +1102,6 @@ func runScriptedRelocationResync(
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	if mod != nil {
-		mod(options)
-	}
 	summary, err := newMessageSyncer(client, st, options).
 		WithLogger(slog.New(slog.DiscardHandler)).
 		Full(t.Context(), identifier)
@@ -1177,7 +1173,7 @@ func TestIMAPRelocationRescanOrderingKeepsEditedSent(t *testing.T) {
 
 	// Force-full rescan with every copy present: durable memberships route
 	// each copy through alias label refresh, so nothing is re-ingested.
-	rescan, err := runScriptedRelocationResync(t, st, identifier, addr, nil)
+	rescan, err := runScriptedRelocationResync(t, st, identifier, addr)
 	require.NoError(err)
 	require.NoError(rescan.Close())
 	assert.NotContains(server.commandsFor(3), "BODY.PEEK[]",
@@ -1235,7 +1231,7 @@ func TestIMAPRelocationRescanOrderingKeepsEditedSent(t *testing.T) {
 	requireEditedSent("draft flag change")
 
 	// Final force-full rescan with every copy present, then a no-op sync.
-	finalRescan, err := runScriptedRelocationResync(t, st, identifier, addr, nil)
+	finalRescan, err := runScriptedRelocationResync(t, st, identifier, addr)
 	require.NoError(err)
 	require.NoError(finalRescan.Close())
 	requireEditedSent("final force-full rescan")
@@ -2263,7 +2259,7 @@ func TestIMAPRelocationConfiguredDraftsRoleNotSent(t *testing.T) {
 // placements never gain that precedence, and a later stale Drafts copy must
 // not downgrade the refreshed snapshot.
 func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
-	for _, mode := range []string{"qresync", "full enumeration", "configured localized sent"} {
+	for _, mode := range []string{"qresync", "full enumeration", "configured localized sent", "removed sent mailbox", "removed sent mailbox full enumeration"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -2305,7 +2301,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			require.Contains(stale.BodyText, draft.Body, "the archived snapshot starts as the draft")
 
 			edited := baseline.clone()
-			if mode == "full enumeration" {
+			if mode == "full enumeration" || mode == "removed sent mailbox full enumeration" {
 				edited.Capabilities = "IMAP4rev1 SPECIAL-USE"
 			}
 			edited.Mailboxes[1].HighestModSeq = 2
@@ -2359,6 +2355,10 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			edited.Mailboxes[1].HighestModSeq = 3
 			edited.Mailboxes[1].ChangedUIDs = nil
 			edited.Mailboxes[1].VanishedUIDs = []imapapi.UID{1}
+			removeMailbox := mode == "removed sent mailbox" || mode == "removed sent mailbox full enumeration"
+			if removeMailbox {
+				edited.Mailboxes = edited.Mailboxes[:1]
+			}
 			for range 2 {
 				server.setSnapshot(edited)
 				client, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
@@ -2372,7 +2372,9 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 				raw, err = st.GetMessageRaw(id)
 				require.NoError(err)
 				assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
-				edited.Mailboxes[1].VanishedUIDs = nil
+				if !removeMailbox {
+					edited.Mailboxes[1].VanishedUIDs = nil
+				}
 			}
 		})
 	}
@@ -2527,6 +2529,119 @@ func TestIMAPRelocationDualSentDraftsRoleDenied(t *testing.T) {
 			raw, err := st.GetMessageRaw(id)
 			require.NoError(err)
 			assert.Equal(scriptedRFC7162RawMessage(draft), string(raw))
+		})
+	}
+}
+
+func TestIMAPRelocationSentContentSurvivesAllAdoption(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	draft := newScriptedRFC7162Message(1, "survivors@example.test", imapapi.FlagDraft)
+	draft.Body = "draftobsoleteword"
+	sent := newScriptedRFC7162Message(1, draft.MessageID, imapapi.FlagSeen)
+	sent.Body = "sentfinalword"
+	baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
+		{Name: "All Mail", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrAll}, UIDValidity: 99, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{sent}},
+		{Name: "Drafts", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrDrafts}, UIDValidity: 77, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{draft}},
+		{Name: "Sent", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrSent}, UIDValidity: 88, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{sent}},
+	}}
+	addr, server := startScriptedRFC7162Server(t, baseline)
+	st := testutil.NewTestStore(t)
+	const identifier = "imap://survivors@example.test"
+	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+	require.NoError(first.Close())
+	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+sent.MessageID+">")
+	require.NoError(err)
+	require.Positive(id)
+	before, err := st.GetMessage(id)
+	require.NoError(err)
+	require.Equal("Sent|1", before.SourceMessageID)
+	require.Contains(before.BodyText, sent.Body)
+	require.Len(queryScriptedRFC7162Memberships(t, st, source.ID), 3)
+	final := baseline.clone()
+	final.Mailboxes[2].Messages = nil
+	final.Mailboxes[2].HighestModSeq = 3
+	final.Mailboxes[2].VanishedUIDs = []imapapi.UID{1}
+	for range 2 {
+		server.setSnapshot(final)
+		client, err := runScriptedRelocationResync(t, st, identifier, addr)
+		require.NoError(err)
+		require.NoError(client.Close())
+		after, err := st.GetMessage(id)
+		require.NoError(err)
+		assert.Contains(after.BodyText, sent.Body)
+		assert.NotContains(after.BodyText, draft.Body)
+		assert.Equal("All Mail|1", after.SourceMessageID)
+		raw, err := st.GetMessageRaw(id)
+		require.NoError(err)
+		assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
+		final.Mailboxes[2].VanishedUIDs = nil
+	}
+}
+
+// Keep the existing placement policy for archives without origin metadata,
+// and continue refreshing a Sent survivor when the original Sent copy is gone.
+func TestIMAPRelocationRetainsOutgoingPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		survivorRole    imapapi.MailboxAttr
+		missingMetadata bool
+		removeCanonical bool
+		wantRefresh     bool
+	}{
+		{name: "sent survivor refreshes", survivorRole: imapapi.MailboxAttrSent, removeCanonical: true, wantRefresh: true},
+		{name: "existing sent without metadata", survivorRole: imapapi.MailboxAttrDrafts, missingMetadata: true},
+		{name: "lost sent without metadata", survivorRole: imapapi.MailboxAttrDrafts, missingMetadata: true, removeCanonical: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			original := newScriptedRFC7162Message(1, "outgoing-precedence@example.test", imapapi.FlagSeen)
+			original.Body = "originalsentword"
+			survivor := original
+			survivor.Body = "survivingcopyword"
+			baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
+				{Name: "Sent", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrSent}, UIDValidity: 88, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{original}},
+				{Name: "Survivor", Attrs: []imapapi.MailboxAttr{tc.survivorRole}, UIDValidity: 77, UIDNext: 1, HighestModSeq: 1},
+			}}
+			addr, server := startScriptedRFC7162Server(t, baseline)
+			st := testutil.NewTestStore(t)
+			const identifier = "imap://outgoing-precedence@example.test"
+			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			require.NoError(first.Close())
+			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+original.MessageID+">")
+			require.NoError(err)
+			require.Positive(id)
+			if tc.missingMetadata {
+				_, err := st.DB().Exec(st.Rebind("UPDATE messages SET metadata = NULL WHERE id = ?"), id)
+				require.NoError(err)
+			}
+			next := baseline.clone()
+			next.Mailboxes[1].Messages = []scriptedRFC7162Message{survivor}
+			next.Mailboxes[1].UIDNext = 2
+			next.Mailboxes[1].HighestModSeq = 2
+			wantSource := "Sent|1"
+			if tc.removeCanonical {
+				next.Mailboxes[0].Messages = nil
+				next.Mailboxes[0].HighestModSeq = 2
+				next.Mailboxes[0].VanishedUIDs = []imapapi.UID{1}
+				wantSource = "Survivor|1"
+			}
+			server.setSnapshot(next)
+			second, err := runScriptedRelocationResync(t, st, identifier, addr)
+			require.NoError(err)
+			require.NoError(second.Close())
+			message, err := st.GetMessage(id)
+			require.NoError(err)
+			assert.Equal(wantSource, message.SourceMessageID)
+			want := original
+			if tc.wantRefresh {
+				want = survivor
+			}
+			assert.Contains(message.BodyText, want.Body)
+			raw, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			assert.Equal(scriptedRFC7162RawMessage(want), string(raw))
 		})
 	}
 }

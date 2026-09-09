@@ -36,10 +36,15 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 		raw == nil || raw.ID != target.NewSourceMessageID {
 		return errors.New("invalid IMAP relocation target")
 	}
+	savedOrigin, err := s.savedIMAPContentOrigin(target.InternalID)
+	if err != nil {
+		return err
+	}
 	// A surviving Drafts copy may take over the location, but it must not
-	// replace the final snapshot from the lost Sent placement.
-	if !s.relocationContentAuthorized(target.NewSourceMessageID) ||
-		s.relocationSentOverDrafts(target.SourceMessageID, target.NewSourceMessageID) {
+	// replace the final snapshot even if the original Sent mailbox is gone.
+	destinationOrigin := s.imapContentOrigin(target.NewSourceMessageID)
+	canonicalOrigin := s.imapContentOrigin(target.SourceMessageID)
+	if !destinationOrigin.canRefresh(savedOrigin, false) || !destinationOrigin.canRefresh(canonicalOrigin, false) {
 		return s.adoptIMAPRelocationLocation(ctx, target, raw, labelMap)
 	}
 	prepared, err := s.prepareMessage(sourceID, raw, threadID, true)
