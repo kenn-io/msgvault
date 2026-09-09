@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -466,6 +466,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 |---|---|---|
 | `rate_limit_qps` | `5` | Gmail API requests per second |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+| `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
@@ -474,6 +475,38 @@ It applies to new ingestion; existing mail needs an explicit backfill.
 
 See [remote email images](usage/remote-images.md) for the opt-in workflow,
 supported formats, download limits, and effect on attachment counts.
+
+`trusted_imap_sent_mailboxes` names each IMAP account's Sent folder for
+servers — such as some Exchange/Outlook accounts — whose (possibly localized)
+Sent folder advertises no RFC 6154 `\Sent` special-use role. A survivor copy in
+that unadvertised folder never replaces the archived snapshot by default:
+the sync adopts the surviving location but keeps the previously archived
+body, raw MIME, recipients, and attachments, because a sender can forge any
+RFC822 `Message-ID`. Placement the server does advertise — an unambiguous
+`\Sent` or `\Drafts` role — remains trusted automatically regardless of
+this setting. Naming a mailbox here states that it is that account's Sent
+folder and holds only mail the account itself authored, which re-enables
+refreshing the archived snapshot from an edited copy found there.
+
+The mapping is keyed by the exact source identifier — copy the `ACCOUNT`
+value printed by `msgvault list-accounts` (for example
+`imaps://user@example.com@imap.example.com:993`), not the email or display
+name. Trust never crosses accounts: a same-named mailbox in another synced
+account stays untrusted, and an account with no entry has no explicit trust.
+
+```toml
+[sync]
+trusted_imap_sent_mailboxes = { "imaps://user@example.com@imap.example.com:993" = ["Gesendete Elemente"] }
+```
+
+This is an explicit trust assumption, not evidence: filters or IMAP rules
+that file received mail into the listed mailbox would let that mail replace
+an archived snapshot under the same Message-ID. Advertised unambiguous
+`\Sent` and `\Drafts` placement is trusted automatically, and a mailbox
+that carries `\All`, `\Junk`, or `\Trash` roles, or INBOX, is never
+trusted — not even when listed here explicitly. A configured name the server
+itself advertises as `\Drafts` keeps its Drafts meaning: explicit
+configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 

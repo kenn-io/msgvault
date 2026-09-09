@@ -25,11 +25,16 @@ import (
 )
 
 type scriptedRFC7162Message struct {
-	UID       imapapi.UID
-	MessageID string
-	Subject   string
-	Flags     []imapapi.Flag
-	ModSeq    uint64
+	UID        imapapi.UID
+	MessageID  string
+	Subject    string
+	Body       string
+	MissingRaw bool
+	Flags      []imapapi.Flag
+	ModSeq     uint64
+	// Raw overrides the synthesized message bytes verbatim (already CRLF
+	// encoded) so tests can vary recipients, attachments, and HTML.
+	Raw string
 }
 
 type scriptedRFC7162Mailbox struct {
@@ -405,6 +410,10 @@ func writeScriptedRFC7162Fetch(
 				sequence, uid, formatScriptedRFC7162Flags(message.Flags), modSeq, len(body), body)
 			continue
 		}
+		if message.MissingRaw {
+			_, _ = fmt.Fprintf(w, "* %d FETCH (UID %d FLAGS (%s))\r\n", sequence, uid, formatScriptedRFC7162Flags(message.Flags))
+			continue
+		}
 		raw := scriptedRFC7162RawMessage(message)
 		_, _ = fmt.Fprintf(w,
 			"* %d FETCH (UID %d FLAGS (%s)%s INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE %d BODY[] {%d}\r\n%s)\r\n",
@@ -413,6 +422,9 @@ func writeScriptedRFC7162Fetch(
 }
 
 func scriptedRFC7162RawMessage(message scriptedRFC7162Message) string {
+	if message.Raw != "" {
+		return message.Raw
+	}
 	subject := message.Subject
 	if subject == "" {
 		subject = "Synthetic message"
@@ -421,9 +433,13 @@ func scriptedRFC7162RawMessage(message scriptedRFC7162Message) string {
 	if message.MessageID != "" {
 		messageIDHeader = fmt.Sprintf("Message-ID: <%s>\r\n", message.MessageID)
 	}
+	body := message.Body
+	if body == "" {
+		body = "Synthetic body."
+	}
 	return fmt.Sprintf(
-		"From: sender@example.test\r\nTo: recipient@example.test\r\nDate: Mon, 1 Jan 2024 00:00:00 +0000\r\n%sSubject: %s\r\n\r\nSynthetic body.\r\n",
-		messageIDHeader, subject)
+		"From: sender@example.test\r\nTo: recipient@example.test\r\nDate: Mon, 1 Jan 2024 00:00:00 +0000\r\n%sSubject: %s\r\n\r\n%s\r\n",
+		messageIDHeader, subject, body)
 }
 
 func newScriptedRFC7162Client(

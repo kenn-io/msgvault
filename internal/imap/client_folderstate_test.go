@@ -1287,3 +1287,20 @@ func TestSourceMessageAliasLoaderRequestsOnlyListedUIDs(t *testing.T) {
 	assert.True(ok)
 	assert.Equal("[Gmail]/All Mail|9", canonical)
 }
+
+// Explicit Sent-folder configuration must survive connection rediscovery:
+// the configured set is persistent per source, and only advertised roles are
+// re-derived from the LIST response.
+func TestConfiguredSentPlacementSurvivesDiscoveryReset(t *testing.T) {
+	client := NewClient(&Config{Host: "imap.example.test", Port: 993}, "password",
+		WithTrustedSentMailboxes([]string{"Gesendete Elemente"}))
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	require.True(t, client.isSentPlacementMailboxLocked("Gesendete Elemente"))
+
+	client.clearMailboxDiscoveryLocked()
+	assert.True(t, client.isSentPlacementMailboxLocked("Gesendete Elemente"),
+		"rediscovery must not discard the per-source Sent configuration")
+	assert.False(t, client.isSentPlacementMailboxLocked("INBOX"))
+}

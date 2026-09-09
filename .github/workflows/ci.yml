@@ -395,11 +395,19 @@ jobs:
         include:
           - name: cli
             package: ./cmd/msgvault/cmd
+            # Windows SQLite I/O makes this package's aggregate shard duration
+            # exceed one hour: the passing shard alone ran 406 tests in 3373.8s
+            # (~56m) and the next shard timed out at 60m while still actively
+            # executing schema setup (no deadlock; tests kept progressing).
+            # Give only this package the larger per-shard budget.
+            timeout: 120m
           - name: sync-vector-embed
             package: ./internal/sync
             package2: ./internal/vector/embed
+            timeout: 60m
           - name: vector-sqlite
             package: ./internal/vector/sqlitevec
+            timeout: 60m
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -428,7 +436,7 @@ jobs:
               -Package $package `
               -ShardCount 4 `
               -Tags "fts5 sqlite_vec" `
-              -Timeout 60m
+              -Timeout ${{ matrix.timeout }}
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 

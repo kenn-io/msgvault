@@ -648,6 +648,16 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
+	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
+	// "imaps://user@example.com@imap.example.com:993") to that source's
+	// Sent-folder mailbox names, for servers whose (possibly localized) Sent
+	// folder advertises no RFC 6154 \Sent role. The mapping is per source:
+	// a same-named mailbox in another account never gains trust. Each entry
+	// is an explicit trust assumption, not evidence. Untrusted-by-default:
+	// a missing entry leaves snapshot refresh authorized only by
+	// unambiguous advertised \Sent or \Drafts placement.
+	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
 // DefaultHome returns the default msgvault home directory.
