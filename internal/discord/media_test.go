@@ -118,6 +118,7 @@ func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
 	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 	result, err := archiver.PersistAttachments(
 		context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, int64(len(content)))},
+		0,
 	)
 	require.NoError(err)
 	require.Len(result.Items, 1)
@@ -161,7 +162,7 @@ func TestMediaArchiverPolicySkipsWithoutFetch(t *testing.T) {
 	)
 	result, err := archiver.PersistAttachments(context.Background(), f.messageID, []Attachment{
 		testDiscordAttachment(cdn.URL+"/attachments/301/401/policy.png", 5),
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(result.Items, 1)
 	assert.Equal(MediaSkipped, result.Items[0].Outcome)
@@ -190,11 +191,11 @@ func TestMediaArchiverReuseKeepsStoredState(t *testing.T) {
 
 	_, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{
 		testDiscordAttachment(rawURL, int64(len(content))),
-	})
+	}, 0)
 	require.NoError(err)
 	_, err = archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{
 		testDiscordAttachment(rawURL, 1),
-	})
+	}, 0)
 	require.NoError(err)
 	assert.EqualValues(1, requests.Load())
 
@@ -240,7 +241,7 @@ func TestMediaArchiverRefreshesVoiceMetadataWithoutRefetching(t *testing.T) {
 	assert.Equal(beforeRef.ContentHash, afterRef.ContentHash)
 	assert.Equal(beforeRef.State, afterRef.State)
 	assert.Equal(beforeRef.SkipReason, afterRef.SkipReason)
-	assert.Equal(`{"discord":{"waveform":"%%%"}}`, afterRef.Metadata)
+	assert.JSONEq(`{"discord":{"waveform":"%%%"}}`, afterRef.Metadata)
 }
 
 func TestMediaArchiverStoresEphemeralAttachment(t *testing.T) {
@@ -259,7 +260,7 @@ func TestMediaArchiverStoresEphemeralAttachment(t *testing.T) {
 	attachment.Ephemeral = true
 	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 
-	result, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{attachment})
+	result, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{attachment}, 0)
 	require.NoError(err)
 	require.Len(result.Items, 1)
 	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
@@ -283,6 +284,7 @@ func TestMediaArchiverRejectsEphemeralPathWithoutEphemeralFlag(t *testing.T) {
 
 	result, err := archiver.PersistAttachments(
 		t.Context(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 1)},
+		0,
 	)
 	require.NoError(err)
 	require.Len(result.Items, 1)
@@ -315,7 +317,7 @@ func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
 	}
 	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 
-	result, err := archiver.PersistAttachments(context.Background(), f.messageID, attachments)
+	result, err := archiver.PersistAttachments(context.Background(), f.messageID, attachments, 0)
 	require.NoError(err)
 	require.Len(result.Items, 2)
 	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
@@ -340,7 +342,7 @@ func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
 	assert.Empty(pending)
 
 	requests.Store(0)
-	result, err = archiver.PersistAttachments(context.Background(), f.messageID, attachments)
+	result, err = archiver.PersistAttachments(context.Background(), f.messageID, attachments, 0)
 	require.NoError(err)
 	require.Len(result.Items, 2)
 	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
@@ -435,7 +437,7 @@ func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
 	attachment.Filename = "unavailable.bin"
 	attachment.ContentType = "application/octet-stream"
 
-	result, err := archiver.PersistAttachments(context.Background(), f.messageID, []Attachment{attachment})
+	result, err := archiver.PersistAttachments(context.Background(), f.messageID, []Attachment{attachment}, 0)
 	require.NoError(err)
 	require.Len(result.Items, 1)
 	assert.Equal(MediaPending, result.Items[0].Outcome)
@@ -513,6 +515,7 @@ func TestMediaArchiverEnforcesSizeCapBeforeAndDuringStreaming(t *testing.T) {
 			archiver := newTestArchiver(t, f, nil, 10, cdn)
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, tt.attachmentSize)},
+				0,
 			)
 			require.NoError(err)
 			require.Len(result.Items, 1)
@@ -609,6 +612,7 @@ func TestMediaArchiverPreservesPendingMarkerOnHTTPAndStorageFailures(t *testing.
 			archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
+				0,
 			)
 			require.NoError(err, "binary failure must not invalidate the durable message boundary")
 			require.Len(result.Items, 1)
@@ -644,7 +648,7 @@ func TestMediaArchiverCancellationLeavesPendingMarker(t *testing.T) {
 	}
 	done := make(chan persistResult, 1)
 	go func() {
-		result, err := archiver.PersistAttachments(ctx, f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)})
+		result, err := archiver.PersistAttachments(ctx, f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)}, 0)
 		done <- persistResult{media: result, err: err}
 	}()
 	<-started
@@ -692,6 +696,7 @@ func TestMediaArchiverCancellationAfterCASLeavesMarkerPending(t *testing.T) {
 
 	result, err := archiver.PersistAttachments(
 		ctx, f.messageID, []Attachment{testDiscordAttachment(rawURL, int64(len(content)))},
+		0,
 	)
 	require.NoError(err)
 	require.Len(result.Items, 1)
@@ -722,6 +727,7 @@ func TestMediaArchiverRejectsUnapprovedOriginsAndRedirects(t *testing.T) {
 		rawURL := "https://example.invalid/attachments/301/401/private.bin?hm=origin-secret"
 		result, err := archiver.PersistAttachments(
 			context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
+			0,
 		)
 		require.NoError(err)
 		require.Len(result.Items, 1)
@@ -743,6 +749,7 @@ func TestMediaArchiverRejectsUnapprovedOriginsAndRedirects(t *testing.T) {
 		archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
 		result, err := archiver.PersistAttachments(
 			context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
+			0,
 		)
 		require.NoError(err)
 		require.Len(result.Items, 1)
@@ -777,6 +784,7 @@ func TestMediaArchiverRejectsMalformedAttachmentPathsBeforeRequest(t *testing.T)
 
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
+				0,
 			)
 			require.NoError(err)
 			require.Len(result.Items, 1)
@@ -886,10 +894,10 @@ func TestDiscordBackfillVoiceMetadata(t *testing.T) {
 	assert.Equal(MediaDownloaded, result.Items[1].Outcome)
 	metadata, err := f.store.GetMessageMetadata(f.messageID)
 	require.NoError(err)
-	assert.Equal(`{"keep":"message"}`, metadata.String)
+	assert.JSONEq(`{"keep":"message"}`, metadata.String)
 	refs, err := f.store.MessageDiscordAttachments(f.messageID)
 	require.NoError(err)
-	assert.Equal(`{"discord":{"waveform":"%%%"}}`, refs["discord:"+mediaTestAttachmentID].Metadata)
+	assert.JSONEq(`{"discord":{"waveform":"%%%"}}`, refs["discord:"+mediaTestAttachmentID].Metadata)
 	assert.Equal("discord:pending:unmatched", refs["discord:unmatched"].StoragePath)
 }
 

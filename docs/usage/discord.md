@@ -210,9 +210,9 @@ WHERE m.message_type = 'discord'
   AND a.source_attachment_id LIKE 'discord:%';
 ```
 
-On a fresh import or after a successful, decodable v1 repair, NULL
+On a fresh import or after a successful repair, NULL
 `attachment_metadata` means the current mapper emitted no Discord voice
-metadata for that row. A pre-M2 voice row can also have NULL metadata because
+metadata for that row. A row imported before this change can also have NULL metadata because
 the old mapper omitted the field. Missing or undecodable raw data can leave a
 historical row unresolved. NULL alone therefore doesn't prove that a
 historical message is non-voice. Run `msgvault repair-derived --source-type

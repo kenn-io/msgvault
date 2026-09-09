@@ -206,13 +206,9 @@ func isLoopbackMediaHost(host string) bool {
 // before attempting binary work. Download, cap, cancellation, and filesystem
 // failures remain per-item pending outcomes and do not become message errors.
 func (m *MediaArchiver) PersistAttachments(
-	ctx context.Context, messageID int64, attachments []Attachment, messageFlags ...int,
+	ctx context.Context, messageID int64, attachments []Attachment, messageFlags int,
 ) (MediaResult, error) {
-	flags := 0
-	if len(messageFlags) > 0 {
-		flags = messageFlags[0]
-	}
-	return m.persistAttachments(ctx, messageID, attachments, true, flags)
+	return m.persistAttachments(ctx, messageID, attachments, true, messageFlags)
 }
 
 // persistAttachments refreshes the complete observed attachment set. When

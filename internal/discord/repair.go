@@ -54,8 +54,8 @@ func (imp *Importer) RepairSource(
 			imp.repairMessage(item, sourceID, sum)
 		}
 		if progress != nil {
-			progress(fmt.Sprintf("%d scanned, %d bodies rewritten, %d attachments tagged",
-				sum.MessagesScanned, sum.BodiesRewritten, sum.AttachmentsTagged))
+			progress(fmt.Sprintf("%d scanned, %d attachments tagged",
+				sum.MessagesScanned, sum.AttachmentsTagged))
 		}
 	}
 	sum.Duration = time.Since(start)
@@ -77,6 +77,9 @@ func (imp *Importer) repairMessage(
 		return
 	}
 	if imp.messageMetadataChanged(item.MessageID, mapped.Metadata, sum) {
+		return
+	}
+	if len(mapped.Attachments) == 0 {
 		return
 	}
 
