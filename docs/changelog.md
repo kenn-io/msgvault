@@ -155,6 +155,7 @@ and [MCP](usage/chat.md).
 
 ### Sync, imports, and maintenance
 
+- Fix WhatsApp Apple imports silently skipping URL messages (type 7) with non-empty text.
 - Sync Notion AI Meeting Notes with available transcripts, verified attendees,
   changed-note refresh, and bounded late-transcript retries.
 - Import Slackdump directories/ZIPs and MailMate-style `.mailbox` trees of EML
