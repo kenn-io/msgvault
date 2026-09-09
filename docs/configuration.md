@@ -552,10 +552,11 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-They are restart-required unless the UI explicitly says otherwise; a pending
-restart banner means the file is saved but the running daemon still has its old
-value. Changing `server.api_key` requires a confirmation and takes effect only
-after restart, which also invalidates browser sessions.
+Only the `[web]` keys apply right away; every other category takes effect after
+the daemon restarts, and the Settings page says so once per category. A "Saved.
+Restart the daemon" banner means the file is saved but the running daemon still
+has its old value. Changing `server.api_key` requires a confirmation and takes
+effect only after restart, which also invalidates browser sessions.
 
 ### `[integrations.tasks]`
 

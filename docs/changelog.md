@@ -137,6 +137,13 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   survives daemon restarts.
 - Add Web Settings with write-only provider credential management and visible
   restart-pending state, plus keyboard-only TUI Settings.
+- Reorganize Web Settings. The daemon now publishes sections inside each
+  category (API schema adds `section` on settings and `sections` on groups),
+  folds the Sync, Logging, Activity, and Backups categories into Sources,
+  Daemon, and Archive, and rewrites every label, description, and hint in
+  plain language with no repeated text. Restart posture is stated once per
+  category instead of on every row, host-managed values show a tag instead of
+  an input, and the footer counts unsaved changes with a Discard action.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.
   Multi-source collections offer Fast search only. Empty collections match

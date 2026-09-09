@@ -6,16 +6,39 @@ import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 const initialSettings = {
+  groups: [
+    { id: 'browser', label: 'Appearance', description: 'How the web app looks.' },
+    {
+      id: 'server', label: 'Daemon', description: 'How the daemon runs.',
+      sections: [{ id: 'listener', label: 'Listener and access' }]
+    },
+    {
+      id: 'search', label: 'Search', description: 'Semantic search and the embedding provider.',
+      sections: [{ id: 'provider', label: 'Text embedding provider', description: 'Save endpoint changes before storing a credential.' }]
+    },
+    { id: 'integrations', label: 'Integrations', description: 'Outside services.' }
+  ],
   settings: [
-    setting('web.theme', 'system', { options: ['system', 'light', 'dark'] }),
+    setting('web.theme', 'system', {
+      group: 'browser', label: 'Theme', options: ['system', 'light', 'dark'], restart_required: false
+    }),
     setting('server.api_key', undefined, {
+      group: 'server',
+      section: 'listener',
+      label: 'API key',
       kind: 'secret',
       read_only: true,
       secret: { configured: true, source: 'environment' }
     }),
-    setting('vector.embeddings.endpoint', 'http://127.0.0.1:11434'),
-    setting('vector.embeddings.api_key_env', 'MSGVAULT_EMBED_API_KEY', { read_only: true }),
+    setting('vector.embeddings.endpoint', 'http://127.0.0.1:11434', {
+      group: 'search', section: 'provider', label: 'Text embedding endpoint'
+    }),
+    setting('vector.embeddings.api_key_env', 'MSGVAULT_EMBED_API_KEY', {
+      group: 'search', section: 'provider', label: 'Text embedding key variable', read_only: true
+    }),
     setting('integrations.tasks.api_key', undefined, {
+      group: 'integrations',
+      label: 'Task integration API key',
       kind: 'secret',
       secret: { configured: false }
     })
@@ -27,15 +50,19 @@ afterEach(() => vi.useRealTimers());
 
 describe('SettingsWorkspace', () => {
   it.each([
-    [{ authority: 'document_index', categoryID: 'archive', settingKey: 'analytics.auto_build_cache' }, 'Archive and cache'],
-    [{ authority: 'document_vector', categoryID: 'search', settingKey: 'vector.enabled' }, 'Search and vectors'],
-    [{ authority: 'visual_attachments', categoryID: 'search', settingKey: 'vector.multimodal.enabled' }, 'Search and vectors']
+    [{ authority: 'document_index', categoryID: 'archive', settingKey: 'analytics.auto_build_cache' }, 'Archive'],
+    [{ authority: 'document_vector', categoryID: 'search', settingKey: 'vector.enabled' }, 'Search'],
+    [{ authority: 'visual_attachments', categoryID: 'search', settingKey: 'vector.multimodal.enabled' }, 'Search']
   ] as const)('opens and focuses the requested $0.authority setting authority', async (navigationTarget, categoryLabel) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      groups: [
+        { id: 'archive', label: 'Archive', description: 'Cache and history.' },
+        { id: 'search', label: 'Search', description: 'Semantic search.' }
+      ],
       settings: [
-        setting('analytics.auto_build_cache', false, { kind: 'boolean' }),
-        setting('vector.enabled', true, { kind: 'boolean' }),
-        setting('vector.multimodal.enabled', false, { kind: 'boolean' })
+        setting('analytics.auto_build_cache', false, { group: 'archive', kind: 'boolean' }),
+        setting('vector.enabled', true, { group: 'search', kind: 'boolean' }),
+        setting('vector.multimodal.enabled', false, { group: 'search', kind: 'boolean' })
       ],
       pending_restart: false
     }));
@@ -55,13 +82,18 @@ describe('SettingsWorkspace', () => {
       plainHTTPWarning: true
     });
 
-    expect(await screen.findByRole('heading', { name: 'Browser experience' })).toBeDefined();
+    expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeDefined();
     expect(screen.getByRole('main', { name: 'Settings' })).toBeDefined();
-    await openSettingsCategory('Server access');
+    expect(screen.getByText('Changes apply right away.')).toBeDefined();
+    expect(screen.queryByText(/Restart required/)).toBeNull();
+    await openSettingsCategory('Daemon');
+    expect(screen.getByRole('heading', { name: 'Listener and access' })).toBeDefined();
     expect(screen.getByText('Configured')).toBeDefined();
-    await openSettingsCategory('Optional integrations');
+    expect(screen.getByText('Host-managed')).toBeDefined();
+    expect(screen.getByText('Set in config.toml on the daemon host.')).toBeDefined();
+    await openSettingsCategory('Integrations');
     expect(screen.getByText('Not set')).toBeDefined();
-    expect(screen.getAllByText('Restart required').length).toBeGreaterThan(0);
+    expect(screen.getByText('Changes take effect after the daemon restarts.')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('plain HTTP');
   });
 
@@ -93,7 +125,8 @@ describe('SettingsWorkspace', () => {
     await expect(request.clone().json()).resolves.toEqual({
       updates: [{ key: 'web.theme', value: { string: 'dark' } }]
     });
-    expect(await screen.findByText('Changes are pending restart.')).toBeDefined();
+    expect((await screen.findByText('Restart the daemon to apply these changes.', { exact: false })).textContent).toContain('Saved.');
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
   });
 
   it('reloads the latest ETag after a conflict while retaining the local draft', async () => {
@@ -123,10 +156,11 @@ describe('SettingsWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => settingsResponse(initialSettings, '"etag-a"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await openSettingsCategory('Server access');
+    await openSettingsCategory('Daemon');
     expect(await screen.findByText('Configured')).toBeDefined();
-    expect(screen.getByText('Set via config.toml on the daemon host.')).toBeDefined();
-    expect(screen.queryByLabelText('New daemon API key')).toBeNull();
+    expect(screen.getByText('Host-managed values are set in config.toml on the daemon host.')).toBeDefined();
+    expect(screen.queryByLabelText('New API key')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -137,12 +171,14 @@ describe('SettingsWorkspace', () => {
       .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await openSettingsCategory('Search and vectors');
+    await openSettingsCategory('Search');
     expect(await screen.findByText('MSGVAULT_EMBED_API_KEY')).toBeDefined();
-    expect(screen.getByText('Set via config.toml on the daemon host.')).toBeDefined();
-    expect(screen.queryByLabelText('Embedding key environment variable')).toBeNull();
+    expect(screen.getByText(
+      'Save endpoint changes before storing a credential. Host-managed values are set in config.toml on the daemon host.'
+    )).toBeDefined();
+    expect(screen.queryByLabelText('Text embedding key variable')).toBeNull();
 
-    await openSettingsCategory('Browser experience');
+    await openSettingsCategory('Appearance');
     await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
@@ -157,7 +193,7 @@ describe('SettingsWorkspace', () => {
       client: createAPIClient(vi.fn<typeof fetch>(async () => settingsResponse(initialSettings, '"etag-a"')))
     });
 
-    await screen.findByRole('heading', { name: 'Browser experience' });
+    await screen.findByRole('heading', { name: 'Appearance' });
     expect(screen.queryByRole('button', { name: 'Test embedding endpoint connection' })).toBeNull();
   });
 
@@ -168,9 +204,10 @@ describe('SettingsWorkspace', () => {
       .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await openSettingsCategory('Optional integrations');
+    await openSettingsCategory('Integrations');
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
-    await openSettingsCategory('Search and vectors');
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    await openSettingsCategory('Search');
     expect(screen.queryByRole('button', { name: /Test .* connection/i })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     const request = fetchFn.mock.calls[1]?.[0] as Request;
@@ -214,9 +251,9 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    expect(await screen.findByRole('heading', { name: 'Web appearance' })).toBeDefined();
-    await openSettingsCategory('Search and embeddings');
-    expect(screen.getByText('Vector search master switch')).toBeDefined();
+    expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeDefined();
+    await openSettingsCategory('Search');
+    expect(screen.getByText('Semantic search')).toBeDefined();
     expect(screen.getByText('Environment variable')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Test .* connection/i })).toBeNull();
     await fireEvent.input(screen.getByLabelText('New text embedding API key'), {
@@ -244,7 +281,7 @@ describe('SettingsWorkspace', () => {
     });
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
-    await openSettingsCategory('Search and embeddings');
+    await openSettingsCategory('Search');
     await fireEvent.input(await screen.findByLabelText('Text embedding endpoint'), {
       target: { value: 'https://new-embedding.example.test/v1' }
     });
@@ -262,8 +299,9 @@ describe('SettingsWorkspace', () => {
         settingsResponse(approvedSettingsDocument(), '"config-a"', '"credential-a"')))
     });
 
-    await openSettingsCategory('Attachment downloads');
+    await openSettingsCategory('Attachments');
     expect(await screen.findByText('Controls future downloads only; existing files are unchanged.')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Discord' })).toBeDefined();
     const maximum = screen.getByLabelText('Discord maximum attachment size') as HTMLInputElement;
     expect(maximum.min).toBe('0');
     expect(screen.getByText('0 uses the Discord default of 50 MiB.')).toBeDefined();
@@ -636,7 +674,7 @@ describe('SettingsWorkspace', () => {
     await waitFor(() => expect(settingsReads).toBe(2));
     await waitFor(() => expect(operationsReads).toBe(8));
 
-    await openSettingsCategory('Browser experience');
+    await openSettingsCategory('Appearance');
     expect(screen.getByRole('combobox', { name: 'Theme: Dark' })).toBeDefined();
     await openSettingsCategory('CardDAV account');
     expect((await screen.findByLabelText('Base URL') as HTMLInputElement).value).toBe('https://saved.example.test/');
@@ -761,7 +799,7 @@ describe('SettingsWorkspace', () => {
     await vi.advanceTimersByTimeAsync(500);
     await waitFor(() => expect(pollSignal).toBeDefined());
 
-    await openSettingsCategory('Browser experience');
+    await openSettingsCategory('Appearance');
     expect(pollSignal?.aborted).toBe(true);
     expect(screen.queryByLabelText('Password')).toBeNull();
 
@@ -836,6 +874,7 @@ function cardDAVSettings({
   schedule = '0 2 * * *'
 }: { baseURL?: string; username?: string; schedule?: string } = {}): object {
   return {
+    groups: initialSettings.groups,
     settings: [
       ...initialSettings.settings,
       setting('carddav.base_url', baseURL),
@@ -902,16 +941,20 @@ function approvedSettingsDocument() {
   });
   return {
     groups: [
-      { id: 'browser', label: 'Web appearance', description: 'Browser preferences.' },
-      { id: 'search', label: 'Search and embeddings', description: 'Vector and provider controls.' },
-      { id: 'attachments', label: 'Attachment downloads', description: 'Controls future downloads only; existing files are unchanged.' },
+      { id: 'browser', label: 'Appearance', description: 'How the web app looks.' },
+      { id: 'search', label: 'Search', description: 'Semantic search and providers.' },
+      {
+        id: 'attachments', label: 'Attachments',
+        description: 'Controls future downloads only; existing files are unchanged.',
+        sections: [{ id: 'discord', label: 'Discord' }]
+      },
       { id: 'enrichment', label: 'Person enrichment', description: 'Named provider policies.' }
     ],
     settings: [
       daemonSetting('web.theme', 'browser', 'Theme', 'Browser color theme.', 'string', 'system', {
         options: ['system', 'light', 'dark'], restart_required: false
       }),
-      daemonSetting('vector.enabled', 'search', 'Vector search master switch', 'Master gate for text search.', 'boolean', false),
+      daemonSetting('vector.enabled', 'search', 'Semantic search', 'Index message text with an embedding provider.', 'boolean', false),
       daemonSetting('vector.embeddings.endpoint', 'search', 'Text embedding endpoint', 'Provider API root.', 'string', 'https://old-embedding.example.test/v1'),
       daemonSetting('vector.embeddings.api_key', 'search', 'Text embedding API key', 'Write-only provider credential.', 'secret', undefined, {
         secret: { configured: true, source: 'environment' }, credential_id: 'vector.embeddings'
@@ -920,15 +963,15 @@ function approvedSettingsDocument() {
       daemonSetting('vector.multimodal.api_key', 'search', 'Voyage API key', 'Write-only provider credential.', 'secret', undefined, {
         secret: { configured: false, source: 'none' }, credential_id: 'vector.multimodal'
       }),
-      daemonSetting('discord.media', 'attachments', 'Download Discord attachments', 'Future downloads only.', 'boolean', true),
+      daemonSetting('discord.media', 'attachments', 'Download Discord attachments', 'Future downloads only.', 'boolean', true, { section: 'discord' }),
       daemonSetting('discord.media_scope', 'attachments', 'Discord attachment scope', 'Conversation scope.', 'string', 'all', {
-        options: ['all', 'direct', 'none']
+        section: 'discord', options: ['all', 'direct', 'none']
       }),
       daemonSetting('discord.media_max_participants', 'attachments', 'Discord participant limit', 'Skip conversations over this size.', 'integer', 0, {
-        validation: { minimum: 0, hint: '0 means no participant limit.' }
+        section: 'discord', validation: { minimum: 0, hint: '0 means no participant limit.' }
       }),
       daemonSetting('discord.max_media_mb', 'attachments', 'Discord maximum attachment size', 'Maximum future file size.', 'integer', 0, {
-        validation: { minimum: 0, hint: '0 uses the Discord default of 50 MiB.' }
+        section: 'discord', validation: { minimum: 0, hint: '0 uses the Discord default of 50 MiB.' }
       }),
       daemonSetting('people.enrichment.enabled', 'enrichment', 'Enable person enrichment', 'Global enrichment gate.', 'boolean', false)
     ],

@@ -609,10 +609,11 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	if setting := schemas["Setting"]; setting != nil {
-		setting.Properties["group"].Enum = []any{
-			"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
-			"activity", "backup", "enrichment", "integrations",
+		groupIDs := make([]any, 0, len(settingsGroups))
+		for _, group := range settingsGroups {
+			groupIDs = append(groupIDs, group.ID)
 		}
+		setting.Properties["group"].Enum = groupIDs
 		setting.Properties["kind"].Enum = []any{"string", "integer", "number", "boolean", "string_array", "secret"}
 	}
 	if request := schemas["SettingsPatchRequest"]; request != nil {

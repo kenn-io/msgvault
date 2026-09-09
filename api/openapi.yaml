@@ -10672,13 +10672,9 @@ components:
             - browser
             - server
             - archive
-            - sync
-            - logging
             - search
             - sources
             - attachments
-            - activity
-            - backup
             - enrichment
             - integrations
           type: string
@@ -10707,6 +10703,8 @@ components:
           type: boolean
         secret:
           $ref: "#/components/schemas/SecretSettingState"
+        section:
+          type: string
         testable:
           type: boolean
         validation:
@@ -10730,10 +10728,27 @@ components:
           type: string
         label:
           type: string
+        sections:
+          items:
+            $ref: "#/components/schemas/SettingSection"
+          type: array
       required:
         - id
         - label
         - description
+      type: object
+    SettingSection:
+      additionalProperties: true
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+        - id
+        - label
       type: object
     SettingUpdate:
       additionalProperties: false

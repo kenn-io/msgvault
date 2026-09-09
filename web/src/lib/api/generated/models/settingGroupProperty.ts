@@ -9,13 +9,9 @@ export const SettingGroupProperty = {
   browser: "browser",
   server: "server",
   archive: "archive",
-  sync: "sync",
-  logging: "logging",
   search: "search",
   sources: "sources",
   attachments: "attachments",
-  activity: "activity",
-  backup: "backup",
   enrichment: "enrichment",
   integrations: "integrations",
 } as const;

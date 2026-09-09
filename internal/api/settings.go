@@ -73,12 +73,24 @@ type Setting struct {
 	Inherited       bool                `json:"inherited,omitempty"`
 	CredentialID    string              `json:"credential_id,omitempty"`
 	Validation      *SettingValidation  `json:"validation,omitempty"`
+	// Section names one of the owning group's sections. Empty when the group
+	// has no sections.
+	Section string `json:"section,omitempty"`
+}
+
+// SettingSection is one titled run of settings inside a group. Clients render
+// sections in the order the group lists them.
+type SettingSection struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 type SettingGroup struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
+	ID          string           `json:"id"`
+	Label       string           `json:"label"`
+	Description string           `json:"description"`
+	Sections    []SettingSection `json:"sections,omitempty"`
 }
 
 type SettingsResponse struct {
@@ -146,11 +158,11 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("analytics.builder_memory_limit", "archive", nil, func(c *config.Config) string { return c.Analytics.BuilderMemoryLimit }),
 	intSetting("analytics.builder_threads", "archive", func(c *config.Config) int { return c.Analytics.BuilderThreads }),
 	stringSetting("analytics.builder_temp_limit", "archive", nil, func(c *config.Config) string { return c.Analytics.BuilderTempLimit }),
-	intSetting("sync.rate_limit_qps", "sync", func(c *config.Config) int { return c.Sync.RateLimitQPS }),
-	boolSetting("log.enabled", "logging", func(c *config.Config) bool { return c.Log.Enabled }),
-	stringSetting("log.level", "logging", []string{"", "debug", "info", "warn", "error"}, func(c *config.Config) string { return c.Log.Level }),
-	int64Setting("log.sql_slow_ms", "logging", func(c *config.Config) int64 { return c.Log.SQLSlowMs }),
-	boolSetting("log.sql_trace", "logging", func(c *config.Config) bool { return c.Log.SQLTrace }),
+	intSetting("sync.rate_limit_qps", settingsGroupSources, func(c *config.Config) int { return c.Sync.RateLimitQPS }),
+	boolSetting("log.enabled", "server", func(c *config.Config) bool { return c.Log.Enabled }),
+	stringSetting("log.level", "server", []string{"", "debug", "info", "warn", "error"}, func(c *config.Config) string { return c.Log.Level }),
+	int64Setting("log.sql_slow_ms", "server", func(c *config.Config) int64 { return c.Log.SQLSlowMs }),
+	boolSetting("log.sql_trace", "server", func(c *config.Config) bool { return c.Log.SQLTrace }),
 	boolSetting("vector.enabled", "search", func(c *config.Config) bool { return c.Vector.Enabled }),
 	readOnlyStringSettingWithOptions("vector.backend", "search", []string{"sqlite-vec", "pgvector"}, func(c *config.Config) string { return c.Vector.Backend }),
 	readOnlyStringSetting("vector.db_path", "search", func(c *config.Config) string { return c.Vector.DBPath }),
@@ -241,11 +253,11 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("teams.media_scope", settingsGroupAttachments, []string{"all", "direct", "none"}, func(c *config.Config) string { return effectiveMediaScope(c.Teams.MediaScope) }),
 	intSetting("teams.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Teams.MediaMaxParticipants }),
 	intSetting("teams.max_media_mb", settingsGroupAttachments, func(c *config.Config) int { return c.Teams.MaxMediaMB }),
-	stringSetting("activity.timezone", "activity", nil, func(c *config.Config) string { return c.Activity.Timezone }),
-	intSetting("activity.max_direct_counterparts", "activity", func(c *config.Config) int { return c.Activity.MaxDirectCounterparts }),
-	intSetting("activity.batch_size", "activity", func(c *config.Config) int { return c.Activity.BatchSize }),
-	stringSetting("activity.schedule", "activity", nil, func(c *config.Config) string { return c.Activity.Schedule }),
-	intSetting("backup.zstd_level", "backup", func(c *config.Config) int { return c.Backup.ZstdLevel }),
+	stringSetting("activity.timezone", "archive", nil, func(c *config.Config) string { return c.Activity.Timezone }),
+	intSetting("activity.max_direct_counterparts", "archive", func(c *config.Config) int { return c.Activity.MaxDirectCounterparts }),
+	intSetting("activity.batch_size", "archive", func(c *config.Config) int { return c.Activity.BatchSize }),
+	stringSetting("activity.schedule", "archive", nil, func(c *config.Config) string { return c.Activity.Schedule }),
+	intSetting("backup.zstd_level", "archive", func(c *config.Config) int { return c.Backup.ZstdLevel }),
 	boolSetting("people.enrichment.enabled", settingsGroupEnrichment, func(c *config.Config) bool { return c.People.Enrichment.Enabled }),
 	stringSetting("people.enrichment.schedule", settingsGroupEnrichment, nil, func(c *config.Config) string { return c.People.Enrichment.Schedule }),
 	intSetting("people.enrichment.batch_size", settingsGroupEnrichment, func(c *config.Config) int { return c.People.Enrichment.BatchSize }),
@@ -636,6 +648,7 @@ func (s *Server) buildSettingsResponse(
 			ReadOnly:        definition.localOnly,
 			CredentialID:    definition.credentialID,
 			Validation:      validationForSetting(definition.key),
+			Section:         metadata.section,
 		}
 		if definition.inherited != nil {
 			setting.Inherited = definition.inherited(cfg)

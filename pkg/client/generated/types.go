@@ -10032,6 +10032,7 @@ type Setting struct {
 	ReadOnly        *bool               `json:"read_only,omitempty"`
 	RestartRequired bool                `json:"restart_required"`
 	Secret          *SecretSettingState `json:"secret,omitempty"`
+	Section         *string             `json:"section,omitempty"`
 	Testable        *bool               `json:"testable,omitempty"`
 	Validation      *SettingValidation  `json:"validation,omitempty"`
 	Value           *SettingValue       `json:"value,omitempty"`
@@ -10086,12 +10087,43 @@ func (s Setting) Validate() error {
 }
 
 type SettingGroup struct {
-	Description string `json:"description" validate:"required"`
-	ID          string `json:"id" validate:"required"`
-	Label       string `json:"label" validate:"required"`
+	Description string           `json:"description" validate:"required"`
+	ID          string           `json:"id" validate:"required"`
+	Label       string           `json:"label" validate:"required"`
+	Sections    []SettingSection `json:"sections,omitempty"`
 }
 
 func (s SettingGroup) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Description, "required"); err != nil {
+		errors = errors.Append("Description", err)
+	}
+	if err := typesValidator.Var(s.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(s.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	for i, item := range s.Sections {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sections[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SettingSection struct {
+	Description *string `json:"description,omitempty"`
+	ID          string  `json:"id" validate:"required"`
+	Label       string  `json:"label" validate:"required"`
+}
+
+func (s SettingSection) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 

@@ -612,10 +612,12 @@ max_media_mb = 30
 	for _, setting := range document.Settings {
 		if setting["key"] == "discord.media" {
 			assertions.Equal(true, setting["inherited"], "omitted provider policy must be identified as inherited/default")
-			assertions.Equal("Provider default is enabled; changes affect future downloads only.", setting["description"])
+			assertions.Contains(setting["description"], "future", "media policy copy must say it only affects future syncs")
 		}
 		if setting["key"] == "discord.max_media_mb" {
-			assertions.Contains(setting["description"], "0 uses the Discord default of 50 MiB")
+			validation, ok := setting["validation"].(map[string]any)
+			requirements.True(ok, "discord.max_media_mb must publish its provider default as a hint")
+			assertions.Contains(validation["hint"], "0 uses the Discord default of 50 MiB")
 		}
 	}
 
@@ -1229,9 +1231,9 @@ func TestSettingsOpenAPIContract(t *testing.T) {
 	setting := doc.Components.Schemas.Map()["Setting"]
 	requirements.NotNil(setting)
 	assertions.ElementsMatch([]any{
-		"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
-		"activity", "backup", "enrichment", "integrations",
+		"browser", "server", "archive", "search", "sources", "attachments", "enrichment", "integrations",
 	}, setting.Properties["group"].Enum)
+	assertions.NotNil(setting.Properties["section"], "settings publish their section for sectioned groups")
 	assertions.ElementsMatch([]any{"string", "integer", "number", "boolean", "string_array", "secret"}, setting.Properties["kind"].Enum)
 	patchRequest := doc.Components.Schemas.Map()["SettingsPatchRequest"]
 	requirements.NotNil(patchRequest)
@@ -1696,4 +1698,51 @@ max_requests_per_day = 100
 	requirements.Len(after.PersonEnrichmentProviders, 1)
 	assertions.Equal("https://api.exa.example/search", after.PersonEnrichmentProviders[0].Endpoint)
 	assertions.NotNil(after.PersonEnrichmentProviders[0].Credential)
+}
+
+func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
+	assertions := assert.New(t)
+	groupsByID := make(map[string]SettingGroup, len(settingsGroups))
+	for _, group := range settingsGroups {
+		groupsByID[group.ID] = group
+	}
+	populated := make(map[string]map[string]bool)
+	for _, definition := range settingsCatalog {
+		group, ok := groupsByID[definition.group]
+		if !assertions.True(ok, "%s uses undeclared group %q", definition.key, definition.group) {
+			continue
+		}
+		section := metadataForSetting(definition.key).section
+		if len(group.Sections) == 0 {
+			assertions.Empty(section, "%s names a section but group %q has none", definition.key, group.ID)
+			continue
+		}
+		known := false
+		for _, candidate := range group.Sections {
+			known = known || candidate.ID == section
+		}
+		assertions.True(known, "%s names section %q that group %q does not declare", definition.key, section, group.ID)
+		if populated[group.ID] == nil {
+			populated[group.ID] = make(map[string]bool)
+		}
+		populated[group.ID][section] = true
+	}
+	for _, group := range settingsGroups {
+		for _, section := range group.Sections {
+			assertions.True(populated[group.ID][section.ID], "section %s/%s has no settings", group.ID, section.ID)
+		}
+	}
+}
+
+func TestSettingsHintsDoNotRepeatDescriptions(t *testing.T) {
+	assertions := assert.New(t)
+	for key, validation := range settingsValidation {
+		hint := strings.TrimSpace(validation.Hint)
+		if hint == "" {
+			continue
+		}
+		description := metadataForSetting(key).description
+		assertions.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
+			"%s repeats its hint inside its description", key)
+	}
 }

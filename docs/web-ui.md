@@ -341,16 +341,31 @@ Shortcuts are suspended while typing and inside message/file content.
 
 ## Settings and restart behavior
 
-Settings edits supported browser, server, search, source, and integration
-settings on the daemon host. The daemon supplies the editable fields and their
-allowed values. Saving makes targeted edits to `config.toml` while preserving
-comments. A stale edit is rejected after another browser or a hand edit
-changes the configuration; reload before saving again.
+Settings edits the daemon's `config.toml` from the browser. The daemon
+supplies every category, section, label, description, and allowed value, so
+the browser never decides on its own what a setting means. Categories are
+Appearance, Daemon, Archive, Search, Sources, Attachments, Person enrichment,
+Integrations, and CardDAV account. Larger categories split into titled
+sections, for example Search has separate sections for the text embedding
+provider, the embedding schedule, and visual attachment search.
 
-Keys marked restart-required show a pending-restart state until the daemon
-restarts. The server API key (`server.api_key`) is read-only in the browser;
-change it in `config.toml` on the daemon host. After that key changes and the
-daemon restarts, old browser sessions end and the login screen appears.
+Each row shows the setting name and one sentence about what it does. A format
+hint, such as the accepted duration syntax, sits under the control. Rows you
+have changed carry an amber dot, the footer counts unsaved changes, and
+Discard throws them away. Save is disabled until something changes.
+
+Each category states once how its changes take effect. Appearance settings
+apply right away. Every other category takes effect after the daemon
+restarts, and after a save the page shows "Saved. Restart the daemon to apply
+these changes." until it does. Saving makes targeted edits to `config.toml`
+while preserving comments. A stale edit is rejected after another browser or
+a hand edit changes the configuration; reload before saving again.
+
+Host-managed values, such as the listener address and the server API key
+(`server.api_key`), show their current value with a Host-managed tag and no
+input. Change them in `config.toml` on the daemon host. After the API key
+changes and the daemon restarts, old browser sessions end and the login
+screen appears.
 
 ### Provider policies and credentials
 

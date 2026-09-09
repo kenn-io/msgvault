@@ -693,6 +693,7 @@ export * from "./setting";
 export * from "./settingGroup";
 export * from "./settingGroupProperty";
 export * from "./settingKind";
+export * from "./settingSection";
 export * from "./settingsPatchRequest";
 export * from "./settingsResponse";
 export * from "./settingUpdate";
