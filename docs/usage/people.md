@@ -68,6 +68,29 @@ msgvault person set-display-name 7 --clear
 vCard UID forever; promoting the same observed cluster later creates a new
 person and UID.
 
+### Browse people by last contact
+
+Use `person directory` to browse promoted people, most recent contact first. It queries the selected daemon and returns a page of up to 50 people by default.
+
+```bash
+msgvault person directory --last-contact-after 2026-06-01
+msgvault person directory --sort last_contact_asc
+msgvault person directory --sort name
+msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 2026-07-01 --json
+```
+
+`--last-contact-after` and `--last-contact-before` are inclusive. Both accept `YYYY-MM-DD` or RFC3339 timestamps with offsets and fractional seconds. A date alone means midnight UTC, so an upper bound of `2026-07-01` includes the start of that day. The default sort is `last_contact_desc`. Use `last_contact_asc` for oldest contact first or `name` for name order.
+
+The table shows ID, display name, and last contact in UTC. Missing names and timestamps show `-`. JSON returns the Directory envelope with a `people` array and optional `next_cursor`. It preserves the daemon's fields and omits `last_contact_at` when no timestamp exists.
+
+When output includes `Next cursor`, pass it unchanged with the same date bounds and sort to read the next page. For JSON, use the `next_cursor` value.
+
+```bash
+msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor>"
+```
+
+`person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
+
 ## Keep private notes
 
 Save context in your own words with the Notes field. It preserves line breaks

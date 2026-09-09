@@ -1719,6 +1719,7 @@ identity cluster or by importing contacts from a subscribed CardDAV address book
 ```bash
 msgvault person promote <participant-id>
 msgvault person list [--json]
+msgvault person directory [flags]
 msgvault person get <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
@@ -1783,6 +1784,34 @@ for the workflow and lifecycle boundaries.
 Setting or clearing a value closes the current history row rather than deleting
 it. See [People, Profiles, and Source Identities](/docs/usage/people/) for the
 shipped definitions and complete workflow.
+
+---
+
+## person directory
+
+Browse promoted people by last contact through the selected local or configured remote daemon. The default order is most recent first, `last_contact_desc`. Each page uses the daemon's default of 50 people.
+
+```bash
+msgvault person directory
+msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 2026-07-01 --json
+msgvault person directory --sort last_contact_asc
+msgvault person directory --sort name
+msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor>"
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--last-contact-after <date>` | absent | Inclusive lower bound, `YYYY-MM-DD` or RFC3339 |
+| `--last-contact-before <date>` | absent | Inclusive upper bound, `YYYY-MM-DD` or RFC3339 |
+| `--sort <order>` | `last_contact_desc` | `name`, `last_contact_desc`, or `last_contact_asc` |
+| `--cursor <cursor>` | absent | Opaque `next_cursor` from the previous page |
+| `--json` | `false` | Output the full Directory page envelope |
+
+Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets and fractional seconds. Both bounds include the specified instant, so `--last-contact-before 2026-07-01` includes midnight at the start of July 1. Use a timestamp when you need a different cutoff.
+
+Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same bounds and sort to continue.
+
+JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, and revision. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
 
 ---
 
