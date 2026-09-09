@@ -2221,17 +2221,19 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 		{"readonly", oauth.ScopeGmailReadonly, " --readonly"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			// An expired token without a refresh token fails locally, without
 			// contacting Google or opening an authorization flow.
 			_, restore := seedTokenEnv(t, fmt.Sprintf(`{"access_token":"expired","expiry":"2000-01-01T00:00:00Z","scopes":[%q]}`, tc.scope))
 			defer restore()
 			mgr, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), logger)
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = runScheduledGmailSync(t.Context(), scopeEscalationAccount, nil, nil,
 				func(string) (*oauth.Manager, error) { return mgr, nil })
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
-			assert.Contains(t, err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
+			require.Error(err)
+			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
+			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
 		})
 	}
 }
