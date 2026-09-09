@@ -1574,11 +1574,18 @@ consented Exa or Sixtyfour policies:
 | `person enrichment consent <fingerprint>` | Grant consent for that exact enrichment policy |
 | `person enrichment revoke [fingerprint]` | Revoke an exact policy; `--all` revokes all enrichment policies |
 | `person enrichment run --person <id> --provider <name> --idempotency-key <key>` | Request a lookup for one person |
-| `person enrichment suppress --person <id> --provider <name> --reason <reason>` | Record an opt-out for the person's current identifiers |
+| `person enrichment suppress --person <id> --reason <reason>` | Record an opt-out for the person's current identifiers |
+| `person enrichment suppress --provider <name> --identifier-class <class> --reason <reason> < identifier.txt` | Suppress an identifier read from standard input |
 
 Status, profiles, consent, revoke, and run accept `--json`. Suppression reasons
-are `opt_out` and `data_subject_request`; suppressing one identifier instead of
-a person uses `--identifier-class` with the value on standard input.
+are `opt_out` and `data_subject_request`. The suppression forms are mutually
+exclusive: `--person` does not accept `--provider` or `--identifier-class`.
+
+For the identifier form, `<class>` is `email`, `phone`, `public_profile_url`,
+`provider_person_id`, or `name_company`. Supply one non-empty line on standard
+input, except for `name_company`, which requires two: the name, then the company.
+Do not put identifier values in command arguments.
+
 See [external enrichment](/docs/usage/people-enrichment/) for required identity
 details, configuration, request limits, and the persistent suppression key.
 
