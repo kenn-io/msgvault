@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -289,37 +290,67 @@ func TestVisualWorkerRejectsObsoleteFenceAndNonFiniteProviderVector(t *testing.T
 	})
 }
 
-func TestVisualWorkerRenewsClaimsDuringProviderRequestAndCancelsCleanly(t *testing.T) {
+func TestVisualWorkerRenewsClaimsDuringProviderRequest(t *testing.T) {
+	f, _, work := workerFixture(t, 1)
+	// Keep database setup and cleanup outside the bubble. Map its fake clock
+	// onto the fixture's claim timestamps for both SQLite and PostgreSQL.
+	claimStart := time.Now().UTC()
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		start := time.Now()
+		now := func() time.Time { return claimStart.Add(time.Since(start)) }
+		const leaseDuration = 100 * time.Millisecond
+		require.NoError(f.Store.RenewVisualWork(t.Context(), work[0].Claim, now(), leaseDuration))
+		providerRelease := make(chan struct{})
+		provider := &fakeVisualProvider{embed: func(ctx context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-providerRelease:
+				return []EmbeddingResult{{Owner: documents[0].Owner, Vector: []float32{1, 2}}}, nil
+			}
+		}}
+		worker, err := NewWorker(f.Store, provider, newFakeVisualBackend(), WorkerConfig{
+			Dimension: 2, ProviderTimeout: 50 * time.Millisecond,
+			LeaseDuration: leaseDuration, RenewInterval: 5 * time.Millisecond, Now: now,
+		})
+		require.NoError(err)
+
+		var result WorkerResult
+		var runErr error
+		go func() { result, runErr = worker.Run(t.Context(), work) }()
+		synctest.Wait()
+		// Advance fake time through several renewals while the provider remains
+		// blocked. Real database latency does not consume the provider timeout.
+		synctest.Sleep(30 * time.Millisecond)
+		_, acquired, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{
+			GenerationID: work[0].Claim.GenerationID, Owner: work[0].Candidate.Owner,
+			ProposedRevision: work[0].Document.Revision, LeaseOwner: "successor",
+			Now: claimStart.Add(leaseDuration + time.Millisecond), LeaseDuration: time.Minute,
+			SourceFence: work[0].Claim.SourceFence,
+		})
+		close(providerRelease)
+		synctest.Wait()
+		require.NoError(err)
+		assert.False(acquired, "renewal must keep the claim live beyond its original expiry")
+		require.NoError(runErr)
+		assert.Equal(int64(1), result.Published)
+	})
+}
+
+func TestVisualWorkerCanceledRunReleasesClaims(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, _, work := workerFixture(t, 1)
-	provider := &fakeVisualProvider{embed: func(ctx context.Context, documents []DocumentInput) ([]EmbeddingResult, error) {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(30 * time.Millisecond):
-		}
-		return []EmbeddingResult{{Owner: documents[0].Owner, Vector: []float32{1, 2}}}, nil
-	}}
-	worker, err := NewWorker(f.Store, provider, newFakeVisualBackend(), WorkerConfig{
-		Dimension: 2, ProviderTimeout: 50 * time.Millisecond,
-		LeaseDuration: 100 * time.Millisecond, RenewInterval: 5 * time.Millisecond,
-	})
-	require.NoError(err)
-
-	result, err := worker.Run(t.Context(), work)
-	require.NoError(err)
-	assert.Equal(int64(1), result.Published)
-
-	f, _, work = workerFixture(t, 1)
-	provider = &fakeVisualProvider{embed: func(ctx context.Context, _ []DocumentInput) ([]EmbeddingResult, error) {
+	provider := &fakeVisualProvider{embed: func(ctx context.Context, _ []DocumentInput) ([]EmbeddingResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}}
-	worker = newTestVisualWorker(t, f, provider, newFakeVisualBackend())
+	worker := newTestVisualWorker(t, f, provider, newFakeVisualBackend())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = worker.Run(ctx, work)
+	_, err := worker.Run(ctx, work)
 	require.ErrorIs(err, context.Canceled)
 	_, acquired, err := f.Store.ClaimVisualWork(t.Context(), store.VisualClaimRequest{
 		GenerationID: work[0].Claim.GenerationID, Owner: work[0].Candidate.Owner,
