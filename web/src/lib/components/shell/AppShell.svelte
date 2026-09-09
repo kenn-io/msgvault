@@ -1101,7 +1101,10 @@
                 : 'Local archive ready'}
           />
         </span>
-        {loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}
+        <span class="archive-state__label">
+          <span class="archive-state__reserve" aria-hidden="true">Local archive</span>
+          <span>{loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}</span>
+        </span>
       </span>
     {/snippet}
   </TopBar>
@@ -1446,6 +1449,19 @@
   .appearance-controls {
     display: inline-flex;
     gap: var(--space-2);
+  }
+
+  /* Keep the longest status label's width while searches are in flight. */
+  .archive-state__label {
+    display: inline-grid;
+  }
+
+  .archive-state__label > span {
+    grid-area: 1 / 1;
+  }
+
+  .archive-state__reserve {
+    visibility: hidden;
   }
 
   .files-shell {
