@@ -1,7 +1,7 @@
 [project]
 site_name = "msgvault"
 site_url = "https://msgvault.io/docs/"
-site_description = "Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, Circleback, and Notion."
+site_description = "A local-first archive for communications and relationships: setup, sources, people, search, operations, and integration reference."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'
 docs_dir = "docs"
@@ -12,44 +12,60 @@ extra_css = ["stylesheets/extra.css"]
 extra_javascript = ["javascripts/lightbox.js"]
 use_directory_urls = true
 nav = [
-  {"Introduction" = "introduction.md"},
-  {"Setup Guide" = "setup.md"},
-  {"Web UI" = "web-ui.md"},
-  {"Interactive TUI" = "usage/tui.md"},
-  {"Configuration" = "configuration.md"},
-  {"CLI Reference" = "cli-reference.md"},
-  {"MCP Server" = "usage/chat.md"},
-  {"Web UI & API Server" = "api-server.md"},
-  {"Changelog" = "changelog.md"},
-  {"CLI Usage" = [
-    {"IMAP Folder Sync" = "usage/imap.md"},
+  {"Start Here" = [
+    {"Documentation" = "index.md"},
+    {"Setup" = "setup.md"},
+    {"Choose a Source" = "guides/sources.md"},
+  ]},
+  {"Explore Your Archive" = [
+    {"Web UI" = "web-ui.md"},
+    {"Terminal UI" = "usage/tui.md"},
     {"Searching" = "usage/searching.md"},
-    {"Vector Search" = "usage/vector-search.md"},
-    {"Recommended Configuration" = "usage/recommended-configuration.md"},
+    {"Semantic and Visual Search" = "usage/vector-search.md"},
     {"Document Attachment Indexing" = "usage/document-indexing.md"},
-    {"Importing Local Email" = "usage/importing.md"},
+    {"Recommended Configuration" = "usage/recommended-configuration.md"},
+    {"Analytics and Stats" = "usage/analytics.md"},
+    {"SQL Queries" = "usage/querying.md"},
+    {"Exporting" = "usage/exporting.md"},
+  ]},
+  {"Sync and Import" = [
+    {"OAuth Setup" = "guides/oauth-setup.md"},
+    {"IMAP Mail" = "usage/imap.md"},
+    {"Local Email" = "usage/importing.md"},
+    {"Remote Email Images" = "usage/remote-images.md"},
     {"Text Messages" = "usage/text-messages.md"},
     {"Google Calendar" = "usage/calendar.md"},
     {"Microsoft Teams" = "usage/teams.md"},
     {"Discord" = "usage/discord.md"},
     {"Beeper" = "usage/beeper.md"},
     {"Slack" = "usage/slack.md"},
-    {"Meeting Transcripts" = "usage/meetings.md"},
-    {"Exporting Data" = "usage/exporting.md"},
-    {"Analytics & Stats" = "usage/analytics.md"},
-    {"SQL Queries" = "usage/querying.md"},
-    {"Deleting Email" = "usage/deletion.md"},
-    {"People, Profiles & Identities" = "usage/people.md"},
-    {"Accounts & Collections" = "usage/multi-account.md"},
-    {"Deduplication" = "usage/deduplication.md"},
-    {"Backup" = "usage/backup.md"},
+    {"Meeting Notes and Transcripts" = "usage/meetings.md"},
   ]},
-  {"Guides" = [
-    {"OAuth Setup" = "guides/oauth-setup.md"},
-    {"Remote Deployment" = "guides/remote-deployment.md"},
-    {"Daemon Migration" = "guides/daemon-migration.md"},
+  {"People and Accounts" = [
+    {"People and Profiles" = "usage/people.md"},
+    {"Conversation Briefs" = "usage/people-briefs.md"},
+    {"Profile Automation" = "usage/people-automation.md"},
+    {"External Enrichment" = "usage/people-enrichment.md"},
+    {"CardDAV Contacts" = "usage/people-carddav.md"},
+    {"Accounts and Collections" = "usage/multi-account.md"},
+  ]},
+  {"Maintain and Operate" = [
+    {"Backup and Restore" = "usage/backup.md"},
     {"Verify Integrity" = "guides/verification.md"},
+    {"Deduplication" = "usage/deduplication.md"},
+    {"Deleting Email" = "usage/deletion.md"},
+    {"Remote Deployment" = "guides/remote-deployment.md"},
+    {"Daemon Lifecycle" = "guides/daemon-migration.md"},
+    {"Troubleshooting" = "troubleshooting.md"},
+  ]},
+  {"Reference and Integrations" = [
+    {"CLI Reference" = "cli-reference.md"},
+    {"Configuration" = "configuration.md"},
+    {"HTTP API" = "api-server.md"},
+    {"MCP Server" = "usage/chat.md"},
     {"Agent Skills" = "guides/agent-skills.md"},
+    {"FAQ" = "faq.md"},
+    {"Changelog" = "changelog.md"},
   ]},
   {"Architecture" = [
     {"Overview" = "architecture/overview.md"},
@@ -58,9 +74,8 @@ nav = [
     {"Search Ranking" = "architecture/search-ranking.md"},
     {"Backup Repository Format" = "architecture/backup-format.md"},
   ]},
-  {"Troubleshooting" = "troubleshooting.md"},
   {"Development" = "development.md"},
-  {"FAQ" = "faq.md"},
+  {"Why msgvault?" = "introduction.md"},
 ]
 
 [project.extra]

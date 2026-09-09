@@ -1,22 +1,36 @@
 ---
-last_edited: 2026-09-07
+last_edited: "2026-09-08"
 title: Accounts, Identities, and Collections
 description: How msgvault organizes every source into accounts, tracks which identifiers are "you," and groups accounts into collections for scoped search, stats, and deduplication.
 ---
 
-msgvault stores every source in one archive database: Gmail accounts, IMAP accounts, Microsoft 365 accounts, local imports, and chat/text imports. A source has an account identifier, optional display name, source type, labels, messages, attachments, and sync/import state.
+Keep live accounts, old imports, and chat histories in one archive while
+retaining where each message came from. Use account identities to tell
+msgvault which messages you sent, and collections to work with a chosen group
+of accounts.
 
-As an archive grows it accumulates overlapping sources: a current Gmail sync, an old mbox export, Apple Mail from a retired laptop, IMAP backups, chat exports, SMS history. Three concepts keep that collection organized without losing any source's provenance.
+## Accounts, identities, and collections
 
-## The Data Model
+| Concept | Meaning | Example |
+|---|---|---|
+| Account (also called a source) | One live connection or imported dataset | A Gmail sync and an MBOX import are separate accounts |
+| Account identity | Confirmed addresses, numbers, or handles that mean “you” in that source | Your primary email and a sending alias |
+| Collection | A named group of accounts | `Work` groups a current mailbox and older work exports |
 
-msgvault introduces three concepts, always in the same order: account, then identity, then collection. Each one builds on the previous.
+Each account keeps its own source type, messages, labels, and sync or import
+state. Importing the same mailbox through two paths does not silently merge
+them. An overlapping address or message alone does not prove that two sources
+belong together.
 
-**An account is one ingest source.** A Gmail sync is one account. An mbox import is another. It is the smallest durable unit of provenance in the archive. If you import the same real-world mailbox twice, once through Gmail sync and once from an old mbox export, you get two accounts. msgvault never silently merges them, and it never infers that two imports belong together just because an address, display name, or message content overlaps.
+Identity is per account. This matters when an export contains several people's
+mail or an old address means something different in another source. Confirmed
+identities let msgvault attribute messages to you and detect sent copies during
+[deduplication](/docs/usage/deduplication/).
 
-**An identity is the set of identifiers that mean "you" inside one account.** These are the email addresses, phone numbers, chat handles, or synthetic identifiers for that source. Identity is per-account because the same address can mean different things in different imports: an address that is unambiguously you in one source may be misleading in another. A confirmed identity lets msgvault treat a message as "from you" within that account's context, which is what makes sent-copy detection work during deduplication.
-
-**A collection is a named group of accounts.** The `All` collection exists by default and contains every account. You create others (`work`, `personal`, or any grouping you like) to search, report, and deduplicate a logical group without changing the underlying sources. A collection is the boundary for every cross-account operation. A collection's identity is the union of its member accounts' identities, computed at read time, so you never manage it directly. Collections contain accounts only, never other collections.
+The built-in `All` collection contains every account. Other collections have
+membership you choose. Their combined identity is the union of their member
+accounts' identities, calculated when used. Collections contain accounts only;
+they cannot contain other collections.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
   <img src="/docs/assets/generated/concepts/account-collection-concept.png" alt="Accounts on the left are individual ingest sources, each carrying the identifiers that mean you inside that source. Collections on the right are named groups of accounts: All contains every account, with Personal and Work as deliberate subsets." loading="lazy" style="width: 100%; display: block;" />
@@ -138,14 +152,14 @@ If a token expires during sync, msgvault prints the re-authorization URL with th
 
 ## Identities
 
-Each account has a confirmed "me" identity: the email addresses, phone numbers, chat handles, or synthetic identifiers that mean you inside that source. Deduplication uses this set for sent-copy detection, so for "sent" versus "received" to mean anything in older imports, msgvault needs to know which identifiers are you in each account.
+An account can have a confirmed "me" identity: the email addresses, phone numbers, chat handles, or synthetic identifiers that mean you inside that source. Deduplication uses this set for sent-copy detection, so for "sent" versus "received" to mean anything in older imports, msgvault needs to know which identifiers are you in each account.
 
 Source identities are different from the observed people and durable profiles
 used by relationship exploration. See [People, Profiles, and Source
 Identities](/docs/usage/people/) for evidence discovery, bulk import, optional
 Fastmail alias inventory, person promotion, and typed attributes.
 
-New Gmail, IMAP, Microsoft 365, MBOX, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
+New Gmail, IMAP, Microsoft 365, MBOX, EML, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
 
 ```bash
 # List confirmed identifiers across all accounts
@@ -167,6 +181,36 @@ Each confirmed identifier records the signals that confirmed it: `account-identi
 msgvault identity list --account work@company.com
 msgvault identity list --collection Work
 ```
+
+### Repair attribution in older archives
+
+If your account's own address was never confirmed, older sent messages may
+not be marked as yours. Confirm it and update the existing messages without a
+provider resync:
+
+```bash
+msgvault repair-identity you@example.com
+msgvault repair-identity --type imap
+```
+
+The default source type is Gmail. The command skips accounts whose own address
+is already confirmed or is not a plain valid email address. Existing aliases
+do not prevent it from adding the primary account address.
+
+### Select an exact source
+
+A live account and an import can share the same email address. Use the numeric
+ID from `list-accounts` when a command needs one exact source:
+
+```bash
+msgvault sync --source-id 3
+msgvault sync-full --source-id 3
+msgvault identity show --source-id 3
+```
+
+On commands that offer `--source-id`, use it in place of an account name. This
+avoids selecting a different source with the same identifier or display name.
+See the [CLI reference](/docs/cli-reference/) for the commands that accept it.
 
 ## Collections
 
@@ -222,9 +266,9 @@ scope carries its exact member source IDs through Email aggregates, message
 lists, fast search, statistics, and deletion-target inspection. An empty
 collection matches nothing.
 
-Named collections require API schema `2.17.0` or newer. Older or unavailable
-daemons hide collection rows while preserving account browsing. Texts and
-Meetings keep independent source selectors. Changing the Email scope returns
+Named collections require API schema `2.17.0` or newer. Upgrade the daemon if
+its source selector does not offer collections. Texts and Meetings keep
+independent source selectors. Changing the Email scope returns
 to the top-level view and clears the current search and selection.
 
 Multi-source collections offer Fast search only. Deep search is available for
@@ -233,9 +277,9 @@ Deletion staging accepts selections from one source, including within a larger
 collection; selections spanning sources are rejected. Deduplication remains
 available through the collection-scoped CLI commands, not through the TUI.
 
-Meetings mode uses the same key for a separate source selector. It lists only
-configured Granola and Circleback sources, and changing it does not replace the
-Email account filter.
+Meetings mode uses the same key for a separate source selector. It lists
+Granola, Circleback, and Notion meeting sources. Changing it does not replace
+the Email account filter.
 
 ## Command Reference
 

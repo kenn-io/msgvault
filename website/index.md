@@ -1,15 +1,17 @@
 # msgvault
 
-**The system of record for your communications and relationships.**
+**Your communications. Your relationships. One archive.**
 
-msgvault is a local-first, open-source archive for a lifetime of email, chat,
-meetings, calendars, and contacts. It keeps everything in one database on your
-own hardware, resolves the people behind decades of messages, and searches by
-keyword or by meaning.
+msgvault is a local-first, open-source archive. Bring email, chat, meetings, and
+contacts together on your own hardware. Find what matters, connect the people
+behind it, and use your history from the terminal, browser, or an AI assistant.
+
+![People and communications flow into one msgvault archive, accessible through the TUI, Web UI, and MCP for AI assistants.](/assets/archive-flow.svg)
 
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
-your data.
+your data. This site describes current main, including unreleased work.
+[Read the changelog for new features and upgrade notes](/docs/changelog/#unreleased).
 
 ## Install
 
@@ -41,14 +43,14 @@ Then [follow the archive lifecycle](/guide/).
 ## Every channel. One archive.
 
 Twenty years of correspondence should not be scattered across a dozen walled
-gardens. msgvault syncs live sources and imports dead exports into one schema,
+gardens. msgvault syncs live sources and imports local exports into one schema,
 keeping raw payloads and content-addressed attachments intact.
 
-- **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Apple Mail, PST, and
+- **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
 - **Chat** — Slack, Teams, Discord, and every network behind Beeper; WhatsApp,
   iMessage, Messenger, and SMS imports.
-- **Meetings** — Granola and Circleback notes and transcripts in the same
+- **Meetings** — Granola, Circleback, and Notion AI Meeting Notes in the same
   searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — bidirectional CardDAV: pull address books, publish curated
@@ -68,7 +70,7 @@ display names alone never merge two people.
 ### Durable profiles
 
 A promoted profile gets a stable ID and vCard UID, so names, notes, and typed
-attributes survive later identity changes. Merges are atomic and reversible.
+attributes survive later identity changes. Merge profiles with history and explicit reversal controls.
 
 ### Fact ledger
 
@@ -84,27 +86,27 @@ temperature.
 ## Work the archive in the browser
 
 The daemon serves a dense, keyboard-driven browser application: relationships,
-a unified Everything table, files, saved views, source status, deletion
-staging, and settings. Every analytical slice is URL-addressable, so Back and
+a unified Everything table, files, saved views, Directory, operation history,
+source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and
 Forward restore exact views.
 
-**In development:** an open pull request adds Directory and Reviews workspaces —
-durable-person search, profile maintenance and history, identity and merge
-review queues, the privacy-gated fact ledger, CardDAV publication, and a
-self-describing Settings surface with write-only credential management.
+Maintain profiles, review identities and merges, publish contacts through
+CardDAV, and catch up with a saved conversation brief in **Directory**.
+**Operations** tracks syncs and background work; **Settings** manages provider
+credentials and restart-pending changes. [Explore the workspaces](/docs/web-ui/).
 
 ## Semantic search and document understanding
 
-Keyword search works offline, always. Semantic search, document extraction,
+Keyword search reads your archive offline. Semantic search, document extraction,
 and visual search are opt-in, with explicit consent recording exactly what
 leaves your machine and where it goes.
 
 - **Hybrid search:** FTS5 with Gmail-style operators, pure semantic search,
   or hybrid BM25-plus-vector fusion via reciprocal rank fusion, with an
   explain mode that shows why each result ranked.
-- **Local models:** any OpenAI-compatible endpoint works: Ollama, llama.cpp,
-  LM Studio, or Apple's on-device model. Embedding scope is a privacy
-  boundary; out-of-scope accounts are never sent anywhere.
+- **Local models:** use a supported local or hosted embedding endpoint, such
+  as Ollama with an embedding model. Scope a text index to selected accounts;
+  document, image, and profile processing have separate configuration and consent.
 - **Attachments:** the embedded
   [Docbank](https://github.com/kenn-io/docbank) document engine handles OCR
   extraction, normalized chunks, lexical and semantic document search, and
@@ -115,7 +117,7 @@ leaves your machine and where it goes.
 
 ## One archive across every surface
 
-The daemon owns all writes and serializes every mutation. People, scripts, and
+The daemon coordinates archive access and background work. People, scripts, and
 agents work through the interface suited to the task, against the same record.
 
 - **CLI:** scriptable sync, search, and repair.
@@ -135,10 +137,13 @@ until the last one.
 
 - **Verify:** integrity verification checks the archive against the mailbox
   before you trust it with anything irreversible.
-- **Stage:** deletions are staged into manifests from the Web UI, TUI, or
-  MCP — inspected, counted, and cancellable. No surface executes them.
-- **Execute:** execution is a separate CLI step behind an explicit environment
-  gate, defaulting to recoverable trash. The local archive is never modified.
+- **Stage:** create a deletion manifest from the CLI, Web UI, TUI, or MCP,
+  then inspect it. Staging does not remove provider messages; execution is a
+  separate CLI command.
+- **Execute:** the CLI requires explicit client consent. Gmail and IMAP default
+  to moving messages to Trash; permanent deletion requires explicit opt-in.
+  Archived messages and attachments remain available; msgvault records their
+  source-deletion state.
 - **Restore:** append-only, verifiable backup snapshots cover the database and
   attachments, with restore paths that need no provider at all.
 

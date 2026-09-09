@@ -1,8 +1,16 @@
 ---
 title: Setup Guide
-description: Install msgvault, configure OAuth, and sync your first emails.
+description: Install msgvault, choose a source, and explore your first archived messages.
 ---
 
+
+Install msgvault, bring in a small first batch, then open it in the browser or
+terminal. The Gmail walkthrough below includes Google OAuth setup. For other
+mail providers, chats, meetings, contacts, or local exports, use
+[Choose a Source](guides/sources.md) after installation.
+
+Already using 0.19? Read [the changelog’s upgrade notes](changelog.md#upgrade-and-compatibility) before
+opening an existing archive with a newer build.
 
 ## Install Release
 
@@ -77,7 +85,7 @@ On Windows, use the native PowerShell helper:
 ```
 
 It detects AMD64 or ARM64 automatically and writes `msgvault.exe` in the
-repository root. See [Development and Roadmap](/docs/development/#windows) for the
+repository root. See [Development](/docs/development/#windows) for the
 one-time MSYS2 compiler prerequisites.
 
 Verify the installation:
@@ -87,6 +95,9 @@ msgvault --help
 ```
 
 ## Configure OAuth
+
+This section is for Gmail and other Google-backed sources. Skip it for local
+imports or a provider with its own authorization guide.
 
 Create a Google Cloud project, enable the Gmail API, and download your `client_secret.json`. If you plan to archive Google Calendar, enable the Google Calendar API too. See the full [OAuth Setup Guide](/docs/guides/oauth-setup/).
 

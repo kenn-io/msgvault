@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-07"
+last_edited: "2026-09-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -13,16 +13,51 @@ background sync scheduler to keep accounts up to date on a cron-based schedule.
 The complete UI is embedded in the release binary; see [Web UI](/docs/web-ui/) for
 browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the current schema is 2.20.0. Within the unreleased 2.x line, 2.14.0 replaces the CardDAV publication and conflict response shapes with bounded projections that omit raw vCards and resource hrefs. The running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
+### Choose an integration path
 
-Schema 2.19.0 extends operation history with durable worker runs, date filters,
-filter-bound pagination, fixed error codes, and supported actions. It also adds
-`GET /api/v1/documents/status/current` to report extraction status for the
-selected document profile without requiring clients to supply its identifier.
+| Need | Start here |
+|---|---|
+| Browse the archive | [Web UI](web-ui.md) |
+| Use a generated Go client | `pkg/client` in the repository |
+| Build a client in another language | `/openapi.json` from the daemon or `msgvault openapi` |
+| Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
+| Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
+| Integrate an AI assistant | [MCP server](usage/chat.md) |
+
+### API compatibility
+
+The API publishes its generated OpenAPI contract at `/openapi.json`.
+`msgvault openapi` prints the checked-in contract without starting a daemon or
+opening an archive. OpenAPI `info.version` is the **API schema version**;
+it is separate from the binary release version. The current schema is **2.20.0**.
+Upgrade clients and daemon together across incompatible schema versions,
+including remote deployments.
+
+Participant analytics live under `/api/v1/participants/*`; durable curated
+profiles live under `/api/v1/people/*`. CardDAV publication and conflict
+responses are bounded projections that omit raw vCards and resource hrefs.
+See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
+and the 1.x/2.x transition.
+
+### Archive and processing boundaries
+
+The API uses the same archive database and attachment store as other clients.
+SQLite is the default; PostgreSQL has [documented feature limits](architecture/postgresql.md).
+Keyword search and ordinary reads use stored data. Semantic and hybrid search
+also call the configured embedding endpoint. Profile, document, and enrichment
+operations have their own provider and consent contracts.
+
+Operation history includes durable worker runs, date filters, filter-bound
+pagination, error codes, and supported actions. `GET
+/api/v1/documents/status/current` reports the selected document extraction
+profile without requiring its identifier. The OpenAPI document defines exact
+request and response fields.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
 returning `200` while created manifests return `201`.
+
+### Startup and readiness
 
 The HTTP listener, health endpoint, and API routing start before analytics cache
 maintenance. With `engine = "auto"`, aggregate requests initially use live SQL
@@ -79,6 +114,84 @@ is required. Three API-key authentication methods are supported:
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
 If no `api_key` is configured, authentication is not required regardless of bind address. The separate `allow_insecure` / security validation prevents starting without an API key on non-loopback addresses.
+
+## Historical import jobs {#historical-import-jobs}
+
+Start a Gmail or IMAP history backfill and poll its progress without keeping an
+HTTP request open. These endpoints use the daemon's existing account
+credentials and full-sync path. They do not accept uploaded archive files.
+See [the importing guide](/docs/usage/importing/#historical-import-jobs) for a
+step-by-step example.
+
+### Start an import {#post-apiv1imports}
+
+**Endpoint:** `POST /api/v1/imports`
+
+Send one JSON object with `Content-Type: application/json`. The request body is
+limited to 16 KiB; unknown fields and additional JSON values are rejected.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `account` | Yes | Exact account identifier or display name, matched case-insensitively, for one Gmail or IMAP source |
+| `after` | No | Lower date bound in `YYYY-MM-DD` form |
+| `before` | No | Upper date bound in `YYYY-MM-DD` form; must be later than `after` when both are present |
+| `limit` | No | Non-negative message limit; `0` or omission means unlimited |
+| `query` | No | Gmail search expression; a nonempty value is rejected for IMAP |
+| `noresume` | No | Set `true` to start fresh instead of using a resumable checkpoint; defaults to `false` |
+
+A successful request returns **`202 Accepted`** with a durable `job_id` and the
+status record described below. It starts background work immediately; it does
+not create a persistent queue that will automatically resume after a restart.
+
+| Error | Meaning |
+|---|---|
+| `404 not_found` | No matching account exists |
+| `409 ambiguous_account` | More than one syncable source matches the account name |
+| `409 sync_already_active` | The source already has an active sync or import |
+| `422 account_not_syncable` | The matching source is not Gmail or IMAP |
+| `422 validation_failed` | A required value, date range, limit, or provider-specific field is invalid |
+| `413 request_too_large` | The body exceeds 16 KiB |
+| `415 unsupported_media_type` | The request is not JSON |
+| `503 service_unavailable` | The daemon cannot start historical imports, including during shutdown |
+
+Malformed JSON and unknown fields return `400 bad_request`. Normal API
+authentication and archive-operation locking also apply.
+
+### Read progress {#get-apiv1importsjobid}
+
+**Endpoint:** `GET /api/v1/imports/{job_id}`
+
+Returns **`200 OK`** for an existing job or **`404 not_found`** for an unknown
+ID. The start and progress responses have the same shape:
+
+| Field | Meaning |
+|---|---|
+| `job_id` | Durable ID to save and poll |
+| `account` | Resolved source identifier |
+| `status` | `pending`, `running`, `done`, or `failed` |
+| `processed`, `added`, `skipped` | Counts across sync runs belonging to this job |
+| `created_at` | UTC creation time |
+| `started_at` | UTC start time, or `null` before work starts |
+| `finished_at` | UTC completion time, or `null` while unfinished |
+| `summary` | Present for `done`; contains `processed`, `added`, `updated`, `skipped`, and `errors` |
+| `error` | Present for `failed`; currently the generic message `import failed` |
+
+`skipped` is the non-negative remainder of processed messages after additions
+and updates. Check `summary.errors` as well as the terminal status when
+assessing coverage. Detailed failure information belongs to daemon logs and
+sync-run diagnostics; it is not returned in the job's generic `error` field.
+
+### Disconnects, failures, and restarts
+
+Closing the client connection does not cancel a submitted job. Daemon shutdown
+cancels running import work. On the next start, the daemon marks jobs abandoned
+in `pending` or `running` state as `failed`; it preserves their IDs and progress
+for later inspection.
+
+Messages already committed remain archived after a failure. Submit a new job
+with the same account and bounds to continue through the normal resumable
+importer. Leave `noresume` false when you want to reuse available progress.
+There is no dedicated cancellation endpoint for these jobs.
 
 ## API Endpoints
 

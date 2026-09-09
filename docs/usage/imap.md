@@ -1,17 +1,43 @@
 ---
-title: IMAP Folder Sync
-description: List IMAP folders and choose which folders msgvault scans during a sync.
+last_edited: "2026-09-08"
+title: IMAP Sync and Repair
+description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
 
-# IMAP Folder Sync
+Archive mail from an IMAP account, then keep it current without downloading
+unchanged messages again. Start with [IMAP account setup](/docs/setup/#add-an-imap-account)
+if you have not connected the account yet.
 
-By default, msgvault scans every selectable folder in an IMAP account. You can
-limit a sync to the folders you need or skip folders that are large or
-unimportant. This is useful when you want to try msgvault with a small part of
-an account before starting a complete archive.
+```bash
+msgvault sync-full you@example.com
+msgvault sync you@example.com
+```
 
-Folder filters work with both `sync-full` and `sync`. They affect IMAP accounts
-only.
+Sync reads the provider. It preserves messages already in your local archive
+when their server copies disappear. Remote deletion is a separate
+[staged workflow](/docs/usage/deletion/).
+
+## How later syncs find changes
+
+msgvault chooses the sync method from the server's capabilities:
+
+| Server behavior | What msgvault does |
+|---|---|
+| Supports QRESYNC, the IMAP change-tracking extension | Uses saved mailbox state to fetch changes and track messages removed from folders |
+| Does not support QRESYNC | Compares mailbox counts and saved message-number boundaries; skips unchanged folders and fetches new messages where possible |
+| State is missing, inconsistent, or no longer valid | Enumerates the affected folders again to establish current membership |
+
+A failed QRESYNC attempt reconnects and falls back to full enumeration. An
+incomplete server response is not accepted as a complete mailbox snapshot.
+Temporary connection failures receive bounded retries; a persistent failure
+still ends the run with an error. Rerun the command after correcting the
+connection problem.
+
+## Choose folders
+
+By default, msgvault scans every selectable folder. Folder filters let you
+start with a small part of an account or leave out folders you do not need.
+They work with both `sync-full` and `sync` and affect IMAP sources only.
 
 ## Find the Folder Names
 
@@ -117,3 +143,38 @@ without folder flags scans the complete account again.
 
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.
+
+## Repair stored labels
+
+Use `repair-labels` when an archived message still shows a folder label that
+no longer belongs to it. The command rebuilds labels from the folder
+memberships already stored in msgvault. It does not contact the provider.
+
+1. Preview the repair for one source:
+
+   ```bash
+   msgvault repair-labels you@example.com
+   ```
+
+2. Review the `scanned` and `changed` counts, then apply it:
+
+   ```bash
+   msgvault repair-labels you@example.com --apply
+   ```
+
+Omit the identifier to check or repair every IMAP source. Applying a repair
+also refreshes the analytical cache.
+
+A sync with incomplete folder information only adds labels; it does not
+remove labels it cannot disprove. If the stored memberships later become
+complete but never change again, an old label can remain until this repair.
+
+If the stored memberships themselves need refreshing, enumerate the server
+again first:
+
+```bash
+msgvault sync-full you@example.com --noresume
+```
+
+Leave out folder filters for a complete account scan. `repair-labels` cannot
+recover memberships that the archive has never observed.

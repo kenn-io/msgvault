@@ -1,8 +1,25 @@
 ---
-last_edited: "2026-09-07"
+last_edited: "2026-09-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
+
+Find a command by task below, or use `msgvault COMMAND --help` for the flags
+in your installed binary. This reference follows current `main`; see
+[the changelog](changelog.md#unreleased) for the release boundary.
+
+| Task | Commands and guides |
+|---|---|
+| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [text imports](usage/text-messages.md) |
+| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings) |
+| Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
+| Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments) |
+| Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
+| Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
+| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
+| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [mcp](#mcp), [query](#query), [openapi](#openapi) |
 
 ## Global Flags
 
@@ -751,6 +768,31 @@ msgvault sync-calendar <name|email> [flags]
 
 ---
 
+## import-eml
+
+Import RFC 5322 `.eml` files inside MailMate-style `.mailbox` directories.
+Arbitrary loose `.eml` files are not discovered. The directory structure
+provides mailbox labels. The command resumes an active checkpoint by default.
+
+```bash
+msgvault import-eml /path/to/mail --identifier user@example.com
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--identifier` | required | Source identifier for imported messages |
+| `--source-type` | `eml` | Source type stored for this import |
+| `--no-resume` | `false` | Start a new import rather than resume its checkpoint |
+| `--checkpoint-interval` | `200` | Messages between saved checkpoints |
+| `--no-attachments` | `false` | Do not write attachment files |
+| `--no-default-identity` | `false` | Do not confirm the identifier as this source's identity |
+
+See [local email import](usage/importing.md) for file discovery and repeat-import
+behavior, and [remote images](usage/remote-images.md) for the separate opt-in
+that can cause network requests during email imports.
+
+---
+
 ## import-mbox
 
 Import a local MBOX archive into msgvault.
@@ -880,7 +922,9 @@ See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
 ## import-whatsapp
 
-Import messages from a decrypted WhatsApp `msgstore.db` SQLite database.
+Import messages from a decrypted Android `msgstore.db` or Apple
+`ChatStorage.sqlite` WhatsApp database. Apple support currently imports text,
+participants, and available names; native Apple attachments are not imported.
 
 ```bash
 msgvault import-whatsapp <msgstore.db> --phone <your-number>
@@ -1441,6 +1485,177 @@ msgvault stats [flags]
 
 ---
 
+## People command guide
+
+Use the [people guide](/docs/usage/people/) for the workflow. Observed contacts
+use participant IDs; saved profiles use person IDs. Each command below takes
+the ID named in its arguments.
+
+### person notes
+
+Read, replace, or append private Notes while retaining earlier values:
+
+| Command | Purpose |
+|---|---|
+| `person notes get <person-id>` | Read the current Notes text |
+| `person notes set <person-id> --text <text>` | Replace Notes |
+| `person notes append <person-id> --text <text>` | Append a fragment atomically on a new line |
+
+`--text` accepts inline text, `@path`, or `-` for standard input. All commands
+accept `--json`. `set --expected-value-id <id>` rejects concurrent changes.
+See [private notes](/docs/usage/people/#keep-private-notes) for
+how Notes interact with search, MCP, and CardDAV.
+
+### person search and files
+
+| Command | Purpose |
+|---|---|
+| `person search <free-text> [--limit 20] [--json]` | Search curated profiles semantically; requires person embeddings and consent |
+| `person files <person-id> [flags]` | Find archived attachments related to the person's linked identities |
+
+Person search accepts `--limit` from 1–100. File lookup defaults to the
+`metadata` lane and 100 results. Its main filters are `--direction`,
+`--filename`, `--mime-family`, `--after`, and `--before`.
+`--lane documents`, `visual`, or `all` requires `--query`; a `--cursor` belongs
+to one lane and cannot be used with `all`. See
+[person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
+[person files](/docs/usage/people/#find-files-related-to-a-person) for index
+requirements, supported filters, and pagination.
+
+### person track, provider, sweep, and facts
+
+Tracking chooses which profiles automatic maintenance may process. It does not
+grant consent to a provider or enroll a person in briefs.
+
+| Command | Purpose |
+|---|---|
+| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
+| `person provider list` | List configured model profiles |
+| `person provider use <name>` | Select a checked profile and enable sweeps |
+| `person provider check [name]` | Run fixed synthetic input without granting consent |
+| `person provider consent [name] --yes` | Grant consent to the exact checked policy |
+| `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
+| `person provider remove <name>` | Remove a configured profile |
+| `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
+| `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
+| `person sweep status` | Read redacted progress and usage |
+| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts |
+| `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
+| `person facts evidence <person-id>` | Inspect saved supporting evidence |
+| `person facts evidence-status <person-id>` | Inspect changes to evidence support |
+| `person facts claims <person-id>` | Inspect proposed values |
+| `person facts decisions <person-id>` | Inspect resolver decisions |
+| `person facts pins <person-id>` | List fields protected from automatic replacement |
+| `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
+| `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
+
+These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
+Evidence, claims, and decisions accept an exact `--target`; fact-history
+commands accept `--limit` (1–200) and `--offset`. `sweep run --backstop`
+revisits older evidence in a bounded pass.
+
+Provider configuration edits run on the daemon host. Restart the daemon after
+changing its active provider or policy. For setup, privacy controls, budgets,
+and recovery, see [profile automation](/docs/usage/people-automation/).
+[Provider status](#person-provider-status), [reverify](#person-provider-reverify),
+[set](#person-provider-set), and [briefs](#person-brief) have additional details
+below.
+
+### person enrichment
+
+Look up public person information through independently configured and
+consented Exa or Sixtyfour policies:
+
+| Command | Purpose |
+|---|---|
+| `person enrichment profiles` | List saved policy fingerprints |
+| `person enrichment status [--limit 20]` | Inspect policies, consent, and bounded suppression history |
+| `person enrichment consent <fingerprint>` | Grant consent for that exact enrichment policy |
+| `person enrichment revoke [fingerprint]` | Revoke an exact policy; `--all` revokes all enrichment policies |
+| `person enrichment run --person <id> --provider <name> --idempotency-key <key>` | Request a lookup for one person |
+| `person enrichment suppress --person <id> --provider <name> --reason <reason>` | Record an opt-out for the person's current identifiers |
+
+Status, profiles, consent, revoke, and run accept `--json`. Suppression reasons
+are `opt_out` and `data_subject_request`; suppressing one identifier instead of
+a person uses `--identifier-class` with the value on standard input.
+See [external enrichment](/docs/usage/people-enrichment/) for required identity
+details, configuration, request limits, and the persistent suppression key.
+
+## organization and employment
+
+Keep organization details and current or historical jobs in structured records.
+`org` is an alias for `organization`.
+
+| Command | Purpose |
+|---|---|
+| `organization list [--query <text>] [--include-retired]` | Find organizations |
+| `organization create <name> [--domain <domain>]` | Create an organization |
+| `organization show <id> [--history]` | Read an organization and its profile data |
+| `organization set <id> --name <name> [flags]` | Replace mutable organization fields |
+| `organization retire <id>` / `organization unretire <id>` | Change active status while keeping the record |
+| `organization merge <survivor-id> <losing-id>` | Consolidate duplicate organizations |
+| `organization delete <id>` | Permanently delete an organization |
+| `organization attribute list <id>` | Read attributes; `--include-superseded` adds history |
+| `organization attribute set <id> --definition <slug> --text <value>` | Set a text attribute |
+| `organization attribute clear <id> <slug>` | Close an attribute value while retaining history |
+| `employment add --person <id> --organization <id> [flags]` | Connect a person to an organization |
+| `employment list --person <id>` | List a person's jobs; `--organization <id>` lists an organization's jobs |
+| `employment show <id>` / `employment set <id> [flags]` | Inspect or edit one job |
+| `employment end <id> [--end <date>]` | End a job while keeping its history |
+| `employment set-primary <id>` | Select the primary current job |
+| `employment delete <id>` | Permanently delete a job |
+
+These commands accept `--json`. Employment creation accepts `--title`, `--role`,
+`--department`, `--location`, `--description`, `--start`, `--end`, and `--primary`.
+Dates can be partial (`YYYY`, `YYYY-MM`, or `YYYY-MM-DD`). Attribute writes
+support `--dry-run` and `--expected-value-id` for validation and concurrent-edit
+checks. See [employment and relationships](/docs/usage/people/#record-employment-and-relationships).
+
+## relationship-type and person relationship
+
+Record typed relationships between two saved profiles:
+
+| Command | Purpose |
+|---|---|
+| `relationship-type list` | Read forward and reverse labels for available types |
+| `relationship-type create <slug> <forward-label> <reverse-label>` | Create a user-owned type; `--symmetric` requires identical labels |
+| `relationship-type update <type-id> [flags]` | Change labels and presentation |
+| `relationship-type delete <type-id>` | Delete an eligible user-owned type |
+| `person relationship add <source-person-id> <type-slug> <target-person-id>` | Add a relationship; accepts `--from`, `--until`, and `--notes` |
+| `person relationship list <person-id> [--include-ended]` | Read relationships from that person's perspective |
+| `person relationship end <relationship-id> <until-date>` | End a relationship while keeping history |
+| `person relationship delete <relationship-id>` | Permanently delete a relationship |
+| `person relationship reviews [--status <status>]` | Inspect relationship review candidates |
+
+All accept `--json`. The forward label means “source is the ___ of target.”
+See [relationships](/docs/usage/people/#record-employment-and-relationships)
+for direction and date examples.
+
+## add-carddav, sync-carddav, and carddav
+
+Connect one CardDAV account, choose its address-book roles, and resolve sync
+conflicts. Publishing or resolving a conflict can change the external address
+book; see the [CardDAV guide](/docs/usage/people-carddav/).
+
+| Command | Purpose |
+|---|---|
+| `add-carddav <base-url> <username> [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
+| `sync-carddav [--full]` | Synchronize the account; `--full` reconciles complete books |
+| `person publish <person-id>` / `person unpublish <person-id>` | Publish a saved profile or remove its remote card |
+| `carddav books` | List discovered books and their roles |
+| `carddav books set-role <book-id> [--write-target] [--subscribed] [--lookup-source]` | Replace all three roles; omitted flags become false |
+| `carddav conflicts list` | List unresolved conflicts |
+| `carddav conflicts show <conflict-id>` | Compare bounded base, local, and remote summaries |
+| `carddav conflicts resolve <conflict-id> <keep_local\|keep_remote>` | Choose the local or remote side explicitly |
+
+Directory and integrations can also use the
+[publication API](/docs/usage/people-carddav/#sync-and-publish-selected-people).
+CardDAV commands do not expose a general `--json` flag; role changes and
+conflict list/show commands already print JSON.
+
+---
+
 ## identity
 
 Manage the confirmed "me" identifiers for each account.
@@ -1491,8 +1706,8 @@ for classifications, Fastmail inventory, and import formats.
 ## person
 
 Manage durable person profiles and their typed, historized attributes. A
-profile is created only by explicit promotion of an observed participant's
-identity cluster.
+profile can be created by explicitly promoting an observed participant's
+identity cluster or by importing contacts from a subscribed CardDAV address book.
 
 ```bash
 msgvault person promote <participant-id>
@@ -2306,7 +2521,10 @@ msgvault cancel-deletion --all
 
 ## delete-staged
 
-Execute staged remote deletions. By default, Gmail messages are moved to trash; pass `--permanent` for permanent Gmail batch deletion. IMAP deletion removes messages from the provider using IMAP delete/expunge behavior.
+Execute staged remote deletions. Gmail and IMAP move messages to Trash by
+default. `--permanent` uses Gmail batch deletion or IMAP UID EXPUNGE; the
+IMAP permanent path requires UIDPLUS. Recovery from Trash depends on the
+provider. See [deletion behavior](usage/deletion.md).
 
 ```bash
 msgvault delete-staged [batch-id] [flags]
@@ -2315,7 +2533,7 @@ msgvault delete-staged [batch-id] [flags]
 | Flag | Description |
 |---|---|
 | `-y`, `--yes` | Skip confirmation prompt |
-| `--permanent` | Permanently delete through the Gmail batch API instead of moving to trash |
+| `--permanent` | Permanently delete through Gmail batch deletion or IMAP UID EXPUNGE instead of moving to Trash |
 | `--dry-run` | Show what would be deleted without deleting |
 | `-l`, `--list` | List staged deletion batches |
 | `--account` | Filter to one source by identifier or unique display name |
@@ -2329,6 +2547,109 @@ there is no planned automatic removal of the guardrail. A remote daemon's own
 Staging, `--list`, and `--dry-run` remain ungated. `--permanent` and `--yes`
 are mutually exclusive because permanent deletion always requires the
 destructive confirmation prompt.
+
+---
+
+## repair-identity
+
+Confirm a source's own email address and recompute `is_from_me` for matching
+archived messages. This writes immediately; it has no dry-run flag. Sources
+whose account address is already confirmed are skipped.
+
+```bash
+msgvault repair-identity user@example.com
+msgvault repair-identity --type imap
+```
+
+The optional identifier narrows the repair. `--type` selects a source type and
+defaults to `gmail`. Only plain, valid email addresses are confirmed. For
+reviewing other aliases, use [identity discovery](#identity).
+
+## repair-senders
+
+Recover missing sender metadata from archived email MIME. The default is a
+read-only report; `--apply` writes repairs and refreshes analytics. This repairs
+messages that have neither `sender_id` nor a From-recipient snapshot and does
+not replace existing sender evidence or contact a provider.
+
+```bash
+msgvault repair-senders
+msgvault repair-senders --apply
+```
+
+## repair-message
+
+Repair one Gmail message snapshot, or audit stored Gmail MIME without changing
+it. The repair form can fetch the message from Gmail; the audit is local.
+
+```bash
+msgvault repair-message --audit
+msgvault repair-message --audit --source-id 42 --json
+msgvault repair-message 123 --source-id 42
+```
+
+| Flag | Description |
+|---|---|
+| `--audit` | Inspect stored MIME; accepts no message argument |
+| `--source-id` | Limit to one positive source ID |
+| `--json` | Emit newline-delimited audit results; requires `--audit` |
+
+Without `--audit`, supply exactly one internal numeric message ID or Gmail ID.
+
+## repair-derived
+
+Recompute derived text and metadata from retained provider payloads without
+contacting the provider. The command writes immediately and refreshes analytics;
+it leaves raw payloads, downloaded media, and sync cursors in place.
+
+```bash
+msgvault repair-derived
+msgvault repair-derived --source-type beeper
+```
+
+Repeat `--source-type` or `--identifier` to narrow the source set. Only source
+types with a registered re-derivation pass are supported; an unknown requested
+type is an error. Source syncs also run pending re-derivation passes, so use this
+command for on-demand repair or retrying an interrupted pass.
+
+## gc
+
+Permanently purge **all source-deleted messages** from a SQLite archive,
+compact the database, and remove loose attachment blobs no remaining message
+references. Active messages and messages hidden only by deduplication remain.
+This does not contact providers and does not run on PostgreSQL.
+
+```bash
+msgvault gc
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--yes`, `-y` | `false` | Skip interactive confirmation |
+| `--no-backup` | `false` | Skip the automatic SQLite database backup |
+
+There is no source/date selector or dry-run flag. The automatic backup covers
+the database, not attachment bytes removed afterward. Create a complete
+[backup](usage/backup.md) first. After a purge, follow the printed instructions
+to rebuild each enabled analytics or embedding cache. See
+[local purge](usage/deletion.md) for the difference from remote deletion.
+
+## purge-excluded-media
+
+Remove locally stored provider media excluded by the current media policy,
+replacing its occurrences with typed skip markers. Messages remain. Shared
+blobs stay live while a retained occurrence references them; packed dead bytes
+are reclaimed by the daemon's normal repack maintenance.
+
+```bash
+msgvault purge-excluded-media --dry-run
+msgvault purge-excluded-media
+```
+
+`--dry-run` previews occurrence, blob, and logical-byte counts without changing
+the archive. Applying requires confirmation or `--yes` (`-y`). This never
+removes media from a provider. Review [media policy](configuration.md#media-policy)
+and [backup](usage/backup.md) before applying.
 
 ---
 

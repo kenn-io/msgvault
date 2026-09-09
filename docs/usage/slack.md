@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-03
+last_edited: "2026-09-08"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
@@ -10,8 +10,9 @@ reactions, @mentions, edits, and shared files. Each workspace becomes its own
 msgvault source; all Slack-archived messages share `message_type = slack` for
 search.
 
-Slack sync is strictly read-only: msgvault only calls read methods of the Web
-API and never posts, edits, or marks anything in Slack.
+Choose a [local Slackdump import](#import-a-slackdump-export) for an existing
+export, or [connect a workspace](#prerequisites) for continuing sync. Live sync
+only reads Slack; it does not post or edit messages or mark them read.
 
 ## Import a Slackdump export
 
@@ -42,6 +43,10 @@ remaining separately filterable sources.
 | `--max-media-mb N` | Skip exported files larger than N MiB (0 = configured/default limit) |
 | `--no-default-identity` | Do not auto-confirm the workspace user ID as the source's "me" identity |
 
+Slackdump uses the same [media policy](/docs/configuration/#media-policy) as
+live Slack sync, including per-workspace limits. It reads exported files from
+disk and does not fetch missing files from Slack.
+
 Re-running the same export updates existing messages and reuses stored file
 content instead of creating duplicates. If a file is referenced but absent
 from the export, msgvault keeps a metadata-only attachment record and reports
@@ -51,8 +56,7 @@ client machine.
 
 ## Prerequisites
 
-A **user token** from an internal Slack app you create yourself (a two-minute,
-one-time setup per workspace):
+Create an internal Slack app in each workspace and obtain a **user token**:
 
 1. Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New
    App** → **From scratch**, in your workspace.
@@ -93,7 +97,7 @@ msgvault add-slack --token-file ~/slack-token.txt
 ```
 
 Repeat for additional workspaces — tokens are per-workspace and sources stay
-separately filterable in the TUI (`a`).
+separately filterable in the TUI.
 
 ## Sync
 
@@ -110,15 +114,29 @@ msgvault sync-slack --full
 
 | Flag | Description |
 |---|---|
-| `--limit N` | Max messages of work per conversation this run — thread replies count via their `reply_count` forecast, and the reply sweep gets the same budget workspace-wide. Every phase resumes next run (large threads, catch-up walks, and the sweep all make durable progress), so standing limited schedules converge; only the maintenance rescan is skipped |
-| `--full` | Start (or continue) a repair session: re-fetch and upsert every message in place. Interrupted or `--limit`-scoped repairs resume across subsequent runs of any kind until complete |
+| `--limit N` | Bound work per conversation, including thread replies; progress resumes next run |
+| `--full` | Re-fetch all messages and update the existing archive rows |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
-| `--maintenance` | Repair edits and reaction changes on recent messages, thread replies included (archives ignore post-capture mutations by default; "recent" keys on message age — edits to older messages need `--full`) |
+| `--maintenance` | Refresh recent messages and replies for edits and reaction changes |
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
-from the last checkpoint. Incremental runs fetch new messages and sweep for
-thread replies created since the last run.
+from the last checkpoint. A `--full` repair also resumes on later runs,
+including normal incremental runs, until it finishes.
+
+Incremental runs fetch new messages and look for thread replies created since
+the last run. Edits and reaction changes need `--maintenance` for recent
+messages or `--full` for older ones.
+
+### Limited runs
+
+`--limit` counts thread replies in each conversation's work budget using their
+reported `reply_count`. The workspace-wide search for new replies gets the
+same budget. Large threads, missed-history recovery, and reply searches keep
+checkpoints, so repeated limited runs continue making progress. The maintenance
+rescan is skipped while a limit is set.
+
+### How thread replies are found
 
 Slack's history API never returns thread replies in the main channel stream
 (unless "also sent to channel"), and offers no change feed. The importer
@@ -136,11 +154,8 @@ sweep over the days it missed before rejoining the workspace-wide sweep.
 One documented edge: a single day whose reply count exceeds search's
 ~10,000 reachable results per query cannot be fully swept — the run fails
 loudly (never silently skipping), records the unreachable remainder as
-thread catch-up debt, and later runs recover it automatically without
-search; per-channel query narrowing for this case is planned.
-Edits and reaction changes after capture are ignored by default; run
-`sync-slack --maintenance` to repair the recent window, or `--full` to
-repair everything.
+unfinished thread work, and later runs recover it automatically without
+search.
 Deleted messages never erase their archived content locally. They are marked
 deleted-at-source so active-message queries match Teams and Discord semantics.
 This holds on every re-read path, `--full` and `--maintenance` included: a

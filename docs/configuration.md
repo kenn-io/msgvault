@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-07"
+last_edited: "2026-09-08"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -15,181 +15,11 @@ Default location:
 
 Override the data directory with the `MSGVAULT_HOME` environment variable or the `--home` flag (see below).
 
-```toml
-[data]
-# Base data directory (default: ~/.msgvault)
-data_dir = "/path/to/msgvault/data"
+For a first archive, add only the sections required by your source. Optional
+provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
+The [complete example](#example-configuration) below illustrates the available
+sections; it is not a required starting configuration.
 
-# User-requested exports (default: {data_dir}/exports)
-export_dir = "/path/to/msgvault/exports"
-
-# Database URL (default: {data_dir}/msgvault.db; PostgreSQL DSN supported)
-database_url = "/path/to/msgvault.db"
-
-# Keep attachment content as individual files instead of creating packs.
-# loose_attachments = true
-
-[oauth]
-# Path to Google OAuth client secrets JSON for browser OAuth
-client_secrets = "/path/to/client_secret.json"
-
-# Google service account key for Workspace domain-wide delegation (optional)
-# service_account_key = "/path/to/service-account.json"
-
-# Named OAuth apps for Google Workspace orgs (optional)
-[oauth.apps.acme]
-client_secrets = "/path/to/acme_workspace_secret.json"
-# service_account_key = "/path/to/acme_service_account.json"
-
-[microsoft]
-# Azure AD app registration client ID (required for M365)
-client_id = "your-azure-app-client-id"
-# redirect_uri = "http://localhost:8089/callback/microsoft"  # default
-# tenant_id = "your-tenant-id"   # optional, default "common"
-
-# Optional source-scoped Fastmail alias inventory.
-[[fastmail]]
-source_id = 14
-api_token = "replace-with-a-Fastmail-API-token"
-auto_confirm_identities = false
-
-[discord]
-# Per-attachment download cap (default: 50 MiB)
-max_media_bytes = 52428800
-# Skip attachments from rooms with more than this many participants
-# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
-media_max_participants = 20
-# Trailing edit/delete/reaction repair window (default: seven days)
-edit_rescan_window = "168h"
-
-[discord.guilds."123456789012345678"]
-# Channel, thread, and forum-post IDs; empty include means all accessible.
-include = ["456789012345678901"]
-exclude = ["567890123456789012"]
-
-[log]
-# Persistent structured file logging (opt-in)
-enabled = true
-# dir = "/path/to/logs"        # default: <data_dir>/logs
-# level = "info"                # debug, info, warn, error
-# sql_trace = false             # log every SQL query (verbose)
-# sql_slow_ms = 100             # slow query threshold in ms
-
-[sync]
-# Gmail API rate limit (requests per second)
-rate_limit_qps = 5
-
-[server]
-# API server settings (used by `msgvault serve` and `msgvault daemon`)
-# api_port is optional; omit it (or set 0) to auto-select an open port that
-# clients discover automatically. Set a fixed port for remote/NAS deployments.
-api_port = 0
-bind_addr = "127.0.0.1"
-api_key = "your-secret-key"
-daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
-daemon_auto_restart = "newer" # newer, never, or always
-
-[analytics]
-# Daemon-side analytics engine for Web UI, TUI, and aggregate HTTP views:
-# "auto" starts on live SQL and switches to DuckDB after cache maintenance.
-# "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
-engine = "auto"
-# Build a stale/missing cache during daemon startup and after scheduled syncs.
-auto_build_cache = true
-# Minimum age of a usable cache before a scheduled sync may rebuild it again.
-# min_rebuild_interval = "6h"
-
-[backup]
-# Default repository for `msgvault backup`.
-repo = "~/Backups/msgvault"
-zstd_level = 0
-
-[deletion]
-# Durable consent for remote deletion execution. Opt in deliberately;
-# defaults to false.
-remote_enabled = false
-
-[remote]
-# Remote msgvault endpoint for CLI remote mode
-url = "http://nas-ip:8080"
-api_key = "remote-api-key"
-allow_insecure = true
-
-# Scheduled sync accounts
-[[accounts]]
-email = "you@gmail.com"
-schedule = "0 * * * *"
-enabled = true
-
-[vector]
-# Semantic and hybrid search (opt-in)
-enabled = true
-backend = "sqlite-vec"
-# backend = "pgvector"  # with a PostgreSQL database_url and pgvector build
-
-[vector.embeddings]
-endpoint = "http://localhost:11434/v1"
-model = "nomic-embed-text"
-dimension = 768
-document_prefix = "search_document: "
-query_prefix = "search_query: "
-eta_window = 10
-
-[vector.preprocess]
-strip_quotes = true
-strip_signatures = true
-strip_html = true
-strip_base64 = true
-strip_url_tracking = true
-collapse_whitespace = true
-
-[vector.embed.scope]
-# Empty means embed the full archive. Set this for partial generations.
-message_types = ["sms", "mms"]
-# Use stable account identifiers, not numeric source IDs. This keeps a scoped
-# generation usable after a daemon restart.
-# accounts = ["you@work.example"]
-
-[attachments.documents]
-# Hosted extraction is opt-in and requires a separately recorded consent.
-enabled = false
-provider = "mistral"
-region = "eu"
-api_key_env = "MISTRAL_API_KEY"
-model = "mistral-ocr-4-0"
-retention_posture = "zdr"
-training_posture = "opted-out"
-max_file_bytes = 52428800
-max_pages_per_document = 500
-max_response_bytes = 67108864
-max_normalized_chars = 25000000
-max_spool_bytes = 536870912
-min_free_space_bytes = 1073741824
-request_timeout = "5m"
-max_retries = 3
-max_pages_per_run = 10000
-max_estimated_cost_usd_per_run = 50
-# Set both pricing fields together to include a cost estimate in manual build preflight.
-# estimated_cost_usd_per_1000_units = 0.001
-# pricing_assumption_on = "2026-08-17"
-
-[attachments.documents.scope]
-# Empty includes every supported message type.
-message_types = ["email"]
-
-[attachments.documents.index]
-lexical = true
-store_chunk_text = true
-
-[[synctech_sms.sources]]
-name = "phone-backups"
-enabled = true
-backend = "drive"
-folder_id = "google-drive-folder-id"
-google_account = "you@gmail.com"
-owner_phone = "+14155551234"
-schedule = "30 4 * * *"
-```
 
 ## Remote Deletion Consent
 
@@ -202,6 +32,22 @@ Consent belongs to the invoking CLI. When a command uses a remote daemon, the
 CLI forwards its effective consent for that operation; the remote daemon's own
 `[deletion]` section is not server policy for a command invoked elsewhere.
 Staging, listing, inspecting, and dry-running deletion batches remain ungated.
+
+## Choose optional processing
+
+Use [recommended configuration](usage/recommended-configuration.md) for a guided
+setup, then return here for exact keys and defaults. Each processing feature
+has a separate scope and consent contract.
+
+- [Profile automation](usage/people-automation.md): tracked people, sweep
+  providers, budgets, and fact resolution.
+- [Conversation briefs](usage/people-briefs.md): enrolled people and versioned
+  summaries through the sweep provider.
+- [External enrichment](usage/people-enrichment.md): Exa/SixtyFour policy setup,
+  exact consent, request limits, and the persistent suppression key.
+- [Document indexing](usage/document-indexing.md): extraction, document vectors,
+  and separate query consent.
+- [Vector search](usage/vector-search.md): text, person, and visual indexes.
 
 ## People sweep inference
 
@@ -341,8 +187,8 @@ here so the configuration is ready when the gate ships.
 `codex_app_server` profiles are also the one protocol `person provider add`
 cannot create: generic onboarding negotiates HTTP capabilities through an
 endpoint, while codex_app_server has no endpoint to negotiate against and
-runs through an attested local Codex executable instead. Configure the
-profile manually, then authorize it with the device-code login:
+runs through an attested local Codex executable instead. The following is
+a reference shape for that gated implementation, not a working setup procedure:
 
 ```toml
 [people.sweep.providers.codex]
@@ -362,12 +208,9 @@ allow_sensitive = true
 `"none"`: the transport is the local Codex app server, authenticated by its
 own ChatGPT login. Sensitivity policy is protocol-agnostic: real Codex sweeps
 send the same seed and context packets, so `allow_sensitive = true` is
-required here as well. After saving
-the profile, run `msgvault person provider login` to complete the device-code
-authorization, review `msgvault person provider models` for the exact model
-identifiers and reasoning efforts your subscription exposes, then run
-`msgvault person provider check codex` and
-`msgvault person provider consent codex --yes` as with any other profile.
+required here as well. Login, model discovery, checks, and consent cannot make
+this profile usable while the release gate is closed. Use one of the available
+HTTP protocols for current [profile automation](usage/people-automation.md).
 
 ### Windows Paths
 
@@ -624,42 +467,13 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | `rate_limit_qps` | `5` | Gmail API requests per second |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 
-Remote image archiving is **off by default**. Enabling it sends requests to
-sender-controlled servers. Those requests can activate tracking pixels and
-disclose the archive server's IP address. Private-network targets are blocked,
-but this does not prevent tracking by public image hosts.
+Remote image archiving is **off by default**. Enabling it contacts
+sender-controlled servers and can activate tracking pixels or disclose the
+archive server's IP address. Restart the daemon after changing the setting.
+It applies to new ingestion; existing mail needs an explicit backfill.
 
-```toml
-[sync]
-archive_remote_images = true
-```
-
-Restart the daemon after changing this setting. It applies to newly ingested
-messages, not mail already in the archive. To process existing mail explicitly:
-
-```bash
-msgvault archive-remote-images --allow-tracking
-```
-
-For large initial syncs or imports, leave this setting off and run the backfill
-command afterward. Images are fetched sequentially, with a 15-second timeout
-per fetch and a 60-second budget per message, so slow image hosts can
-substantially delay mail ingestion.
-
-Downloaded PNG, JPEG, GIF, and WebP images are stored locally and displayed
-offline in message and conversation views. Raw MIME and stored HTML are left
-unchanged. Disabling the setting stops automatic downloads without removing
-images already archived. Missing images remain subject to the reader's existing
-remote-image consent control.
-
-Archived images count as inline attachments, including small logos and tracking
-pixels. They affect attachment counts and filters and appear in the Files view.
-
-Archiving handles HTTP(S) `<img src>` URLs, including protocol-relative URLs.
-It does not fetch CSS backgrounds, `srcset` candidates, linked pages, or external
-stylesheets. Each message is limited to 64 distinct image URLs, 10 MiB per
-image, and 30 MiB of newly archived image data. Failed downloads are reported
-without failing the mail import.
+See [remote email images](usage/remote-images.md) for the opt-in workflow,
+supported formats, download limits, and effect on attachment counts.
 
 ### `[server]`
 
@@ -1250,3 +1064,183 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `tokens/` | OAuth tokens per account |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+
+## Example configuration
+
+Copy only the sections you need and replace example paths and credentials.
+
+```toml
+[data]
+# Base data directory (default: ~/.msgvault)
+data_dir = "/path/to/msgvault/data"
+
+# User-requested exports (default: {data_dir}/exports)
+export_dir = "/path/to/msgvault/exports"
+
+# Database URL (default: {data_dir}/msgvault.db; PostgreSQL DSN supported)
+database_url = "/path/to/msgvault.db"
+
+# Keep attachment content as individual files instead of creating packs.
+# loose_attachments = true
+
+[oauth]
+# Path to Google OAuth client secrets JSON for browser OAuth
+client_secrets = "/path/to/client_secret.json"
+
+# Google service account key for Workspace domain-wide delegation (optional)
+# service_account_key = "/path/to/service-account.json"
+
+# Named OAuth apps for Google Workspace orgs (optional)
+[oauth.apps.acme]
+client_secrets = "/path/to/acme_workspace_secret.json"
+# service_account_key = "/path/to/acme_service_account.json"
+
+[microsoft]
+# Azure AD app registration client ID (required for M365)
+client_id = "your-azure-app-client-id"
+# redirect_uri = "http://localhost:8089/callback/microsoft"  # default
+# tenant_id = "your-tenant-id"   # optional, default "common"
+
+# Optional source-scoped Fastmail alias inventory.
+[[fastmail]]
+source_id = 14
+api_token = "replace-with-a-Fastmail-API-token"
+auto_confirm_identities = false
+
+[discord]
+# Per-attachment download cap (default: 50 MiB)
+max_media_bytes = 52428800
+# Skip attachments from rooms with more than this many participants
+# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+media_max_participants = 20
+# Trailing edit/delete/reaction repair window (default: seven days)
+edit_rescan_window = "168h"
+
+[discord.guilds."123456789012345678"]
+# Channel, thread, and forum-post IDs; empty include means all accessible.
+include = ["456789012345678901"]
+exclude = ["567890123456789012"]
+
+[log]
+# Persistent structured file logging (opt-in)
+enabled = true
+# dir = "/path/to/logs"        # default: <data_dir>/logs
+# level = "info"                # debug, info, warn, error
+# sql_trace = false             # log every SQL query (verbose)
+# sql_slow_ms = 100             # slow query threshold in ms
+
+[sync]
+# Gmail API rate limit (requests per second)
+rate_limit_qps = 5
+
+[server]
+# API server settings (used by `msgvault serve` and `msgvault daemon`)
+# api_port is optional; omit it (or set 0) to auto-select an open port that
+# clients discover automatically. Set a fixed port for remote/NAS deployments.
+api_port = 0
+bind_addr = "127.0.0.1"
+api_key = "your-secret-key"
+daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
+daemon_auto_restart = "newer" # newer, never, or always
+
+[analytics]
+# Daemon-side analytics engine for Web UI, TUI, and aggregate HTTP views:
+# "auto" starts on live SQL and switches to DuckDB after cache maintenance.
+# "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
+engine = "auto"
+# Build a stale/missing cache during daemon startup and after scheduled syncs.
+auto_build_cache = true
+# Minimum age of a usable cache before a scheduled sync may rebuild it again.
+# min_rebuild_interval = "6h"
+
+[backup]
+# Default repository for `msgvault backup`.
+repo = "~/Backups/msgvault"
+zstd_level = 0
+
+[deletion]
+# Durable consent for remote deletion execution. Opt in deliberately;
+# defaults to false.
+remote_enabled = false
+
+[remote]
+# Remote msgvault endpoint for CLI remote mode
+url = "http://nas-ip:8080"
+api_key = "remote-api-key"
+allow_insecure = true
+
+# Scheduled sync accounts
+[[accounts]]
+email = "you@gmail.com"
+schedule = "0 * * * *"
+enabled = true
+
+[vector]
+# Semantic and hybrid search (opt-in)
+enabled = true
+backend = "sqlite-vec"
+# backend = "pgvector"  # with a PostgreSQL database_url and pgvector build
+
+[vector.embeddings]
+endpoint = "http://localhost:11434/v1"
+model = "nomic-embed-text"
+dimension = 768
+document_prefix = "search_document: "
+query_prefix = "search_query: "
+eta_window = 10
+
+[vector.preprocess]
+strip_quotes = true
+strip_signatures = true
+strip_html = true
+strip_base64 = true
+strip_url_tracking = true
+collapse_whitespace = true
+
+[vector.embed.scope]
+# Empty means embed the full archive. Set this for partial generations.
+message_types = ["sms", "mms"]
+# Use stable account identifiers, not numeric source IDs. This keeps a scoped
+# generation usable after a daemon restart.
+# accounts = ["you@work.example"]
+
+[attachments.documents]
+# Hosted extraction is opt-in and requires a separately recorded consent.
+enabled = false
+provider = "mistral"
+region = "eu"
+api_key_env = "MISTRAL_API_KEY"
+model = "mistral-ocr-4-0"
+retention_posture = "zdr"
+training_posture = "opted-out"
+max_file_bytes = 52428800
+max_pages_per_document = 500
+max_response_bytes = 67108864
+max_normalized_chars = 25000000
+max_spool_bytes = 536870912
+min_free_space_bytes = 1073741824
+request_timeout = "5m"
+max_retries = 3
+max_pages_per_run = 10000
+max_estimated_cost_usd_per_run = 50
+# Set both pricing fields together to include a cost estimate in manual build preflight.
+# estimated_cost_usd_per_1000_units = 0.001
+# pricing_assumption_on = "2026-08-17"
+
+[attachments.documents.scope]
+# Empty includes every supported message type.
+message_types = ["email"]
+
+[attachments.documents.index]
+lexical = true
+store_chunk_text = true
+
+[[synctech_sms.sources]]
+name = "phone-backups"
+enabled = true
+backend = "drive"
+folder_id = "google-drive-folder-id"
+google_account = "you@gmail.com"
+owner_phone = "+14155551234"
+schedule = "30 4 * * *"
+```

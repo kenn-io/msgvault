@@ -1,20 +1,49 @@
 ---
-last_edited: 2026-08-30
+last_edited: 2026-09-08
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
 
 <p class="faq-question">Can msgvault send email?</p>
 
-**No.** msgvault cannot send, forward, or reply to email. While msgvault requests full Gmail account access (required for features like sync, search, and deletion), we have intentionally not built any send functionality into the tool. This is both a scope discipline decision and a security one: msgvault is an archival and analysis tool, not an email client. Whether you are using the CLI directly, running it from a script, or letting an AI agent operate through the MCP server, there is no code path in msgvault that composes or sends mail.
+No. msgvault archives and analyzes messages; it does not compose, send, forward,
+or reply to mail. Gmail authorization requests `gmail.modify` by default for
+archive and deletion workflows. `add-account --readonly` requests read-only
+access instead. See [read-only Gmail access](guides/oauth-setup.md#read-only-access)
+for existing-account restrictions.
 
-<p class="faq-question">Is it safe to use with AI agents (MCP, Claude, etc.)?</p>
+<p class="faq-question">What can an AI assistant do through MCP?</p>
 
-For normal use, yes. The MCP server exposes read, search, and deletion-staging operations (no sync, no sending, no direct deletion). An AI agent operating through the MCP server can read and search the selected msgvault archive, and can stage messages for deletion by asking the selected daemon to save a manifest. Staged deletions are not executed until you explicitly run `msgvault delete-staged` from the CLI.
+MCP exposes archive search, messages, files, analytics, and people tools.
+Assistants can read private message content and can explicitly request private
+person notes. General profile reads omit Notes and sensitive attributes; this
+is not a promise that the assistant cannot access private archive content.
 
-However, you should be aware of prompt injection risks. If an adversary can influence the prompts your LLM processes (through malicious email content, for example), the agent could be manipulated into reading sensitive messages such as password reset links or two-factor codes. In a worst case scenario, this could allow an attacker to compromise accounts by combining prompt injection with the ability to read your inbox.
+MCP can stage a deletion manifest but cannot execute remote deletion, send mail,
+or sync new messages. Optional profile writes require `--allow-profile-writes`;
+HTTP write tools also need `--http-allow-writes`. Execution of a staged mail
+deletion remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
 
-The MCP server's lack of sync capability offers some protection here, since an agent cannot pull new messages on demand. But this project does not claim to be immune to LLM security issues. Users are ultimately responsible for their own security setup and for understanding the risks of giving LLMs access to sensitive data.
+Treat imported messages, attachments, and generated briefs as untrusted input to
+an assistant. Choose an assistant and model provider you are willing to give
+that data to, and review its requested actions. MCP is an access interface,
+not a guarantee against prompt injection.
+
+<p class="faq-question">Does everything work offline?</p>
+
+Keyword search, ordinary archive reads, and analytics use stored data. Sync
+contacts the source service. Optional semantic search, document extraction,
+profile automation, and external enrichment can send selected data to your
+configured providers. A supported local embedding endpoint keeps that embedding
+work local; it does not automatically change the providers used by other
+features. See [recommended configuration](usage/recommended-configuration.md).
+
+<p class="faq-question">Why is a documented feature missing from my binary?</p>
+
+The documentation follows current `main`, including work after 0.19.3 that is
+not yet released. Check `msgvault version` and the installed command's `--help`,
+then consult [the changelog](changelog.md#unreleased). A configured remote daemon also
+needs a compatible version.
 
 <p class="faq-question">What is the web server for?</p>
 
@@ -32,7 +61,7 @@ By default, everything stays on your local machine. msgvault stores messages in 
 
 Yes. You can sync any standard IMAP server, Microsoft 365 mail and Teams,
 Discord guilds, Slack workspaces, Beeper Desktop chats, Google Calendar, and supported meeting
-note services. You can also import email from PST, MBOX, or Apple Mail and
+note services. You can also import email from PST, MBOX, MailMate-style EML directories, or Apple Mail and
 chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
 Backup & Restore. All messages use the same Web UI, search, TUI, MCP, REST API,
 and export surfaces. See [Setup Guide](/docs/setup/#add-an-imap-account),
@@ -54,11 +83,12 @@ Starting in v0.20.0, remote deletion remains permanently opt-in. The invoking
 CLI may enable it durably with `[deletion] remote_enabled = true` or for one
 command with `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both mechanisms are permanent;
 there is no planned automatic removal of the guardrail. A remote daemon's own
-`[deletion]` section is not policy for a command invoked elsewhere. Gmail
-messages move to trash by default; `--permanent` opts into permanent Gmail
-deletion. IMAP deletion removes messages from the provider. Your local archive
-is always preserved. See [Deleting Email](/docs/usage/deletion/) for the complete
-process.
+`[deletion]` section is not policy for a command invoked elsewhere. Gmail and
+IMAP move messages to Trash by default; `--permanent` requests permanent
+deletion. Recovery from Trash depends on the provider. Remote deletion retains
+archived content and records source-deletion state. A separate local purge
+with `gc` or `delete-deduped` can remove archive data. See
+[Deleting Email](/docs/usage/deletion/) for the complete process.
 
 ---
 

@@ -75,3 +75,8 @@ orphan generated-assets branch through `docs/screenshots/update-generated-assets
 
 The pages embed each PNG inside a `<figure data-lightbox>` so it can be clicked
 to zoom; keep the `alt` text in sync with the diagram when you change it.
+
+The deduplication and safety-ladder raster captures are currently omitted from
+the public reading path. Their HTML sources now distinguish IMAP Trash from
+explicit permanent deletion; regenerate and inspect both before restoring any
+links to the captures on the generated-assets branch.

@@ -1,14 +1,12 @@
-# PostgreSQL Backend Implementation Status
+# PostgreSQL backend: historical implementation tracker
 
-This is a repository-local engineering tracker for PostgreSQL backend work. It
-is intentionally not user documentation. Public technical docs belong in the
-docs website:
+This record preserves the original PostgreSQL implementation scope and follow-up
+ideas. Its delivery notes and future-work list are historical, not current
+release status. Use [PostgreSQL setup and limits](../architecture/postgresql.md),
+[search ranking](../architecture/search-ranking.md), and the
+[TUI guide](../usage/tui.md) for current behavior.
 
-- PostgreSQL setup and operations: `msgvault-docs/src/content/docs/architecture/postgresql.mdx`
-- Backend ranking behavior: `msgvault-docs/src/content/docs/architecture/search-ranking.mdx`
-- TUI keybindings: `msgvault-docs/src/content/docs/usage/tui.mdx`
-
-## Current State
+## State recorded during implementation
 
 The PostgreSQL path is functionally implemented for the core archive workflow:
 
@@ -25,7 +23,7 @@ The PostgreSQL path is functionally implemented for the core archive workflow:
 SQLite remains the default backend. PostgreSQL is opt-in via
 `[data].database_url`.
 
-## Implemented In This PR
+## Original delivery scope
 
 - PostgreSQL query/store fixes needed after the initial dialect extraction.
 - pgvector backend under `internal/vector/pgvector/`.
@@ -38,7 +36,7 @@ SQLite remains the default backend. PostgreSQL is opt-in via
   lifecycle.
 - CI lanes for live PostgreSQL and pgvector coverage.
 
-## Remaining Implementation Work
+## Follow-up work recorded at the time
 
 These are real follow-ups, not blockers for the current branch:
 

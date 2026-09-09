@@ -4,6 +4,16 @@ title: Introduction
 description: Why msgvault was created and what problem it solves.
 ---
 
+msgvault is a local-first archive for communications and relationships. To
+start using it, follow [Setup](setup.md) or [Choose a Source](guides/sources.md).
+For the current product overview, visit [msgvault.io](https://msgvault.io/).
+
+## Why I built msgvault
+
+The story below explains the project's origin. Current capabilities and release
+status are maintained in the [documentation index](index.md) and
+[changelog](changelog.md).
+
 I have been living in my e-mail inbox for more than 30 years since the
 beginning of the internet in the mid-1990s.
 

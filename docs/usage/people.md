@@ -1,227 +1,330 @@
 ---
-last_edited: "2026-09-07"
-title: People, Profiles, and Source Identities
-description: Keep person profiles, prepare for conversations with recent-message briefs, and identify your own accounts.
+last_edited: "2026-09-08"
+title: People and Profiles
+description: Find people across your archive, keep their details together, and understand your contact history.
 ---
 
-Keep a person's contact details, relationships, and profile facts together,
-and [read a recent-message brief](#catch-up-before-your-next-conversation)
-before your next conversation. Use the Web Directory, TUI, or commands on this
-page to manage profiles through your local or remote daemon.
+Find someone across email, chats, and meetings, then keep their contact details
+and the things you want to remember in one profile. Start in the Web UI's
+**Directory** or the [TUI People browser](/docs/usage/tui/#people).
 
-Three kinds of record connect the archive to those profiles:
+| I want to… | Start here |
+|---|---|
+| Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
+| Find files you exchanged | [Person files](#find-files-related-to-a-person) |
+| Keep profile facts current from messages | [Profile automation](/docs/usage/people-automation/) |
+| Look up public profile information | [External enrichment](/docs/usage/people-enrichment/) |
+| Sync contacts with an address book | [CardDAV contacts](/docs/usage/people-carddav/) |
+| Tell msgvault which accounts and aliases are mine | [Source identities](#discover-source-identities) |
+
+Ordinary profile editing and identity discovery use your archive. Briefs,
+automatic fact extraction, semantic person search, and external enrichment
+need separate provider configuration and consent. You can use the Directory
+without enabling them.
+
+## Understand the records
 
 - A **source identity** is an address or handle that belongs to you in one
   source. It helps msgvault recognize messages you sent.
 - An **observed person** groups addresses and handles linked by archive
   evidence. Matching display names alone do not combine people.
-- A **person profile** is a person you explicitly promote to a saved record.
-  Its stable ID keeps your curated details attached when archive links change.
+- A **person profile** is a saved record with a stable person ID. Your curated
+  details stay attached when archive links change.
 
-## Configure provider-backed person sweeps
+Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
+Commands name the ID they require; the two are not interchangeable. Promotion
+creates a profile from an observed person. Subscribed CardDAV contacts can also
+create profiles when imported.
 
-People sweeps can maintain supported profile fields from bounded archive
-evidence. Provider access is disabled until one exact named profile passes a
-synthetic check and you separately consent to its privacy policy.
+## Promote a durable person
 
-Add a profile with explicit custom values when you do not want catalog
-discovery. This path does not contact models.dev:
+Open an observed contact in Directory and promote it, or use its participant
+ID with the CLI. Replace `42` with that participant ID and `7` with the person
+ID returned by promotion:
 
 ```bash
-export ZAI_API_KEY="..."
-msgvault person provider add glm --custom \
-  --protocol openai_chat \
-  --endpoint https://api.z.ai/api/paas/v4 \
-  --model glm-5.3 \
-  --auth bearer \
-  --credential-env ZAI_API_KEY \
-  --retention-posture provider-declared \
-  --training-posture provider-declared \
-  --source conversation_text \
-  --source meeting_text \
-  --source-since 2026-01-01 \
-  --allow-sensitive \
-  --reasoning-effort max \
-  --yes
+msgvault person promote 42
+msgvault person list
+msgvault person get 7
+msgvault person set-display-name 7 "Alex Example"
 ```
 
-`--allow-sensitive` is required for real sweeps: any packet with seed or
-context evidence is marked sensitive, so a profile without this flag fails on
-every real sweep. The flag permits sending that verbatim archive text to the
-selected provider; without it only the synthetic capability check, which
-sends no archive text, can run.
+Repeating promotion returns the same profile. Archive observation alone does
+not promote people. Linking another cluster into a promoted one expands that
+profile's participant bindings. Linking two clusters that already belong to
+different profiles reports a conflict instead of silently merging curated
+data. Unlinking evidence does not move or delete profile bindings.
 
-Omit `--custom` to allow interactive onboarding to consult models.dev for
-discovery hints. Models.dev is used only by `provider add`; it is not a runtime
-dependency and never receives archive content or credentials. A catalog
-suggestion never chooses where a credential is sent either: onboarding pairs a
-credential only with an endpoint you passed explicitly via `--endpoint` or
-with the first-party API hosts compiled into msgvault. The add command
-checks the selected endpoint with fixed synthetic input and saves the exact
-negotiated protocol behavior. It does not grant archive egress consent.
-
-Review the saved policy, then consent explicitly and run a bounded sweep:
+Your display-name override is also used in analytics, search results, and
+exports. Original addresses and message content stay available. Clear the
+override with `--clear`:
 
 ```bash
-msgvault person provider status glm
-msgvault person provider consent glm --yes
-msgvault person provider use glm
+msgvault person set-display-name 7 --clear
+```
+
+`person delete` is permanent. It removes the profile bindings and retires the
+vCard UID forever; promoting the same observed cluster later creates a new
+person and UID.
+
+## Keep private notes
+
+Save context in your own words with the Notes field. It preserves line breaks
+and keeps earlier values in attribute history:
+
+```bash
+msgvault person notes get 7
+msgvault person notes set 7 --text "Met at the community workshop."
+msgvault person notes append 7 --text "Ask how the garden project is going."
+msgvault person notes set 7 --text @person-notes.txt
+```
+
+`--text -` reads standard input. Append adds a new line atomically, so two
+concurrent appends do not overwrite each other. When replacing text in an
+automated workflow, `set --expected-value-id <id>` rejects a concurrent change.
+Notes are marked sensitive and
+excluded from semantic person search and MCP's general `get_person_profile`
+response. The separate MCP `get_person_notes` tool can read them. If you publish
+a profile to CardDAV, Notes map to the vCard `NOTE` property.
+
+## Record employment and relationships
+
+Organizations have their own profiles. Employment connects a person to an
+organization and can retain a title, role, department, location, and dates:
+
+```bash
+msgvault organization create "Example Cooperative" --domain example.com
+msgvault employment add --person 7 --organization 3 --title "Engineer" --start 2024-03
+msgvault employment list --person 7
+msgvault employment end 9 --end 2026-08
+```
+
+Use the IDs returned by your commands. `employment set-primary` chooses the
+primary current job. Ending a job keeps its history. Organization commands
+also support profile edits, custom attributes, retirement, and merging
+duplicates; `organization show 3 --history` includes superseded profile rows.
+
+Relationships connect two saved people and have a direction. The forward label
+reads “source person is the ___ of target person.” List the available types
+before choosing one:
+
+```bash
+msgvault relationship-type list
+msgvault person relationship add 7 parent 12 --from 2020
+msgvault person relationship list 7 --include-ended
+```
+
+The same stored relationship appears from both people's perspectives, with the
+appropriate forward or reverse label. Dates accept `YYYY`, `YYYY-MM`, or
+`YYYY-MM-DD`. Use `person relationship end <relationship-id> <until-date>` to
+keep an ended relationship in history. `relationship-type create` adds your
+own types; symmetric types require identical forward and reverse labels.
+
+## Find a person by what you remember
+
+Directory name and identity searches work without an embedding provider. For a
+description such as “people who enjoy gardening,” enable
+[semantic people search](/docs/configuration/#vectorpeople), grant its separate
+consent, and build the embeddings:
+
+```bash
+msgvault person provider status --semantic-embeddings
+msgvault person provider consent --semantic-embeddings --yes
 msgvault daemon restart
-msgvault person sweep run --limit 5
-msgvault person sweep status
+msgvault embeddings build
+msgvault person search "people who enjoy gardening" --limit 10
 ```
 
-`provider consent <name>` can grant the checked profile while scheduling is
-still disabled. `provider use <name>` selects that profile and enables people
-sweeps, so the following manual run and future scheduled runs use it.
-`provider add` never switches the active selection or enables sweeps: it only
-publishes the profile and records its synthetic check. A profile can exist
-without being selected as long as people sweeps stay disabled.
+This searches saved profiles, using current names, categories, locations,
+employment, relationships, and eligible searchable attributes. It does not
+search your messages or private Notes. Sensitive attributes and `how_we_met`
+are excluded. Search text and the curated person documents go to the configured
+embedding endpoint. `--limit` defaults to 20 and accepts 1–100; `--json` includes
+person IDs and scores.
 
-`add`, `use`, `remove`, `check`, `consent`, and `status` all accept `--json`.
-`status <name> --json` reports the profile, its recorded `check`, and its
-`consent` state, which together are every gate a sweep must pass, so an agent
-can decide the next step without parsing prose.
+## Find files related to a person
 
-`provider use` and `provider remove` edit the `config.toml` on the machine
-where you run them, so run them on the daemon host; against a configured
-remote daemon they refuse rather than edit a config file that daemon never
-reads. A running daemon keeps the people sweep configuration it started
-with. Run `msgvault daemon restart` after changing the selected provider or
-enabling sweeps so scheduled sweeps and `person brief generate` use the new
-configuration. The `person sweep run` command reads the current configuration
-separately.
+Use a saved person ID to find attachments across their linked identities:
 
-Use `--api-key-stdin` during `provider add` to store a profile-specific key
-outside `config.toml`, or `--credential-env NAME` to store only an environment
-variable name. Never put the secret value in a command argument. Stored keys
-are supported on Linux and macOS only; on other platforms `provider add`
-refuses a stored credential before reading it, so pass `--credential-env`
-there. Custom local gateways can use `--custom`; their synthetic check still
-calls the configured endpoint.
+```bash
+msgvault person files 7 --direction from_person --filename proposal
+msgvault person files 7 --mime-family pdf --after 2026-01-01
+msgvault person files 7 --lane documents --query "project proposal"
+msgvault person files 7 --lane visual --query "garden plan"
+msgvault person files 7 --lane all --query "project proposal" --json
+```
 
-GLM 5.3, Kimi K3, OpenRouter, Venice, open-agent-api, Gemini, Anthropic, and
-OpenAI Responses are examples of profiles over the supported HTTP protocols,
-not presets or provider-name branches. A gateway uses the protocol it
-exposes. OpenRouter and Venice may forward data to upstream operators, so
-review the complete routing path and its privacy terms. Use subscription and
-logged-in endpoints only as their terms allow. The `codex_app_server`
-protocol is present but release-gated: every Codex operation currently fails
-closed until its executable isolation gate ships, and `provider add` cannot
-create it; see the Codex app-server profiles section of the configuration
-reference.
+The default `metadata` lane lists archived attachments without semantic search.
+`--direction` accepts `from_person`, `to_person`, and `group`; it is repeatable.
+`--filename` matches a case-insensitive substring. MIME families are `image`,
+`pdf`, `audio`, `video`, `text`, `document`, `archive`, and `other`.
 
-Msgvault never switches providers automatically. A locally invalid response
-may receive one repair call on the same resolved profile, credential, endpoint,
-and model. Any profile edit needs a fresh exact check and consent. Live
-credential checks are useful operator verification but are not CI tests.
+The `documents` and `visual` lanes need their respective indexes; see
+[document search](/docs/usage/document-indexing/) and
+[visual search](/docs/usage/vector-search/). Both require `--query`, as does
+`all`. The `all` result reports each lane separately, including unavailable
+lanes; its metadata results do not use the semantic query. Document search
+cannot apply filename or MIME-family filters.
+
+Each lane has its own cursor. Use `--cursor` with one lane to continue a result;
+`all` cannot take a cursor. `--limit` is per lane, defaults to 100, and accepts
+1–100. `--after` is inclusive and `--before` exclusive; both accept a date or
+RFC3339 timestamp.
 
 ## Catch up before your next conversation
 
-A person brief gives you a short summary of what someone recently shared,
-with references to the archived messages behind it. Read it before a call or
-message to remember what was going on and what you might ask about next.
+[Person briefs](/docs/usage/people-briefs/) summarize recent chat and text
+messages with citations. The guide covers enrollment, generation, reading in
+Directory or the TUI, refresh timing, and saved versions. Email-only contacts
+cannot receive a brief yet.
 
-Briefs currently use the person's own messages from supported chat and text
-sources: Apple Messages/iMessage, Beeper, Discord, Facebook Messenger, Google
-Messages, Slack/Slackdump, SyncTech SMS, Teams, and WhatsApp. Email, meeting
-transcripts, documents, and your own replies are excluded. An email-only
-contact cannot receive a brief yet.
+## Configure provider-backed person sweeps
 
-### Generate your first brief
+[Profile automation](/docs/usage/people-automation/) maintains facts for people
+you choose to track. Follow that guide to check and consent to a provider,
+change its policy, recover stale consent after an upgrade, and inspect or pin
+automatic facts. [External enrichment](/docs/usage/people-enrichment/) has a
+separate setup for looking up public information.
 
-First, [configure a provider](#configure-provider-backed-person-sweeps), consent
-to sending it archive text, and restart the daemon after enabling sweeps or
-changing the selected provider. The profile must allow sensitive content and
-include `conversation_text` in its allowed sources.
+## Merge duplicate profiles and reverse a merge
 
-Find the person's stable profile ID with `msgvault person list`. If they do not
-have a profile yet, [promote them](#promote-a-durable-person) first. Replace `7`
-below with that profile ID:
+Merge two durable profiles only after reviewing both people. The first person
+survives with the same ID and vCard UID; the second person's participants and
+profile data move to it, and the retired UID becomes an alias. Both current
+revisions and an idempotency key are required:
 
 ```bash
-msgvault person brief enroll 7 --track
-msgvault person brief generate 7
-msgvault person brief show 7
+msgvault person merge 7 12 \
+  --survivor-revision 4 \
+  --absorbed-revision 2 \
+  --idempotency-key merge-7-12
 ```
 
-Enrollment enables briefs for that person. `--track` also turns on profile
-tracking if needed; without it, enrollment requires the person to be tracked
-already. Tracking alone does not enable briefs.
+Conflicting single-value attributes remain reviewable instead of being
+dropped. Inspect the merge and decide each candidate explicitly:
 
-Generation sends eligible archive text to your selected provider and spends
-its configured budget. The separate profile extraction step may update facts
-from a limited set of messages. Attributes suggested by the brief stay in its
-saved structure for your review; they do not change profile facts. The command
-waits for the attempt to finish. If no eligible messages
-exist within the profile's source and date limits, it produces no brief.
+```bash
+msgvault person merge-history 7
+msgvault person merge-show 42
+msgvault person merge-show 42 --snapshot
+msgvault person merge-candidate 18 \
+  --person-id 7 --revision 5 --decision accepted
+```
 
-If brief generation fails, profile extraction still commits. Automatic retries
-use the sweep's retry delay instead of repeating the brief on every daemon tick.
-Running `person brief generate` again bypasses that delay.
+A split creates a new person and a new vCard UID. Select absorbed participant
+lineage with repeated `--participant` flags. Omit `--participant` only when the
+absorbed profile had no participants:
 
-### Read and manage briefs
+```bash
+msgvault person split 7 \
+  --merge-id 42 \
+  --participant 91 \
+  --revision 5 \
+  --idempotency-key split-42-91
+```
 
-In the Web UI, open **Directory**, select the person, and find **Last time we
-talked** on the Overview tab. Enroll or generate there, expand a sentence to see
-its sources, and use the history to inspect version dates and status. To read
-earlier paragraphs and sources, run `msgvault person brief history 7 --json`. If a source cannot
-be tied to an individual sentence, the card labels it as a source for the whole
-brief. Turning enrollment off hides the brief and history in this card; saved
-versions remain available through the CLI and API.
+An exact reversal restores the two pre-merge profiles when their lineage and
+dependencies are still intact. A partial split moves participant-attributable
+data instead of guessing; use `--json` to inspect ambiguous or unrestored rows.
+An active merge prevents deletion of its current person; complete the split
+first.
 
-In the TUI People browser, the Overview tab shows the brief. Press `b` to read
-its details and sources, then `b` or `Esc` to return. Press `:` to enter
-`brief enroll`, `brief generate`, or `brief reject <reason>`. TUI enrollment also
-turns on tracking.
+Profiles with an active CardDAV publication cannot be merged. This prevents a
+local merge from silently reassigning a UID that an external address book is
+already syncing.
 
-| Command | Effect |
-|---|---|
-| `msgvault person brief show 7` | Read the current brief |
-| `msgvault person brief history 7 --limit 5` | List the five newest versions with their dates and status |
-| `msgvault person brief history 7 --json` | Read saved paragraphs and sources as JSON |
-| `msgvault person brief generate 7` | Generate now, using provider budget |
-| `msgvault person brief reject 7 --reason "merges two different threads"` | Remove the current brief from view and let the next eligible run replace it; the reason is optional |
-| `msgvault person brief unenroll 7` | Stop future generation while keeping saved versions |
+Merge snapshots are durable audit data. They retain both profiles' merge-time
+values after later live-profile edits or redaction. A subset copies a complete
+merge packet only with `--include-attributes`, `--include-profiles`, and
+`--include-vcard-resources`; treat that output as containing historical
+personal data.
 
-Every command accepts `--json` to print the daemon's response. MCP assistants
-can read the current brief with `get_person_profile`; MCP does not generate,
-reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
-and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
+## Store typed attributes
 
-### When briefs refresh
+Every archive starts with the same seeded person-field catalog. The
+definitions are system-owned and cannot be deleted; labels, descriptions, and
+display order can be edited. Sensitive fields are not searchable and stay out
+of provider inference unless a provider profile opts in. The seeded descriptive fields, including `ask_me_about` and `how_we_met`,
+accept up to 280 characters per value. The private `notes` field is a separate
+multiline text field. Older 120-character descriptive-field limits are widened
+on the next store open.
 
-Scheduled sweeps generate a brief for an enrolled, tracked person who has none,
-or whose latest brief was rejected. Otherwise, they wait for new activity and
-either a brief at least seven days old or a planned contact date within three
-days. The sweep checks these conditions even when profile extraction has
-already caught up with the archive.
+| Slug | Label | Type | Cardinality | Sensitive | Behavior |
+|---|---|---|---|---|---|
+| `primary_channel` | Primary channel | text choice | single | no | Writable: email, phone, SMS, chat, or in person |
+| `contact_frequency` | Contact frequency | integer days | single | no | Writable |
+| `ask_me_about` | Ask me about | text | multiple | no | Writable and searchable |
+| `last_contacted` | Last contacted | timestamp | single | no | Read-only derived field; it remains empty until its producer supplies a value |
+| `notes` | Notes | text | single | yes | Private free-form notes; maps to the vCard `NOTE` property |
+| `location` | Location | text | single | no | Where this person lives or is based |
+| `birthplace` | Born in | text | single | no | Where this person was born |
+| `membership` | Membership | text | multiple | no | Groups and communities |
+| `religion` | Religion | text | single | yes | Religious identity or affiliation |
+| `politics` | Politics | text | single | yes | Political views or affiliation |
+| `personality` | Personality | text | multiple | yes | Traits and working style |
+| `family_pets` | Pets | text | multiple | no | Pets in this person's family |
+| `interests_fun_now` | Fun now | text | multiple | no | Activities this person enjoys now |
+| `interests_fun_growing_up` | Fun growing up | text | multiple | no | Activities this person enjoyed growing up |
+| `favorites_food` | Favorite food | text | multiple | no | Foods this person especially likes |
+| `favorites_place` | Favorite place | text | multiple | no | Places this person especially likes |
+| `how_we_met` | How we met | text | single | no | How you and this person first met; the one seeded field about your relationship rather than the person alone. Not searchable, so it stays out of the semantic person document |
 
-`generate` bypasses those timing and new-activity checks. It still requires
-enrollment, an enabled provider with consent, eligible messages, and available
-budget. Regeneration saves a new dated version and keeps earlier versions in
-history. Rejecting a brief hides it until a replacement is generated.
+Contact points, addresses, dates such as birthdays, categories, organizations
+and employment, and typed relationships such as partner or child are structured
+records rather than attributes. Manage them with `msgvault person`,
+`msgvault organization`, `msgvault employment`, and `msgvault person
+relationship`, or through the `/api/v1/people` routes in the OpenAPI contract.
 
-The default paragraph limit is 560 characters. You can change generation timing,
-input limits, and output limits in
-[brief configuration](/docs/configuration/#peoplesweepbrief), or disable
-brief generation for everyone without removing enrollments.
+List fields and values, set scalar values, and retain superseded history:
 
-### Sources and saved versions
+```bash
+msgvault attribute-definition list --object-type person
+msgvault person attributes list 7
+msgvault person attributes set 7 primary_channel --value email
+msgvault person attributes set 7 ask_me_about --ordinal 0 --value "release engineering"
+msgvault person attributes set 7 ask_me_about --ordinal 1 --value databases
+msgvault person attributes list 7 --history
+```
 
-Each retained statement cites archive items. If a source is later deleted,
-edited, or reassigned, its citation is marked unsupported. Msgvault trims whole
-items to fit the paragraph limit; `dropped_item_count` records those removals
-and content rejected during validation.
+Setting a value supersedes the current value at the same slug and ordinal; it
+does not overwrite history. `person attributes clear` closes the current value
+and also retains it in history. Use `--dry-run` to validate a set or clear, and
+`--expected-value-id` for compare-and-swap protection when automating updates.
 
-Saved briefs live in your archive. They are not published to CardDAV or included
-in people search. Generating one sends message text to your consented provider;
-reading an existing one makes no provider call. Suggested profile facts pass
-through the same evidence checks as other automatically extracted facts.
+Scalar `--value` input handles text, integer, real, boolean, date, and timestamp
+definitions. Structured record and JSON values use `--value-json` with inline
+JSON, `@path`, or `-` for standard input.
 
-Merging profiles keeps the surviving person's brief history. The other
-person's versions are removed, and their enrollment transfers only if the
-survivor was not already enrolled.
+## Create a portable field definition
+
+Custom fields are metadata rows, not runtime database migrations. Their
+universal IDs and slugs are stable; labels and descriptions can change.
+Validate a definition locally before creating it:
+
+```bash
+msgvault attribute-definition create --dry-run --definition '{
+  "object_type": "person",
+  "slug": "favorite_project",
+  "label": "Favorite project",
+  "value_type": "text",
+  "field_type": "text",
+  "cardinality": "single",
+  "is_searchable": true,
+  "is_audited": true
+}'
+
+msgvault attribute-definition create --definition @favorite-project.json
+```
+
+`attribute-definition rename` changes presentation metadata without changing
+stored references. Deletion is limited to user-created definitions that still
+have no stored values; shipped and non-deletable definitions are protected.
+
+For automation, run `msgvault openapi` or read `/openapi.json` from the daemon.
+The contract includes source identities, person profiles, attribute
+definitions, and historized person-attribute routes, and the generated Go
+client exposes the same operations.
 
 ## Discover source identities
 
@@ -302,170 +405,3 @@ than 24 hours old or the prior attempt failed.
 
 The API token is stored in `config.toml`; protect that file like the rest of the
 msgvault data directory.
-
-## Promote a durable person
-
-People returned by the Web UI or API include participant IDs. Promote any
-participant in one identity cluster to reserve a stable profile:
-
-```bash
-msgvault person promote 42
-msgvault person list
-msgvault person get 7
-msgvault person set-display-name 7 "Alex Example"
-```
-
-Promotion is explicit and idempotent; observed people are not promoted
-automatically. Linking another cluster into a promoted one expands that
-profile's participant bindings. Linking two clusters that already belong to
-different profiles reports a conflict instead of silently merging curated
-data. Unlinking evidence does not move or delete profile bindings.
-
-Clear only the display-name override with `--clear`:
-
-```bash
-msgvault person set-display-name 7 --clear
-```
-
-`person delete` is permanent. It removes the profile bindings and retires the
-vCard UID forever; promoting the same observed cluster later creates a new
-person and UID.
-
-## Merge duplicate profiles and reverse a merge
-
-Merge two durable profiles only after reviewing both people. The first person
-survives with the same ID and vCard UID; the second person's participants and
-profile data move to it, and the retired UID becomes an alias. Both current
-revisions and an idempotency key are required:
-
-```bash
-msgvault person merge 7 12 \
-  --survivor-revision 4 \
-  --absorbed-revision 2 \
-  --idempotency-key merge-7-12
-```
-
-Conflicting single-value attributes remain reviewable instead of being
-dropped. Inspect the merge and decide each candidate explicitly:
-
-```bash
-msgvault person merge-history 7
-msgvault person merge-show 42
-msgvault person merge-show 42 --snapshot
-msgvault person merge-candidate 18 \
-  --person-id 7 --revision 5 --decision accepted
-```
-
-A split creates a new person and a new vCard UID. Select absorbed participant
-lineage with repeated `--participant` flags. Omit `--participant` only when the
-absorbed profile had no participants:
-
-```bash
-msgvault person split 7 \
-  --merge-id 42 \
-  --participant 91 \
-  --revision 5 \
-  --idempotency-key split-42-91
-```
-
-An exact reversal restores the two pre-merge profiles when their lineage and
-dependencies are still intact. A partial split moves participant-attributable
-data instead of guessing; use `--json` to inspect ambiguous or unrestored rows.
-An active merge prevents deletion of its current person; complete the split
-first.
-
-Profiles with an active CardDAV publication cannot be merged. This prevents a
-local merge from silently reassigning a UID that an external address book is
-already syncing.
-
-Merge snapshots are durable audit data. They retain both profiles' merge-time
-values after later live-profile edits or redaction. A subset copies a complete
-merge packet only with `--include-attributes`, `--include-profiles`, and
-`--include-vcard-resources`; treat that output as containing historical
-personal data.
-
-## Store typed attributes
-
-Every archive starts with the same seeded person-field catalog. The
-definitions are system-owned and cannot be deleted; labels, descriptions, and
-display order can be edited. Sensitive fields are not searchable and stay out
-of provider inference unless a provider profile opts in. Every seeded text
-field accepts up to 280 characters per value; earlier archives that were
-seeded with the old 120-character cap are widened in place on the next store
-open.
-
-| Slug | Label | Type | Cardinality | Sensitive | Behavior |
-|---|---|---|---|---|---|
-| `primary_channel` | Primary channel | text choice | single | no | Writable: email, phone, SMS, chat, or in person |
-| `contact_frequency` | Contact frequency | integer days | single | no | Writable |
-| `ask_me_about` | Ask me about | text | multiple | no | Writable and searchable |
-| `last_contacted` | Last contacted | timestamp | single | no | Read-only derived field; it remains empty until its producer supplies a value |
-| `notes` | Notes | text | single | yes | Private free-form notes; maps to the vCard `NOTE` property |
-| `location` | Location | text | single | no | Where this person lives or is based |
-| `birthplace` | Born in | text | single | no | Where this person was born |
-| `membership` | Membership | text | multiple | no | Groups and communities |
-| `religion` | Religion | text | single | yes | Religious identity or affiliation |
-| `politics` | Politics | text | single | yes | Political views or affiliation |
-| `personality` | Personality | text | multiple | yes | Traits and working style |
-| `family_pets` | Pets | text | multiple | no | Pets in this person's family |
-| `interests_fun_now` | Fun now | text | multiple | no | Activities this person enjoys now |
-| `interests_fun_growing_up` | Fun growing up | text | multiple | no | Activities this person enjoyed growing up |
-| `favorites_food` | Favorite food | text | multiple | no | Foods this person especially likes |
-| `favorites_place` | Favorite place | text | multiple | no | Places this person especially likes |
-| `how_we_met` | How we met | text | single | no | How you and this person first met; the one seeded field about your relationship rather than the person alone. Not searchable, so it stays out of the semantic person document |
-
-Contact points, addresses, dates such as birthdays, categories, organizations
-and employment, and typed relationships such as partner or child are structured
-records rather than attributes. Manage them with `msgvault person`,
-`msgvault organization`, `msgvault employment`, and `msgvault person
-relationship`, or through the `/api/v1/people` routes in the OpenAPI contract.
-
-List fields and values, set scalar values, and retain superseded history:
-
-```bash
-msgvault attribute-definition list --object-type person
-msgvault person attributes list 7
-msgvault person attributes set 7 primary_channel --value email
-msgvault person attributes set 7 ask_me_about --ordinal 0 --value "release engineering"
-msgvault person attributes set 7 ask_me_about --ordinal 1 --value databases
-msgvault person attributes list 7 --history
-```
-
-Setting a value supersedes the current value at the same slug and ordinal; it
-does not overwrite history. `person attributes clear` closes the current value
-and also retains it in history. Use `--dry-run` to validate a set or clear, and
-`--expected-value-id` for compare-and-swap protection when automating updates.
-
-Scalar `--value` input handles text, integer, real, boolean, date, and timestamp
-definitions. Structured record and JSON values use `--value-json` with inline
-JSON, `@path`, or `-` for standard input.
-
-## Create a portable field definition
-
-Custom fields are metadata rows, not runtime database migrations. Their
-universal IDs and slugs are stable; labels and descriptions can change.
-Validate a definition locally before creating it:
-
-```bash
-msgvault attribute-definition create --dry-run --definition '{
-  "object_type": "person",
-  "slug": "favorite_project",
-  "label": "Favorite project",
-  "value_type": "text",
-  "field_type": "text",
-  "cardinality": "single",
-  "is_searchable": true,
-  "is_audited": true
-}'
-
-msgvault attribute-definition create --definition @favorite-project.json
-```
-
-`attribute-definition rename` changes presentation metadata without changing
-stored references. Deletion is limited to user-created definitions that still
-have no stored values; shipped and non-deletable definitions are protected.
-
-For automation, run `msgvault openapi` or read `/openapi.json` from the daemon.
-The contract includes source identities, person profiles, attribute
-definitions, and historized person-attribute routes, and the generated Go
-client exposes the same operations.

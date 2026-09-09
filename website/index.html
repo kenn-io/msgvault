@@ -23,7 +23,6 @@
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <a class="wordmark" href="/">
-        <img src="/favicon.svg" width="22" height="22" alt="">
         msgvault
       </a>
       <nav aria-label="Primary navigation">
@@ -97,13 +96,24 @@
     </header>
 
     <main id="main">
-      <section class="hero branded" aria-labelledby="hero-title">
-        <p class="hero-brand">
-          <img src="/favicon.svg" width="68" height="68" alt="">
-          msgvault
-        </p>
-        <h1 id="hero-title">The system of record for your communications and relationships.</h1>
-        <p class="lede">msgvault is a local-first, open-source archive for a lifetime of email, chat, meetings, calendars, and contacts. It keeps everything in one database on your own hardware, resolves the people behind decades of messages, and searches by keyword or by meaning.</p>
+      <section class="hero product-hero" aria-labelledby="hero-title">
+        <div class="hero-overview">
+          <div class="hero-copy">
+            <p class="eyebrow">Local-first. Open source. Yours.</p>
+            <h1 id="hero-title">Your communications.<br>Your relationships.<br>One archive.</h1>
+            <p class="lede">Bring email, chat, meetings, and contacts together on your own hardware. Find what matters, connect the people behind it, and use your history from the terminal, browser, or an AI assistant.</p>
+            <div class="actions">
+              <a class="button primary" href="/guide/">See how it works</a>
+              <a class="button" href="/docs/">Read the docs</a>
+            </div>
+          </div>
+          <figure class="hero-flow">
+            <picture>
+              <source media="(max-width: 620px)" srcset="/assets/archive-flow-mobile.svg" width="360" height="360">
+              <img src="/assets/archive-flow.svg" width="560" height="360" alt="People and communications flow into one msgvault archive, accessible through the TUI, Web UI, and MCP for AI assistants.">
+            </picture>
+          </figure>
+        </div>
         <div class="install-matrix">
           <div class="install-row" data-install-command data-command="curl -fsSL https://msgvault.io/install.sh | bash">
             <span class="install-label">macOS / Linux</span>
@@ -122,10 +132,7 @@
           </div>
         </div>
         <p class="install-hint">Installers fetch the latest release and verify its SHA-256 checksum. Also on <a href="https://prefix.dev/channels/conda-forge/packages/msgvault">conda-forge</a>, or <a href="/docs/setup/">build from source</a>.<span data-install-status aria-live="polite"></span></p>
-        <div class="actions">
-          <a class="button primary" href="/guide/">See how it works</a>
-          <a class="button" href="/docs/">Read the docs</a>
-        </div>
+        <p class="caption">This site describes current main, including unreleased work. <a href="/docs/changelog/#unreleased">Read the changelog for new features and upgrade notes</a>.</p>
       </section>
 
       <section class="site-section" aria-labelledby="record-title">
@@ -134,15 +141,15 @@
             <p class="section-index">01 / Record</p>
             <h2 id="record-title">Every channel. One archive.</h2>
           </div>
-          <p>Twenty years of correspondence should not be scattered across a dozen walled gardens. msgvault syncs live sources and imports dead exports into one schema, keeping raw payloads and content-addressed attachments intact.</p>
+          <p>Twenty years of correspondence should not be scattered across a dozen walled gardens. msgvault syncs live sources and imports local exports into one schema, keeping raw payloads and content-addressed attachments intact.</p>
         </div>
         <figure class="diagram pipeline">
           <img src="/assets/sources-map.svg" alt="Mail, chat, meetings, calendar, contacts, and offline imports converging into one msgvault archive of SQLite, attachments, and Parquet">
         </figure>
         <ol class="ledger">
-          <li><strong>Mail</strong><span>Gmail, IMAP, and Microsoft 365 sync; MBOX, Apple Mail, PST, and EML imports.</span></li>
+          <li><strong>Mail</strong><span>Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and EML imports.</span></li>
           <li><strong>Chat</strong><span>Slack, Teams, Discord, and every network behind Beeper; WhatsApp, iMessage, Messenger, and SMS imports.</span></li>
-          <li><strong>Meetings</strong><span>Granola and Circleback notes and transcripts in the same searchable record.</span></li>
+          <li><strong>Meetings</strong><span>Granola, Circleback, and Notion AI Meeting Notes in the same searchable record.</span></li>
           <li><strong>Calendar</strong><span>Google Calendar events, organizers, and attendees, read-only.</span></li>
           <li><strong>Contacts</strong><span>Bidirectional CardDAV: pull address books, publish curated people back.</span></li>
         </ol>
@@ -165,7 +172,7 @@
           <article class="proof">
             <p class="proof-tag">Durable profiles</p>
             <h3>Promote the people who matter.</h3>
-            <p>A promoted profile gets a stable ID and vCard UID, so names, notes, and typed attributes survive later identity changes. Merges are atomic and reversible.</p>
+            <p>A promoted profile gets a stable ID and vCard UID, so names, notes, and typed attributes survive later identity changes. Merge profiles with history and explicit reversal controls.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Fact ledger</p>
@@ -186,7 +193,7 @@
             <p class="section-index">03 / Operation</p>
             <h2 id="operation-title">Work the archive in the browser.</h2>
           </div>
-          <p>The daemon serves a dense, keyboard-driven browser application: relationships, a unified Everything table, files, saved views, source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and Forward restore exact views.</p>
+          <p>The daemon serves a dense, keyboard-driven browser application: relationships, a unified Everything table, files, saved views, Directory, operation history, source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and Forward restore exact views.</p>
         </div>
         <figure class="capture">
           <a href="/docs/assets/static/relationships-dark-comfortable-darwin.png" data-lightbox>
@@ -195,9 +202,9 @@
           <figcaption class="caption">The Relationships workspace over the public Enron research corpus. Select the image to inspect it at full size.</figcaption>
         </figure>
         <div class="placeholder-panel">
-          <p class="proof-tag">In development</p>
+          <p class="proof-tag">Directory and Operations</p>
           <h3>The Directory workspace</h3>
-          <p>An open pull request adds Directory and Reviews workspaces: durable-person search, profile maintenance and history, identity and merge review queues, the privacy-gated fact ledger, CardDAV publication, and a self-describing Settings surface with write-only credential management. Captures land here when it merges.</p>
+          <p>Maintain profiles, review identities and merges, publish contacts through CardDAV, and catch up with a saved conversation brief in Directory. Operations tracks syncs and background work; Settings manages provider credentials and restart-pending changes. <a href="/docs/web-ui/">Explore the workspaces</a>.</p>
         </div>
       </section>
 
@@ -207,7 +214,7 @@
             <p class="section-index">04 / Intelligence</p>
             <h2 id="intelligence-title">Semantic search and document understanding.</h2>
           </div>
-          <p>Keyword search works offline, always. Semantic search, document extraction, and visual search are opt-in, with explicit consent recording exactly what leaves your machine and where it goes.</p>
+          <p>Keyword search reads your archive offline. Semantic search, document extraction, and visual search are opt-in, with explicit consent recording exactly what leaves your machine and where it goes.</p>
         </div>
         <figure class="diagram pipeline">
           <img src="/assets/intelligence-pipeline.svg" alt="The msgvault archive feeding an FTS5 keyword index, vector embeddings, and Docbank document extraction, fused by hybrid retrieval for the CLI, Web UI, TUI, and MCP agents">
@@ -220,8 +227,8 @@
           </article>
           <article class="proof">
             <p class="proof-tag">Local models</p>
-            <h3>Point at any embedding server.</h3>
-            <p>Any OpenAI-compatible endpoint works: Ollama, llama.cpp, LM Studio, or Apple's on-device model. Embedding scope is a privacy boundary; out-of-scope accounts are never sent anywhere.</p>
+            <h3>Choose your embedding server.</h3>
+            <p>Use a supported local or hosted embedding endpoint, such as Ollama with an embedding model. Scope a text index to selected accounts; document, image, and profile processing have separate configuration and consent.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Attachments</p>
@@ -241,7 +248,7 @@
           <div>
             <p class="section-index">05 / Interfaces</p>
             <h2 id="interfaces-title">One archive across every surface.</h2>
-            <p class="lede">The daemon owns all writes and serializes every mutation. People, scripts, and agents work through the interface suited to the task, against the same record.</p>
+            <p class="lede">The daemon coordinates archive access and background work. People, scripts, and agents work through the interface suited to the task, against the same record.</p>
             <ul class="interface-list">
               <li><strong>CLI</strong><span>Scriptable sync, search, and repair.</span></li>
               <li><strong>Web</strong><span>Analytical workspaces in the browser.</span></li>
@@ -278,12 +285,12 @@
           <article class="choice">
             <p class="choice-label">Stage</p>
             <h3>Review before anything moves.</h3>
-            <p>Deletions are staged into manifests from the Web UI, TUI, or MCP — inspected, counted, and cancellable. No surface executes them.</p>
+            <p>Create a deletion manifest from the CLI, Web UI, TUI, or MCP, then inspect it. Staging does not remove provider messages; execution is a separate CLI command.</p>
           </article>
           <article class="choice">
             <p class="choice-label">Execute</p>
             <h3>Delete upstream, keep the record.</h3>
-            <p>Execution is a separate CLI step behind an explicit environment gate, defaulting to recoverable trash. The local archive is never modified.</p>
+            <p>Execution is a separate CLI step with explicit client consent. Gmail and IMAP default to moving messages to Trash; permanent deletion requires explicit opt-in. Archived messages and attachments remain available; msgvault records their source-deletion state.</p>
           </article>
           <article class="choice">
             <p class="choice-label">Restore</p>

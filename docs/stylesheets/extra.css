@@ -36,18 +36,8 @@
   border-bottom: 1px solid var(--msgvault-border);
 }
 
-.md-logo {
-  display: inline-flex;
-  width: auto;
-  align-items: center;
-  gap: 0.5rem;
-  text-decoration: none;
-}
-
-.md-logo img {
-  display: block;
-  width: 1.5rem;
-  height: 1.5rem;
+.md-nav--primary .md-nav__button.md-logo {
+  display: none;
 }
 
 .msgvault-discord-link {

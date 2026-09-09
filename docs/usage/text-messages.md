@@ -1,22 +1,34 @@
 ---
+last_edited: "2026-09-08"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
 
-msgvault can import chats and text messages from WhatsApp, iMessage, Google
-Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft
-Teams chats and channels through [Microsoft Teams](/docs/usage/teams/) and Discord
-guild channels and threads through [Discord](/docs/usage/discord/). These records
-are stored in the same database as email. The [Web UI](/docs/web-ui/) presents chats
-as conversation rows in Everything, with individual messages available on
-drill-down; in the [TUI](/docs/usage/tui/), press `m` to switch to text mode.
+Search old texts and chats alongside your email. Import a local export below,
+or connect [Beeper](/docs/usage/beeper/), [Slack](/docs/usage/slack/),
+[Microsoft Teams](/docs/usage/teams/), or [Discord](/docs/usage/discord/) for
+ongoing sync.
+
+The [Web UI](/docs/web-ui/) groups chats into conversations in Everything;
+open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
+`m` to switch to Texts mode.
+
+| Local source | What to provide |
+|---|---|
+| [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db` or Apple `ChatStorage.sqlite` |
+| [iMessage](#import-imessage) | macOS `chat.db` |
+| [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Facebook Messenger](#import-messenger) | Download Your Information export |
+| [SMS Backup & Restore](#import-synctech-sms) | XML backup |
+| [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
 
 ## import-whatsapp
 
-Import messages from a decrypted WhatsApp `msgstore.db` SQLite database.
+Import direct and group chats from a decrypted Android `msgstore.db` or an
+Apple `ChatStorage.sqlite` database. msgvault detects the database format.
 
 ```bash
-msgvault import-whatsapp <msgstore.db> --phone <your-number>
+msgvault import-whatsapp <database> --phone <your-number>
 ```
 
 The `--phone` flag is required and must be in E.164 format (for example, `+447700900000`).
@@ -27,7 +39,7 @@ The `--phone` flag is required and must be in E.164 format (for example, `+44770
 |---|---|---|
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
-| `--media-dir` | No | Path to decrypted Media folder for attachments |
+| `--media-dir` | No | Android Media folder for attachments; Apple import is text-only |
 | `--limit` | No | Limit number of messages (for testing) |
 | `--display-name` | No | Display name for the phone owner |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
@@ -47,11 +59,29 @@ msgvault import-whatsapp msgstore.db --phone +14155551234 \
   --contacts contacts.vcf --media-dir ./Media
 ```
 
-### Prerequisites
+### Apple WhatsApp on macOS
 
-You need a decrypted copy of your WhatsApp `msgstore.db` file. This is the SQLite database where WhatsApp stores all messages on your device. How you obtain the decrypted database depends on your platform; msgvault does not handle decryption itself.
+Point the command at the native WhatsApp database or a copy of it:
 
-The importer brings in chats, messages, participants, reactions, and attachments (when `--media-dir` is provided).
+```bash
+msgvault import-whatsapp --phone +447700900000 \
+  "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
+```
+
+Reading the native store may require Full Disk Access for your terminal in
+**System Settings → Privacy & Security**.
+
+### Format limits
+
+| Format | Imported today | Not included |
+|---|---|---|
+| Android `msgstore.db` | Chats, messages, participants, reactions, attachment metadata, and available media from `--media-dir` | Database decryption |
+| Apple `ChatStorage.sqlite` | Text from direct and group chats, sender attribution, and available group participant names | Media downloads and reactions |
+
+Supply your own phone number with `--phone` for either format. msgvault records
+it as the source's confirmed “me” identity unless you pass
+`--no-default-identity`. This confirmation also happens after a completed
+run that reports recoverable message errors.
 
 ## import-imessage
 

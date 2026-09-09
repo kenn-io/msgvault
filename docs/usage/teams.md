@@ -1,16 +1,15 @@
 ---
-last_edited: 2026-09-03
+last_edited: "2026-09-08"
 title: Microsoft Teams
 description: Archive Microsoft Teams chats and channels through delegated Microsoft Graph sync.
 ---
 
-msgvault can archive Microsoft Teams chats and channel messages into the same
-local archive as email, calendar events, and text-message imports. Teams
-messages are stored with `message_type = teams`, so they can be searched,
-queried, and embedded without mixing them into ordinary email-only workflows.
+Search Teams chats, channel discussions, and replies alongside your email and
+other messages. msgvault archives their text, participants, source JSON, and
+eligible inline images through Microsoft Graph.
 
-Teams sync is read-only: msgvault reads messages through Microsoft Graph and
-does not send messages, edit Teams content, or modify channel membership.
+Teams messages use `message_type = teams`. Sync reads the provider without
+sending messages, editing Teams content, or changing channel membership.
 
 ## Prerequisites
 
@@ -84,8 +83,8 @@ incomplete ones continue.
 
 ## What Gets Archived
 
-- One-on-one chats, group chats, meeting chats, team channels, and channel
-  replies.
+- One-on-one chats, self-chat, group chats, meeting chats, team channels, and
+  channel replies.
 - Plain-text body text derived from Graph HTML bodies, plus the original HTML
   body when present.
 - Sender and conversation members as participants, so Teams contacts can appear
@@ -96,8 +95,12 @@ incomplete ones continue.
 - Inline hosted-content images downloaded into msgvault's attachment store.
 - Call-recording event links in the searchable body text.
 
+Self-chat is included automatically when the account has messages to itself;
+it needs no extra configuration. A failed self-chat check is reported in the
+sync error count while ordinary chats continue.
+
 Deleted Teams messages are marked deleted in the archive when Graph reports a
-`deletedDateTime`; existing rows are not silently left active.
+`deletedDateTime`; previously archived content is retained.
 
 ## Inline Media Backfill
 
@@ -110,8 +113,9 @@ msgvault backfill-teams-media user@example.com --only-incomplete
 ```
 
 The backfill scans stored Teams HTML bodies for `hostedContents` URLs and
-downloads those images into the attachment store. It is idempotent because
-attachment storage is content-addressed.
+downloads eligible images. Files with the same content share storage. The
+[media policy](#media-policy) still determines which conversations and file
+sizes are eligible.
 
 ## Media Policy
 

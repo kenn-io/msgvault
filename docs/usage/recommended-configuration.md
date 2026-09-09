@@ -1,16 +1,17 @@
 ---
-last_edited: "2026-09-03"
+last_edited: "2026-09-08"
 title: Recommended Configuration
-description: The config.toml that `msgvault setup providers` writes from the API keys you have, section by section.
+description: Set up optional search and people features from your available provider keys, then check what still needs attention.
 ---
 
-Msgvault has four retrieval lanes (message text, curated people, visual
-attachments, document attachments), a people sweep that keeps profiles
-current, a scheduled activity projection, and a media policy for chat
-sources. Each shipped as opt-in with its own table, key variable, consent
-step, and build command. `msgvault setup providers` chooses recommended
-values for all of them from the keys in your environment and turns on the
-lanes those keys support, one explicit consent per hosted provider.
+Use `msgvault setup providers` to configure optional search and people
+features from the provider keys you already have. It proposes defaults,
+explains what each provider will receive, and asks for consent before saving.
+Keyword search and normal archive browsing do not need provider keys.
+
+A **lane** in setup's output is one optional feature: message embeddings,
+semantic people search, visual attachments, document extraction, document
+vectors, or people sweeps. Each has its own readiness and consent checks.
 
 ```bash
 export VOYAGE_API_KEY="..."      # text, people, and visual search
@@ -23,64 +24,15 @@ msgvault setup providers --allow-sensitive # opt into sensitive evidence for the
 msgvault setup status                # what is on, what is off, and why
 ```
 
-Hosted lanes never turn on from a key alone. Setup asks before it writes,
-records the postures you assert, runs the people-provider check and consent
-through the same gates the `person provider` commands enforce, and prints the
-exact commands that finish the lanes it cannot complete on its own (the two
-provider probes need private synthetic seed files). Re-running setup after
-adding a key upgrades only the lanes that are still unset; a configured lane
-keeps its model, because switching the embedding policy invalidates the
-index and is your call.
+Setup prints follow-up commands for features that still need a capability
+probe, consent, or index build. `setup status` checks those prerequisites and
+shows the next step. A key by itself never starts hosted processing.
 
-If visual search is already enabled but `capabilities_file` is unset, setup
-validates `<home>/voyage-capabilities.json` and offers to save that path.
-It does not replace an explicit custom path. Status stays pending until the
-path is saved and the remaining consent and readiness checks pass.
-
-When enabling a disabled lane, setup preserves saved retention and training
-postures. Defaults fill only unset values. Pass `--retention-posture` or
-`--training-posture` to replace the corresponding people-search posture,
-or `--document-retention` or `--document-training` for document extraction.
-Already enabled lanes with known postures remain unchanged. `unknown` is
-unset, not an assertion: setup fills it with the disclosed default, or the
-corresponding explicit flag. This also completes an already-enabled document
-lane whose postures are still unknown, under the Mistral confirmation.
-
-Setup also preserves each explicit `cron` and `run_after_sync` setting for
-text and visual embeddings, including `cron = ""` and `run_after_sync = false`.
-Only absent keys receive schedule defaults. Missing embedding credentials
-leave text search and its dependent people-search and document-vector lanes
-pending in the status report.
-
-Configured vector lanes also stay pending when the binary lacks the backend
-required by the archive database. Status includes the rebuild command.
-
-Consent-gated lanes also remain pending until their required consents are
-active, including when the consent records cannot be read. Visual consent
-must match both the current configuration and the capability-manifest policy;
-after either changes, run `msgvault multimodal build --yes` again. Local Ollama
-setup clears any old `api_key_env` setting because its selected loopback
-endpoint does not require authentication.
-
-For existing text endpoints, setup recognizes the exact OpenAI and Voyage
-API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
-configure their people-search and document-vector lanes explicitly, then
-review the separate consent commands for the new data they will receive.
-
-The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
-The flag permits sending sensitive archive excerpts to the inference provider
-and inferring sensitive personal attributes. The plan describes this policy
-in both human and JSON output. Vector lanes stay pending if the binary lacks
-the backend needed for your database; rebuild as directed before re-running.
-
-Every value below is settable per lane exactly as before. This page only
-describes what happens when nothing is set.
-
-## What each key turns on
+## Defaults selected from your keys
 
 | Key present | Lanes | Model | Notes |
 |---|---|---|---|
-| `VOYAGE_API_KEY` | text search, semantic people search, visual attachments (after the probe) | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024) | Chats embed as conversation windows and meetings as turn-aware chunks; email rides the same generation. |
+| `VOYAGE_API_KEY` | text search, semantic people search, visual attachments (after the probe) | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024) | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents. |
 | `MISTRAL_API_KEY` | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`. |
 | `OPENAI_API_KEY` | people sweep with `--allow-sensitive`; text search only when no Voyage key | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536) | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints. |
 | none | local Ollama at `[chat].server` when reachable | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text stays on your machine. Setup skips a lane the server cannot serve and says why. |
@@ -152,10 +104,12 @@ request_timeout = "1m0s"
 ### `[vector]` and `[vector.embeddings]`
 
 The text lane. `api_format = "voyage-contextual"` pins `voyage-context-4`
-and sends each chat conversation window and each meeting as one contextual
-request, so a message is embedded with its neighbors. The OpenAI-compatible
-format (`api_format = "openai"`) embeds each message on its own. Message
-text leaves the machine either way; setup states that before it asks.
+and sends each Beeper conversation window and each meeting as one contextual
+request, so a message is embedded with its neighbors. Other chat sources and
+email remain individual documents. The OpenAI-compatible
+format (`api_format = "openai"`) embeds each message on its own. Hosted
+configurations send message text to that provider; a loopback Ollama
+endpoint processes it locally. Setup states the destination before asking.
 
 `run_after_sync` covers Gmail, IMAP, Teams, and Discord syncs. The cron
 covers Slack, Beeper, calendar, and meeting sources, which do not trigger a
@@ -170,6 +124,8 @@ your assertion about the embedding provider; setup records
 `provider-declared` unless you pass `--retention-posture` and
 `--training-posture`. Consent is a separate step:
 `msgvault person provider consent --semantic-embeddings --yes`.
+See [semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember)
+for the build and search workflow.
 
 ### `[vector.multimodal]`
 
@@ -188,9 +144,10 @@ msgvault multimodal build --yes # consent to exactly that capability profile
 
 ### `[attachments.documents]`
 
-Mistral is the only document provider and receives the complete original
-bytes of standalone document attachments. Setup records the least-asserting
-legal postures (`standard` retention, `default-opt-out` training) unless you
+Mistral is the document extraction provider. It receives original attachment
+bytes for directly authorized formats, or locally converted PDF bytes when
+CSV conversion is enabled. Setup records `standard` retention and
+`default-opt-out` training unless you
 pass `--document-retention zdr` or `--document-training opted-out`; use the
 values your account actually has. Uploads stay manual: build the fixture
 matrix, probe, consent, then build. See
@@ -202,6 +159,7 @@ msgvault documents consent-mistral --capabilities ~/.msgvault/mistral-capabiliti
 msgvault documents build --capabilities ~/.msgvault/mistral-capabilities.json --yes
 msgvault documents vectors consent --yes     # when document vectors are enabled
 msgvault documents vectors consent --purpose queries --yes
+msgvault daemon restart
 msgvault documents vectors build
 ```
 
@@ -221,9 +179,9 @@ consent, and selects it; the daily schedule is the `[people.sweep]` default.
 `allow_sensitive = true` is required for real sweeps because every archive
 evidence packet is marked sensitive. Setup sets it only when you pass
 `--allow-sensitive`; without that flag it leaves the sweep unconfigured.
-The Codex app-server adapter is release-gated and
-cannot be the default. With no OpenAI key, setup offers a loopback Ollama
-profile on `[chat].model`.
+With no OpenAI key, setup offers a loopback Ollama profile on `[chat].model`.
+See [People Automation](/docs/usage/people-automation/) to track people,
+review inferred facts, and change or recover a provider.
 
 ### `[activity]`
 
@@ -247,14 +205,71 @@ and are on regardless of provider keys. The text lane adds
 `search_visual_attachments`; the document lane adds
 `search_document_attachments`. `msgvault setup status` prints the live list.
 
+## Existing settings and pending setup
+
+Hosted lanes never turn on from a key alone. Setup asks before it writes,
+records the postures you assert, runs the people-provider check and consent
+through the same gates the `person provider` commands enforce, and prints the
+exact commands that finish the lanes it cannot complete on its own (the two
+provider probes need private synthetic seed files). Re-running setup after
+adding a key upgrades only the lanes that are still unset; a configured lane
+keeps its model, because switching the embedding policy invalidates the
+index and is your call.
+
+If visual search is already enabled but `capabilities_file` is unset, setup
+validates `<home>/voyage-capabilities.json` and offers to save that path.
+It does not replace an explicit custom path. Status stays pending until the
+path is saved and the remaining consent and readiness checks pass.
+
+When enabling a disabled lane, setup preserves saved retention and training
+postures. Defaults fill only unset values. Pass `--retention-posture` or
+`--training-posture` to replace the corresponding people-search posture,
+or `--document-retention` or `--document-training` for document extraction.
+Already enabled lanes with known postures remain unchanged. `unknown` is
+unset, not an assertion: setup fills it with the disclosed default, or the
+corresponding explicit flag. This also completes an already-enabled document
+lane whose postures are still unknown, under the Mistral confirmation.
+
+Setup also preserves each explicit `cron` and `run_after_sync` setting for
+text and visual embeddings, including `cron = ""` and `run_after_sync = false`.
+Only absent keys receive schedule defaults. Missing embedding credentials
+leave text search and its dependent people-search and document-vector lanes
+pending in the status report.
+
+Configured vector lanes also stay pending when the binary lacks the backend
+required by the archive database. Status includes the rebuild command.
+
+Consent-gated lanes also remain pending until their required consents are
+active, including when the consent records cannot be read. Visual consent
+must match both the current configuration and the capability-manifest policy;
+after either changes, run `msgvault multimodal build --yes` again. Local Ollama
+setup clears any old `api_key_env` setting because its selected loopback
+endpoint does not require authentication.
+
+For existing text endpoints, setup recognizes the exact OpenAI and Voyage
+API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
+configure their people-search and document-vector lanes explicitly, then
+review the separate consent commands for the new data they will receive.
+
+The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
+The flag permits sending sensitive archive excerpts to the inference provider
+and inferring sensitive personal attributes. The plan describes this policy
+in both human and JSON output.
+
 ## Reading the status report
+
+`setup status` reads local configuration, the process environment, stored
+credentials, and archive consent records. It does not contact a provider. An
+`on` state means those setup checks passed; use the index's status command or
+[Web Operations](/docs/web-ui/#operations) to inspect build progress and
+coverage.
 
 ```text
 LANE                                      STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
 Text search (messages, chats, meetings)   on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
-Semantic people search                    on       voyage    voyage-context-4  missing  -
+Semantic people search                    pending  voyage    voyage-context-4  missing  -
 Visual attachment search                  pending  -         -                 -        -
-Document attachments (...)                on       mistral   mistral-ocr-4-0   missing  -
+Document attachments (...)                pending  mistral   mistral-ocr-4-0   missing  -
 ```
 
 `pending` means the lane is configured or the key is present but an

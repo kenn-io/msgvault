@@ -5,8 +5,9 @@
 > layer, keyword and semantic search, an MCP server, and agent skills, owned
 > and operated by you.
 
-The product and guide pages have exact Markdown twins; documentation pages are
-served as HTML. Markdown versions are canonical for machine readers.
+The product and guide pages have Markdown companions with the same core
+information; documentation pages are served as HTML. Use the Markdown
+companions for machine reading.
 
 ## Product
 
@@ -19,6 +20,8 @@ served as HTML. Markdown versions are canonical for machine readers.
 ## Docs
 
 - [Documentation index](https://msgvault.io/docs/): all operating documentation
+- [Changelog](https://msgvault.io/docs/changelog/): released and unreleased changes, with upgrade notes
+- [Choose a source](https://msgvault.io/docs/guides/sources/): sync and import routes by provider and format
 - [Setup guide](https://msgvault.io/docs/setup/): installation and first sync
 - [CLI reference](https://msgvault.io/docs/cli-reference/): every command and flag
 - [Configuration](https://msgvault.io/docs/configuration/): config.toml reference
@@ -27,6 +30,11 @@ served as HTML. Markdown versions are canonical for machine readers.
 - [Vector search](https://msgvault.io/docs/usage/vector-search/): semantic and hybrid setup
 - [Document attachment indexing](https://msgvault.io/docs/usage/document-indexing/): Docbank-backed extraction
 - [People, profiles, and identities](https://msgvault.io/docs/usage/people/): the people layer
+- [Profile automation](https://msgvault.io/docs/usage/people-automation/): tracking, fact resolution, and provider consent
+- [Conversation briefs](https://msgvault.io/docs/usage/people-briefs/): saved summaries, citations, and input limits
+- [External enrichment](https://msgvault.io/docs/usage/people-enrichment/): provider policies and suppression
+- [CardDAV contacts](https://msgvault.io/docs/usage/people-carddav/): address-book import, publication, and conflicts
+- [Remote email images](https://msgvault.io/docs/usage/remote-images/): opt-in downloads and offline display
 - [MCP server](https://msgvault.io/docs/usage/chat/): AI assistant integration
 - [Deleting email](https://msgvault.io/docs/usage/deletion/): staging and gated execution
 - [Backup](https://msgvault.io/docs/usage/backup/): snapshot repositories
@@ -35,4 +43,3 @@ served as HTML. Markdown versions are canonical for machine readers.
 ## Other
 
 - [GitHub repository](https://github.com/kenn-io/msgvault): source, issues, releases
-- [Changelog](https://msgvault.io/docs/changelog/): release history

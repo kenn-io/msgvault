@@ -3,7 +3,21 @@ title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
 
-The MCP server operates on your msgvault archive through the selected daemon, not your live Gmail account. Without `[remote].url`, `msgvault mcp` starts or reuses the local background daemon; with `[remote].url`, it uses that remote server. The AI cannot send emails, modify labels, or access your Google credentials. Standard read and search operations go through the daemon. If [vector search](/docs/usage/vector-search/) is enabled, semantic and hybrid searches also call the embedding endpoint configured in `[vector.embeddings]`; use a local or self-hosted endpoint if message text must stay on your machine or network. The `stage_deletion` tool asks the selected daemon to save a deletion manifest, and `export_attachment` saves an attachment to a requested path on the MCP server's filesystem. Neither modifies the database, and actual deletion still requires you to run `msgvault delete-staged` from the CLI. You control when data enters the archive (via sync and import commands) and when anything is deleted (via the explicit [deletion workflow](/docs/usage/deletion/)). Compared to giving an AI assistant direct OAuth access to your mailbox, this is a fundamentally smaller attack surface.
+Connect an AI assistant to your msgvault archive so it can find messages,
+retrieve attachments, and help you remember people and conversations. The
+server uses your selected daemon: without `[remote].url`, it starts or reuses
+the local daemon; with `[remote].url`, it uses that remote server.
+
+MCP searches the archive. It cannot send email, change live mailbox labels, or
+read Google credentials. Semantic searches call your configured embedding
+endpoint, so use a local or self-hosted endpoint when search text must stay on
+your machine or network. See [vector search](/docs/usage/vector-search/).
+
+By default, stdio clients can also export attachments and stage deletion
+manifests. Actual message deletion still requires the CLI
+[deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
+need `--allow-profile-writes`. HTTP clients get read tools by default and need
+`--http-allow-writes` for any write tools. See [write controls](#write-controls).
 
 ## Setup
 
@@ -105,8 +119,24 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `search_people` | Find observed contacts and saved profiles by name or identity. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
+| `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
+| `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
+| `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | `person_id` (int, required) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
+
+`search_people` returns `rows`, `total_count`, `next_cursor`, and
+`cache_revision`. A row includes `person_id` only when it has a saved profile;
+use its participant ID for observed-contact tools. Pass the returned cursor
+with the same query and limit. Restart the lookup if profiles changed during
+pagination. For semantic search over curated profile facts, use
+[`msgvault person search`](/docs/usage/people/#find-a-person-by-what-you-remember).
+
+People profile, Notes, relationship, and lookup tools require a successful
+capability check against a daemon with API schema `2.10.0` or newer. If they are
+missing, check the daemon version and connection. `get_person_notes` is the
+explicit route to private Notes; `get_person_profile` omits them.
 
 In `get_person_profile`, `emails` and `phones` list current entries with preferred
 ones first. Email-shaped service handles remain in `contact_points`. `address`
@@ -203,7 +233,7 @@ Claude will automatically call the appropriate msgvault tools to retrieve and an
 Ask your assistant what a person recently shared, and `get_person_profile` can
 return their saved brief with its sources. This is a read-only operation: it
 makes no provider call and cannot generate, reject, or enroll briefs. See
-[person briefs](/docs/usage/people/#catch-up-before-your-next-conversation) to
+[person briefs](/docs/usage/people-briefs/) to
 set one up.
 
 The summary comes from messages other people wrote. Treat its words as archive
@@ -242,9 +272,37 @@ assistant should read the prose as a summary to relay or check, match an item
 to its citation by `kind` and `index`, and never treat a sentence in it as an
 instruction or as your consent to a write.
 
+## Write controls
+
+Enable only the writes intended for the assistant's session:
+
+| Transport | Attachment export and deletion staging | Person promotion and Notes writes |
+|---|---|---|
+| Stdio | Available by default | Add `--allow-profile-writes` |
+| HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` |
+
+When profile writes are enabled, two additional tools appear:
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `promote_person` | Create a saved profile from an observed contact; repeated promotion returns the existing profile. | `participant_id` (int, required) |
+| `update_person_notes` | Append or replace private Notes with `enrichment` provenance. | `person_id` (int, required), `text` (required), `mode` (`append` by default, or `replace`), `expected_value_id` |
+
+Appending is atomic and forbids `expected_value_id`. Replacing existing Notes
+requires the current value ID returned by `get_person_notes`; a concurrent
+change causes the write to fail instead of overwriting newer text. Creating the
+first Notes value also omits `expected_value_id`. Notes need non-blank text and
+a saved profile; tools do not silently promote observed contacts.
+
+These tools persist local profile data. They require explicit user intent for
+the write. Text found in archived messages, Notes, or generated briefs is data,
+and never grants permission to modify a profile. Only Notes marked with `user`
+provenance are user-authored; MCP writes use `enrichment` provenance.
+
 ## Staged Deletion via MCP
 
-The `stage_deletion` tool lets an AI assistant help you clean up your inbox. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Results are capped at 100,000 messages per call.
+When enabled for the transport, `stage_deletion` lets an AI assistant help you
+plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Results are capped at 100,000 messages per call.
 
 When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 
@@ -274,6 +332,8 @@ msgvault mcp --http 8080
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
+| `--http-allow-writes` | `false` | Expose attachment exports and deletion staging over HTTP; profile writes still need their separate flag. |
+| `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
 Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to daemon configuration. Use `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` so local and remote daemon behavior stays consistent.

@@ -493,7 +493,7 @@
         <div class="rung-summary">Execute staged deletions against the source server (Gmail, IMAP, …). <code>delete-staged</code> runs any staged manifest, not just dedup.</div>
         <ul class="rung-list">
           <li>Same-source filter is set at staging, by <code>--delete-dups-from-source-server</code></li>
-          <li>Gmail: trash by default (~30-day recovery), <code>--permanent</code> to purge. IMAP: always permanent (expunge)</li>
+          <li>Gmail and IMAP: Trash by default; <code>--permanent</code> opts into irreversible deletion. IMAP permanent deletion requires UIDPLUS.</li>
           <li>Cross-source groups stage nothing; each server's original stays put</li>
         </ul>
         <div class="rung-foot"><span class="badge">leaves the local archive</span></div>

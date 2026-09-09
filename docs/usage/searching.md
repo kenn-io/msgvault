@@ -1,8 +1,24 @@
 ---
-last_edited: "2026-08-30"
+last_edited: "2026-09-08"
 title: Searching
-description: Gmail-like search syntax with full-text search and JSON output.
+description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
+
+Use `msgvault search` to find archived email, chats, calendar events, and
+meeting transcripts. Keyword search works without an embedding provider.
+Combine words with filters to narrow the result, then use `msgvault show-message <id>`
+to read a message.
+
+| What you want to find | Where to search |
+|---|---|
+| Words in a message or its subject | `msgvault search "quarterly report"` |
+| A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
+| Words or topics inside an attached document | [Document attachment search](/docs/usage/document-indexing/#search-and-inspect-status) |
+| An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
+| A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
+
+Message search does not search extracted document text or attachment pixels.
+Those have separate indexes and setup steps.
 
 ## Basic Usage
 
@@ -38,6 +54,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `larger:` | Minimum size | `larger:5M`, `100K` |
 | `smaller:` | Maximum size | `smaller:1M` |
 | `message_type:` | Stored message type | `message_type:teams`, `message_type=calendar_event` |
+| `conversation_id:` | Local conversation ID | `conversation_id:123` |
 
 Bare words and `"quoted phrases"` perform full-text search across message subjects and bodies.
 
@@ -83,7 +100,14 @@ msgvault search "from:boss@company.com has:attachment after:2024-01-01"
 
 # Full-text search
 msgvault search "quarterly report"
+
+# Search within one archived conversation
+msgvault search "conversation_id:123 budget"
 ```
+
+`conversation_id:` takes the positive local conversation ID shown in message
+metadata, not the provider's thread or room ID. It works with keyword, vector,
+and hybrid search. Vector and hybrid queries still need free text.
 
 ## Repairing Existing Archives
 
@@ -168,8 +192,8 @@ msgvault search "release planning" --message-type discord
 msgvault search "dinner" --message-type sms --message-type mms
 ```
 
-Valid values are `email`, `calendar_event`, `meeting_transcript`, `beeper`,
-`sms`, `mms`, `whatsapp`, `imessage`, `teams`, `discord`, `fbmessenger`,
+Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
+`beeper`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`,
 `synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column

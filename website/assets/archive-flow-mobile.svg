@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" role="img" aria-labelledby="title desc">
+  <title id="title">Your history, connected</title>
+  <desc id="desc">People and communications flow into one msgvault archive on your own hardware. Use the same archive through the terminal, web browser, or an AI assistant via MCP.</desc>
+
+  <g fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M86 106v5q0 13 13 13h68q13 0 13 13"/>
+    <path d="M270 106v5q0 13-13 13h-64q-13 0-13 13"/>
+    <path d="m175 130 5 7 5-7"/>
+    <path d="M180 232v53"/>
+    <path d="M180 250q0 13-13 13H73q-13 0-13 13v9"/>
+    <path d="M180 250q0 13 13 13h94q13 0 13 13v9"/>
+    <path d="m55 278 5 7 5-7m110 0 5 7 5-7m110 0 5 7 5-7"/>
+  </g>
+
+  <g fill="none" stroke="#c8c8c8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="79" cy="35" r="10"/>
+    <path d="M60 67v-7c0-9 8-15 19-15s19 6 19 15v7M99 27a9 9 0 0 1 0 18m7 4c7 2 11 7 11 14v4"/>
+    <rect x="244" y="40" width="37" height="27" rx="3"/>
+    <path d="m245 42 17.5 13 17.5-13"/>
+    <path d="M274 31V21a3 3 0 0 1 3-3h27a3 3 0 0 1 3 3v20a3 3 0 0 1-3 3h-12l-8 7v-7"/>
+    <path d="M283 28h15m-15 7h10" stroke="#888"/>
+    <rect x="43" y="296" width="34" height="28" rx="3"/>
+    <path d="m50 304 5 5-5 5m9 0h9"/>
+    <rect x="163" y="296" width="34" height="28" rx="3"/>
+    <path d="M163 304h34m-27-4h1m4 0h1m-6 10h9m-9 6h18"/>
+    <path d="m294 306 10-10m-10 18 10 10"/>
+    <circle cx="290" cy="310" r="6"/>
+    <circle cx="308" cy="292" r="5"/>
+    <circle cx="308" cy="328" r="5"/>
+  </g>
+
+  <rect x="105" y="140" width="150" height="92" rx="8" fill="#131313" stroke="#666"/>
+  <path d="M124 140h-11a8 8 0 0 0-8 8v11m131 73h11a8 8 0 0 0 8-8v-11" fill="none" stroke="#e8e8e8" stroke-width="1.5"/>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif" fill="#e8e8e8" text-anchor="middle">
+    <text x="86" y="92" font-size="19">People</text>
+    <text x="270" y="92" font-size="17">Communications</text>
+    <text x="180" y="178" font-family="ui-monospace, monospace" font-size="23" letter-spacing="-1">msgvault</text>
+    <text x="180" y="206" font-size="16" fill="#aaa">your archive</text>
+    <g font-family="ui-monospace, monospace" font-size="19">
+      <text x="60" y="352">TUI</text>
+      <text x="180" y="352">Web</text>
+      <text x="300" y="352">MCP</text>
+    </g>
+  </g>
+</svg>

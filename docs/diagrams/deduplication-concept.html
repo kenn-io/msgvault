@@ -558,7 +558,7 @@
         </div>
 
         <div class="footer-rule">Dedup itself only hides. <strong>delete-deduped</strong> hard-deletes hidden rows locally; it is a separate command and is irreversible.</div>
-        <div class="identity-rule">Remote deletion is a further separate, source-scoped step. Gmail copies move to trash by default (~30-day recovery), permanent only with an explicit flag; IMAP copies are always expunged permanently. Never inferred from a collection-scope dedup.</div>
+        <div class="identity-rule">Remote deletion is a further separate, source-scoped step. Gmail and IMAP copies move to Trash by default; permanent deletion requires an explicit flag. IMAP permanent deletion requires UIDPLUS. Never inferred from a collection-scope dedup.</div>
       </div>
     </section>
 
@@ -579,7 +579,7 @@
         </div>
         <div class="rung-mini">
           <div><span class="rung-mini-num">04</span><span class="rung-mini-name">Remote delete</span><span class="opt-in-tag">opt-in</span></div>
-          <div class="rung-mini-hint">source-scoped · Gmail trash / IMAP permanent</div>
+          <div class="rung-mini-hint">source-scoped · Trash by default · permanent is opt-in</div>
         </div>
       </div>
       <div class="ladder-strip-note"><strong>Backup first, by default.</strong> Before this step modifies any row, msgvault writes a point-in-time database copy (<code>*.dedup-backup-&lt;ts&gt;</code>) on SQLite archives; on PostgreSQL, snapshot with <code>pg_dump</code> and use <code>--no-backup</code>. <strong>And deletion is never required:</strong> you can run <code>deduplicate</code> as many times as you want and stay on rung 02 forever. <code>delete-deduped</code> and <code>delete-staged</code> only run if you invoke them.</div>

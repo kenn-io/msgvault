@@ -1,21 +1,43 @@
 ---
-last_edited: "2026-08-31"
+last_edited: "2026-09-08"
 title: Meeting Transcripts
 description: Archive AI meeting notes and transcripts from Granola, Circleback, and Notion into your searchable local archive.
 ---
 
-msgvault can archive meeting notes and transcripts from AI meeting-notes
-services into the same local database as your email. Each meeting becomes one
-searchable message: the subject is the meeting title, the body carries the AI
-summary followed by the full speaker-labeled transcript, and the organizer and
-attendees join the same contact graph as the people you email.
+Find meeting decisions and transcripts in the same archive as your email and
+chats. Each meeting becomes one searchable message with a title, notes or
+summary, and a transcript when the source provides one. Verified participant
+emails connect meetings to the people you already know in msgvault.
 
-Meeting sync is **read-only**: msgvault never modifies anything in the source
-service. Meetings are cached and fully searchable with `msgvault search`, the
-Web UI, and the TUI. An unscoped search intentionally returns every cached
-message type, including meetings and chats. The Web UI's Everything workspace
-uses modality-aware rows and filters; email-specific CLI/TUI aggregates remain
-email-only unless you explicitly choose another message type.
+## Choose a meeting source
+
+| Source | Connection | Main coverage limit |
+|---|---|---|
+| [Granola](#granola) | API key | Requires access to Granola's public API |
+| [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
+| [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
+| [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
+
+Provider sync reads meeting data without changing the source service. Recording
+media is not downloaded by the Notion or Circleback integrations.
+
+## Browse and search
+
+Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to find meetings in
+Everything. Filter to meeting notes or search across notes, email, and chats.
+To search only meetings from the CLI:
+
+```bash
+msgvault search "quarterly budget" --message-type meeting_transcript
+```
+
+In the [TUI](/docs/usage/tui/), press `m` until the title shows **Meetings**.
+Use `A` to select a source, `/` to search, and `Enter` to open the note and
+transcript. In the detail view, `/` finds text and `n`/`N` moves between
+matches. Meetings mode does not offer selection or deletion.
+
+Unscoped search includes meetings and chats. Email-specific CLI and TUI
+aggregates remain email-only unless you choose another message type.
 
 ## Source labels and account identity
 
@@ -146,25 +168,7 @@ same limited sync again updates the existing meeting rows rather than creating
 duplicates. Once the results look correct, run `msgvault sync-granola work`
 without a limit to continue normal incremental operation.
 
-### Browse in the Web UI or TUI
-
-Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to include meetings in
-Everything, search their titles and transcripts, group them with other archive
-modalities, or filter to meeting notes only. Open a result to read the note in
-its containing context.
-
-Launch `msgvault tui` and press `m` until the title bar shows **Meetings**.
-The list combines Granola, Circleback, and Notion meetings and shows their date, title,
-organizer, and source. Press `A` to select one meeting source, `/` to search
-meeting titles, people, transcripts, and notes, and `Enter` to open the full
-transcript. The detail view renders summary Markdown with terminal-friendly
-headings, lists, emphasis, code, and preserved transcript line breaks. Inside
-the detail view, `/` finds text and `n`/`N` moves between matches. Meetings
-mode is read-only; selection and deletion actions are not available.
-
-Meetings remains available in the mode cycle when the archive is empty and
-shows setup guidance. If Texts mode is unavailable, `m` skips it and still
-reaches Meetings.
+### Scheduling and partial results
 
 With a `schedule` set, `msgvault serve` runs the sync on that cron cadence,
 like `[[gcal]]` calendar sources. Registration is intentionally durable: if
@@ -240,13 +244,14 @@ query per run, never loops the same page, and reports partial coverage when
 Notion sets `has_more`. This means native sync is reliable for the visible
 recent window but is not a complete historical workspace export.
 
-Every run hydrates the visible meetings that pass local filters, then compares
-their complete snapshots; matching checksums skip the archive write. `--full`
-instead sends every selected snapshot through archive upsert, which can repair
-cursor/archive divergence while identical archived content remains a no-op. It
-does not expose history beyond the visible window. `--after` is a local filter
-over returned meetings. `--limit` caps visible meetings hydrated and verified
-but does not suppress due transcript maintenance.
+Every run fetches the details of visible meetings that pass your filters.
+Unchanged content is skipped. Use `--full` to send those meetings through the
+archive update path again when stored sync state and archived content disagree.
+It still cannot discover history beyond the visible window.
+
+- `--after` filters meetings returned by Notion locally and implies `--full`.
+- `--limit` caps the visible meetings fetched and checked.
+- Due transcript retries run in addition to that limit.
 
 Notion may publish notes before a transcript. Missing transcripts retry every
 six hours until seven days after the best known meeting end, or for 48 hours
@@ -257,11 +262,12 @@ idempotent.
 
 ### What gets stored (Notion)
 
-Each meeting-note block becomes one `meeting_transcript` message in one
-`meeting` conversation, keyed by the block ID. The body contains deterministic
-title, time, attendee, summary, notes, and transcript sections. Raw format
-`notion_meeting_json` preserves the query object, block trees, Markdown page,
-privacy-safe attendee display labels, minimal resolved users, and warnings.
+Each meeting-note block becomes one `meeting_transcript` message in a
+`meeting` conversation. Its block ID identifies the meeting on later syncs.
+The body includes title, time, attendees, summary, notes, and transcript
+sections. The raw archive (`notion_meeting_json`) keeps the source meeting
+object, note blocks, Markdown, attendee labels, resolved user details, and
+warnings for later inspection.
 
 Notion's `created_by` user is stored as creator metadata and is never assumed
 to be the organizer. Only attendees with provider-verified email addresses
@@ -361,12 +367,3 @@ status), insights, and tags land in the message metadata and body; the
 meeting recording URL and `recording_url_fetched_at` remain in the archived
 provider metadata. msgvault does not expose recording URLs as durable
 attachments, and downloading or archiving recording media is not supported.
-
-## Searching
-
-Unscoped search returns all cached matching message types. Filter to meetings
-when the question is meeting-specific:
-
-```bash
-msgvault search "quarterly budget" --message-type meeting_transcript
-```

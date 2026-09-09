@@ -23,7 +23,6 @@
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <a class="wordmark" href="/">
-        <img src="/favicon.svg" width="22" height="22" alt="">
         msgvault
       </a>
       <nav aria-label="Primary navigation">
@@ -100,7 +99,7 @@
       <header class="hero compact">
         <p class="eyebrow">Lifecycle guide</p>
         <h1>The archive lifecycle</h1>
-        <p class="lede">One archive moves through nine stages. Your data stays local and complete at every stop.</p>
+        <p class="lede">One archive moves through nine stages. Source access and media policies determine what is captured. Optional hosted processing sends selected data to the providers you configure.</p>
         <ol class="guide-nav" aria-label="Guide stops">
           <li><a href="#capture">01 Capture</a></li>
           <li><a href="#preserve">02 Preserve</a></li>
@@ -118,7 +117,7 @@
         <li class="guide-stop" id="capture">
           <div class="guide-copy">
             <h2>Capture every channel</h2>
-            <p>Live sources sync on a schedule — Gmail, IMAP, Slack, Teams, Discord, Beeper, Google Calendar, CardDAV, meeting notes. Dead exports import once — MBOX, Apple Mail, PST, WhatsApp, iMessage, Messenger, SMS backups. Interrupted syncs resume from checkpoints.</p>
+            <p>Live sources sync on a schedule — Gmail, IMAP, Slack, Teams, Discord, Beeper, Google Calendar, CardDAV, meeting notes. Local exports import on demand — MBOX, Maildir, Apple Mail, PST, EML, Slackdump, WhatsApp, iMessage, Messenger, SMS backups. Interrupted syncs resume from checkpoints.</p>
             <a href="/docs/usage/importing/">Importing local email</a>
           </div>
           <div class="guide-media">
@@ -128,19 +127,18 @@
           </div>
         </li>
 
-        <li class="guide-stop" id="preserve">
+        <li class="guide-stop guide-stop-text" id="preserve">
           <div class="guide-copy">
             <h2>Preserve the original</h2>
-            <p>Raw provider payloads are retained compressed beside the parsed record. Attachments are content-addressed by SHA-256, deduplicated, and sealed into immutable packs. Cross-account duplicates hide behind a reversible safety ladder — the surviving copy is always the complete one.</p>
+            <p>Raw provider payloads are retained compressed beside the parsed record. Attachments are content-addressed by SHA-256, deduplicated, and sealed into immutable packs. Cross-account duplicates hide behind a reversible safety ladder — msgvault checks source preference, raw message evidence, and attachment completeness under defined rules.</p>
             <a href="/docs/architecture/storage/">Data storage</a>
           </div>
           <div class="guide-media">
-            <figure class="capture">
-              <a href="/docs/assets/generated/concepts/deduplication-concept.png" data-lightbox>
-                <img src="/docs/assets/generated/concepts/deduplication-concept.png" alt="msgvault deduplication concept showing duplicate copies collapsing to one surviving complete record">
-              </a>
-              <figcaption class="caption">Duplicates collapse to the most complete survivor, reversibly.</figcaption>
-            </figure>
+            <ol class="ledger">
+              <li><strong>Preview</strong><span>Review duplicate groups and the proposed survivor.</span></li>
+              <li><strong>Hide</strong><span>Keep one visible copy; retain hidden copies and source evidence.</span></li>
+              <li><strong>Undo</strong><span>Restore hidden copies while they remain in the archive.</span></li>
+            </ol>
           </div>
         </li>
 
@@ -176,7 +174,7 @@
         <li class="guide-stop" id="understand">
           <div class="guide-copy">
             <h2>Understand with your models</h2>
-            <p>Opt in to semantic search by pointing msgvault at an embedding server you choose — local ones included. The embedded Docbank document engine extracts and indexes attachment text and images behind explicit, fail-closed consent. Every intelligence lane is disposable and rebuildable; the record is not.</p>
+            <p>Opt in to semantic search by pointing msgvault at an embedding server you choose — local ones included. The embedded Docbank document engine extracts and indexes attachment text and images behind explicit, fail-closed consent. Search indexes can be rebuilt from the archive. Stored evidence and curated profiles remain part of the record.</p>
             <a href="/docs/usage/vector-search/">Vector search</a>
           </div>
           <div class="guide-media">
@@ -189,7 +187,7 @@
         <li class="guide-stop" id="search">
           <div class="guide-copy">
             <h2>Search by word or meaning</h2>
-            <p>Full-text search with Gmail-style operators answers instantly and offline. Semantic and hybrid modes fuse BM25 with vectors through reciprocal rank fusion, with explainable ranking and honest coverage states; msgvault never quietly substitutes one mode for another.</p>
+            <p>Full-text search with Gmail-style operators answers instantly and offline. Semantic mode finds results by meaning. Hybrid mode combines keyword and vector rankings, with explicit coverage and ranking details; msgvault never quietly substitutes one mode for another.</p>
             <a href="/docs/usage/searching/">Searching</a>
           </div>
           <div class="guide-media">
@@ -218,19 +216,19 @@
           </div>
         </li>
 
-        <li class="guide-stop" id="act">
+        <li class="guide-stop guide-stop-text" id="act">
           <div class="guide-copy">
             <h2>Act with a safety ladder</h2>
-            <p>Staging and execution never share a surface. Any interface can stage a deletion manifest for review; only the CLI executes it, behind an explicit environment gate, defaulting to recoverable trash. The local archive is never modified, and deleted mail remains searchable.</p>
+            <p>Stage a deletion manifest from the CLI, browser, TUI, or MCP and review it before execution. The separate CLI execution step requires client consent. Gmail and IMAP default to moving messages to Trash; permanent deletion requires explicit opt-in. Archived content remains searchable unless you separately purge it locally.</p>
             <a href="/docs/usage/deletion/">Deleting email</a>
           </div>
           <div class="guide-media">
-            <figure class="capture">
-              <a href="/docs/assets/generated/concepts/safety-ladder-concept.png" data-lightbox>
-                <img src="/docs/assets/generated/concepts/safety-ladder-concept.png" alt="msgvault deletion safety ladder from staging and review to gated execution">
-              </a>
-              <figcaption class="caption">Staged deletions are inspectable and cancellable before execution.</figcaption>
-            </figure>
+            <ol class="ledger">
+              <li><strong>Stage</strong><span>Select one source and create a reviewable manifest.</span></li>
+              <li><strong>Review</strong><span>Inspect the count and contents. Cancel if needed.</span></li>
+              <li><strong>Execute</strong><span>Grant client consent, then move to Trash or explicitly delete permanently.</span></li>
+              <li><strong>Retain</strong><span>Keep the archived messages and attachments. Local purging is separate.</span></li>
+            </ol>
           </div>
         </li>
 

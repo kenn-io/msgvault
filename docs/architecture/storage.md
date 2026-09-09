@@ -1,8 +1,13 @@
 ---
-last_edited: "2026-08-30"
+last_edited: "2026-09-08"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
+
+The archive database preserves messages, source evidence, curated people, and
+durable operation state. Attachment bytes are stored separately and shared by
+content hash. Analytics and semantic indexes are derived from those records;
+back up the archive and attachments before relying on a rebuild or local purge.
 
 ## Storage Layers
 
@@ -10,13 +15,16 @@ description: Database schema, Parquet analytics cache, content-addressed attachm
 |---|---|---|
 | SQLite | Default system of record | `~/.msgvault/msgvault.db` |
 | PostgreSQL | Optional system of record | `[data].database_url` |
+| SQLite vector index | Optional, rebuildable semantic index | `[vector].db_path`, default `~/.msgvault/vectors.db` |
 | Parquet | Analytics cache | `~/.msgvault/analytics/` |
 | Attachments | Content-addressed loose files and sealed packs | `~/.msgvault/attachments/` |
-| Tokens | OAuth credentials | `~/.msgvault/tokens/` |
+| Tokens | OAuth tokens and provider credentials | `~/.msgvault/tokens/` |
 
 ## Archive Database
 
-All message data (metadata, labels, participants, and raw MIME) lives in the configured archive database. SQLite is the default and stores the archive at `~/.msgvault/msgvault.db`. PostgreSQL is opt-in through `[data].database_url` and is intended for new archives or fresh re-syncs.
+Message metadata, bodies, labels, participants, raw payloads, and curated
+profiles live in the configured archive database. Attachment bytes are stored
+separately. SQLite is the default and stores the archive at `~/.msgvault/msgvault.db`. PostgreSQL is opt-in through `[data].database_url` and is intended for new archives or fresh re-syncs.
 
 ### Core Tables
 
@@ -54,11 +62,18 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `subject` | TEXT | Message subject |
-| `body_text` | TEXT | Plain text content |
 | `snippet` | TEXT | Preview excerpt |
 | `size_estimate` | INTEGER | Approximate size in bytes |
 | `has_attachments` | BOOLEAN | Attachment flag |
-| `deleted_at` | DATETIME | Soft delete timestamp |
+| `deleted_at` | DATETIME | Soft-delete timestamp |
+| `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
+
+**message_bodies** -- Parsed content stored separately from message metadata.
+
+`message_id` is both the primary key and a reference to `messages`; `body_text`
+and `body_html` hold the parsed bodies. Keeping these large values separate
+allows metadata scans without reading message content. Search uses the full-text
+index; detail readers fetch bodies by message ID.
 
 **message_raw** -- Raw provider payload storage, compressed with zlib.
 
@@ -67,6 +82,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `message_id` | INTEGER PK/FK | References `messages` |
 | `raw_data` | BLOB | Compressed MIME or provider JSON data |
 | `compression` | TEXT | `zlib` |
+| `raw_format` | TEXT | Format discriminator, such as `mime` or `notion_meeting_json` |
 
 Native Notion meetings use raw format `notion_meeting_json`. The compressed
 envelope keeps provider discovery, structured blocks, page Markdown, minimized
@@ -74,7 +90,8 @@ resolved users, canonical text used for safe transcript preservation, and
 hydration warnings. Integration tokens and authorization headers are never
 part of the envelope.
 
-**participants** -- Unified contacts.
+**participants** -- Observed addresses and handles from source data. These are
+separate from the curated `persons` table.
 
 | Column | Type | Description |
 |---|---|---|
@@ -92,7 +109,8 @@ part of the envelope.
 | `participant_id` | INTEGER FK | References `participants` |
 | `recipient_type` | TEXT | `from`, `to`, `cc`, `bcc`, `mention`, or another provider-defined role |
 
-**labels / message_labels** -- Gmail labels (many-to-many).
+**labels / message_labels** -- Source labels and imported mailbox/folder labels
+(many-to-many).
 
 | Table | Key Columns |
 |---|---|
@@ -130,6 +148,25 @@ disappears before raw fetch, is recorded as `status = 'skipped'`.
 may not have a stable checksum. msgvault treats a null checksum as an empty
 string when checking already-imported source items.
 
+### People, evidence, and operation state
+
+| Table family | What it preserves |
+|---|---|
+| `persons`, `person_participants` | Durable profiles and their bindings to observed participants |
+| `attribute_definitions`, `person_attribute_values` | Typed profile fields, values, and history |
+| `organizations`, `employments`, `person_relationships` | Organization profiles, employment history, and dated relationships |
+| `person_fact_*` | Evidence, claims, resolutions, decisions, and pins |
+| `person_tracking`, `person_sweep_*` | Enrollment and progress for profile maintenance |
+| `person_briefs`, `person_brief_evidence`, `person_brief_enrollments` | Saved conversation briefs, citations, and per-person enrollment |
+| `person_inference_*`, `person_enrichment_*` | Provider profiles, checks, consent, external lookup state, and suppression |
+| `carddav_*` | Address books, retained resources, publication, conflicts, and sync runs |
+| `sync_runs` and worker run tables | Durable operation outcomes and progress behind Operations |
+
+The current SQL schemas in `internal/store/schema.sql` and `schema_pg.sql` own
+exact columns and constraints. [People guides](../usage/people.md) explain how
+curation, evidence, and provider consent interact. These durable records are
+not interchangeable with disposable analytics or semantic indexes.
+
 ### Full-Text Index
 
 SQLite uses an FTS5 virtual table named `messages_fts`. PostgreSQL uses a `search_fts` `tsvector` column on `messages` with a GIN index.
@@ -157,11 +194,9 @@ There is currently no SQLite to PostgreSQL migration command. Use PostgreSQL for
 ## Parquet (Analytics Cache)
 
 The Web UI and TUI need to aggregate across your entire archive and return
-results instantly as you group and drill down. SQLite JOINs across normalized
-tables cannot do this at interactive speeds on large archives. msgvault solves
-this on the default SQLite backend with denormalized Parquet files queried by
-an embedded DuckDB engine, delivering aggregate queries hundreds of times
-faster than SQLite.
+results instantly as you group and drill down. On the default SQLite backend, msgvault exports denormalized metadata to
+Parquet so DuckDB can group and filter it without repeatedly joining the
+normalized archive tables.
 
 Ungrouped Everything and Files listings page a scalar message or attachment
 population before resolving participant lists for the returned rows. Exact
@@ -194,13 +229,12 @@ cannot replace Parquet files underneath an active reader. `msgvault
 build-cache` builds or repairs the cache on demand. PostgreSQL archives use live
 SQL for aggregate views rather than this Parquet acceleration layer.
 
-Version 0.19.0 adds `relationship_activity`, `relationship_people`,
+The cache includes `relationship_activity`, `relationship_people`,
 `relationship_domains`, and `relationship_daily` datasets. These compact edges
 and rollups avoid expanding every message's participant list during people,
-domain, relationship, timeline, and file-group queries. Existing SQLite caches
-need one full rebuild after upgrading; automatic cache building performs it in
-the background during daemon startup, or run `msgvault build-cache --full-rebuild`
-explicitly.
+domain, relationship, timeline, and file-group queries. When a cache format changes, automatic cache building performs the required
+rebuild during daemon startup. Run `msgvault build-cache --full-rebuild` to
+request a full rebuild explicitly.
 
 ```bash
 # Manual build
@@ -232,7 +266,8 @@ analytics/
 └── _last_sync.json
 ```
 
-Messages are partitioned by year for efficient time-range queries. The entire analytics cache is typically a few MB even for hundreds of thousands of messages, compared to the much larger SQLite database with full message bodies.
+Messages are partitioned by year for efficient time-range queries. The cache omits full message bodies. Its size depends on message count,
+participants, attachments, and the derived datasets included in the build.
 
 ## Content-Addressed Attachments
 

@@ -1,20 +1,27 @@
 ---
-last_edited: "2026-09-07"
+last_edited: "2026-09-08"
 title: Web UI
-description: Use and securely deploy msgvault's daemon-served analytical interface.
+description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
 
 # Web UI
 
-Msgvault's first-party web UI is embedded in every release binary and served by
-`msgvault serve`. It needs no Node/Bun process, hosted service, or external asset
-directory at runtime. The transactional archive remains authoritative while the
-Parquet/DuckDB analytical cache supplies the interactive tables.
+The Web UI lets you search across your archive, read messages, browse files,
+maintain your contact directory, and see whether sync and indexing work has
+finished. It is embedded in the release binary and served by `msgvault serve`;
+you do not need a separate web application process.
 
-These reference captures are hydrated from the orphan `docs-assets` branch when
-the documentation is built. The analytical captures use a compact,
-provenance-documented Enron-derived fixture imported through the real daemon;
-the ordinary browser checks continue to use small synthetic API fixtures.
+| Your question | Workspace |
+|---|---|
+| Where is that message, conversation, or meeting? | Everything |
+| Who have I been in contact with? | Relationships, People, and Domains |
+| Where is an attachment, image, or video? | Files |
+| What do I know about this person? | Directory |
+| Which identity matches or profile facts need my decision? | Reviews |
+| Can I return to this search later? | Saved Views |
+| Did sync, enrichment, or indexing finish? | Operations and Sources |
+| What is staged for deletion? | Deletions |
+| How do I change the daemon's configuration? | Settings |
 
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
@@ -36,12 +43,10 @@ the ordinary browser checks continue to use small synthetic API fixtures.
   <figcaption>Light theme with compact density.</figcaption>
 </figure>
 
-The authentic names and message text in these two relationship captures are
-intentional public research data from the controlled `docs-fixtures` branch.
-The branch README and manifest record the CMU/CALO source, attribution,
-selection exclusions, and message-by-message sensitive-content review.
-The relationship captures are Darwin-only; the analytical matrix includes
-Darwin and Linux variants to exercise host-specific rasterization.
+The screenshots use a curated public Enron research-data fixture. Authentic
+names and message text are intentional; the repository's `docs-fixtures`
+branch records provenance, attribution, and the content review. Screenshots
+illustrate the workflows; newer controls may differ from these captures.
 
 ## Start and discover the URL
 
@@ -49,6 +54,10 @@ Darwin and Linux variants to exercise host-specific rasterization.
 msgvault build-cache
 msgvault serve
 ```
+
+`build-cache` prepares the analytical tables before you open the browser. You
+can also run `serve` directly and let the default startup maintenance build a
+missing or stale cache in the background.
 
 Foreground startup prints `API server: http://HOST:PORT`. The default
 `server.api_port = 0` chooses a free port. Local CLI commands discover that
@@ -123,7 +132,7 @@ substitute full-text search for either state.
 
 ## Cache states
 
-The web tables use one modality-neutral analytical cache. When it is missing,
+The web tables share one analytical cache across message types. When it is missing,
 building, stale, or unavailable, the UI names that state instead of quietly
 switching selected modalities to a different read path. Run `msgvault
 build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
@@ -138,6 +147,28 @@ PDFs open in application-controlled viewers. Metadata-only, missing,
 unsupported, and previewable content remain distinct. From a file, navigate to
 its containing item and then its email or chat conversation.
 
+Filter by filename and file type. In a person's Media & Files view, choose a
+media gallery or file table and narrow the relationship to **From them**,
+**To them**, or **Group conversations**. These directions describe the
+containing messages; they do not identify people pictured in an image.
+
+Turn on **Hosted visual search** to describe image or video content, or supply
+a JPEG, PNG, or WebP query image. The UI discloses that the query goes to the
+configured provider. It requires the separate
+[visual index](/docs/usage/vector-search/#visual-attachment-search); ordinary
+filename browsing does not use that provider.
+
+### Images in email
+
+The reader displays archived inline images and leaves remote images unloaded
+until you choose **Load images**. That choice applies to the current item and
+fetches images through the daemon. Moving to another item resets it.
+
+For unattended, offline preservation of remote images, see
+[Archive Remote Email Images](/docs/usage/remote-images/). Reader permission
+to load an image and permission to archive remote images during ingest are
+separate choices.
+
 ## People and domains
 
 People combines identifiers backed by explicit archive identity evidence; it
@@ -151,13 +182,24 @@ that mean “me,” explicit durable profile promotion, display-name overrides, 
 typed profile attributes are separate curated operations; see [People,
 Profiles, and Source Identities](/docs/usage/people/).
 
-Directory is the curated durable-person workspace. Its person detail keeps
+### Directory and Reviews
+
+Directory holds durable people: the profiles you explicitly curate and keep
+across sources. Search by name, email, or organization; filter by contact
+state, category, primary channel, or last-contact dates; and sort by most or
+least recently contacted.
+
+Its person detail keeps
 Overview, Organizations, Relationships, Network, and Media & Files together.
+Edit structured profile information, attributes, employment, and typed
+relationships here. Curated display names also appear in message views,
+analytics, and exports while source identifiers remain available.
+
 The Overview tab's **Last time we talked** card summarizes the person's recent
 chat and text messages. Enroll the person, generate a brief, and expand a
 sentence to check its sources. You can reject a brief or inspect the dates and status of earlier
 versions. Generation requires a consented provider and uses its budget; see
-[person briefs](/docs/usage/people/#catch-up-before-your-next-conversation)
+[person briefs](/docs/usage/people-briefs/)
 for setup and supported sources.
 
 The Network tab can request one, two, or three hops and optionally include
@@ -168,21 +210,11 @@ profiles. Edges come only from curated typed relationships and employments
 (including shared organizations), never messages, participant co-occurrence,
 or inferred communication activity.
 
-Settings is a daemon-described workspace: the daemon publishes the catalog of
-editable keys with their groups, kinds, and allowed values, and the browser
-renders that catalog rather than a hard-coded form. Saving writes
-`config.toml` on the daemon host. Keys marked restart-required show a
-pending-restart state until the daemon restarts. Person enrichment uses named
-provider policies for Exa and SixtyFour; the workspace can create and edit
-those policies, and the TUI shows them read-only.
-
-Provider credentials (embedding, enrichment, and sweep API keys) are
-write-only. You can add, replace, or remove a key; the value is never shown
-again after saving, only whether one is configured and where it comes from.
-Credentials are versioned separately from `config.toml`. When both an endpoint
-or model change and a credential change are pending, save the endpoint/model
-change first, then the credential, so the key is bound to the endpoint it was
-entered for.
+Reviews brings together identity matches, fact review, and imported
+relationships. Inspect the evidence before accepting or rejecting a candidate.
+Conflicts between existing profiles require an explicit merge decision.
+Merge history and reversal follow the boundaries documented in
+[People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
@@ -222,10 +254,43 @@ than claiming success. Conflicting runs and unavailable capabilities retain
 their explicit errors or reasons. Full resync, pause/resume, schedule editing,
 and source add/remove are outside this workspace's initial scope.
 
+## Operations
+
+Operations answers two different questions: what is configured and ready now,
+and what happened during a particular run. Its overview groups work into five
+lanes:
+
+| Lane | Work shown |
+|---|---|
+| Messages | Source sync and message embeddings |
+| Facts | People sweeps, person embeddings, and external enrichment |
+| Contacts | CardDAV sync |
+| Documents | Document extraction and document embeddings |
+| Attachments | Visual embeddings |
+
+Filter history by lane, kind of work, state, and start date. Open a run to
+inspect its progress, outcome, timestamps, and available diagnostics. Queued,
+running, succeeded, partial, failed, and cancelled are distinct states.
+Missing history is reported as unavailable instead of looking like no work
+has ever run.
+
+Links open source status, CardDAV settings, or detailed document and visual
+index status. The latter show coverage and the current prerequisites for
+processing. The workspace offers **Start CardDAV sync**, **Build visual
+index**, or **Resume visual index** only when the daemon advertises that
+action. Source **Sync now** remains in Sources. Document extraction still
+requires the explicit CLI upload workflow in
+[Document Indexing](/docs/usage/document-indexing/).
+
+While Operations is visible it refreshes status and run history. The filters
+and selected run are kept in the URL, so browser Back and Forward restore the
+view. If paging history becomes inconsistent after a change, use **Restart
+operation history** to load a fresh snapshot.
+
 ## Deletions
 
 Everything supports explicit row selection and select-all-matching for the
-current canonical filter. `d` and `D` open the Deletions workspace, where the
+current query and filters. `d` and `D` open the Deletions workspace, where the
 daemon first preflights the selection and reports any unavailable action before
 the UI offers a separate staging confirmation. The workspace lists, inspects,
 and cancels manifests; it cannot execute deletion against a provider. Use the
@@ -254,16 +319,41 @@ Shortcuts are suspended while typing and inside message/file content.
 
 ## Settings and restart behavior
 
-Settings exposes the supported browser, server, search, source, and optional
-integration keys. It performs targeted, comment-preserving edits to
-`config.toml`, rejects a stale browser edit after a concurrent hand edit, and
-never displays secret values—only whether they are configured.
+Settings edits supported browser, server, search, source, and integration
+settings on the daemon host. The daemon supplies the editable fields and their
+allowed values. Saving makes targeted edits to `config.toml` while preserving
+comments. A stale edit is rejected after another browser or a hand edit
+changes the configuration; reload before saving again.
 
-Most settings are restart-required by design. After saving, the UI shows a
-pending-restart state until the daemon restarts. The server API key
-(`server.api_key`) is read-only in the browser; it can only be changed in
-`config.toml` on the daemon host. After a key change and restart, old browser
-sessions are gone and the login screen appears.
+Keys marked restart-required show a pending-restart state until the daemon
+restarts. The server API key (`server.api_key`) is read-only in the browser;
+change it in `config.toml` on the daemon host. After that key changes and the
+daemon restarts, old browser sessions end and the login screen appears.
+
+### Provider policies and credentials
+
+Create or edit named person-enrichment policies for Exa and SixtyFour in
+Settings. Provider checks and consent still govern whether enrichment can
+run; configuration alone does not authorize a provider. The TUI shows these
+policies read-only. See [External Person Enrichment](/docs/usage/people-enrichment/)
+for the provider lifecycle.
+
+Provider credentials for embeddings, enrichment, and sweeps are write-only.
+You can add, replace, or remove a key. After saving, the UI shows whether a key
+is configured and where it comes from, but never its value.
+
+Credentials have a separate revision from `config.toml`. When changing both
+an endpoint or model and its credential, save the endpoint/model first, then
+the credential. This binds the key to the destination it was entered for.
+
+### CardDAV contacts
+
+CardDAV settings manage contact accounts and discovered address books. Choose
+which books participate in sync, lookup, and publishing; publishing also
+enables contact sync for that book. The workspace offers incremental and full
+sync, recent run history, and conflict review. A conflict shows local and
+remote versions before you choose which to keep. See
+[People and CardDAV](/docs/usage/people-carddav/) for setup and publishing rules.
 
 ## Optional integration states
 
