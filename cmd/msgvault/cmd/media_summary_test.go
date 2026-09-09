@@ -88,6 +88,21 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	}
 }
 
+func TestDiscordSyncSummaryReportsAutomaticMetadataRepair(t *testing.T) {
+	assert := assert.New(t)
+	var output bytes.Buffer
+	writeDiscordSyncSummary(&output, "guild", &discord.ImportSummary{
+		MessageMetadataRepaired: 2,
+		AttachmentsRetagged:     3,
+		RepairUndecodable:       1,
+		RepairErrors:            4,
+	})
+	assert.Contains(output.String(), "Message metadata repaired: 2")
+	assert.Contains(output.String(), "Attachments retagged from archive: 3")
+	assert.Contains(output.String(), "Archived payloads not decoded: 1")
+	assert.Contains(output.String(), "Derived metadata repair errors: 4")
+}
+
 func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
 	tests := []struct {
 		name  string

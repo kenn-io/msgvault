@@ -241,6 +241,34 @@ func TestImporterArchivesDiscordVoiceMetadata(t *testing.T) {
 	}
 }
 
+func TestImporterReportsAutomaticDiscordMetadataRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "501",
+		MessageType: discordMessageType,
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"501","channel_id":"300","type":0,"flags":8192,"attachments":[{"id":"401","filename":"voice.ogg","content_type":"audio/ogg","waveform":"%%%"}]}`), discordRawFormat))
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{
+		{SourceAttachmentID: "discord:401", StoragePath: "discord:pending:401"},
+	}))
+
+	summary, err := newTestImporter(st, newImporterFakeAPI(importerTestChannel("300", "general"))).Import(
+		t.Context(), ImportOptions{GuildID: "200", Full: true},
+	)
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessageMetadataRepaired)
+	assert.Equal(int64(1), summary.AttachmentsRetagged)
+	assert.Zero(summary.RepairUndecodable)
+	assert.Zero(summary.RepairErrors)
+}
+
 func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {
 	t.Helper()
 	lower, err := SnowflakeFromTimestamp(at)

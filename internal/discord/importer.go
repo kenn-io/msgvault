@@ -45,19 +45,23 @@ type ImportOptions struct {
 
 // ImportSummary reports durable core work and best-effort media outcomes.
 type ImportSummary struct {
-	Duration            time.Duration
-	SourceID            int64
-	SyncRunID           int64
-	ContainersProcessed int64
-	MessagesProcessed   int64
-	MessagesAdded       int64
-	MessagesUpdated     int64
-	MediaDownloaded     int64
-	MediaPending        int64
-	MediaSkipped        int64
-	CatalogIssues       []CatalogIssue
-	ContainerIssues     []ContainerIssue
-	processedMessageIDs map[string]struct{}
+	Duration                time.Duration
+	SourceID                int64
+	SyncRunID               int64
+	ContainersProcessed     int64
+	MessagesProcessed       int64
+	MessagesAdded           int64
+	MessagesUpdated         int64
+	MessageMetadataRepaired int64
+	AttachmentsRetagged     int64
+	RepairUndecodable       int64
+	RepairErrors            int64
+	MediaDownloaded         int64
+	MediaPending            int64
+	MediaSkipped            int64
+	CatalogIssues           []CatalogIssue
+	ContainerIssues         []ContainerIssue
+	processedMessageIDs     map[string]struct{}
 }
 
 // ContainerIssueKind classifies a message-container scan that was skipped
@@ -115,10 +119,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err != nil {
 		return nil, fmt.Errorf("get Discord source: %w", err)
 	}
-	if _, _, err := rederive.RunIfStale(
+	summary = &ImportSummary{
+		SourceID:            source.ID,
+		processedMessageIDs: make(map[string]struct{}),
+	}
+	repairSummary, _, repairErr := rederive.RunIfStale(
 		ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
-	); err != nil {
-		return nil, fmt.Errorf("repair Discord derived metadata: %w", err)
+	)
+	if repairSummary != nil {
+		summary.MessageMetadataRepaired = repairSummary.MessageMetadataRewritten
+		summary.AttachmentsRetagged = repairSummary.AttachmentsTagged
+		summary.RepairUndecodable = repairSummary.Undecodable
+		summary.RepairErrors = repairSummary.Errors
+	}
+	if repairErr != nil {
+		return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
 	}
 	lowerBound := ""
 	if !opts.After.IsZero() {
@@ -144,10 +159,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
-	summary = &ImportSummary{
-		SourceID: source.ID, SyncRunID: syncID,
-		processedMessageIDs: make(map[string]struct{}),
-	}
+	summary.SyncRunID = syncID
 	completed := false
 	defer func() {
 		summary.Duration = time.Since(started)
