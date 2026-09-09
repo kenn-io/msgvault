@@ -16,6 +16,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/scheduler"
 )
 
 const (
@@ -57,13 +58,15 @@ type SettingValidation struct {
 	// types and render with a purpose-built control.
 	Format string `json:"format,omitempty" enum:"cron"`
 	// Off names the value that switches the setting off. Minimum and
-	// Maximum then bound only the "on" values; clients render a switch
-	// beside the value control.
+	// Maximum keep covering every accepted value, the off value included,
+	// so a client that ignores Off still accepts what the daemon stores.
+	// Clients that understand Off render a switch beside the value control
+	// and bound the "on" values with OnMinimum.
 	Off *SettingOff `json:"off,omitempty"`
 }
 
-// SettingOff describes the one value outside a setting's normal range that
-// turns it off or hands it back to a default.
+// SettingOff describes the one value that turns a setting off or hands it
+// back to a default.
 type SettingOff struct {
 	// Value is the off value in the same text form the value control shows:
 	// "0" for a count, "0s" for a duration, "" for an optional size.
@@ -72,6 +75,9 @@ type SettingOff struct {
 	Label string `json:"label"`
 	// Suggest is the value the control starts from when switched on.
 	Suggest string `json:"suggest,omitempty"`
+	// OnMinimum is the smallest value accepted while the setting is on. It
+	// is set when the off value sits below that range.
+	OnMinimum *float64 `json:"on_minimum,omitempty"`
 }
 
 // Setting describes one browser-managed allowlisted config value. ReadOnly
@@ -915,6 +921,9 @@ func validateSettingUpdate(key string, value any, options []string) error {
 	if err := validateSettingBounds(key, value); err != nil {
 		return err
 	}
+	if err := validateSettingText(key, value); err != nil {
+		return err
+	}
 	switch key {
 	case "sync.rate_limit_qps":
 		integer, ok := value.(int)
@@ -959,6 +968,31 @@ func validateSettingUpdate(key string, value any, options []string) error {
 		}
 		if _, err := time.ParseDuration(text); err != nil {
 			return errors.New("invalid duration")
+		}
+	}
+	return nil
+}
+
+// validateSettingText enforces the published Required and Format rules for
+// string settings so the daemon rejects what the browser rejects. Config
+// defaulting would otherwise turn an empty required schedule into the
+// built-in one without telling the caller.
+func validateSettingText(key string, value any) error {
+	validation := validationForSetting(key)
+	if validation == nil {
+		return nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	if validation.Required && trimmed == "" {
+		return errors.New("a value is required")
+	}
+	if validation.Format == settingFormatCron && trimmed != "" {
+		if err := scheduler.ValidateCronExpr(trimmed); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -110,6 +110,14 @@
     { id: 'carddav', label: 'CardDAV account' },
   ]);
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
+  // An emptied number field is a draft in progress, not a value: it keeps the
+  // row on, cannot be saved, and never stands in for the off value.
+  const incompleteDrafts = $derived(
+    Object.entries(drafts).filter(([key, value]) => {
+      const setting = settings.find((candidate) => candidate.key === key);
+      return value === '' && (setting?.kind === 'integer' || setting?.kind === 'number');
+    }).length,
+  );
   onMount(() => {
     void loadSettings(false);
   });
@@ -152,7 +160,8 @@
       pendingRestart = document.pending_restart;
       etag = response.headers.get('ETag') ?? '';
       credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
-      if (!retainDrafts) discardChanges();
+      if (retainDrafts) pruneSettledDrafts();
+      else discardChanges();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load settings.';
     } finally {
@@ -183,6 +192,23 @@
   }
   function sameValue(draft: SettingValue, persisted: SettingValue | undefined): boolean {
     return persisted !== undefined && JSON.stringify(draft) === JSON.stringify(persisted);
+  }
+  // After a reload that keeps local edits, drop the ones the daemon already
+  // holds: a draft equal to the new persisted value, or a clear for a secret
+  // that is no longer configured.
+  function pruneSettledDrafts() {
+    const nextDrafts = { ...drafts };
+    for (const [key, value] of Object.entries(nextDrafts)) {
+      const setting = settings.find((candidate) => candidate.key === key);
+      if (setting && value !== '' && sameValue(typedValue(setting, value), setting.value)) delete nextDrafts[key];
+    }
+    drafts = nextDrafts;
+    const nextSecrets = { ...secretUpdates };
+    for (const [key, update] of Object.entries(nextSecrets)) {
+      const setting = settings.find((candidate) => candidate.key === key);
+      if (update.action === 'clear' && setting && !setting.secret?.configured) delete nextSecrets[key];
+    }
+    secretUpdates = nextSecrets;
   }
   function setSecret(key: string, value: string) {
     secretValues = { ...secretValues, [key]: value };
@@ -305,7 +331,10 @@
     }
     if (numeric) {
       const suggested = off.suggest === undefined || off.suggest === '' ? Number.NaN : Number(off.suggest);
-      setDraft(setting.key, Number.isNaN(suggested) ? (setting.validation?.minimum ?? 1) : suggested);
+      setDraft(
+        setting.key,
+        Number.isNaN(suggested) ? (off.on_minimum ?? setting.validation?.minimum ?? 1) : suggested,
+      );
       return;
     }
     setDraft(setting.key, off.suggest ?? '');
@@ -411,11 +440,13 @@
 
 {#snippet settingsFooter()}
   <span class="unsaved" role="status">
-    {dirtyCount === 0 ? 'No unsaved changes' : `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}`}
+    {dirtyCount === 0
+      ? 'No unsaved changes'
+      : `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : ''}`}
   </span>
   <Button label="Discard" disabled={saving || dirtyCount === 0} onclick={discardChanges} />
   <Button
-    disabled={saving || dirtyCount === 0}
+    disabled={saving || dirtyCount === 0 || incompleteDrafts > 0}
     tone="success"
     surface="solid"
     label={saving ? 'Saving…' : 'Save settings'}
@@ -529,10 +560,14 @@
                 data-mono
                 value={stringValue(setting)}
                 step={setting.kind === 'integer' ? '1' : 'any'}
-                min={setting.validation?.minimum}
+                min={off?.on_minimum ?? setting.validation?.minimum}
                 max={setting.validation?.maximum}
-                required={setting.validation?.required}
-                oninput={(event) => setDraft(setting.key, Number(event.currentTarget.value))}
+                required={setting.validation?.required || off !== undefined}
+                aria-invalid={drafts[setting.key] === '' || undefined}
+                oninput={(event) => {
+                  const raw = event.currentTarget.value;
+                  setDraft(setting.key, raw === '' ? '' : Number(raw));
+                }}
               />
             </label>
           {:else}

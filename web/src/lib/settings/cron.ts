@@ -130,7 +130,12 @@ function tokenize(expression: string): CronToken[] {
 }
 
 function parseField(text: string, spec: CronFieldSpec): { terms: CronTerm[]; any: boolean } {
-  const terms = text.split(',').map((piece) => parseTerm(piece, spec));
+  // The daemon splits on commas and drops empty pieces, so "0," and "0,,30"
+  // are lists of one and two values. A field with no values at all never
+  // matches; the daemon stores it, but the browser calls it out.
+  const pieces = text.split(',').filter((piece) => piece !== '');
+  if (pieces.length === 0) throw new Error('a value is missing.');
+  const terms = pieces.map((piece) => parseTerm(piece, spec));
   return { terms, any: terms.some((term) => term.all && term.step === 1) };
 }
 
@@ -144,7 +149,7 @@ function parseTerm(text: string, spec: CronFieldSpec): CronTerm {
   let end: number;
   let all = false;
   if (lowText === '*' || lowText === '?') {
-    if (highText !== undefined) throw new Error(`${lowText} cannot start a range.`);
+    // The daemon reads "*-N" as "*" and ignores the range end.
     start = spec.min;
     end = spec.max;
     all = true;
@@ -207,25 +212,40 @@ export function describeFields(fields: CronField[]): string {
   return capitalize(`${time} ${days}`);
 }
 
+// A "*\/N" term only means "every N" when N divides the field evenly. "*\/40"
+// in the minute field fires at :00 and :40, with gaps of 40 and 20 minutes,
+// so it is described by its positions instead.
+function evenStep(field: CronField): number | undefined {
+  if (field.terms.length !== 1) return undefined;
+  const term = field.terms[0];
+  if (!term.all || term.step <= 1) return undefined;
+  const span = CRON_FIELDS.find((spec) => spec.name === field.name);
+  if (!span || (span.max - span.min + 1) % term.step !== 0) return undefined;
+  return term.step;
+}
+
 function describeTime(minute: CronField, hour: CronField): string {
   const minuteValues = values(minute);
   const hourValues = values(hour);
-  const singleMinuteStep = minute.terms.length === 1 && minute.terms[0].all && minute.terms[0].step > 1;
-  const singleHourStep = hour.terms.length === 1 && hour.terms[0].all && hour.terms[0].step > 1;
+  const minuteStep = evenStep(minute);
+  const hourStep = evenStep(hour);
 
   if (minute.any && hour.any) return 'every minute';
-  if (singleMinuteStep && hour.any) return `every ${minute.terms[0].step} minutes`;
-  if (singleMinuteStep) return `every ${minute.terms[0].step} minutes ${describeHourWindow(hour)}`;
+  if (minuteStep && hour.any) return `every ${minuteStep} minutes`;
+  if (minuteStep) return `every ${minuteStep} minutes ${describeHourWindow(hour)}`;
   if (minute.any) return `every minute ${describeHourWindow(hour)}`;
 
   if (minuteValues.length === 1) {
     const mm = pad(minuteValues[0]);
     if (hour.any) return `at :${mm} past every hour`;
-    if (singleHourStep) return `at :${mm} past every ${ordinalStep(hour.terms[0].step)} hour`;
-    if (hourValues.length <= 4) return `at ${joinWords(hourValues.map((h) => `${pad(h)}:${mm}`))}`;
+    if (hourStep) return `at :${mm} past every ${ordinalStep(hourStep)} hour`;
+    if (hourValues.length <= 6) return `at ${joinWords(hourValues.map((h) => `${pad(h)}:${mm}`))}`;
     return `at :${mm} past ${describeHourWindow(hour)}`;
   }
 
+  if (hour.any && minuteValues.length <= 4) {
+    return `at ${joinWords(minuteValues.map((m) => `:${pad(m)}`))} past every hour`;
+  }
   if (hourValues.length === 1 && minuteValues.length <= 4) {
     return `at ${joinWords(minuteValues.map((m) => `${pad(hourValues[0])}:${pad(m)}`))}`;
   }
@@ -234,9 +254,10 @@ function describeTime(minute: CronField, hour: CronField): string {
 
 function describeHourWindow(hour: CronField): string {
   if (hour.any) return 'every hour';
+  const step = evenStep(hour);
+  if (step) return `every ${ordinalStep(step)} hour`;
   if (hour.terms.length === 1) {
     const term = hour.terms[0];
-    if (term.all && term.step > 1) return `every ${ordinalStep(term.step)} hour`;
     if (term.step === 1 && term.start !== term.end) return `from ${pad(term.start)}:00 to ${pad(term.end)}:59`;
     if (term.step === 1) return `during the ${pad(term.start)}:00 hour`;
   }
@@ -256,18 +277,20 @@ function describeDays(day: CronField, month: CronField, weekday: CronField): str
 }
 
 function describeDayOfMonth(day: CronField): string {
-  if (day.terms.length === 1 && day.terms[0].all && day.terms[0].step > 1) {
-    return `every ${ordinalStep(day.terms[0].step)} day of the month`;
-  }
+  const step = evenStep(day);
+  if (step) return `every ${ordinalStep(step)} day of the month`;
+  // 31 days never divide evenly, but "*\/2" is exactly the odd days.
+  if (day.terms.length === 1 && day.terms[0].all && day.terms[0].step === 2) return 'on odd days of the month';
   const list = values(day);
   if (list.length <= 4) return `on the ${joinWords(list.map(ordinal))} of the month`;
   return `on days ${describeGeneric(day)} of the month`;
 }
 
 function describeWeekday(weekday: CronField): string {
+  const step = evenStep(weekday);
+  if (step) return `every ${ordinalStep(step)} day of the week`;
   if (weekday.terms.length === 1) {
     const term = weekday.terms[0];
-    if (term.all && term.step > 1) return `every ${ordinalStep(term.step)} day of the week`;
     if (term.step === 1 && term.start === 1 && term.end === 5) return 'on weekdays';
     if (term.step === 1 && term.start !== term.end) return `${WEEKDAYS[term.start]} to ${WEEKDAYS[term.end]}`;
   }
@@ -279,9 +302,10 @@ function describeWeekday(weekday: CronField): string {
 }
 
 function describeMonth(month: CronField): string {
+  const step = evenStep(month);
+  if (step) return `every ${ordinalStep(step)} month`;
   if (month.terms.length === 1) {
     const term = month.terms[0];
-    if (term.all && term.step > 1) return `every ${ordinalStep(term.step)} month`;
     if (term.step === 1 && term.start !== term.end) return `${MONTHS[term.start - 1]} to ${MONTHS[term.end - 1]}`;
   }
   const list = values(month);

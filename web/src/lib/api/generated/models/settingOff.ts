@@ -4,6 +4,7 @@
 
 export interface SettingOff {
   label: string;
+  on_minimum?: number;
   suggest?: string;
   value: string;
   [key: string]: unknown;

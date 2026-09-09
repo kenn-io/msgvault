@@ -296,9 +296,11 @@ import (
 // Saved View responses include incompatibility_reason for invalid definitions.
 // Additive (minor bump): existing Saved View and Explore routes are unchanged.
 // 2.22.0 adds the optional rfc822_message_id to CLI message detail responses.
-// 2.23.0 adds `section` on settings, `sections` on settings groups, and
-// `validation.format` and `validation.off`; the daemon stops emitting the
-// sync, logging, activity, and backup groups but keeps them in the enum.
+// 2.23.0 adds `section` on settings in sectioned groups, `sections` on those
+// groups, and `validation.format` and `validation.off`. `minimum` and
+// `maximum` keep covering every accepted value, so clients that ignore `off`
+// still accept a stored off value. The daemon stops emitting the sync,
+// logging, activity, and backup groups but keeps them in the enum.
 // Additive (minor bump): existing settings routes are unchanged.
 const APISchemaVersion = "2.23.0"
 

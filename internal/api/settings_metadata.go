@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // settingMetadata is the user-facing copy for one setting. The label names
@@ -230,7 +232,7 @@ var settingsValidation = map[string]SettingValidation{
 	"server.daemon_idle_timeout":     withOffValue(durationValidation("30s, 15m, or 2h"), "0s", "Never stops for being idle", "20m"),
 	"analytics.min_rebuild_interval": withOffValue(durationValidation("15m or 2h"), "0s", "Rebuilds can run back to back", "15m"),
 	"analytics.builder_memory_limit": withOffValue(sizeValidation("512MiB or 2GB"), "", "No limit", "512MiB"),
-	"analytics.builder_threads":      withOff(atLeast(1), "Engine default", ""),
+	"analytics.builder_threads":      withOff(atLeast(1), "Engine default", "4"),
 	"analytics.builder_temp_limit":   withOffValue(sizeValidation("1GiB or 10GB"), "", "No limit", "1GiB"),
 	"sync.rate_limit_qps":            atLeast(1),
 	"log.sql_slow_ms":                withOff(atLeast(1), "Built-in threshold of 100 ms", "100"),
@@ -238,11 +240,13 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.embeddings.endpoint": {
 		Hint: "HTTP or HTTPS URL without credentials, query, or fragment.", Required: true,
 	},
-	"vector.embeddings.model":           {Required: true},
-	"vector.embeddings.dimension":       atLeast(1),
-	"vector.embeddings.batch_size":      atLeast(1),
-	"vector.embeddings.timeout":         {Hint: "Duration such as 30s or 2m.", Required: true},
-	"vector.embeddings.max_retries":     withOff(atLeast(1), "Built-in default of 3", "3"),
+	"vector.embeddings.model":      {Required: true},
+	"vector.embeddings.dimension":  atLeast(1),
+	"vector.embeddings.batch_size": atLeast(1),
+	"vector.embeddings.timeout":    {Hint: "Duration such as 30s or 2m.", Required: true},
+	// Loading the config turns a stored 0 into 3, so zero cannot be a
+	// persistent off state here; the control shows the effective value.
+	"vector.embeddings.max_retries":     atLeast(1),
 	"vector.embeddings.max_input_chars": atLeast(1),
 	"vector.embeddings.eta_window":      atLeast(1),
 	"vector.people.retention_posture":   {Required: true},
@@ -261,17 +265,19 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.search.subject_boost":         atLeast(0),
 	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", "200"),
 
-	"beeper.schedule":                cronValidation(false),
-	"slack.schedule":                 cronValidation(false),
-	"beeper.rate_limit_qps":          withOff(atLeast(0), "Provider default", "5"),
+	"beeper.schedule": cronValidation(false),
+	"slack.schedule":  cronValidation(false),
+	// A float has no "greater than zero" bound a number control can carry,
+	// so the on range starts at 0.1 requests per second.
+	"beeper.rate_limit_qps":          withOff(atLeast(0.1), "Provider default", "5"),
 	"beeper.media_max_participants":  withOff(atLeast(1), "No limit", "20"),
 	"slack.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
 	"discord.media_max_participants": withOff(atLeast(1), "No limit", "20"),
 	"teams.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
-	"beeper.max_media_mb":            withOff(atLeast(1), "Beeper default of 100 MiB", "100"),
-	"slack.max_media_mb":             withOff(atLeast(1), "Slack default of 100 MiB", "100"),
-	"discord.max_media_mb":           withOff(atLeast(1), "Discord default of 50 MiB", "50"),
-	"teams.max_media_mb":             withOff(atLeast(1), "Teams default of 100 MiB", "100"),
+	"beeper.max_media_mb":            mediaSizeOff("Beeper", config.DefaultChatMaxMediaBytes),
+	"slack.max_media_mb":             mediaSizeOff("Slack", config.DefaultChatMaxMediaBytes),
+	"discord.max_media_mb":           mediaSizeOff("Discord", config.DefaultDiscordMaxMediaBytes),
+	"teams.max_media_mb":             mediaSizeOff("Teams", config.DefaultChatMaxMediaBytes),
 
 	"activity.timezone":                {Hint: "UTC or an IANA name such as America/New_York.", Required: true},
 	"activity.max_direct_counterparts": numberRange(1, 10_000),
@@ -300,8 +306,17 @@ func sizeValidation(examples string) SettingValidation {
 	return SettingValidation{Hint: "Size such as " + examples + "."}
 }
 
+const settingFormatCron = "cron"
+
 func cronValidation(required bool) SettingValidation {
-	return SettingValidation{Format: "cron", Required: required}
+	return SettingValidation{Format: settingFormatCron, Required: required}
+}
+
+// mediaSizeOff describes a per-attachment size cap whose zero means the
+// provider default, derived from the same constant the sync path applies.
+func mediaSizeOff(provider string, defaultBytes int64) SettingValidation {
+	mib := strconv.FormatInt(defaultBytes>>20, 10)
+	return withOff(atLeast(1), provider+" default of "+mib+" MiB", mib)
 }
 
 func withHint(validation SettingValidation, hint string) SettingValidation {
@@ -309,9 +324,16 @@ func withHint(validation SettingValidation, hint string) SettingValidation {
 	return validation
 }
 
-// withOff marks zero as the value that switches a numeric setting off.
+// withOff marks zero as the value that switches a numeric setting off. The
+// range the validation carried becomes the on range; Minimum widens to
+// include zero so clients that ignore Off still accept a stored zero.
 func withOff(validation SettingValidation, label, suggest string) SettingValidation {
-	return withOffValue(validation, "0", label, suggest)
+	validation = withOffValue(validation, "0", label, suggest)
+	if validation.Minimum != nil && *validation.Minimum > 0 {
+		validation.Off.OnMinimum = validation.Minimum
+		validation.Minimum = new(float64(0))
+	}
+	return validation
 }
 
 func withOffValue(validation SettingValidation, value, label, suggest string) SettingValidation {
@@ -346,6 +368,9 @@ func validateSettingBounds(key string, value any) error {
 	if validation.Off != nil {
 		if off, err := strconv.ParseFloat(validation.Off.Value, 64); err == nil && off == number {
 			return nil
+		}
+		if validation.Off.OnMinimum != nil && number < *validation.Off.OnMinimum {
+			return errors.New("below minimum")
 		}
 	}
 	if validation.Minimum != nil && number < *validation.Minimum {

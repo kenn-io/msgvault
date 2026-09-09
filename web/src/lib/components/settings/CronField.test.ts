@@ -64,7 +64,9 @@ describe('CronField', () => {
     render(CronField, { value: '', label: 'Schedule', required: true });
 
     expect(screen.getByText('Enter a schedule.')).toBeDefined();
-    expect((screen.getByLabelText('Schedule') as HTMLInputElement).required).toBe(true);
+    const input = screen.getByLabelText('Schedule') as HTMLInputElement;
+    expect(input.required).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(screen.queryByRole('option', { name: 'Off' })).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Presets: Custom' })).toBeDefined();
   });

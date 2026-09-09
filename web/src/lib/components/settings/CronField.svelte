@@ -30,7 +30,8 @@
   const statusID = `${uid}-status`;
   const parsed = $derived(parseCron(value));
   const empty = $derived(value.trim() === '');
-  const invalid = $derived(!empty && parsed.fields === undefined);
+  const invalid = $derived(empty ? required : parsed.fields === undefined);
+  let mirror = $state<HTMLDivElement>();
   const segments = $derived(segmentsOf(value, parsed.tokens));
   const status = $derived.by((): { tone: 'off' | 'error' | 'ok'; text: string } => {
     if (empty) {
@@ -76,7 +77,7 @@
 <div class="cron" class:cron--disabled={disabled}>
   <div class="cron__row">
     <div class="cron__editor" class:cron__editor--invalid={invalid}>
-      <div class="cron__mirror" aria-hidden="true">
+      <div class="cron__mirror" aria-hidden="true" bind:this={mirror}>
         {#each segments as segment, index (index)}
           {#if segment.field}
             <span data-field={segment.field} data-invalid={segment.invalid || undefined}>{segment.text}</span>
@@ -100,6 +101,9 @@
         {disabled}
         bind:value
         oninput={() => oninput?.(value)}
+        onscroll={(event) => {
+          if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
+        }}
       />
     </div>
     <SelectDropdown

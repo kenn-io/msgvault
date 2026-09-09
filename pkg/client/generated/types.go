@@ -10118,9 +10118,10 @@ func (s SettingGroup) Validate() error {
 }
 
 type SettingOff struct {
-	Label   string  `json:"label" validate:"required"`
-	Suggest *string `json:"suggest,omitempty"`
-	Value   string  `json:"value" validate:"required"`
+	Label     string   `json:"label" validate:"required"`
+	OnMinimum *float64 `json:"on_minimum,omitempty"`
+	Suggest   *string  `json:"suggest,omitempty"`
+	Value     string   `json:"value" validate:"required"`
 }
 
 func (s SettingOff) Validate() error {

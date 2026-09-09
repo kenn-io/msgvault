@@ -381,6 +381,57 @@ describe('SettingsWorkspace', () => {
     ]);
   });
 
+  it('keeps a switch round trip and an emptied number from counting as changes', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      settingsResponse(approvedSettingsDocument(), '"config-a"', '"credential-a"'));
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await openSettingsCategory('Attachments');
+    const sizeSwitch = () => screen.getByRole('switch', { name: 'Set Discord maximum attachment size' });
+    await screen.findByText('Discord default of 50 MiB');
+    await fireEvent.click(sizeSwitch());
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    await fireEvent.click(sizeSwitch());
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+
+    const participants = screen.getByLabelText('Discord participant limit') as HTMLInputElement;
+    await fireEvent.input(participants, { target: { value: '' } });
+    expect(screen.getByLabelText('Discord participant limit')).toBeDefined();
+    expect(participants.getAttribute('aria-invalid')).toBe('true');
+    expect((screen.getByRole('switch', { name: 'Set Discord participant limit' }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('1 unsaved change. Enter a number to save.')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.input(participants, { target: { value: '20' } });
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+  });
+
+  it('drops drafts the daemon already holds after a conflict reload', async () => {
+    const latest = {
+      ...initialSettings,
+      settings: initialSettings.settings.map((item) =>
+        item.key === 'web.theme' ? { ...item, value: { string: 'dark' } } : item
+      )
+    };
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(settingsResponse(initialSettings, '"etag-a"'))
+      .mockResolvedValueOnce(Response.json({ error: 'settings_conflict' }, { status: 412 }))
+      .mockResolvedValueOnce(settingsResponse(latest, '"etag-latest"'));
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
+    await openSettingsCategory('Integrations');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
+    await openSettingsCategory('Appearance');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('changed on disk');
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+
   it('edits cron schedules with the cron field and its presets', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
@@ -1075,10 +1126,10 @@ function approvedSettingsDocument() {
         section: 'discord', options: ['all', 'direct', 'none']
       }),
       daemonSetting('discord.media_max_participants', 'attachments', 'Discord participant limit', 'Skip conversations over this size.', 'integer', 20, {
-        section: 'discord', validation: { minimum: 1, off: { value: '0', label: 'No limit', suggest: '20' } }
+        section: 'discord', validation: { minimum: 0, off: { value: '0', label: 'No limit', suggest: '20', on_minimum: 1 } }
       }),
       daemonSetting('discord.max_media_mb', 'attachments', 'Discord maximum attachment size', 'Maximum future file size.', 'integer', 0, {
-        section: 'discord', validation: { minimum: 1, off: { value: '0', label: 'Discord default of 50 MiB', suggest: '50' } }
+        section: 'discord', validation: { minimum: 0, off: { value: '0', label: 'Discord default of 50 MiB', suggest: '50', on_minimum: 1 } }
       }),
       daemonSetting('people.enrichment.enabled', 'enrichment', 'Enable person enrichment', 'Global enrichment gate.', 'boolean', false)
     ],

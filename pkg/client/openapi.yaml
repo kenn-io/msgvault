@@ -10524,6 +10524,9 @@ components:
       properties:
         label:
           type: string
+        on_minimum:
+          format: double
+          type: number
         suggest:
           type: string
         value:

@@ -33,12 +33,25 @@ it is separate from the binary release version. The current schema is **2.23.0**
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
-Schema 2.23.0 describes Settings structure. Each setting names its `section`
-and each group lists its `sections`; `validation` gains `format` (currently
-`cron`) and `off`, the value that switches a setting off with a label and a
-suggested on value. The daemon no longer emits the `sync`, `logging`,
-`activity`, and `backup` groups, which folded into `sources`, `server`, and
-`archive`; the `group` enum keeps them so clients still accept older daemons.
+Schema 2.23.0 describes Settings structure. A sectioned group lists its
+`sections`, and each setting in such a group names its `section`; groups
+without sections omit both. `validation` gains two optional fields:
+
+- `format: "cron"` marks a five-field cron schedule (minute, hour, day of
+  month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,
+  numbers, ranges, comma lists, `/step`, and three-letter month and weekday
+  names. Descriptors such as `@hourly` and the `L`, `W`, and `#` extensions are
+  rejected. The daemon validates the expression on PATCH, and an empty value is
+  rejected when the setting is `required`.
+- `off` names the value that switches a setting off (`value`), what happens
+  while it is off (`label`), a starting value for switching it on (`suggest`),
+  and `on_minimum`, the smallest value accepted while on. `minimum` and
+  `maximum` keep covering every accepted value including the off value, so a
+  client that ignores `off` still accepts what the daemon stores.
+
+The daemon no longer emits the `sync`, `logging`, `activity`, and `backup`
+groups, which folded into `sources`, `server`, and `archive`; the `group` enum
+keeps them so clients still accept older daemons.
 
 Schema 2.21.0 adds Saved View execution at
 `POST /api/v1/saved-views/{id}/run`, publishes the accepted Saved View

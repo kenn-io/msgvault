@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import corpus from './cron-corpus.json';
 import { CRON_PRESETS, describeCron, parseCron, scheduleSummary } from './cron';
 
 describe('parseCron', () => {
@@ -36,11 +37,29 @@ describe('parseCron', () => {
     ['*/0 * * * *', 'Minute: step in */0 must be at least 1.'],
     ['1-2-3 * * * *', 'Minute: too many hyphens in 1-2-3.'],
     ['1/2/3 * * * *', 'Minute: too many slashes in 1/2/3.'],
-    ['0, * * * *', 'Minute: a value is missing.'],
+    [', * * * *', 'Minute: a value is missing.'],
   ])('rejects %j with a plain message', (expression, message) => {
     const parsed = parseCron(expression);
     expect(parsed.fields).toBeUndefined();
     expect(parsed.error).toBe(message);
+  });
+
+  it('reads lists the way the daemon does', () => {
+    expect(parseCron('0,,30, * * * *').fields?.[0].terms.map((term) => term.start)).toEqual([0, 30]);
+    expect(parseCron('*-5 * * * *').fields?.[0]).toEqual({
+      name: 'minute',
+      terms: [{ start: 0, end: 59, step: 1, all: true }],
+      any: true,
+    });
+  });
+
+  it('agrees with the daemon parser on the shared corpus', () => {
+    for (const expression of corpus.valid) {
+      expect(parseCron(expression).error, expression).toBeUndefined();
+    }
+    for (const expression of corpus.invalid) {
+      expect(parseCron(expression).fields, expression).toBeUndefined();
+    }
   });
 
   it('marks only the broken token', () => {
@@ -68,12 +87,16 @@ describe('describeCron', () => {
     ['0 2 * * 1,3,5', 'At 02:00 on Monday, Wednesday, and Friday'],
     ['0 4 1 * *', 'At 04:00 on the 1st of the month'],
     ['0 4 1,15 * *', 'At 04:00 on the 1st and 15th of the month'],
-    ['0 4 */2 * *', 'At 04:00 every other day of the month'],
+    ['0 4 */2 * *', 'At 04:00 on odd days of the month'],
     ['0 4 1 jan *', 'At 04:00 on the 1st of the month in January'],
     ['0 4 * 6-8 *', 'At 04:00 every day June to August'],
     ['0 4 1 * 1', 'At 04:00 on the 1st of the month or on Mondays'],
     ['0 4 * */3 *', 'At 04:00 every day every 3rd month'],
     ['0 0-23/6 * * *', 'At 00:00, 06:00, 12:00, and 18:00 every day'],
+    ['*/40 * * * *', 'At :00 and :40 past every hour'],
+    ['30 */5 * * *', 'At 00:30, 05:30, 10:30, 15:30, and 20:30 every day'],
+    ['*/20 * * * *', 'Every 20 minutes'],
+    ['0 4 * * */3', 'At 04:00 on Sunday, Wednesday, and Saturday'],
   ])('describes %s as %s', (expression, description) => {
     expect(describeCron(expression)).toBe(description);
   });

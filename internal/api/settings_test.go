@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -170,21 +171,31 @@ func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T
 
 	backupLevel, ok := byKey["backup.zstd_level"]["validation"].(map[string]any)
 	requirements.True(ok, "backup.zstd_level must publish validation metadata")
-	assertions.InDelta(float64(1), backupLevel["minimum"], 0)
+	assertions.InDelta(float64(0), backupLevel["minimum"], 0, "minimum keeps covering the stored off value for older clients")
 	assertions.InDelta(float64(19), backupLevel["maximum"], 0)
 	backupOff, ok := backupLevel["off"].(map[string]any)
 	requirements.True(ok, "backup.zstd_level must publish zero as its off value")
 	assertions.Equal("0", backupOff["value"])
 	assertions.Equal("Encoder default", backupOff["label"])
+	assertions.InDelta(float64(1), backupOff["on_minimum"], 0)
 	assertions.Nil(backupLevel["hint"], "bounds belong on the control, not in hint text")
 
 	mediaSize, ok := byKey["discord.max_media_mb"]["validation"].(map[string]any)
 	requirements.True(ok, "attachment size controls must publish validation metadata")
-	assertions.InDelta(float64(1), mediaSize["minimum"], 0)
+	assertions.InDelta(float64(0), mediaSize["minimum"], 0)
 	mediaOff, ok := mediaSize["off"].(map[string]any)
 	requirements.True(ok, "attachment size controls must publish their provider default as the off state")
 	assertions.Equal("Discord default of 50 MiB", mediaOff["label"])
 	assertions.Equal("50", mediaOff["suggest"])
+	assertions.InDelta(float64(1), mediaOff["on_minimum"], 0)
+	chatSize, ok := byKey["beeper.max_media_mb"]["validation"].(map[string]any)
+	requirements.True(ok)
+	chatOff, ok := chatSize["off"].(map[string]any)
+	requirements.True(ok)
+	assertions.Equal("Beeper default of 250 MiB", chatOff["label"], "the label follows the shared chat default")
+	retries, ok := byKey["vector.embeddings.max_retries"]["validation"].(map[string]any)
+	requirements.True(ok)
+	assertions.Nil(retries["off"], "a zero that loading rewrites to the default cannot be an off state")
 
 	embeddingEndpoint, ok := byKey["vector.embeddings.endpoint"]["validation"].(map[string]any)
 	requirements.True(ok, "provider endpoints must publish safe input guidance")
@@ -1759,7 +1770,20 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 	requirements.Error(validateSettingBounds("backup.zstd_level", 20))
 	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
 	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
+	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
+	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start above zero")
+	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
 	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
+	for key, validation := range settingsValidation {
+		if validation.Off == nil || validation.Off.OnMinimum == nil {
+			continue
+		}
+		requirements.NotNil(validation.Minimum, "%s: minimum must stay published for clients that ignore off", key)
+		off, err := strconv.ParseFloat(validation.Off.Value, 64)
+		requirements.NoError(err, key)
+		assertions.LessOrEqual(*validation.Minimum, off, "%s: minimum must include the off value", key)
+		assertions.Greater(*validation.Off.OnMinimum, off, "%s: the on range must exclude the off value", key)
+	}
 	for key, validation := range settingsValidation {
 		if validation.Off == nil {
 			continue
@@ -1767,6 +1791,23 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 		assertions.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
 		assertions.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
 	}
+}
+
+func TestSettingsPatchEnforcesRequiredAndCronFormat(t *testing.T) {
+	assertions := assert.New(t)
+	srv, _ := newSettingsTestServer(t, "[people.enrichment]\nschedule = \"*/15 * * * *\"\n")
+
+	empty := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":""}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, empty.Code, empty.Body.String())
+
+	invalid := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 25 * * *"}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
+
+	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":""}}]}`)
+	assertions.Equal(http.StatusOK, off.Code, off.Body.String())
+
+	valid := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":"0 4 * * mon-fri"}}]}`)
+	assertions.Equal(http.StatusOK, valid.Code, valid.Body.String())
 }
 
 func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {

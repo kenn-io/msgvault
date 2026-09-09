@@ -4,6 +4,7 @@
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
   import { Button, SettingsSection, TextInput, Toggle } from '@kenn-io/kit-ui';
+  import ZapIcon from '@lucide/svelte/icons/zap';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
@@ -217,6 +218,10 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
+  <p class="posture">
+    <ZapIcon size={12} aria-hidden="true" />
+    Saving the account applies right away. No daemon restart is needed.
+  </p>
   <form
     onsubmit={(event) => {
       event.preventDefault();
@@ -274,6 +279,18 @@
   form {
     display: grid;
     gap: var(--space-5);
+  }
+  .posture {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 var(--space-5);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .posture :global(svg) {
+    flex-shrink: 0;
+    color: var(--accent-green);
   }
   label,
   .field {
