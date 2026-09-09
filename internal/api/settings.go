@@ -97,6 +97,11 @@ type Setting struct {
 	Section string `json:"section,omitempty"`
 }
 
+// legacySettingsGroupIDs are group IDs that daemons before API schema 2.22.0
+// emitted. They stay in the published enum so generated clients accept those
+// daemons; the current daemon never emits them.
+var legacySettingsGroupIDs = []string{"sync", "logging", "activity", "backup"}
+
 // SettingSection is one titled run of settings inside a group. Clients render
 // sections in the order the group lists them.
 type SettingSection struct {

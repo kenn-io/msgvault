@@ -115,7 +115,7 @@ var settingsMetadata = map[string]settingMetadata{
 	"analytics.builder_threads":        {"Builder threads", "Threads the cache builder may use.", "analytics"},
 	"analytics.builder_temp_limit":     {"Builder temporary storage limit", "Disk space the cache builder may use for temporary files.", "analytics"},
 	"activity.timezone":                {"Timezone", "Timezone used to sort events into calendar days.", "activity"},
-	"activity.max_direct_counterparts": {"Direct counterparts per pass", "Most direct-message counterparts one projection pass includes.", "activity"},
+	"activity.max_direct_counterparts": {"Direct conversation limit", "Conversations with more other people than this count as broadcasts, not direct activity.", "activity"},
 	"activity.batch_size":              {"Batch size", "Records processed per projection batch.", "activity"},
 	"activity.schedule":                {"Schedule", "When the activity projection runs.", "activity"},
 	"backup.zstd_level":                {"Compression level", "Zstandard level for portable backups.", "backups"},
@@ -250,7 +250,7 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.embed.schedule.cron":        cronValidation(false),
 	"vector.embed.backstop_interval":    {Hint: "Duration. 0 uses the default. A negative value disables the backstop.", Required: true},
 	"vector.multimodal.endpoint": {
-		Hint: "Voyage HTTPS URL without credentials, query, or fragment.", Required: true,
+		Hint: "Only https://api.voyageai.com/v1 is accepted.", Required: true,
 	},
 	"vector.multimodal.model":             {Required: true},
 	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Voyage visual models require 1024."),

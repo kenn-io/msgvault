@@ -188,6 +188,30 @@ describe('SettingsWorkspace', () => {
     });
   });
 
+  it('treats a value restored to its saved state as no change', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => settingsResponse(initialSettings, '"etag-a"'));
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await screen.findByRole('heading', { name: 'Appearance' });
+    await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    await chooseSelectOption(screen.getByLabelText('Theme'), 'System');
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await openSettingsCategory('Search');
+    const endpoint = (await screen.findByLabelText('Text embedding endpoint')) as HTMLInputElement;
+    await fireEvent.input(endpoint, { target: { value: 'http://127.0.0.1:11435' } });
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    await fireEvent.input(endpoint, { target: { value: 'http://127.0.0.1:11434' } });
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+
+    await openSettingsCategory('Integrations');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it('hides the Test connection button when no handler is provided', async () => {
     render(SettingsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => settingsResponse(initialSettings, '"etag-a"')))
@@ -198,10 +222,16 @@ describe('SettingsWorkspace', () => {
   });
 
   it('offers generic secret clearing without publishing fake connection actions', async () => {
+    const configured = {
+      ...initialSettings,
+      settings: initialSettings.settings.map((item) =>
+        item.key === 'integrations.tasks.api_key' ? { ...item, secret: { configured: true } } : item
+      )
+    };
     const fetchFn = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(settingsResponse(initialSettings, '"etag-a"'))
-      .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
+      .mockResolvedValueOnce(settingsResponse(configured, '"etag-a"'))
+      .mockResolvedValueOnce(settingsResponse({ ...configured, pending_restart: true }, '"etag-b"'));
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('Integrations');

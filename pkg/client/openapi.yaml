@@ -10457,6 +10457,10 @@ components:
             - attachments
             - enrichment
             - integrations
+            - sync
+            - logging
+            - activity
+            - backup
           type: string
         inherited:
           type: boolean
@@ -11959,7 +11963,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.22.0
+  version: 2.23.0
 openapi: 3.0.3
 paths:
   /api/ping:

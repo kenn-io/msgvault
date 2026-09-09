@@ -74,7 +74,6 @@
   type ProviderSetting = GeneratedPersonEnrichmentProviderSetting;
   type CredentialResponse = GeneratedProviderCredentialResponse;
   type SettingsDocument = GeneratedSettingsResponse;
-  type ControlSize = 'xs' | 'md' | 'lg' | 'cron';
   type SettingOff = NonNullable<NonNullable<SettingState['validation']>['off']>;
   let {
     client,
@@ -170,8 +169,20 @@
     if ('boolean' in value) return value.boolean;
     return value.strings;
   }
+  // A draft that equals the persisted value is not a change: the row stays
+  // clean, Save stays disabled, and no no-op PATCH can mark a restart pending.
   function setDraft(key: string, value: unknown) {
+    const setting = settings.find((candidate) => candidate.key === key);
+    if (setting && sameValue(typedValue(setting, value), setting.value)) {
+      const next = { ...drafts };
+      delete next[key];
+      drafts = next;
+      return;
+    }
     drafts = { ...drafts, [key]: value };
+  }
+  function sameValue(draft: SettingValue, persisted: SettingValue | undefined): boolean {
+    return persisted !== undefined && JSON.stringify(draft) === JSON.stringify(persisted);
   }
   function setSecret(key: string, value: string) {
     secretValues = { ...secretValues, [key]: value };
@@ -185,7 +196,11 @@
   }
   function clearSecret(key: string) {
     secretValues = { ...secretValues, [key]: '' };
-    secretUpdates = { ...secretUpdates, [key]: { action: 'clear' } };
+    const next = { ...secretUpdates };
+    delete next[key];
+    const configured = settings.find((candidate) => candidate.key === key)?.secret?.configured;
+    if (configured) next[key] = { action: 'clear' };
+    secretUpdates = next;
   }
   function discardChanges() {
     drafts = {};
@@ -267,12 +282,6 @@
   }
   function settingLabel(setting: SettingState): string {
     return setting.label || humanizeKey(setting.key);
-  }
-  function controlSize(setting: SettingState): ControlSize {
-    if (setting.validation?.format === 'cron') return 'cron';
-    if (setting.kind === 'integer' || setting.kind === 'number') return 'xs';
-    if (optionValues(setting).length > 0) return 'md';
-    return 'lg';
   }
   function isReadOnly(setting: SettingState): boolean {
     return Boolean(setting.read_only) || hostManagedKeys.has(setting.key);
@@ -627,6 +636,10 @@
             {/if}
 
             {#if group.id === 'enrichment'}
+              <p class="posture posture--providers" data-posture="live">
+                <ZapIcon size={12} aria-hidden="true" />
+                Provider API keys apply right away.
+              </p>
               <div class="provider-list">
                 {#each ['exa', 'sixtyfour'] as kind}
                   <PersonEnrichmentProviderCreator
@@ -720,13 +733,16 @@
     font-size: var(--font-size-sm);
     line-height: 1.45;
   }
-  .category .posture {
+  .posture {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin-top: var(--space-2);
+    margin: var(--space-2) 0 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+  .posture--providers {
+    margin: 0;
   }
   .posture :global(svg) {
     flex-shrink: 0;

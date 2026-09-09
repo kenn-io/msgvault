@@ -14,4 +14,8 @@ export const SettingGroupProperty = {
   attachments: "attachments",
   enrichment: "enrichment",
   integrations: "integrations",
+  sync: "sync",
+  logging: "logging",
+  activity: "activity",
+  backup: "backup",
 } as const;

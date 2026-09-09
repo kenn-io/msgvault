@@ -27,7 +27,7 @@ rebuild the cache; see [recovery instructions](usage/importing.md#message-identi
   outside your archive home. PostgreSQL users need their own database backup;
   see [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.22.0**. Old analytical
+  compatibility boundary; the current schema is **2.23.0**. Old analytical
   `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
   profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
   removed, not aliased. Local and remote clients reject incompatible daemons;
@@ -138,7 +138,8 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
 - Add Web Settings with write-only provider credential management and visible
   restart-pending state, plus keyboard-only TUI Settings.
 - Reorganize Web Settings. The daemon now publishes sections inside each
-  category (API schema adds `section` on settings and `sections` on groups),
+  category (API schema 2.23.0 adds `section` on settings and `sections` on
+  groups and keeps the folded group IDs in the enum for older daemons),
   folds the Sync, Logging, Activity, and Backups categories into Sources,
   Daemon, and Archive, and rewrites every label, description, and hint in
   plain language with no repeated text. Restart posture is stated once per

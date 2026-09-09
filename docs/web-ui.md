@@ -341,13 +341,15 @@ Shortcuts are suspended while typing and inside message/file content.
 
 ## Settings and restart behavior
 
-Settings edits the daemon's `config.toml` from the browser. The daemon
-supplies every category, section, label, description, and allowed value, so
-the browser never decides on its own what a setting means. Categories are
-Appearance, Daemon, Archive, Search, Sources, Attachments, Person enrichment,
-Integrations, and CardDAV account. Larger categories split into titled
-sections, for example Search has separate sections for the text embedding
-provider, the embedding schedule, and visual attachment search.
+Settings edits the daemon's `config.toml` from the browser. For every
+`config.toml` setting the daemon supplies the category, section, label,
+description, and allowed values, so the browser never decides on its own what
+a setting means. Those categories are Appearance, Daemon, Archive, Search,
+Sources, Attachments, Person enrichment, and Integrations. Larger categories
+split into titled sections, for example Search has separate sections for the
+text embedding provider, the embedding schedule, and visual attachment search.
+The CardDAV account category is a separate browser-owned workflow with its own
+save action; it is not part of the daemon's settings catalog.
 
 Each row shows the setting name and one sentence about what it does. Limits
 live on the control itself: a number input carries its minimum and maximum,
@@ -368,9 +370,11 @@ The CardDAV account form uses the same field, and the Sources and CardDAV
 status views describe stored schedules the same way.
 
 Each category states once how its changes take effect. Appearance settings
-apply right away. Every other category takes effect after the daemon
-restarts, and after a save the page shows "Saved. Restart the daemon to apply
-these changes." until it does. Saving makes targeted edits to `config.toml`
+apply right away. Every other `config.toml` category takes effect after the
+daemon restarts, and after a save the page shows "Saved. Restart the daemon to
+apply these changes." until it does. Two exceptions apply right away and say
+so beside their controls: person-enrichment provider API keys, and the CardDAV
+account, which saves through its own form. Saving makes targeted edits to `config.toml`
 while preserving comments. A stale edit is rejected after another browser or
 a hand edit changes the configuration; reload before saving again.
 

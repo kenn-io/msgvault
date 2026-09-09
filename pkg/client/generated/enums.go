@@ -2192,20 +2192,24 @@ func (s SetPersonAttributeRequestSource) Validate() error {
 type SettingGroup0 string
 
 const (
+	Activity                SettingGroup0 = "activity"
 	Archive                 SettingGroup0 = "archive"
 	Attachments             SettingGroup0 = "attachments"
+	Backup                  SettingGroup0 = "backup"
 	Browser                 SettingGroup0 = "browser"
 	Integrations            SettingGroup0 = "integrations"
+	Logging                 SettingGroup0 = "logging"
 	Search                  SettingGroup0 = "search"
 	Server                  SettingGroup0 = "server"
 	SettingGroup0Enrichment SettingGroup0 = "enrichment"
 	Sources                 SettingGroup0 = "sources"
+	Sync                    SettingGroup0 = "sync"
 )
 
 // Validate checks if the SettingGroup0 value is valid
 func (s SettingGroup0) Validate() error {
 	switch s {
-	case Archive, Attachments, Browser, Integrations, Search, Server, SettingGroup0Enrichment, Sources:
+	case Activity, Archive, Attachments, Backup, Browser, Integrations, Logging, Search, Server, SettingGroup0Enrichment, Sources, Sync:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingGroup0 value, got: %v", s))

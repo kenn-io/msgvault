@@ -1245,7 +1245,11 @@ func TestSettingsOpenAPIContract(t *testing.T) {
 	requirements.NotNil(setting)
 	assertions.ElementsMatch([]any{
 		"browser", "server", "archive", "search", "sources", "attachments", "enrichment", "integrations",
+		"sync", "logging", "activity", "backup",
 	}, setting.Properties["group"].Enum)
+	for _, group := range settingsGroups {
+		assertions.NotContains(legacySettingsGroupIDs, group.ID, "legacy IDs are compatibility-only")
+	}
 	assertions.NotNil(setting.Properties["section"], "settings publish their section for sectioned groups")
 	assertions.ElementsMatch([]any{"string", "integer", "number", "boolean", "string_array", "secret"}, setting.Properties["kind"].Enum)
 	patchRequest := doc.Components.Schemas.Map()["SettingsPatchRequest"]

@@ -29,9 +29,16 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.22.0**.
+it is separate from the binary release version. The current schema is **2.23.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.23.0 describes Settings structure. Each setting names its `section`
+and each group lists its `sections`; `validation` gains `format` (currently
+`cron`) and `off`, the value that switches a setting off with a label and a
+suggested on value. The daemon no longer emits the `sync`, `logging`,
+`activity`, and `backup` groups, which folded into `sources`, `server`, and
+`archive`; the `group` enum keeps them so clients still accept older daemons.
 
 Schema 2.21.0 adds Saved View execution at
 `POST /api/v1/saved-views/{id}/run`, publishes the accepted Saved View
