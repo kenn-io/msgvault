@@ -43,11 +43,13 @@ type ImportOptions struct {
 	Progress         func(string)
 }
 
-// ImportSummary reports durable core work and best-effort media outcomes.
+// ImportSummary reports automatic archive repair, durable core work, and
+// best-effort media outcomes.
 type ImportSummary struct {
 	Duration                time.Duration
 	SourceID                int64
 	SyncRunID               int64
+	RepairRan               bool
 	ContainersProcessed     int64
 	MessagesProcessed       int64
 	MessagesAdded           int64
@@ -123,9 +125,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		SourceID:            source.ID,
 		processedMessageIDs: make(map[string]struct{}),
 	}
-	repairSummary, _, repairErr := rederive.RunIfStale(
+	repairSummary, repairRan, repairErr := rederive.RunIfStale(
 		ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
 	)
+	summary.RepairRan = repairRan
 	if repairSummary != nil {
 		summary.MessageMetadataRepaired = repairSummary.MessageMetadataRewritten
 		summary.AttachmentsRetagged = repairSummary.AttachmentsTagged

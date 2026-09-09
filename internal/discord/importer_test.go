@@ -269,6 +269,35 @@ func TestImporterReportsAutomaticDiscordMetadataRepair(t *testing.T) {
 	assert.Zero(summary.RepairErrors)
 }
 
+func TestImporterReportsPreSyncRepairCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	for i := 1; i <= discordRepairBatchSize+1; i++ {
+		sourceMessageID := strconv.Itoa(i)
+		messageID, err := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversationID, SourceMessageID: sourceMessageID,
+			MessageType: discordMessageType,
+		})
+		require.NoError(err)
+		raw := []byte(`{"id":"` + sourceMessageID + `","channel_id":"300","type":0,"flags":0,"attachments":[]}`)
+		require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, discordRawFormat))
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	summary, err := newTestImporter(st, newImporterFakeAPI()).Import(ctx, ImportOptions{
+		GuildID: "200", Progress: func(string) { cancel() },
+	})
+	require.ErrorIs(err, context.Canceled)
+	assert.Zero(summary.SyncRunID)
+	assert.True(summary.RepairRan)
+	assert.Equal(int64(discordRepairBatchSize), summary.MessageMetadataRepaired)
+}
+
 func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {
 	t.Helper()
 	lower, err := SnowflakeFromTimestamp(at)

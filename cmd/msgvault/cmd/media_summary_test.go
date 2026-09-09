@@ -103,6 +103,14 @@ func TestDiscordSyncSummaryReportsAutomaticMetadataRepair(t *testing.T) {
 	assert.Contains(output.String(), "Derived metadata repair errors: 4")
 }
 
+func TestDiscordSyncRequestsCacheRefreshAfterPreSyncRepair(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{RepairRan: true}))
+	assert.True(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{SyncRunID: 1}))
+	assert.False(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{}))
+	assert.False(discordSummaryNeedsCacheRefresh(nil))
+}
+
 func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
 	tests := []struct {
 		name  string
