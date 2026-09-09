@@ -128,11 +128,13 @@
     display: grid;
     gap: var(--space-2);
     min-width: 0;
-    --cron-minute: var(--accent-blue);
-    --cron-hour: var(--accent-teal);
-    --cron-day: var(--accent-green);
-    --cron-month: var(--accent-amber);
-    --cron-weekday: var(--accent-purple);
+    /* Accents darkened toward the text color, the same recipe as the app's
+       status ink tokens, so small tinted text clears 4.5:1 in both themes. */
+    --cron-minute: color-mix(in srgb, var(--accent-blue) 72%, var(--text-primary));
+    --cron-hour: color-mix(in srgb, var(--accent-teal) 72%, var(--text-primary));
+    --cron-day: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
+    --cron-month: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
+    --cron-weekday: color-mix(in srgb, var(--accent-purple) 72%, var(--text-primary));
   }
   .cron__row {
     display: flex;
@@ -196,7 +198,7 @@
   }
   .cron__mirror [data-field='extra'],
   .cron__mirror [data-invalid] {
-    color: var(--accent-red);
+    color: var(--status-error-ink);
     text-decoration: underline wavy;
     text-underline-offset: 3px;
   }
@@ -251,6 +253,6 @@
     color: var(--text-muted);
   }
   .cron__status[data-tone='error'] {
-    color: var(--accent-red);
+    color: var(--status-error-ink);
   }
 </style>
