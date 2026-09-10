@@ -35,6 +35,14 @@ type AddAccountResponseJSON = StatusMessageResponse
 
 type AddAccountErrorResponse = ErrorResponse
 
+type ListAgentTokensResponse = AgentTokenListResponse
+
+type ListAgentTokensErrorResponse = ErrorResponse
+
+type IssueAgentTokenResponse = AgentTokenIssueResponse
+
+type IssueAgentTokenErrorResponse = ErrorResponse
+
 type GetAggregatesResponse = AggregateResponse
 
 type GetAggregatesErrorResponse = ErrorResponse
@@ -2882,6 +2890,26 @@ type AddAccountResp struct {
 	StatusCode   int
 	JSON200      *AddAccountResponse
 	JSON201      *AddAccountResponseJSON
+}
+
+type ListAgentTokensResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListAgentTokensResponse
+}
+
+type IssueAgentTokenResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *IssueAgentTokenResponse
+}
+
+type RevokeAgentTokenResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
 }
 
 type GetAggregatesResp struct {

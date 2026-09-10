@@ -186,6 +186,7 @@ type ServerConfig struct {
 	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
 	APIKey            string        `toml:"api_key"`             // API authentication key
 	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
+	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires api_key)
 	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
 	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
@@ -204,6 +205,9 @@ func (s *ServerConfig) ApplyDefaults() {
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
+	}
+	if s.AgentAccess && s.APIKey == "" {
+		return errors.New("invalid [server] agent_access: requires api_key to be set")
 	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:

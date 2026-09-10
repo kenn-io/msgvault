@@ -484,6 +484,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address |
 | `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
+| `agent_access` | `false` | Enable restricted agent grants; requires `api_key` to be non-empty. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |

@@ -6,6 +6,15 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type RevokeAgentTokenPath struct {
+	// ID Agent grant ID to revoke
+	ID string `json:"id" validate:"required"`
+}
+
+func (r RevokeAgentTokenPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type GetAttachmentContentPath struct {
 	// Hash Attachment SHA-256 content hash
 	Hash string `json:"hash" validate:"required"`

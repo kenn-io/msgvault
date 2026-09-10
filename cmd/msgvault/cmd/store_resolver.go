@@ -102,7 +102,64 @@ type HTTPStoreKind string
 const (
 	HTTPStoreConfiguredRemote HTTPStoreKind = "configured_remote"
 	HTTPStoreLocalDaemon      HTTPStoreKind = "local_daemon"
+	HTTPStoreAgentDelegated   HTTPStoreKind = "agent_delegated"
 )
+
+// Agent delegation flags — populated by init, consumed in openAgentDelegatedStore.
+var (
+	agentURL           string
+	agentTokenFile     string
+	agentAllowInsecure bool
+)
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&agentURL, "agent-url", "",
+		"Daemon URL for agent-delegated mode (requires --agent-token-file)")
+	rootCmd.PersistentFlags().StringVar(&agentTokenFile, "agent-token-file", "",
+		"Path to a file containing the agent grant secret (requires --agent-url)")
+	rootCmd.PersistentFlags().BoolVar(&agentAllowInsecure, "agent-allow-insecure", false,
+		"Allow plain HTTP for agent-delegated connections (trusted networks only)")
+}
+
+// isAgentMode returns true when both --agent-url and --agent-token-file are provided.
+func isAgentMode() bool {
+	return agentURL != "" && agentTokenFile != ""
+}
+
+// openAgentDelegatedStore creates a daemonclient.Client authenticated with an
+// agent grant secret read from the file named by --agent-token-file.
+func openAgentDelegatedStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
+	if agentURL == "" {
+		return nil, HTTPStoreInfo{}, errors.New("--agent-url is required for agent-delegated mode")
+	}
+	if agentTokenFile == "" {
+		return nil, HTTPStoreInfo{}, errors.New("--agent-token-file is required for agent-delegated mode")
+	}
+	if useLocal {
+		return nil, HTTPStoreInfo{}, errors.New(
+			"--local and --agent-url are incompatible: agent-delegated mode targets a specific remote daemon")
+	}
+	raw, err := os.ReadFile(agentTokenFile)
+	if err != nil {
+		return nil, HTTPStoreInfo{}, fmt.Errorf("read agent token file %q: %w", agentTokenFile, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return nil, HTTPStoreInfo{}, fmt.Errorf("agent token file %q is empty", agentTokenFile)
+	}
+	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
+		URL:           agentURL,
+		AgentToken:    token,
+		AllowInsecure: agentAllowInsecure,
+	})
+	if err != nil {
+		return nil, HTTPStoreInfo{}, err
+	}
+	return st, HTTPStoreInfo{
+		Kind: HTTPStoreAgentDelegated,
+		URL:  agentURL,
+	}, nil
+}
 
 // HTTPStoreInfo carries the selected daemon endpoint alongside the client.
 // Commands use it for user-facing endpoint labels and local-daemon cwd policy.
@@ -139,6 +196,10 @@ func openHTTPStoreWithStartupCacheIntent(
 	ctx context.Context,
 	intent startupCacheBuildIntent,
 ) (*daemonclient.Client, HTTPStoreInfo, error) {
+	// Agent-delegated mode is checked first: it operates without a local config.
+	if isAgentMode() {
+		return openAgentDelegatedStore(ctx)
+	}
 	if cfg == nil {
 		return nil, HTTPStoreInfo{}, errors.New("nil config")
 	}

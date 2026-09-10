@@ -191,9 +191,12 @@ enabled = true
 mailbox = "Drafts"
 ```
 
-Restart the daemon after changing the grant. The grant applies to the source,
-not to the caller: any client that can reach the daemon can create drafts on a
-granted source. The `draft-reply` command accepts
+Restart the daemon after changing the grant. The host policy applies per
+source. For owner callers (API key, browser session, or keyless loopback), any
+owner caller that can reach the daemon can create drafts on a granted source. A
+delegated caller authenticated with a restricted agent token additionally
+requires that the target source appear in the token's grant; see
+[agent-token](../cli-reference.md#agent-token). The `draft-reply` command accepts
 one archived message ID, one confirmed `--from` identity, and `--body`. The
 daemon composes a plain-text reply with the parent message's threading headers,
 then sends one IMAP `APPEND` to the literal mailbox with `\Draft`. The source

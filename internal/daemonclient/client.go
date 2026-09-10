@@ -33,6 +33,7 @@ const (
 type Config struct {
 	URL              string
 	APIKey           string
+	AgentToken       string
 	LocalDaemonToken string
 	AllowInsecure    bool
 	Timeout          time.Duration
@@ -45,6 +46,7 @@ type Config struct {
 type Client struct {
 	baseURL          string
 	apiKey           string
+	agentToken       string
 	httpClient       *http.Client
 	typedClient      *apiclient.Client
 	busyNotify       func(message string)
@@ -98,6 +100,9 @@ func New(cfg Config) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, errors.New("daemon URL is required")
 	}
+	if cfg.APIKey != "" && cfg.AgentToken != "" {
+		return nil, errors.New("APIKey and AgentToken are mutually exclusive")
+	}
 
 	parsedURL, err := url.Parse(cfg.URL)
 	if err != nil {
@@ -105,6 +110,12 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	if parsedURL.Scheme == "http" && !cfg.AllowInsecure {
+		if cfg.AgentToken != "" {
+			return nil, errors.New("HTTPS required for agent token connections\n\n" +
+				"Options:\n" +
+				"  1. Use HTTPS for the daemon URL\n" +
+				"  2. Pass --agent-allow-insecure to override (trusted networks only)")
+		}
 		return nil, errors.New("HTTPS required for daemon connections\n\n" +
 			"Options:\n" +
 			"  1. Use HTTPS for configured remote servers\n" +
@@ -137,9 +148,18 @@ func New(cfg Config) (*Client, error) {
 	}
 	httpClient.Timeout = timeout
 
+	// Delegated callers must not follow redirects: a redirect to a login page
+	// would silently drop the agent token header, making the error opaque.
+	if cfg.AgentToken != "" {
+		httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("agent token client does not follow redirects")
+		}
+	}
+
 	c := &Client{
 		baseURL:          strings.TrimSuffix(cfg.URL, "/"),
 		apiKey:           cfg.APIKey,
+		agentToken:       cfg.AgentToken,
 		httpClient:       httpClient,
 		rootContext:      rootContext,
 		requestMode:      cfg.RequestMode,
@@ -190,7 +210,7 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 			client:      c.httpClient,
 			rootContext: c.requestContext(),
 		}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.requestMode, c.localDaemonToken)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -337,9 +357,13 @@ func (b *cancelOnCloseBody) Close() error {
 
 type grantDecisionContextKey struct{}
 
-func requestEditor(apiKey string, mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
+func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
-		if apiKey != "" {
+		if agentToken != "" {
+			// #nosec G101 -- this is a header value set from the configured agent
+			// token, not a hardcoded credential.
+			req.Header.Set(apiprotocol.AgentTokenHeader, agentToken)
+		} else if apiKey != "" {
 			req.Header.Set("X-Api-Key", apiKey)
 		}
 		if mode == RequestModeCLI {

@@ -2187,3 +2187,37 @@ capabilities_file = "manifests/voyage.json"
 	assert.Equal(filepath.Join(tmpDir, "manifests/voyage.json"),
 		cfg.Vector.Multimodal.CapabilitiesFile)
 }
+
+// TestAgentAccessRequiresAPIKey verifies that [server] agent_access = true is
+// rejected unless api_key is also set. An agent grant secret is useless without
+// an API key because the owner has no stable credential to manage grants.
+func TestAgentAccessRequiresAPIKey(t *testing.T) {
+	t.Run("agent_access without api_key rejected", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(configPath, []byte(`
+[server]
+agent_access = true
+`), 0o600))
+		_, err := Load(configPath, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "agent_access")
+		assert.Contains(t, err.Error(), "api_key")
+	})
+
+	t.Run("agent_access with api_key accepted", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(configPath, []byte(`
+[server]
+agent_access = true
+api_key = "owner-secret"
+`), 0o600))
+		cfg, err := Load(configPath, "")
+		require.NoError(t, err)
+		assert.True(t, cfg.Server.AgentAccess)
+	})
+
+	t.Run("agent_access false without api_key accepted", func(t *testing.T) {
+		cfg := NewDefaultConfig()
+		assert.False(t, cfg.Server.AgentAccess)
+	})
+}
