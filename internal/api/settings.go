@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -977,16 +978,43 @@ func validateSettingUpdate(key string, value any, options []string) error {
 // string settings so the daemon rejects what the browser rejects. Config
 // defaulting would otherwise turn an empty required schedule into the
 // built-in one without telling the caller.
-// normalizeSettingValue trims text whose surrounding whitespace carries no
-// meaning, so a schedule made only of spaces is stored as the empty off value
-// instead of failing the config check after the PATCH was accepted.
+// normalizeSettingValue stores a schedule the way the scheduler reads it: a
+// value made only of spaces, or only of a time zone with no fields, is the
+// empty off value instead of text that fails the config check after the
+// PATCH was accepted.
+//
+// A number that lands between the off value and the on minimum is raised to
+// the on minimum: the control's step cannot express "any positive value", so
+// the daemon settles the gap instead of rejecting the save.
 func normalizeSettingValue(key string, value any) any {
 	validation := validationForSetting(key)
-	if validation == nil || validation.Format != settingFormatCron {
+	if validation == nil {
 		return value
 	}
-	if text, ok := value.(string); ok {
-		return strings.TrimSpace(text)
+	if text, ok := value.(string); ok && validation.Format == settingFormatCron {
+		return scheduler.NormalizeCronExpr(text)
+	}
+	if validation.Off == nil || validation.Off.OnMinimum == nil {
+		return value
+	}
+	off, err := strconv.ParseFloat(validation.Off.Value, 64)
+	if err != nil {
+		return value
+	}
+	onMinimum := *validation.Off.OnMinimum
+	switch typed := value.(type) {
+	case float64:
+		if typed > off && typed < onMinimum {
+			return onMinimum
+		}
+	case int:
+		if float64(typed) > off && float64(typed) < onMinimum {
+			return int(math.Ceil(onMinimum))
+		}
+	case int64:
+		if float64(typed) > off && float64(typed) < onMinimum {
+			return int64(math.Ceil(onMinimum))
+		}
 	}
 	return value
 }

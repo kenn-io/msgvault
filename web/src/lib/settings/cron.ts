@@ -106,26 +106,14 @@ export function splitCron(schedule: string): CronParts {
   return { zone: match[1], expression: schedule.slice(match[0].length) };
 }
 
-/** Rebuilds a schedule; an empty expression stays empty so "off" survives. */
+/**
+ * Rebuilds the stored schedule: trimmed, so spaces alone mean off, and with
+ * the zone only when there are fields for it to apply to.
+ */
 export function joinCron(zone: string, expression: string): string {
   const trimmed = expression.trim();
-  if (zone === '' || trimmed === '') return expression;
+  if (zone === '' || trimmed === '') return trimmed;
   return `CRON_TZ=${zone} ${trimmed}`;
-}
-
-/**
- * True when the browser can resolve the zone name. "Local" and "UTC" are
- * always accepted because the daemon resolves them itself.
- */
-export function isKnownTimeZone(zone: string): boolean {
-  if (zone === 'UTC' || zone === 'Local') return true;
-  if (zone === '') return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: zone });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** IANA zone names the browser knows, with UTC first. */
@@ -139,14 +127,14 @@ export function timeZoneLabel(zone: string): string {
   return zone.replaceAll('_', ' ');
 }
 
-/** Splits an expression into tokens and checks each field. */
+/**
+ * Splits an expression into tokens and checks each field. The zone name is
+ * passed through as written: the daemon's time zone database decides which
+ * names are valid, so a zone it stored is never shown as a mistake here.
+ */
 export function parseCron(schedule: string): CronParse {
   const prefix = ZONE_PREFIX.exec(schedule);
   const zone = prefix?.[1] ?? '';
-  if (prefix && !isKnownTimeZone(zone)) {
-    const error = zone === '' ? 'Time zone: a name is missing.' : `Time zone: "${zone}" is not a known time zone.`;
-    return { tokens: [], zone, error };
-  }
   const expression = prefix ? schedule.slice(prefix[0].length) : schedule;
   const tokens = tokenize(expression, prefix?.[0].length ?? 0);
   if (tokens.length === 0) {

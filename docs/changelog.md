@@ -153,7 +153,9 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   plain-English description, inline validation, and presets. A Time zone
   menu stores a `CRON_TZ=` prefix so a schedule runs in a chosen zone, the
   field legend shows while the field is focused or hovered, and the daemon
-  trims schedules and rejects a field made only of commas. The CardDAV
+  trims schedules, treats a zone with no fields as off, rejects a field made
+  only of commas, and raises a rate below the on minimum instead of
+  rejecting it. The CardDAV
   account form, Sources, and CardDAV status describe schedules the same way.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.

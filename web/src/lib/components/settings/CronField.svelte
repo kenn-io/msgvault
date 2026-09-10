@@ -96,6 +96,13 @@
   const presetMenu = $derived(
     presetValue === 'custom' ? [{ value: 'custom', label: 'Custom' }, ...presetOptions] : presetOptions,
   );
+  // A stored zone the browser's list lacks (a legacy alias, or a newer zone
+  // database on the daemon) still shows on the trigger and stays selectable.
+  const zoneMenu = $derived(
+    parts.zone !== '' && !zoneOptions().some((option) => option.name === parts.zone)
+      ? [{ name: parts.zone, label: timeZoneLabel(parts.zone) }, ...zoneOptions()]
+      : zoneOptions(),
+  );
 
   function segmentsOf(expression: string, expressionTokens: CronToken[]): Segment[] {
     const result: Segment[] = [];
@@ -164,7 +171,7 @@
     <SelectDropdown title="Presets" value={presetValue} options={presetMenu} onchange={applyPreset} {disabled} />
     <div class="cron__zone">
       <Typeahead
-        options={zoneOptions()}
+        options={zoneMenu}
         value={parts.zone}
         fallbackLabel="Local time"
         placeholder="Time zone"

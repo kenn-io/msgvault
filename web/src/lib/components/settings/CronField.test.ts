@@ -85,6 +85,23 @@ describe('CronField', () => {
     expect(screen.getByText('At 04:00 every day')).toBeDefined();
   });
 
+  it('shows a stored zone the browser list lacks and stores a trimmed expression', async () => {
+    const oninput = vi.fn();
+    render(CronField, { value: 'CRON_TZ=US/Eastern 0 3 * * *', label: 'Schedule', oninput });
+
+    expect(screen.getByRole('button', { name: 'Time zone: US/Eastern' })).toBeDefined();
+    expect(screen.getByText('At 03:00 every day, US/Eastern time')).toBeDefined();
+
+    const input = screen.getByLabelText('Schedule') as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: '  0 4 * * *  ' } });
+    expect(input.value).toBe('  0 4 * * *  ');
+    expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=US/Eastern 0 4 * * *');
+
+    await fireEvent.input(input, { target: { value: '   ' } });
+    expect(oninput).toHaveBeenLastCalledWith('');
+    expect(screen.getByText('Off. Nothing runs on a schedule.')).toBeDefined();
+  });
+
   it('keeps the zone while the expression is empty and drops it from the stored value', async () => {
     const oninput = vi.fn();
     render(CronField, { value: 'CRON_TZ=UTC 0 3 * * *', label: 'Schedule', oninput });

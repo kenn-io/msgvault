@@ -38,8 +38,6 @@ describe('parseCron', () => {
     ['1-2-3 * * * *', 'Minute: too many hyphens in 1-2-3.'],
     ['1/2/3 * * * *', 'Minute: too many slashes in 1/2/3.'],
     [', * * * *', 'Minute: a value is missing.'],
-    ['CRON_TZ=Nowhere/Place 0 3 * * *', 'Time zone: "Nowhere/Place" is not a known time zone.'],
-    ['CRON_TZ= 0 3 * * *', 'Time zone: a name is missing.'],
     ['CRON_TZ=UTC', 'Enter five fields: minute, hour, day, month, and weekday.'],
   ])('rejects %j with a plain message', (expression, message) => {
     const parsed = parseCron(expression);
@@ -63,6 +61,13 @@ describe('parseCron', () => {
     expect(parsed.tokens[0]).toMatchObject({ field: 'minute', text: '+5', start: 18, end: 20 });
     expect(parsed.fields?.[0].terms).toEqual([{ start: 5, end: 5, step: 1, all: false }]);
     expect(parseCron('0 3 * * *').zone).toBeUndefined();
+  });
+
+  it('leaves zone names to the daemon instead of the browser database', () => {
+    const parsed = parseCron('CRON_TZ=US/Eastern 0 3 * * *');
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.zone).toBe('US/Eastern');
+    expect(describeCron('CRON_TZ=Mars/Olympus 0 3 * * *')).toBe('At 03:00 every day, Mars/Olympus time');
   });
 
   it('agrees with the daemon parser on the shared corpus', () => {
@@ -134,8 +139,9 @@ describe('splitCron and joinCron', () => {
     expect(splitCron('TZ=UTC  0 3 * * *')).toEqual({ zone: 'UTC', expression: '0 3 * * *' });
     expect(splitCron('0 3 * * *')).toEqual({ zone: '', expression: '0 3 * * *' });
     expect(joinCron('Europe/Berlin', ' 0 3 * * * ')).toBe('CRON_TZ=Europe/Berlin 0 3 * * *');
-    expect(joinCron('', '0 3 * * *')).toBe('0 3 * * *');
-    expect(joinCron('Europe/Berlin', '   ')).toBe('   ');
+    expect(joinCron('', ' 0 3 * * * ')).toBe('0 3 * * *');
+    expect(joinCron('Europe/Berlin', '   ')).toBe('');
+    expect(joinCron('', '   ')).toBe('');
   });
 });
 

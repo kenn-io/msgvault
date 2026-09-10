@@ -1771,7 +1771,7 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
 	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
 	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
-	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.05), "any positive rate is a real limit")
+	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start at 0.1; PATCH raises smaller rates")
 	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
 	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", -1.0))
 	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
@@ -1830,9 +1830,34 @@ func TestSettingsPatchTrimsCronSchedules(t *testing.T) {
 	requirements.Equal(http.StatusOK, blank.Code, blank.Body.String())
 	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"))
 
+	zoneOnly := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=UTC"}}]}`)
+	requirements.Equal(http.StatusOK, zoneOnly.Code, zoneOnly.Body.String())
+	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"), "a zone with no fields is no schedule")
+
 	cfg, err := config.Load(path, "")
 	requirements.NoError(err)
 	assertions.Empty(cfg.Beeper.Schedule)
+}
+
+func TestSettingsPatchRaisesRatesBelowTheOnMinimum(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, path := newSettingsTestServer(t, "[beeper]\nrate_limit_qps = 5\n")
+
+	small := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0.05}}]}`)
+	requirements.Equal(http.StatusOK, small.Code, small.Body.String())
+	cfg, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.InDelta(0.1, cfg.Beeper.RateLimitQPS, 1e-9, "a positive rate below the on minimum is raised, not rejected")
+
+	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0}}]}`)
+	requirements.Equal(http.StatusOK, off.Code, off.Body.String())
+	cfg, err = config.Load(path, "")
+	requirements.NoError(err)
+	assertions.Zero(cfg.Beeper.RateLimitQPS, "zero stays the off value")
+
+	negative := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":-1}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, negative.Code, negative.Body.String())
 }
 
 func currentSettingString(t *testing.T, srv *Server, key string) string {

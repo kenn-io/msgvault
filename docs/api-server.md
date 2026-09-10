@@ -43,14 +43,17 @@ without sections omit both. `validation` gains two optional fields:
   names. A `CRON_TZ=<zone>` or `TZ=<zone>` prefix with an IANA zone name runs
   the schedule in that zone instead of the daemon's local time. Descriptors
   such as `@hourly`, the `L`, `W`, and `#` extensions, and a field made only
-  of commas are rejected. The daemon trims surrounding whitespace, then
-  validates the expression on PATCH; an empty value is rejected when the
-  setting is `required`.
+  of commas are rejected. The daemon trims surrounding whitespace and treats
+  a zone prefix with no fields after it as the empty value, then validates
+  the expression on PATCH; an empty value is rejected when the setting is
+  `required`.
 - `off` names the value that switches a setting off (`value`), what happens
   while it is off (`label`), a starting value for switching it on (`suggest`),
-  and `on_minimum`, the smallest value accepted while on. `minimum` and
-  `maximum` keep covering every accepted value including the off value, so a
-  client that ignores `off` still accepts what the daemon stores.
+  and `on_minimum`, the smallest value accepted while on. A value between the
+  off value and `on_minimum` is raised to `on_minimum` on PATCH rather than
+  rejected. `minimum` and `maximum` keep covering every accepted value
+  including the off value, so a client that ignores `off` still accepts what
+  the daemon stores.
 
 The daemon no longer emits the `sync`, `logging`, `activity`, and `backup`
 groups, which folded into `sources`, `server`, and `archive`; the `group` enum

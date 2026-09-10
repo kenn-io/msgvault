@@ -156,6 +156,9 @@ func (s *Scheduler) WithWorkTracker(tracker WorkTracker) *Scheduler {
 // AddAccount schedules sync for an account using the given cron expression.
 // Returns an error if the cron expression is invalid.
 func (s *Scheduler) AddAccount(email, cronExpr string) error {
+	if err := ValidateCronExpr(cronExpr); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -212,6 +215,9 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 func (s *Scheduler) AddJob(job Job) error {
 	if job.Name == "" || job.Run == nil {
 		return errors.New("job name and run function are required")
+	}
+	if err := ValidateCronExpr(job.Schedule); err != nil {
+		return err
 	}
 	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		_ = s.TriggerJob(job.Name)
@@ -771,6 +777,19 @@ func (s *Scheduler) JobStatus() []JobStatus {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// NormalizeCronExpr trims a schedule and turns a value that is only a time
+// zone prefix into the empty string: with no fields after the zone there is
+// no schedule, so it is off rather than an error.
+func NormalizeCronExpr(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	if strings.HasPrefix(trimmed, "TZ=") || strings.HasPrefix(trimmed, "CRON_TZ=") {
+		if !strings.ContainsAny(trimmed, " \t") {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 // ValidateCronExpr validates a cron expression without scheduling anything.

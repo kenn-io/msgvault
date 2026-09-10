@@ -49,7 +49,6 @@
     ", * * * *",
     "0 3 * * ,",
     "0 3 ,, * *",
-    "CRON_TZ=Nowhere/Place 0 3 * * *",
     "CRON_TZ=UTC",
     "CRON_TZ=UTC 0 3 * *"
   ]
