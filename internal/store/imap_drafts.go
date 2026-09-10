@@ -55,6 +55,18 @@ func (s *Store) PersistIMAPDraftContext(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check IMAP draft membership: %w", err)
 		}
+		// A new epoch can reuse an archived UID. Preserve the old message under
+		// sync's invalidated key; sync still owns membership retirement and cursors.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
+			WHERE source_id = ? AND source_message_id = ? AND EXISTS (
+				SELECT 1 FROM imap_message_memberships
+				WHERE message_id = messages.id AND source_id = messages.source_id
+				  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
+			)
+		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity); err != nil {
+			return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
+		}
 		err = tx.QueryRowContext(ctx, `
 			SELECT id FROM messages
 			WHERE source_id = ? AND source_message_id = ?
