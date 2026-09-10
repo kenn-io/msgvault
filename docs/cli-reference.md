@@ -190,6 +190,14 @@ deleted, returns `draft_changed` or `draft_missing`. On success, a new message
 row is created with the updated body, the old row is tombstoned, and
 `revision` advances by 1.
 
+The edit sequence is APPEND-then-EXPUNGE. If the operation is interrupted after
+the APPEND but before the EXPUNGE, the next `draft-edit` or `draft-delete` call
+finds the stale marker and returns `edit_interrupted`. This means an extra copy
+of the draft may be sitting in the Drafts mailbox; remove it in your mail client,
+then retry. If `remote_accepted_local_failed` is returned, the new copy was
+confirmed on the server but the local record could not be updated; retry the same
+`--revision` to recover.
+
 ---
 
 ## draft-delete
@@ -204,6 +212,10 @@ msgvault draft-delete <draft-id> --revision <n>
 the server the deletion is treated as successful (idempotent). If a prior
 delete attempt left a pending state, re-issue the same command with the same
 `--revision` to resume.
+
+If `remote_deleted_local_failed` is returned, the draft was confirmed deleted on
+the IMAP server but the local record could not be marked `discarded`; retry the
+same `--revision` to complete the local record.
 
 ---
 

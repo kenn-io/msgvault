@@ -782,6 +782,88 @@ func TestDraftEditClearsStaleInterruptedEdit(t *testing.T) {
 	assert.False(t, pendingKind.Valid, "pending_kind must be cleared after edit_interrupted")
 }
 
-// Compile-time check: verify errors.Is can unwrap CLIRunCodedError (used in
-// allowlist tests; kept here to guard the interface invariant for lifecycle).
-var _ = errors.New // suppress unused import if the above test is the only user
+// TestDraftEditRejectsRecentPendingEdit verifies that the staleness guard in
+// draft-edit returns operation_pending for a fresh pending-edit marker and
+// edit_interrupted for a stale one, controlled by pending_started_at alone.
+func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Inject a fresh pending_kind='edit' (younger than pendingEditStalenessThreshold).
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), time.Now(), f.draftID)
+	require.NoError(t, err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=should refuse")
+	require.Error(t, editErr)
+	assert.Equal(t, "operation_pending", editErr.Error(),
+		"fresh pending-edit marker must produce operation_pending")
+
+	// Backdate the marker past the staleness threshold; now draft-edit must clear it.
+	staleTime := time.Now().Add(-(pendingEditStalenessThreshold + time.Minute))
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts SET pending_started_at = ? WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	_, editErr = f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error(),
+		"stale pending-edit marker must produce edit_interrupted after clearing")
+}
+
+// TestConcurrentDraftDeletePendingDiscard verifies that two concurrent
+// draft-delete calls against a pending-discard state produce exactly one
+// completion and one refusal, with no intermediate window between lock release
+// and re-acquire.
+func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Simulate a prior Begin by injecting pending_kind='discard' and advancing the
+	// revision to 2, exactly as BeginIMAPDraftOperationContext would leave it.
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'discard', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), time.Now().Add(-time.Minute), f.draftID)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			// Both callers present revision=1 (the pre-Begin revision stored in intent).
+			_, errs[idx] = f.runLifecycle(t,
+				"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+		}(i)
+	}
+	wg.Wait()
+
+	successes, failures := 0, 0
+	for _, e := range errs {
+		if e == nil {
+			successes++
+		} else {
+			failures++
+			// sync_active: second caller blocked on the lock while first held it.
+			// operation_pending: second caller got the lock after first finished;
+			//   BeginIMAPDraftOperationContext returns operation_pending when
+			//   lifecycle='discarded' (store imap_draft_lifecycle.go:148).
+			// revision_conflict: second caller's revision no longer matches.
+			assert.True(t,
+				e.Error() == "revision_conflict" || e.Error() == "sync_active" ||
+					e.Error() == "operation_pending" || e.Error() == "draft_not_found",
+				"unexpected error from losing caller: %v", e)
+		}
+	}
+	assert.Equal(t, 1, successes, "exactly one delete must complete")
+	assert.Equal(t, 1, failures, "exactly one delete must be refused")
+}

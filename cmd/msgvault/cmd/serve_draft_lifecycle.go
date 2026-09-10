@@ -702,10 +702,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			return draftReplyError("operation_pending",
 				fmt.Errorf("draft %d has a pending edit; use draft-edit to resolve it", intent.DraftID))
 		case "discard":
-			// Release the lock before replayPendingDiscard acquires its own.
+			// Pass the held execution into the replay so the entire operation
+			// runs under one uninterrupted lock. The defer above must not
+			// also call Release, so mark it handled here.
 			lockReleased = true
-			_ = execution.Release()
-			return a.replayPendingDiscard(ctx, intent, target, emit)
+			return a.replayPendingDiscard(ctx, execution, intent, target, emit)
 		}
 	}
 
@@ -838,21 +839,16 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 }
 
 // replayPendingDiscard re-attempts a draft-delete whose Begin ran but whose
-// RemoveDraft+Finish did not complete. It re-uses the pending_uid coordinates
-// saved by BeginIMAPDraftOperationContext.
+// RemoveDraft+Finish did not complete. It uses the execution lock already held
+// by the caller so there is no gap between the pending-kind decision and the
+// re-read. The caller must set its own lockReleased flag before calling here.
 func (a *storeAPIAdapter) replayPendingDiscard(
 	ctx context.Context,
+	execution *store.SyncExecution,
 	intent draftLifecycleIntent,
 	target draftLifecycleTarget,
 	emit func(api.CLIRunEvent) error,
 ) error {
-	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrSyncAlreadyActive) {
-			return draftReplyError("sync_active", fmt.Errorf("source %d: %w", target.source.ID, err))
-		}
-		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
-	}
 	replayReleased := false
 	defer func() {
 		if !replayReleased {
@@ -875,15 +871,10 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 			fmt.Errorf("draft %d: revision %d is stale", intent.DraftID, intent.Revision))
 	}
 
-	var oldUID uint32
-	var oldUIDValidity uint32
-	if draft.PendingUID.Valid {
-		oldUID = uint32(draft.PendingUID.Int64)
-		oldUIDValidity = uint32(draft.PendingUIDValidity.Int64)
-	} else {
-		oldUID = draft.UID
-		oldUIDValidity = draft.UIDValidity
-	}
+	// The schema CHECK guarantees pending_uid IS NOT NULL when pending_kind IS NOT NULL,
+	// so PendingUID is always valid here and no fallback to draft.UID is needed.
+	oldUID := uint32(draft.PendingUID.Int64)
+	oldUIDValidity := uint32(draft.PendingUIDValidity.Int64)
 
 	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
