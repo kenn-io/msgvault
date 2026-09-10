@@ -142,6 +142,17 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			// A token-source failure (e.g. a service account whose domain-wide
+			// delegation lacks the Calendar scope → 401 unauthorized_client)
+			// surfaces here as a transport error. A credential problem is not
+			// a network blip: retrying it would hide the real cause behind ten
+			// minutes of backoff, so fail immediately with Google's message.
+			// A 429 or 5xx from the token endpoint itself is transient and
+			// keeps the normal retry policy.
+			var rerr *oauth2.RetrieveError
+			if errors.As(err, &rerr) && !isTransientTokenError(rerr) {
+				return nil, fmt.Errorf("oauth token for calendar request: %w", err)
+			}
 			lastErr = fmt.Errorf("http request: %w", err)
 			continue // retry on network errors
 		}
@@ -205,6 +216,16 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 	return time.Duration(jittered * float64(time.Second))
 }
 
+// isTransientTokenError reports whether the token endpoint failed with a
+// status worth retrying (429 or 5xx) rather than rejecting the credentials.
+func isTransientTokenError(rerr *oauth2.RetrieveError) bool {
+	if rerr.Response == nil {
+		return false
+	}
+	code := rerr.Response.StatusCode
+	return code == http.StatusTooManyRequests || code >= http.StatusInternalServerError
+}
+
 // isRateLimitError reports whether a 403 body is a quota/rate-limit error
 // (retryable) rather than a genuine permission error (terminal). Calendar uses
 // the same error envelope as Gmail: error.errors[].reason / error.status.
@@ -228,6 +249,11 @@ func isRateLimitError(body []byte) bool {
 		switch e.Reason {
 		case "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED":
 			return true
+		case "accessNotConfigured":
+			// Google files "Calendar API is not enabled in this project" under
+			// domain usageLimits too, but it is a configuration error that no
+			// amount of backoff fixes — surface it immediately.
+			return false
 		}
 		if e.Domain == "usageLimits" {
 			return true
