@@ -403,6 +403,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	return &query.MessageDetail{
 		ID:                   resp.ID,
 		SourceMessageID:      resp.SourceMessageID,
+		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
 		ConversationID:       resp.ConversationID,
 		SourceConversationID: resp.SourceConversationID,
 		Subject:              resp.Subject,

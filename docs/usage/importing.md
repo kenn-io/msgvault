@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: Importing Local Email
 description: Bring local email archives into msgvault, or backfill older Gmail and IMAP messages.
 ---
@@ -233,6 +233,23 @@ msgvault import-emlx me@gmail.com ~/Mail/INBOX.mbox/
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk (messages still record attachment metadata) |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
+
+### Message identifiers and replies
+
+The importer stores the email's `Message-ID` in `rfc822_message_id`, without surrounding angle brackets and with its original case preserved. `In-Reply-To` links to a message in the same source when exactly one visible parent matches. Missing or ambiguous parents remain unresolved; a later import can link a parent that arrives afterward.
+
+To fill missing identifiers in an existing archive, re-import the same directory and source identifier, then rebuild the analytics cache. Use `--no-resume` to revisit every file if a previous import was interrupted:
+
+```bash
+msgvault import-emlx --no-resume me@gmail.com ~/Mail/INBOX.mbox/
+msgvault build-cache --full-rebuild
+msgvault show-message 123 --json
+msgvault query "SELECT id, rfc822_message_id FROM messages LIMIT 10"
+```
+
+`show-message --json` includes `rfc822_message_id` as a string, or an empty string when absent. Analytics queries preserve SQL `NULL` for absent identifiers. Re-importing fills missing identifiers while preserving existing message content and nonempty identifiers.
+
+For a Mail.app link, wrap the stored ID in angle brackets and URL-encode it. For example, `Case-ID@example.test` becomes `message://%3CCase-ID%40example.test%3E`.
 
 ### How Apple Mail organizes files
 

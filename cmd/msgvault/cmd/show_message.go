@@ -194,6 +194,7 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 	output := map[string]any{
 		"id":                     msg.ID,
 		"source_message_id":      msg.SourceMessageID,
+		"rfc822_message_id":      msg.RFC822MessageID,
 		"conversation_id":        msg.ConversationID,
 		"source_conversation_id": msg.SourceConversationID,
 		"subject":                msg.Subject,
