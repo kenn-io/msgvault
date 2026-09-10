@@ -11,21 +11,18 @@ import (
 
 // IMAPDraft holds the ownership row for one draft msgvault created.
 type IMAPDraft struct {
-	DraftID                int64
-	SourceID               int64
-	CurrentMessageID       int64
-	Mailbox                string
-	UIDValidity            uint32
-	UID                    uint32
-	Revision               int64
-	Lifecycle              string
-	PendingKind            sql.NullString
-	PendingUIDValidity     sql.NullInt64
-	PendingUID             sql.NullInt64
-	PendingRaw             []byte
-	PendingRfc822ID        sql.NullString
-	PendingAppendAttempted bool
-	PendingStartedAt       sql.NullTime
+	DraftID            int64
+	SourceID           int64
+	CurrentMessageID   int64
+	Mailbox            string
+	UIDValidity        uint32
+	UID                uint32
+	Revision           int64
+	Lifecycle          string
+	PendingKind        sql.NullString
+	PendingUIDValidity sql.NullInt64
+	PendingUID         sql.NullInt64
+	PendingStartedAt   sql.NullTime
 	// Projected from the current message row
 	ConversationID   int64
 	RFC822MessageID  string
@@ -42,8 +39,6 @@ type IMAPDraftIntent struct {
 	DraftID          int64
 	ExpectedRevision int64
 	Kind             string // "edit" or "discard"
-	PendingRaw       []byte // set for edit, nil for discard
-	PendingRfc822ID  string // set for edit, empty for discard
 }
 
 // IMAPDraftOutcome holds the result of completing a draft operation.
@@ -69,7 +64,6 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 			d.draft_id, d.source_id, d.current_message_id,
 			d.mailbox, d.uidvalidity, d.uid, d.revision, d.lifecycle,
 			d.pending_kind, d.pending_uidvalidity, d.pending_uid,
-			d.pending_raw, d.pending_rfc822_id, d.pending_append_attempted,
 			d.pending_started_at,
 			m.conversation_id,
 			COALESCE(m.rfc822_message_id, ''),
@@ -89,7 +83,6 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 		&d.DraftID, &d.SourceID, &d.CurrentMessageID,
 		&d.Mailbox, &uidValidity, &uid, &d.Revision, &d.Lifecycle,
 		&d.PendingKind, &d.PendingUIDValidity, &d.PendingUID,
-		&d.PendingRaw, &d.PendingRfc822ID, &d.PendingAppendAttempted,
 		&d.PendingStartedAt,
 		&d.ConversationID,
 		&d.RFC822MessageID, &parentRFC822, &d.ReplyToMessageID, &d.FromAddress, &d.Subject, &d.Snippet, &d.SizeEstimate,
@@ -112,26 +105,10 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 // "revision_conflict" or "operation_pending" wrapped in opserr.Invalid.
 func (s *Store) BeginIMAPDraftOperationContext(ctx context.Context, intent IMAPDraftIntent) (*IMAPDraft, error) {
 	now := s.dialect.Now()
-	newLifecycle := "replace_pending"
-	if intent.Kind == "discard" {
-		newLifecycle = "delete_pending"
-	}
-	var pendingRaw interface{}
-	if len(intent.PendingRaw) > 0 {
-		pendingRaw = intent.PendingRaw
-	}
-	var pendingRfc822ID interface{}
-	if intent.PendingRfc822ID != "" {
-		pendingRfc822ID = intent.PendingRfc822ID
-	}
 
 	result, err := s.db.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
 		UPDATE imap_drafts
-		SET lifecycle = ?,
-		    pending_kind = ?,
-		    pending_raw = ?,
-		    pending_rfc822_id = ?,
-		    pending_append_attempted = FALSE,
+		SET pending_kind = ?,
 		    pending_uid = uid,
 		    pending_uidvalidity = uidvalidity,
 		    pending_started_at = %s,
@@ -139,9 +116,10 @@ func (s *Store) BeginIMAPDraftOperationContext(ctx context.Context, intent IMAPD
 		    updated_at = %s
 		WHERE draft_id = ?
 		  AND lifecycle = 'active'
+		  AND pending_kind IS NULL
 		  AND revision = ?
 	`, now, now)),
-		newLifecycle, intent.Kind, pendingRaw, pendingRfc822ID,
+		intent.Kind,
 		intent.DraftID, intent.ExpectedRevision,
 	)
 	if err != nil {
@@ -157,37 +135,20 @@ func (s *Store) BeginIMAPDraftOperationContext(ctx context.Context, intent IMAPD
 	// Zero rows: determine why.
 	var lifecycle string
 	var revision int64
+	var pendingKind sql.NullString
 	err = s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT lifecycle, revision FROM imap_drafts WHERE draft_id = ?
-	`), intent.DraftID).Scan(&lifecycle, &revision)
+		SELECT lifecycle, revision, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), intent.DraftID).Scan(&lifecycle, &revision, &pendingKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, opserr.NotFound(fmt.Errorf("draft %d: not found", intent.DraftID))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect IMAP draft %d after CAS miss: %w", intent.DraftID, err)
 	}
-	if lifecycle != "active" {
+	if lifecycle != "active" || pendingKind.Valid {
 		return nil, opserr.Invalid(errors.New("operation_pending"))
 	}
 	return nil, opserr.Invalid(errors.New("revision_conflict"))
-}
-
-// RecordIMAPDraftAppendContext marks pending_append_attempted=TRUE.
-// The receipt parameter is accepted for call-site symmetry but is no longer
-// stored here: pending_uid/pending_uidvalidity hold the OLD copy's coordinates
-// (saved by BeginIMAPDraftOperationContext) throughout the operation so that
-// resume can always find the removal target. The new copy's coordinates are
-// written to imap_drafts.uid/uidvalidity only by PersistIMAPDraftReplacementContext.
-func (s *Store) RecordIMAPDraftAppendContext(ctx context.Context, draftID, expectedRevision int64, receipt *IMAPDraftReceipt) error {
-	now := s.dialect.Now()
-	if _, err := s.db.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
-		UPDATE imap_drafts
-		SET pending_append_attempted = TRUE, updated_at = %s
-		WHERE draft_id = ? AND revision = ?
-	`, now)), draftID, expectedRevision); err != nil {
-		return fmt.Errorf("record IMAP draft append attempted %d: %w", draftID, err)
-	}
-	return nil
 }
 
 // PersistIMAPDraftReplacementContext archives the new message body for a draft
@@ -356,9 +317,6 @@ func (s *Store) FinishIMAPDraftOperationContext(ctx context.Context, draftID, ex
 			    pending_kind = NULL,
 			    pending_uidvalidity = NULL,
 			    pending_uid = NULL,
-			    pending_raw = NULL,
-			    pending_rfc822_id = NULL,
-			    pending_append_attempted = FALSE,
 			    pending_started_at = NULL,
 			    updated_at = %s
 			WHERE draft_id = ? AND revision = ?
@@ -381,22 +339,23 @@ func (s *Store) FinishIMAPDraftOperationContext(ctx context.Context, draftID, ex
 	})
 }
 
-// GetMessageIDByMembershipContext returns the local message ID for the
-// imap_message_memberships row identified by (sourceID, mailbox, uidvalidity, uid).
-// Returns 0, nil when no row matches.
-func (s *Store) GetMessageIDByMembershipContext(ctx context.Context, sourceID int64, mailbox string, uidvalidity, uid uint32) (int64, error) {
-	var messageID int64
-	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT message_id FROM imap_message_memberships
-		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
-	`), sourceID, mailbox, int64(uidvalidity), int64(uid)).Scan(&messageID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+// ClearIMAPDraftPendingEditContext resets an interrupted edit operation by
+// clearing the pending_* columns without changing lifecycle. The caller should
+// inform the operator that a duplicate may remain in the Drafts mailbox.
+func (s *Store) ClearIMAPDraftPendingEditContext(ctx context.Context, draftID int64) error {
+	now := s.dialect.Now()
+	if _, err := s.db.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
+		UPDATE imap_drafts
+		SET pending_kind = NULL,
+		    pending_uid = NULL,
+		    pending_uidvalidity = NULL,
+		    pending_started_at = NULL,
+		    updated_at = %s
+		WHERE draft_id = ? AND pending_kind = 'edit'
+	`, now)), draftID); err != nil {
+		return fmt.Errorf("clear IMAP draft pending edit %d: %w", draftID, err)
 	}
-	if err != nil {
-		return 0, fmt.Errorf("get message ID by membership (%d, %s, %d, %d): %w", sourceID, mailbox, uidvalidity, uid, err)
-	}
-	return messageID, nil
+	return nil
 }
 
 // registerIMAPDraftTx inserts the ownership row for a newly created draft.

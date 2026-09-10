@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -335,50 +334,6 @@ func (f draftLifecycleFixture) makeFaultyFactory(counter *sharedRemoveCounter, f
 	}
 }
 
-// TestDraftResumeCompletesOwedRemoval verifies that when RemoveDraft fails
-// during draft-delete (leaving delete_pending), a subsequent draft-delete
-// --resume retries and completes the removal, marking the draft discarded.
-func TestDraftResumeCompletesOwedRemoval(t *testing.T) {
-	f := newDraftLifecycleFixture(t)
-
-	counter := &sharedRemoveCounter{}
-
-	// First attempt: RemoveDraft will fail (counter=1 ≤ failBefore=1).
-	adapter := f.grantedAdapter()
-	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
-
-	var evs1 []api.CLIRunEvent
-	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
-		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
-	}, func(ev api.CLIRunEvent) error { evs1 = append(evs1, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "delete_failed", err.Error())
-
-	// State must be delete_pending with pending_uid set (P1-C: Begin saves old uid).
-	var lifecycle string
-	var pendingUID sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
-		SELECT lifecycle, pending_uid FROM imap_drafts WHERE draft_id = ?
-	`), f.draftID).Scan(&lifecycle, &pendingUID))
-	assert.Equal(t, "delete_pending", lifecycle)
-	assert.True(t, pendingUID.Valid, "pending_uid must be set by BeginIMAPDraftOperationContext")
-
-	// Second attempt with --resume: counter=2 > failBefore=1, so RemoveDraft succeeds.
-	adapter2 := f.grantedAdapter()
-	adapter2.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
-
-	var evs2 []api.CLIRunEvent
-	err = adapter2.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
-		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--resume"},
-	}, func(ev api.CLIRunEvent) error { evs2 = append(evs2, ev); return nil })
-	require.NoError(t, err)
-
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
-		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
-	`), f.draftID).Scan(&lifecycle))
-	assert.Equal(t, "discarded", lifecycle)
-}
-
 // TestDraftGetReportsExternalRemoval verifies that draft-get reports a
 // non-present provider_status when the UID was expunged externally, and that
 // lifecycle stays active in the local store.
@@ -434,19 +389,6 @@ func TestParseDraftLifecycleArgs(t *testing.T) {
 		intent, err := parseDraftLifecycleArgs([]string{"draft-delete", "42", "--revision=1"})
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), intent.Revision)
-		assert.False(t, intent.Resume)
-	})
-
-	t.Run("draft-delete with resume", func(t *testing.T) {
-		intent, err := parseDraftLifecycleArgs([]string{"draft-delete", "42", "--resume"})
-		require.NoError(t, err)
-		assert.True(t, intent.Resume)
-	})
-
-	t.Run("resume mutually exclusive with revision", func(t *testing.T) {
-		_, err := parseDraftLifecycleArgs([]string{"draft-delete", "42", "--resume", "--revision=1"})
-		require.Error(t, err)
-		assert.Equal(t, "invalid_args", err.Error())
 	})
 
 	t.Run("unknown flag rejected", func(t *testing.T) {
@@ -550,127 +492,6 @@ func TestDraftEditConcurrentRevisionConflict(t *testing.T) {
 	assert.Equal(t, uint32(1), data.NumMessages, "mailbox must hold exactly one draft copy")
 }
 
-// TestDraftResumeRecoversUnknownAppend verifies that when pending_append_attempted
-// is true but no receipt was recorded, --resume uses FindDraftAppend to locate
-// the one matching candidate and completes the edit (rows 13, 14).
-func TestDraftResumeRecoversUnknownAppend(t *testing.T) {
-	f := newDraftLifecycleFixture(t)
-	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
-
-	// Build the replacement raw as the edit path would.
-	originalRaw, err := f.store.GetMessageRawContext(t.Context(), f.draftID)
-	require.NoError(t, err)
-	newDraft, err := imaplib.ReplaceDraftBody(originalRaw, "Resume recovery body", time.Now())
-	require.NoError(t, err)
-
-	// Append the new copy to the server (simulating the APPEND that was sent but
-	// whose receipt was lost before it could be recorded).
-	newUID := appendRawToServer(t, addr, "Drafts", newDraft.Raw)
-	require.NotZero(t, newUID)
-
-	// Simulate the state left by a crash after AppendDraft but before
-	// RecordIMAPDraftAppendContext: lifecycle=replace_pending, revision=2,
-	// pending_append_attempted=TRUE, pending_uid=NULL, pending_raw=<new raw>.
-	msgID := newDraft.Parsed.MessageID
-	if !strings.HasPrefix(msgID, "<") {
-		msgID = "<" + msgID + ">"
-	}
-	_, err = f.store.DB().Exec(f.store.Rebind(`
-		UPDATE imap_drafts
-		SET lifecycle = 'replace_pending',
-		    revision = 2,
-		    pending_kind = 'edit',
-		    pending_uidvalidity = NULL,
-		    pending_uid = NULL,
-		    pending_raw = ?,
-		    pending_rfc822_id = ?,
-		    pending_append_attempted = TRUE,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE draft_id = ?
-	`), newDraft.Raw, msgID, f.draftID)
-	require.NoError(t, err)
-
-	// --resume should find the single candidate and complete the edit.
-	_, err = f.runLifecycle(t, "draft-edit", strconv.FormatInt(f.draftID, 10), "--resume")
-	require.NoError(t, err)
-
-	// Verify lifecycle returned to active.
-	var lifecycle string
-	var pendingUID sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
-		SELECT lifecycle, pending_uid FROM imap_drafts WHERE draft_id = ?
-	`), f.draftID).Scan(&lifecycle, &pendingUID))
-	assert.Equal(t, "active", lifecycle)
-	assert.False(t, pendingUID.Valid, "pending_uid must be cleared after resume")
-
-	// Mailbox must hold exactly one draft (the new copy; old was removed).
-	c2, err := imapclient.DialInsecure(addr, nil)
-	require.NoError(t, err)
-	defer func() { _ = c2.Close() }()
-	require.NoError(t, c2.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
-	data, err := c2.Select("Drafts", nil).Wait()
-	require.NoError(t, err)
-	assert.Equal(t, uint32(1), data.NumMessages, "mailbox must hold exactly one draft after resume")
-
-	t.Run("ambiguous", func(t *testing.T) {
-		// Place a second copy with the same bytes so FindDraftAppend finds two
-		// candidates and cannot uniquely identify the appended copy.
-		f2 := newDraftLifecycleFixture(t)
-		addr2 := f2.config.Host + ":" + strconv.Itoa(f2.config.Port)
-
-		origRaw2, err := f2.store.GetMessageRawContext(t.Context(), f2.draftID)
-		require.NoError(t, err)
-		newDraft2, err := imaplib.ReplaceDraftBody(origRaw2, "Ambiguous body", time.Now())
-		require.NoError(t, err)
-
-		// Append two identical copies.
-		appendRawToServer(t, addr2, "Drafts", newDraft2.Raw)
-		appendRawToServer(t, addr2, "Drafts", newDraft2.Raw)
-
-		msgID2 := newDraft2.Parsed.MessageID
-		if !strings.HasPrefix(msgID2, "<") {
-			msgID2 = "<" + msgID2 + ">"
-		}
-		_, err = f2.store.DB().Exec(f2.store.Rebind(`
-			UPDATE imap_drafts
-			SET lifecycle = 'replace_pending',
-			    revision = 2,
-			    pending_kind = 'edit',
-			    pending_uidvalidity = NULL,
-			    pending_uid = NULL,
-			    pending_raw = ?,
-			    pending_rfc822_id = ?,
-			    pending_append_attempted = TRUE,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE draft_id = ?
-		`), newDraft2.Raw, msgID2, f2.draftID)
-		require.NoError(t, err)
-
-		// Capture pending_raw before resume attempt.
-		var pendingRawBefore []byte
-		require.NoError(t, f2.store.DB().QueryRow(f2.store.Rebind(`
-			SELECT pending_raw FROM imap_drafts WHERE draft_id = ?
-		`), f2.draftID).Scan(&pendingRawBefore))
-		require.NotNil(t, pendingRawBefore)
-
-		// --resume must fail with remote_unknown and leave pending columns unchanged.
-		err = f2.grantedAdapter().runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
-			Args: []string{"draft-edit", strconv.FormatInt(f2.draftID, 10), "--resume"},
-		}, func(ev api.CLIRunEvent) error { return nil })
-		require.Error(t, err)
-		assert.Equal(t, "remote_unknown", err.Error())
-
-		// Pending columns must be unchanged.
-		var pendingRawAfter []byte
-		var lifecycleAfter string
-		require.NoError(t, f2.store.DB().QueryRow(f2.store.Rebind(`
-			SELECT lifecycle, pending_raw FROM imap_drafts WHERE draft_id = ?
-		`), f2.draftID).Scan(&lifecycleAfter, &pendingRawAfter))
-		assert.Equal(t, "replace_pending", lifecycleAfter)
-		assert.Equal(t, pendingRawBefore, pendingRawAfter, "pending_raw must be unchanged")
-	})
-}
-
 // TestDraftDeleteReportsRemoteFailureWithoutLocalLoss verifies that when
 // draft-delete fails because RemoveDraft is rejected, the operation returns
 // delete_failed, leaves lifecycle=delete_pending with pending_uid set, and
@@ -698,13 +519,13 @@ func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "delete_failed", err.Error())
 
-	// Lifecycle must be delete_pending with pending_uid set (P1-C: Begin saves old uid).
+	// Lifecycle stays active; pending_uid must be set (Begin saves old uid).
 	var lifecycle string
 	var pendingUID sql.NullInt64
 	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, pending_uid FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &pendingUID))
-	assert.Equal(t, "delete_pending", lifecycle)
+	assert.Equal(t, "active", lifecycle)
 	assert.True(t, pendingUID.Valid, "pending_uid must be set")
 
 	// Membership row must still exist.
@@ -748,8 +569,7 @@ func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 }
 
 // TestDraftLifecycleCommandsRouteThroughDaemon verifies cobra command
-// registration, ExactArgs(1), required-flag enforcement, and --resume mutual
-// exclusion (row 26).
+// registration, ExactArgs(1), and required-flag enforcement.
 func TestDraftLifecycleCommandsRouteThroughDaemon(t *testing.T) {
 	t.Run("draft-get ExactArgs", func(t *testing.T) {
 		cmd := newDraftGetCommand()
@@ -787,41 +607,13 @@ func TestDraftLifecycleCommandsRouteThroughDaemon(t *testing.T) {
 		assert.Contains(t, err.Error(), "body")
 	})
 
-	t.Run("draft-edit resume skips revision+body", func(t *testing.T) {
-		cmd := newDraftEditCommand()
-		cmd.SetOut(new(strings.Builder))
-		cmd.SetErr(new(strings.Builder))
-		require.NoError(t, cmd.Flags().Set("resume", "true"))
-		// Without revision or body, RunE should not return a usageErr.
-		// It will fail trying to connect to daemon (no daemon running), but
-		// it must not fail on the missing-flag check.
-		err := cmd.RunE(cmd, []string{"1"})
-		// The error must not be about revision or body.
-		if err != nil {
-			assert.NotContains(t, err.Error(), "revision")
-			assert.NotContains(t, err.Error(), "body")
-		}
-	})
-
-	t.Run("draft-delete requires revision or resume", func(t *testing.T) {
+	t.Run("draft-delete requires revision", func(t *testing.T) {
 		cmd := newDraftDeleteCommand()
 		cmd.SetOut(new(strings.Builder))
 		cmd.SetErr(new(strings.Builder))
 		err := cmd.RunE(cmd, []string{"1"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "revision")
-	})
-
-	t.Run("parseDraftLifecycleArgs resume+revision rejected", func(t *testing.T) {
-		_, err := parseDraftLifecycleArgs([]string{"draft-edit", "42", "--resume", "--revision=1"})
-		require.Error(t, err)
-		assert.Equal(t, "invalid_args", err.Error())
-	})
-
-	t.Run("parseDraftLifecycleArgs resume+body rejected", func(t *testing.T) {
-		_, err := parseDraftLifecycleArgs([]string{"draft-edit", "42", "--resume", "--body=hi"})
-		require.Error(t, err)
-		assert.Equal(t, "invalid_args", err.Error())
 	})
 }
 

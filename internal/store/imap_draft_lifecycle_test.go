@@ -148,7 +148,7 @@ func TestBeginIMAPDraftOperationRejectsSecondPending(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Equal(int64(2), draft.Revision)
 
-	// Second claim at the new revision should fail: lifecycle is not 'active'.
+	// Second claim at the new revision should fail: pending_kind is already set.
 	_, err = st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
 		DraftID:          draftID,
 		ExpectedRevision: 2,
@@ -209,13 +209,13 @@ func TestIMAPDraftLifecycleContract(t *testing.T) {
 	requirements := require.New(t)
 	st, source, draftID, receipt := newIMAPDraftFixture(t)
 
-	// Claim at revision 1 → bumps to 2.
+	// Claim at revision 1 → bumps to 2, lifecycle stays 'active'.
 	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
 		DraftID: draftID, ExpectedRevision: 1, Kind: "discard",
 	})
 	requirements.NoError(err)
 	assertions.Equal(int64(2), draft.Revision)
-	assertions.Equal("delete_pending", draft.Lifecycle)
+	assertions.Equal("active", draft.Lifecycle)
 	assertions.Equal("discard", draft.PendingKind.String)
 
 	// Stale revision still affects zero rows.
@@ -224,7 +224,7 @@ func TestIMAPDraftLifecycleContract(t *testing.T) {
 	})
 	requirements.ErrorContains(err, "operation_pending")
 
-	// Second claim at new revision also returns operation_pending (lifecycle != active).
+	// Second claim at new revision also returns operation_pending (pending_kind is set).
 	_, err = st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
 		DraftID: draftID, ExpectedRevision: 2, Kind: "discard",
 	})
@@ -243,16 +243,14 @@ func TestIMAPDraftLifecycleContract(t *testing.T) {
 	var lifecycle string
 	var pendingKind sql.NullString
 	var pendingUID, pendingUIDValidity sql.NullInt64
-	var pendingRaw []byte
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT lifecycle, pending_kind, pending_uid, pending_uidvalidity, pending_raw
+		SELECT lifecycle, pending_kind, pending_uid, pending_uidvalidity
 		FROM imap_drafts WHERE draft_id = ?
-	`), draftID).Scan(&lifecycle, &pendingKind, &pendingUID, &pendingUIDValidity, &pendingRaw))
+	`), draftID).Scan(&lifecycle, &pendingKind, &pendingUID, &pendingUIDValidity))
 	assertions.Equal("discarded", lifecycle)
 	assertions.False(pendingKind.Valid)
 	assertions.False(pendingUID.Valid)
 	assertions.False(pendingUIDValidity.Valid)
-	assertions.Nil(pendingRaw)
 
 	// Message must be tombstoned (no remaining memberships).
 	assertions.True(messageTombstoned(t, st, draftID))
@@ -328,55 +326,6 @@ func TestDraftCommandsRefuseUnregisteredHistoricalDraft(t *testing.T) {
 	requirements.ErrorContains(err, "not found")
 }
 
-// TestRecordIMAPDraftAppendContext verifies that pending_append_attempted is set
-// and that pending_uid/pending_uidvalidity are NOT overwritten by the receipt
-// (P1-C: they hold the old copy's coordinates set at Begin).
-func TestRecordIMAPDraftAppendContext(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st, source, draftID, receipt := newIMAPDraftFixture(t)
-
-	// Begin operation: saves old uid in pending_uid.
-	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
-		DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
-	})
-	requirements.NoError(err)
-
-	// Verify Begin set pending_uid to the OLD uid.
-	var pendingUIDAfterBegin sql.NullInt64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT pending_uid FROM imap_drafts WHERE draft_id = ?
-	`), draftID).Scan(&pendingUIDAfterBegin))
-	assertions.True(pendingUIDAfterBegin.Valid, "Begin must set pending_uid")
-	assertions.Equal(int64(receipt.UID), pendingUIDAfterBegin.Int64, "Begin must save old uid in pending_uid")
-
-	// Record attempt without receipt: only pending_append_attempted should change.
-	err = st.RecordIMAPDraftAppendContext(context.Background(), draftID, draft.Revision, nil)
-	requirements.NoError(err)
-	var attempted bool
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT pending_append_attempted FROM imap_drafts WHERE draft_id = ?
-	`), draftID).Scan(&attempted))
-	assertions.True(attempted)
-
-	// Record with a receipt: pending_uid/pending_uidvalidity must NOT change.
-	// The receipt is accepted for call-site symmetry but is intentionally ignored
-	// so that the removal target (old uid) remains stable across crash recovery.
-	newReceipt := &store.IMAPDraftReceipt{
-		SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 101, UID: 5,
-	}
-	err = st.RecordIMAPDraftAppendContext(context.Background(), draftID, draft.Revision, newReceipt)
-	requirements.NoError(err)
-	var pendingUID, pendingUIDValidity sql.NullInt64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT pending_uidvalidity, pending_uid FROM imap_drafts WHERE draft_id = ?
-	`), draftID).Scan(&pendingUIDValidity, &pendingUID))
-	assertions.True(pendingUIDValidity.Valid)
-	assertions.Equal(int64(receipt.UIDValidity), pendingUIDValidity.Int64, "pending_uidvalidity must stay at old value set by Begin")
-	assertions.True(pendingUID.Valid)
-	assertions.Equal(int64(receipt.UID), pendingUID.Int64, "pending_uid must stay at old uid set by Begin, not receipt uid 5")
-}
-
 // TestDraftOwnershipSurvivesGCAfterEdit verifies that garbage-collecting the
 // tombstoned first-generation message row after a draft edit does NOT delete
 // the imap_drafts ownership row (P1-E: no ON DELETE CASCADE on draft_id).
@@ -387,7 +336,7 @@ func TestDraftOwnershipSurvivesGCAfterEdit(t *testing.T) {
 
 	// --- Full edit cycle ---
 
-	// Begin: lifecycle → replace_pending, pending_uid = old uid.
+	// Begin: pending_kind = 'edit', pending_uid = old uid, lifecycle stays 'active'.
 	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
 		DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
 	})

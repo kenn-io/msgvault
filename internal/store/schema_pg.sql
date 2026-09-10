@@ -1724,17 +1724,14 @@ CREATE TABLE IF NOT EXISTS imap_drafts (
     uid                      BIGINT NOT NULL,
     revision                 BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
     lifecycle                TEXT NOT NULL DEFAULT 'active'
-        CHECK (lifecycle IN ('active','replace_pending','delete_pending','discarded')),
+        CHECK (lifecycle IN ('active','discarded')),
     pending_kind             TEXT CHECK (pending_kind IN ('edit','discard')),
     pending_uidvalidity      BIGINT,
     pending_uid              BIGINT,
-    pending_raw              BYTEA,
-    pending_rfc822_id        TEXT,
-    pending_append_attempted BOOLEAN NOT NULL DEFAULT FALSE,
     pending_started_at       TIMESTAMPTZ,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK ((pending_uid IS NULL) = (pending_uidvalidity IS NULL))
+    CHECK ((pending_kind IS NULL) OR (pending_uid IS NOT NULL AND pending_uidvalidity IS NOT NULL))
 );
 COMMENT ON TABLE imap_drafts IS 'Ownership rows for IMAP drafts created by msgvault. draft_id is stable; current_message_id follows each replacement.';
 CREATE INDEX IF NOT EXISTS idx_imap_drafts_source_current
