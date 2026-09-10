@@ -1767,8 +1767,8 @@ func (s *Syncer) prepareMessage(
 	}
 
 	var metadata *sql.NullString
-	if s.opts.SourceType == sourceTypeIMAP {
-		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: s.imapContentOrigin(raw.ID)})
+	if origin := s.imapContentOrigin(raw.ID); s.opts.SourceType == sourceTypeIMAP && origin != "" {
+		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin})
 		if err != nil {
 			return nil, fmt.Errorf("encode IMAP content origin: %w", err)
 		}
@@ -1993,18 +1993,29 @@ func (s *Syncer) ingestMessage(
 			if matches {
 				if complete && oldSourceMessageID != data.message.SourceMessageID {
 					if destinationOrigin.canRefresh(savedOrigin, true) && destinationOrigin.canRefresh(canonicalOrigin, true) {
-						// Compare the fetched copy with the saved content's origin:
-						// adopting an All Mail location must not erase Sent priority.
-						expected := store.MessageIdentityGuard{
-							ID: existingID, SourceID: sourceID,
-							SourceMessageID: oldSourceMessageID,
+						storedRaw, err := s.store.GetMessageRaw(existingID)
+						if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrInvalidMessageRaw) {
+							return false, fmt.Errorf("read canonical IMAP raw: %w", err)
 						}
-						err := s.relocateIMAPMessage(
-							ctx, expected, raw, threadID, labelMap,
-							complete, deferLabels,
-						)
-						return dedupMutationResult(
-							true, "refresh relocated IMAP message", err)
+						if err != nil || !bytes.Equal(storedRaw, raw.Raw) {
+							// A missing or unreadable snapshot still needs the fetched copy.
+							expected := store.MessageIdentityGuard{
+								ID: existingID, SourceID: sourceID,
+								SourceMessageID: oldSourceMessageID,
+							}
+							err := s.relocateIMAPMessage(
+								ctx, expected, raw, threadID, labelMap,
+								complete, deferLabels,
+							)
+							return dedupMutationResult(
+								true, "refresh relocated IMAP message", err)
+						}
+						// Identical bytes need no content rewrite or relocation. Save
+						// their outgoing origin so later stale Drafts copies still
+						// lose, then apply the normal location and label rules.
+						if err := s.store.SetMessageMetadata(existingID, *data.metadata); err != nil {
+							return false, fmt.Errorf("record identical IMAP content origin: %w", err)
+						}
 					}
 					if preferred, ok := s.client.(preferredIMAPSourceID); ok &&
 						preferred.IsPreferredSourceMessageID(data.message.SourceMessageID) {

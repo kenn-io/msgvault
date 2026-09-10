@@ -2540,8 +2540,10 @@ func TestIMAPRelocationSentContentSurvivesAllAdoption(t *testing.T) {
 	draft.Body = "draftobsoleteword"
 	sent := newScriptedRFC7162Message(1, draft.MessageID, imapapi.FlagSeen)
 	sent.Body = "sentfinalword"
+	// The mirror starts with the draft bytes so Sent supplies an edited
+	// snapshot and becomes canonical before its later disappearance.
 	baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
-		{Name: "All Mail", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrAll}, UIDValidity: 99, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{sent}},
+		{Name: "All Mail", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrAll}, UIDValidity: 99, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{draft}},
 		{Name: "Drafts", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrDrafts}, UIDValidity: 77, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{draft}},
 		{Name: "Sent", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrSent}, UIDValidity: 88, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{sent}},
 	}}
@@ -2711,5 +2713,148 @@ func TestIMAPRelocationUnchangedSentOutranksChangedAll(t *testing.T) {
 		assert.Zero(total, "the obsolete draft must leave the search index")
 		f.final.Mailboxes[0].VanishedUIDs = nil
 		f.final.Mailboxes[2].ChangedUIDs = nil
+	}
+}
+
+func TestIMAPRelocationMalformedSentAdvancesFolderStates(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persisted-membership=%t", legacy), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			draft := newScriptedRFC7162Message(1, "malformed-relocation@example.test", imapapi.FlagDraft)
+			draft.Body = "validdraftword"
+			sent := newScriptedRFC7162Message(1, draft.MessageID, imapapi.FlagSeen)
+			sent.Raw = "From: sender@example.test\r\nTo: recipient@example.test\r\nSubject: Invalid final\r\nMessage-ID: <" + draft.MessageID + ">\r\nMIME-Version: 1.0\r\nContent-Type: multipart mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: text/plain\r\n\r\nfinalword\r\n--outer--\r\n"
+			baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
+				scriptedRFC7162Inbox(55, 1, 1),
+				{Name: "Drafts", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrDrafts}, UIDValidity: 77, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{draft}},
+				{Name: "Sent", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrSent}, UIDValidity: 88, UIDNext: 1, HighestModSeq: 1},
+			}}
+			addr, server := startScriptedRFC7162Server(t, baseline)
+			st := testutil.NewTestStore(t)
+			const identifier = "imap://malformed-relocation@example.test"
+			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			require.NoError(first.Close())
+			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			require.NoError(err)
+			require.Positive(id)
+			if legacy {
+				seedLegacyDraftsCanonicalWithSentMembership(t, st, source, []byte(sent.Raw), "<"+draft.MessageID+">")
+			}
+			edited := baseline.clone()
+			edited.Mailboxes[1].Messages = nil
+			edited.Mailboxes[1].HighestModSeq = 3
+			edited.Mailboxes[1].VanishedUIDs = []imapapi.UID{1}
+			edited.Mailboxes[2].Messages = []scriptedRFC7162Message{sent}
+			edited.Mailboxes[2].UIDNext = 2
+			edited.Mailboxes[2].HighestModSeq = 2
+			if !legacy {
+				edited.Mailboxes[2].ChangedUIDs = []imapapi.UID{1}
+			}
+			for n := 1; n <= 3; n++ {
+				inbox := newScriptedRFC7162Message(imapapi.UID(n), fmt.Sprintf("new-inbox-%d@example.test", n), imapapi.FlagSeen)
+				inbox.Body = fmt.Sprintf("inboxword%d", n)
+				edited.Mailboxes[0].Messages = append(edited.Mailboxes[0].Messages, inbox)
+				edited.Mailboxes[0].UIDNext = uint32(n + 1)
+				edited.Mailboxes[0].HighestModSeq = uint64(n + 1)
+				edited.Mailboxes[0].ChangedUIDs = append(edited.Mailboxes[0].ChangedUIDs, imapapi.UID(n))
+				server.setSnapshot(edited)
+				summary, err := runScriptedRelocationSyncSummary(t, st, identifier, addr)
+				require.NoError(err)
+				require.NotNil(summary)
+				assert.Zero(summary.Errors)
+				assert.Equal(int64(1), summary.MessagesAdded)
+				inboxID, err := st.GetMessageIDByRFC822ID(source.ID, "<"+inbox.MessageID+">")
+				require.NoError(err)
+				assert.Positive(inboxID)
+				target, err := st.GetMessage(id)
+				require.NoError(err)
+				assert.Equal("Sent|1", target.SourceMessageID)
+				assert.Contains(target.BodyText, "MIME parsing failed")
+				assert.NotContains(target.BodyText, draft.Body)
+				raw, err := st.GetMessageRaw(id)
+				require.NoError(err)
+				assert.Equal(sent.Raw, string(raw))
+				afterStates, err := st.GetIMAPFolderStates(source.ID)
+				require.NoError(err)
+				require.Len(afterStates, 3)
+				for _, state := range afterStates {
+					if state.Mailbox == "INBOX" {
+						assert.Equal(uint32(n+1), state.UIDNext)
+						assert.Equal(uint64(n+1), state.HighestModSeq)
+					}
+				}
+				edited.Mailboxes[1].VanishedUIDs = nil
+				edited.Mailboxes[2].ChangedUIDs = nil
+			}
+		})
+	}
+}
+
+func TestIMAPIdenticalSentKeepsPreferredLocation(t *testing.T) {
+	for _, withSent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sent=%v", withSent), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			msg := newScriptedRFC7162Message(1, "identical-outgoing@example.test", imapapi.FlagSeen)
+			msg.Body = "finalsentword"
+			baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
+				{Name: "All Mail", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrAll}, UIDValidity: 99, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{msg}},
+			}}
+			if withSent {
+				baseline.Mailboxes = append(baseline.Mailboxes, scriptedRFC7162Mailbox{
+					Name: "Sent", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrSent}, UIDValidity: 88, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{msg},
+				})
+			}
+			addr, server := startScriptedRFC7162Server(t, baseline)
+			st := testutil.NewTestStore(t)
+			const identifier = "imap://identical-outgoing@example.test"
+			summary, err := runScriptedRelocationSyncSummary(t, st, identifier, addr)
+			require.NoError(err)
+			assert.Zero(summary.Errors)
+			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Zero(summary.MessagesUpdated, "identical content must not trigger relocation persistence")
+			source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
+			require.NoError(err)
+			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+msg.MessageID+">")
+			require.NoError(err)
+			require.Positive(id)
+			message, err := st.GetMessage(id)
+			require.NoError(err)
+			assert.Equal("All Mail|1", message.SourceMessageID)
+			if !withSent {
+				metadata, err := st.GetMessageMetadata(id)
+				require.NoError(err)
+				assert.False(metadata.Valid, "untrusted origin does not need a metadata write")
+				return
+			}
+			for range 2 {
+				client, err := runScriptedRelocationResync(t, st, identifier, addr)
+				require.NoError(err)
+				require.NoError(client.Close())
+				message, err = st.GetMessage(id)
+				require.NoError(err)
+				assert.Equal("All Mail|1", message.SourceMessageID)
+				assert.Contains(message.BodyText, msg.Body)
+			}
+			// The identical Sent copy must still establish content precedence:
+			// losing both locations cannot let a stale draft replace the final bytes.
+			draft := newScriptedRFC7162Message(1, msg.MessageID, imapapi.FlagDraft)
+			draft.Body = "staledraftword"
+			server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{
+				{Name: "Drafts", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrDrafts}, UIDValidity: 77, UIDNext: 2, HighestModSeq: 1, Messages: []scriptedRFC7162Message{draft}},
+			}})
+			client, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+			require.NoError(err)
+			require.NoError(client.Close())
+			message, err = st.GetMessage(id)
+			require.NoError(err)
+			assert.Equal("Drafts|1", message.SourceMessageID)
+			assert.Contains(message.BodyText, msg.Body)
+			assert.NotContains(message.BodyText, draft.Body)
+			raw, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			assert.Equal(scriptedRFC7162RawMessage(msg), string(raw))
+		})
 	}
 }

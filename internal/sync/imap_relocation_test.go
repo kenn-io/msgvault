@@ -448,15 +448,17 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 	require.NoError(retryClient.Close())
 }
 
-func TestIMAPRelocationStrictParseFailurePreservesOldSnapshot(t *testing.T) {
+func TestIMAPRelocationRecoversMalformedSentSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
+	opts.AttachmentsDir = filepath.Join(env.TmpDir, "attachments")
 	const messageID = "invalid-relocation@example.com"
 	draftRaw := testemail.NewMessage().Subject("Valid draft").
-		Header("Message-ID", "<"+messageID+">").Body("draftword").CRLF().Bytes()
+		Header("Message-ID", "<"+messageID+">").Body("draftword").
+		WithAttachment("draft.bin", "application/octet-stream", []byte("draft attachment")).CRLF().Bytes()
 	invalidRaw := []byte(
 		"From: invalid-final@example.com\r\nTo: invalid-recipient@example.com\r\n" +
 			"Subject: Invalid final\r\nMessage-ID: <" + messageID + ">\r\n" +
@@ -476,31 +478,26 @@ func TestIMAPRelocationStrictParseFailurePreservesOldSnapshot(t *testing.T) {
 	require.NoError(env.Store.DB().QueryRow(
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
-	var participantsBefore int
-	require.NoError(env.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM participants`,
-	).Scan(&participantsBefore))
+	before, err := env.Store.GetMessage(internalID)
+	require.NoError(err)
+	require.Len(before.Attachments, 1)
 	testutil.AppendIMAPRawMessage(t, user, "Envoyes", invalidRaw)
 	testutil.ExpungeIMAPMessage(t, addr, "Brouillons", imapv2.UID(1))
 	secondClient := newSyncTestIMAPClient(t, addr)
 	env.Syncer = New(secondClient, env.Store, opts)
 	assertSummary(t, runFullSync(t, env), WantSummary{
-		Added: new(int64(0)), Updated: new(int64(0)), Errors: new(int64(1)),
+		Added: new(int64(0)), Updated: new(int64(1)), Errors: new(int64(0)),
 	})
 	message, err := env.Store.GetMessage(internalID)
 	require.NoError(err)
-	assert.Equal("Brouillons|1", message.SourceMessageID)
-	assert.Equal("Valid draft", message.Subject)
-	assert.Contains(message.BodyText, "draftword")
+	assert.Equal("Envoyes|1", message.SourceMessageID)
+	assert.Equal("Invalid final", message.Subject)
+	assert.Contains(message.BodyText, "MIME parsing failed")
+	assert.NotContains(message.BodyText, "draftword")
+	assert.Empty(message.Attachments)
 	raw, err := env.Store.GetMessageRaw(internalID)
 	require.NoError(err)
-	assert.Equal(draftRaw, raw)
-	var participantsAfter int
-	require.NoError(env.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM participants`,
-	).Scan(&participantsAfter))
-	assert.Equal(participantsBefore, participantsAfter,
-		"strict relocation failure must not resolve prepared participants")
+	assert.Equal(invalidRaw, raw)
 	require.NoError(secondClient.Close())
 }
 

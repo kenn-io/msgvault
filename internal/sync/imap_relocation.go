@@ -21,7 +21,7 @@ func (s *Syncer) relocateIMAPMessage(
 	replaceLabels bool,
 	preserveLabels bool,
 ) error {
-	prepared, err := s.prepareMessage(expected.SourceID, raw, threadID, true)
+	prepared, err := s.prepareMessage(expected.SourceID, raw, threadID, false)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 	if !destinationOrigin.canRefresh(savedOrigin, false) || !destinationOrigin.canRefresh(canonicalOrigin, false) {
 		return s.adoptIMAPRelocationLocation(ctx, target, raw, labelMap)
 	}
-	prepared, err := s.prepareMessage(sourceID, raw, threadID, true)
+	prepared, err := s.prepareMessage(sourceID, raw, threadID, false)
 	if err != nil {
 		return err
 	}
