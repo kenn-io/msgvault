@@ -519,6 +519,10 @@ func (s *Store) MergeDuplicates(
 		}
 
 		for _, dupID := range duplicateIDs {
+			if _, err := tx.Exec(`UPDATE messages SET reply_to_message_id = ?
+				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
+				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
+			}
 			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}

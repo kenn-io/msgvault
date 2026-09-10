@@ -1147,7 +1147,7 @@ func upsertMessageSQL(now string) string {
 		END,
 		message_type = excluded.message_type,
 		conversation_id = excluded.conversation_id,
-		rfc822_message_id = excluded.rfc822_message_id,
+		rfc822_message_id = COALESCE(NULLIF(messages.rfc822_message_id, ''), excluded.rfc822_message_id),
 		list_id = excluded.list_id,
 		sent_at = excluded.sent_at,
 		received_at = excluded.received_at,
@@ -1164,6 +1164,7 @@ func upsertMessageSQL(now string) string {
 }
 
 // UpsertMessage inserts or updates a message.
+// Existing nonempty RFC Message-IDs are preserved.
 func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 	if msg == nil {
 		return 0, errors.New("upsert message requires a message")
@@ -1840,6 +1841,11 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			)
 		}
 		q := boundQuerier{ctx: ctx, q: tx}
+		// Explicit repairs replace provider-authoritative headers as well as content.
+		if _, err := q.Exec(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`,
+			data.Message.RFC822MessageID, messageID); err != nil {
+			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
+		}
 		if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
 			return fmt.Errorf("replace repair message attachments: %w", err)
 		}

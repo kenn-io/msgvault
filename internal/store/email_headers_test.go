@@ -92,6 +92,38 @@ func TestEmailHeaderRepairPreservesMetadataAndRevision(t *testing.T) {
 	assertions.Equal("child@example.test", rfcID)
 }
 
+func TestEmailRepliesSurviveDeduplication(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	parent := f.CreateMessage("parent")
+	child := f.CreateMessage("child")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, parent, "parent@example.test", ""))
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, child, "child@example.test", "parent@example.test"))
+	require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
+
+	other, err := st.GetOrCreateSource("mbox", "other@example.test")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(other.ID, "thread", "Thread")
+	require.NoError(err)
+	survivor, err := st.UpsertMessage(&store.Message{
+		SourceID: other.ID, SourceMessageID: "parent-copy", ConversationID: conversation,
+		MessageType:     store.MessageTypeEmail,
+		RFC822MessageID: sql.NullString{String: "parent@example.test", Valid: true},
+	})
+	require.NoError(err)
+	_, err = st.MergeDuplicates(survivor, []int64{parent}, "reply-dedup")
+	require.NoError(err)
+	var reply int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT reply_to_message_id FROM messages WHERE id = ?`), child).Scan(&reply))
+	assert.Equal(survivor, reply)
+	deleted, _, err := st.DeleteAllDedupedContext(t.Context())
+	require.NoError(err)
+	assert.Equal(int64(1), deleted)
+}
+
 func TestEmailReplyResolutionResumesCommittedPages(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
