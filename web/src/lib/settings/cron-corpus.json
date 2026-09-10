@@ -24,7 +24,8 @@
     "*/+5 * * * *",
     "CRON_TZ=UTC 0 3 * * *",
     "TZ=America/New_York 0 3 * * *",
-    "CRON_TZ=Europe/Berlin 0,30 9-17 * * mon-fri"
+    "CRON_TZ=Europe/Berlin 0,30 9-17 * * mon-fri",
+    "CRON_TZ= 0 3 * * *"
   ],
   "invalid": [
     "",

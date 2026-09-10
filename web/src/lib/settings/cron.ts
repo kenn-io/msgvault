@@ -98,12 +98,14 @@ function nameTable(names: readonly string[], offset: number): Record<string, num
 
 /**
  * Separates a `CRON_TZ=<zone>` or `TZ=<zone>` prefix from the five fields.
- * The daemon reads both spellings; `joinCron` always writes `CRON_TZ=`.
+ * The daemon reads both spellings; `joinCron` always writes `CRON_TZ=`. A
+ * prefix with no name after the equals sign runs in UTC on the daemon, so it
+ * reads as UTC here too.
  */
 export function splitCron(schedule: string): CronParts {
   const match = ZONE_PREFIX.exec(schedule);
   if (!match) return { zone: '', expression: schedule };
-  return { zone: match[1], expression: schedule.slice(match[0].length) };
+  return { zone: match[1] || 'UTC', expression: schedule.slice(match[0].length) };
 }
 
 /**
@@ -133,10 +135,8 @@ export function timeZoneLabel(zone: string): string {
  * names are valid, so a zone it stored is never shown as a mistake here.
  */
 export function parseCron(schedule: string): CronParse {
-  const prefix = ZONE_PREFIX.exec(schedule);
-  const zone = prefix?.[1] ?? '';
-  const expression = prefix ? schedule.slice(prefix[0].length) : schedule;
-  const tokens = tokenize(expression, prefix?.[0].length ?? 0);
+  const { zone, expression } = splitCron(schedule);
+  const tokens = tokenize(expression, schedule.length - expression.length);
   if (tokens.length === 0) {
     return { tokens, zone: zone || undefined, error: 'Enter five fields: minute, hour, day, month, and weekday.' };
   }

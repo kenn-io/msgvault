@@ -152,10 +152,12 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   `validation.format: "cron"` and use a cron field with tinted fields, a
   plain-English description, inline validation, and presets. A Time zone
   menu stores a `CRON_TZ=` prefix so a schedule runs in a chosen zone, the
-  field legend shows while the field is focused or hovered, and the daemon
-  trims schedules, treats a zone with no fields as off, rejects a field made
-  only of commas, and raises a rate below the on minimum instead of
-  rejecting it. The CardDAV
+  field legend shows while the field is focused or hovered. On a Settings
+  save or a CardDAV account save the daemon trims the schedule and stores a
+  zone with no fields as off; a schedule in `config.toml` must be a full
+  expression or empty, and the scheduler now reports a bad one instead of
+  panicking. The daemon rejects a field made only of commas and raises a
+  rate below the on minimum instead of rejecting it. The CardDAV
   account form, Sources, and CardDAV status describe schedules the same way.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.

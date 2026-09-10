@@ -70,6 +70,12 @@ describe('parseCron', () => {
     expect(describeCron('CRON_TZ=Mars/Olympus 0 3 * * *')).toBe('At 03:00 every day, Mars/Olympus time');
   });
 
+  it('reads a prefix with no zone name as UTC, like the daemon', () => {
+    expect(parseCron('CRON_TZ= 0 3 * * *').zone).toBe('UTC');
+    expect(splitCron('TZ= 0 3 * * *')).toEqual({ zone: 'UTC', expression: '0 3 * * *' });
+    expect(describeCron('CRON_TZ= 0 3 * * *')).toBe('At 03:00 every day, UTC time');
+  });
+
   it('agrees with the daemon parser on the shared corpus', () => {
     for (const expression of corpus.valid) {
       expect(parseCron(expression).error, expression).toBeUndefined();
