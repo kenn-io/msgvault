@@ -142,6 +142,9 @@ Use `--after` for an exclusive lower bound in `YYYY-MM-DD` or RFC3339 form:
 msgvault sync-discord 123456789012345678 --after 2025-01-01
 ```
 
+A bounded sync defers the full-source automatic metadata repair pass, so rows
+older than the bound remain untouched. Run `msgvault repair-derived --source-type discord` when historical metadata needs repair.
+
 Use `--full` to ignore normal completion cursors, re-fetch all available
 history, repair existing rows, and detect historical upstream deletions:
 
@@ -186,6 +189,57 @@ resolved and synced independently through the same importer as
   remain in metadata when a target was deleted, excluded by `--after`, or
   lives in another container, so the reply can appear as unavailable.
 - Attachment metadata and, within the configured cap, content-addressed bytes.
+
+Discord message metadata stores the complete nonzero message flag integer in
+`messages.metadata.discord_message_flags`. When that value contains `8192`,
+each attachment receives a `discord` object in
+`attachments.attachment_metadata`. A nonempty waveform remains the exact
+source string at `attachments.attachment_metadata.discord.waveform`, including
+strings that aren't valid base64. An empty waveform still produces
+`{"discord":{}}`. Existing `attachments.duration_ms`, MIME, and generic media
+type fields keep their current meanings.
+
+Run these queries against the archive database with a SQLite or PostgreSQL
+client. The `msgvault query` command reads the analytics cache, whose views
+don't include every archive column used here.
+
+For SQLite:
+
+```sql
+SELECT m.id AS message_id,
+       json_extract(m.metadata, '$.discord_message_flags') AS message_flags,
+       a.source_attachment_id,
+       json_extract(a.attachment_metadata, '$.discord.waveform') AS waveform,
+       a.duration_ms, a.mime_type, a.media_type
+FROM messages AS m
+JOIN attachments AS a ON a.message_id = m.id
+WHERE m.message_type = 'discord'
+  AND a.source_attachment_id LIKE 'discord:%';
+```
+
+For PostgreSQL, use the JSONB operators:
+
+```sql
+SELECT m.id AS message_id,
+       m.metadata->>'discord_message_flags' AS message_flags,
+       a.source_attachment_id,
+       a.attachment_metadata->'discord'->>'waveform' AS waveform,
+       a.duration_ms, a.mime_type, a.media_type
+FROM messages AS m
+JOIN attachments AS a ON a.message_id = m.id
+WHERE m.message_type = 'discord'
+  AND a.source_attachment_id LIKE 'discord:%';
+```
+
+On a fresh import or after a successful repair, NULL
+`attachment_metadata` means the current mapper emitted no Discord voice
+metadata for that row. A row imported before this change can also have NULL metadata because
+the old mapper omitted the field. Missing or undecodable raw data can leave a
+historical row unresolved. NULL alone therefore doesn't prove that a
+historical message is non-voice. Run `msgvault repair-derived --source-type
+discord`, or inspect the archived `discord_json`, before interpreting that
+value. Repair reads the archive and changes derived message and attachment
+metadata only. It doesn't download or rewrite media.
 
 Reaction metadata is stored as stable summaries such as `👍 12`, including
 custom emoji name, ID, animation state, and count. Version 1 does not fetch

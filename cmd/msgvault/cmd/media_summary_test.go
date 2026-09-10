@@ -88,6 +88,37 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	}
 }
 
+func TestDiscordSyncSummaryReportsAutomaticMetadataRepair(t *testing.T) {
+	assert := assert.New(t)
+	var output bytes.Buffer
+	writeDiscordSyncSummary(&output, "guild", &discord.ImportSummary{
+		RepairRan:               true,
+		MessageMetadataRepaired: 2,
+		AttachmentsRetagged:     3,
+		RepairUndecodable:       1,
+		RepairErrors:            4,
+	})
+	assert.Contains(output.String(), "Message metadata repaired: 2")
+	assert.Contains(output.String(), "Attachments retagged from archive: 3")
+	assert.Contains(output.String(), "Archived payloads not decoded: 1")
+	assert.Contains(output.String(), "Derived metadata repair errors: 4")
+
+	output.Reset()
+	writeDiscordSyncSummary(&output, "guild", &discord.ImportSummary{})
+	assert.NotContains(output.String(), "Message metadata repaired:")
+	assert.NotContains(output.String(), "Attachments retagged from archive:")
+	assert.NotContains(output.String(), "Archived payloads not decoded:")
+	assert.NotContains(output.String(), "Derived metadata repair errors:")
+}
+
+func TestDiscordSyncRequestsCacheRefreshAfterPreSyncRepair(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{RepairRan: true}))
+	assert.True(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{SyncRunID: 1}))
+	assert.False(discordSummaryNeedsCacheRefresh(&discord.ImportSummary{}))
+	assert.False(discordSummaryNeedsCacheRefresh(nil))
+}
+
 func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
 	tests := []struct {
 		name  string

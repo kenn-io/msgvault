@@ -2,6 +2,7 @@ package discord
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -298,7 +299,7 @@ func TestMapDiscordAttachments(t *testing.T) {
 		},
 	}}
 
-	got := mapAttachments(msg.Attachments)
+	got := mapAttachments(msg.Attachments, msg.Flags)
 	assert.Equal([]store.AttachmentRef{
 		{
 			Filename: "image.png", MimeType: "image/png", Size: 4096,
@@ -319,4 +320,37 @@ func TestMapDiscordAttachments(t *testing.T) {
 	assert.True(mapped.Message.HasAttachments)
 	assert.Equal(2, mapped.Message.AttachmentCount)
 	assert.Equal(got, mapped.Attachments)
+}
+
+func TestMapDiscordVoiceMessageMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	voice := &Message{
+		Type: 0, Flags: discordVoiceMessageFlag,
+		Attachments: []Attachment{
+			{ID: "empty", Filename: "empty.ogg", ContentType: "audio/ogg", Duration: 5.94},
+			{ID: "wave", Filename: "voice.ogg", ContentType: "audio/ogg", Duration: 5.94, Waveform: "%%%"},
+		},
+	}
+	mapped, err := mapMessage(voice, 10, 20)
+	require.NoError(err)
+	assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, string(mapped.Metadata))
+	assert.JSONEq(`{"discord":{}}`, mapped.Attachments[0].Metadata)
+	assert.JSONEq(`{"discord":{"waveform":"%%%"}}`, mapped.Attachments[1].Metadata)
+	assert.Equal("audio", mapped.Attachments[0].MediaType)
+	assert.Equal(int64(5940), mapped.Attachments[0].DurationMS)
+
+	for _, flags := range []int{0, discordVoiceMessageFlag - 1} {
+		mapped, err := mapMessage(&Message{
+			Type: 0, Flags: flags,
+			Attachments: []Attachment{{ID: "ordinary", Filename: "voice.ogg", ContentType: "audio/ogg", Waveform: "%%%"}},
+		}, 10, 20)
+		require.NoError(err)
+		if flags == 0 {
+			assert.NotContains(string(mapped.Metadata), "discord_message_flags")
+		} else {
+			assert.Contains(string(mapped.Metadata), `"discord_message_flags":`+strconv.Itoa(flags))
+		}
+		assert.Empty(mapped.Attachments[0].Metadata)
+	}
 }

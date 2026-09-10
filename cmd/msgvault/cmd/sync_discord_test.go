@@ -171,6 +171,63 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 	assert.Equal(1, rebuilds, "a failed importer attempt with durable writes must refresh analytics")
 }
 
+func TestSyncDiscordRebuildsCacheAfterRepairBeforeSyncSetupFailure(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		invalidState bool
+		wantError    string
+	}{
+		{"invalid saved state", true, "load last successful Discord sync state"},
+		{"active sync", false, "start Discord sync"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := newDiscordCLIStore(t)
+			tokensDir := t.TempDir()
+			require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+			source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+			require.NoError(err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
+			require.NoError(err)
+			messageID, err := st.UpsertMessage(&store.Message{
+				SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "400000000000000001",
+				MessageType: "discord",
+			})
+			require.NoError(err)
+			require.NoError(st.UpsertMessageRawWithFormat(messageID,
+				[]byte(`{"id":"400000000000000001","type":0,"flags":8192}`), "discord_json"))
+			runID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			if tt.invalidState {
+				require.NoError(st.CompleteSync(runID, "not-json"))
+			}
+			api := newDiscordCLIServer(t)
+			deps := testDiscordCommandDeps(t, st, tokensDir, api.server.URL)
+			rebuilds := 0
+			deps.rebuildCache = func(string) error {
+				rebuilds++
+				return nil
+			}
+			cmd := newSyncDiscordLocalCmd(deps)
+			cmd.SetArgs([]string{testDiscordGuildA})
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			cmd.SetErr(&output)
+
+			err = cmd.Execute()
+			require.ErrorContains(err, tt.wantError)
+			if !tt.invalidState {
+				require.ErrorIs(err, store.ErrSyncAlreadyActive)
+			}
+			metadata, err := st.GetMessageMetadata(messageID)
+			require.NoError(err)
+			assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, metadata.String)
+			assert.Equal(1, rebuilds, "repair writes must refresh analytics even if sync setup fails")
+		})
+	}
+}
+
 func installFailingDiscordParticipantTrigger(t *testing.T, st *store.Store) {
 	t.Helper()
 	var err error

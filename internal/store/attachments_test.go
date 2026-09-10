@@ -463,3 +463,74 @@ func TestListDiscordPendingAttachmentMessages(t *testing.T) {
 		ChatID:          "234567890123456789",
 	}}, beeperItems)
 }
+
+func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "metadata-source")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "metadata-channel", "channel", "metadata")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "metadata-message")
+	hash := strings.Repeat("a", 64)
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{
+		{
+			Filename: "voice.ogg", MimeType: "audio/ogg", StoragePath: hash[:2] + "/" + hash,
+			ContentHash: hash, Size: 42, SourceAttachmentID: "discord:keep",
+		},
+		{SourceAttachmentID: "discord:stale", StoragePath: "discord:pending:stale"},
+	}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE attachments
+		SET attachment_role = ?, role_source = ?, attachment_state = ?,
+		    attachment_skip_reason = ?, source_part_key = ?
+		WHERE message_id = ? AND source_attachment_id = ?
+	`), string(store.AttachmentRoleStandalone), string(store.AttachmentRoleSourceProviderExplicit),
+		string(attachmentpolicy.StateStored), "", "part-keep", messageID, "discord:keep")
+	require.NoError(err)
+	_, err = st.SetDiscordAttachmentMetadata(messageID, map[string]string{
+		"discord:keep":  `{"discord":{"waveform":"old"}}`,
+		"discord:stale": `{"discord":{}}`,
+	})
+	require.NoError(err)
+
+	type snapshot struct {
+		storagePath, contentHash, role, roleSource, state, skipReason, sourcePartKey, metadata string
+		size                                                                                   int64
+	}
+	read := func(id string) snapshot {
+		var got snapshot
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT storage_path, COALESCE(content_hash, ''), size, attachment_role,
+			       role_source, COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, ''),
+			       COALESCE(source_part_key, ''), COALESCE(CAST(attachment_metadata AS TEXT), '')
+			FROM attachments WHERE message_id = ? AND source_attachment_id = ?
+		`), messageID, id).Scan(&got.storagePath, &got.contentHash, &got.size, &got.role,
+			&got.roleSource, &got.state, &got.skipReason, &got.sourcePartKey, &got.metadata))
+		return got
+	}
+	before := read("discord:keep")
+	changed, err := st.SetDiscordAttachmentMetadata(messageID, map[string]string{
+		"discord:keep": `{"discord":{"waveform":"new"}}`,
+	})
+	require.NoError(err)
+	assert.Equal(int64(2), changed)
+	after := read("discord:keep")
+	assert.Equal(before.storagePath, after.storagePath)
+	assert.Equal(before.contentHash, after.contentHash)
+	assert.Equal(before.size, after.size)
+	assert.Equal(before.role, after.role)
+	assert.Equal(before.roleSource, after.roleSource)
+	assert.Equal(before.state, after.state)
+	assert.Equal(before.skipReason, after.skipReason)
+	assert.Equal(before.sourcePartKey, after.sourcePartKey)
+	assert.JSONEq(`{"discord":{"waveform":"new"}}`, after.metadata)
+	assert.Empty(read("discord:stale").metadata)
+
+	changed, err = st.SetDiscordAttachmentMetadata(messageID, map[string]string{
+		"discord:keep": `{"discord":{"waveform":"new"}}`,
+	})
+	require.NoError(err)
+	assert.Equal(int64(0), changed)
+}
