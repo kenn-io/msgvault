@@ -65,8 +65,10 @@ func agentTokenListResponseJSON() string {
 				"id":          "tok_abc123",
 				"label":       "Test Agent",
 				"permissions": []string{"draft.create"},
-				"sources":     []any{},
-				"created_at":  time.Now().UTC().Format(time.RFC3339),
+				"sources": []map[string]any{
+					{"id": 1, "type": "imap", "identifier": "alice@example.com"},
+				},
+				"created_at": time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 	}
@@ -145,6 +147,7 @@ func TestAgentTokenListFormatsTable(t *testing.T) {
 
 	assert.Contains(output, "tok_abc123")
 	assert.Contains(output, "Test Agent")
+	assert.Contains(output, "alice@example.com", "source identifier must appear in list output")
 	assert.NotContains(output, "mva1_", "secret must never appear in list output")
 }
 

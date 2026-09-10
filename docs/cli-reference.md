@@ -2940,8 +2940,7 @@ List all active grants. Secrets and digests are never returned.
 msgvault agent-token list
 ```
 
-Each row shows the grant ID, label, permissions, source references (ID, type, and identifier),
-and creation time.
+Each row shows the grant ID, label, permissions, sources (as `id/type/identifier`), and creation time.
 
 ### agent-token revoke
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -39,43 +40,41 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code, "grant from old registry must not authenticate against new registry")
 }
 
-// TestRevocationDeniesNextRequest tests proof matrix row 14.
-// After Revoke, the next request with the revoked token gets 401.
-func TestRevocationDeniesNextRequest(t *testing.T) {
-	srv, reg := newAgentTokenTestServer(t)
-
-	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	grantID, secret, _, err := reg.Issue("revoke-me", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(t, err)
-
-	// Pre-revocation: getHealth is allowed for delegated callers.
-	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	req1.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	w1 := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w1, req1)
-	assert.NotEqual(t, http.StatusUnauthorized, w1.Code, "pre-revocation: valid token must not get 401")
-
-	// Revoke the grant.
-	revoked := reg.Revoke(grantID)
-	require.True(t, revoked, "Revoke must return true for a known grant")
-
-	// Post-revocation: same token must get 401.
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	req2.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	w2 := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w2, req2)
-	assert.Equal(t, http.StatusUnauthorized, w2.Code, "post-revocation: revoked token must get 401")
-}
-
 // TestDelegatedHealthUsesPublicProjection tests proof matrix row 17.
-// Delegated callers receive the public projection plus APISchemaVersion.
-// Owner callers receive the full health detail.
+// Delegated callers receive the public projection (operationBusyHealth) plus
+// APISchemaVersion. Owner callers receive the full projection (operationHealth)
+// which includes the operation label. When the gate is held, the two bodies
+// differ on Operation.Label: delegated sees none, owner sees the label.
 func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
-	srv, reg := newAgentTokenTestServer(t)
+	gate := NewSerialOperationGate()
+	stub := &stubSourceStore{
+		src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	}
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			APIKey:      agentTokenTestAPIKey,
+			AgentAccess: true,
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         stub,
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("health-check", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
 	require.NoError(t, err)
+
+	// Hold the gate with a label so operationHealth() returns a labelled entry
+	// and operationBusyHealth() returns Busy only.
+	releaseGate, ok := gate.BeginLabeledWorkContext(context.Background(), "test-operation")
+	require.True(t, ok, "must acquire gate")
+	defer releaseGate()
 
 	// Delegated caller.
 	reqD := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -103,6 +102,15 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	assert.NotEmpty(t, delegatedResp.APISchemaVersion, "delegated health must include APISchemaVersion")
 	assert.NotEmpty(t, ownerResp.APISchemaVersion, "owner health must include APISchemaVersion")
 	assert.Equal(t, ownerResp.APISchemaVersion, delegatedResp.APISchemaVersion, "APISchemaVersion must match between delegated and owner")
+
+	// Public projection: Operation.Busy is reported but Label is withheld.
+	require.NotNil(t, delegatedResp.Operation, "delegated health must report operation busy when gate is held")
+	assert.True(t, delegatedResp.Operation.Busy, "delegated operation must be busy")
+	assert.Empty(t, delegatedResp.Operation.Label, "delegated operation must not expose label (public projection)")
+
+	// Full projection: Operation.Label names the holder.
+	require.NotNil(t, ownerResp.Operation, "owner health must report operation busy when gate is held")
+	assert.Equal(t, "test-operation", ownerResp.Operation.Label, "owner operation must expose label (full projection)")
 }
 
 const agentTokenTestAPIKey = "owner-api-key-for-agent-tests"
@@ -256,7 +264,8 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w2.Body).Decode(&listResp))
 	require.Len(t, listResp.Tokens, 1)
 	for _, tok := range listResp.Tokens {
-		assert.Empty(t, tok.Label == "" && tok.ID == "", "token view should have label and ID")
+		assert.NotEmpty(t, tok.Label, "token view should have label")
+		assert.NotEmpty(t, tok.ID, "token view should have ID")
 	}
 	// Verify no secret field in list body
 	assert.NotContains(t, w2.Body.String(), issueResp.Secret, "secret must not appear in list response")

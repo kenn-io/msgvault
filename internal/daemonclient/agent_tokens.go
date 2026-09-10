@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -41,18 +42,13 @@ type agentTokenIssueBody struct {
 }
 
 // agentTokenOptions implements runtime.RequestOptions for the agent-token endpoints.
-// It avoids a dependency on the generated client types so the file compiles before
-// make api-generate is run.
 type agentTokenOptions struct {
-	pathParams map[string]any
-	body       any
+	body any
 }
 
-func (o *agentTokenOptions) GetPathParams() (map[string]any, error) {
-	return o.pathParams, nil
-}
-func (o *agentTokenOptions) GetQuery() (map[string]any, error) { return nil, nil }
-func (o *agentTokenOptions) GetBody() any                      { return o.body }
+func (o *agentTokenOptions) GetPathParams() (map[string]any, error) { return nil, nil }
+func (o *agentTokenOptions) GetQuery() (map[string]any, error)      { return nil, nil }
+func (o *agentTokenOptions) GetBody() any                           { return o.body }
 func (o *agentTokenOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
@@ -129,7 +125,7 @@ func (c *Client) ListAgentTokens(ctx context.Context) ([]AgentTokenView, error) 
 // RevokeAgentToken deletes a grant by ID. The server returns 204 regardless of
 // whether the ID existed, to prevent enumeration.
 func (c *Client) RevokeAgentToken(ctx context.Context, id string) error {
-	raw, status, err := c.doAgentTokenRequest(ctx, http.MethodDelete, "/api/v1/agent-tokens/"+id, nil)
+	raw, status, err := c.doAgentTokenRequest(ctx, http.MethodDelete, "/api/v1/agent-tokens/"+url.PathEscape(id), nil)
 	if err != nil {
 		return err
 	}

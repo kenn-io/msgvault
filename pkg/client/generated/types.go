@@ -155,46 +155,12 @@ func (a AgentTokenIssueRequest) Validate() error {
 }
 
 type AgentTokenIssueResponse struct {
-	CreatedAt   time.Time              `json:"created_at" validate:"required"`
-	DaemonURL   string                 `json:"daemon_url" validate:"required"`
-	ID          string                 `json:"id" validate:"required"`
-	Label       string                 `json:"label" validate:"required"`
-	Permissions []string               `json:"permissions" validate:"required"`
-	Secret      string                 `json:"secret" validate:"required"`
-	Sources     []AgentTokenSourceView `json:"sources" validate:"required"`
+	DaemonURL string `json:"daemon_url" validate:"required"`
+	Secret    string `json:"secret" validate:"required"`
 }
 
 func (a AgentTokenIssueResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(a.CreatedAt, "required"); err != nil {
-		errors = errors.Append("CreatedAt", err)
-	}
-	if err := typesValidator.Var(a.DaemonURL, "required"); err != nil {
-		errors = errors.Append("DaemonURL", err)
-	}
-	if err := typesValidator.Var(a.ID, "required"); err != nil {
-		errors = errors.Append("ID", err)
-	}
-	if err := typesValidator.Var(a.Label, "required"); err != nil {
-		errors = errors.Append("Label", err)
-	}
-	if err := typesValidator.Var(a.Permissions, "required"); err != nil {
-		errors = errors.Append("Permissions", err)
-	}
-	if err := typesValidator.Var(a.Secret, "required"); err != nil {
-		errors = errors.Append("Secret", err)
-	}
-	for i, item := range a.Sources {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
 type AgentTokenListResponse struct {

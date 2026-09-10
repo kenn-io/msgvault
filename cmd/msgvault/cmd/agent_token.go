@@ -152,12 +152,17 @@ func printAgentTokenList(cmd *cobra.Command, tokens []daemonclient.AgentTokenVie
 		return
 	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tCREATED")
+	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tSOURCES\tCREATED")
 	for _, t := range tokens {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+		sourceParts := make([]string, len(t.Sources))
+		for i, s := range t.Sources {
+			sourceParts[i] = fmt.Sprintf("%d/%s/%s", s.ID, s.Type, s.Identifier)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			t.ID,
 			t.Label,
 			strings.Join(t.Permissions, ","),
+			strings.Join(sourceParts, ";"),
 			t.CreatedAt.Format(time.RFC3339),
 		)
 	}

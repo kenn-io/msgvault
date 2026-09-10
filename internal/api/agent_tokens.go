@@ -26,13 +26,9 @@ type agentTokenIssueRequest struct {
 // agentTokenIssueResponse is the 201 body returned by issueAgentToken.
 // The secret is returned exactly once.
 type agentTokenIssueResponse struct {
-	ID          string                 `json:"id"`
-	Secret      string                 `json:"secret"`
-	Label       string                 `json:"label"`
-	Permissions []string               `json:"permissions"`
-	Sources     []agentTokenSourceView `json:"sources"`
-	CreatedAt   time.Time              `json:"created_at"`
-	DaemonURL   string                 `json:"daemon_url"`
+	agentTokenView
+	Secret    string `json:"secret"`
+	DaemonURL string `json:"daemon_url"`
 }
 
 // agentTokenView is the list/revoke-safe view of a grant: no secret or digest.
@@ -163,18 +159,6 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build source views
-	srcViews := make([]agentTokenSourceView, len(g.Sources))
-	for i, src := range g.Sources {
-		srcViews[i] = agentTokenSourceView{ID: src.ID, Type: src.Type, Identifier: src.Identifier}
-	}
-
-	// Build permission strings
-	permStrs := make([]string, len(g.Permissions))
-	for i, p := range g.Permissions {
-		permStrs[i] = string(p)
-	}
-
 	// Derive daemon URL from request Host
 	scheme := "http"
 	if r.TLS != nil {
@@ -183,13 +167,9 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	daemonURL := scheme + "://" + r.Host
 
 	writeJSON(w, http.StatusCreated, agentTokenIssueResponse{
-		ID:          g.ID,
-		Secret:      secret,
-		Label:       g.Label,
-		Permissions: permStrs,
-		Sources:     srcViews,
-		CreatedAt:   g.CreatedAt,
-		DaemonURL:   daemonURL,
+		agentTokenView: grantToView(g),
+		Secret:         secret,
+		DaemonURL:      daemonURL,
 	})
 }
 

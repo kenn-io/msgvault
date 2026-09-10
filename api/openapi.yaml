@@ -195,32 +195,12 @@ components:
     AgentTokenIssueResponse:
       additionalProperties: true
       properties:
-        created_at:
-          format: date-time
-          type: string
         daemon_url:
           type: string
-        id:
-          type: string
-        label:
-          type: string
-        permissions:
-          items:
-            type: string
-          type: array
         secret:
           type: string
-        sources:
-          items:
-            $ref: "#/components/schemas/AgentTokenSourceView"
-          type: array
       required:
-        - id
         - secret
-        - label
-        - permissions
-        - sources
-        - created_at
         - daemon_url
       type: object
     AgentTokenListResponse:
@@ -12289,6 +12269,10 @@ components:
         - text
       type: object
   securitySchemes:
+    agentToken:
+      in: header
+      name: X-Msgvault-Agent-Token
+      type: apiKey
     apiKey:
       in: header
       name: X-Api-Key
@@ -15079,6 +15063,7 @@ paths:
           description: Error
       security:
         - apiKey: []
+        - agentToken: []
       summary: Run an allowlisted CLI command
       tags:
         - API
@@ -17365,6 +17350,7 @@ paths:
           description: Error
       security:
         - apiKey: []
+        - agentToken: []
       summary: Get authenticated health details
       tags:
         - API

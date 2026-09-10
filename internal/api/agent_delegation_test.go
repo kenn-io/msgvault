@@ -219,6 +219,36 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 		})
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
+
+	t.Run("Authorization header alongside agent token", func(t *testing.T) {
+		_, newSecret, _, issErr := reg.Issue("with-auth", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		require.NoError(t, issErr)
+		w := makeHealthReq(func(req *http.Request) {
+			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
+			req.Header.Set("Authorization", "Bearer spoofed-owner-key")
+		})
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "Authorization alongside agent token must classify AuthModeRequired")
+	})
+
+	t.Run("session cookie alongside agent token", func(t *testing.T) {
+		_, newSecret, _, issErr := reg.Issue("with-cookie", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		require.NoError(t, issErr)
+		w := makeHealthReq(func(req *http.Request) {
+			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "spoofed-session-token"})
+		})
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "session cookie alongside agent token must classify AuthModeRequired")
+	})
+
+	t.Run("daemon runtime token alongside agent token", func(t *testing.T) {
+		_, newSecret, _, issErr := reg.Issue("with-daemon-token", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		require.NoError(t, issErr)
+		w := makeHealthReq(func(req *http.Request) {
+			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
+			req.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, "spoofed-daemon-token")
+		})
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "daemon runtime token alongside agent token must classify AuthModeRequired")
+	})
 }
 
 // TestDelegatedOperationAllowlistIsClosed tests proof matrix row 8.

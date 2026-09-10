@@ -26,8 +26,9 @@ const (
 )
 
 const (
-	apiKeySecurityScheme = "apiKey"
-	cliRouteTag          = "CLI"
+	apiKeySecurityScheme     = "apiKey"
+	agentTokenSecurityScheme = "agentToken"
+	cliRouteTag              = "CLI"
 )
 
 var configureHumaOnce sync.Once
@@ -169,6 +170,11 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 			In:   headerParamLocation,
 			Name: "X-Api-Key",
 		},
+		agentTokenSecurityScheme: {
+			Type: "apiKey",
+			In:   headerParamLocation,
+			Name: "X-Msgvault-Agent-Token",
+		},
 	}
 
 	return humago.New(mux, config)
@@ -233,7 +239,12 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		Tags:        []string{"System"},
 		Summary:     "Health check",
 	}, s.handleHealth)
-	registerAPIV1RawHumaJSONRoute[HealthResponse](apiV1, "getHealth", http.MethodGet, "/health", "Get authenticated health details", s.handleAuthenticatedHealth)
+	{
+		op := rawAPIV1Operation("getHealth", http.MethodGet, "/health", "Get authenticated health details")
+		op.Security = append(op.Security, map[string][]string{agentTokenSecurityScheme: {}})
+		op.Responses = jsonResponsesFor[HealthResponse](apiV1)
+		registerRawHumaRoute(apiV1, op, s.handleAuthenticatedHealth)
+	}
 	registerRawHumaJSONRoute[daemon.PingInfo](api, huma.Operation{
 		OperationID: "daemonPing",
 		Method:      http.MethodGet,
@@ -341,7 +352,13 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIDeleteStagedPlanRequest, CLIDeleteStagedPlanResponse](apiV1, "planCLIDeleteStaged", http.MethodPost, "/cli/delete-staged/plan", "Plan CLI staged deletion execution", s.handleCLIDeleteStagedPlan)
 	registerAPIV1RawHumaJSONRouteWithRequest[deletion.Manifest, CLIDeletionManifestResponse](apiV1, "createCLIDeletionManifest", http.MethodPost, "/cli/deletion-manifests", "Create a staged deletion manifest", s.handleCLICreateDeletionManifest)
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
-	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRunRequest, CLIRunEvent](apiV1, "runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command", s.handleCLIRun)
+	{
+		op := rawAPIV1Operation("runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command")
+		op.Security = append(op.Security, map[string][]string{agentTokenSecurityScheme: {}})
+		op.RequestBody = jsonRequestBodyFor[CLIRunRequest](apiV1)
+		op.Responses = ndjsonResponsesFor[CLIRunEvent](apiV1)
+		registerRawHumaRoute(apiV1, op, s.handleCLIRun)
+	}
 	registerAPIV1RawHumaJSONRoute[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
