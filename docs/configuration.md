@@ -918,7 +918,7 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
 | `timeout` | `30s` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
-| `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
+| `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
 
 ##### Stored provider credentials
