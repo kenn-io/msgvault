@@ -77,7 +77,7 @@
     const buildNonce = createFrameNonce();
     const sanitized = sanitizeArchivedHTML(currentHTML, { messageId: currentMessageID });
     remoteImageCount = sanitized.remoteImages.length;
-    const mode = originalColors || (sanitized.designed && currentScheme === 'light')
+    const mode = (originalColors && currentScheme === 'dark') || (sanitized.designed && currentScheme === 'light')
       ? 'canvas' as const : 'themed' as const;
     inlineController = new AbortController();
     const signal = inlineController.signal;

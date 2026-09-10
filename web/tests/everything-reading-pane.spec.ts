@@ -242,7 +242,6 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await page.reload();
   await expect(reading).toBeVisible();
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await page.screenshot({ path: 'test-results/right-preview-desktop.png' });
 
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
@@ -250,7 +249,6 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   const narrowList = (await primary.boundingBox())!;
   expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
   await expect(reading).toBeVisible();
-  await page.screenshot({ path: 'test-results/right-preview-narrow.png' });
 
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');

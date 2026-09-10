@@ -76,9 +76,8 @@
   }
 
   let host = $state<HTMLDivElement>();
-  const storedSize = readStoredSize();
-  let sizedSize = $state(untrack(() => storedSize ?? initialSize));
-  let userSized = storedSize !== undefined;
+  let sizedSize = $state(untrack(() => initialSize));
+  let userSized = false;
   let available = $state(0);
   let resizeStartSize = 0;
 

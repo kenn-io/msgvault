@@ -64,12 +64,22 @@ html[data-mode='themed'][data-scheme='dark'] :where(body, body *:not([data-archi
   border-color: var(--mail-border) !important;
 }
 
-html[data-mode='themed'][data-scheme='dark'] :where(a, a *) {
-  color: var(--mail-link) !important;
+html[data-mode='themed'][data-scheme='dark'] :where(
+  blockquote, blockquote *, [data-archived-quote], [data-archived-quote] *,
+  [data-archived-quote-toggle] > summary, [data-archived-quote-toggle] > summary *,
+  [data-archived-image-placeholder]
+) {
+  color: var(--mail-muted) !important;
 }
 
-html[data-mode='themed'][data-scheme='dark'] :where(blockquote, [data-archived-quote], [data-archived-image-placeholder]) {
-  color: var(--mail-muted) !important;
+html[data-mode='themed'][data-scheme='dark'] :where(
+  [data-archived-quote-toggle] > summary:hover, [data-archived-quote-toggle] > summary:hover *
+) {
+  color: var(--mail-text) !important;
+}
+
+html[data-mode='themed'][data-scheme='dark'] :where(a, a *) {
+  color: var(--mail-link) !important;
 }
 
 /* Reading typography as low-specificity defaults: author styles in designed

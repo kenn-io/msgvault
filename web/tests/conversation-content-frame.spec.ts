@@ -387,7 +387,6 @@ test('opening a message fires no sender-host request until images are enabled', 
 });
 
 test('email colors follow the app theme with an original-colors override', async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
   await page.addInitScript(() => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
   });
@@ -404,19 +403,30 @@ test('email colors follow the app theme with an original-colors override', async
       from: 'alice@example.com', to: ['bob@example.com'], sent_at: row.occurred_at,
       snippet: row.preview, labels: [], has_attachments: false, size_bytes: 10,
       body: 'A designed email', attachments: [],
-      body_html: '<table bgcolor="#ffffff"><tr><td style="color: #111111; background-color: #ffffff"><p>Designed email text</p><a href="https://example.com" style="color: #112233">Read more</a><img alt="Embedded image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></td></tr></table>'
+      body_html: '<table bgcolor="#ffffff"><tr><td style="color: #111111; background-color: #ffffff"><p>Designed email text</p><a href="https://example.com" style="color: #112233">Read more</a><img alt="Embedded image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></td></tr></table>' +
+        '<blockquote><p style="color: #111111">Quoted paragraph</p><blockquote><div>Nested quote</div><a href="https://example.com"><span>Quoted link</span></a></blockquote></blockquote>' +
+        '<div class="gmail_quote"><div style="color: #111111">Gmail quoted text</div></div>'
     }]
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
-  await page.getByRole('radiogroup', { name: 'Preview position' }).getByRole('radio', { name: 'Right' }).click();
   const content = page.locator('iframe[title="Message body"]').contentFrame();
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
   await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
   await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
-  await page.screenshot({ path: 'test-results/email-dark-theme.png' });
+  const showQuote = content.getByText('Show quoted text');
+  await expect.soft(showQuote).toHaveCSS('color', 'rgb(164, 168, 175)');
+  await showQuote.hover();
+  await expect.soft(showQuote).toHaveCSS('color', 'rgb(242, 243, 245)');
+  await showQuote.click();
+  await page.mouse.move(0, 0);
+  await expect.soft(content.getByText('Hide quoted text')).toHaveCSS('color', 'rgb(164, 168, 175)');
+  for (const text of ['Quoted paragraph', 'Nested quote', 'Gmail quoted text']) {
+    await expect.soft(content.getByText(text, { exact: true })).toHaveCSS('color', 'rgb(164, 168, 175)');
+  }
+  await expect(content.getByText('Quoted link', { exact: true })).toHaveCSS('color', 'rgb(116, 172, 254)');
   await page.getByRole('button', { name: 'Use original colors' }).click();
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
   await expect(content.locator('table')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
@@ -427,4 +437,36 @@ test('email colors follow the app theme with an original-colors override', async
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
   await setKitTheme(page, 'dark');
   await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+});
+
+test('switching to light ignores the original-colors override for simple mail', async ({ page }) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
+  });
+  await page.route('**/api/session', (route) => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: false
+  } }));
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows: [row], total_count: 1, cache_revision: 'cache-mail-theme', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/conversations/7**', (route) => route.fulfill({ json: {
+    id: 7, anchor_id: 42, has_before: false, has_after: false, total: 1,
+    messages: [{
+      id: 42, conversation_id: 7, subject: row.title, message_type: 'email',
+      from: 'alice@example.com', to: ['bob@example.com'], sent_at: row.occurred_at,
+      snippet: row.preview, labels: [], has_attachments: false, size_bytes: 10,
+      body: 'Simple reply', body_html: '<p style="color: #112233">Simple reply</p>', attachments: []
+    }]
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
+  const frame = page.locator('iframe[title="Message body"]');
+  await expect(frame.contentFrame().getByText('Simple reply')).toHaveCSS('color', 'rgb(242, 243, 245)');
+  await page.getByRole('button', { name: 'Use original colors' }).click();
+  await expect(frame).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(frame.contentFrame().getByText('Simple reply')).toHaveCSS('color', 'rgb(17, 34, 51)');
+  await setKitTheme(page, 'light');
+  await expect(page.getByRole('button', { name: 'Use app colors' })).toHaveCount(0);
+  await expect(frame).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(frame.contentFrame().locator('body')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 });
