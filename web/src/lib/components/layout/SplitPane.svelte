@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
-  import { onMount, untrack, type Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
 
   interface Props {
     ariaLabel: string;
@@ -47,7 +47,7 @@
   }: Props = $props();
 
   const keyboardStep = 24;
-  const vertical = untrack(() => orientation) === 'vertical';
+  const vertical = $derived(orientation === 'vertical');
   const handleThickness = 4;
   const minSized = $derived(vertical ? minSecondary ?? 160 : minPrimary);
   const minOther = $derived(vertical ? minPrimary : minSecondary ?? 320);
@@ -75,7 +75,7 @@
     }
   }
 
-  let host: HTMLDivElement;
+  let host = $state<HTMLDivElement>();
   const storedSize = readStoredSize();
   let sizedSize = $state(untrack(() => storedSize ?? initialSize));
   let userSized = storedSize !== undefined;
@@ -133,7 +133,19 @@
     return vertical ? entry.contentRect.height : entry.contentRect.width;
   }
 
-  onMount(() => {
+  // Reconfigure sizing without remounting either pane's content when the
+  // layout changes. Each orientation can retain its own stored dimensions.
+  $effect(() => {
+    const target = host;
+    void orientation;
+    void storageKey;
+    if (!target) return;
+    untrack(() => {
+      const stored = readStoredSize();
+      userSized = stored !== undefined;
+      sizedSize = stored ?? initialSize;
+      available = 0;
+    });
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
@@ -145,12 +157,12 @@
         setSize(Math.round(available * initialFraction), false);
       } else setSize(sizedSize, false);
     });
-    observer.observe(host);
+    observer.observe(target);
     return () => observer.disconnect();
   });
 </script>
 
-<div class="split-pane" class:split-pane--vertical={vertical} data-split-pane bind:this={host}>
+<div class="split-pane" class:split-pane--vertical={vertical} class:split-pane--collapsed={collapsed} data-split-pane bind:this={host}>
   <section
     class="pane primary"
     data-pane="primary"
@@ -221,6 +233,10 @@
     flex-grow: 0;
     flex-shrink: 0;
     overflow: hidden;
+  }
+
+  .split-pane--collapsed > .primary {
+    flex: 1;
   }
 
   .handle-reset {

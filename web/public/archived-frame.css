@@ -4,8 +4,8 @@
  * (style-src 'self') is inherited by sandboxed srcdoc frames and blocks every
  * inline style. Rendering mode and scheme arrive as html[data-mode] /
  * html[data-scheme] attributes:
- *   - canvas: designed mail on its own white, light canvas in both themes
- *   - themed: simple mail rendered transparently with shell inks
+ *   - canvas: original email colors on a white canvas
+ *   - themed: mail rendered transparently with shell inks
  * Themed ink values mirror web/src/styles/theme-light.css / theme-dark.css.
  */
 
@@ -52,6 +52,24 @@ html[data-mode='themed'] body {
   max-width: 680px;
   padding: 2px 0;
   background: transparent;
+}
+
+/* In dark reading mode replace sender colors together so dark text never
+ * lands on a dark surface. Keep layout and image pixels intact. Original
+ * colors remain available through the message's color control. */
+html[data-mode='themed'][data-scheme='dark'] :where(body, body *:not([data-archived-image-glyph])) {
+  color: var(--mail-text) !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border-color: var(--mail-border) !important;
+}
+
+html[data-mode='themed'][data-scheme='dark'] :where(a, a *) {
+  color: var(--mail-link) !important;
+}
+
+html[data-mode='themed'][data-scheme='dark'] :where(blockquote, [data-archived-quote], [data-archived-image-placeholder]) {
+  color: var(--mail-muted) !important;
 }
 
 /* Reading typography as low-specificity defaults: author styles in designed

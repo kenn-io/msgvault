@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { setKitTheme } from './kit-ui';
 
 const row = {
   key: 'source:1:message:source-1',
@@ -383,4 +384,47 @@ test('opening a message fires no sender-host request until images are enabled', 
   await expect(frame.contentFrame().locator('img[src^="data:image/png;base64,"]')).toHaveCount(1);
   expect(proxiedURLs).toEqual(['https://tracking.example/pixel.gif']);
   expect(sentinelRequests).toEqual([]);
+});
+
+test('email colors follow the app theme with an original-colors override', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.addInitScript(() => {
+    sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'dark' }));
+  });
+  await page.route('**/api/session', (route) => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: false
+  } }));
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows: [row], total_count: 1, cache_revision: 'cache-mail-theme', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/conversations/7**', (route) => route.fulfill({ json: {
+    id: 7, anchor_id: 42, has_before: false, has_after: false, total: 1,
+    messages: [{
+      id: 42, conversation_id: 7, subject: row.title, message_type: 'email',
+      from: 'alice@example.com', to: ['bob@example.com'], sent_at: row.occurred_at,
+      snippet: row.preview, labels: [], has_attachments: false, size_bytes: 10,
+      body: 'A designed email', attachments: [],
+      body_html: '<table bgcolor="#ffffff"><tr><td style="color: #111111; background-color: #ffffff"><p>Designed email text</p><a href="https://example.com" style="color: #112233">Read more</a><img alt="Embedded image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></td></tr></table>'
+    }]
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.getByRole('grid', { name: 'Everything results' }).getByText(row.title).click();
+  await page.getByRole('radiogroup', { name: 'Preview position' }).getByRole('radio', { name: 'Right' }).click();
+  const content = page.locator('iframe[title="Message body"]').contentFrame();
+  await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+  await expect(content.locator('table')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(content.locator('a').filter({ hasText: 'Read more' })).toHaveCSS('color', 'rgb(116, 172, 254)');
+  await expect(content.getByRole('img', { name: 'Embedded image' })).toHaveCSS('filter', 'none');
+  await page.screenshot({ path: 'test-results/email-dark-theme.png' });
+  await page.getByRole('button', { name: 'Use original colors' }).click();
+  await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
+  await expect(content.locator('table')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await page.getByRole('button', { name: 'Use app colors' }).click();
+  await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
+  // Change the actual shell theme while the same email remains open.
+  await setKitTheme(page, 'light');
+  await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(17, 17, 17)');
+  await setKitTheme(page, 'dark');
+  await expect(content.getByText('Designed email text')).toHaveCSS('color', 'rgb(242, 243, 245)');
 });

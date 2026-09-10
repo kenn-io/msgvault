@@ -36,6 +36,7 @@
   let documentState = $state<'building' | 'loading' | 'ready' | 'failed'>('building');
   let remoteImageCount = $state(0);
   let remoteImagesAllowed = $state(false);
+  let originalColors = $state(false);
   let frameHeight = $state(96);
   let nonce = $state(createFrameNonce());
   let colorScheme = $state<FrameColorScheme>(resolvedColorScheme());
@@ -65,6 +66,7 @@
     const identityChanged = nextIdentity !== messageIdentity;
     messageIdentity = nextIdentity;
     if (identityChanged && remoteImagesAllowed) remoteImagesAllowed = false;
+    if (identityChanged && originalColors) originalColors = false;
     // A new message starts from the compact default height; the bridge
     // reports the real content height as soon as the document loads. Reusing
     // the previous message's height would leave a tall empty frame.
@@ -75,7 +77,8 @@
     const buildNonce = createFrameNonce();
     const sanitized = sanitizeArchivedHTML(currentHTML, { messageId: currentMessageID });
     remoteImageCount = sanitized.remoteImages.length;
-    const mode = sanitized.designed ? 'canvas' as const : 'themed' as const;
+    const mode = originalColors || (sanitized.designed && currentScheme === 'light')
+      ? 'canvas' as const : 'themed' as const;
     inlineController = new AbortController();
     const signal = inlineController.signal;
     void resolveArchivedInlineImages({
@@ -193,6 +196,17 @@
 </script>
 
 <section class="content-frame" aria-label={title} bind:this={host}>
+  {#if colorScheme === 'dark'}
+    <div class="color-control">
+      <Button
+        size="sm"
+        surface="soft"
+        label={originalColors ? 'Use app colors' : 'Use original colors'}
+        disabled={documentState !== 'ready'}
+        onclick={() => { originalColors = !originalColors; }}
+      />
+    </div>
+  {/if}
   {#if remoteImageCount > 0 && !remoteImagesAllowed}
     <p class="remote-notice" role="status">
       <span>{remoteImageCount === 1
@@ -241,6 +255,11 @@
     gap: var(--space-2);
   }
 
+  .color-control {
+    display: flex;
+    justify-content: flex-end;
+  }
+
   .remote-notice {
     display: flex;
     align-items: center;
@@ -265,8 +284,7 @@
     background: transparent;
   }
 
-  /* Designed mail keeps the white canvas it was authored for — bounded by a
-   * hairline so it reads as an artifact rather than a hole in dark mode.
+  /* Original colors use the white canvas assumed by authored mail.
    * content-box keeps the styled height equal to the inner viewport, so the
    * hairline never steals bridge-reported content height. */
   iframe.canvas {

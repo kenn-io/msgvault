@@ -204,3 +204,68 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
     await expect(locator).toBeFocused();
   }
 });
+
+test('right preview resizes, restores its width, and falls back below on narrow windows', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.route('**/api/session', (route) =>
+    route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } })
+  );
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows: [entry(1), entry(2)], total_count: 2,
+    cache_revision: 'cache-layout', search_provenance: {}
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.getByText('Synthetic subject 1').click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+  const resize = page.getByRole('separator', { name: 'Resize reading pane' });
+  const position = page.getByRole('radiogroup', { name: 'Preview position' });
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
+  const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
+  const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
+  const listBox = (await primary.boundingBox())!;
+  const previewBox = (await secondary.boundingBox())!;
+  expect(previewBox.x).toBeGreaterThanOrEqual(listBox.x + listBox.width);
+  expect(previewBox.y).toBe(listBox.y);
+  await expect(reading.getByText('Synthetic excerpt 1')).toBeVisible();
+
+  const handleBox = (await resize.boundingBox())!;
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 - 80, handleBox.y + 50);
+  await page.mouse.up();
+  await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(previewBox.width + 80, 0);
+  await resize.press('ArrowLeft');
+  const resizedWidth = previewBox.width + 104;
+  await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
+  await page.reload();
+  await expect(reading).toBeVisible();
+  await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
+  await page.screenshot({ path: 'test-results/right-preview-desktop.png' });
+
+  await page.setViewportSize({ width: 760, height: 900 });
+  await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
+  await expect(position).toHaveCount(0);
+  const narrowList = (await primary.boundingBox())!;
+  expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
+  await expect(reading).toBeVisible();
+  await page.screenshot({ path: 'test-results/right-preview-narrow.png' });
+
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
+  await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
+  await position.getByRole('radio', { name: 'Below', exact: true }).click();
+  await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
+  await resize.press('ArrowUp');
+  const bottomHeight = (await secondary.boundingBox())!.height;
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
+  await position.getByRole('radio', { name: 'Below', exact: true }).click();
+  await expect.poll(async () => (await secondary.boundingBox())!.height).toBe(bottomHeight);
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
+  await page.getByRole('button', { name: 'Close reading pane' }).click();
+  await expect(grid).toBeFocused();
+  await expect.poll(async () => (await primary.boundingBox())!.width)
+    .toBeCloseTo((await page.locator('.results-split').boundingBox())!.width, 0);
+});
