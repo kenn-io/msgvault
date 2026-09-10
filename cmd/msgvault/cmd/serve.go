@@ -1835,6 +1835,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	if api.IsCLIRunDraftReply(req.Args) {
 		return a.runCLIReplyDraft(ctx, req, emit)
 	}
+	if api.IsCLIRunDraftLifecycle(req.Args) {
+		return a.runCLIDraftLifecycle(ctx, req, emit)
+	}
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {

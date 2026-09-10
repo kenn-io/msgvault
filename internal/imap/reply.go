@@ -315,6 +315,91 @@ func formatMessageIDs(ids []string) string {
 	return strings.Join(values, " ")
 }
 
+// ReplaceDraftBody recomposes an existing draft's RFC822 bytes with a new body.
+// It preserves From, To, Subject, In-Reply-To, and References headers from the
+// existing draft, generates a new Message-ID, and replaces the text/plain body.
+// The raw argument must be a single-part text/plain message (no attachments).
+// body=="" is valid (an empty body); not providing body at all is a caller error.
+func ReplaceDraftBody(raw []byte, body string, now time.Time) (ReplyDraft, error) {
+	if !utf8.ValidString(body) || strings.ContainsAny(body, "\x00") {
+		return ReplyDraft{}, errors.New("invalid reply body")
+	}
+	existing, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("parse existing draft: %w", err)
+	}
+	if err := validateSingletonHeaders(existing.Header); err != nil {
+		return ReplyDraft{}, err
+	}
+	// Reject attachments and unsupported MIME structures.
+	contentType := existing.Header.Get("Content-Type")
+	if contentType != "" {
+		mediaType, _, err := stdmime.ParseMediaType(contentType)
+		if err != nil {
+			return ReplyDraft{}, errors.New("invalid_message")
+		}
+		if strings.HasPrefix(mediaType, "multipart/") {
+			return ReplyDraft{}, errors.New("invalid_message")
+		}
+		if mediaType != "" && mediaType != "text/plain" {
+			return ReplyDraft{}, errors.New("invalid_message")
+		}
+	}
+	// Collect preserved headers.
+	fromValue := existing.Header.Get("From")
+	if fromValue == "" {
+		return ReplyDraft{}, errors.New("existing draft has no From header")
+	}
+	toValue := existing.Header.Get("To")
+	subject := existing.Header.Get("Subject")
+	inReplyTo := existing.Header.Get("In-Reply-To")
+	references := existing.Header.Get("References")
+
+	newMessageID, err := newReplyMessageID()
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+
+	var out bytes.Buffer
+	writeHeader := func(name, value string) {
+		if value != "" {
+			_, _ = fmt.Fprintf(&out, "%s: %s\r\n", name, value)
+		}
+	}
+	writeHeader("Date", now.UTC().Format(time.RFC1123Z))
+	writeHeader("From", fromValue)
+	if toValue != "" {
+		writeHeader("To", toValue)
+	}
+	if subject != "" {
+		writeHeader("Subject", subject)
+	}
+	writeHeader("Message-ID", "<"+newMessageID+">")
+	if inReplyTo != "" {
+		writeHeader("In-Reply-To", inReplyTo)
+	}
+	if references != "" {
+		writeFoldedHeader(&out, "References", references)
+	}
+	out.WriteString("MIME-Version: 1.0\r\n")
+	out.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
+	out.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	out.WriteString("\r\n")
+	qp := quotedprintable.NewWriter(&out)
+	if _, err := io.WriteString(qp, body); err != nil {
+		return ReplyDraft{}, fmt.Errorf("encode draft body: %w", err)
+	}
+	if err := qp.Close(); err != nil {
+		return ReplyDraft{}, fmt.Errorf("close draft body encoder: %w", err)
+	}
+
+	parsed, err := msgmime.Parse(out.Bytes())
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("parse composed draft: %w", err)
+	}
+	return ReplyDraft{Raw: out.Bytes(), Parsed: parsed}, nil
+}
+
 func writeFoldedHeader(raw *bytes.Buffer, name, value string) {
 	const width = 78
 	line := name + ": "

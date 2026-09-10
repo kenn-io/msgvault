@@ -92,6 +92,59 @@ func TestBuildReplyParsesCommentedThreadingHeaders(t *testing.T) {
 	}
 }
 
+func TestReplaceDraftBodyPreservesHeaders(t *testing.T) {
+	draftRawBytes := []byte("From: alice@example.com\r\n" +
+		"To: bob@example.com\r\n" +
+		"Subject: Re: Question\r\n" +
+		"Message-ID: <old-id@example.com>\r\n" +
+		"In-Reply-To: <parent@example.com>\r\n" +
+		"References: <root@example.com> <parent@example.com>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
+		"Content-Transfer-Encoding: quoted-printable\r\n" +
+		"\r\nOriginal draft body\r\n")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	t.Run("preserves headers and replaces body", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		result, err := ReplaceDraftBody(draftRawBytes, "new body text", now)
+		requirements.NoError(err)
+		raw := string(result.Raw)
+		assertions.Contains(raw, "From: alice@example.com")
+		assertions.Contains(raw, "To: bob@example.com")
+		assertions.Contains(raw, "Subject: Re: Question")
+		assertions.Contains(raw, "In-Reply-To: <parent@example.com>")
+		assertions.Contains(raw, "References:")
+		assertions.Contains(raw, "<root@example.com>")
+		assertions.Contains(raw, "<parent@example.com>")
+		// Message-ID must be new.
+		assertions.NotContains(raw, "old-id@example.com")
+		assertions.Contains(raw, "Message-ID:")
+		// Body must be the new text.
+		assertions.Equal("new body text", strings.TrimSpace(strings.ReplaceAll(result.Parsed.BodyText, "\r\n", "\n")))
+	})
+
+	t.Run("empty body is valid", func(t *testing.T) {
+		requirements := require.New(t)
+		result, err := ReplaceDraftBody(draftRawBytes, "", now)
+		requirements.NoError(err)
+		require.NotNil(t, result.Parsed)
+	})
+
+	t.Run("attachment-bearing draft returns invalid_message", func(t *testing.T) {
+		multipartRaw := []byte("From: alice@example.com\r\n" +
+			"To: bob@example.com\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/mixed; boundary=\"boundary\"\r\n" +
+			"\r\n--boundary\r\n" +
+			"Content-Type: text/plain\r\n\r\nHello\r\n" +
+			"--boundary--\r\n")
+		_, err := ReplaceDraftBody(multipartRaw, "body", now)
+		require.ErrorContains(t, err, "invalid_message")
+	})
+}
+
 func TestParseMessageIDHeader(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

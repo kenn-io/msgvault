@@ -158,6 +158,56 @@ an IMAP cursor.
 
 ---
 
+## draft-get
+
+Inspect a draft created by `draft-reply`. Returns the local lifecycle state and
+the live provider state (whether the remote UID is still present).
+
+```bash
+msgvault draft-get <draft-id>
+msgvault draft-get <draft-id> --json
+```
+
+`lifecycle` is `active`, `replace_pending`, `delete_pending`, or `discarded`.
+`provider_status` is `present`, `absent`, `flag_missing`, or `changed`
+(or `unknown` when the IMAP server is unreachable). `draft-get` never mutates
+local or remote state.
+
+---
+
+## draft-edit
+
+Replace the body of a draft, advancing its revision.
+
+```bash
+msgvault draft-edit <draft-id> --revision <n> --body <text>
+msgvault draft-edit <draft-id> --revision <n> --body <text> --json
+```
+
+`--revision` must match the current revision or the command returns
+`revision_conflict`. If the remote copy has been externally modified or
+deleted, returns `draft_changed` or `draft_missing`. On success, a new message
+row is created with the updated body, the old row is tombstoned, and
+`revision` advances by 1.
+
+---
+
+## draft-delete
+
+Permanently delete a draft from the IMAP server and mark it `discarded` locally.
+
+```bash
+msgvault draft-delete <draft-id> --revision <n>
+msgvault draft-delete <draft-id> --resume
+```
+
+`--revision` must match the current revision. If the draft is already absent on
+the server the deletion is treated as successful (idempotent). Use `--resume`
+to complete an interrupted `delete_pending` operation without re-supplying a
+revision.
+
+---
+
 ## list-folders
 
 List the selectable folders in one or all configured IMAP accounts, including

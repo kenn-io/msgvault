@@ -1903,19 +1903,7 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 		if err := c.selectMailbox(mailbox); err != nil {
 			return err
 		}
-		var uidSet imap.UIDSet
-		uidSet.AddNum(uid)
-		if err := conn.Store(uidSet, &imap.StoreFlags{
-			Op:     imap.StoreFlagsAdd,
-			Silent: true,
-			Flags:  []imap.Flag{imap.FlagDeleted},
-		}, nil).Close(); err != nil {
-			return fmt.Errorf("UID STORE \\Deleted: %w", err)
-		}
-		if err := conn.UIDExpunge(uidSet).Close(); err != nil {
-			return fmt.Errorf("UID EXPUNGE: %w", err)
-		}
-		return nil
+		return expungeUIDLocked(conn, uint32(uid))
 	})
 }
 

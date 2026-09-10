@@ -109,6 +109,9 @@ func (s *Store) PersistIMAPDraftContext(
 		if err := replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, id, []int64{labelID}); err != nil {
 			return fmt.Errorf("persist IMAP draft label: %w", err)
 		}
+		if err := s.registerIMAPDraftTx(ctx, tx, receipt, id); err != nil {
+			return err
+		}
 		messageID = id
 		return nil
 	}

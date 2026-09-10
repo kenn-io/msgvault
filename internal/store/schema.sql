@@ -1890,6 +1890,38 @@ CREATE TABLE IF NOT EXISTS imap_message_memberships (
 CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
+-- Local draft identity for drafts msgvault created over IMAP. draft_id is the
+-- archived message row of the first APPEND and never moves; current_message_id
+-- follows each replacement. Provenance: only the draft path writes this table,
+-- so a row here is what distinguishes a draft msgvault owns from an ordinary
+-- archived message that happens to carry \Draft in the same mailbox. The
+-- pending_* columns are the in-flight remote mutation, following
+-- carddav_publications (schema.sql:1236-1265): one object row carrying its own
+-- pending operation, cleared together once a live read proves the outcome.
+CREATE TABLE IF NOT EXISTS imap_drafts (
+    draft_id                 INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    source_id                INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    current_message_id       INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    mailbox                  TEXT NOT NULL,
+    uidvalidity              INTEGER NOT NULL,
+    uid                      INTEGER NOT NULL,
+    revision                 INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    lifecycle                TEXT NOT NULL DEFAULT 'active'
+        CHECK (lifecycle IN ('active','replace_pending','delete_pending','discarded')),
+    pending_kind             TEXT CHECK (pending_kind IN ('edit','discard')),
+    pending_uidvalidity      INTEGER,
+    pending_uid              INTEGER,
+    pending_raw              BLOB,
+    pending_rfc822_id        TEXT,
+    pending_append_attempted BOOLEAN NOT NULL DEFAULT FALSE,
+    pending_started_at       DATETIME,
+    created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((pending_uid IS NULL) = (pending_uidvalidity IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_imap_drafts_source_current
+    ON imap_drafts(source_id, current_message_id);
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,
