@@ -48,7 +48,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
-4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` is available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv.
+4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` is available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 

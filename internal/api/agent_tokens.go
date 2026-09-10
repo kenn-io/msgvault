@@ -24,11 +24,16 @@ type agentTokenIssueRequest struct {
 }
 
 // agentTokenIssueResponse is the 201 body returned by issueAgentToken.
-// The secret is returned exactly once.
+// The secret is returned exactly once. Fields are inlined (not embedded) so the
+// schema generator exposes every field, including id, to generated clients.
 type agentTokenIssueResponse struct {
-	agentTokenView
-	Secret    string `json:"secret"`
-	DaemonURL string `json:"daemon_url"`
+	ID          string                 `json:"id"`
+	Label       string                 `json:"label"`
+	Permissions []string               `json:"permissions"`
+	Sources     []agentTokenSourceView `json:"sources"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Secret      string                 `json:"secret"`
+	DaemonURL   string                 `json:"daemon_url"`
 }
 
 // agentTokenView is the list/revoke-safe view of a grant: no secret or digest.
@@ -166,10 +171,15 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 	daemonURL := scheme + "://" + r.Host
 
+	v := grantToView(g)
 	writeJSON(w, http.StatusCreated, agentTokenIssueResponse{
-		agentTokenView: grantToView(g),
-		Secret:         secret,
-		DaemonURL:      daemonURL,
+		ID:          v.ID,
+		Label:       v.Label,
+		Permissions: v.Permissions,
+		Sources:     v.Sources,
+		CreatedAt:   v.CreatedAt,
+		Secret:      secret,
+		DaemonURL:   daemonURL,
 	})
 }
 

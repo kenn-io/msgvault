@@ -26,9 +26,8 @@ const (
 )
 
 const (
-	apiKeySecurityScheme     = "apiKey"
-	agentTokenSecurityScheme = "agentToken"
-	cliRouteTag              = "CLI"
+	apiKeySecurityScheme = "apiKey"
+	cliRouteTag          = "CLI"
 )
 
 var configureHumaOnce sync.Once
@@ -170,11 +169,6 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 			In:   headerParamLocation,
 			Name: "X-Api-Key",
 		},
-		agentTokenSecurityScheme: {
-			Type: "apiKey",
-			In:   headerParamLocation,
-			Name: "X-Msgvault-Agent-Token",
-		},
 	}
 
 	return humago.New(mux, config)
@@ -241,7 +235,6 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	}, s.handleHealth)
 	{
 		op := rawAPIV1Operation("getHealth", http.MethodGet, "/health", "Get authenticated health details")
-		op.Security = append(op.Security, map[string][]string{agentTokenSecurityScheme: {}})
 		op.Responses = jsonResponsesFor[HealthResponse](apiV1)
 		registerRawHumaRoute(apiV1, op, s.handleAuthenticatedHealth)
 	}
@@ -354,7 +347,6 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
 	{
 		op := rawAPIV1Operation("runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command")
-		op.Security = append(op.Security, map[string][]string{agentTokenSecurityScheme: {}})
 		op.RequestBody = jsonRequestBodyFor[CLIRunRequest](apiV1)
 		op.Responses = ndjsonResponsesFor[CLIRunEvent](apiV1)
 		registerRawHumaRoute(apiV1, op, s.handleCLIRun)

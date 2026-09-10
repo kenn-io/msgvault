@@ -314,6 +314,49 @@ func TestAgentModeRejectsHomeFlag(t *testing.T) {
 	assert.Contains(t, err.Error(), "--home")
 }
 
+// TestOpenAgentDelegatedStoreRejectsNonexistentTokenFile verifies that a missing
+// token file produces a clear error (P3: token-file read-error branch).
+func TestOpenAgentDelegatedStoreRejectsNonexistentTokenFile(t *testing.T) {
+	oldURL, oldFile := agentURL, agentTokenFile
+	agentURL = "https://daemon:8080"
+	agentTokenFile = filepath.Join(t.TempDir(), "does-not-exist.token")
+	t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+
+	_, _, err := openAgentDelegatedStore(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read agent token file")
+}
+
+// TestOpenAgentDelegatedStoreRejectsEmptyTokenFile verifies that an empty or
+// whitespace-only token file produces a clear error (P3: empty-file branch).
+func TestOpenAgentDelegatedStoreRejectsEmptyTokenFile(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "empty.token")
+
+	t.Run("empty file", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(tokenFile, []byte(""), 0o600))
+		oldURL, oldFile := agentURL, agentTokenFile
+		agentURL = "https://daemon:8080"
+		agentTokenFile = tokenFile
+		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+
+		_, _, err := openAgentDelegatedStore(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is empty")
+	})
+
+	t.Run("whitespace only", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(tokenFile, []byte("   \n\t  \n"), 0o600))
+		oldURL, oldFile := agentURL, agentTokenFile
+		agentURL = "https://daemon:8080"
+		agentTokenFile = tokenFile
+		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+
+		_, _, err := openAgentDelegatedStore(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is empty")
+	})
+}
+
 // TestGrantDeniesDifferentAccountOnReusedRowid tests proof matrix row 6.
 // After D7, Grant.Allows uses (Type, Identifier) for matching; ID is kept as
 // a diagnostic field. A reused SQLite rowid belonging to a different account

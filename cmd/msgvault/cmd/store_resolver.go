@@ -158,6 +158,7 @@ func openAgentDelegatedStore(ctx context.Context) (*daemonclient.Client, HTTPSto
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
+	st.SetBusyNotifier(reportDaemonBusyWait)
 	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
 		_ = st.Close()
 		return nil, HTTPStoreInfo{}, err

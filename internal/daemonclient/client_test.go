@@ -312,6 +312,31 @@ func TestNewRejectsHTTPWithoutAllowInsecure(t *testing.T) {
 	require.Error(t, err, "New should reject http without AllowInsecure")
 }
 
+func TestNewRejectsHTTPAgentTokenWithoutAllowInsecure(t *testing.T) {
+	_, err := New(Config{URL: "http://nas:8080", AgentToken: "mva1_token"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS required for agent token", "error must name agent token as the reason")
+}
+
+func TestNewAgentTokenClientRejectsRedirects(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	c, err := New(Config{URL: redirector.URL, AgentToken: "mva1_token", AllowInsecure: true})
+	require.NoError(t, err)
+
+	_, err = c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	require.Error(t, err, "agent token client must not follow redirects")
+	assert.Contains(t, err.Error(), "does not follow redirects")
+}
+
 func TestNewAllowsHTTPWithAllowInsecure(t *testing.T) {
 	c, err := New(Config{URL: "http://nas:8080", APIKey: "key", AllowInsecure: true})
 	require.NoError(t, err, "New")
