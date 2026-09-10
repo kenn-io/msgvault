@@ -1,7 +1,3 @@
----
-last_edited: "2026-09-08"
----
-
 <p align="center">
   <img src=".github/assets/msgvault-mark.svg" width="160" height="160" alt="msgvault logo">
 </p>
