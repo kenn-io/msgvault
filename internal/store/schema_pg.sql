@@ -1706,15 +1706,17 @@ CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
 -- Local draft identity for drafts msgvault created over IMAP. draft_id is the
--- archived message row of the first APPEND and never moves; current_message_id
--- follows each replacement. Provenance: only the draft path writes this table,
--- so a row here distinguishes a draft msgvault owns from an ordinary archived
--- message that happens to carry \Draft in the same mailbox. The pending_*
--- columns are the in-flight remote mutation, following carddav_publications:
--- one object row carrying its own pending operation, cleared together once a
--- live read proves the outcome.
+-- stable local identity named after the first APPEND's message row and never
+-- moves; current_message_id follows each replacement. draft_id deliberately
+-- outlives the archive row it was named after (the first APPEND is tombstoned
+-- after a successful edit), so it must NOT carry ON DELETE CASCADE. Provenance:
+-- only the draft path writes this table, so a row here distinguishes a draft
+-- msgvault owns from an ordinary archived message that happens to carry \Draft
+-- in the same mailbox. The pending_* columns are the in-flight remote mutation,
+-- following carddav_publications: one object row carrying its own pending
+-- operation, cleared together once a live read proves the outcome.
 CREATE TABLE IF NOT EXISTS imap_drafts (
-    draft_id                 BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    draft_id                 BIGINT PRIMARY KEY,
     source_id                BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     current_message_id       BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     mailbox                  TEXT NOT NULL,

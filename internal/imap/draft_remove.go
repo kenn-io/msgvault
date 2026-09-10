@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/mail"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -202,7 +203,7 @@ func (c *Client) FindDraftAppend(ctx context.Context, target DraftTarget, messag
 			return nil
 		}
 		var allUIDs imap.UIDSet
-		allUIDs.AddRange(1, imap.UID(c.selectedNumMessages+1000)) // generous range
+		allUIDs.AddRange(imap.UID(1), imap.UID(math.MaxUint32))
 		options := &imap.FetchOptions{
 			UID:         true,
 			Flags:       true,

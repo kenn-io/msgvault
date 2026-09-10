@@ -18,6 +18,30 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// draftClient is the subset of imaplib.Client methods used by the draft reply
+// and lifecycle commands. Using an interface enables test injection of custom
+// behaviour (e.g. injecting a failing RemoveDraft) without requiring a real
+// IMAP connection.
+type draftClient interface {
+	AppendDraft(ctx context.Context, mailbox string, raw []byte) (imaplib.DraftAppendResult, error)
+	InspectDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
+	RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
+	FindDraftAppend(ctx context.Context, target imaplib.DraftTarget, messageID string) (*imaplib.DraftAppendResult, error)
+	Close() error
+}
+
+// lifecycleDraftClient returns the adapter's lifecycle factory, falling back
+// through draftClientFactory and then defaultDraftClientFactory.
+func (a *storeAPIAdapter) lifecycleDraftClient(ctx context.Context, source *store.Source) (draftClient, error) {
+	if a.draftLifecycleClientFactory != nil {
+		return a.draftLifecycleClientFactory(ctx, source)
+	}
+	if a.draftClientFactory != nil {
+		return a.draftClientFactory(ctx, source)
+	}
+	return defaultDraftClientFactory(ctx, source)
+}
+
 // draftLifecycleIntent holds the parsed arguments for a draft lifecycle command.
 type draftLifecycleIntent struct {
 	Command     string // "draft-get", "draft-edit", "draft-delete"
@@ -51,6 +75,9 @@ type draftLifecycleOutput struct {
 	Mailbox         string `json:"mailbox,omitempty"`
 	UID             uint32 `json:"uid,omitempty"`
 	UIDValidity     uint32 `json:"uidvalidity,omitempty"`
+	Subject         string `json:"subject,omitempty"`
+	FromAddress     string `json:"from_address,omitempty"`
+	BodyText        string `json:"body_text,omitempty"`
 }
 
 func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
@@ -329,13 +356,13 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 	if err != nil {
 		return draftReplyError("invalid_source", fmt.Errorf("load source %d: %w", draft.SourceID, err))
 	}
+
+	// P2-B: check the operator grant before opening any IMAP connection.
 	var providerStatus string
-	if source.SyncConfig.Valid {
-		clientFactory := a.draftClientFactory
-		if clientFactory == nil {
-			clientFactory = defaultDraftClientFactory
-		}
-		client, clientErr := clientFactory(ctx, source)
+	if _, grantErr := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType); grantErr != nil {
+		providerStatus = "not_checked"
+	} else if source.SyncConfig.Valid {
+		client, clientErr := a.lifecycleDraftClient(ctx, source)
 		if clientErr == nil {
 			defer func() { _ = client.Close() }()
 			raw, rawErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
@@ -374,6 +401,9 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		Mailbox:         draft.Mailbox,
 		UID:             draft.UID,
 		UIDValidity:     draft.UIDValidity,
+		Subject:         draft.Subject,
+		FromAddress:     draft.FromAddress,
+		BodyText:        draft.Snippet,
 	}
 	return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
 }
@@ -412,11 +442,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	defer func() { _ = execution.Release() }()
 
 	// 4. InspectDraft on live old receipt.
-	clientFactory := a.draftClientFactory
-	if clientFactory == nil {
-		clientFactory = defaultDraftClientFactory
-	}
-	client, err := clientFactory(ctx, target.source)
+	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
 		return draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
 	}
@@ -472,6 +498,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	}
 
 	// 6. APPEND the new copy.
+	// P1-B: mark pending_append_attempted=TRUE BEFORE the network call so a
+	// crash between the APPEND and receipt-recording is detectable on resume.
+	if recErr := a.store.RecordIMAPDraftAppendContext(ctx, intent.DraftID, claimedDraft.Revision, nil); recErr != nil {
+		logger.Error("pre-record draft append attempted", "draft_id", intent.DraftID, "error", recErr)
+	}
 	appendResult, appendErr := client.AppendDraft(ctx, draft.Mailbox, newDraft.Raw)
 	recordCtx := context.WithoutCancel(ctx)
 	var newReceipt *store.IMAPDraftReceipt
@@ -481,13 +512,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			UIDValidity: appendResult.UIDValidity, UID: appendResult.UID,
 		}
 		newReceipt = &r
-		// Record the append with receipt.
+		// Record the append (attempted flag already set above; this call is a no-op for pending_uid).
 		if recErr := a.store.RecordIMAPDraftAppendContext(recordCtx, intent.DraftID, claimedDraft.Revision, newReceipt); recErr != nil {
 			logger.Error("record draft append receipt", "draft_id", intent.DraftID, "error", recErr)
 		}
 	} else {
-		// Record attempt only.
-		_ = a.store.RecordIMAPDraftAppendContext(recordCtx, intent.DraftID, claimedDraft.Revision, nil)
 		var dae *imaplib.DraftAppendError
 		if errors.As(appendErr, &dae) {
 			return draftReplyError(dae.Code, dae.Err)
@@ -516,7 +545,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 					RFC822MessageID: sql.NullString{String: messageIDValue, Valid: true},
 					MessageType:     "email", IsFromMe: true, IdentityDerivedIsFromMe: true,
 					SenderID:         sql.NullInt64{Int64: ids[0], Valid: true},
-					ReplyToMessageID: sql.NullInt64{Int64: draft.DraftID, Valid: true},
+					ReplyToMessageID: draft.ReplyToMessageID,
 					Subject:          sql.NullString{String: newDraft.Parsed.Subject, Valid: newDraft.Parsed.Subject != ""},
 					Snippet:          sql.NullString{String: strings.TrimSpace(newDraft.Parsed.BodyText), Valid: newDraft.Parsed.BodyText != ""},
 					SentAt:           sql.NullTime{Time: newDraft.Parsed.Date, Valid: !newDraft.Parsed.Date.IsZero()},
@@ -551,17 +580,33 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	_ = newMessageID
 
 	// Re-inspect the old copy to confirm it's still the same before deleting.
-	removeResult, removeErr := client.RemoveDraft(recordCtx, oldTarget)
+	// P2-E: use ctx (not recordCtx) so the remote call is cancellable.
+	// P1-A: only call Finish when RemoveDraft confirms absent or present (expunged).
+	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
-		if errors.As(removeErr, &dae) && dae.Code == "uidvalidity_changed" {
-			// Old copy is in a changed epoch - note the issue but finish locally.
-			logger.Error("old draft epoch changed during edit", "draft_id", intent.DraftID)
-		} else {
-			logger.Error("remove old draft copy", "draft_id", intent.DraftID, "error", removeErr)
+		if errors.As(removeErr, &dae) {
+			// Leave pending state so --resume can retry the removal.
+			logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
+			output := draftLifecycleOutput{
+				Status:       "remote_accepted_local_failed",
+				DraftID:      intent.DraftID,
+				OperationRef: draftOperationRef(*newReceipt),
+			}
+			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+			return draftReplyError(dae.Code, dae.Err)
 		}
+		logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
+		return draftReplyError("remote_unknown", removeErr)
 	}
-	_ = removeResult
+	switch removeResult.State {
+	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
+		// Success: absent means already gone; present means just expunged.
+	default:
+		// Soft failure (flag_missing or changed): leave pending state.
+		logger.Error("remove old draft copy soft fail", "draft_id", intent.DraftID, "state", removeResult.State)
+		return draftReplyError("delete_failed", fmt.Errorf("remote draft state changed during edit: %s", removeResult.State))
+	}
 
 	// 8. FinishIMAPDraftOperationContext.
 	finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, intent.DraftID, claimedDraft.Revision, store.IMAPDraftOutcome{
@@ -631,11 +676,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	defer func() { _ = execution.Release() }()
 
 	// InspectDraft.
-	clientFactory := a.draftClientFactory
-	if clientFactory == nil {
-		clientFactory = defaultDraftClientFactory
-	}
-	client, err := clientFactory(ctx, target.source)
+	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
 		return draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
 	}
@@ -687,8 +728,9 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 
 	recordCtx := context.WithoutCancel(ctx)
 
-	// RemoveDraft.
-	removeResult, removeErr := client.RemoveDraft(recordCtx, oldTarget)
+	// RemoveDraft. P2-E: use ctx (cancellable) for the network call.
+	// P1-A: only call Finish when RemoveDraft confirms absent or present (expunged).
+	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
@@ -712,7 +754,21 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", removeErr)
 	}
-	_ = removeResult
+	// P1-A: soft failures (flag_missing or changed) mean the remote copy was
+	// externally modified after InspectDraft confirmed it; leave pending.
+	switch removeResult.State {
+	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
+		// Success: proceed to local cleanup.
+	default:
+		output := draftLifecycleOutput{
+			Status:    "delete_failed",
+			DraftID:   intent.DraftID,
+			Lifecycle: "delete_pending",
+			Revision:  claimedDraft.Revision,
+		}
+		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+		return draftReplyError("delete_failed", fmt.Errorf("remote draft state changed: %s", removeResult.State))
+	}
 
 	// FinishIMAPDraftOperationContext.
 	finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, intent.DraftID, claimedDraft.Revision, store.IMAPDraftOutcome{
@@ -765,11 +821,25 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
 	}
 
-	clientFactory := a.draftClientFactory
-	if clientFactory == nil {
-		clientFactory = defaultDraftClientFactory
+	// P1-D: acquire the sync lock before creating the IMAP client so that
+	// resume and the regular sync never race over the same mailbox.
+	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrSyncAlreadyActive) {
+			return draftReplyError("sync_active", fmt.Errorf("source %d: %w", target.source.ID, err))
+		}
+		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
 	}
-	client, err := clientFactory(ctx, target.source)
+	defer func() { _ = execution.Release() }()
+
+	// Reload the draft under the lock to get a fresh, authoritative snapshot.
+	freshDraft, reloadErr := a.store.GetIMAPDraftContext(ctx, draft.DraftID)
+	if reloadErr != nil {
+		return draftReplyError("internal", fmt.Errorf("reload draft %d under lock: %w", draft.DraftID, reloadErr))
+	}
+	draft = freshDraft
+
+	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
 		return draftReplyError("invalid_source", fmt.Errorf("build IMAP client for resume: %w", err))
 	}
@@ -778,10 +848,38 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 	recordCtx := context.WithoutCancel(ctx)
 
 	if draft.PendingKind.String == "edit" {
-		// For edit resume: if APPEND was attempted but receipt not recorded,
-		// try FindDraftAppend to locate the candidate.
+		// Determine the old UID from the pending tuple saved at Begin (P1-C).
+		// After P1-C, BeginIMAPDraftOperationContext saves pending_uid = uid (old).
+		// PersistIMAPDraftReplacementContext then updates imap_drafts.uid to the
+		// new value, so pending_uid != uid once Persist has run.
+		var oldUID uint32
+		var oldUIDValidity uint32
+		if draft.PendingUID.Valid {
+			oldUID = uint32(draft.PendingUID.Int64)
+			oldUIDValidity = uint32(draft.PendingUIDValidity.Int64)
+		} else {
+			// Fallback: test 13 manually sets pending_uid = NULL to simulate
+			// pre-P1-C state; use current values in that case.
+			oldUID = draft.UID
+			oldUIDValidity = draft.UIDValidity
+		}
+
+		// Determine whether PersistIMAPDraftReplacementContext has already run.
+		persistDone := draft.PendingUID.Valid && draft.PendingUID.Int64 != int64(draft.UID)
+
 		var newReceipt *store.IMAPDraftReceipt
-		if draft.PendingAppendAttempted && !draft.PendingUID.Valid {
+		if persistDone {
+			// Persist ran: new uid is in imap_drafts.uid (draft.UID).
+			r := store.IMAPDraftReceipt{
+				SourceID:    target.source.ID,
+				Mailbox:     draft.Mailbox,
+				UIDValidity: draft.UIDValidity,
+				UID:         draft.UID,
+			}
+			newReceipt = &r
+		} else if draft.PendingAppendAttempted && (!draft.PendingUID.Valid || draft.PendingUID.Int64 == int64(draft.UID)) {
+			// APPEND was attempted but Persist hasn't run (new uid not yet in table).
+			// Use FindDraftAppend to locate the appended copy.
 			var pendingDigest [32]byte
 			if len(draft.PendingRaw) > 0 {
 				pendingDigest = sha256.Sum256(draft.PendingRaw)
@@ -794,7 +892,6 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 			}, draft.PendingRfc822ID.String)
 			if findErr != nil {
 				logger.Error("resume find draft append", "draft_id", draft.DraftID, "error", findErr)
-				// Cannot recover - leave pending.
 				return draftReplyError("remote_unknown", findErr)
 			}
 			if found != nil {
@@ -805,49 +902,68 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 					UID:         found.UID,
 				}
 				newReceipt = &r
-				// Record the recovered receipt.
 				_ = a.store.RecordIMAPDraftAppendContext(recordCtx, draft.DraftID, draft.Revision, newReceipt)
 			} else {
 				// Zero or multiple candidates: leave pending columns untouched.
 				return draftReplyError("remote_unknown", errors.New("could not uniquely identify pending APPEND; retry later"))
 			}
-		} else if draft.PendingUID.Valid {
-			r := store.IMAPDraftReceipt{
-				SourceID:    target.source.ID,
-				Mailbox:     draft.Mailbox,
-				UIDValidity: uint32(draft.PendingUIDValidity.Int64),
-				UID:         uint32(draft.PendingUID.Int64),
-			}
-			newReceipt = &r
 		}
 
 		if newReceipt == nil {
-			// No receipt available yet; cannot complete.
+			// No APPEND attempted yet; cannot complete.
 			return draftReplyError("remote_unknown", errors.New("pending edit has no receipt to complete"))
 		}
 
-		// Remove the old copy.
-		currentRaw, rawErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
-		if rawErr != nil {
-			return draftReplyError("internal", fmt.Errorf("load current raw for resume %d: %w", draft.DraftID, rawErr))
+		// Locate the old message's raw bytes for the removal digest.
+		// When Persist has run, current_message_id points to the new message so
+		// we look up the old one via the membership table (which still holds the
+		// old UID until Finish runs).
+		var oldMessageID int64
+		if persistDone {
+			oldMessageID, _ = a.store.GetMessageIDByMembershipContext(ctx, target.source.ID, draft.Mailbox, oldUIDValidity, oldUID)
 		}
-		oldDigest := sha256.Sum256(currentRaw)
+		if oldMessageID == 0 {
+			oldMessageID = draft.CurrentMessageID
+		}
+
+		oldRaw, rawErr := a.store.GetMessageRawContext(ctx, oldMessageID)
+		if rawErr != nil {
+			return draftReplyError("internal", fmt.Errorf("load old raw for resume %d: %w", draft.DraftID, rawErr))
+		}
+		oldDigest := sha256.Sum256(oldRaw)
 		oldTarget := imaplib.DraftTarget{
 			Mailbox:     draft.Mailbox,
-			UIDValidity: draft.UIDValidity,
-			UID:         draft.UID,
+			UIDValidity: oldUIDValidity,
+			UID:         oldUID,
 			RawSHA256:   oldDigest,
 		}
-		_, _ = client.RemoveDraft(recordCtx, oldTarget) // best effort
 
-		// FinishIMAPDraftOperationContext.
+		// P1-A + P2-E: use ctx for RemoveDraft; only Finish on success.
+		removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
+		if removeErr != nil {
+			var dae *imaplib.DraftAppendError
+			if errors.As(removeErr, &dae) {
+				return draftReplyError(dae.Code, dae.Err)
+			}
+			return draftReplyError("remote_unknown", removeErr)
+		}
+		switch removeResult.State {
+		case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
+			// Success: proceed to Finish.
+		default:
+			return draftReplyError("delete_failed", fmt.Errorf("remote draft state is %s", removeResult.State))
+		}
+
+		// FinishIMAPDraftOperationContext uses the old UID (P1-C).
+		// FinishIMAPDraftOperationContext will look up oldMessageID from the
+		// membership it deletes; pass it as fallback in case the row is already gone.
 		finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, draft.DraftID, draft.Revision, store.IMAPDraftOutcome{
 			Lifecycle:   "active",
 			SourceID:    target.source.ID,
 			Mailbox:     draft.Mailbox,
-			UIDValidity: draft.UIDValidity,
-			UID:         draft.UID,
-			MessageID:   draft.CurrentMessageID,
+			UIDValidity: oldUIDValidity,
+			UID:         oldUID,
+			MessageID:   oldMessageID,
 		})
 		if finishErr != nil {
 			return draftReplyError("remote_accepted_local_failed", finishErr)
@@ -867,7 +983,18 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 	}
 
 	if draft.PendingKind.String == "discard" {
-		// Re-attempt the delete.
+		// Re-attempt the delete using the pending tuple as removal target (P1-C).
+		// pending_uid was set to the old uid by BeginIMAPDraftOperationContext.
+		var oldUID uint32
+		var oldUIDValidity uint32
+		if draft.PendingUID.Valid {
+			oldUID = uint32(draft.PendingUID.Int64)
+			oldUIDValidity = uint32(draft.PendingUIDValidity.Int64)
+		} else {
+			oldUID = draft.UID
+			oldUIDValidity = draft.UIDValidity
+		}
+
 		currentRaw, rawErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
 		if rawErr != nil {
 			return draftReplyError("internal", fmt.Errorf("load current raw for resume delete %d: %w", draft.DraftID, rawErr))
@@ -875,25 +1002,36 @@ func (a *storeAPIAdapter) resumeDraftOperation(
 		digest := sha256.Sum256(currentRaw)
 		oldTarget := imaplib.DraftTarget{
 			Mailbox:     draft.Mailbox,
-			UIDValidity: draft.UIDValidity,
-			UID:         draft.UID,
+			UIDValidity: oldUIDValidity,
+			UID:         oldUID,
 			RawSHA256:   digest,
 		}
-		_, removeErr := client.RemoveDraft(recordCtx, oldTarget)
+
+		// P1-A + P2-E: use ctx; all DraftAppendErrors (including uidvalidity_changed)
+		// must leave the pending state, not fall through to Finish.
+		removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 		if removeErr != nil {
 			var dae *imaplib.DraftAppendError
-			if errors.As(removeErr, &dae) && dae.Code != "uidvalidity_changed" {
-				// Leave pending.
+			if errors.As(removeErr, &dae) {
+				// All protocol errors (including epoch mismatch) leave pending.
 				return draftReplyError("delete_failed", dae.Err)
 			}
+			return draftReplyError("delete_failed", removeErr)
+		}
+		switch removeResult.State {
+		case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
+			// Success: proceed to local cleanup.
+		default:
+			// Soft failure (flag_missing or changed): leave pending.
+			return draftReplyError("delete_failed", fmt.Errorf("remote draft state is %s", removeResult.State))
 		}
 
 		finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, draft.DraftID, draft.Revision, store.IMAPDraftOutcome{
 			Lifecycle:   "discarded",
 			SourceID:    target.source.ID,
 			Mailbox:     draft.Mailbox,
-			UIDValidity: draft.UIDValidity,
-			UID:         draft.UID,
+			UIDValidity: oldUIDValidity,
+			UID:         oldUID,
 			MessageID:   draft.CurrentMessageID,
 		})
 		if finishErr != nil {

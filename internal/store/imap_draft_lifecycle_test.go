@@ -328,19 +328,29 @@ func TestDraftCommandsRefuseUnregisteredHistoricalDraft(t *testing.T) {
 	requirements.ErrorContains(err, "not found")
 }
 
-// TestRecordIMAPDraftAppendContext verifies that pending columns are updated.
+// TestRecordIMAPDraftAppendContext verifies that pending_append_attempted is set
+// and that pending_uid/pending_uidvalidity are NOT overwritten by the receipt
+// (P1-C: they hold the old copy's coordinates set at Begin).
 func TestRecordIMAPDraftAppendContext(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st, source, draftID, _ := newIMAPDraftFixture(t)
+	st, source, draftID, receipt := newIMAPDraftFixture(t)
 
-	// Begin operation.
+	// Begin operation: saves old uid in pending_uid.
 	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
 		DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
 	})
 	requirements.NoError(err)
 
-	// Record attempt without receipt.
+	// Verify Begin set pending_uid to the OLD uid.
+	var pendingUIDAfterBegin sql.NullInt64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT pending_uid FROM imap_drafts WHERE draft_id = ?
+	`), draftID).Scan(&pendingUIDAfterBegin))
+	assertions.True(pendingUIDAfterBegin.Valid, "Begin must set pending_uid")
+	assertions.Equal(int64(receipt.UID), pendingUIDAfterBegin.Int64, "Begin must save old uid in pending_uid")
+
+	// Record attempt without receipt: only pending_append_attempted should change.
 	err = st.RecordIMAPDraftAppendContext(context.Background(), draftID, draft.Revision, nil)
 	requirements.NoError(err)
 	var attempted bool
@@ -349,7 +359,9 @@ func TestRecordIMAPDraftAppendContext(t *testing.T) {
 	`), draftID).Scan(&attempted))
 	assertions.True(attempted)
 
-	// Record receipt.
+	// Record with a receipt: pending_uid/pending_uidvalidity must NOT change.
+	// The receipt is accepted for call-site symmetry but is intentionally ignored
+	// so that the removal target (old uid) remains stable across crash recovery.
 	newReceipt := &store.IMAPDraftReceipt{
 		SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 101, UID: 5,
 	}
@@ -360,7 +372,93 @@ func TestRecordIMAPDraftAppendContext(t *testing.T) {
 		SELECT pending_uidvalidity, pending_uid FROM imap_drafts WHERE draft_id = ?
 	`), draftID).Scan(&pendingUIDValidity, &pendingUID))
 	assertions.True(pendingUIDValidity.Valid)
-	assertions.Equal(int64(101), pendingUIDValidity.Int64)
+	assertions.Equal(int64(receipt.UIDValidity), pendingUIDValidity.Int64, "pending_uidvalidity must stay at old value set by Begin")
 	assertions.True(pendingUID.Valid)
-	assertions.Equal(int64(5), pendingUID.Int64)
+	assertions.Equal(int64(receipt.UID), pendingUID.Int64, "pending_uid must stay at old uid set by Begin, not receipt uid 5")
+}
+
+// TestDraftOwnershipSurvivesGCAfterEdit verifies that garbage-collecting the
+// tombstoned first-generation message row after a draft edit does NOT delete
+// the imap_drafts ownership row (P1-E: no ON DELETE CASCADE on draft_id).
+func TestDraftOwnershipSurvivesGCAfterEdit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, source, draftID, oldReceipt := newIMAPDraftFixture(t)
+
+	// --- Full edit cycle ---
+
+	// Begin: lifecycle → replace_pending, pending_uid = old uid.
+	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+		DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
+	})
+	requirements.NoError(err)
+
+	// Persist replacement: archives new message body, updates imap_drafts.uid to new uid.
+	newReceipt := store.IMAPDraftReceipt{
+		SourceID: source.ID, Mailbox: "Drafts",
+		UIDValidity: oldReceipt.UIDValidity, UID: oldReceipt.UID + 1,
+	}
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "alice@example.com", Domain: "example.com"},
+		{EmailAddress: "bob@example.com", Domain: "example.com"},
+	}
+	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nMessage-ID: <draft2@example.com>\r\n\r\nEdited body\r\n")
+	// Obtain conversationID before the transaction to avoid lock contention
+	// (the builder callback runs inside the PersistIMAPDraftReplacementContext tx).
+	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Test Thread")
+	requirements.NoError(err)
+
+	newMsgID, err := st.PersistIMAPDraftReplacementContext(
+		context.Background(), draftID, draft.Revision, newReceipt, participants,
+		func(ids []int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(newReceipt),
+					ConversationID:  conversationID,
+					MessageType:     store.MessageTypeEmail,
+					SenderID:        sql.NullInt64{Int64: ids[0], Valid: true},
+					RFC822MessageID: sql.NullString{String: "<draft2@example.com>", Valid: true},
+					Subject:         sql.NullString{String: "Re: Test Thread", Valid: true},
+					IsFromMe:        true, IdentityDerivedIsFromMe: true,
+					ArchivedAt: time.Now(), SizeEstimate: int64(len(raw)),
+				},
+				BodyText: sql.NullString{String: "Edited body", Valid: true},
+				RawMIME:  raw,
+			}
+		},
+	)
+	requirements.NoError(err)
+	requirements.Positive(newMsgID)
+
+	// Finish: tombstones old message, clears pending state, lifecycle → active.
+	requirements.NoError(st.FinishIMAPDraftOperationContext(
+		context.Background(), draftID, draft.Revision,
+		store.IMAPDraftOutcome{
+			Lifecycle:   "active",
+			SourceID:    source.ID,
+			Mailbox:     oldReceipt.Mailbox,
+			UIDValidity: oldReceipt.UIDValidity,
+			UID:         oldReceipt.UID,
+			MessageID:   draftID,
+		},
+	))
+
+	// Verify the old message is now tombstoned.
+	var deletedFromSourceAt sql.NullTime
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), draftID).Scan(&deletedFromSourceAt))
+	assertions.True(deletedFromSourceAt.Valid, "old message must be tombstoned after Finish")
+
+	// --- Simulate GC: hard-delete the tombstoned original message row ---
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM messages WHERE id = ?`), draftID)
+	requirements.NoError(err, "GC delete of tombstoned message must succeed")
+
+	// --- Ownership row must survive (no ON DELETE CASCADE on draft_id) ---
+	var count int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM imap_drafts WHERE draft_id = ?
+	`), draftID).Scan(&count))
+	assertions.Equal(1, count, "imap_drafts row must survive GC of the first-gen message")
 }

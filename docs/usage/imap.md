@@ -206,12 +206,13 @@ change, including a reused UID that identifies different mail. An uncertain
 APPEND requires mailbox inspection before another request.
 
 The message ID that `draft-reply` prints is the stable draft ID. Pass it to
-`draft-edit` or `draft-discard` to update or remove the draft later. An edit is
-implemented as APPEND-then-expunge: the daemon appends the revised body and
-immediately expunges the previous UID, so the draft always occupies exactly one
-message slot. If another mail client has modified the draft since it was created
-— detected by a UID or flags mismatch — the daemon reports the conflict and
-refuses the operation rather than overwriting the external change. Cursor
-ownership is unchanged: the regular sync continues to own `imap_folder_state`
-advancement for the Drafts mailbox and will reconcile the new UID on its next
-pass.
+`draft-edit` or `draft-delete` to update or remove the draft later. An edit is
+implemented as APPEND-then-expunge: the daemon appends the revised body and then
+expunges the previous UID. Between the APPEND and the expunge there is a brief
+window in which the mailbox holds two copies of the draft; this is normal and
+the old copy is removed as the last step of a successful edit. If another mail
+client has modified the draft since it was created — detected by a UID or flags
+mismatch — the daemon reports the conflict and refuses the operation rather than
+overwriting the external change. Cursor ownership is unchanged: the regular sync
+continues to own `imap_folder_state` advancement for the Drafts mailbox and
+will reconcile the new UID on its next pass.

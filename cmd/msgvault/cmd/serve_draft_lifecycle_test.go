@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -291,30 +293,86 @@ func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
 	assert.True(t, found, "bystander UID must remain after deleting only the owned draft")
 }
 
-// TestDraftResumeCompletesOwedRemoval verifies that --resume completes a
-// delete_pending operation and marks the draft discarded.
+// failOnNthRemove wraps a real IMAP client and injects a RemoveDraft failure
+// until the shared counter exceeds failBefore.  All other methods are delegated
+// to the embedded client unchanged.
+type failOnNthRemove struct {
+	*imaplib.Client
+	mu         sync.Mutex
+	counter    *int // shared across factory calls to survive re-creation
+	failBefore int  // fail when the call number is <= failBefore
+}
+
+func (f *failOnNthRemove) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
+	f.mu.Lock()
+	*f.counter++
+	n := *f.counter
+	f.mu.Unlock()
+	if n <= f.failBefore {
+		return imaplib.DraftInspectResult{}, &imaplib.DraftAppendError{
+			State: imaplib.DraftStateRemoteUnknown,
+			Code:  "remote_unknown",
+			Err:   errors.New("injected RemoveDraft failure"),
+		}
+	}
+	return f.Client.RemoveDraft(ctx, target)
+}
+
+// sharedRemoveCounter holds state that must outlive a single IMAP client so
+// that the factory-injected failure counter persists across --resume calls.
+type sharedRemoveCounter struct{ n int }
+
+// makeFaultyFactory returns a draftClientFactory that wraps the real IMAP
+// client and fails RemoveDraft on the first failBefore calls (counted across
+// all clients created from this factory).
+func (f draftLifecycleFixture) makeFaultyFactory(counter *sharedRemoveCounter, failBefore int) func(context.Context, *store.Source) (draftClient, error) {
+	return func(ctx context.Context, src *store.Source) (draftClient, error) {
+		return &failOnNthRemove{
+			Client:     imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+			counter:    &counter.n,
+			failBefore: failBefore,
+		}, nil
+	}
+}
+
+// TestDraftResumeCompletesOwedRemoval verifies that when RemoveDraft fails
+// during draft-delete (leaving delete_pending), a subsequent draft-delete
+// --resume retries and completes the removal, marking the draft discarded.
 func TestDraftResumeCompletesOwedRemoval(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
 
-	// Simulate an interrupted delete by setting delete_pending state directly.
-	_, err := f.store.DB().Exec(f.store.Rebind(`
-		UPDATE imap_drafts
-		SET lifecycle = 'delete_pending',
-		    pending_kind = 'discard',
-		    revision = 2,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE draft_id = ?
-	`), f.draftID)
-	require.NoError(t, err)
+	counter := &sharedRemoveCounter{}
 
+	// First attempt: RemoveDraft will fail (counter=1 ≤ failBefore=1).
 	adapter := f.grantedAdapter()
-	var evs []api.CLIRunEvent
-	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
+
+	var evs1 []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+	}, func(ev api.CLIRunEvent) error { evs1 = append(evs1, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "delete_failed", err.Error())
+
+	// State must be delete_pending with pending_uid set (P1-C: Begin saves old uid).
+	var lifecycle string
+	var pendingUID sql.NullInt64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle, pending_uid FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle, &pendingUID))
+	assert.Equal(t, "delete_pending", lifecycle)
+	assert.True(t, pendingUID.Valid, "pending_uid must be set by BeginIMAPDraftOperationContext")
+
+	// Second attempt with --resume: counter=2 > failBefore=1, so RemoveDraft succeeds.
+	adapter2 := f.grantedAdapter()
+	adapter2.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
+
+	var evs2 []api.CLIRunEvent
+	err = adapter2.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--resume"},
-	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	}, func(ev api.CLIRunEvent) error { evs2 = append(evs2, ev); return nil })
 	require.NoError(t, err)
 
-	var lifecycle string
 	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle))
@@ -614,35 +672,33 @@ func TestDraftResumeRecoversUnknownAppend(t *testing.T) {
 }
 
 // TestDraftDeleteReportsRemoteFailureWithoutLocalLoss verifies that when
-// delete_pending is set but the remote removal has not yet completed, the
-// membership and message rows remain intact and the server copy is still present
-// (row 15). The delete_failed code path is proved by the state that persists
-// after BeginIMAPDraftOperationContext without a matching Finish call.
+// draft-delete fails because RemoveDraft is rejected, the operation returns
+// delete_failed, leaves lifecycle=delete_pending with pending_uid set, and
+// leaves both the local membership/message rows and the server copy intact.
 func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
 	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
 
-	// Simulate the state that exists after BeginIMAPDraftOperationContext for a
-	// discard committed but RemoveDraft returning delete_failed: lifecycle is
-	// delete_pending, pending_uid is set, and the remote copy has not been touched.
-	var currentUID, currentUIDVal int64
+	// Capture the current UID before the delete attempt.
+	var currentUID int64
 	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
-		SELECT uid, uidvalidity FROM imap_drafts WHERE draft_id = ?
-	`), f.draftID).Scan(&currentUID, &currentUIDVal))
+		SELECT uid FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&currentUID))
 
-	_, err := f.store.DB().Exec(f.store.Rebind(`
-		UPDATE imap_drafts
-		SET lifecycle = 'delete_pending',
-		    pending_kind = 'discard',
-		    pending_uid = uid,
-		    pending_uidvalidity = uidvalidity,
-		    revision = 2,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE draft_id = ?
-	`), f.draftID)
-	require.NoError(t, err)
+	// Inject a factory that always fails RemoveDraft so that draft-delete leaves
+	// the pending state without touching the remote or local data.
+	counter := &sharedRemoveCounter{}
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 999) // always fail
 
-	// Verify the required invariants of the delete_failed state.
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "delete_failed", err.Error())
+
+	// Lifecycle must be delete_pending with pending_uid set (P1-C: Begin saves old uid).
 	var lifecycle string
 	var pendingUID sql.NullInt64
 	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
