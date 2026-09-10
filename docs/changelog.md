@@ -150,9 +150,11 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   an `off` state (API schema adds `validation.off` with a label and suggested
   value) and render as a switch beside the value, and cron schedules publish
   `validation.format: "cron"` and use a cron field with tinted fields, a
-  plain-English description, inline validation, and presets. A Time zone
-  menu stores a `CRON_TZ=` prefix so a schedule runs in a chosen zone, the
-  field legend shows while the field is focused or hovered. On a Settings
+  plain-English description, inline validation, and presets. The control is
+  one line: a Presets menu (with Off and Custom), the expression editor when
+  Custom is chosen, and a Time zone menu that shows "Server time" until a
+  zone is picked. The zone is stored as a `CRON_TZ=` prefix, and the field
+  legend shows while the editor is focused or hovered. On a Settings
   save or a CardDAV account save the daemon trims the schedule and stores a
   zone with no fields as off; a schedule in `config.toml` must be a full
   expression or empty, and the scheduler now reports a bad one instead of

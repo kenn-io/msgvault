@@ -469,14 +469,17 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('Search');
-    const schedule = (await screen.findByLabelText('Embedding schedule')) as HTMLInputElement;
-    expect(schedule.value).toBe('0 3 * * *');
-    expect(screen.getByText('At 03:00 every day')).toBeDefined();
+    const presets = (name: string) => screen.getByRole('combobox', { name: `Presets: ${name}` });
+    expect(await screen.findByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeDefined();
+    expect(screen.queryByLabelText('Embedding schedule')).toBeNull();
     expect(screen.queryByText(/Five-field cron/)).toBeNull();
 
-    await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Every 15 minutes');
+    await chooseSelectOption(presets('Every day at 03:00'), 'Every 15 minutes');
+    expect(presets('Every 15 minutes')).toBeDefined();
+    await chooseSelectOption(presets('Every 15 minutes'), 'Custom');
+    const schedule = screen.getByLabelText('Embedding schedule') as HTMLInputElement;
     expect(schedule.value).toBe('*/15 * * * *');
-    const status = () => document.getElementById(schedule.getAttribute('aria-describedby') ?? '')?.textContent;
+    const status = () => document.getElementById(schedule.getAttribute('aria-describedby') ?? '')?.textContent?.trim();
     expect(status()).toBe('Every 15 minutes');
     await fireEvent.input(schedule, { target: { value: '0 3 * * 9' } });
     expect(status()).toBe('Weekday: 9 is above the maximum of 6.');
@@ -664,6 +667,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByLabelText('Username')).toBeDefined();
     expect(screen.getByLabelText('Password')).toBeDefined();
     expect(screen.getByLabelText('Enabled')).toBeDefined();
+    expect(screen.getByRole('combobox', { name: 'Presets: Custom' })).toBeDefined();
     expect(screen.getByLabelText('Schedule')).toBeDefined();
     expect(screen.queryByText('CardDAV server')).toBeNull();
 
@@ -914,6 +918,7 @@ describe('SettingsWorkspace', () => {
     });
     await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'alice' } });
     await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'first-password' } });
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Off' }), 'Custom');
     await fireEvent.input(screen.getByLabelText('Schedule'), { target: { value: '0 2 * * *' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
     await waitFor(() => expect(credentialFacts).toHaveLength(1));

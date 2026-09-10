@@ -845,7 +845,7 @@
     display: grid;
     justify-items: end;
     gap: var(--space-1);
-    max-width: 24rem;
+    max-width: 30rem;
   }
   .row__widgets {
     display: flex;
@@ -871,9 +871,11 @@
   .row__field[data-size='lg'] {
     width: 15rem;
   }
+  /* A schedule is one line: presets, the expression when custom, and the
+     zone. Cron text is short, so the line fits without wrapping. */
   .row__field[data-size='cron'] {
     width: 100%;
-    max-width: 22rem;
+    max-width: 30rem;
   }
   .row__format {
     color: var(--text-muted);

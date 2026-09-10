@@ -88,14 +88,17 @@
     ...(required ? [] : [{ value: 'off', label: 'Off' }]),
     ...CRON_PRESETS.map((preset) => ({ value: preset.expression, label: preset.label })),
   ]);
+  // Choosing Custom keeps the editor open even while the text still equals a
+  // preset, so the expression can be edited from a preset's starting point.
+  let customMode = $state(false);
   const presetValue = $derived.by(() => {
     if (empty) return required ? 'custom' : 'off';
+    if (customMode) return 'custom';
     const normalized = tokens.map((token) => token.text).join(' ');
     return CRON_PRESETS.some((preset) => preset.expression === normalized) ? normalized : 'custom';
   });
-  const presetMenu = $derived(
-    presetValue === 'custom' ? [{ value: 'custom', label: 'Custom' }, ...presetOptions] : presetOptions,
-  );
+  const presetMenu = $derived([...presetOptions, { value: 'custom', label: 'Custom' }]);
+  const summary = $derived(parsed.fields ? describeFields(parsed.fields) : '');
   // A stored zone the browser's list lacks (a legacy alias, or a newer zone
   // database on the daemon) still shows on the trigger and stays selectable.
   const zoneMenu = $derived(
@@ -124,74 +127,90 @@
   }
 
   function applyPreset(next: string) {
-    if (next === 'custom') return;
+    if (next === 'custom') {
+      customMode = true;
+      if (empty) update(parts.zone, '0 3 * * *');
+      return;
+    }
+    customMode = false;
     update(parts.zone, next === 'off' ? '' : next);
   }
 </script>
 
 <div class="cron" class:cron--disabled={disabled}>
-  <div class="cron__editor" class:cron__editor--invalid={invalid}>
-    <div class="cron__mirror" aria-hidden="true" bind:this={mirror}>
-      {#each segments as segment, index (index)}
-        {#if segment.field}
-          <span data-field={segment.field} data-invalid={segment.invalid || undefined}>{segment.text}</span>
-        {:else}
-          {segment.text}
-        {/if}
-      {/each}
+  <div class="cron__row">
+    <div class="cron__presets">
+      <SelectDropdown title="Presets" value={presetValue} options={presetMenu} onchange={applyPreset} {disabled} />
     </div>
-    <input
-      class="cron__input"
-      type="text"
-      {id}
-      aria-label={label}
-      aria-invalid={invalid || undefined}
-      aria-describedby={statusID}
-      autocomplete="off"
-      autocapitalize="off"
-      spellcheck="false"
-      placeholder="0 3 * * *"
-      {required}
-      {disabled}
-      value={parts.expression}
-      oninput={(event) => update(parts.zone, event.currentTarget.value)}
-      onscroll={(event) => {
-        if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
-      }}
-    />
-    <!-- Field names appear above the editor only while it is hovered or
-         focused, so the row stays quiet and nothing below gets covered. -->
-    <span class="cron__legend kit-popover-card" aria-hidden="true">
-      {#each CRON_FIELDS as field (field.name)}
-        <span data-field={field.name}>{field.label}</span>
-      {/each}
-    </span>
+    {#if presetValue === 'custom'}
+      <div class="cron__editor" class:cron__editor--invalid={invalid}>
+        <div class="cron__mirror" aria-hidden="true" bind:this={mirror}>
+          {#each segments as segment, index (index)}
+            {#if segment.field}
+              <span data-field={segment.field} data-invalid={segment.invalid || undefined}>{segment.text}</span>
+            {:else}
+              {segment.text}
+            {/if}
+          {/each}
+        </div>
+        <input
+          class="cron__input"
+          type="text"
+          {id}
+          aria-label={label}
+          aria-invalid={invalid || undefined}
+          aria-describedby={statusID}
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="0 3 * * *"
+          {required}
+          {disabled}
+          value={parts.expression}
+          oninput={(event) => update(parts.zone, event.currentTarget.value)}
+          onscroll={(event) => {
+            if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
+          }}
+        />
+        <!-- Field names and the plain-English reading appear above the
+             editor only while it is hovered or focused, so the row stays one
+             line and nothing below gets covered. -->
+        <span class="cron__legend kit-popover-card" aria-hidden="true">
+          <span class="cron__legend-fields">
+            {#each CRON_FIELDS as field (field.name)}
+              <span data-field={field.name}>{field.label}</span>
+            {/each}
+          </span>
+          {#if summary}<span class="cron__summary">{summary}</span>{/if}
+        </span>
+      </div>
+    {/if}
+    {#if !empty}
+      <div class="cron__zone">
+        <Typeahead
+          options={zoneMenu}
+          value={parts.zone}
+          fallbackLabel="Server time"
+          placeholder="Time zone"
+          title="Time zone"
+          emptyLabel="No matching time zone"
+          allowClear
+          clearLabel="Server time"
+          {disabled}
+          onselect={(zone) => update(zone, parts.expression)}
+        />
+      </div>
+    {/if}
   </div>
-  <div class="cron__menus">
-    <SelectDropdown title="Presets" value={presetValue} options={presetMenu} onchange={applyPreset} {disabled} />
-    <div class="cron__zone">
-      <Typeahead
-        options={zoneMenu}
-        value={parts.zone}
-        fallbackLabel="Local time"
-        placeholder="Time zone"
-        title="Time zone"
-        triggerPrefix="Time zone:"
-        emptyLabel="No matching time zone"
-        allowClear
-        clearLabel="Local time"
-        disabled={disabled || empty}
-        onselect={(zone) => update(zone, parts.expression)}
-      />
-    </div>
-  </div>
-  <p class="cron__status" id={statusID} data-tone={status.tone}>{status.text}</p>
+  <p class="cron__status" class:kit-sr-only={status.tone !== 'error'} id={statusID} data-tone={status.tone}>
+    {status.text}
+  </p>
 </div>
 
 <style>
   .cron {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-1);
     min-width: 0;
     /* Accents darkened toward the text color, the same recipe as the app's
        status ink tokens, so small tinted text clears 4.5:1 in both themes. */
@@ -279,32 +298,57 @@
   .cron--disabled .cron__editor {
     opacity: 0.6;
   }
-  .cron__menus {
+  .cron__row {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
   }
-  .cron__zone {
-    flex: 1 1 auto;
+  .cron__presets {
+    flex: 0 0 auto;
+    width: 9.5rem;
     min-width: 0;
+  }
+  .cron__editor {
+    flex: 1 1 7rem;
+    min-width: 6.5rem;
+  }
+  .cron__zone {
+    flex: 0 1 11rem;
+    min-width: 7rem;
     --typeahead-min-width: 0;
     --typeahead-max-width: none;
+  }
+  /* Zone names are long; the list grows past its trigger instead of
+     truncating every entry. */
+  .cron__zone :global(.kit-typeahead__panel) {
+    min-width: 18rem;
   }
   .cron__legend {
     position: absolute;
     left: 0;
     bottom: calc(100% + 4px);
     z-index: 1;
-    display: flex;
-    gap: var(--space-3);
-    padding: 2px var(--space-3);
+    display: grid;
+    gap: 2px;
+    padding: var(--space-2) var(--space-3);
     font-family: var(--font-mono);
     font-size: var(--font-size-2xs);
     font-weight: 600;
     letter-spacing: 0.02em;
     white-space: nowrap;
     visibility: hidden;
+  }
+  .cron__legend-fields {
+    display: flex;
+    gap: var(--space-3);
+  }
+  .cron__summary {
+    font-family: inherit;
+    font-size: var(--font-size-xs);
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--text-secondary);
   }
   .cron__editor:hover .cron__legend,
   .cron__editor:focus-within .cron__legend {

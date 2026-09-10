@@ -361,16 +361,18 @@ value input appears, starting from a suggested value. Rows you have changed
 carry an amber dot, the footer counts unsaved changes, and Discard throws them
 away. Save is disabled until something changes.
 
-Schedules use a cron field. The five fields are tinted, a legend naming them
-(minute, hour, day, month, weekday) appears while the field has focus or the
-pointer is over it, the line under the field says in plain English when the
-schedule runs, and a mistake names the field and the problem before you save.
-A Presets menu offers common schedules such as every hour, every day at
-03:00, or weekdays at 09:00, and Off for schedules that can be empty. A Time
-zone menu runs the schedule in a chosen IANA zone instead of the daemon's
-local time; the choice is stored as a `CRON_TZ=` prefix on the schedule. The
-CardDAV account form uses the same field, and the Sources and CardDAV status
-views describe stored schedules the same way.
+Schedules are one line. A Presets menu offers common schedules such as every
+hour, every day at 03:00, or weekdays at 09:00, plus Off for schedules that
+can be empty and Custom. Choosing Custom opens the expression editor beside
+the menu, starting from the preset you had. The five fields are tinted, and
+while the editor has focus or the pointer is over it a small card names the
+fields (minute, hour, day, month, weekday) and says in plain English when the
+schedule runs; a mistake names the field and the problem before you save. A
+Time zone menu at the end of the line runs the schedule in a chosen IANA zone
+instead of the daemon's own clock, shown as "Server time"; the choice is
+stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
+the same field, and the Sources and CardDAV status views describe stored
+schedules the same way.
 
 Each category states once how its changes take effect. Appearance settings
 apply right away. Every other `config.toml` category takes effect after the
