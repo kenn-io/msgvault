@@ -124,7 +124,7 @@ query_prefix = "search_query: "        # required by nomic-embed-text
 batch_size = 32                          # embeddings per HTTP call
 timeout = "30s"
 max_retries = 3
-max_input_chars = 2000                   # per-chunk cap; see sizing guidance below
+max_input_chars = 6000                   # per-chunk cap; see sizing guidance below
 eta_window = 10                          # progress ETA smoothing window
 
 [vector.preprocess]
@@ -244,25 +244,42 @@ real context window before starting a full rebuild.
 
 Practical guidance:
 
-- **2k-token embedding models:** start around `max_input_chars = 2000`
-  and raise only after confirming the endpoint accepts longer inputs.
+- **Characters are not tokens.** English prose runs about 4 characters
+  per token; code, markup, and non-Latin scripts run closer to 1–2. The
+  values below assume 3 characters per token, which leaves headroom for
+  mixed content.
+- **2k-token embedding models:** start around `max_input_chars = 6000`.
 - **8k-token embedding models:** start around `max_input_chars = 24000`.
 - **Self-hosted models:** match the actual context window exposed by
   your server, not just the upstream model card.
 
-!!! warning "Ollama truncates silently"
-    Ollama applies its own context limit (`num_ctx`, 2048 by default for
-    embedding models) and truncates longer inputs instead of returning an
-    error. Raising `max_input_chars` past that limit therefore does not
-    fail loudly — it quietly embeds only the beginning of each chunk and
-    degrades recall. Raise `num_ctx` on the served model first (via a
-    `Modelfile` or the API's `options`), confirm the larger window is
-    actually in effect, and only then raise `max_input_chars`.
+To measure the ratio for your own archive, tokenize a representative
+message with your embedder. Ollama's native API reports the token
+count:
 
-If `msgvault embeddings build` logs `HTTP 400`, msgvault now includes
-the response body from the embedder when available. Check both the
-CLI log and the embedder's own logs. `the input length exceeds the
-context length` confirms you need to lower `max_input_chars`.
+```bash
+curl -s http://127.0.0.1:11434/api/embed \
+  -d '{"model":"nomic-embed-text","input":"<message text>"}' | jq .prompt_eval_count
+```
+
+!!! warning "Ollama truncates instead of rejecting"
+    Through its OpenAI-compatible `/v1/embeddings` endpoint, which
+    msgvault uses, Ollama does not return `HTTP 400` for over-limit
+    input. It truncates each input to the smaller of the model's trained
+    context length and `num_ctx`, embeds only the beginning of the
+    chunk, and returns a normal response. Oversizing `max_input_chars`
+    therefore degrades recall silently instead of failing. The trained
+    length is the hard ceiling: Ollama's `nomic-embed-text` ships with
+    `num_ctx = 8192` but a trained context of 2048 tokens, so raising
+    `num_ctx` does not help. Check both with `ollama show <model>`
+    before raising `max_input_chars`.
+
+If `msgvault embeddings build` logs `HTTP 400`, msgvault includes the
+response body from the embedder when available. Check both the CLI log
+and the embedder's own logs. A body such as `the input length exceeds
+the context length` confirms you need to lower `max_input_chars`.
+Ollama's OpenAI-compatible endpoint does not return this error; see the
+warning above.
 
 ## Initial Embedding
 
