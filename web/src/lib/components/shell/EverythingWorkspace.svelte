@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, KbdBadge, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, KbdBadge, SearchInput, SegmentedControl } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -95,6 +95,28 @@
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
+
+  function storedPreviewPosition(): 'below' | 'right' {
+    try {
+      return localStorage.getItem('msgvault.reading-pane.position') === 'right' ? 'right' : 'below';
+    } catch {
+      return 'below';
+    }
+  }
+
+  let previewPosition = $state(storedPreviewPosition());
+  let resultsWidth = $state(0);
+  const canPreviewRight = $derived(resultsWidth >= 960);
+  const previewRight = $derived(canPreviewRight && previewPosition === 'right');
+
+  function setPreviewPosition(value: string): void {
+    previewPosition = value === 'right' ? 'right' : 'below';
+    try {
+      localStorage.setItem('msgvault.reading-pane.position', previewPosition);
+    } catch {
+      // Keep the control usable when browser storage is unavailable.
+    }
+  }
 
   // coverage, coveragePollAttempts/coveragePollKey, visibleLexicalRowKeys,
   // lexicalCountCache/canonicalQueryHashes, and readingGroupDetail/
@@ -500,15 +522,28 @@
     <div>
       <h1>Everything</h1>
     </div>
-    <p class="result-count" aria-live="polite" data-mono>
-      {#if loader.result?.candidatePoolSaturated}
-        {loader.rows.length.toLocaleString()} {loader.rows.length === 1 ? 'result' : 'results'} shown
-      {:else if loader.result?.totalCount !== undefined}
-        {loader.result.totalCount.toLocaleString()} items
-      {:else}
-        Modality-neutral archive
+    <div class="workspace-view-controls">
+      {#if canPreviewRight}
+        <div class="preview-position">
+          <span>Preview position</span>
+          <SegmentedControl
+            ariaLabel="Preview position"
+            options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
+            value={previewPosition}
+            onchange={setPreviewPosition}
+          />
+        </div>
       {/if}
-    </p>
+      <p class="result-count" aria-live="polite" data-mono>
+        {#if loader.result?.candidatePoolSaturated}
+          {loader.rows.length.toLocaleString()} {loader.rows.length === 1 ? 'result' : 'results'} shown
+        {:else if loader.result?.totalCount !== undefined}
+          {loader.result.totalCount.toLocaleString()} items
+        {:else}
+          Modality-neutral archive
+        {/if}
+      </p>
+    </div>
   </header>
 
   <form class="search-bar" role="search" aria-label="Search Everything" onsubmit={submitSearch}>
@@ -588,14 +623,14 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
-  <div class="results-split">
+  <div class="results-split" class:results-split--right={previewRight} bind:clientWidth={resultsWidth}>
     <SplitPane
       ariaLabel="Resize reading pane"
-      storageKey="msgvault.reading-pane.size"
-      orientation="vertical"
-      initialFraction={0.55}
-      minPrimary={120}
-      minSecondary={160}
+      storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
+      orientation={previewRight ? 'horizontal' : 'vertical'}
+      initialFraction={previewRight ? 0.45 : 0.55}
+      minPrimary={previewRight ? 360 : 120}
+      minSecondary={previewRight ? 400 : 160}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
@@ -766,6 +801,18 @@
     gap: var(--space-6);
   }
 
+  .workspace-view-controls,
+  .preview-position {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .preview-position {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
   h1 {
     margin: 0;
     font-family: var(--font-sans);
@@ -846,6 +893,16 @@
     border: 1px solid var(--border-default);
     border-top: 0;
     border-radius: 0 0 var(--radius-md) var(--radius-md);
+  }
+
+  .results-split--right :global([data-pane]) {
+    overflow: hidden;
+  }
+
+  .results-split--right :global([data-pane='secondary']) {
+    border-top: 1px solid var(--border-default);
+    border-left: 0;
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
   }
 
   .keyboard-help {

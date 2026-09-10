@@ -23,8 +23,8 @@ export interface SanitizedArchivedHTML {
   remoteImages: string[];
   inlineImages: ArchivedInlineImage[];
   /** True when the sender authored a visual design (backgrounds or
-   * multi-column layout tables). Designed mail renders on its own white
-   * canvas; everything else inherits the shell theme. */
+   * multi-column layout tables). Used to preserve its white canvas in
+   * light mode; dark mode adapts email colors unless the reader opts out. */
   designed: boolean;
 }
 
