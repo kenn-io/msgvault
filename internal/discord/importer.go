@@ -132,6 +132,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			return nil, fmt.Errorf("convert Discord after bound: %w", err)
 		}
 	}
+	defer func() {
+		summary.Duration = time.Since(started)
+	}()
 	if lowerBound == "" {
 		// The automatic pass scans the complete source. Defer it for bounded
 		// imports so --after leaves earlier archive rows untouched.
@@ -146,13 +149,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			summary.RepairErrors = repairSummary.Errors
 		}
 		if repairErr != nil {
-			summary.Duration = time.Since(started)
 			return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
 		}
 	}
 	state, hadBaseline, stateErr := imp.initialState(source.ID, opts.Full, lowerBound)
 	if stateErr != nil {
-		return nil, stateErr
+		return summary, stateErr
 	}
 	if state == nil {
 		state = NewSyncState()
@@ -162,7 +164,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 
 	syncID, err := imp.store.StartSync(source.ID, sourceTypeDiscord)
 	if err != nil {
-		return nil, fmt.Errorf("start Discord sync: %w", err)
+		return summary, fmt.Errorf("start Discord sync: %w", err)
 	}
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
@@ -170,7 +172,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	summary.SyncRunID = syncID
 	completed := false
 	defer func() {
-		summary.Duration = time.Since(started)
 		if completed || retErr == nil {
 			return
 		}
