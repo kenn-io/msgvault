@@ -3492,9 +3492,9 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
 			}
 			if oauthMgr.HasToken(email) {
-				return nil, fmt.Errorf("get token source: %w (token may be expired; run 'sync %s' or 'verify %s' from an interactive terminal to re-authorize)", tsErr, email, email)
+				return nil, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)))
 			}
-			return nil, fmt.Errorf("get token source: %w (run 'add-account %s' first)", tsErr, email)
+			return nil, fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
 		}
 	}
 
