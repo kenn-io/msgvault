@@ -2,7 +2,6 @@ package gcal
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,6 +25,21 @@ func (u *unauthorizedTokenSource) Token() (*oauth2.Token, error) {
 	}
 }
 
+// flakyTokenSource mimics Google's token endpoint answering 503 once before
+// issuing a token: transient, so the request loop must retry it.
+type flakyTokenSource struct{ calls int }
+
+func (f *flakyTokenSource) Token() (*oauth2.Token, error) {
+	f.calls++
+	if f.calls == 1 {
+		return nil, &oauth2.RetrieveError{
+			Response: &http.Response{StatusCode: http.StatusServiceUnavailable},
+			Body:     []byte(`upstream unavailable`),
+		}
+	}
+	return &oauth2.Token{AccessToken: "t"}, nil
+}
+
 // A credential failure must surface immediately with Google's error text —
 // not be retried as a network error for ten minutes of backoff.
 func TestRequest_TokenSourceErrorFailsFast(t *testing.T) {
@@ -42,11 +56,28 @@ func TestRequest_TokenSourceErrorFailsFast(t *testing.T) {
 	_, err := c.ListCalendars(context.Background(), "")
 	require.Error(t, err)
 
+	assert := assert.New(t)
 	var rerr *oauth2.RetrieveError
-	assert.True(t, errors.As(err, &rerr), "the oauth2 RetrieveError must be preserved in the chain")
-	assert.Contains(t, err.Error(), "unauthorized_client")
-	assert.Equal(t, 1, ts.calls, "no retry on a credential error")
-	assert.Less(t, time.Since(start), 2*time.Second, "must not back off")
+	require.ErrorAs(t, err, &rerr, "the oauth2 RetrieveError must be preserved in the chain")
+	assert.Contains(err.Error(), "unauthorized_client")
+	assert.Equal(1, ts.calls, "no retry on a credential error")
+	assert.Less(time.Since(start), 2*time.Second, "must not back off")
+}
+
+// A 5xx from the token endpoint is not a credential problem and must go
+// through the normal retry policy instead of failing fast.
+func TestRequest_TransientTokenErrorIsRetried(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	ts := &flakyTokenSource{}
+	c := NewClient(ts, WithBaseURL(srv.URL))
+
+	_, err := c.ListCalendars(context.Background(), "")
+	require.NoError(t, err)
+	assert.Equal(t, 2, ts.calls, "token fetch retried after a 503")
 }
 
 // "API not enabled in this project" arrives as a 403 in domain usageLimits —
@@ -65,7 +96,8 @@ func TestRequest_AccessNotConfiguredFailsFast(t *testing.T) {
 	start := time.Now()
 	_, err := c.ListCalendars(context.Background(), "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has not been used in project")
-	assert.Equal(t, 1, calls, "no retry on accessNotConfigured")
-	assert.Less(t, time.Since(start), 2*time.Second)
+	assert := assert.New(t)
+	assert.Contains(err.Error(), "has not been used in project")
+	assert.Equal(1, calls, "no retry on accessNotConfigured")
+	assert.Less(time.Since(start), 2*time.Second)
 }

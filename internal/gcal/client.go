@@ -144,11 +144,13 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 		if err != nil {
 			// A token-source failure (e.g. a service account whose domain-wide
 			// delegation lacks the Calendar scope → 401 unauthorized_client)
-			// surfaces here as a transport error. It is a credential problem,
-			// not a network blip: retrying it would hide the real cause behind
-			// ten minutes of backoff, so fail immediately with Google's message.
+			// surfaces here as a transport error. A credential problem is not
+			// a network blip: retrying it would hide the real cause behind ten
+			// minutes of backoff, so fail immediately with Google's message.
+			// A 429 or 5xx from the token endpoint itself is transient and
+			// keeps the normal retry policy.
 			var rerr *oauth2.RetrieveError
-			if errors.As(err, &rerr) {
+			if errors.As(err, &rerr) && !isTransientTokenError(rerr) {
 				return nil, fmt.Errorf("oauth token for calendar request: %w", err)
 			}
 			lastErr = fmt.Errorf("http request: %w", err)
@@ -212,6 +214,16 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 	}
 	jittered := rand.Float64() * base //nolint:gosec // retry spread, not security-sensitive
 	return time.Duration(jittered * float64(time.Second))
+}
+
+// isTransientTokenError reports whether the token endpoint failed with a
+// status worth retrying (429 or 5xx) rather than rejecting the credentials.
+func isTransientTokenError(rerr *oauth2.RetrieveError) bool {
+	if rerr.Response == nil {
+		return false
+	}
+	code := rerr.Response.StatusCode
+	return code == http.StatusTooManyRequests || code >= http.StatusInternalServerError
 }
 
 // isRateLimitError reports whether a 403 body is a quota/rate-limit error

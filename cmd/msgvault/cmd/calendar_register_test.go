@@ -28,18 +28,20 @@ func TestRegisterCalendarsAndReport_RegistersSourcesAndReports(t *testing.T) {
 	var out bytes.Buffer
 	err := registerCalendarsAndReport(context.Background(), &out, st, api,
 		"alice@example.com", "acme", true)
-	require.NoError(t, err)
+	require := require.New(t)
+	assert := assert.New(t)
+	require.NoError(err)
 
 	for _, id := range []string{"alice@example.com/primary", "alice@example.com/team@group.calendar.google.com"} {
 		src, err := st.GetSourceByIdentifier(id)
-		require.NoError(t, err, id)
-		assert.Equal(t, "gcal", src.SourceType)
+		require.NoError(err, id)
+		assert.Equal("gcal", src.SourceType)
 	}
 	_, err = st.GetSourceByIdentifier("alice@example.com/holidays")
-	assert.Error(t, err, "reader-only calendar is not registered without --all-calendars")
+	require.Error(err, "reader-only calendar is not registered without --all-calendars")
 
-	assert.Contains(t, out.String(), "Registered 2 calendar(s) for alice@example.com")
-	assert.Contains(t, out.String(), "Next: ")
+	assert.Contains(out.String(), "Registered 2 calendar(s) for alice@example.com")
+	assert.Contains(out.String(), "Next: ")
 }
 
 func TestRegisterCalendarsAndReport_NoMatchIsNotAnError(t *testing.T) {
@@ -73,7 +75,8 @@ func TestPlanCLIAddCalendar_ServiceAccountAppNeedsNoConsent(t *testing.T) {
 		Email: "bob@example.com", OAuthApp: "sa", OAuthAppExplicit: true,
 	})
 	require.NoError(t, err, "service-account apps have no client_secrets and must not be asked for one")
-	assert.Equal(t, "sa", plan.OAuthApp)
-	assert.True(t, plan.OAuthAppResolved)
-	assert.False(t, plan.NeedsScopeEscalation)
+	assert := assert.New(t)
+	assert.Equal("sa", plan.OAuthApp)
+	assert.True(plan.OAuthAppResolved)
+	assert.False(plan.NeedsScopeEscalation)
 }
