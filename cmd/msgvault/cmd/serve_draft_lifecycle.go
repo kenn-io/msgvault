@@ -238,6 +238,17 @@ func (a *storeAPIAdapter) resolveDraftLifecycleTarget(ctx context.Context, inten
 	return draftLifecycleTarget{draft: draft, source: source, mailbox: draft.Mailbox, raw: raw}, nil
 }
 
+// draftRevisionForOutput returns the revision value a caller should supply as
+// --revision on their next invocation. While a pending marker is set the
+// stored revision is post-Begin (N+1), so the retry value is N; without a
+// marker the stored value is already correct.
+func draftRevisionForOutput(draft *store.IMAPDraft) int64 {
+	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
+		return draft.Revision - 1
+	}
+	return draft.Revision
+}
+
 // marshalDraftLifecycleOutput serializes output to JSON.
 func marshalDraftLifecycleOutput(output draftLifecycleOutput) []byte {
 	data, err := json.Marshal(output)
@@ -372,7 +383,7 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		Status:          "active",
 		DraftID:         draft.DraftID,
 		Lifecycle:       draft.Lifecycle,
-		Revision:        draft.Revision,
+		Revision:        draftRevisionForOutput(draft),
 		RFC822MessageID: draft.RFC822MessageID,
 		ProviderStatus:  providerStatus,
 		SourceID:        draft.SourceID,
@@ -447,12 +458,13 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
 				return draftReplyError("internal", fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
 			}
-			var pendingUID int64
-			if draft.PendingUID.Valid {
-				pendingUID = draft.PendingUID.Int64
+			if draft.PendingUID.Valid && uint32(draft.PendingUID.Int64) != draft.UID {
+				// Persist committed: pending_uid names the pre-edit copy; safe to remove.
+				return draftReplyError("edit_interrupted",
+					fmt.Errorf("draft %d had an interrupted edit; stale copy UID=%d may remain in Drafts mailbox — remove it and retry", intent.DraftID, draft.PendingUID.Int64))
 			}
 			return draftReplyError("edit_interrupted",
-				fmt.Errorf("draft %d had an interrupted edit; pending copy UID=%d may remain in Drafts mailbox — remove it and retry", intent.DraftID, pendingUID))
+				fmt.Errorf("draft %d had an interrupted edit; an untracked duplicate of the draft may remain in the Drafts mailbox — the tracked copy is the one local state still points at; remove a duplicate only if you see one, then retry", intent.DraftID))
 		}
 	}
 
@@ -774,7 +786,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 				Status:       "delete_failed",
 				DraftID:      intent.DraftID,
 				Lifecycle:    "active",
-				Revision:     claimedDraft.Revision,
+				Revision:     draftRevisionForOutput(claimedDraft),
 				OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: draft.UIDValidity, UID: draft.UID}),
 			}
 			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
@@ -784,7 +796,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			Status:    "delete_failed",
 			DraftID:   intent.DraftID,
 			Lifecycle: "active",
-			Revision:  claimedDraft.Revision,
+			Revision:  draftRevisionForOutput(claimedDraft),
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", removeErr)
@@ -799,7 +811,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			Status:    "delete_failed",
 			DraftID:   intent.DraftID,
 			Lifecycle: "active",
-			Revision:  claimedDraft.Revision,
+			Revision:  draftRevisionForOutput(claimedDraft),
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", fmt.Errorf("remote draft state changed: %s", removeResult.State))

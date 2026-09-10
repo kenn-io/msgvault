@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -815,6 +817,169 @@ func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
 	require.Error(t, editErr)
 	assert.Equal(t, "edit_interrupted", editErr.Error(),
 		"stale pending-edit marker must produce edit_interrupted after clearing")
+}
+
+// TestDraftEditInterruptedMessageMatchingUID verifies that when pending_uid
+// equals uid (Persist did not commit), edit_interrupted does not name any UID —
+// naming the tracked UID would tell the operator to remove the live copy.
+func TestDraftEditInterruptedMessageMatchingUID(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	staleTime := time.Now().Add(-60 * time.Minute)
+	// uid == pending_uid: simulate crash between Begin and Persist.
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
+	require.True(t, ok)
+	// Must not name any UID — the tracked copy is still the live one.
+	assert.NotContains(t, coded.Err.Error(), "UID=")
+}
+
+// TestDraftEditInterruptedMessageDifferentUID verifies that when pending_uid
+// differs from uid (Persist committed), edit_interrupted names pending_uid as
+// the stale removable copy.
+func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	staleTime := time.Now().Add(-60 * time.Minute)
+	// Record the original uid, then advance uid to simulate Persist committing.
+	var origUID int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(
+		`SELECT uid FROM imap_drafts WHERE draft_id = ?`), f.draftID).Scan(&origUID))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1,
+		    uid = 99999
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
+	require.True(t, ok)
+	// Must name pending_uid (the stale pre-edit copy) in the message.
+	assert.Contains(t, coded.Err.Error(), fmt.Sprintf("UID=%d", origUID))
+	// Must not name the post-Persist uid (the tracked live copy).
+	assert.NotContains(t, coded.Err.Error(), "UID=99999")
+}
+
+// TestDraftDeleteRevisionRoundTrip verifies that the revision in delete_failed
+// JSON output is the value the retry must pass as --revision. A consumer that
+// reads revision off the failure event and retries with it must succeed.
+func TestDraftDeleteRevisionRoundTrip(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Fail the first RemoveDraft call to produce delete_failed.
+	counter := &sharedRemoveCounter{}
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
+
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1", "--json"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "delete_failed", err.Error())
+	require.NotEmpty(t, evs, "delete_failed must emit an event")
+
+	// Read revision from the emitted JSON — this is what a --json consumer would do.
+	var failOutput map[string]any
+	require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &failOutput))
+	revisionVal, ok := failOutput["revision"].(float64)
+	require.True(t, ok, "emitted JSON must contain revision field")
+	retryRevision := strconv.FormatInt(int64(revisionVal), 10)
+
+	// Retry with the emitted revision; must succeed.
+	_, retryErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision="+retryRevision)
+	require.NoError(t, retryErr, "retry with emitted revision must succeed")
+}
+
+// TestDraftEditRefusesWrongGrantMailbox verifies that draft-edit returns
+// draft_disabled when the policy mailbox does not match the draft's mailbox,
+// and does so without opening any IMAP connection.
+func TestDraftEditRefusesWrongGrantMailbox(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	var imapOpened bool
+	adapter := &storeAPIAdapter{
+		store:       f.store,
+		draftPolicy: []config.IMAPDraftSource{{SourceID: f.source.ID, Enabled: true, Mailbox: "WrongMailbox"}},
+		draftLifecycleClientFactory: func(context.Context, *store.Source) (draftClient, error) {
+			imapOpened = true
+			return nil, errors.New("must not open IMAP connection for mismatched mailbox")
+		},
+	}
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=test"},
+	}, nil)
+	require.Error(t, err)
+	assert.Equal(t, "draft_disabled", err.Error())
+	assert.False(t, imapOpened, "IMAP must not be opened when grant mailbox mismatches")
+}
+
+// TestDraftDeleteRefusesWrongGrantMailbox verifies that draft-delete returns
+// draft_disabled when the policy mailbox does not match the draft's mailbox,
+// and does so without opening any IMAP connection.
+func TestDraftDeleteRefusesWrongGrantMailbox(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	var imapOpened bool
+	adapter := &storeAPIAdapter{
+		store:       f.store,
+		draftPolicy: []config.IMAPDraftSource{{SourceID: f.source.ID, Enabled: true, Mailbox: "WrongMailbox"}},
+		draftLifecycleClientFactory: func(context.Context, *store.Source) (draftClient, error) {
+			imapOpened = true
+			return nil, errors.New("must not open IMAP connection for mismatched mailbox")
+		},
+	}
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+	}, nil)
+	require.Error(t, err)
+	assert.Equal(t, "draft_disabled", err.Error())
+	assert.False(t, imapOpened, "IMAP must not be opened when grant mailbox mismatches")
+}
+
+// TestDraftGetReportsNotCheckedForWrongGrantMailbox verifies that draft-get
+// returns provider_status=not_checked when the policy mailbox does not match
+// the draft's mailbox, without opening any IMAP connection.
+func TestDraftGetReportsNotCheckedForWrongGrantMailbox(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	var imapOpened bool
+	adapter := &storeAPIAdapter{
+		store:       f.store,
+		draftPolicy: []config.IMAPDraftSource{{SourceID: f.source.ID, Enabled: true, Mailbox: "WrongMailbox"}},
+		draftLifecycleClientFactory: func(context.Context, *store.Source) (draftClient, error) {
+			imapOpened = true
+			return nil, errors.New("must not open IMAP connection for mismatched mailbox")
+		},
+	}
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-get", strconv.FormatInt(f.draftID, 10), "--json"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &result))
+	assert.Equal(t, "not_checked", result["provider_status"])
+	assert.False(t, imapOpened, "IMAP must not be opened when grant mailbox mismatches")
 }
 
 // TestConcurrentDraftDeletePendingDiscard verifies that two concurrent
