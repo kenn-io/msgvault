@@ -4,7 +4,6 @@
 
 export interface AgentTokenIssueRequest {
   label: string;
-  lifetime?: string;
   permissions: string[];
   source_ids: number[];
 }

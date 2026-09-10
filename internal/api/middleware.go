@@ -305,7 +305,7 @@ func agentTokenHeaderValue(r *http.Request) (string, bool) {
 
 // ownerCredentialPresented returns true if the request carries any credential
 // that could identify the owner: API key, Authorization header, session cookie,
-// daemon runtime token, or a header value containing the mva1_ prefix.
+// or daemon runtime token.
 func ownerCredentialPresented(r *http.Request) bool {
 	if v := r.Header.Get("X-Api-Key"); v != "" {
 		return true
@@ -318,12 +318,6 @@ func ownerCredentialPresented(r *http.Request) bool {
 	}
 	if v := r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader); v != "" {
 		return true
-	}
-	// Check for mva1_ prefix in any of the credential headers
-	for _, hdr := range []string{"X-Api-Key", "Authorization", apiprotocol.DaemonRuntimeTokenHeader} {
-		if strings.Contains(r.Header.Get(hdr), "mva1_") {
-			return true
-		}
 	}
 	return false
 }

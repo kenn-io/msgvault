@@ -276,6 +276,26 @@ func TestRunCLIReplyDraftDeniesBeforeConnecting(t *testing.T) {
 		})
 	}
 
+	t.Run("cwd", func(t *testing.T) {
+		adapter := &storeAPIAdapter{store: fixture.store, draftClientFactory: refuseConnect}
+		var events []api.CLIRunEvent
+		err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+			Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--body", "reply body"},
+			Cwd:  "/tmp",
+		}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		requirements.Error(err)
+		assertions.Empty(events)
+		assertions.Equal("invalid_args", err.Error())
+		coded, ok := errors.AsType[*api.CLIRunCodedError](err)
+		requirements.True(ok)
+		requirements.ErrorContains(coded.Err, "working directory")
+	})
+
 	t.Run("unconfirmed identity", func(t *testing.T) {
 		adapter := &storeAPIAdapter{
 			store:              fixture.store,
@@ -481,7 +501,6 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 		Sources: []agentgrant.SourceRef{
 			{ID: fixture.source.ID + 999, Type: "imap", Identifier: "other@example.com"},
 		},
-		ExpiresAt: time.Now().Add(time.Hour),
 	}
 
 	intent := draftReplyIntent{
@@ -512,13 +531,11 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		ID:          "g-in-grant",
 		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		Sources:     []agentgrant.SourceRef{inGrantRef},
-		ExpiresAt:   time.Now().Add(time.Hour),
 	}
 	outOfGrant := &agentgrant.Grant{
 		ID:          "g-other",
 		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		Sources:     []agentgrant.SourceRef{{ID: 9999, Type: "imap", Identifier: "stranger@example.com"}},
-		ExpiresAt:   time.Now().Add(time.Hour),
 	}
 
 	intent := draftReplyIntent{

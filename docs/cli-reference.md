@@ -48,7 +48,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
-4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` and `show-message` are available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv.
+4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` is available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv.
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
@@ -2906,7 +2906,7 @@ user-managed daemon achieves that, and so does an isolated local agent environme
 a second daemon or data directory under the same unrestricted user does not.
 
 Tokens are in-memory and process-scoped. All grants are invalidated when the daemon
-restarts. The default lifetime is **24 hours**; supply `--lifetime` on `issue` to override.
+restarts. A grant is valid until it is revoked or the daemon restarts.
 There is no persistence to disk and no migration needed.
 
 ### agent-token issue
@@ -2917,16 +2917,17 @@ can read, never pass it as a flag or environment variable.
 
 ```bash
 msgvault agent-token issue --label <name> \
-  --permissions draft.create,message.read \
+  --permissions draft.create \
   --source-ids <id>[,<id>...]
 ```
 
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create`, `message.read` |
+| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create` |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
-| `--lifetime <duration>` | Grant lifetime (default: `24h`); the grant is invalidated at expiry or daemon restart |
+
+The grant is valid until revoked or until the daemon restarts.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
@@ -2940,7 +2941,7 @@ msgvault agent-token list
 ```
 
 Each row shows the grant ID, label, permissions, source references (ID, type, and identifier),
-creation time, and expiry time.
+and creation time.
 
 ### agent-token revoke
 

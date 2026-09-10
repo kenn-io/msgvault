@@ -146,7 +146,6 @@ func (a Address) Validate() error {
 
 type AgentTokenIssueRequest struct {
 	Label       string   `json:"label" validate:"required"`
-	Lifetime    *string  `json:"lifetime,omitempty"`
 	Permissions []string `json:"permissions" validate:"required"`
 	SourceIds   []int64  `json:"source_ids" validate:"required"`
 }
@@ -158,7 +157,6 @@ func (a AgentTokenIssueRequest) Validate() error {
 type AgentTokenIssueResponse struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
 	DaemonURL   string                 `json:"daemon_url" validate:"required"`
-	ExpiresAt   time.Time              `json:"expires_at" validate:"required"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`
@@ -173,9 +171,6 @@ func (a AgentTokenIssueResponse) Validate() error {
 	}
 	if err := typesValidator.Var(a.DaemonURL, "required"); err != nil {
 		errors = errors.Append("DaemonURL", err)
-	}
-	if err := typesValidator.Var(a.ExpiresAt, "required"); err != nil {
-		errors = errors.Append("ExpiresAt", err)
 	}
 	if err := typesValidator.Var(a.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
@@ -233,7 +228,6 @@ func (a AgentTokenSourceView) Validate() error {
 
 type AgentTokenView struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
-	ExpiresAt   time.Time              `json:"expires_at" validate:"required"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`
@@ -244,9 +238,6 @@ func (a AgentTokenView) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(a.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
-	}
-	if err := typesValidator.Var(a.ExpiresAt, "required"); err != nil {
-		errors = errors.Append("ExpiresAt", err)
 	}
 	if err := typesValidator.Var(a.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)

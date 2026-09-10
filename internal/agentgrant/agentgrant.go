@@ -15,12 +15,10 @@ type Permission string
 
 const (
 	PermissionDraftCreate Permission = "draft.create"
-	PermissionMessageRead Permission = "message.read"
 )
 
 var knownPermissions = map[string]Permission{
 	string(PermissionDraftCreate): PermissionDraftCreate,
-	string(PermissionMessageRead): PermissionMessageRead,
 }
 
 func KnownPermission(s string) (Permission, bool) {
@@ -29,11 +27,12 @@ func KnownPermission(s string) (Permission, bool) {
 }
 
 func AllPermissions() []Permission {
-	return []Permission{PermissionDraftCreate, PermissionMessageRead}
+	return []Permission{PermissionDraftCreate}
 }
 
-// SourceRef is the repo's durable source identity: (id, type, identifier).
-// Matches internal/deletion/manifest.go:99-106.
+// SourceRef carries the repo's durable source identity: (id, type, identifier).
+// SourceRef carries ID as a diagnostic field only; matching uses (Type, Identifier)
+// which are portable across re-adds (manifest.go:99-101).
 type SourceRef struct {
 	ID         int64
 	Type       string
@@ -46,10 +45,9 @@ type Grant struct {
 	Permissions []Permission
 	Sources     []SourceRef
 	CreatedAt   time.Time
-	ExpiresAt   time.Time
 }
 
-// Allows returns true only when p is in the grant AND some SourceRef matches all three fields.
+// Allows returns true only when p is in the grant AND some SourceRef matches Type and Identifier.
 func (g Grant) Allows(p Permission, src SourceRef) bool {
 	hasPerm := false
 	for _, gp := range g.Permissions {
@@ -62,14 +60,13 @@ func (g Grant) Allows(p Permission, src SourceRef) bool {
 		return false
 	}
 	for _, s := range g.Sources {
-		if s.ID == src.ID && s.Type == src.Type && s.Identifier == src.Identifier {
+		if s.Type == src.Type && s.Identifier == src.Identifier {
 			return true
 		}
 	}
 	return false
 }
 
-const DefaultLifetime = 24 * time.Hour
 const secretBytes = 32
 const secretPrefix = "mva1_"
 
@@ -81,14 +78,13 @@ type entry struct {
 type Registry struct {
 	mu      sync.Mutex
 	entries map[string]entry // keyed by grant ID
-	now     func() time.Time
 }
 
-func NewRegistry(now func() time.Time) *Registry {
-	return &Registry{entries: make(map[string]entry), now: now}
+func NewRegistry() *Registry {
+	return &Registry{entries: make(map[string]entry)}
 }
 
-func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, lifetime time.Duration) (id, secret string, g Grant, err error) {
+func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
 	if label == "" {
 		return "", "", Grant{}, errors.New("agentgrant: label must not be empty")
 	}
@@ -118,9 +114,6 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 		}
 		seen[s.ID] = struct{}{}
 	}
-	if lifetime <= 0 {
-		lifetime = DefaultLifetime
-	}
 
 	// generate ID
 	var idBuf [16]byte
@@ -137,14 +130,12 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 	secretPlain := secretPrefix + base64.RawURLEncoding.EncodeToString(secretBuf[:])
 	digest := sha256.Sum256([]byte(secretPlain))
 
-	now := r.now()
 	g = Grant{
 		ID:          id,
 		Label:       label,
 		Permissions: append([]Permission(nil), perms...),
 		Sources:     append([]SourceRef(nil), sources...),
-		CreatedAt:   now,
-		ExpiresAt:   now.Add(lifetime),
+		CreatedAt:   time.Now(),
 	}
 
 	r.mu.Lock()
@@ -156,16 +147,11 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 
 func (r *Registry) Lookup(secret string) (Grant, bool) {
 	digest := sha256.Sum256([]byte(secret))
-	now := r.now()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for id, e := range r.entries {
-		if !e.grant.ExpiresAt.After(now) {
-			delete(r.entries, id)
-			continue
-		}
+	for _, e := range r.entries {
 		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 {
 			g := e.grant
 			return Grant{
@@ -174,7 +160,6 @@ func (r *Registry) Lookup(secret string) (Grant, bool) {
 				Permissions: append([]Permission(nil), g.Permissions...),
 				Sources:     append([]SourceRef(nil), g.Sources...),
 				CreatedAt:   g.CreatedAt,
-				ExpiresAt:   g.ExpiresAt,
 			}, true
 		}
 	}
@@ -182,15 +167,10 @@ func (r *Registry) Lookup(secret string) (Grant, bool) {
 }
 
 func (r *Registry) List() []Grant {
-	now := r.now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []Grant
-	for id, e := range r.entries {
-		if !e.grant.ExpiresAt.After(now) {
-			delete(r.entries, id)
-			continue
-		}
+	for _, e := range r.entries {
 		g := e.grant
 		out = append(out, Grant{
 			ID:          g.ID,
@@ -198,7 +178,6 @@ func (r *Registry) List() []Grant {
 			Permissions: append([]Permission(nil), g.Permissions...),
 			Sources:     append([]SourceRef(nil), g.Sources...),
 			CreatedAt:   g.CreatedAt,
-			ExpiresAt:   g.ExpiresAt,
 		})
 	}
 	return out

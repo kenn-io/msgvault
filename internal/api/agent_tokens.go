@@ -1,17 +1,24 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/store"
 )
+
+// agentGrantSourceResolver is the narrow interface on s.store needed by
+// handleIssueAgentToken to resolve a source ID to a SourceRef.
+type agentGrantSourceResolver interface {
+	GetSourceByIDContext(ctx context.Context, id int64) (*store.Source, error)
+}
 
 // agentTokenIssueRequest is the body for POST /agent-tokens.
 type agentTokenIssueRequest struct {
 	Label       string   `json:"label"`
-	LifetimeStr string   `json:"lifetime,omitempty"` // e.g. "24h"; omit for default
 	Permissions []string `json:"permissions"`
 	SourceIDs   []int64  `json:"source_ids"`
 }
@@ -25,7 +32,6 @@ type agentTokenIssueResponse struct {
 	Permissions []string               `json:"permissions"`
 	Sources     []agentTokenSourceView `json:"sources"`
 	CreatedAt   time.Time              `json:"created_at"`
-	ExpiresAt   time.Time              `json:"expires_at"`
 	DaemonURL   string                 `json:"daemon_url"`
 }
 
@@ -36,7 +42,6 @@ type agentTokenView struct {
 	Permissions []string               `json:"permissions"`
 	Sources     []agentTokenSourceView `json:"sources"`
 	CreatedAt   time.Time              `json:"created_at"`
-	ExpiresAt   time.Time              `json:"expires_at"`
 }
 
 type agentTokenSourceView struct {
@@ -64,7 +69,6 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 		Permissions: perms,
 		Sources:     sources,
 		CreatedAt:   g.CreatedAt,
-		ExpiresAt:   g.ExpiresAt,
 	}
 }
 
@@ -153,18 +157,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Parse lifetime
-	var lifetime time.Duration
-	if req.LifetimeStr != "" {
-		var err error
-		lifetime, err = time.ParseDuration(req.LifetimeStr)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_lifetime", "invalid duration: "+req.LifetimeStr)
-			return
-		}
-	}
-
-	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources, lifetime)
+	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -196,7 +189,6 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		Permissions: permStrs,
 		Sources:     srcViews,
 		CreatedAt:   g.CreatedAt,
-		ExpiresAt:   g.ExpiresAt,
 		DaemonURL:   daemonURL,
 	})
 }

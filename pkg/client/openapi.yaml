@@ -172,8 +172,6 @@ components:
       properties:
         label:
           type: string
-        lifetime:
-          type: string
         permissions:
           items:
             type: string
@@ -194,9 +192,6 @@ components:
           format: date-time
           type: string
         daemon_url:
-          type: string
-        expires_at:
-          format: date-time
           type: string
         id:
           type: string
@@ -219,7 +214,6 @@ components:
         - permissions
         - sources
         - created_at
-        - expires_at
         - daemon_url
       type: object
     AgentTokenListResponse:
@@ -250,9 +244,6 @@ components:
         created_at:
           format: date-time
           type: string
-        expires_at:
-          format: date-time
-          type: string
         id:
           type: string
         label:
@@ -271,7 +262,6 @@ components:
         - permissions
         - sources
         - created_at
-        - expires_at
       type: object
     AggregateResponse:
       properties:

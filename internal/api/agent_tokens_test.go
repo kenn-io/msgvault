@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +22,7 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 	// First "instance": issue a grant.
 	_, reg1 := newAgentTokenTestServer(t)
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg1.Issue("pre-restart", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, agentgrant.DefaultLifetime)
+	_, secret, _, err := reg1.Issue("pre-restart", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
 	require.NoError(t, err)
 
 	// Confirm the grant is valid in the first registry.
@@ -46,7 +45,7 @@ func TestRevocationDeniesNextRequest(t *testing.T) {
 	srv, reg := newAgentTokenTestServer(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	grantID, secret, _, err := reg.Issue("revoke-me", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, agentgrant.DefaultLifetime)
+	grantID, secret, _, err := reg.Issue("revoke-me", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
 	require.NoError(t, err)
 
 	// Pre-revocation: getHealth is allowed for delegated callers.
@@ -75,7 +74,7 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	srv, reg := newAgentTokenTestServer(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("health-check", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, agentgrant.DefaultLifetime)
+	_, secret, _, err := reg.Issue("health-check", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
 	require.NoError(t, err)
 
 	// Delegated caller.
@@ -110,7 +109,7 @@ const agentTokenTestAPIKey = "owner-api-key-for-agent-tests"
 
 func newAgentTokenTestServer(t *testing.T) (*Server, *agentgrant.Registry) {
 	t.Helper()
-	reg := agentgrant.NewRegistry(time.Now)
+	reg := agentgrant.NewRegistry()
 	stub := &stubSourceStore{
 		src: &store.Source{
 			ID:         1,
@@ -167,7 +166,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	t.Run("delegated token gets 401", func(t *testing.T) {
 		// Issue a grant first
 		src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-		_, secret, _, issuErr := reg.Issue("delegated-caller", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, agentgrant.DefaultLifetime)
+		_, secret, _, issuErr := reg.Issue("delegated-caller", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
 		require.NoError(t, issuErr)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
@@ -261,4 +260,53 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 	}
 	// Verify no secret field in list body
 	assert.NotContains(t, w2.Body.String(), issueResp.Secret, "secret must not appear in list response")
+}
+
+// TestRevocationDeniesSubsequentAuthentication verifies the full HTTP
+// issue → authenticate → revoke → authenticate cycle using only the HTTP
+// endpoints (POST /api/v1/agent-tokens, GET /api/v1/health,
+// DELETE /api/v1/agent-tokens/{id}).
+func TestRevocationDeniesSubsequentAuthentication(t *testing.T) {
+	srv, _ := newAgentTokenTestServer(t)
+
+	// Step 1: issue a grant via HTTP.
+	reqBody := agentTokenIssueRequest{
+		Label:       "revoke-http-test",
+		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs:   []int64{1},
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	issueReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+	issueReq.Header.Set("Content-Type", "application/json")
+	issueReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	issueW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issueW, issueReq)
+	require.Equal(t, http.StatusCreated, issueW.Code, "issue: %s", issueW.Body.String())
+
+	var issued agentTokenIssueResponse
+	require.NoError(t, json.NewDecoder(issueW.Body).Decode(&issued))
+	require.NotEmpty(t, issued.ID)
+	require.NotEmpty(t, issued.Secret)
+
+	// Step 2: prove the token authenticates.
+	healthReq1 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq1.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	healthW1 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(healthW1, healthReq1)
+	assert.Equal(t, http.StatusOK, healthW1.Code, "pre-revocation: token must authenticate")
+
+	// Step 3: revoke via HTTP.
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/"+issued.ID, nil)
+	revokeReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	revokeW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(revokeW, revokeReq)
+	assert.Equal(t, http.StatusNoContent, revokeW.Code, "revoke: %s", revokeW.Body.String())
+
+	// Step 4: prove the token no longer authenticates.
+	healthReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq2.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	healthW2 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(healthW2, healthReq2)
+	assert.Equal(t, http.StatusUnauthorized, healthW2.Code, "post-revocation: revoked token must return 401")
 }

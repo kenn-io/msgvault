@@ -16,7 +16,6 @@ var (
 	agentTokenLabel       string
 	agentTokenPermissions []string
 	agentTokenSourceIDs   string // comma-separated source IDs
-	agentTokenLifetime    string
 	agentTokenJSON        bool
 )
 
@@ -27,8 +26,8 @@ var agentTokenCmd = &cobra.Command{
 		"Agent tokens allow delegated callers (e.g. AI agents) to perform a\n" +
 		"limited set of operations on behalf of the archive owner without\n" +
 		"exposing the full owner API key. Each token declares the permissions\n" +
-		"and source IDs it may access. Tokens expire automatically after their\n" +
-		"configured lifetime (default 24 h).\n\n" +
+		"and source IDs it may access. A grant is valid until revoked or until\n" +
+		"the daemon restarts.\n\n" +
 		"Requires agent_access = true and api_key to be set in config.toml.",
 }
 
@@ -53,7 +52,6 @@ var agentTokenIssueCmd = &cobra.Command{
 			agentTokenLabel,
 			agentTokenPermissions,
 			sourceIDs,
-			agentTokenLifetime,
 		)
 		if err != nil {
 			return err
@@ -141,7 +139,7 @@ func printAgentTokenIssueResult(cmd *cobra.Command, r *daemonclient.AgentTokenIs
 		_, _ = fmt.Fprintf(w, "Sources:     %s\n", strings.Join(parts, ", "))
 	}
 	_, _ = fmt.Fprintf(w, "Created:     %s\n", r.CreatedAt.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(w, "Expires:     %s\n", r.ExpiresAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "Valid until: revoked or daemon restart\n")
 	if r.DaemonURL != "" {
 		_, _ = fmt.Fprintf(w, "Daemon URL:  %s\n", r.DaemonURL)
 	}
@@ -154,13 +152,13 @@ func printAgentTokenList(cmd *cobra.Command, tokens []daemonclient.AgentTokenVie
 		return
 	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tCREATED")
 	for _, t := range tokens {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 			t.ID,
 			t.Label,
 			strings.Join(t.Permissions, ","),
-			t.ExpiresAt.Format(time.RFC3339),
+			t.CreatedAt.Format(time.RFC3339),
 		)
 	}
 	_ = tw.Flush()
@@ -173,11 +171,9 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated list of permissions to grant (e.g. run_cli,read_message)")
+		"Comma-separated list of permissions to grant (e.g. draft.create)")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
-	agentTokenIssueCmd.Flags().StringVar(&agentTokenLifetime, "lifetime", "",
-		"Token lifetime as a Go duration string (default: 24h)")
 	agentTokenIssueCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")
 	agentTokenListCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")
 }

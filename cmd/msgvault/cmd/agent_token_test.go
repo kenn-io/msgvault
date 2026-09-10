@@ -245,18 +245,87 @@ func TestOpenAgentDelegatedStoreRejectsLocalFlag(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "incompatible"), err.Error())
 }
 
+// TestOpenAgentDelegatedStoreRequiresBothFlags verifies that providing only one
+// of --agent-url or --agent-token-file is an error (either flag triggers
+// delegated mode; the other is then required).
+func TestOpenAgentDelegatedStoreRequiresBothFlags(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "agent.token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("mva1_abc"), 0o600))
+
+	t.Run("agent-url alone errors", func(t *testing.T) {
+		oldURL, oldFile := agentURL, agentTokenFile
+		agentURL = "http://daemon:8080"
+		agentTokenFile = ""
+		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+
+		_, _, err := openAgentDelegatedStore(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--agent-token-file")
+	})
+
+	t.Run("agent-token-file alone errors", func(t *testing.T) {
+		oldURL, oldFile := agentURL, agentTokenFile
+		agentURL = ""
+		agentTokenFile = tokenFile
+		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+
+		_, _, err := openAgentDelegatedStore(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--agent-url")
+	})
+}
+
+// TestAgentModeRejectsConfigFlag verifies that --config is rejected in
+// agent-delegated mode for a delegated-capable command.
+func TestAgentModeRejectsConfigFlag(t *testing.T) {
+	oldURL, oldFile := agentURL, agentTokenFile
+	oldCfg := cfgFile
+	agentURL = "http://daemon:8080"
+	agentTokenFile = "/tmp/token"
+	cfgFile = "/tmp/config.toml"
+	t.Cleanup(func() {
+		agentURL = oldURL
+		agentTokenFile = oldFile
+		cfgFile = oldCfg
+	})
+
+	cmd := &cobra.Command{Use: "draft-reply"}
+	err := rootCmd.PersistentPreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--config")
+}
+
+// TestAgentModeRejectsHomeFlag verifies that --home is rejected in
+// agent-delegated mode for a delegated-capable command.
+func TestAgentModeRejectsHomeFlag(t *testing.T) {
+	oldURL, oldFile := agentURL, agentTokenFile
+	oldHome := homeDir
+	agentURL = "http://daemon:8080"
+	agentTokenFile = "/tmp/token"
+	homeDir = "/tmp/home"
+	t.Cleanup(func() {
+		agentURL = oldURL
+		agentTokenFile = oldFile
+		homeDir = oldHome
+	})
+
+	cmd := &cobra.Command{Use: "draft-reply"}
+	err := rootCmd.PersistentPreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--home")
+}
+
 // TestGrantDeniesDifferentAccountOnReusedRowid tests proof matrix row 6.
-// Grant.Allows uses all three fields (ID, Type, Identifier). A source that
-// shares only the row ID or only the Identifier with the granted source is
-// denied: a reused SQLite rowid with a different account must not inherit the
-// grant, and re-adding the same account under a new rowid also does not match.
+// After D7, Grant.Allows uses (Type, Identifier) for matching; ID is kept as
+// a diagnostic field. A reused SQLite rowid belonging to a different account
+// (different Identifier) is denied. Re-adding the same account under a new
+// rowid is now allowed since type+identifier match.
 func TestGrantDeniesDifferentAccountOnReusedRowid(t *testing.T) {
 	original := agentgrant.SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com"}
 	g := agentgrant.Grant{
 		ID:          "g-reuse",
 		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		Sources:     []agentgrant.SourceRef{original},
-		ExpiresAt:   time.Now().Add(time.Hour),
 	}
 
 	// Same row ID, different Identifier: the account was removed and a new one
@@ -266,10 +335,11 @@ func TestGrantDeniesDifferentAccountOnReusedRowid(t *testing.T) {
 		"reused rowid with different identifier must be denied")
 
 	// Same Identifier, different ID: the same account re-added after removal
-	// got a new rowid. The grant still references the old ID and must not match.
+	// got a new rowid. After D7, matching uses (Type, Identifier) only —
+	// ID is kept as a diagnostic but is not required for matching.
 	sameIdentifierNewID := agentgrant.SourceRef{ID: 99, Type: "imap", Identifier: "imap://alice@example.com"}
-	assert.False(t, g.Allows(agentgrant.PermissionDraftCreate, sameIdentifierNewID),
-		"same identifier with different ID must be denied: grant is bound to the exact (id, type, identifier) triple")
+	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sameIdentifierNewID),
+		"same type+identifier with different ID must be allowed: ID is diagnostic only")
 
 	// Original triple still passes.
 	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, original),
@@ -277,31 +347,30 @@ func TestGrantDeniesDifferentAccountOnReusedRowid(t *testing.T) {
 }
 
 // TestGrantFollowsRecreatedSource tests proof matrix row 22.
-// A grant follows an account only when all three fields (ID, Type, Identifier)
-// match. Re-adding the identical account on the same rowid succeeds; a
-// different account on the same rowid does not.
+// After D7, matching uses (Type, Identifier) only — ID is kept as a
+// diagnostic but is not required for matching. A grant therefore follows
+// the account across a remove-and-re-add (new rowid, same type+identifier),
+// while a genuinely different account on the same rowid is still denied.
 func TestGrantFollowsRecreatedSource(t *testing.T) {
 	sourceA := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://user@host"}
 	g := agentgrant.Grant{
 		ID:          "g-recreated",
 		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		Sources:     []agentgrant.SourceRef{sourceA},
-		ExpiresAt:   time.Now().Add(time.Hour),
 	}
 
 	// Account removed and re-added with same credentials → new rowid (SQLite auto-increment).
-	// The new rowid breaks the ID match; the grant does not follow.
+	// After D7, type+identifier match is sufficient; the grant follows the account.
 	sourceANewRowid := agentgrant.SourceRef{ID: 2, Type: "imap", Identifier: "imap://user@host"}
-	assert.False(t, g.Allows(agentgrant.PermissionDraftCreate, sourceANewRowid),
-		"re-added source with new rowid must be denied: ID changed")
+	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sourceANewRowid),
+		"re-added source with new rowid must be allowed: type+identifier match and ID is diagnostic only")
 
 	// A completely different account that happens to land on the reused rowid 1.
 	differentAccountSameRowid := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://other@host"}
 	assert.False(t, g.Allows(agentgrant.PermissionDraftCreate, differentAccountSameRowid),
 		"different account on reused rowid must be denied: identifier differs")
 
-	// The exact original triple still works: either the original source was never
-	// removed, or the re-add happened to reuse all three fields identically.
+	// The exact original triple still works.
 	sourceAExactMatch := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://user@host"}
 	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sourceAExactMatch),
 		"re-added source with all three fields matching must succeed")

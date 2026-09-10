@@ -24,7 +24,6 @@ type AgentTokenView struct {
 	Permissions []string               `json:"permissions"`
 	Sources     []AgentTokenSourceView `json:"sources"`
 	CreatedAt   time.Time              `json:"created_at"`
-	ExpiresAt   time.Time              `json:"expires_at"`
 }
 
 // AgentTokenIssueResult holds the one-time result of issuing a new agent grant.
@@ -39,7 +38,6 @@ type agentTokenIssueBody struct {
 	Label       string   `json:"label"`
 	Permissions []string `json:"permissions"`
 	SourceIDs   []int64  `json:"source_ids"`
-	Lifetime    string   `json:"lifetime,omitempty"`
 }
 
 // agentTokenOptions implements runtime.RequestOptions for the agent-token endpoints.
@@ -86,12 +84,11 @@ func errorResponseFromBytes(status int, body []byte) *http.Response {
 
 // IssueAgentToken creates a new restricted agent grant and returns its metadata
 // and the one-time secret. The caller must store the secret immediately.
-func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64, lifetime string) (*AgentTokenIssueResult, error) {
+func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64) (*AgentTokenIssueResult, error) {
 	reqBody := agentTokenIssueBody{
 		Label:       label,
 		Permissions: permissions,
 		SourceIDs:   sourceIDs,
-		Lifetime:    lifetime,
 	}
 	raw, status, err := c.doAgentTokenRequest(ctx, http.MethodPost, "/api/v1/agent-tokens", reqBody)
 	if err != nil {

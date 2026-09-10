@@ -595,7 +595,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		sessions:               newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
-				return agentgrant.NewRegistry(time.Now)
+				return agentgrant.NewRegistry()
 			}
 			return nil
 		}(),

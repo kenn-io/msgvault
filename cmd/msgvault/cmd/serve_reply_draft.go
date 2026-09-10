@@ -304,34 +304,18 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 		return draftReplyTarget{}, err
 	}
 	if !source.SyncConfig.Valid {
-		cause := fmt.Errorf("source %d has no sync config", source.ID)
-		if grant != nil {
-			return draftReplyTarget{}, draftReplyNotPermitted(cause)
-		}
-		return draftReplyTarget{}, draftReplyError("invalid_source", cause)
+		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d has no sync config", source.ID))
 	}
 	imapConfig, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
 	if err != nil {
-		cause := fmt.Errorf("source %d sync config: %w", source.ID, err)
-		if grant != nil {
-			return draftReplyTarget{}, draftReplyNotPermitted(cause)
-		}
-		return draftReplyTarget{}, draftReplyError("invalid_source", cause)
+		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config: %w", source.ID, err))
 	}
 	if imapConfig.Identifier() != source.Identifier {
-		cause := fmt.Errorf("source %d sync config identifier does not match the source", source.ID)
-		if grant != nil {
-			return draftReplyTarget{}, draftReplyNotPermitted(cause)
-		}
-		return draftReplyTarget{}, draftReplyError("invalid_source", cause)
+		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 	}
 	raw, err := a.store.GetMessageRawContext(ctx, parent.ID)
 	if err != nil {
-		cause := fmt.Errorf("load raw MIME for message %d: %w", parent.ID, err)
-		if grant != nil {
-			return draftReplyTarget{}, draftReplyNotPermitted(cause)
-		}
-		return draftReplyTarget{}, draftReplyError("invalid_parent", cause)
+		return draftReplyTarget{}, draftReplyError("invalid_parent", fmt.Errorf("load raw MIME for message %d: %w", parent.ID, err))
 	}
 	identities, err := a.store.ListAccountIdentitiesContext(ctx, source.ID)
 	if err != nil {

@@ -2,12 +2,10 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,7 +36,7 @@ func decodeRunErrorCode(t *testing.T, body *bytes.Buffer) string {
 // newDelegatedTestServer creates a server with agentGrants enabled and issues a grant.
 func newDelegatedTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	reg := agentgrant.NewRegistry(time.Now)
+	reg := agentgrant.NewRegistry()
 	stub := &stubSourceStore{
 		src: &store.Source{
 			ID:         1,
@@ -62,7 +60,7 @@ func newDelegatedTestServer(t *testing.T) (*Server, string) {
 
 	// Issue a grant and return the secret
 	srcRef := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{srcRef}, agentgrant.DefaultLifetime)
+	_, secret, _, err := reg.Issue("test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{srcRef})
 	require.NoError(t, err)
 
 	return srv, secret
@@ -149,32 +147,5 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		require.NoError(t, json.NewDecoder(envW.Body).Decode(&envResp))
 		assert.Equal(t, "env_not_allowed", envResp.Error) // cliRunEnvAllowedForCommand
 
-		// Cwd: passes the env loop; runCLIReplyDraft:178 rejects non-empty Cwd
-		// before parsing args or opening any connection. A stub runner that
-		// replicates that gate proves the invariant without importing the cmd package.
-		cwdStub := &stubSourceStore{src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"}}
-		cwdStub.runFunc = func(_ context.Context, req CLIRunRequest, _ func(CLIRunEvent) error) error {
-			if req.Cwd != "" {
-				return &CLIRunCodedError{Code: "invalid_args", Err: nil} // runCLIReplyDraft:178
-			}
-			return nil
-		}
-		cwdCfg := &config.Config{Server: config.ServerConfig{APIKey: "test-owner-key", AgentAccess: true}}
-		cwdSrv := NewServerWithOptions(ServerOptions{Config: cwdCfg, Store: cwdStub, Logger: testLogger(), Scheduler: newMockScheduler()})
-		cwdReg := agentgrant.NewRegistry(time.Now)
-		cwdSrv.agentGrants = cwdReg
-		cwdSrcRef := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-		_, cwdSecret, _, err := cwdReg.Issue("test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{cwdSrcRef}, agentgrant.DefaultLifetime)
-		require.NoError(t, err)
-		cwdBody, _ := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}, Cwd: "/tmp"})
-		cwdReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(cwdBody))
-		cwdReq.Header.Set("Content-Type", "application/json")
-		cwdReq.Header.Set(apiprotocol.AgentTokenHeader, cwdSecret)
-		cwdW := httptest.NewRecorder()
-		cwdSrv.Router().ServeHTTP(cwdW, cwdReq)
-		var cwdEvent CLIRunEvent
-		require.NoError(t, json.NewDecoder(cwdW.Body).Decode(&cwdEvent))
-		assert.Equal(t, cliStreamEventTypeError, cwdEvent.Type)
-		assert.Equal(t, "invalid_args", cwdEvent.Error) // runCLIReplyDraft:178
 	})
 }

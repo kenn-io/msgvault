@@ -3165,10 +3165,6 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
 		return
 	}
-	if !s.authorizeDelegatedMessage(r.Context(), s.requestAuthentication(r), msg) {
-		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
-		return
-	}
 
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
@@ -3190,10 +3186,6 @@ func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg == nil {
-		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
-		return
-	}
-	if !s.authorizeDelegatedMessage(r.Context(), s.requestAuthentication(r), msg) {
 		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
 		return
 	}

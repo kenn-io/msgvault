@@ -6,7 +6,6 @@ import type { AgentTokenSourceView } from "./agentTokenSourceView";
 export interface AgentTokenIssueResponse {
   created_at: string;
   daemon_url: string;
-  expires_at: string;
   id: string;
   label: string;
   permissions: string[];
