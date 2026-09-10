@@ -412,3 +412,24 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
 			"unauthenticated request must not register as a gate waiter")
 	})
 }
+
+// TestDelegationDefaultOff verifies that delegation is off when agent_access is
+// unset in config. The constructor (server.go:596-601) must leave agentGrants nil,
+// and a presented agent token must be refused with 401.
+func TestDelegationDefaultOff(t *testing.T) {
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    cfg,
+		Store:     &stubSourceStore{},
+		Logger:    testLogger(),
+		Scheduler: newMockScheduler(),
+	})
+	require.Nil(t, srv.agentGrants, "agentGrants must be nil when AgentAccess is unset in config")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, "mva1_some_token_value_for_test")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"agent token must be refused when agent_access is unset")
+}

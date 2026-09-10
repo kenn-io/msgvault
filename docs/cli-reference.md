@@ -2889,7 +2889,7 @@ msgvault quickstart
 
 Manage restricted agent grants. The daemon must be started with `[server] agent_access = true`
 and a non-empty `[server] api_key`. All three subcommands require owner authentication
-(API key or keyless loopback); a delegated caller cannot issue or modify grants.
+(the owner API key; keyless loopback is not sufficient); a delegated caller cannot issue or modify grants.
 
 ### What a token does and does not defend against
 

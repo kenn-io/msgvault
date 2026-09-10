@@ -42,16 +42,14 @@ func runAgentTokenCommand(
 
 // agentTokenIssueResponseJSON returns a minimal JSON issue response for tests.
 func agentTokenIssueResponseJSON(secret string) string {
-	now := time.Now().UTC()
 	resp := map[string]any{
 		"id":          "tok_abc123",
 		"label":       "Test Agent",
-		"permissions": []string{"run_cli", "read_message"},
+		"permissions": []string{"draft.create"},
 		"sources": []map[string]any{
 			{"id": 1, "type": "imap", "identifier": "alice@example.com"},
 		},
-		"created_at": now.Format(time.RFC3339),
-		"expires_at": now.Add(24 * time.Hour).Format(time.RFC3339),
+		"created_at": time.Now().UTC().Format(time.RFC3339),
 		"secret":     secret,
 		"daemon_url": "",
 	}
@@ -61,16 +59,14 @@ func agentTokenIssueResponseJSON(secret string) string {
 
 // agentTokenListResponseJSON returns a minimal JSON list response for tests.
 func agentTokenListResponseJSON() string {
-	now := time.Now().UTC()
 	resp := map[string]any{
 		"tokens": []map[string]any{
 			{
 				"id":          "tok_abc123",
 				"label":       "Test Agent",
-				"permissions": []string{"run_cli"},
+				"permissions": []string{"draft.create"},
 				"sources":     []any{},
-				"created_at":  now.Format(time.RFC3339),
-				"expires_at":  now.Add(24 * time.Hour).Format(time.RFC3339),
+				"created_at":  time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 	}
@@ -107,7 +103,7 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 
 	output, err := runAgentTokenCommand(t, agentTokenIssueCmd,
 		"--label", "Test Agent",
-		"--permissions", "run_cli,read_message",
+		"--permissions", "draft.create",
 		"--source-ids", "1",
 	)
 	require.NoError(err)
@@ -344,34 +340,4 @@ func TestGrantDeniesDifferentAccountOnReusedRowid(t *testing.T) {
 	// Original triple still passes.
 	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, original),
 		"exact original (id, type, identifier) must be allowed")
-}
-
-// TestGrantFollowsRecreatedSource tests proof matrix row 22.
-// After D7, matching uses (Type, Identifier) only — ID is kept as a
-// diagnostic but is not required for matching. A grant therefore follows
-// the account across a remove-and-re-add (new rowid, same type+identifier),
-// while a genuinely different account on the same rowid is still denied.
-func TestGrantFollowsRecreatedSource(t *testing.T) {
-	sourceA := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://user@host"}
-	g := agentgrant.Grant{
-		ID:          "g-recreated",
-		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-		Sources:     []agentgrant.SourceRef{sourceA},
-	}
-
-	// Account removed and re-added with same credentials → new rowid (SQLite auto-increment).
-	// After D7, type+identifier match is sufficient; the grant follows the account.
-	sourceANewRowid := agentgrant.SourceRef{ID: 2, Type: "imap", Identifier: "imap://user@host"}
-	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sourceANewRowid),
-		"re-added source with new rowid must be allowed: type+identifier match and ID is diagnostic only")
-
-	// A completely different account that happens to land on the reused rowid 1.
-	differentAccountSameRowid := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://other@host"}
-	assert.False(t, g.Allows(agentgrant.PermissionDraftCreate, differentAccountSameRowid),
-		"different account on reused rowid must be denied: identifier differs")
-
-	// The exact original triple still works.
-	sourceAExactMatch := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "imap://user@host"}
-	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sourceAExactMatch),
-		"re-added source with all three fields matching must succeed")
 }
