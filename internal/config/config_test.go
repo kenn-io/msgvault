@@ -2187,3 +2187,30 @@ capabilities_file = "manifests/voyage.json"
 	assert.Equal(filepath.Join(tmpDir, "manifests/voyage.json"),
 		cfg.Vector.Multimodal.CapabilitiesFile)
 }
+
+func TestLoadTrustedIMAPSentMailboxesPerSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := `[sync]
+trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993" = ["Gesendete Elemente", "Sent Items"] }
+`
+	require.NoError(os.WriteFile(configPath, []byte(content), 0o600))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err)
+	require.Len(cfg.Sync.TrustedIMAPSentMailboxes, 1)
+	assert.Equal(
+		[]string{"Gesendete Elemente", "Sent Items"},
+		cfg.Sync.TrustedIMAPSentMailboxes["imaps://alice@example.com@imap.example.com:993"])
+	assert.Empty(
+		cfg.Sync.TrustedIMAPSentMailboxes["imaps://bob@example.com@imap.example.com:993"],
+		"a same-named mailbox in another account gains no trust")
+
+	emptyPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(emptyPath, []byte(""), 0o600))
+	cfg, err = Load(emptyPath, "")
+	require.NoError(err)
+	assert.Empty(cfg.Sync.TrustedIMAPSentMailboxes,
+		"unconfigured archives carry no explicit Sent-folder trust")
+}

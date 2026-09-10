@@ -94,21 +94,21 @@ func (c *Client) tryBuildQresyncMessageList(
 	ctx context.Context,
 	mailboxes []string,
 	statuses map[string]FolderState,
-) (bool, error) {
+) ([]gmailapi.MessageID, bool, error) {
 	if c.forceFullEnumeration || c.labelsSnapshotFilteredLocked() || len(mailboxes) == 0 ||
 		len(statuses) != len(mailboxes) || !c.qresyncBaselinePresent(mailboxes) {
-		return false, nil
+		return nil, false, nil
 	}
 
 	for _, mailbox := range mailboxes {
 		prior, priorOK := c.priorFolderStates[mailbox]
 		current, currentOK := statuses[mailbox]
 		if !priorOK || !currentOK || !c.qresyncEligible(prior, current) {
-			return false, nil
+			return nil, false, nil
 		}
 	}
 	if !c.enableQresync() {
-		return false, nil
+		return nil, false, nil
 	}
 
 	c.observedFolderStates = make(map[string]FolderState, len(mailboxes))
@@ -121,13 +121,13 @@ func (c *Client) tryBuildQresyncMessageList(
 	}
 	for i, mailbox := range mailboxes {
 		if err := ctx.Err(); err != nil {
-			return false, err
+			return nil, false, err
 		}
 		prior := c.priorFolderStates[mailbox]
 		var delta MailboxDelta
 		delta, err := c.collectQresyncMailbox(ctx, mailbox, prior)
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		if len(delta.ChangedUIDs) == 0 && len(delta.VanishedUIDs) == 0 {
 			unchanged++
@@ -147,10 +147,9 @@ func (c *Client) tryBuildQresyncMessageList(
 			c.listProgress(i+1, len(mailboxes), mailbox, len(messages), unchanged)
 		}
 	}
-	c.messageListCache = messages
 	c.activeSourceAliases = activeSourceAliases
 	c.labelMapComplete = true
-	return true, nil
+	return messages, true, nil
 }
 
 func (c *Client) collectQresyncMailbox(

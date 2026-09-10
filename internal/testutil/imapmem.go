@@ -391,6 +391,23 @@ func AppendIMAPMessageWithMessageID(
 	require.NoError(t, err)
 }
 
+// AppendIMAPRawMessage appends caller-supplied RFC822 bytes to a mailbox of an
+// in-memory IMAP test user.
+func AppendIMAPRawMessage(
+	t *testing.T,
+	user *imapmemserver.User,
+	mailbox string,
+	raw []byte,
+) {
+	t.Helper()
+	_, err := user.Append(
+		mailbox,
+		imapLiteral{bytes.NewReader(raw)},
+		&imap.AppendOptions{},
+	)
+	require.NoError(t, err)
+}
+
 // StartIMAPMemServer runs an in-memory IMAP server with the given
 // mailboxes and per-mailbox message counts, returning its listen
 // address and the user handle for later mutation. The server is shut

@@ -28,6 +28,30 @@ func WithLogger(logger *slog.Logger) Option {
 	return func(c *Client) { c.logger = logger }
 }
 
+// WithTrustedSentMailboxes names this source's Sent-folder mailboxes the
+// user explicitly configured, for servers whose (possibly localized) Sent
+// folder advertises no RFC 6154 \Sent role. This is an opt-in trust
+// assumption for servers without role discovery, not provider evidence: it
+// extends snapshot-refresh authorization to these mailboxes exactly like an
+// unambiguous advertised \Sent role. The configuration is derived from the
+// per-source sync configuration by the caller and is never cleared by
+// connection rediscovery.
+func WithTrustedSentMailboxes(names []string) Option {
+	return func(c *Client) {
+		if len(names) == 0 {
+			return
+		}
+		trusted := make(map[string]bool, len(names))
+		for _, name := range names {
+			if name = strings.TrimSpace(name); name != "" {
+				trusted[name] = true
+			}
+		}
+		c.trustedOutgoingMailboxes = trusted
+		c.configuredSentMailboxes = trusted
+	}
+}
+
 // WithTokenSource sets a callback that provides OAuth2 access tokens
 // for XOAUTH2 SASL authentication. Required when Config.AuthMethod is AuthXOAuth2.
 func WithTokenSource(fn func(ctx context.Context) (string, error)) Option {
@@ -83,24 +107,34 @@ type Client struct {
 	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
 	logger      *slog.Logger
 
-	mu                    sync.Mutex
-	conn                  *imapclient.Client
-	selectedMailbox       string               // currently selected mailbox
-	selectedUIDValidity   uint32               // UIDVALIDITY from the last SELECT
-	selectedNumMessages   uint32               // EXISTS count from the last SELECT
-	mailboxCache          []string             // cached list of selectable mailboxes
-	messageListCache      []gmailapi.MessageID // full message ID list, built once per session
-	trashMailbox          string               // cached trash mailbox name
-	junkMailbox           string               // cached junk/spam mailbox name
-	allMailFolder         string               // mailbox with \All attribute (empty if not detected)
-	msgIDToLabels         map[string][]string  // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs         map[string]bool      // dedup overlapping mailbox copies
-	preferredRawSourceIDs map[[32]byte]string  // raw digest → canonical \All source ID
-	sourceMessageAliases  map[string]string    // mailbox UID source ID → durable canonical source ID
-	activeSourceAliases   map[string]string    // aliases validated by this session's QRESYNC SELECTs
-	labelMapComplete      bool                 // latest listing collected every mailbox membership
-	since                 time.Time            // IMAP SINCE date filter (zero = no filter)
-	before                time.Time            // IMAP BEFORE date filter (zero = no filter)
+	mu                          sync.Mutex
+	conn                        *imapclient.Client
+	selectedMailbox             string               // currently selected mailbox
+	selectedUIDValidity         uint32               // UIDVALIDITY from the last SELECT
+	selectedNumMessages         uint32               // EXISTS count from the last SELECT
+	mailboxCache                []string             // cached list of selectable mailboxes
+	messageListCache            []gmailapi.MessageID // full message ID list, built once per session
+	trashMailbox                string               // cached trash mailbox name
+	junkMailbox                 string               // cached junk/spam mailbox name
+	allMailFolder               string               // mailbox with \All attribute (empty if not detected)
+	advertisedOutgoingMailboxes map[string]bool      // unambiguous LIST-advertised \Sent or \Drafts placement
+	advertisedSentMailboxes     map[string]bool      // unambiguous LIST-advertised \Sent placement
+	advertisedDraftsMailboxes   map[string]bool      // unambiguous LIST-advertised \Drafts placement
+	conflictingRoleMailboxes    map[string]bool      // LIST-advertised \All/\Junk/\Trash roles, or INBOX
+	trustedOutgoingMailboxes    map[string]bool      // explicit user-configured outgoing mailboxes
+	configuredSentMailboxes     map[string]bool      // explicit per-source Sent-folder configuration (never cleared)
+	msgIDToLabels               map[string][]string  // RFC822 Message-ID → mailbox memberships
+	seenRFC822IDs               map[string]bool      // dedup overlapping mailbox copies
+	seenTrustedRFC822IDs        map[string]bool      // identities already carried by a trusted full raw this run
+	preferredRawSourceIDs       map[[32]byte]string  // raw digest → canonical \All source ID
+	sourceMessageAliases        map[string]string    // mailbox UID source ID → durable canonical source ID
+	activeSourceAliases         map[string]string    // aliases validated by this session's QRESYNC SELECTs
+	labelMapComplete            bool                 // latest listing collected every mailbox membership
+	since                       time.Time            // IMAP SINCE date filter (zero = no filter)
+	before                      time.Time            // IMAP BEFORE date filter (zero = no filter)
+
+	relocationCandidateLoader func(context.Context, []string) ([]RelocationCandidate, error)
+	relocationTargets         map[string]gmailapi.MessageRelocationTarget
 
 	// aliasLoader resolves durable aliases for the mailbox UIDs a listing
 	// actually touches. Nil when the caller keeps no durable state.
@@ -572,6 +606,50 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 			continue
 		}
 		names = append(names, item.Mailbox)
+		// Received-mail roles deny outgoing trust regardless of how the
+		// mailbox is advertised or configured. RFC 6154 roles describe
+		// intended use, not authorship proof, so this records every LIST
+		// entry carrying \All, \Junk, or \Trash — independently of any
+		// \Sent or \Drafts role — a mailbox advertised with BOTH \Sent
+		// and \Drafts (the roles conflict, so the entry is ambiguous), and
+		// the INBOX name, where placement carries no outgoing assumption at
+		// all. The evidence always comes from the authenticated LIST
+		// response, never the mailbox name alone; the trust predicate
+		// additionally rejects INBOX before discovery has run.
+		if strings.EqualFold(item.Mailbox, "INBOX") ||
+			hasAttr(item.Attrs, imap.MailboxAttrAll) ||
+			hasAttr(item.Attrs, imap.MailboxAttrJunk) ||
+			hasAttr(item.Attrs, imap.MailboxAttrTrash) ||
+			(hasAttr(item.Attrs, imap.MailboxAttrSent) &&
+				hasAttr(item.Attrs, imap.MailboxAttrDrafts)) {
+			if c.conflictingRoleMailboxes == nil {
+				c.conflictingRoleMailboxes = map[string]bool{}
+			}
+			c.conflictingRoleMailboxes[item.Mailbox] = true
+		}
+		if hasAttr(item.Attrs, imap.MailboxAttrSent) || hasAttr(item.Attrs, imap.MailboxAttrDrafts) {
+			// An unambiguous \Sent or \Drafts advertisement is the narrow
+			// trust assumption that authorizes refreshing an archived
+			// snapshot from that placement.
+			if !c.conflictingRoleMailboxes[item.Mailbox] {
+				if c.advertisedOutgoingMailboxes == nil {
+					c.advertisedOutgoingMailboxes = map[string]bool{}
+				}
+				c.advertisedOutgoingMailboxes[item.Mailbox] = true
+				if hasAttr(item.Attrs, imap.MailboxAttrSent) {
+					if c.advertisedSentMailboxes == nil {
+						c.advertisedSentMailboxes = map[string]bool{}
+					}
+					c.advertisedSentMailboxes[item.Mailbox] = true
+				}
+				if hasAttr(item.Attrs, imap.MailboxAttrDrafts) {
+					if c.advertisedDraftsMailboxes == nil {
+						c.advertisedDraftsMailboxes = map[string]bool{}
+					}
+					c.advertisedDraftsMailboxes[item.Mailbox] = true
+				}
+			}
+		}
 		if c.trashMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
 			c.trashMailbox = item.Mailbox
 		}
@@ -629,6 +707,10 @@ func (c *Client) clearMailboxDiscoveryLocked() {
 	c.trashMailbox = ""
 	c.junkMailbox = ""
 	c.allMailFolder = ""
+	c.advertisedOutgoingMailboxes = nil
+	c.advertisedSentMailboxes = nil
+	c.advertisedDraftsMailboxes = nil
+	c.conflictingRoleMailboxes = nil
 }
 
 // enumerateMailboxSearchCriteria always constrains the search with an
@@ -1095,6 +1177,8 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// this listing additive rather than authoritative.
 	c.labelMapComplete = false
 	c.seenRFC822IDs = nil
+	c.seenTrustedRFC822IDs = nil
+	c.relocationTargets = nil
 	c.preferredRawSourceIDs = nil
 	c.activeSourceAliases = nil
 	c.observedMailboxDeltas = nil
@@ -1171,7 +1255,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		requireQresync := !c.forceFullEnumeration &&
 			!c.labelsSnapshotFilteredLocked() &&
 			len(c.priorFolderStates) > 0
-		handled, deltaErr := c.tryBuildQresyncMessageList(ctx, allMailboxes, folderStatuses)
+		qresyncMessages, handled, deltaErr := c.tryBuildQresyncMessageList(ctx, allMailboxes, folderStatuses)
 		switch {
 		case deltaErr != nil:
 			// A failed attempt has already issued ENABLE and CONDSTORE SELECTs
@@ -1202,7 +1286,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.logger.Info("QRESYNC unavailable, enumerating fully")
 			qresyncFallback = true
 		case handled:
-			return nil
+			return c.finalizeMessageListLocked(ctx, allMailboxes, qresyncMessages)
 		}
 	}
 	if trackFolders && !c.labelsSnapshotFilteredLocked() {
@@ -1258,6 +1342,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			// A complete membership map lets the first raw result carry every
 			// mailbox label before overlapping copies become dedup stubs.
 			c.seenRFC822IDs = make(map[string]bool)
+			c.seenTrustedRFC822IDs = make(map[string]bool)
 		}
 	}
 
@@ -1452,10 +1537,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			"unchanged", unchangedFolders, "total", len(listMailboxes))
 	}
 
-	c.messageListCache = messages
 	c.activeSourceAliases = activeSourceAliases
 	c.labelMapComplete = labelMapComplete && enumerationComplete
-	return nil
+	return c.finalizeMessageListLocked(ctx, allMailboxes, messages)
 }
 
 // deltasCoverMailboxes reports whether every current mailbox appears in the
