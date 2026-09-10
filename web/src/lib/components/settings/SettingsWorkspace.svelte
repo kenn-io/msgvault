@@ -113,10 +113,9 @@
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
   const incompleteDrafts = $derived(
-    Object.entries(drafts).filter(([key, value]) => {
-      const setting = settings.find((candidate) => candidate.key === key);
-      return value === '' && (setting?.kind === 'integer' || setting?.kind === 'number');
-    }).length,
+    Object.entries(drafts).filter(([key, value]) =>
+      isIncompleteNumber(settings.find((candidate) => candidate.key === key), value),
+    ).length,
   );
   onMount(() => {
     void loadSettings(false);
@@ -182,13 +181,18 @@
   // clean, Save stays disabled, and no no-op PATCH can mark a restart pending.
   function setDraft(key: string, value: unknown) {
     const setting = settings.find((candidate) => candidate.key === key);
-    if (setting && sameValue(typedValue(setting, value), setting.value)) {
+    if (setting && !isIncompleteNumber(setting, value) && sameValue(typedValue(setting, value), setting.value)) {
       const next = { ...drafts };
       delete next[key];
       drafts = next;
       return;
     }
     drafts = { ...drafts, [key]: value };
+  }
+  // An emptied number input is unfinished, never a value: Number('') is 0,
+  // which would otherwise match a stored zero and drop the draft.
+  function isIncompleteNumber(setting: SettingState | undefined, value: unknown): boolean {
+    return value === '' && (setting?.kind === 'integer' || setting?.kind === 'number');
   }
   function sameValue(draft: SettingValue, persisted: SettingValue | undefined): boolean {
     return persisted !== undefined && JSON.stringify(draft) === JSON.stringify(persisted);
@@ -200,7 +204,9 @@
     const nextDrafts = { ...drafts };
     for (const [key, value] of Object.entries(nextDrafts)) {
       const setting = settings.find((candidate) => candidate.key === key);
-      if (setting && value !== '' && sameValue(typedValue(setting, value), setting.value)) delete nextDrafts[key];
+      if (setting && !isIncompleteNumber(setting, value) && sameValue(typedValue(setting, value), setting.value)) {
+        delete nextDrafts[key];
+      }
     }
     drafts = nextDrafts;
     const nextSecrets = { ...secretUpdates };
@@ -571,7 +577,7 @@
               />
             </label>
           {:else}
-            <label class="row__field" data-size="lg">
+            <label class="row__field" data-size={off ? 'sm' : 'lg'}>
               <span class="kit-sr-only">{label}</span>
               <TextInput
                 value={stringValue(setting)}
@@ -854,6 +860,10 @@
   }
   .row__field[data-size='xs'] {
     width: 6.5rem;
+  }
+  /* Values beside a switch are short sizes or durations such as 512MiB. */
+  .row__field[data-size='sm'] {
+    width: 9rem;
   }
   .row__field[data-size='md'] {
     width: 13rem;

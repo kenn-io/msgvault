@@ -1,6 +1,41 @@
+<script module lang="ts">
+  import type { TypeaheadOption } from '@kenn-io/kit-ui';
+  import { timeZoneLabel, timeZoneNames } from '../../settings/cron';
+
+  let zoneOptionsCache: TypeaheadOption[] | undefined;
+
+  // The zone list is the same for every field on the page, so build it once.
+  function zoneOptions(): TypeaheadOption[] {
+    zoneOptionsCache ??= timeZoneNames().map((zone) => ({
+      name: zone,
+      label: timeZoneLabel(zone),
+      meta: zoneOffset(zone),
+    }));
+    return zoneOptionsCache;
+  }
+
+  function zoneOffset(zone: string): string | undefined {
+    try {
+      return new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' })
+        .formatToParts(new Date())
+        .find((part) => part.type === 'timeZoneName')?.value;
+    } catch {
+      return undefined;
+    }
+  }
+</script>
+
 <script lang="ts">
-  import { SelectDropdown } from '@kenn-io/kit-ui';
-  import { CRON_FIELDS, CRON_PRESETS, describeFields, parseCron, type CronToken } from '../../settings/cron';
+  import { SelectDropdown, Typeahead } from '@kenn-io/kit-ui';
+  import {
+    CRON_FIELDS,
+    CRON_PRESETS,
+    describeFields,
+    joinCron,
+    parseCron,
+    splitCron,
+    type CronToken,
+  } from '../../settings/cron';
 
   interface Segment {
     text: string;
@@ -16,6 +51,7 @@
     id = undefined,
     oninput = undefined,
   }: {
+    /** The stored schedule, with a `CRON_TZ=` prefix when a zone is chosen. */
     value?: string;
     /** Accessible name for the expression input. */
     label: string;
@@ -28,18 +64,24 @@
 
   const uid = $props.id();
   const statusID = `${uid}-status`;
+  // The zone and the five fields are edited separately but stored as one
+  // string. Remember the last split this field produced so typing keeps its
+  // exact text and a zone survives while the expression is empty.
+  let local = $state<{ source: string; zone: string; expression: string }>();
+  const parts = $derived(local !== undefined && local.source === value ? local : splitCron(value));
   const parsed = $derived(parseCron(value));
-  const empty = $derived(value.trim() === '');
+  const tokens = $derived(parseCron(parts.expression).tokens);
+  const empty = $derived(parts.expression.trim() === '');
   const invalid = $derived(empty ? required : parsed.fields === undefined);
   let mirror = $state<HTMLDivElement>();
-  const segments = $derived(segmentsOf(value, parsed.tokens));
+  const segments = $derived(segmentsOf(parts.expression, tokens));
   const status = $derived.by((): { tone: 'off' | 'error' | 'ok'; text: string } => {
     if (empty) {
       return required
         ? { tone: 'error', text: 'Enter a schedule.' }
         : { tone: 'off', text: 'Off. Nothing runs on a schedule.' };
     }
-    if (parsed.fields) return { tone: 'ok', text: describeFields(parsed.fields) };
+    if (parsed.fields) return { tone: 'ok', text: describeFields(parsed.fields, parsed.zone) };
     return { tone: 'error', text: parsed.error ?? 'Invalid schedule.' };
   });
   const presetOptions = $derived([
@@ -48,17 +90,17 @@
   ]);
   const presetValue = $derived.by(() => {
     if (empty) return required ? 'custom' : 'off';
-    const normalized = parsed.tokens.map((token) => token.text).join(' ');
+    const normalized = tokens.map((token) => token.text).join(' ');
     return CRON_PRESETS.some((preset) => preset.expression === normalized) ? normalized : 'custom';
   });
   const presetMenu = $derived(
     presetValue === 'custom' ? [{ value: 'custom', label: 'Custom' }, ...presetOptions] : presetOptions,
   );
 
-  function segmentsOf(expression: string, tokens: CronToken[]): Segment[] {
+  function segmentsOf(expression: string, expressionTokens: CronToken[]): Segment[] {
     const result: Segment[] = [];
     let cursor = 0;
-    for (const token of tokens) {
+    for (const token of expressionTokens) {
       if (token.start > cursor) result.push({ text: expression.slice(cursor, token.start) });
       result.push({ text: token.text, field: token.field, invalid: token.error !== undefined });
       cursor = token.end;
@@ -67,58 +109,74 @@
     return result;
   }
 
+  function update(zone: string, expression: string) {
+    const next = joinCron(zone, expression);
+    local = { source: next, zone, expression };
+    value = next;
+    oninput?.(next);
+  }
+
   function applyPreset(next: string) {
     if (next === 'custom') return;
-    value = next === 'off' ? '' : next;
-    oninput?.(value);
+    update(parts.zone, next === 'off' ? '' : next);
   }
 </script>
 
 <div class="cron" class:cron--disabled={disabled}>
-  <div class="cron__row">
-    <div class="cron__editor" class:cron__editor--invalid={invalid}>
-      <div class="cron__mirror" aria-hidden="true" bind:this={mirror}>
-        {#each segments as segment, index (index)}
-          {#if segment.field}
-            <span data-field={segment.field} data-invalid={segment.invalid || undefined}>{segment.text}</span>
-          {:else}
-            {segment.text}
-          {/if}
-        {/each}
-      </div>
-      <input
-        class="cron__input"
-        type="text"
-        {id}
-        aria-label={label}
-        aria-invalid={invalid || undefined}
-        aria-describedby={statusID}
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-        placeholder="0 3 * * *"
-        {required}
-        {disabled}
-        bind:value
-        oninput={() => oninput?.(value)}
-        onscroll={(event) => {
-          if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
-        }}
+  <div class="cron__editor" class:cron__editor--invalid={invalid}>
+    <div class="cron__mirror" aria-hidden="true" bind:this={mirror}>
+      {#each segments as segment, index (index)}
+        {#if segment.field}
+          <span data-field={segment.field} data-invalid={segment.invalid || undefined}>{segment.text}</span>
+        {:else}
+          {segment.text}
+        {/if}
+      {/each}
+    </div>
+    <input
+      class="cron__input"
+      type="text"
+      {id}
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      aria-describedby={statusID}
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      placeholder="0 3 * * *"
+      {required}
+      {disabled}
+      value={parts.expression}
+      oninput={(event) => update(parts.zone, event.currentTarget.value)}
+      onscroll={(event) => {
+        if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
+      }}
+    />
+    <!-- Field names appear above the editor only while it is hovered or
+         focused, so the row stays quiet and nothing below gets covered. -->
+    <span class="cron__legend kit-popover-card" aria-hidden="true">
+      {#each CRON_FIELDS as field (field.name)}
+        <span data-field={field.name}>{field.label}</span>
+      {/each}
+    </span>
+  </div>
+  <div class="cron__menus">
+    <SelectDropdown title="Presets" value={presetValue} options={presetMenu} onchange={applyPreset} {disabled} />
+    <div class="cron__zone">
+      <Typeahead
+        options={zoneOptions()}
+        value={parts.zone}
+        fallbackLabel="Local time"
+        placeholder="Time zone"
+        title="Time zone"
+        triggerPrefix="Time zone:"
+        emptyLabel="No matching time zone"
+        allowClear
+        clearLabel="Local time"
+        disabled={disabled || empty}
+        onselect={(zone) => update(zone, parts.expression)}
       />
     </div>
-    <SelectDropdown
-      title="Presets"
-      value={presetValue}
-      options={presetMenu}
-      onchange={applyPreset}
-      {disabled}
-      align="end"
-    />
-  </div>
-  <div class="cron__legend" aria-hidden="true">
-    {#each CRON_FIELDS as field (field.name)}
-      <span data-field={field.name}>{field.label}</span>
-    {/each}
   </div>
   <p class="cron__status" id={statusID} data-tone={status.tone}>{status.text}</p>
 </div>
@@ -136,14 +194,8 @@
     --cron-month: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
     --cron-weekday: color-mix(in srgb, var(--accent-purple) 72%, var(--text-primary));
   }
-  .cron__row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
   .cron__editor {
     position: relative;
-    flex: 1 1 auto;
     box-sizing: border-box;
     min-width: 0;
     height: 28px;
@@ -220,13 +272,39 @@
   .cron--disabled .cron__editor {
     opacity: 0.6;
   }
-  .cron__legend {
+  .cron__menus {
     display: flex;
-    gap: var(--space-4);
-    padding: 0 var(--space-3);
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .cron__zone {
+    flex: 1 1 auto;
+    min-width: 0;
+    --typeahead-min-width: 0;
+    --typeahead-max-width: none;
+  }
+  .cron__legend {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 4px);
+    z-index: 1;
+    display: flex;
+    gap: var(--space-3);
+    padding: 2px var(--space-3);
+    font-family: var(--font-mono);
     font-size: var(--font-size-2xs);
     font-weight: 600;
     letter-spacing: 0.02em;
+    white-space: nowrap;
+    visibility: hidden;
+  }
+  .cron__editor:hover .cron__legend,
+  .cron__editor:focus-within .cron__legend {
+    visibility: visible;
+  }
+  .cron--disabled .cron__editor:hover .cron__legend {
+    visibility: hidden;
   }
   .cron__legend [data-field='minute'] {
     color: var(--cron-minute);

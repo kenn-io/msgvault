@@ -150,7 +150,10 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   an `off` state (API schema adds `validation.off` with a label and suggested
   value) and render as a switch beside the value, and cron schedules publish
   `validation.format: "cron"` and use a cron field with tinted fields, a
-  plain-English description, inline validation, and presets. The CardDAV
+  plain-English description, inline validation, and presets. A Time zone
+  menu stores a `CRON_TZ=` prefix so a schedule runs in a chosen zone, the
+  field legend shows while the field is focused or hovered, and the daemon
+  trims schedules and rejects a field made only of commas. The CardDAV
   account form, Sources, and CardDAV status describe schedules the same way.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.

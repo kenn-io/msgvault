@@ -1771,8 +1771,9 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
 	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
 	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
-	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start above zero")
+	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.05), "any positive rate is a real limit")
 	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
+	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", -1.0))
 	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
 	for key, validation := range settingsValidation {
 		if validation.Off == nil || validation.Off.OnMinimum == nil {
@@ -1808,6 +1809,43 @@ func TestSettingsPatchEnforcesRequiredAndCronFormat(t *testing.T) {
 
 	valid := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":"0 4 * * mon-fri"}}]}`)
 	assertions.Equal(http.StatusOK, valid.Code, valid.Body.String())
+
+	zoned := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=Europe/Berlin 0 4 * * *"}}]}`)
+	assertions.Equal(http.StatusOK, zoned.Code, zoned.Body.String())
+
+	emptyList := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 3 * * ,"}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, emptyList.Code, emptyList.Body.String())
+}
+
+func TestSettingsPatchTrimsCronSchedules(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, path := newSettingsTestServer(t, "[beeper]\nschedule = \"0 2 * * *\"\n")
+
+	padded := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"  0 3 * * *  "}}]}`)
+	requirements.Equal(http.StatusOK, padded.Code, padded.Body.String())
+	assertions.Equal("0 3 * * *", currentSettingString(t, srv, "beeper.schedule"))
+
+	blank := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"   "}}]}`)
+	requirements.Equal(http.StatusOK, blank.Code, blank.Body.String())
+	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"))
+
+	cfg, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.Empty(cfg.Beeper.Schedule)
+}
+
+func currentSettingString(t *testing.T, srv *Server, key string) string {
+	t.Helper()
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+	var body SettingsResponse
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &body))
+	setting, ok := settingsByKey(body.Settings)[key]
+	require.True(t, ok, key)
+	require.NotNil(t, setting.Value, key)
+	require.NotNil(t, setting.Value.String, key)
+	return *setting.Value.String
 }
 
 func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {

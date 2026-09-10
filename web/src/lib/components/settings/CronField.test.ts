@@ -60,6 +60,57 @@ describe('CronField', () => {
     expect(oninput).toHaveBeenLastCalledWith('');
   });
 
+  it('stores a chosen time zone as a prefix and keeps the fields on their own', async () => {
+    const oninput = vi.fn();
+    render(CronField, { value: 'CRON_TZ=Europe/Berlin 0 3 * * *', label: 'Schedule', oninput });
+
+    const input = screen.getByLabelText('Schedule') as HTMLInputElement;
+    expect(input.value).toBe('0 3 * * *');
+    expect(screen.getByText('At 03:00 every day, Europe/Berlin time')).toBeDefined();
+    expect(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Time zone: Europe/Berlin' }));
+    await fireEvent.input(screen.getByRole('combobox', { name: 'Time zone' }), { target: { value: 'tokyo' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Asia\/Tokyo/ }));
+    expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=Asia/Tokyo 0 3 * * *');
+    expect(input.value).toBe('0 3 * * *');
+    expect(screen.getByText('At 03:00 every day, Asia/Tokyo time')).toBeDefined();
+
+    await fireEvent.input(input, { target: { value: '0 4 * * *' } });
+    expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=Asia/Tokyo 0 4 * * *');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Time zone: Asia/Tokyo' }));
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Local time' }));
+    expect(oninput).toHaveBeenLastCalledWith('0 4 * * *');
+    expect(screen.getByText('At 04:00 every day')).toBeDefined();
+  });
+
+  it('keeps the zone while the expression is empty and drops it from the stored value', async () => {
+    const oninput = vi.fn();
+    render(CronField, { value: 'CRON_TZ=UTC 0 3 * * *', label: 'Schedule', oninput });
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' }), 'Off');
+    expect(oninput).toHaveBeenLastCalledWith('');
+    expect((screen.getByRole('button', { name: 'Time zone: UTC' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Presets: Off' }), 'Every hour');
+    expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=UTC 0 * * * *');
+  });
+
+  it('names the five fields in a legend hidden from assistive technology', () => {
+    render(CronField, { value: '0 3 * * *', label: 'Schedule' });
+
+    const legend = document.querySelector('.cron__legend');
+    expect(legend?.getAttribute('aria-hidden')).toBe('true');
+    expect([...(legend?.querySelectorAll('[data-field]') ?? [])].map((node) => node.textContent)).toEqual([
+      'minute',
+      'hour',
+      'day',
+      'month',
+      'weekday',
+    ]);
+  });
+
   it('asks for a value when the schedule is required', () => {
     render(CronField, { value: '', label: 'Schedule', required: true });
 

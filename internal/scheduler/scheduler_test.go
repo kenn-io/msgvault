@@ -2182,6 +2182,13 @@ func TestValidateCronExpr(t *testing.T) {
 		{"invalid", true},
 		{"* * * * * *", true}, // Too many fields
 		{"", true},
+		{"CRON_TZ=Europe/Berlin 0 2 * * *", false},
+		{"TZ=UTC 0 2 * * *", false},
+		{"CRON_TZ=Nowhere/Place 0 2 * * *", true},
+		{"CRON_TZ=UTC", true}, // Zone with no fields would slice past the end
+		{", * * * *", true},   // A list with no values never fires
+		{"0 2 * * ,,", true},
+		{"0, 2 * * *", false}, // Empty pieces are dropped, not empty lists
 	}
 
 	for _, tt := range tests {

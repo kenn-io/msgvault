@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -773,10 +774,26 @@ func (s *Scheduler) JobStatus() []JobStatus {
 }
 
 // ValidateCronExpr validates a cron expression without scheduling anything.
+// It accepts what the scheduler's parser accepts: five fields, optionally
+// preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
+// field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
+	fields := expr
+	if strings.HasPrefix(fields, "TZ=") || strings.HasPrefix(fields, "CRON_TZ=") {
+		// The parser slices at the first space without checking for one.
+		space := strings.Index(fields, " ")
+		if space < 0 {
+			return errors.New("invalid cron expression: the time zone must be followed by the five schedule fields")
+		}
+		fields = fields[space:]
+	}
+	for field := range strings.FieldsSeq(fields) {
+		if strings.Trim(field, ",") == "" {
+			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
+		}
+	}
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	_, err := parser.Parse(expr)
-	if err != nil {
+	if _, err := parser.Parse(expr); err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
 	}
 	return nil

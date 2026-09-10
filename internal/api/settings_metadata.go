@@ -269,7 +269,8 @@ var settingsValidation = map[string]SettingValidation{
 	"slack.schedule":  cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second.
-	"beeper.rate_limit_qps":          withOff(atLeast(0.1), "Provider default", "5"),
+	// Any positive rate is a real limit; only zero means the provider default.
+	"beeper.rate_limit_qps":          withOff(atLeast(0), "Provider default", "5"),
 	"beeper.media_max_participants":  withOff(atLeast(1), "No limit", "20"),
 	"slack.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
 	"discord.media_max_participants": withOff(atLeast(1), "No limit", "20"),

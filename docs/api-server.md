@@ -40,9 +40,12 @@ without sections omit both. `validation` gains two optional fields:
 - `format: "cron"` marks a five-field cron schedule (minute, hour, day of
   month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,
   numbers, ranges, comma lists, `/step`, and three-letter month and weekday
-  names. Descriptors such as `@hourly` and the `L`, `W`, and `#` extensions are
-  rejected. The daemon validates the expression on PATCH, and an empty value is
-  rejected when the setting is `required`.
+  names. A `CRON_TZ=<zone>` or `TZ=<zone>` prefix with an IANA zone name runs
+  the schedule in that zone instead of the daemon's local time. Descriptors
+  such as `@hourly`, the `L`, `W`, and `#` extensions, and a field made only
+  of commas are rejected. The daemon trims surrounding whitespace, then
+  validates the expression on PATCH; an empty value is rejected when the
+  setting is `required`.
 - `off` names the value that switches a setting off (`value`), what happens
   while it is off (`label`), a starting value for switching it on (`suggest`),
   and `on_minimum`, the smallest value accepted while on. `minimum` and

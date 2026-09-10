@@ -38,6 +38,7 @@
   let schedule = $state(settingString('carddav.schedule'));
   let persistedEnabled = $state(settingBoolean('carddav.enabled'));
   let persistedSchedule = $state(settingString('carddav.schedule'));
+  const uid = $props.id();
   let activeAction = $state<Action | undefined>();
   let error = $state('');
   let status = $state('');
@@ -110,8 +111,10 @@
   function canReusePersistedPassword(): boolean {
     return persistedPasswordConfigured && baseURL === persistedBaseURL && username === persistedUsername;
   }
+  // Only a stored account can be switched off without its password; a blank
+  // form has nothing to disable.
   function canDisableWithoutPassword(): boolean {
-    return !enabled && baseURL === persistedBaseURL && username === persistedUsername;
+    return !enabled && persistedBaseURL !== '' && baseURL === persistedBaseURL && username === persistedUsername;
   }
   function passwordRequiredForSave(): boolean {
     return !canReusePersistedPassword() && !canDisableWithoutPassword();
@@ -207,14 +210,7 @@
   }
 </script>
 
-<SettingsSection
-  title="CardDAV account"
-  description={passwordRequiredForSave()
-    ? 'Connect an address-book account. A password is required for a new or changed account.'
-    : canReusePersistedPassword()
-      ? 'Connect an address-book account. Leave the password blank to keep the stored credential.'
-      : 'Disable an existing address-book account without re-entering its password.'}
->
+<SettingsSection title="CardDAV account" description="Address-book server this archive syncs contacts with.">
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
@@ -228,33 +224,48 @@
       void saveAccount();
     }}
   >
-    <label>
-      Base URL
-      <TextInput type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
-    </label>
-    <label>
-      Username
-      <TextInput autocomplete="username" bind:value={username} disabled={activeAction !== undefined} required block />
-    </label>
-    <label>
-      Password
-      <TextInput
-        type="password"
-        autocomplete="current-password"
-        bind:value={password}
-        disabled={activeAction !== undefined}
-        required={passwordRequiredForSave()}
-        placeholder={canReusePersistedPassword()
-          ? 'Leave blank to keep current password'
-          : canDisableWithoutPassword()
-            ? 'Not required while disabled'
-            : ''}
-        block
-      />
-    </label>
-    <Toggle bind:checked={enabled} disabled={activeAction !== undefined} label="Enabled" />
+    <div class="fields">
+      <div class="field">
+        <label class="field__label" for={`${uid}-url`}>Base URL</label>
+        <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
+      </div>
+      <div class="field">
+        <label class="field__label" for={`${uid}-username`}>Username</label>
+        <TextInput
+          id={`${uid}-username`}
+          autocomplete="username"
+          bind:value={username}
+          disabled={activeAction !== undefined}
+          required
+          block
+        />
+      </div>
+      <div class="field">
+        <label class="field__label" for={`${uid}-password`}>Password</label>
+        <TextInput
+          id={`${uid}-password`}
+          type="password"
+          autocomplete="current-password"
+          bind:value={password}
+          disabled={activeAction !== undefined}
+          required={passwordRequiredForSave()}
+          ariaDescribedby={`${uid}-password-hint`}
+          block
+        />
+        <span class="field__hint" id={`${uid}-password-hint`}>
+          {passwordRequiredForSave()
+            ? 'Required for a new or changed account.'
+            : canReusePersistedPassword()
+              ? 'Leave blank to keep the stored password.'
+              : 'Not needed to disable the account.'}
+        </span>
+      </div>
+    </div>
     <div class="field">
-      <span class="field__label" aria-hidden="true">Schedule</span>
+      <div class="field__head">
+        <span class="field__label">Automatic sync</span>
+        <Toggle bind:checked={enabled} disabled={activeAction !== undefined} label="Enabled" />
+      </div>
       <CronField label="Schedule" bind:value={schedule} disabled={activeAction !== undefined} />
     </div>
 
@@ -292,13 +303,33 @@
     flex-shrink: 0;
     color: var(--accent-green);
   }
-  label,
+  .fields {
+    display: grid;
+    gap: var(--space-4);
+  }
+  .fields,
+  .field {
+    max-width: 26rem;
+  }
   .field {
     display: grid;
     gap: var(--space-2);
+  }
+  .field__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .field__label {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     font-weight: 500;
+  }
+  .field__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    line-height: 1.4;
   }
   .actions {
     display: flex;

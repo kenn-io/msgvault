@@ -406,6 +406,30 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByText('No unsaved changes')).toBeDefined();
   });
 
+  it('never treats an emptied number as the stored zero', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      settingsResponse(approvedSettingsDocument(), '"config-a"', '"credential-a"'));
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    await openSettingsCategory('Attachments');
+    await screen.findByText('Discord default of 50 MiB');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Set Discord maximum attachment size' }));
+    const size = screen.getByLabelText('Discord maximum attachment size') as HTMLInputElement;
+    expect(size.value).toBe('50');
+    await fireEvent.input(size, { target: { value: '' } });
+
+    // The stored value is 0. An empty input must stay an unfinished draft
+    // rather than collapse back to the stored zero and the off state.
+    expect(screen.getByLabelText('Discord maximum attachment size')).toBe(size);
+    expect(size.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.queryByText('Discord default of 50 MiB')).toBeNull();
+    expect(screen.getByText('1 unsaved change. Enter a number to save.')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.input(size, { target: { value: '0' } });
+    expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect(screen.getByText('Discord default of 50 MiB')).toBeDefined();
+  });
+
   it('drops drafts the daemon already holds after a conflict reload', async () => {
     const latest = {
       ...initialSettings,

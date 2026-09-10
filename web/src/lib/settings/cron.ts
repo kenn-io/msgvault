@@ -62,9 +62,21 @@ export interface CronParse {
   tokens: CronToken[];
   /** All five fields when the expression is valid. */
   fields?: CronField[];
+  /** The IANA zone named by a `CRON_TZ=` or `TZ=` prefix, if any. */
+  zone?: string;
   /** The first problem found, in plain words. */
   error?: string;
 }
+
+/** A schedule split into its optional time zone and the five fields. */
+export interface CronParts {
+  /** IANA zone name; empty when the daemon's local time applies. */
+  zone: string;
+  /** The five-field expression without the zone prefix. */
+  expression: string;
+}
+
+const ZONE_PREFIX = /^\s*(?:CRON_TZ|TZ)=(\S*)\s*/;
 
 export interface CronPreset {
   label: string;
@@ -84,10 +96,62 @@ function nameTable(names: readonly string[], offset: number): Record<string, num
   return Object.fromEntries(names.map((name, index) => [name, index + offset]));
 }
 
+/**
+ * Separates a `CRON_TZ=<zone>` or `TZ=<zone>` prefix from the five fields.
+ * The daemon reads both spellings; `joinCron` always writes `CRON_TZ=`.
+ */
+export function splitCron(schedule: string): CronParts {
+  const match = ZONE_PREFIX.exec(schedule);
+  if (!match) return { zone: '', expression: schedule };
+  return { zone: match[1], expression: schedule.slice(match[0].length) };
+}
+
+/** Rebuilds a schedule; an empty expression stays empty so "off" survives. */
+export function joinCron(zone: string, expression: string): string {
+  const trimmed = expression.trim();
+  if (zone === '' || trimmed === '') return expression;
+  return `CRON_TZ=${zone} ${trimmed}`;
+}
+
+/**
+ * True when the browser can resolve the zone name. "Local" and "UTC" are
+ * always accepted because the daemon resolves them itself.
+ */
+export function isKnownTimeZone(zone: string): boolean {
+  if (zone === 'UTC' || zone === 'Local') return true;
+  if (zone === '') return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** IANA zone names the browser knows, with UTC first. */
+export function timeZoneNames(): string[] {
+  const supported = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  return ['UTC', ...supported.filter((zone) => zone !== 'UTC')];
+}
+
+/** "America/New_York" as "America/New York", for menus and summaries. */
+export function timeZoneLabel(zone: string): string {
+  return zone.replaceAll('_', ' ');
+}
+
 /** Splits an expression into tokens and checks each field. */
-export function parseCron(expression: string): CronParse {
-  const tokens = tokenize(expression);
-  if (tokens.length === 0) return { tokens, error: 'Enter five fields: minute, hour, day, month, and weekday.' };
+export function parseCron(schedule: string): CronParse {
+  const prefix = ZONE_PREFIX.exec(schedule);
+  const zone = prefix?.[1] ?? '';
+  if (prefix && !isKnownTimeZone(zone)) {
+    const error = zone === '' ? 'Time zone: a name is missing.' : `Time zone: "${zone}" is not a known time zone.`;
+    return { tokens: [], zone, error };
+  }
+  const expression = prefix ? schedule.slice(prefix[0].length) : schedule;
+  const tokens = tokenize(expression, prefix?.[0].length ?? 0);
+  if (tokens.length === 0) {
+    return { tokens, zone: zone || undefined, error: 'Enter five fields: minute, hour, day, month, and weekday.' };
+  }
 
   const fields: CronField[] = [];
   let error: string | undefined;
@@ -109,11 +173,11 @@ export function parseCron(expression: string): CronParse {
     const missing = CRON_FIELDS.slice(tokens.length).map((field) => field.label);
     error = `Missing ${joinWords(missing)}.`;
   }
-  if (error) return { tokens, error };
-  return { tokens, fields };
+  if (error) return { tokens, zone: zone || undefined, error };
+  return { tokens, fields, zone: zone || undefined };
 }
 
-function tokenize(expression: string): CronToken[] {
+function tokenize(expression: string, offset: number): CronToken[] {
   const tokens: CronToken[] = [];
   const pattern = /\S+/g;
   let match: RegExpExecArray | null;
@@ -122,8 +186,8 @@ function tokenize(expression: string): CronToken[] {
     tokens.push({
       field: index < CRON_FIELDS.length ? CRON_FIELDS[index].name : 'extra',
       text: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
+      start: offset + match.index,
+      end: offset + match.index + match[0].length,
     });
   }
   return tokens;
@@ -170,16 +234,19 @@ function parseTerm(text: string, spec: CronFieldSpec): CronTerm {
   return { start, end, step, all };
 }
 
+// The daemon reads numbers with Atoi, so a leading plus sign is allowed.
+const WHOLE_NUMBER = /^\+?\d+$/;
+
 function parseValue(text: string, spec: CronFieldSpec): number {
   if (text === '') throw new Error('a value is missing.');
-  if (/^\d+$/.test(text)) return Number(text);
+  if (WHOLE_NUMBER.test(text)) return Number(text);
   const named = spec.names?.[text.toLowerCase()];
   if (named !== undefined) return named;
   throw new Error(`"${text}" is not a ${spec.label}.`);
 }
 
 function parsePositiveInt(text: string, what: string): number {
-  if (!/^\d+$/.test(text)) throw new Error(`${what} must be a whole number.`);
+  if (!WHOLE_NUMBER.test(text)) throw new Error(`${what} must be a whole number.`);
   const value = Number(text);
   if (value === 0) throw new Error(`${what} must be at least 1.`);
   return value;
@@ -192,24 +259,25 @@ function parsePositiveInt(text: string, what: string): number {
 export function scheduleSummary(expression: string | null | undefined): string {
   if (!expression) return '';
   const parsed = parseCron(expression);
-  return parsed.fields ? describeFields(parsed.fields) : expression;
+  return parsed.fields ? describeFields(parsed.fields, parsed.zone) : expression;
 }
 
 /** Plain-English summary of a parsed schedule, such as "At 03:00 every day". */
 export function describeCron(expression: string): string {
   const parsed = parseCron(expression);
   if (!parsed.fields) return parsed.error ?? '';
-  return describeFields(parsed.fields);
+  return describeFields(parsed.fields, parsed.zone);
 }
 
-export function describeFields(fields: CronField[]): string {
+/** Describes parsed fields; a zone adds ", Europe/Berlin time" at the end. */
+export function describeFields(fields: CronField[], zone?: string): string {
   const [minute, hour, day, month, weekday] = fields;
   const time = describeTime(minute, hour);
   const days = describeDays(day, month, weekday);
   // "Every 15 minutes every day" says nothing extra; a clock time does.
   const clockTime = time.startsWith('at ') && !time.startsWith('at :');
-  if (days === 'every day' && !clockTime) return capitalize(time);
-  return capitalize(`${time} ${days}`);
+  const text = days === 'every day' && !clockTime ? capitalize(time) : capitalize(`${time} ${days}`);
+  return zone ? `${text}, ${timeZoneLabel(zone)} time` : text;
 }
 
 // A "*\/N" term only means "every N" when N divides the field evenly. "*\/40"

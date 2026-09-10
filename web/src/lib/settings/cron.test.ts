@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import corpus from './cron-corpus.json';
-import { CRON_PRESETS, describeCron, parseCron, scheduleSummary } from './cron';
+import { CRON_PRESETS, describeCron, joinCron, parseCron, scheduleSummary, splitCron } from './cron';
 
 describe('parseCron', () => {
   it('labels each token with its field and position', () => {
@@ -38,6 +38,9 @@ describe('parseCron', () => {
     ['1-2-3 * * * *', 'Minute: too many hyphens in 1-2-3.'],
     ['1/2/3 * * * *', 'Minute: too many slashes in 1/2/3.'],
     [', * * * *', 'Minute: a value is missing.'],
+    ['CRON_TZ=Nowhere/Place 0 3 * * *', 'Time zone: "Nowhere/Place" is not a known time zone.'],
+    ['CRON_TZ= 0 3 * * *', 'Time zone: a name is missing.'],
+    ['CRON_TZ=UTC', 'Enter five fields: minute, hour, day, month, and weekday.'],
   ])('rejects %j with a plain message', (expression, message) => {
     const parsed = parseCron(expression);
     expect(parsed.fields).toBeUndefined();
@@ -51,6 +54,15 @@ describe('parseCron', () => {
       terms: [{ start: 0, end: 59, step: 1, all: true }],
       any: true,
     });
+  });
+
+  it('reads a time zone prefix and keeps token positions on the whole string', () => {
+    const parsed = parseCron('TZ=Europe/Berlin  +5 3 * * *');
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.zone).toBe('Europe/Berlin');
+    expect(parsed.tokens[0]).toMatchObject({ field: 'minute', text: '+5', start: 18, end: 20 });
+    expect(parsed.fields?.[0].terms).toEqual([{ start: 5, end: 5, step: 1, all: false }]);
+    expect(parseCron('0 3 * * *').zone).toBeUndefined();
   });
 
   it('agrees with the daemon parser on the shared corpus', () => {
@@ -97,6 +109,8 @@ describe('describeCron', () => {
     ['30 */5 * * *', 'At 00:30, 05:30, 10:30, 15:30, and 20:30 every day'],
     ['*/20 * * * *', 'Every 20 minutes'],
     ['0 4 * * */3', 'At 04:00 on Sunday, Wednesday, and Saturday'],
+    ['CRON_TZ=America/New_York 0 3 * * *', 'At 03:00 every day, America/New York time'],
+    ['TZ=UTC */15 * * * *', 'Every 15 minutes, UTC time'],
   ])('describes %s as %s', (expression, description) => {
     expect(describeCron(expression)).toBe(description);
   });
@@ -114,9 +128,21 @@ describe('describeCron', () => {
   });
 });
 
+describe('splitCron and joinCron', () => {
+  it('round-trips a zone and leaves an empty expression empty', () => {
+    expect(splitCron('CRON_TZ=Europe/Berlin 0 3 * * *')).toEqual({ zone: 'Europe/Berlin', expression: '0 3 * * *' });
+    expect(splitCron('TZ=UTC  0 3 * * *')).toEqual({ zone: 'UTC', expression: '0 3 * * *' });
+    expect(splitCron('0 3 * * *')).toEqual({ zone: '', expression: '0 3 * * *' });
+    expect(joinCron('Europe/Berlin', ' 0 3 * * * ')).toBe('CRON_TZ=Europe/Berlin 0 3 * * *');
+    expect(joinCron('', '0 3 * * *')).toBe('0 3 * * *');
+    expect(joinCron('Europe/Berlin', '   ')).toBe('   ');
+  });
+});
+
 describe('scheduleSummary', () => {
   it('describes a stored schedule and falls back to the raw expression', () => {
     expect(scheduleSummary('0 2 * * *')).toBe('At 02:00 every day');
+    expect(scheduleSummary('CRON_TZ=Asia/Tokyo 0 2 * * *')).toBe('At 02:00 every day, Asia/Tokyo time');
     expect(scheduleSummary('0 2 * * L')).toBe('0 2 * * L');
     expect(scheduleSummary('')).toBe('');
     expect(scheduleSummary(undefined)).toBe('');

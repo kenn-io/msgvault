@@ -896,7 +896,7 @@ func settingsEdits(current *config.Config, updates []SettingUpdate) ([]config.Ed
 			if err != nil {
 				return nil, false, fmt.Errorf("setting %q: %w", update.Key, err)
 			}
-			value = converted
+			value = normalizeSettingValue(update.Key, converted)
 		}
 		if err := validateSettingUpdate(update.Key, value, definition.options); err != nil {
 			return nil, false, fmt.Errorf("%w: %s", errInvalidSettingUpdate, update.Key)
@@ -977,6 +977,20 @@ func validateSettingUpdate(key string, value any, options []string) error {
 // string settings so the daemon rejects what the browser rejects. Config
 // defaulting would otherwise turn an empty required schedule into the
 // built-in one without telling the caller.
+// normalizeSettingValue trims text whose surrounding whitespace carries no
+// meaning, so a schedule made only of spaces is stored as the empty off value
+// instead of failing the config check after the PATCH was accepted.
+func normalizeSettingValue(key string, value any) any {
+	validation := validationForSetting(key)
+	if validation == nil || validation.Format != settingFormatCron {
+		return value
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return value
+}
+
 func validateSettingText(key string, value any) error {
 	validation := validationForSetting(key)
 	if validation == nil {
