@@ -116,7 +116,45 @@ It tests the connection before saving credentials.
 
 Credentials are stored in `tokens/imap_<hash>.json` with restricted file permissions (0600). Use app-specific passwords when your provider supports them.
 
+---
+
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
+
+---
+
+## draft-reply
+
+Create one reply draft from an archived IMAP message. The daemon requires a
+confirmed `--from` identity and an operator grant in `[[imap.drafts]]`.
+
+```bash
+msgvault draft-reply <message-id> --from <address> --body <text>
+msgvault draft-reply <message-id> --from <address> --body= --json
+```
+
+The daemon appends the composed message to the configured literal mailbox with
+the `\Draft` flag, then stores the local message and its `(mailbox, uidvalidity,
+uid)` receipt. The server must advertise UIDPLUS. An accepted APPEND without a
+receipt returns `accepted_unidentified`, and a lost connection returns
+`remote_unknown`; inspect the mailbox before retrying either result. A request
+made while that source is syncing returns `sync_active`; retry after the sync
+finishes.
+
+Configure the grant by editing the daemon host's `config.toml`, then restart
+the daemon:
+
+```toml
+[[imap.drafts]]
+source_id = 42
+enabled = true
+mailbox = "Drafts"
+```
+
+Requests, Settings, source JSON, environment variables, and client config do
+not grant access or change the mailbox. The grant is per source, not per
+caller: any client that can reach the daemon can create drafts on it. A later sync reconciles the saved
+membership when the mailbox's UIDVALIDITY changes. Draft creation never moves
+an IMAP cursor.
 
 ---
 

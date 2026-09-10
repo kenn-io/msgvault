@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
@@ -440,10 +441,24 @@ type Config struct {
 	People         PeopleConfig                    `toml:"people"`
 	Teams          TeamsConfig                     `toml:"teams"`
 	Deletion       DeletionConfig                  `toml:"deletion"`
+	IMAP           IMAPConfig                      `toml:"imap"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
 	configPath string // resolved path to the loaded config file
+}
+
+// IMAPConfig contains operator-owned settings for IMAP mutations.
+type IMAPConfig struct {
+	Drafts []IMAPDraftSource `toml:"drafts"`
+}
+
+// IMAPDraftSource grants one source permission to create a draft in a literal
+// mailbox. The daemon copies this grant at startup.
+type IMAPDraftSource struct {
+	SourceID int64  `toml:"source_id"`
+	Enabled  bool   `toml:"enabled"`
+	Mailbox  string `toml:"mailbox"`
 }
 
 // DeletionConfig records durable operator consent for remote deletion.
@@ -819,8 +834,14 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
 		}
+		if strings.HasPrefix(key.String(), "imap.drafts.") {
+			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
+		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateIMAPDraftSources(content); err != nil {
 		return nil, err
 	}
 
@@ -916,6 +937,38 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) validateIMAPDraftSources(content []byte) error {
+	var raw struct {
+		IMAP struct {
+			Drafts []struct {
+				SourceID *int64 `toml:"source_id"`
+			} `toml:"drafts"`
+		} `toml:"imap"`
+	}
+	_, _ = toml.Decode(string(content), &raw)
+	seen := make(map[int64]struct{}, len(c.IMAP.Drafts))
+	for i := range c.IMAP.Drafts {
+		draft := &c.IMAP.Drafts[i]
+		if i >= len(raw.IMAP.Drafts) || raw.IMAP.Drafts[i].SourceID == nil {
+			return fmt.Errorf("[[imap.drafts]] entry %d: source_id is required", i+1)
+		}
+		if draft.SourceID <= 0 {
+			return fmt.Errorf("[[imap.drafts]] entry %d: source_id must be positive", i+1)
+		}
+		if _, ok := seen[draft.SourceID]; ok {
+			return fmt.Errorf("[[imap.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
+		}
+		seen[draft.SourceID] = struct{}{}
+		if !utf8.ValidString(draft.Mailbox) || strings.TrimSpace(draft.Mailbox) == "" {
+			return fmt.Errorf("[[imap.drafts]] entry %d: mailbox must be nonblank UTF-8", i+1)
+		}
+		if strings.ContainsAny(draft.Mailbox, "\x00\r\n") {
+			return fmt.Errorf("[[imap.drafts]] entry %d: mailbox contains control characters", i+1)
+		}
+	}
+	return nil
 }
 
 func fastmailSourceIDConfigured(content []byte) []bool {

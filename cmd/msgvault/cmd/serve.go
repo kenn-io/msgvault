@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -584,18 +585,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 
 	// Create adapters for the API interfaces
+	refreshCacheAfterWrite := func(_ context.Context, label string) error {
+		// The write is already durable. Keep the refresh independent of the
+		// client, but let daemon shutdown stop it before the store closes.
+		return daemonCacheRefreshError(ctx, rebuildCacheAfterScheduledSync(ctx, label))
+	}
 	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
 		AfterSourceSetup: func() error {
 			return runPostSourceCreateMigrations(s)
 		},
-		RefreshCache: func(_ context.Context, label string) error {
-			// The import is already durable. Keep the refresh independent of the
-			// client, but let daemon shutdown stop it before the store closes.
-			return daemonCacheRefreshError(ctx, rebuildCacheAfterScheduledSync(ctx, label))
-		},
+		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
+		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
+		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
@@ -775,6 +779,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func snapshotIMAPDraftPolicy(cfg *config.Config) []config.IMAPDraftSource {
+	if cfg == nil {
+		return nil
+	}
+	return append([]config.IMAPDraftSource(nil), cfg.IMAP.Drafts...)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
@@ -1216,7 +1227,12 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store                 *store.Store
+	store              *store.Store
+	draftPolicy        []config.IMAPDraftSource
+	draftClientFactory func(context.Context, *store.Source) (*imaplib.Client, error)
+	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
+	// the same best-effort hook the meeting importer uses.
+	draftCacheRefresh     func(context.Context, string) error
 	attachmentMaintenance *attachmentMaintenance
 	meetingImporter       *meetingimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
@@ -1812,6 +1828,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			return nil
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
+	}
+	if api.IsCLIRunDraftReply(req.Args) {
+		return a.runCLIReplyDraft(ctx, req, emit)
 	}
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args

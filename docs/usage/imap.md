@@ -178,3 +178,29 @@ msgvault sync-full you@example.com --noresume
 
 Leave out folder filters for a complete account scan. `repair-labels` cannot
 recover memberships that the archive has never observed.
+
+## Reply drafts
+
+An operator can grant draft creation for one IMAP source in the daemon host's
+TOML file:
+
+```toml
+[[imap.drafts]]
+source_id = 42
+enabled = true
+mailbox = "Drafts"
+```
+
+Restart the daemon after changing the grant. The grant applies to the source,
+not to the caller: any client that can reach the daemon can create drafts on a
+granted source. The `draft-reply` command accepts
+one archived message ID, one confirmed `--from` identity, and `--body`. The
+daemon composes a plain-text reply with the parent message's threading headers,
+then sends one IMAP `APPEND` to the literal mailbox with `\Draft`. The source
+must advertise UIDPLUS. An empty body is valid when supplied as `--body=`.
+
+The daemon stores the accepted message and its mailbox, UIDVALIDITY, and UID in
+one local transaction. It leaves `imap_folder_state` unchanged. A later sync
+owns cursor advancement and reconciles the membership after a UIDVALIDITY
+change, including a reused UID that identifies different mail. An uncertain
+APPEND requires mailbox inspection before another request.

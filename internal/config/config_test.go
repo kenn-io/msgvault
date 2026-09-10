@@ -37,6 +37,39 @@ enabled = true
 	assert.NotContains(encoded.String(), "password")
 }
 
+func TestIMAPDraftConfig(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[[imap.drafts]]\nsource_id = 42\nenabled = true\nmailbox = \"Drafts*2026\"\n"
+	requirements.NoError(os.WriteFile(path, []byte(content), 0o600))
+	t.Log("[[imap.drafts]] enabled source_id=42 mailbox=Drafts*2026")
+	cfg, err := Load(path, "")
+	requirements.NoError(err)
+	requirements.Len(cfg.IMAP.Drafts, 1)
+	assertions.Equal(int64(42), cfg.IMAP.Drafts[0].SourceID)
+	assertions.True(cfg.IMAP.Drafts[0].Enabled)
+	assertions.Equal("Drafts*2026", cfg.IMAP.Drafts[0].Mailbox)
+	requirements.NoError(cfg.Save())
+	reloaded, err := Load(path, "")
+	requirements.NoError(err)
+	requirements.Len(reloaded.IMAP.Drafts, 1)
+	assertions.Equal("Drafts*2026", reloaded.IMAP.Drafts[0].Mailbox)
+	t.Log("config Save/load round-trip kept enabled=true mailbox=Drafts*2026")
+
+	for _, invalid := range []string{
+		"[[imap.drafts]]\nsource_id = 0\nenabled = true\nmailbox = \"Drafts\"\n",
+		"[[imap.drafts]]\nsource_id = 42\nenabled = true\nmailbox = \"\"\n",
+		"[[imap.drafts]]\nsource_id = 42\nenabled = true\nmailbox = \"Drafts\"\n[[imap.drafts]]\nsource_id = 42\nenabled = false\nmailbox = \"Drafts\"\n",
+		"[[imap.drafts]]\nsource_id = 42\nenabled = true\nmailbox = \"Drafts\"\nextra = true\n",
+	} {
+		requirements.NoError(os.WriteFile(path, []byte(invalid), 0o600))
+		_, err := Load(path, "")
+		requirements.Error(err)
+	}
+	t.Log("invalid [[imap.drafts]] entries reject bad source_id, mailbox, duplicate source_id, and unknown keys")
+}
+
 func TestCardDAVConfigRejectsPasswordField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`[carddav]

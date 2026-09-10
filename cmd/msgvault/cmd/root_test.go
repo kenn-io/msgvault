@@ -18,6 +18,10 @@ import (
 	extOAuth2 "golang.org/x/oauth2"
 )
 
+func TestSanitizeArgsDraftBody(t *testing.T) {
+	assert.Equal(t, []string{"draft-reply", "42", "--body", "<redacted>", "--body=<redacted>"}, sanitizeArgs([]string{"draft-reply", "42", "--body", "body-secret-731", "--body=body-secret-731"}))
+}
+
 func TestErrOAuthNotConfigured(t *testing.T) {
 	assert := assert.New(t)
 	err := errOAuthNotConfigured()
