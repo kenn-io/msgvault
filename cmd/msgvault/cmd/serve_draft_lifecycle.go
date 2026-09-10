@@ -18,6 +18,14 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// pendingEditStalenessThreshold is the minimum age for a pending-edit marker
+// to be treated as an interrupted (crashed) operation. Holding the sync
+// execution lock already proves no live caller is between Begin and Finish;
+// this threshold guards against a lock-release/re-acquire race in the same
+// wall-clock window by refusing to clear a marker younger than the maximum
+// conceivable lock hold time.
+const pendingEditStalenessThreshold = 5 * time.Minute
+
 // draftClient is the subset of imaplib.Client methods used by the draft reply
 // and lifecycle commands. Using an interface enables test injection of custom
 // behaviour (e.g. injecting a failing RemoveDraft) without requiring a real
@@ -388,24 +396,8 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	if err != nil {
 		return err
 	}
-	draft := target.draft
 
-	// Handle a prior interrupted operation inline.
-	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
-		switch draft.PendingKind.String {
-		case "discard":
-			return draftReplyError("operation_pending",
-				fmt.Errorf("draft %d has a pending discard; use draft-delete to complete it", intent.DraftID))
-		case "edit":
-			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
-				return draftReplyError("internal", fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
-			}
-			return draftReplyError("edit_interrupted",
-				fmt.Errorf("draft %d had an interrupted edit; a duplicate may exist in the Drafts mailbox — remove it in your mail client and retry", intent.DraftID))
-		}
-	}
-
-	// Build the new raw draft body.
+	// Build the new raw draft body before acquiring the lock (CPU-only).
 	newDraft, err := imaplib.ReplaceDraftBody(target.raw, intent.Body, time.Now())
 	if err != nil {
 		if err.Error() == "invalid_message" {
@@ -428,6 +420,41 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
 	}
 	defer func() { _ = execution.Release() }()
+
+	// Reload draft under the lock to get authoritative pending state. Any
+	// pending marker visible here must be from a crashed prior holder because
+	// holding the sync execution lock guarantees no other caller is currently
+	// between Begin and Finish.
+	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
+	if err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("reload draft %d: %w", intent.DraftID, err))
+	}
+	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
+		switch draft.PendingKind.String {
+		case "discard":
+			return draftReplyError("operation_pending",
+				fmt.Errorf("draft %d has a pending discard; use draft-delete to complete it", intent.DraftID))
+		case "edit":
+			// A marker younger than pendingEditStalenessThreshold is treated
+			// conservatively as a potentially-live operation (defense-in-depth).
+			if draft.PendingStartedAt.Valid && time.Since(draft.PendingStartedAt.Time) < pendingEditStalenessThreshold {
+				return draftReplyError("operation_pending",
+					fmt.Errorf("draft %d has a recent pending edit", intent.DraftID))
+			}
+			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
+				return draftReplyError("internal", fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
+			}
+			var pendingUID int64
+			if draft.PendingUID.Valid {
+				pendingUID = draft.PendingUID.Int64
+			}
+			return draftReplyError("edit_interrupted",
+				fmt.Errorf("draft %d had an interrupted edit; pending copy UID=%d may remain in Drafts mailbox — remove it and retry", intent.DraftID, pendingUID))
+		}
+	}
 
 	// 4. InspectDraft on live old receipt.
 	client, err := a.lifecycleDraftClient(ctx, target.source)
@@ -562,7 +589,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			// Leave pending state so --resume can retry the removal.
+			// Leave pending state so draft-delete can retry the removal.
 			logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
 			output := draftLifecycleOutput{
 				Status:       "remote_accepted_local_failed",
@@ -639,20 +666,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if err != nil {
 		return err
 	}
-	draft := target.draft
 
-	// Handle a prior interrupted operation inline.
-	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
-		switch draft.PendingKind.String {
-		case "edit":
-			return draftReplyError("operation_pending",
-				fmt.Errorf("draft %d has a pending edit; use draft-edit to resolve it", intent.DraftID))
-		case "discard":
-			return a.replayPendingDiscard(ctx, intent, target, emit)
-		}
-	}
-
-	// Acquire the sync execution context.
+	// Acquire the sync execution context BEFORE checking pending state so that
+	// the pending-kind read and any subsequent Begin are both inside the same
+	// mutual-exclusion window. No concurrent caller can be between Begin and
+	// Finish while we hold the lock.
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSyncAlreadyActive) {
@@ -660,7 +678,36 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		}
 		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
 	}
-	defer func() { _ = execution.Release() }()
+	lockReleased := false
+	defer func() {
+		if !lockReleased {
+			_ = execution.Release()
+		}
+	}()
+
+	// Reload draft under the lock for authoritative pending state.
+	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
+	if err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("reload draft %d: %w", intent.DraftID, err))
+	}
+	target.draft = draft
+
+	// Handle a prior interrupted operation (under the lock so state is authoritative).
+	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
+		switch draft.PendingKind.String {
+		case "edit":
+			return draftReplyError("operation_pending",
+				fmt.Errorf("draft %d has a pending edit; use draft-edit to resolve it", intent.DraftID))
+		case "discard":
+			// Release the lock before replayPendingDiscard acquires its own.
+			lockReleased = true
+			_ = execution.Release()
+			return a.replayPendingDiscard(ctx, intent, target, emit)
+		}
+	}
 
 	// InspectDraft.
 	client, err := a.lifecycleDraftClient(ctx, target.source)
@@ -721,11 +768,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			// Leave pending state set; caller can --resume.
+			// Leave pending state set; caller can retry draft-delete.
 			output := draftLifecycleOutput{
 				Status:       "delete_failed",
 				DraftID:      intent.DraftID,
-				Lifecycle:    "delete_pending",
+				Lifecycle:    "active",
 				Revision:     claimedDraft.Revision,
 				OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: draft.UIDValidity, UID: draft.UID}),
 			}
@@ -771,7 +818,8 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		return draftReplyError("remote_deleted_local_failed", finishErr)
 	}
 
-	// Release lock.
+	// Release lock before cache refresh.
+	lockReleased = true
 	if err := execution.Release(); err != nil {
 		logger.Error("release source after draft delete", "source_id", target.source.ID, "error", err)
 	}
@@ -798,7 +846,34 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 	target draftLifecycleTarget,
 	emit func(api.CLIRunEvent) error,
 ) error {
-	draft := target.draft
+	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrSyncAlreadyActive) {
+			return draftReplyError("sync_active", fmt.Errorf("source %d: %w", target.source.ID, err))
+		}
+		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
+	}
+	replayReleased := false
+	defer func() {
+		if !replayReleased {
+			_ = execution.Release()
+		}
+	}()
+
+	// Reload under the lock for authoritative revision and pending coordinates.
+	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
+	if err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("reload draft %d for replay: %w", intent.DraftID, err))
+	}
+	// intent.Revision is the caller's pre-Begin revision; Begin incremented it
+	// by 1. Reject if the stored post-Begin revision no longer matches.
+	if intent.Revision != draft.Revision-1 {
+		return draftReplyError("revision_conflict",
+			fmt.Errorf("draft %d: revision %d is stale", intent.DraftID, intent.Revision))
+	}
 
 	var oldUID uint32
 	var oldUIDValidity uint32
@@ -809,15 +884,6 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		oldUID = draft.UID
 		oldUIDValidity = draft.UIDValidity
 	}
-
-	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrSyncAlreadyActive) {
-			return draftReplyError("sync_active", fmt.Errorf("source %d: %w", target.source.ID, err))
-		}
-		return draftReplyError("sync_lock_failed", fmt.Errorf("source %d: %w", target.source.ID, err))
-	}
-	defer func() { _ = execution.Release() }()
 
 	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
@@ -865,6 +931,7 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		return draftReplyError("remote_deleted_local_failed", finishErr)
 	}
 
+	replayReleased = true
 	if err := execution.Release(); err != nil {
 		logger.Error("release source after replay discard", "source_id", target.source.ID, "error", err)
 	}

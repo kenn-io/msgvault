@@ -130,10 +130,61 @@ func TestInspectDraftClassifiesRemoteStateInIsolation(t *testing.T) {
 		require.NoError(t, err2)
 		assert.Equal(t, DraftRemoteAbsent, r2.State)
 	})
+
+	t.Run("RemoveDraft_flag_missing_does_not_expunge", func(t *testing.T) {
+		// Append without \Draft flag so RemoveDraft sees flag_missing.
+		noFlagUID := appendWithFlags(t, addr, "Drafts", raw, []emersionimap.Flag{emersionimap.FlagSeen})
+		require.NotZero(t, noFlagUID)
+		flagMissingTarget := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         noFlagUID,
+			RawSHA256:   digest,
+		}
+		cl := newDraftTestClient(t, addr)
+		r, err := cl.RemoveDraft(context.Background(), flagMissingTarget)
+		require.NoError(t, err)
+		assert.Equal(t, DraftRemoteFlagMissing, r.State, "flag_missing must not call expungeUIDLocked")
+		// Message must still be present.
+		cl2 := newDraftTestClient(t, addr)
+		r2, err2 := cl2.InspectDraft(context.Background(), flagMissingTarget)
+		require.NoError(t, err2)
+		assert.NotEqual(t, DraftRemoteAbsent, r2.State, "message must not be expunged for flag_missing")
+	})
+
+	t.Run("RemoveDraft_changed_does_not_expunge", func(t *testing.T) {
+		// Re-append a proper draft and supply wrong digest so RemoveDraft sees changed.
+		cl := newDraftTestClient(t, addr)
+		reappendResult, err := cl.AppendDraft(context.Background(), "Drafts", raw)
+		require.NoError(t, err)
+		differentDigest := sha256.Sum256([]byte("different content"))
+		changedTarget := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         reappendResult.UID,
+			RawSHA256:   differentDigest,
+		}
+		cl2 := newDraftTestClient(t, addr)
+		r, err := cl2.RemoveDraft(context.Background(), changedTarget)
+		require.NoError(t, err)
+		assert.Equal(t, DraftRemoteChanged, r.State, "changed must not call expungeUIDLocked")
+		// Message must still be present.
+		goodTarget := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         reappendResult.UID,
+			RawSHA256:   digest,
+		}
+		cl3 := newDraftTestClient(t, addr)
+		r2, err2 := cl3.InspectDraft(context.Background(), goodTarget)
+		require.NoError(t, err2)
+		assert.Equal(t, DraftRemotePresent, r2.State, "message must not be expunged for changed")
+	})
 }
 
 // TestInspectDraftReportsFlagLossAndContentChange verifies flag_missing
-// and changed classifications.
+// and changed classifications, and that RemoveDraft refuses both cases
+// without expunging the message.
 func TestInspectDraftReportsFlagLossAndContentChange(t *testing.T) {
 	caps := emersionimap.CapSet{
 		emersionimap.CapIMAP4rev1: {},
@@ -170,6 +221,24 @@ func TestInspectDraftReportsFlagLossAndContentChange(t *testing.T) {
 		assert.Equal(t, DraftRemoteFlagMissing, r.State)
 	})
 
+	t.Run("flag_missing_RemoveDraft_refuses", func(t *testing.T) {
+		target := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         noFlagUID,
+			RawSHA256:   digest,
+		}
+		cl := newDraftTestClient(t, addr)
+		r, err := cl.RemoveDraft(context.Background(), target)
+		require.NoError(t, err)
+		assert.Equal(t, DraftRemoteFlagMissing, r.State, "RemoveDraft must refuse flag_missing without expunging")
+		// Message must still be present (expungeUIDLocked was not called).
+		cl2 := newDraftTestClient(t, addr)
+		r2, err2 := cl2.InspectDraft(context.Background(), target)
+		require.NoError(t, err2)
+		assert.NotEqual(t, DraftRemoteAbsent, r2.State, "message must survive RemoveDraft refusal for flag_missing")
+	})
+
 	t.Run("changed", func(t *testing.T) {
 		// The draft just appended with AppendDraft has the right UID but
 		// we supply a different digest.
@@ -186,6 +255,31 @@ func TestInspectDraftReportsFlagLossAndContentChange(t *testing.T) {
 		assert.Equal(t, DraftRemoteChanged, r.State)
 		// The actual digest from the server matches original.
 		assert.Equal(t, digest, r.RawSHA256)
+	})
+
+	t.Run("changed_RemoveDraft_refuses", func(t *testing.T) {
+		differentRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nMessage-ID: <draft-test@example.com>\r\n\r\nDIFFERENT\r\n")
+		target := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         presentResult.UID,
+			RawSHA256:   sha256.Sum256(differentRaw), // intentionally wrong digest
+		}
+		cl := newDraftTestClient(t, addr)
+		r, err := cl.RemoveDraft(context.Background(), target)
+		require.NoError(t, err)
+		assert.Equal(t, DraftRemoteChanged, r.State, "RemoveDraft must refuse changed without expunging")
+		// Message must still be present (expungeUIDLocked was not called).
+		goodTarget := DraftTarget{
+			Mailbox:     "Drafts",
+			UIDValidity: uidvalidity,
+			UID:         presentResult.UID,
+			RawSHA256:   digest, // correct digest
+		}
+		cl2 := newDraftTestClient(t, addr)
+		r2, err2 := cl2.InspectDraft(context.Background(), goodTarget)
+		require.NoError(t, err2)
+		assert.Equal(t, DraftRemotePresent, r2.State, "message must survive RemoveDraft refusal for changed")
 	})
 }
 

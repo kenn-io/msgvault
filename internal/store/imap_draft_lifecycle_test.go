@@ -276,6 +276,14 @@ func TestIMAPDraftLifecycleSurvivesAuthoritativeSync(t *testing.T) {
 	})
 	requirements.NoError(err)
 
+	// Draft ops (Begin + Finish) must not write imap_folder_state on a
+	// mailbox that has never been synced.
+	var folderStateCntBefore int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM imap_folder_state WHERE source_id = ?
+	`), source.ID).Scan(&folderStateCntBefore))
+	assert.Equal(t, 0, folderStateCntBefore, "draft ops must not write imap_folder_state")
+
 	// ApplyIMAPMailboxDeltas with Reset delta must not resurrect the old message.
 	err = st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: receipt.Mailbox, Reset: true,

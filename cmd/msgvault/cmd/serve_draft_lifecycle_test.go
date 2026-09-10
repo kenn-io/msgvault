@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -150,6 +151,15 @@ func TestDraftEditReplacesRemoteCopyAndAdvancesRevision(t *testing.T) {
 		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?
 	`), f.source.ID).Scan(&cnt))
 	assert.Equal(t, 1, cnt)
+
+	// Archived raw for the new current_message_id must contain the updated body.
+	var newMessageID int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT current_message_id FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&newMessageID))
+	rawData, rawErr := f.store.GetMessageRawContext(t.Context(), newMessageID)
+	require.NoError(t, rawErr, "must be able to load archived raw for new draft")
+	assert.Contains(t, string(rawData), "Updated draft body", "archived raw must contain the new body text")
 }
 
 // TestDraftEditRejectsStaleRevision verifies that a second edit at the same
@@ -353,6 +363,25 @@ func TestDraftGetReportsExternalRemoval(t *testing.T) {
 	assert.NotEqual(t, imaplib.DraftRemotePresent, result["provider_status"])
 	// Lifecycle stays active (get is read-only).
 	assert.Equal(t, "active", result["lifecycle"])
+
+	// draft-edit after external removal must return draft_missing.
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10),
+		"--revision=1", "--body=should fail")
+	require.Error(t, editErr)
+	assert.Equal(t, "draft_missing", editErr.Error(), "draft-edit must return draft_missing for externally removed draft")
+
+	// draft-delete after external removal must complete locally (absent is idempotent).
+	_, deleteErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.NoError(t, deleteErr, "draft-delete must complete when remote copy is already absent")
+
+	// Lifecycle must now be discarded; no APPEND recreated the draft.
+	events2, err2 := f.runLifecycle(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
+	require.NoError(t, err2)
+	var result2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events2[0].Data), &result2))
+	assert.Equal(t, "discarded", result2["lifecycle"], "lifecycle must be discarded after draft-delete")
 }
 
 // TestParseDraftLifecycleArgs is a pure unit test for the hand-written arg parser.
@@ -494,7 +523,7 @@ func TestDraftEditConcurrentRevisionConflict(t *testing.T) {
 
 // TestDraftDeleteReportsRemoteFailureWithoutLocalLoss verifies that when
 // draft-delete fails because RemoveDraft is rejected, the operation returns
-// delete_failed, leaves lifecycle=delete_pending with pending_uid set, and
+// delete_failed, leaves lifecycle=active with pending_uid set, and
 // leaves both the local membership/message rows and the server copy intact.
 func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
@@ -615,6 +644,142 @@ func TestDraftLifecycleCommandsRouteThroughDaemon(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "revision")
 	})
+}
+
+// TestDraftReplayPendingDiscard verifies that draft-delete resumes a pending
+// discard when the previous attempt left pending_kind='discard' set.
+func TestDraftReplayPendingDiscard(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// First attempt: inject a failing RemoveDraft to leave pending_kind='discard'.
+	counter := &sharedRemoveCounter{}
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1) // fail first call
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "delete_failed", err.Error())
+
+	// Verify pending state is set (revision bumped to 2 by Begin).
+	var pendingKind sql.NullString
+	var revision int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT pending_kind, revision FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&pendingKind, &revision))
+	assert.Equal(t, "discard", pendingKind.String)
+	assert.Equal(t, int64(2), revision)
+
+	// Retry with --revision=1 (pre-Begin revision) and real RemoveDraft.
+	evs = nil
+	_, retryErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.NoError(t, retryErr, "replay of pending discard must succeed")
+
+	// Draft must now be discarded.
+	var lifecycle string
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle))
+	assert.Equal(t, "discarded", lifecycle)
+}
+
+// TestDraftReplayPendingDiscardRejectsStaleRevision verifies that
+// replayPendingDiscard refuses a caller-supplied revision that does not match
+// the current pre-Begin revision (draft.Revision-1).
+func TestDraftReplayPendingDiscardRejectsStaleRevision(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Perform a successful edit first so revision advances to 2.
+	_, err := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10),
+		"--revision=1", "--body=Intermediate edit")
+	require.NoError(t, err)
+
+	// Leave pending_kind='discard' at revision=3 by injecting a RemoveDraft failure.
+	counter := &sharedRemoveCounter{}
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=2"},
+	}, nil)
+	require.Error(t, err)
+
+	// Retry with the original stale revision=1 (pre-Begin was 2, so 1 != 3-1=2) must fail.
+	_, staleErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.Error(t, staleErr)
+	assert.Equal(t, "revision_conflict", staleErr.Error(), "stale revision must produce revision_conflict")
+}
+
+// TestDraftEditReturnsPendingOperationForPendingDiscard verifies that
+// draft-edit returns operation_pending when pending_kind='discard' is set.
+func TestDraftEditReturnsPendingOperationForPendingDiscard(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Inject pending_kind='discard' directly in the DB (simulating a crashed delete).
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'discard', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), time.Now(), f.draftID)
+	require.NoError(t, err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=should fail")
+	require.Error(t, editErr)
+	assert.Equal(t, "operation_pending", editErr.Error())
+}
+
+// TestDraftDeleteReturnsPendingOperationForPendingEdit verifies that
+// draft-delete returns operation_pending when pending_kind='edit' is set.
+func TestDraftDeleteReturnsPendingOperationForPendingEdit(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Inject pending_kind='edit' directly in the DB (simulating a crashed edit).
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), time.Now(), f.draftID)
+	require.NoError(t, err)
+
+	_, deleteErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.Error(t, deleteErr)
+	assert.Equal(t, "operation_pending", deleteErr.Error())
+}
+
+// TestDraftEditClearsStaleInterruptedEdit verifies that draft-edit returns
+// edit_interrupted (and clears the stale pending marker) when pending_kind='edit'
+// has a pending_started_at older than pendingEditStalenessThreshold.
+func TestDraftEditClearsStaleInterruptedEdit(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Inject a pending_kind='edit' with a very old pending_started_at.
+	staleTime := time.Now().Add(-60 * time.Minute)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error())
+
+	// pending_kind must be cleared.
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&pendingKind))
+	assert.False(t, pendingKind.Valid, "pending_kind must be cleared after edit_interrupted")
 }
 
 // Compile-time check: verify errors.Is can unwrap CLIRunCodedError (used in
