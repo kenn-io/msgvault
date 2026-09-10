@@ -1187,6 +1187,9 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 			DisableSQLiteScanner: true,
 			TempDirectory:        tempDirectory,
 			OwnTempDirectory:     true,
+			MemoryLimit:          c.Analytics.QueryMemoryLimit,
+			Threads:              c.Analytics.QueryThreads,
+			MaxTempDirectorySize: c.Analytics.QueryTempLimit,
 		},
 	)
 }

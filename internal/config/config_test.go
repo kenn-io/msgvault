@@ -186,6 +186,28 @@ builder_temp_limit = "12gB"
 	assertions.Equal("12gB", cfg.Analytics.BuilderTempLimit)
 }
 
+// The daemon-query knobs mirror the cache-builder ones: the InteractivePolicy
+// defaults are laptop-sized, and a large archive has to raise them or heavy
+// queries fail once they spill past max_temp_directory_size.
+func TestLoadWithAnalyticsQueryResourceLimits(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirements.NoError(os.WriteFile(configPath, []byte(`
+[analytics]
+query_memory_limit = "8GB"
+query_threads = 6
+query_temp_limit = "40GiB"
+`), 0o600))
+
+	cfg, err := Load(configPath, "")
+	requirements.NoError(err)
+	assertions.Equal("8GB", cfg.Analytics.QueryMemoryLimit)
+	assertions.Equal(6, cfg.Analytics.QueryThreads)
+	assertions.Equal("40GiB", cfg.Analytics.QueryTempLimit)
+}
+
 func TestLoadRejectsInvalidAnalyticsBuilderResourceLimits(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -200,6 +222,10 @@ func TestLoadRejectsInvalidAnalyticsBuilderResourceLimits(t *testing.T) {
 		{name: "negative temp", key: "builder_temp_limit", value: `"-8GB"`},
 		{name: "missing temp number", key: "builder_temp_limit", value: `"GB"`},
 		{name: "negative threads", key: "builder_threads", value: "-1"},
+		{name: "zero query memory", key: "query_memory_limit", value: `"0GB"`},
+		{name: "missing query memory unit", key: "query_memory_limit", value: `"2"`},
+		{name: "negative query temp", key: "query_temp_limit", value: `"-8GB"`},
+		{name: "negative query threads", key: "query_threads", value: "-1"},
 	}
 
 	for _, tt := range tests {

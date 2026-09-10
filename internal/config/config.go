@@ -55,6 +55,9 @@ type AnalyticsConfig struct {
 	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
 	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
 	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
+	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit; empty uses the default
+	QueryThreads       int           `toml:"query_threads"`        // Optional DuckDB daemon-query threads; zero uses the default
+	QueryTempLimit     string        `toml:"query_temp_limit"`     // Optional DuckDB daemon-query temp-directory limit; empty uses the default
 }
 
 const (
@@ -164,6 +167,8 @@ func (a *AnalyticsConfig) Validate() error {
 	}{
 		{key: "builder_memory_limit", value: a.BuilderMemoryLimit},
 		{key: "builder_temp_limit", value: a.BuilderTempLimit},
+		{key: "query_memory_limit", value: a.QueryMemoryLimit},
+		{key: "query_temp_limit", value: a.QueryTempLimit},
 	} {
 		if size.value != "" && !duckdbutil.ValidSize(size.value) {
 			return fmt.Errorf("invalid [analytics] %s %q: want a positive integer followed by B, KB, MB, GB, TB, KiB, MiB, GiB, or TiB",
@@ -172,6 +177,9 @@ func (a *AnalyticsConfig) Validate() error {
 	}
 	if a.BuilderThreads < 0 {
 		return fmt.Errorf("invalid [analytics] builder_threads %d: must be zero or positive", a.BuilderThreads)
+	}
+	if a.QueryThreads < 0 {
+		return fmt.Errorf("invalid [analytics] query_threads %d: must be zero or positive", a.QueryThreads)
 	}
 	if a.MinRebuildInterval < 0 {
 		return fmt.Errorf("invalid [analytics] min_rebuild_interval %q: must be zero or positive",
