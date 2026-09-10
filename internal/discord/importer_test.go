@@ -323,6 +323,7 @@ func TestImporterReportsPreSyncRepairCancellation(t *testing.T) {
 	assert.Zero(summary.SyncRunID)
 	assert.True(summary.RepairRan)
 	assert.Equal(int64(discordRepairBatchSize), summary.MessageMetadataRepaired)
+	assert.Positive(summary.Duration)
 }
 
 func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {

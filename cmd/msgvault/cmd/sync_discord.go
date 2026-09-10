@@ -105,10 +105,12 @@ func writeDiscordSyncSummary(out io.Writer, label string, summary *discord.Impor
 	_, _ = fmt.Fprintf(out, "  Containers processed: %d\n", summary.ContainersProcessed)
 	_, _ = fmt.Fprintf(out, "  Messages added: %d\n", summary.MessagesAdded)
 	_, _ = fmt.Fprintf(out, "  Messages updated: %d\n", summary.MessagesUpdated)
-	_, _ = fmt.Fprintf(out, "  Message metadata repaired: %d\n", summary.MessageMetadataRepaired)
-	_, _ = fmt.Fprintf(out, "  Attachments retagged from archive: %d\n", summary.AttachmentsRetagged)
-	_, _ = fmt.Fprintf(out, "  Archived payloads not decoded: %d\n", summary.RepairUndecodable)
-	_, _ = fmt.Fprintf(out, "  Derived metadata repair errors: %d\n", summary.RepairErrors)
+	if summary.RepairRan {
+		_, _ = fmt.Fprintf(out, "  Message metadata repaired: %d\n", summary.MessageMetadataRepaired)
+		_, _ = fmt.Fprintf(out, "  Attachments retagged from archive: %d\n", summary.AttachmentsRetagged)
+		_, _ = fmt.Fprintf(out, "  Archived payloads not decoded: %d\n", summary.RepairUndecodable)
+		_, _ = fmt.Fprintf(out, "  Derived metadata repair errors: %d\n", summary.RepairErrors)
+	}
 	_, _ = fmt.Fprintf(out, "  Media downloaded: %d\n", summary.MediaDownloaded)
 	_, _ = fmt.Fprintf(out, "  Media pending: %d\n", summary.MediaPending)
 	_, _ = fmt.Fprintf(out, "  Media skipped by policy: %d\n", summary.MediaSkipped)

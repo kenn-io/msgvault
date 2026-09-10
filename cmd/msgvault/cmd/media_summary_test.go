@@ -92,6 +92,7 @@ func TestDiscordSyncSummaryReportsAutomaticMetadataRepair(t *testing.T) {
 	assert := assert.New(t)
 	var output bytes.Buffer
 	writeDiscordSyncSummary(&output, "guild", &discord.ImportSummary{
+		RepairRan:               true,
 		MessageMetadataRepaired: 2,
 		AttachmentsRetagged:     3,
 		RepairUndecodable:       1,
@@ -101,6 +102,13 @@ func TestDiscordSyncSummaryReportsAutomaticMetadataRepair(t *testing.T) {
 	assert.Contains(output.String(), "Attachments retagged from archive: 3")
 	assert.Contains(output.String(), "Archived payloads not decoded: 1")
 	assert.Contains(output.String(), "Derived metadata repair errors: 4")
+
+	output.Reset()
+	writeDiscordSyncSummary(&output, "guild", &discord.ImportSummary{})
+	assert.NotContains(output.String(), "Message metadata repaired:")
+	assert.NotContains(output.String(), "Attachments retagged from archive:")
+	assert.NotContains(output.String(), "Archived payloads not decoded:")
+	assert.NotContains(output.String(), "Derived metadata repair errors:")
 }
 
 func TestDiscordSyncRequestsCacheRefreshAfterPreSyncRepair(t *testing.T) {

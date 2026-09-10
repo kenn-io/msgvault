@@ -82,8 +82,12 @@ func TestDiscordRepairAddsVoiceMetadataAndPreservesStoredMedia(t *testing.T) {
 	_, err = st.SetDiscordAttachmentMetadata(emptyID, map[string]string{"discord:stale-empty": `{"old":5}`})
 	require.NoError(err)
 
-	sum, err := NewImporter(st, nil).RepairSource(t.Context(), source.ID, nil)
+	var progress []string
+	sum, err := NewImporter(st, nil).RepairSource(t.Context(), source.ID, func(line string) {
+		progress = append(progress, line)
+	})
 	require.NoError(err)
+	assert.Contains(progress, "3 scanned, 2 message metadata rewritten, 4 attachments tagged")
 	assert.Equal(int64(3), sum.MessagesScanned)
 	assert.Equal(int64(2), sum.MessageMetadataRewritten)
 	assert.Equal(int64(1), sum.Undecodable)

@@ -146,6 +146,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			summary.RepairErrors = repairSummary.Errors
 		}
 		if repairErr != nil {
+			summary.Duration = time.Since(started)
 			return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
 		}
 	}

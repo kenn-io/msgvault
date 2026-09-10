@@ -455,6 +455,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 			SELECT EXISTS (
 				SELECT 1 FROM attachments
 				WHERE message_id = ? AND source_attachment_id LIKE 'discord:%'
+				  AND attachment_metadata IS NOT NULL
 			)
 		`, messageID).Scan(&exists); err != nil {
 			return 0, fmt.Errorf("check Discord attachment metadata: %w", err)

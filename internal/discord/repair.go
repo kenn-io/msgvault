@@ -12,6 +12,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// discordRederiveVersion identifies this package's derivation logic. Bump it
+// when the same archived payload would produce different metadata, so existing
+// archives re-derive on their next sync.
+//
+//	v1 — preserve Discord message flags and voice attachment metadata.
 const discordRederiveVersion = "v1"
 
 const discordRepairBatchSize = 500
@@ -54,8 +59,8 @@ func (imp *Importer) RepairSource(
 			imp.repairMessage(item, sourceID, sum)
 		}
 		if progress != nil {
-			progress(fmt.Sprintf("%d scanned, %d attachments tagged",
-				sum.MessagesScanned, sum.AttachmentsTagged))
+			progress(fmt.Sprintf("%d scanned, %d message metadata rewritten, %d attachments tagged",
+				sum.MessagesScanned, sum.MessageMetadataRewritten, sum.AttachmentsTagged))
 		}
 	}
 	sum.Duration = time.Since(start)
@@ -76,7 +81,8 @@ func (imp *Importer) repairMessage(
 		sum.Errors++
 		return
 	}
-	if imp.messageMetadataChanged(item.MessageID, mapped.Metadata, sum) {
+	if err := imp.repairMessageMetadata(item.MessageID, mapped.Metadata, sum); err != nil {
+		sum.Errors++
 		return
 	}
 
@@ -94,25 +100,23 @@ func (imp *Importer) repairMessage(
 	sum.AttachmentsTagged += changed
 }
 
-func (imp *Importer) messageMetadataChanged(
+func (imp *Importer) repairMessageMetadata(
 	messageID int64, wanted json.RawMessage, sum *rederive.Summary,
-) bool {
+) error {
 	current, err := imp.store.GetMessageMetadata(messageID)
 	if err != nil {
-		sum.Errors++
-		return true
+		return err
 	}
 	if current.Valid && jsonValuesEqual([]byte(current.String), wanted) {
-		return false
+		return nil
 	}
 	if err := imp.store.SetMessageMetadata(messageID, sql.NullString{
 		String: string(wanted), Valid: len(wanted) > 0,
 	}); err != nil {
-		sum.Errors++
-		return true
+		return err
 	}
 	sum.MessageMetadataRewritten++
-	return false
+	return nil
 }
 
 func jsonValuesEqual(left, right []byte) bool {
