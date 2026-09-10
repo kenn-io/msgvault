@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 )
@@ -355,35 +354,4 @@ func TestOpenAgentDelegatedStoreRejectsEmptyTokenFile(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is empty")
 	})
-}
-
-// TestGrantDeniesDifferentAccountOnReusedRowid tests proof matrix row 6.
-// After D7, Grant.Allows uses (Type, Identifier) for matching; ID is kept as
-// a diagnostic field. A reused SQLite rowid belonging to a different account
-// (different Identifier) is denied. Re-adding the same account under a new
-// rowid is now allowed since type+identifier match.
-func TestGrantDeniesDifferentAccountOnReusedRowid(t *testing.T) {
-	original := agentgrant.SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com"}
-	g := agentgrant.Grant{
-		ID:          "g-reuse",
-		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-		Sources:     []agentgrant.SourceRef{original},
-	}
-
-	// Same row ID, different Identifier: the account was removed and a new one
-	// took the SQLite rowid. The grant must not transfer to the new account.
-	reuseWithDifferentIdentifier := agentgrant.SourceRef{ID: 5, Type: "imap", Identifier: "imap://bob@example.com"}
-	assert.False(t, g.Allows(agentgrant.PermissionDraftCreate, reuseWithDifferentIdentifier),
-		"reused rowid with different identifier must be denied")
-
-	// Same Identifier, different ID: the same account re-added after removal
-	// got a new rowid. After D7, matching uses (Type, Identifier) only —
-	// ID is kept as a diagnostic but is not required for matching.
-	sameIdentifierNewID := agentgrant.SourceRef{ID: 99, Type: "imap", Identifier: "imap://alice@example.com"}
-	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, sameIdentifierNewID),
-		"same type+identifier with different ID must be allowed: ID is diagnostic only")
-
-	// Original triple still passes.
-	assert.True(t, g.Allows(agentgrant.PermissionDraftCreate, original),
-		"exact original (id, type, identifier) must be allowed")
 }

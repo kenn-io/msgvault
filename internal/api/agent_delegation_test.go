@@ -443,6 +443,96 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
 	})
 }
 
+// TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter verifies that a
+// delegated caller targeting a gated route outside the two-operation allowlist
+// (e.g. POST /api/v1/accounts) is not admitted to the operation gate and
+// receives 401 directly from the auth layer without ever queuing as a waiter.
+func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) {
+	var gate LabeledOperationGate = NewSerialOperationGate()
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         &stubSourceStore{},
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
+	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	_, secret, _, err := reg.Issue("gate-nonallowed", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	require.NoError(t, err)
+
+	done, ok := gate.BeginWork()
+	require.True(t, ok, "must acquire the gate to hold it for this subtest")
+	defer done()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		srv.Router().ServeHTTP(w, req)
+	}()
+
+	select {
+	case <-reqDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("delegated request on non-allowlisted gated route must not block on the operation gate")
+	}
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"delegated caller on non-allowlisted route must get 401, not 503")
+	assert.False(t, gate.HasRequestWaiters(),
+		"delegated caller on non-allowlisted route must not register as a gate waiter")
+}
+
+// TestDelegatedGateBusyRedactsHolderLabel verifies that when a delegated caller
+// times out on the /api/v1/cli/run gate the 503 body does not contain the
+// internal holder label (which names configured account identifiers).
+func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
+	var gate LabeledOperationGate = NewSerialOperationGate()
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         &stubSourceStore{},
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
+	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	_, secret, _, err := reg.Issue("label-redact", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	require.NoError(t, err)
+
+	// Acquire gate with an identifiable holder label.
+	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
+	require.True(t, ok)
+	defer holderDone()
+
+	// Override the wait limit so the test doesn't take 10 s.
+	orig := operationGateWaitLimit
+	operationGateWaitLimit = time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = orig })
+
+	body := `{"args":["draft-reply","--from","alice@example.com"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	body503 := w.Body.String()
+	assert.Contains(t, body503, "operation_in_progress",
+		"busy response must use operation_in_progress code")
+	assert.NotContains(t, body503, "owner-msgvault-sync",
+		"holder label must be redacted for delegated callers")
+}
+
 // TestDelegationDefaultOff verifies that delegation is off when agent_access is
 // unset in config. The constructor (server.go:596-601) must leave agentGrants nil,
 // and a presented agent token must be refused with 401.

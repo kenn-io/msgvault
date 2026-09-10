@@ -273,8 +273,10 @@ func (g *SerialOperationGate) state() (chan struct{}, chan struct{}) {
 // that fail it pass straight through — without registering as request
 // waiters, triggering scheduler yields, or observing operation state — and
 // are rejected by the API auth layer below. A nil authorized gates every
-// request.
-func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) bool) func(http.Handler) http.Handler {
+// request. redactHolder, when non-nil, suppresses the holder label in the
+// busy response for callers where it would leak internal operation names; a
+// nil predicate keeps the label visible (today's behavior for owner callers).
+func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) bool, redactHolder func(*http.Request) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if gate == nil {
 			return next
@@ -300,7 +302,7 @@ func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) 
 			}
 			done, ok := beginGateWorkBounded(r.Context(), gate, label)
 			if !ok {
-				writeOperationGateBusy(w, gate)
+				writeOperationGateBusy(w, gate, redactHolder != nil && redactHolder(r))
 				return
 			}
 			defer done()
@@ -321,7 +323,7 @@ func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string)
 	return gate.BeginWorkContext(waitCtx)
 }
 
-func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
+func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate, redact bool) {
 	lg, ok := gate.(LabeledOperationGate)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
@@ -332,9 +334,11 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 		return
 	}
 	message := "another operation is running"
-	if label, since, held := lg.Holder(); held && label != "" {
-		message = fmt.Sprintf("%s has been running for %s",
-			label, time.Since(since).Round(time.Second))
+	if !redact {
+		if label, since, held := lg.Holder(); held && label != "" {
+			message = fmt.Sprintf("%s has been running for %s",
+				label, time.Since(since).Round(time.Second))
+		}
 	}
 	writeError(w, http.StatusServiceUnavailable, "operation_in_progress", message)
 }

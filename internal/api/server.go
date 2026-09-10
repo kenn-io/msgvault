@@ -681,7 +681,7 @@ func (s *Server) setupRouter() http.Handler {
 	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
 	h = s.analyticsEngineMiddleware(h)
-	h = operationGateMiddleware(s.operationGate, s.requestGateEligible)(h)
+	h = operationGateMiddleware(s.operationGate, s.requestGateEligible, s.requestIsDelegated)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)

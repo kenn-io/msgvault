@@ -122,7 +122,7 @@ func (s *Server) handleCreateImportJob(w http.ResponseWriter, r *http.Request) {
 		return beginGateWorkBounded(r.Context(), s.operationGate, "msgvault historical import")
 	}()
 	if !acquired {
-		writeOperationGateBusy(w, s.operationGate)
+		writeOperationGateBusy(w, s.operationGate, false)
 		return
 	}
 	jobID, err := newImportJobID()

@@ -332,14 +332,22 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 }
 
 // requestGateEligible reports whether the request should participate in the
-// operation gate. Any authenticated request — owner, session, or delegated —
-// registers as a waiter or holder. Unauthenticated requests (AuthModeRequired)
-// pass straight through so they reach the API auth layer without touching gate
-// state. This is the predicate passed to operationGateMiddleware; it is
-// intentionally broader than apiRequestAuthorized so that delegated mutations
-// are serialized correctly.
+// operation gate. Owner, session, and loopback requests register as waiters or
+// holders on any gated route. Delegated callers register only for the one
+// allowlisted operation they may reach (/api/v1/cli/run); all other gated
+// routes must reject them at the auth layer without touching gate state.
+// Unauthenticated requests (AuthModeRequired) pass straight through so they
+// reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
-	return s.requestAuthentication(r).Mode != AuthModeRequired
+	auth := s.requestAuthentication(r)
+	if auth.Mode == AuthModeDelegated {
+		return r.URL.Path == "/api/v1/cli/run"
+	}
+	return auth.Mode != AuthModeRequired
+}
+
+func (s *Server) requestIsDelegated(r *http.Request) bool {
+	return s.requestAuthentication(r).Mode == AuthModeDelegated
 }
 
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.

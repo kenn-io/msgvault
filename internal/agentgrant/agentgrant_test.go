@@ -90,12 +90,33 @@ func TestRegistryLifecycle(t *testing.T) {
 		assert.Contains(t, err.Error(), "positive")
 	})
 
-	t.Run("Issue rejects duplicate source IDs", func(t *testing.T) {
+	t.Run("Issue rejects empty source Type", func(t *testing.T) {
 		r := NewRegistry()
-		sources := []SourceRef{src, {ID: src.ID, Type: "imap", Identifier: "bob@example.com"}}
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "", Identifier: "x"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Type")
+	})
+
+	t.Run("Issue rejects empty source Identifier", func(t *testing.T) {
+		r := NewRegistry()
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "imap", Identifier: ""}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Identifier")
+	})
+
+	t.Run("Issue rejects duplicate source Type+Identifier", func(t *testing.T) {
+		r := NewRegistry()
+		sources := []SourceRef{src, {ID: src.ID + 1, Type: src.Type, Identifier: src.Identifier}}
 		_, _, _, err := r.Issue("test", perms, sources)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate")
+	})
+
+	t.Run("Issue allows same ID with different Type+Identifier", func(t *testing.T) {
+		r := NewRegistry()
+		sources := []SourceRef{src, {ID: src.ID, Type: "imap", Identifier: "bob@example.com"}}
+		_, _, _, err := r.Issue("test", perms, sources)
+		require.NoError(t, err, "same ID with different (Type, Identifier) must be accepted")
 	})
 
 	t.Run("Issue rejects unknown permission", func(t *testing.T) {
@@ -157,4 +178,18 @@ func TestRegistryLifecycle(t *testing.T) {
 		r.Close()
 		assert.Empty(t, r.List())
 	})
+}
+
+// TestGrantAllowsExactOriginalTriple covers proof matrix row 6 (novel assertion).
+// The exact (ID, Type, Identifier) triple that was issued must be allowed; this
+// complements TestGrantPermissionsDoNotImply which covers partial-match cases.
+func TestGrantAllowsExactOriginalTriple(t *testing.T) {
+	original := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com"}
+	g := Grant{
+		ID:          "g-original",
+		Permissions: []Permission{PermissionDraftCreate},
+		Sources:     []SourceRef{original},
+	}
+	assert.True(t, g.Allows(PermissionDraftCreate, original),
+		"exact original (ID, Type, Identifier) triple must be allowed")
 }

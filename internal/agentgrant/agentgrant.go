@@ -104,15 +104,22 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 		}
 	}
 	// validate sources
-	seen := make(map[int64]struct{})
+	seen := make(map[string]struct{})
 	for _, s := range sources {
 		if s.ID <= 0 {
 			return "", "", Grant{}, fmt.Errorf("agentgrant: source ID must be positive, got %d", s.ID)
 		}
-		if _, dup := seen[s.ID]; dup {
-			return "", "", Grant{}, fmt.Errorf("agentgrant: duplicate source ID %d", s.ID)
+		if s.Type == "" {
+			return "", "", Grant{}, fmt.Errorf("agentgrant: source Type must not be empty")
 		}
-		seen[s.ID] = struct{}{}
+		if s.Identifier == "" {
+			return "", "", Grant{}, fmt.Errorf("agentgrant: source Identifier must not be empty")
+		}
+		key := s.Type + "\x00" + s.Identifier
+		if _, dup := seen[key]; dup {
+			return "", "", Grant{}, fmt.Errorf("agentgrant: duplicate source (Type=%q, Identifier=%q)", s.Type, s.Identifier)
+		}
+		seen[key] = struct{}{}
 	}
 
 	// generate ID
