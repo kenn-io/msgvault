@@ -104,8 +104,15 @@ go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 ## Enable
 
 Use `msgvault setup providers` to select defaults, or add a `[vector]` block
-to `~/.msgvault/config.toml`. This manual example uses an OpenAI-compatible
-endpoint:
+to `~/.msgvault/config.toml`.
+
+Guided Ollama setup uses a conservative `max_input_chars = 2000`, leaving
+more room for token-dense content. To use `6000` as shown below, first
+check representative content with the [sizing guidance](#matching-max_input_chars-to-your-embedders-context-window),
+then change `max_input_chars` under `[vector.embeddings]` in
+`~/.msgvault/config.toml`.
+
+This manual example uses an OpenAI-compatible endpoint:
 
 ```toml
 [vector]
@@ -253,8 +260,10 @@ Practical guidance:
 - **Self-hosted models:** match the actual context window exposed by
   your server, not just the upstream model card.
 
-To check a candidate cap, send a representative preprocessed chunk of
-that size, including your `document_prefix`, to your embedder. Ollama's
+To check a candidate cap, take `max_input_chars` characters of representative
+preprocessed content, then prepend your configured `document_prefix` and
+send the combined input to your embedder. The prefix does not consume the
+chunking budget. Ollama's
 [native API](https://docs.ollama.com/api/embed) reports the token count.
 Set `truncate: false` so an oversized input returns an error instead of
 a count for truncated text:
