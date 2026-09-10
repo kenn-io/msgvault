@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -33,6 +33,16 @@ type stubSourceStore struct {
 
 func (s *stubSourceStore) GetSourceByIDContext(_ context.Context, _ int64) (*store.Source, error) {
 	return s.src, s.srcErr
+}
+
+// multiSourceStore extends mockStore with a per-ID source lookup for delegation tests.
+type multiSourceStore struct {
+	mockStore
+	sources map[int64]*store.Source
+}
+
+func (m *multiSourceStore) GetSourceByIDContext(_ context.Context, id int64) (*store.Source, error) {
+	return m.sources[id], nil //nolint:nilnil // nil, nil = not found, mirrors store contract
 }
 
 // newTestServerWithStore creates a test server using any MessageStore.
@@ -51,6 +61,22 @@ func newTestServerWithAgentGrants(t *testing.T, apiKey string) (*Server, *agentg
 		Store:     &stubSourceStore{},
 		Logger:    testLogger(),
 		Scheduler: newMockScheduler(),
+	})
+	srv.agentGrants = reg
+	return srv, reg
+}
+
+func newTestServerWithAgentGrantsAndEngine(t *testing.T, apiKey string, st MessageStore, engine query.Engine) (*Server, *agentgrant.Registry) {
+	t.Helper()
+	reg := agentgrant.NewRegistry(time.Now)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: apiKey}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         st,
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		Engine:        engine,
+		AnalyticsMode: AnalyticsModeSQLFallback,
 	})
 	srv.agentGrants = reg
 	return srv, reg
@@ -389,61 +415,118 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 }
 
 // TestDelegatedMessageReadScoping tests proof matrix rows 10 and 11.
-// In-grant messages are authorized; out-of-grant messages are denied with the
-// same result as nonexistent messages (denial = absence). The
-// provider_id_fallback subtest confirms that the resolver's source lookup
+// Both GET /api/v1/cli/message and GET /api/v1/cli/message/raw are driven over
+// HTTP with real identifier resolution. In-grant responses byte-match the
+// owner's; out-of-grant and nonexistent responses are byte-identical (denial =
+// absence). The provider_id_fallback subtest proves the fallback resolver
 // cannot escape the grant boundary.
 func TestDelegatedMessageReadScoping(t *testing.T) {
 	inGrantSrc := &store.Source{ID: 10, SourceType: "imap", Identifier: "alice@example.com"}
+	outGrantSrc := &store.Source{ID: 20, SourceType: "imap", Identifier: "bob@example.com"}
+	providerSrc := &store.Source{ID: 30, SourceType: "imap", Identifier: "carol@example.com"}
 
-	grant := agentgrant.Grant{
-		ID:          "g-scoping",
-		Permissions: []agentgrant.Permission{agentgrant.PermissionMessageRead},
-		Sources: []agentgrant.SourceRef{
-			{ID: inGrantSrc.ID, Type: inGrantSrc.SourceType, Identifier: inGrantSrc.Identifier},
+	inGrantMsg := &query.MessageDetail{ID: 1, SourceID: inGrantSrc.ID, SourceMessageID: "alice-msg-1"}
+	outGrantMsg := &query.MessageDetail{ID: 2, SourceID: outGrantSrc.ID, SourceMessageID: "bob-msg-1"}
+	providerMsg := &query.MessageDetail{ID: 3, SourceID: providerSrc.ID, SourceMessageID: "carol-provider-id"}
+	inGrantRaw := []byte("From: alice@example.com\r\nSubject: Test\r\n\r\nHello")
+
+	st := &multiSourceStore{
+		sources: map[int64]*store.Source{
+			inGrantSrc.ID:  inGrantSrc,
+			outGrantSrc.ID: outGrantSrc,
+			providerSrc.ID: providerSrc,
 		},
-		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	engine := &querytest.MockEngine{}
+	engine.GetMessageFunc = func(_ context.Context, id int64) (*query.MessageDetail, error) {
+		msgs := map[int64]*query.MessageDetail{
+			inGrantMsg.ID:  inGrantMsg,
+			outGrantMsg.ID: outGrantMsg,
+			providerMsg.ID: providerMsg,
+		}
+		return msgs[id], nil //nolint:nilnil // nil, nil = not found
+	}
+	engine.GetMessageBySourceIDFunc = func(_ context.Context, sourceID string) (*query.MessageDetail, error) {
+		if sourceID == "carol-provider-id" {
+			return providerMsg, nil
+		}
+		return nil, nil //nolint:nilnil // nil, nil = not found
+	}
+	engine.GetMessageRawFunc = func(_ context.Context, id int64) ([]byte, error) {
+		if id == inGrantMsg.ID {
+			return inGrantRaw, nil
+		}
+		return nil, nil //nolint:nilnil // nil, nil = not found
 	}
 
-	t.Run("in-grant source allows read", func(t *testing.T) {
-		stub := &stubSourceStore{src: inGrantSrc}
-		srv := newTestServerWithStore(stub)
-		auth := requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
-		msg := &query.MessageDetail{SourceID: inGrantSrc.ID}
-		assert.True(t, srv.authorizeDelegatedMessage(context.Background(), auth, msg))
+	srv, reg := newTestServerWithAgentGrantsAndEngine(t, "owner-key", st, engine)
+	grantSrc := agentgrant.SourceRef{ID: inGrantSrc.ID, Type: inGrantSrc.SourceType, Identifier: inGrantSrc.Identifier}
+	_, secret, _, err := reg.Issue("scoping-test", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{grantSrc}, agentgrant.DefaultLifetime)
+	require.NoError(t, err)
+
+	getMsg := func(id string, hdrs map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message?id="+id, nil)
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+	getRaw := func(id string, hdrs map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/raw?id="+id, nil)
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+	ownerHdr := map[string]string{"X-Api-Key": "owner-key"}
+	delegatedHdr := map[string]string{apiprotocol.AgentTokenHeader: secret}
+
+	t.Run("in-grant message JSON body byte-matches owner", func(t *testing.T) {
+		ownerW := getMsg("1", ownerHdr)
+		delegatedW := getMsg("1", delegatedHdr)
+		require.Equal(t, http.StatusOK, ownerW.Code, "owner must get 200")
+		require.Equal(t, http.StatusOK, delegatedW.Code, "in-grant delegated must get 200")
+		assert.Equal(t, ownerW.Body.Bytes(), delegatedW.Body.Bytes(),
+			"in-grant response body must byte-match the owner's")
 	})
 
-	t.Run("out-of-grant source denied same as nonexistent", func(t *testing.T) {
-		outSrc := &store.Source{ID: 20, SourceType: "imap", Identifier: "bob@example.com"}
-		stubOut := &stubSourceStore{src: outSrc}
-		srvOut := newTestServerWithStore(stubOut)
-		auth := requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
-
-		// Out-of-grant source
-		outMsg := &query.MessageDetail{SourceID: outSrc.ID}
-		outDenied := srvOut.authorizeDelegatedMessage(context.Background(), auth, outMsg)
-
-		// Nonexistent source (store returns error) — same outcome
-		stubErr := &stubSourceStore{srcErr: errors.New("source not found")}
-		srvErr := newTestServerWithStore(stubErr)
-		errDenied := srvErr.authorizeDelegatedMessage(context.Background(), auth, outMsg)
-
-		assert.False(t, outDenied, "out-of-grant source must be denied")
-		assert.False(t, errDenied, "nonexistent source must be denied")
-		assert.Equal(t, outDenied, errDenied, "denial = absence: both produce false")
+	t.Run("out-of-grant returns same 404 as nonexistent", func(t *testing.T) {
+		outW := getMsg("2", delegatedHdr)
+		noneW := getMsg("999", delegatedHdr)
+		assert.Equal(t, http.StatusNotFound, outW.Code, "out-of-grant must be 404")
+		assert.Equal(t, http.StatusNotFound, noneW.Code, "nonexistent must be 404")
+		assert.Equal(t, outW.Body.Bytes(), noneW.Body.Bytes(),
+			"out-of-grant and nonexistent must return byte-identical responses (denial = absence)")
 	})
 
-	t.Run("provider_id_fallback", func(t *testing.T) {
-		// A message whose source is looked up via provider ID but resolves to a
-		// source not in the grant must still be denied. The grant check uses the
-		// resolved (id, type, identifier) triple, not just the numeric ID.
-		providerSrc := &store.Source{ID: 30, SourceType: "imap", Identifier: "carol@example.com"}
-		stub := &stubSourceStore{src: providerSrc}
-		srv := newTestServerWithStore(stub)
-		auth := requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
-		msg := &query.MessageDetail{SourceID: providerSrc.ID}
-		assert.False(t, srv.authorizeDelegatedMessage(context.Background(), auth, msg),
-			"provider-id fallback must not escape the grant: source 30 is not in the grant (only 10 is)")
+	t.Run("provider_id_fallback out-of-grant returns 404", func(t *testing.T) {
+		// carol-provider-id resolves via GetMessageBySourceID to providerMsg
+		// (SourceID=30, carol@example.com), which is not in the grant (only
+		// alice@example.com/ID=10 is). The resolved source, not the supplied
+		// identifier, determines the authorization outcome.
+		w := getMsg("carol-provider-id", delegatedHdr)
+		assert.Equal(t, http.StatusNotFound, w.Code,
+			"provider-id fallback to out-of-grant source must be denied")
+	})
+
+	t.Run("raw in-grant message returns 200 with rfc822 content", func(t *testing.T) {
+		w := getRaw("1", delegatedHdr)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "message/rfc822", w.Header().Get("Content-Type"))
+		assert.Equal(t, inGrantRaw, w.Body.Bytes())
+	})
+
+	t.Run("raw out-of-grant returns same 404 as nonexistent", func(t *testing.T) {
+		outW := getRaw("2", delegatedHdr)
+		noneW := getRaw("999", delegatedHdr)
+		assert.Equal(t, http.StatusNotFound, outW.Code, "raw out-of-grant must be 404")
+		assert.Equal(t, http.StatusNotFound, noneW.Code, "raw nonexistent must be 404")
+		assert.Equal(t, outW.Body.Bytes(), noneW.Body.Bytes(),
+			"raw out-of-grant and nonexistent must return byte-identical responses")
 	})
 }
 
@@ -475,6 +558,93 @@ func TestDelegationNotReachableOverHTTP(t *testing.T) {
 				"route %s %s must deny delegated callers", route.method, route.path)
 		})
 	}
+}
+
+// TestDelegatedDraftAcquiresOperationGate tests the P1 operation-gate fix.
+// A delegated POST /api/v1/cli/run for draft-reply must register as a gate
+// waiter (gate label: "msgvault draft-reply"); an unauthenticated request with
+// the same body must bypass the gate entirely and return without waiting.
+func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
+	var gate LabeledOperationGate = NewSerialOperationGate()
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         &stubSourceStore{},
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry(time.Now)
+	srv.agentGrants = reg
+	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, agentgrant.DefaultLifetime)
+	require.NoError(t, err)
+
+	t.Run("delegated request is gate eligible, owner predicate returns false", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		assert.True(t, srv.requestGateEligible(req), "delegated request must be gate eligible")
+		assert.False(t, srv.apiRequestAuthorized(req), "delegated request must not satisfy the owner predicate")
+	})
+
+	t.Run("unauthenticated request is not gate eligible", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", nil)
+		assert.False(t, srv.requestGateEligible(req), "unauthenticated request must not be gate eligible")
+	})
+
+	t.Run("delegated draft-reply registers as gate waiter with label msgvault draft-reply", func(t *testing.T) {
+		done, ok := gate.BeginWork()
+		require.True(t, ok, "must acquire the gate to hold it for this subtest")
+
+		body := `{"args":["draft-reply","--from","alice@example.com"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
+
+		reqDone := make(chan struct{})
+		go func() {
+			defer close(reqDone)
+			srv.Router().ServeHTTP(w, req)
+		}()
+
+		// requestGateEligible returns true for delegated, so the request enters
+		// the gate, inspects the body, and registers as a waiter.
+		// Gate label observed: "msgvault draft-reply".
+		require.Eventually(t, func() bool { return gate.HasRequestWaiters() },
+			time.Second, time.Millisecond,
+			"delegated draft-reply must register as gate waiter (label: msgvault draft-reply)")
+
+		done()
+		<-reqDone
+	})
+
+	t.Run("unauthenticated draft-reply does not register as gate waiter", func(t *testing.T) {
+		done, ok := gate.BeginWork()
+		require.True(t, ok)
+		defer done()
+
+		body := `{"args":["draft-reply","--from","alice@example.com"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		reqDone := make(chan struct{})
+		go func() {
+			defer close(reqDone)
+			srv.Router().ServeHTTP(w, req)
+		}()
+
+		// requestGateEligible returns false for AuthModeRequired, so the gate is
+		// bypassed and the request returns immediately (401 from the auth layer).
+		select {
+		case <-reqDone:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("unauthenticated request must not block on the operation gate")
+		}
+		assert.False(t, gate.HasRequestWaiters(),
+			"unauthenticated request must not register as a gate waiter")
+	})
 }
 
 // TestDelegationNotReachableFromOwnerPaths verifies that delegated mode callers

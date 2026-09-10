@@ -2903,7 +2903,7 @@ type IssueAgentTokenResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
-	JSON200      *IssueAgentTokenResponse
+	JSON201      *IssueAgentTokenResponse
 }
 
 type RevokeAgentTokenResp struct {

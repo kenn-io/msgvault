@@ -337,6 +337,17 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 	}
 }
 
+// requestGateEligible reports whether the request should participate in the
+// operation gate. Any authenticated request — owner, session, or delegated —
+// registers as a waiter or holder. Unauthenticated requests (AuthModeRequired)
+// pass straight through so they reach the API auth layer without touching gate
+// state. This is the predicate passed to operationGateMiddleware; it is
+// intentionally broader than apiRequestAuthorized so that delegated mutations
+// are serialized correctly.
+func (s *Server) requestGateEligible(r *http.Request) bool {
+	return s.requestAuthentication(r).Mode != AuthModeRequired
+}
+
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.
 // The exempt predicate lets trusted requests bypass the limiter: the local
 // TUI/CLI legitimately bursts far past the remote budget (daemon discovery

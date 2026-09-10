@@ -121,9 +121,12 @@ func init() {
 		"Allow plain HTTP for agent-delegated connections (trusted networks only)")
 }
 
-// isAgentMode returns true when both --agent-url and --agent-token-file are provided.
+// isAgentMode returns true when either --agent-url or --agent-token-file is
+// provided. Either flag signals an explicit delegation request; the pair is
+// validated inside openAgentDelegatedStore and an appropriate error is returned
+// if one is missing, rather than silently falling back to owner access.
 func isAgentMode() bool {
-	return agentURL != "" && agentTokenFile != ""
+	return agentURL != "" || agentTokenFile != ""
 }
 
 // openAgentDelegatedStore creates a daemonclient.Client authenticated with an
@@ -153,6 +156,10 @@ func openAgentDelegatedStore(ctx context.Context) (*daemonclient.Client, HTTPSto
 		AllowInsecure: agentAllowInsecure,
 	})
 	if err != nil {
+		return nil, HTTPStoreInfo{}, err
+	}
+	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
+		_ = st.Close()
 		return nil, HTTPStoreInfo{}, err
 	}
 	return st, HTTPStoreInfo{

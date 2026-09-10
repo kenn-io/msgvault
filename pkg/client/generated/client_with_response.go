@@ -393,11 +393,11 @@ func (c *Client) IssueAgentTokenWithResponse(ctx context.Context, options *Issue
 	}
 
 	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(IssueAgentTokenResponse)
+	case 201:
+		out.JSON201 = new(IssueAgentTokenResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),

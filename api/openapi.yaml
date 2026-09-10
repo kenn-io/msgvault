@@ -12474,12 +12474,12 @@ paths:
               $ref: "#/components/schemas/AgentTokenIssueRequest"
         required: true
       responses:
-        "200":
+        "201":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentTokenIssueResponse"
-          description: OK
+          description: Created
         default:
           content:
             application/json:

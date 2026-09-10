@@ -69,6 +69,22 @@ in a single binary.`,
 		// invocation-contract violations.
 		cmd.SilenceUsage = true
 
+		// Agent-delegated mode: detect before any local owner lifecycle.
+		// Reject flags that are meaningless in delegated mode, then skip
+		// config.Load, EnsureHomeDir, and logging init entirely — a
+		// delegated invocation must not depend on local configuration or
+		// writable local storage.
+		if isAgentMode() {
+			if cfgFile != "" {
+				return errors.New("--config is not allowed in agent-delegated mode")
+			}
+			if homeDir != "" {
+				return errors.New("--home is not allowed in agent-delegated mode")
+			}
+			cmd.SilenceUsage = false
+			return nil
+		}
+
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
 		if skipsConfigLoad(cmd) {
@@ -213,6 +229,11 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		if c == skillsCmd {
 			return true
 		}
+	}
+	// Agent-delegated commands skip local config; the early check in
+	// PersistentPreRunE handles flag rejection before this is reached.
+	if isAgentMode() {
+		return true
 	}
 	return false
 }

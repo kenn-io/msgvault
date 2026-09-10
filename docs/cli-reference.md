@@ -2917,15 +2917,15 @@ can read, never pass it as a flag or environment variable.
 
 ```bash
 msgvault agent-token issue --label <name> \
-  --draft-create-source-id <id>[,<id>...] \
-  --message-read-source-id <id>[,<id>...]
+  --permissions draft.create,message.read \
+  --source-ids <id>[,<id>...]
 ```
 
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--draft-create-source-id <ids>` | Comma-separated source IDs that receive `draft.create` permission |
-| `--message-read-source-id <ids>` | Comma-separated source IDs that receive `message.read` permission |
+| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create`, `message.read` |
+| `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--lifetime <duration>` | Grant lifetime (default: `24h`); the grant is invalidated at expiry or daemon restart |
 
 The response includes the daemon address, the secret, and the granted source references.

@@ -1440,7 +1440,7 @@ func (c *Client) IssueAgentToken(ctx context.Context, options *IssueAgentTokenRe
 
 	responseParser := func(ctx context.Context, resp *runtime.Response) (*IssueAgentTokenResponse, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != 201 {
 			target := new(IssueAgentTokenErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
