@@ -199,7 +199,7 @@ and [MCP](usage/chat.md).
 
 - Fix WhatsApp Apple imports silently skipping URL messages (type 7) with non-empty text.
 - Add `draft-reply`, an opt-in IMAP reply draft path: the daemon composes a plain-text reply with the parent's threading headers, appends it with UIDPLUS to the granted mailbox, and stores the message and its receipt locally in one transaction. msgvault never sends mail.
-- Add `draft-get`, `draft-edit`, and `draft-delete` commands to retrieve, replace, and remove IMAP drafts created by `draft-reply`. Edits are CAS-guarded by a client-supplied revision number; a refused or interrupted operation is resolved by reloading the draft with `draft-get` and calling the command again with the revision it reports.
+- Add `draft-get`, `draft-edit`, and `draft-delete` commands for IMAP drafts created by `draft-reply`. Edits and deletes validate the remote receipt before changing local state, and a client-supplied revision number guards each mutation.
 - Sync Notion AI Meeting Notes with available transcripts, verified attendees,
   changed-note refresh, and bounded late-transcript retries.
 - Import Slackdump directories/ZIPs and MailMate-style `.mailbox` trees of EML

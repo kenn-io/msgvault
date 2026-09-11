@@ -183,7 +183,8 @@ next call lands. Run `draft-get` again after any refusal.
 
 ## draft-edit
 
-Replace the body of a draft, advancing its revision.
+Replace the body of a draft, advancing its revision when the server supports
+the required atomic removal operation.
 
 ```bash
 msgvault draft-edit <draft-id> --revision <n> --body <text>
@@ -192,24 +193,16 @@ msgvault draft-edit <draft-id> --revision <n> --body <text> --json
 
 `--revision` must match the current revision or the command returns
 `revision_conflict`. If the remote copy has been externally modified or
-deleted, returns `draft_changed` or `draft_missing`. On success, a new message
-row is created with the updated body, the old row is tombstoned, and
-`revision` advances by 1.
+deleted, the command returns `draft_changed` or `draft_missing`. A present
+remote copy currently returns `atomic_expunge_required` before the command
+claims local state or appends a replacement. The local draft remains unchanged.
 
-The edit sequence is APPEND-then-EXPUNGE. If the operation is interrupted, the
-next `draft-edit` clears the stale marker and returns `edit_interrupted`; it
-does not apply the body that call supplied. A `draft-delete` that meets the
-same marker returns `operation_pending` and directs you to `draft-edit`, which
-is the only command that resolves an interrupted edit. The daemon names a UID to
-remove only after it has re-checked that copy on the server and found it still
-under the recorded UIDVALIDITY, still flagged `\Draft`, and still holding the
-exact bytes msgvault wrote. If that check cannot run or does not hold — most
-often because the mailbox's UIDVALIDITY changed, which reassigns every UID — no
-UID is named, because the recorded number would now point at a different
-message. In that case the result tells you to find the draft's older copy by its
-subject and date and remove only that copy. After `edit_interrupted`, run
-`draft-get` again and edit with the revision that read reports: the revision
-passed to the recovering call is never applied and never carried forward.
+An interrupted edit keeps its pending marker. A later `draft-edit` or
+`draft-delete` reports `operation_pending` until the pending copy has been
+resolved. The daemon names a UID for cleanup only after it verifies that copy
+under the recorded UIDVALIDITY, with the `\Draft` flag and the exact bytes
+msgvault wrote. A UID is omitted when that check cannot identify the same
+message.
 
 A refused or partially completed draft command prints its code on stderr and,
 on the same stream, a status line carrying the fixed recovery instruction and
@@ -222,36 +215,29 @@ the mailbox was recreated and every UID you hold now names a different message,
 so reload before acting on any of them, and `remote_unknown` means the mailbox
 state could not be read at all, so look at the mailbox before retrying.
 
-If `remote_accepted_local_failed` is returned, the new copy was confirmed on the
-server but the local record could not be updated. Inspect the mailbox for an
-extra copy, then reload with `draft-get` before another attempt.
-
-If `edit_applied_old_copy_remains` is returned, the inverse happened: the new
-body is live both on the server and in the local record, and only the pre-edit
-copy could not be removed, so the mailbox holds two copies. The result names
-that leftover copy in `uid` only when a live re-check finds it still under the
-recorded UIDVALIDITY, still flagged `\Draft`, and still holding the bytes
-msgvault wrote — remove it, then reload with `draft-get`. When the removal's
-outcome is unknown, when another client has changed the copy, or when the
-mailbox's UIDVALIDITY moved, no UID is named and the result asks you to find the
-older copy by its subject and date instead. The draft
-keeps its pending-edit marker, so `draft-delete` refuses with `operation_pending`
-and the next `draft-edit` is what clears it.
+If a pending edit came from an earlier implementation, inspect the mailbox and
+reload with `draft-get` before acting on the pending copy. The command keeps the
+pending marker when it cannot verify or remove that copy.
 
 ---
 
 ## draft-delete
 
-Permanently delete a draft from the IMAP server and mark it `discarded` locally.
+Permanently delete a draft from the IMAP server and mark it `discarded` locally
+when the server supports the required atomic removal operation.
 
 ```bash
 msgvault draft-delete <draft-id> --revision <n>
 ```
 
 `--revision` must match the current revision. If the draft is already absent on
-the server the deletion is treated as successful (idempotent). Deleting a draft
-that is already `discarded` locally reports `discarded` again and opens no IMAP
+the server the deletion is treated as successful. Deleting a draft that is
+already `discarded` locally reports `discarded` again and opens no IMAP
 connection.
+
+A present remote copy currently returns `atomic_expunge_required` before the
+command claims local state. Servers without CONDSTORE return
+`conditional_store_required`. These refusals leave the local draft unchanged.
 
 No failure or partial result carries a revision to feed back into a retry. Each
 one prints its code and, on stderr, the status line and fixed instruction

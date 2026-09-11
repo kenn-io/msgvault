@@ -102,9 +102,9 @@ func (c *Client) InspectDraft(ctx context.Context, target DraftTarget) (DraftIns
 	return result, nil
 }
 
-// RemoveDraft permanently deletes a draft from the remote server using
-// UID STORE \Deleted + UID EXPUNGE. It only operates when the draft is
-// present with the correct \Draft flag and matching digest.
+// RemoveDraft validates a draft's remote identity. Standard IMAP cannot
+// remove one UID with an atomic conditional operation, so a present matching
+// draft returns atomic_expunge_required without changing server state.
 func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInspectResult, error) {
 	if err := ValidateDraftMailbox(target.Mailbox); err != nil {
 		return DraftInspectResult{}, &DraftAppendError{State: DraftStateRejected, Code: "invalid_mailbox", Err: err}

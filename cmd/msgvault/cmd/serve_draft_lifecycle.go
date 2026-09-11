@@ -618,6 +618,12 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	}
 	defer func() { _ = execution.Release() }()
 
+	if err := a.store.RefreshIMAPDraftReceiptContext(ctx, intent.DraftID); err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("refresh draft %d: %w", intent.DraftID, err))
+	}
 	// Reload draft under the lock to get authoritative pending state. Any
 	// pending marker visible here must be from a crashed prior holder because
 	// holding the sync execution lock guarantees no other caller is currently
@@ -995,6 +1001,12 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		}
 	}()
 
+	if err := a.store.RefreshIMAPDraftReceiptContext(ctx, intent.DraftID); err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("refresh draft %d: %w", intent.DraftID, err))
+	}
 	// Reload draft under the lock for authoritative pending state.
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
@@ -1219,6 +1231,9 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 			return draftReplyError("draft_not_found", err)
 		}
 		return draftReplyError("internal", fmt.Errorf("reload draft %d for replay: %w", intent.DraftID, err))
+	}
+	if err := a.verifyDraftMailboxGrant(target.source, draft); err != nil {
+		return err
 	}
 	// The supplied revision is validated against the stored current revision,
 	// exactly as an ordinary mutation is. A caller still holding the pre-Begin

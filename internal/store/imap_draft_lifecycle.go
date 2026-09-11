@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/opserr"
 )
@@ -53,10 +54,10 @@ type IMAPDraftOutcome struct {
 	MessageID int64
 }
 
-// refreshIMAPDraftReceiptContext follows the current message's membership
+// RefreshIMAPDraftReceiptContext follows the current message's membership
 // after a mailbox move or UIDVALIDITY reset. The message ID is the stable
 // ownership link; mailbox coordinates are provider state and can change.
-func (s *Store) refreshIMAPDraftReceiptContext(ctx context.Context, draftID int64) error {
+func (s *Store) RefreshIMAPDraftReceiptContext(ctx context.Context, draftID int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		var sourceID, messageID, oldUIDValidity, oldUID int64
 		var oldMailbox string
@@ -201,19 +202,35 @@ func (s *Store) RefreshIMAPDraftDiscardReceiptContext(ctx context.Context, draft
 }
 
 // GetIMAPDraftContext loads the ownership row for one draft, joining the
-// current message for projected fields. It refreshes provider coordinates from
-// the stable current message before reading them. sql.ErrNoRows → opserr.NotFound.
+// current message for projected fields and projecting the current membership
+// for an idle draft. It does not change local state.
+// sql.ErrNoRows → opserr.NotFound.
 func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDraft, error) {
-	if err := s.refreshIMAPDraftReceiptContext(ctx, draftID); err != nil {
-		return nil, err
-	}
 	var d IMAPDraft
 	var uidValidity, uid int64
 	var parentRFC822 sql.NullString
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		WITH current_receipt AS (
+			SELECT d2.draft_id, mm.mailbox, mm.uidvalidity, mm.uid
+			FROM imap_drafts d2
+			JOIN imap_message_memberships mm
+			  ON mm.source_id = d2.source_id
+			 AND mm.message_id = d2.current_message_id
+			WHERE d2.draft_id = ?
+			  AND d2.pending_kind IS NULL
+			ORDER BY
+				CASE WHEN mm.mailbox = d2.mailbox
+				       AND mm.uidvalidity = d2.uidvalidity
+				       AND mm.uid = d2.uid THEN 0 ELSE 1 END,
+				mm.updated_at DESC, mm.mailbox, mm.uidvalidity, mm.uid
+			LIMIT 1
+		)
 		SELECT
 			d.draft_id, d.source_id, d.current_message_id,
-			d.mailbox, d.uidvalidity, d.uid, d.revision, d.lifecycle,
+			COALESCE(cr.mailbox, d.mailbox),
+			COALESCE(cr.uidvalidity, d.uidvalidity),
+			COALESCE(cr.uid, d.uid),
+			d.revision, d.lifecycle,
 			d.pending_kind, d.pending_uidvalidity, d.pending_uid,
 			d.pending_started_at,
 			m.conversation_id,
@@ -226,11 +243,12 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 			COALESCE(m.size_estimate, 0)
 		FROM imap_drafts d
 		JOIN messages m ON m.id = d.current_message_id
+		LEFT JOIN current_receipt cr ON cr.draft_id = d.draft_id
 		LEFT JOIN messages pm ON pm.id = m.reply_to_message_id
 		LEFT JOIN participants p ON p.id = m.sender_id
 		WHERE d.draft_id = ?
 		  AND `+LiveMessagesWhere("m", false),
-	), draftID).Scan(
+	), draftID, draftID).Scan(
 		&d.DraftID, &d.SourceID, &d.CurrentMessageID,
 		&d.Mailbox, &uidValidity, &uid, &d.Revision, &d.Lifecycle,
 		&d.PendingKind, &d.PendingUIDValidity, &d.PendingUID,
@@ -358,10 +376,16 @@ func (s *Store) PersistIMAPDraftReplacementContext(
 	participants []ParticipantPersistData,
 	build func([]int64) *MessagePersistData,
 ) (int64, error) {
+	if receipt.SourceID <= 0 || strings.TrimSpace(receipt.Mailbox) == "" || receipt.UID == 0 || receipt.UIDValidity == 0 {
+		return 0, errors.New("invalid IMAP draft receipt")
+	}
 	if build == nil {
 		return 0, errors.New("persist IMAP draft replacement requires a message builder")
 	}
 	var newMessageID int64
+	var expectedSourceID int64
+	var expectedMailbox string
+	var expectedUIDValidity, expectedUID int64
 	before := func(ctx context.Context, tx *loggedTx) error {
 		var sourceType string
 		if err := tx.QueryRowContext(ctx, s.Rebind(`SELECT source_type FROM sources WHERE id = ?`), receipt.SourceID).Scan(&sourceType); err != nil {
@@ -373,11 +397,63 @@ func (s *Store) PersistIMAPDraftReplacementContext(
 		if sourceType != "imap" {
 			return errors.New("invalid_source")
 		}
+		var revision int64
+		var pendingKind sql.NullString
+		if err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT source_id, mailbox, uidvalidity, uid, revision, pending_kind
+			FROM imap_drafts
+			WHERE draft_id = ?
+		`), draftID).Scan(
+			&expectedSourceID, &expectedMailbox, &expectedUIDValidity, &expectedUID, &revision, &pendingKind,
+		); errors.Is(err, sql.ErrNoRows) {
+			return opserr.NotFound(fmt.Errorf("draft %d: not found", draftID))
+		} else if err != nil {
+			return fmt.Errorf("read IMAP draft replacement state: %w", err)
+		}
+		if expectedSourceID != receipt.SourceID {
+			return errors.New("invalid_source")
+		}
+		if revision != expectedRevision {
+			return opserr.Invalid(errors.New("revision_conflict"))
+		}
+		if !pendingKind.Valid || pendingKind.String != "edit" {
+			return opserr.Invalid(errors.New("operation_pending"))
+		}
+		if receipt.Mailbox != expectedMailbox || int64(receipt.UIDValidity) != expectedUIDValidity {
+			return opserr.Invalid(errors.New("uidvalidity_changed"))
+		}
+		var existing int64
+		err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT message_id FROM imap_message_memberships
+			WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+		`), receipt.SourceID, receipt.Mailbox, receipt.UIDValidity, receipt.UID).Scan(&existing)
+		if err == nil {
+			return errors.New("source_key_conflict")
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check IMAP draft replacement membership: %w", err)
+		}
+		err = tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT id FROM messages
+			WHERE source_id = ? AND source_message_id = ?
+		`), receipt.SourceID, IMAPDraftSourceMessageID(receipt)).Scan(&existing)
+		if err == nil {
+			return errors.New("source_key_conflict")
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check IMAP draft replacement source key: %w", err)
+		}
 		return nil
 	}
 	prepare := func(ctx context.Context, _ *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
 		if data == nil || data.Message == nil {
 			return nil, errors.New("persist IMAP draft replacement requires a message")
+		}
+		if data.Message.SourceID != receipt.SourceID || data.Message.SourceMessageID != IMAPDraftSourceMessageID(receipt) {
+			return nil, errors.New("source_key_conflict")
+		}
+		if data.MIMEAttachmentReplacement != nil {
+			return nil, errors.New("IMAP drafts cannot contain attachments")
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -409,10 +485,16 @@ func (s *Store) PersistIMAPDraftReplacementContext(
 			    uidvalidity = ?,
 			    uid = ?,
 			    updated_at = %s
-			WHERE draft_id = ? AND revision = ?
+			WHERE draft_id = ?
+			  AND source_id = ?
+			  AND revision = ?
+			  AND pending_kind = 'edit'
+			  AND mailbox = ?
+			  AND uidvalidity = ?
+			  AND uid = ?
 		`, s.dialect.Now())),
 			id, int64(receipt.UIDValidity), int64(receipt.UID),
-			draftID, expectedRevision,
+			draftID, expectedSourceID, expectedRevision, expectedMailbox, expectedUIDValidity, expectedUID,
 		)
 		if err != nil {
 			return fmt.Errorf("persist IMAP draft replacement CAS: %w", err)

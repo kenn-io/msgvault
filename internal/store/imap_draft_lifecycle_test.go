@@ -434,7 +434,51 @@ func TestDraftOwnershipSurvivesGCAfterEdit(t *testing.T) {
 	assertions.Equal(1, count, "imap_drafts row must survive GC of the first-gen message")
 }
 
-func TestGetIMAPDraftContextRefreshesReceiptFromCurrentMembership(t *testing.T) {
+func TestPersistIMAPDraftReplacementRejectsReceiptReuse(t *testing.T) {
+	t.Run("UIDVALIDITY rollover", func(t *testing.T) {
+		require := require.New(t)
+		st, source, draftID, receipt := newIMAPDraftFixture(t)
+		draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+			DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
+		})
+		require.NoError(err)
+
+		_, err = st.PersistIMAPDraftReplacementContext(
+			context.Background(), draftID, draft.Revision,
+			store.IMAPDraftReceipt{
+				SourceID: source.ID, Mailbox: receipt.Mailbox,
+				UIDValidity: receipt.UIDValidity + 1, UID: receipt.UID + 1,
+			}, nil, func([]int64) *store.MessagePersistData { return nil },
+		)
+		require.ErrorContains(err, "uidvalidity_changed")
+	})
+
+	t.Run("membership key collision", func(t *testing.T) {
+		require := require.New(t)
+		st, source, draftID, receipt := newIMAPDraftFixture(t)
+		draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+			DraftID: draftID, ExpectedRevision: 1, Kind: "edit",
+		})
+		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`
+			INSERT INTO imap_message_memberships
+				(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`), source.ID, receipt.Mailbox, receipt.UIDValidity, receipt.UID+1, draftID, `["\\Draft"]`)
+		require.NoError(err)
+
+		_, err = st.PersistIMAPDraftReplacementContext(
+			context.Background(), draftID, draft.Revision,
+			store.IMAPDraftReceipt{
+				SourceID: source.ID, Mailbox: receipt.Mailbox,
+				UIDValidity: receipt.UIDValidity, UID: receipt.UID + 1,
+			}, nil, func([]int64) *store.MessagePersistData { return nil },
+		)
+		require.ErrorContains(err, "source_key_conflict")
+	})
+}
+
+func TestGetIMAPDraftContextIsReadOnlyAndRefreshIsExplicit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, source, draftID, receipt := newIMAPDraftFixture(t)
@@ -452,6 +496,21 @@ func TestGetIMAPDraftContextRefreshesReceiptFromCurrentMembership(t *testing.T) 
 	require.NoError(err)
 
 	draft, err := st.GetIMAPDraftContext(context.Background(), draftID)
+	require.NoError(err)
+	assert.Equal("Archive", draft.Mailbox)
+	assert.Equal(receipt.UIDValidity+1, draft.UIDValidity)
+	assert.Equal(receipt.UID+7, draft.UID)
+	var storedMailbox string
+	var storedUIDValidity, storedUID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mailbox, uidvalidity, uid FROM imap_drafts WHERE draft_id = ?
+	`), draftID).Scan(&storedMailbox, &storedUIDValidity, &storedUID))
+	assert.Equal(receipt.Mailbox, storedMailbox)
+	assert.Equal(int64(receipt.UIDValidity), storedUIDValidity)
+	assert.Equal(int64(receipt.UID), storedUID)
+
+	require.NoError(st.RefreshIMAPDraftReceiptContext(context.Background(), draftID))
+	draft, err = st.GetIMAPDraftContext(context.Background(), draftID)
 	require.NoError(err)
 	assert.Equal("Archive", draft.Mailbox)
 	assert.Equal(receipt.UIDValidity+1, draft.UIDValidity)
