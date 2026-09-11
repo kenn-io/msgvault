@@ -1000,7 +1000,8 @@ func (s *Server) writeCardDAVAccountError(
 	case errors.Is(err, store.ErrCardDAVCredentialChangePending),
 		errors.Is(err, store.ErrCardDAVIdentityChangeOwned):
 		writeError(w, http.StatusConflict, "conflict", message)
-	case errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusTooManyRequests:
+	case errors.As(err, &statusErr) &&
+		(statusErr.StatusCode == http.StatusTooManyRequests || statusErr.RetryAfter > 0):
 		s.setCardDAVRetryAfterHeader(ctx, w, statusErr.RetryAfter)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
 	case errors.Is(err, errCardDAVUpstream):
@@ -1043,7 +1044,8 @@ func (s *Server) writeCardDAVOperationError(
 	case errors.Is(err, store.ErrCardDAVRetryAfter):
 		s.setCardDAVRetryAfterHeader(ctx, w, 0)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
-	case errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusTooManyRequests:
+	case errors.As(err, &statusErr) &&
+		(statusErr.StatusCode == http.StatusTooManyRequests || statusErr.RetryAfter > 0):
 		s.setCardDAVRetryAfterHeader(ctx, w, statusErr.RetryAfter)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
 	case errors.As(err, &statusErr), errors.As(err, &networkErr):

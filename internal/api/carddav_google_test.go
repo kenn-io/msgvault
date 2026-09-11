@@ -106,14 +106,17 @@ func TestGoogleCardDAVScheduleSaveDoesNotRequireAuthorization(t *testing.T) {
 
 func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 	for _, tc := range []struct {
-		name, body, apiCode, runCode string
-		status, apiStatus            int
-		truncatedBody                bool
-		closeEndpoint                bool
+		name, body, retryAfter, wantRetryAfter, apiCode, runCode string
+		status, apiStatus                                        int
+		truncatedBody                                            bool
+		closeEndpoint                                            bool
 	}{
 		{name: "revoked", status: 400, body: `{"error":"invalid_grant"}`, apiStatus: 502, apiCode: "google_authorization_required", runCode: "google_authorization_required"},
 		{name: "unavailable", status: 503, body: `{"error":"server_error"}`, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
-		{name: "rate limited", status: 429, body: `{}`, apiStatus: 503, apiCode: "carddav_retry_after", runCode: "retry_after"},
+		{name: "rate limited", status: 429, body: `{}`, wantRetryAfter: "1", apiStatus: 503, apiCode: "carddav_retry_after", runCode: "retry_after"},
+		{name: "request timeout", status: 408, body: `{}`, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
+		{name: "request timeout with retry delay", status: 408, body: `{}`, retryAfter: "17", wantRetryAfter: "17", apiStatus: 503, apiCode: "carddav_retry_after", runCode: "retry_after"},
+		{name: "provider temporarily unavailable", status: 400, body: `{"error":"temporarily_unavailable"}`, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
 		{name: "connection refused", closeEndpoint: true, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
 		{name: "truncated response", status: 200, body: "{", truncatedBody: true, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
 	} {
@@ -126,6 +129,9 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 				}
 				assertions.Equal("refresh_token", r.Form.Get("grant_type"))
 				w.Header().Set("Content-Type", "application/json")
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
 				if tc.truncatedBody {
 					w.Header().Set("Content-Length", "100")
 				}
@@ -182,6 +188,7 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 			srv.writeCardDAVOperationError(t.Context(), response, syncErr, "CardDAV sync failed")
 			assertions.Equal(tc.apiStatus, response.Code)
 			assertions.Contains(response.Body.String(), tc.apiCode)
+			assertions.Equal(tc.wantRetryAfter, response.Header().Get("Retry-After"))
 		})
 	}
 }

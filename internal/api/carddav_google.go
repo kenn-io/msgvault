@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
@@ -82,16 +84,23 @@ func (c *CardDAVController) googleBearerToken(ctx context.Context, credential ca
 
 func googleCardDAVTokenError(err error) error {
 	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.Response != nil {
+		if retrieveErr.ErrorCode == "invalid_grant" {
+			return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
+		}
 		code := retrieveErr.Response.StatusCode
-		if code == http.StatusTooManyRequests || code >= http.StatusInternalServerError {
-			return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{StatusCode: code}))
+		var retryAfter time.Duration
+		if value := strings.TrimSpace(retrieveErr.Response.Header.Get("Retry-After")); value != "" {
+			retryAfter = httpretry.RetryAfter(value, 0, time.Hour)
 		}
-	} else {
-		// oauth2 formats response-body read failures with %v, losing the cause.
-		bodyReadFailure := strings.Contains(err.Error(), "oauth2: cannot fetch token: ")
-		if _, ok := errors.AsType[net.Error](err); ok || syncerr.IsTransientNetwork(err) || errors.Is(err, context.Canceled) || bodyReadFailure {
-			return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{StatusCode: http.StatusBadGateway}))
-		}
+		return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{
+			StatusCode: code,
+			RetryAfter: retryAfter,
+		}))
+	}
+	// oauth2 formats response-body read failures with %v, losing the cause.
+	bodyReadFailure := strings.Contains(err.Error(), "oauth2: cannot fetch token: ")
+	if _, ok := errors.AsType[net.Error](err); ok || syncerr.IsTransientNetwork(err) || errors.Is(err, context.Canceled) || bodyReadFailure {
+		return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{StatusCode: http.StatusBadGateway}))
 	}
 	return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
 }

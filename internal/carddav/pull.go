@@ -191,6 +191,9 @@ func cardDAVSyncPublicFailure(err error) (string, string) {
 		return "retry_after", "CardDAV sync is temporarily paused."
 	}
 	if status, ok := errors.AsType[*StatusError](err); ok {
+		if status.RetryAfter > 0 {
+			return "retry_after", "CardDAV sync is temporarily paused."
+		}
 		switch status.StatusCode {
 		case http.StatusUnauthorized:
 			return "authentication_failed", "CardDAV authentication failed."
@@ -216,7 +219,7 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 	}
 	var status *StatusError
 	return errors.As(err, &status) &&
-		(status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusTooManyRequests)
+		(status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusTooManyRequests || status.RetryAfter > 0)
 }
 
 func (s *Service) syncBook(
