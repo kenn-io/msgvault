@@ -63,6 +63,10 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   const enabled = page.getByRole('switch', { name: 'Enabled' });
   await enabled.focus();
   await page.keyboard.press('Space');
+  const presets = page.getByRole('combobox', { name: 'Presets: Off' });
+  await presets.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('option', { name: 'Custom' }).click();
   await page.getByLabel('Schedule').fill('0 2 * * *');
 
   const testConnection = page.getByRole('button', { name: 'Test CardDAV connection' });

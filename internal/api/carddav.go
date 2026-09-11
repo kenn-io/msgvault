@@ -236,6 +236,7 @@ func (c *CardDAVController) saveCardDAVConfig(
 
 func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest) (CardDAVAccountResponse, error) {
 	c.ensureDependencies()
+	req.Schedule = scheduler.NormalizeCronExpr(req.Schedule)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}
@@ -259,6 +260,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	c.saveMu.Lock()
 	defer c.saveMu.Unlock()
 	c.ensureDependencies()
+	req.Schedule = scheduler.NormalizeCronExpr(req.Schedule)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}

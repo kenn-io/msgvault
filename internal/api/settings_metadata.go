@@ -2,208 +2,345 @@ package api
 
 import (
 	"errors"
+	"go.kenn.io/msgvault/internal/vector"
+	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/config"
+)
+
+// settingMetadata is the user-facing copy for one setting. The label names
+// the setting, the description says what it does in one plain sentence, and
+// the section places it inside its group. Format and range rules belong in
+// settingsValidation so they are not repeated here.
+// Section IDs that repeat across the catalog.
+const (
+	sectionProvider = "provider"
+	sectionVisual   = "visual"
 )
 
 type settingMetadata struct {
 	label       string
 	description string
+	section     string
 }
 
+// settingsGroups are the categories a settings client shows. Groups with
+// sections list them in display order; every setting in such a group names
+// one of them.
 var settingsGroups = []SettingGroup{
-	{ID: "browser", Label: "Web appearance", Description: "Browser preferences applied without restarting the daemon."},
-	{ID: "server", Label: "Daemon", Description: "Daemon lifecycle settings. Listener and authentication bootstrap values are host-managed and read-only."},
-	{ID: "archive", Label: "Analytics", Description: "Analytics engine and bounded cache-builder resources."},
-	{ID: "sync", Label: "Sync", Description: "Shared source synchronization limits."},
-	{ID: "logging", Label: "Logging", Description: "Persistent diagnostics. SQL tracing can produce high-volume logs with statement metadata."},
-	{ID: "search", Label: "Search and embeddings", Description: "Vector search, text embeddings, and visual Voyage embeddings."},
-	{ID: settingsGroupSources, Label: "Sources", Description: "Safe schedules and filters for configured archive sources."},
-	{ID: settingsGroupAttachments, Label: "Attachment downloads", Description: "Controls future attachment downloads only. Changes do not fetch, remove, or re-evaluate existing files."},
-	{ID: "activity", Label: "Activity", Description: "Dated activity projection schedule and bounded batch settings."},
-	{ID: "backup", Label: "Backups", Description: "Portable backup compression settings."},
-	{ID: settingsGroupEnrichment, Label: "Person enrichment", Description: "Global orchestration and independently consented providers. Provider policies are keyed by stable name."},
-	{ID: "integrations", Label: "Integrations", Description: "Optional outbound integrations."},
+	{
+		ID: "browser", Label: "Appearance",
+		Description: "How the web app looks and which search mode it opens in.",
+	},
+	{
+		ID: "server", Label: "Daemon",
+		Description: "How the background daemon listens, stays alive, and logs.",
+		Sections: []SettingSection{
+			{ID: "listener", Label: "Listener and access"},
+			{ID: "lifecycle", Label: "Lifecycle"},
+			{ID: "logging", Label: "Logging"},
+		},
+	},
+	{
+		ID: "archive", Label: "Archive",
+		Description: "The analytics cache, activity history, and backups.",
+		Sections: []SettingSection{
+			{ID: "analytics", Label: "Analytics cache", Description: "Aggregate views read a Parquet cache that the daemon rebuilds when it goes stale."},
+			{ID: "activity", Label: "Activity history", Description: "Sorts events into calendar days for the activity views."},
+			{ID: "backups", Label: "Backups"},
+		},
+	},
+	{
+		ID: "search", Label: "Search",
+		Description: "Semantic search, the embedding provider, and visual attachment indexing.",
+		Sections: []SettingSection{
+			{ID: "semantic", Label: "Semantic search"},
+			{ID: sectionProvider, Label: "Text embedding provider", Description: "Save endpoint changes before storing a credential."},
+			{ID: "schedule", Label: "Embedding schedule and scope"},
+			{ID: "people", Label: "Person embeddings", Description: "Sends consented person fields to the text embedding provider."},
+			{ID: sectionVisual, Label: "Visual attachment search", Description: "Sends images to a hosted provider. Semantic search must also be on."},
+			{ID: "ranking", Label: "Hybrid ranking", Description: "How full-text and semantic results combine."},
+			{ID: "preprocess", Label: "Text preprocessing", Description: "What to strip from message text before embedding it."},
+		},
+	},
+	{
+		ID: settingsGroupSources, Label: "Sources",
+		Description: "Sync schedules and filters for chat and contact sources.",
+		Sections: []SettingSection{
+			{ID: "shared", Label: "All sources"},
+			{ID: sourceTypeBeeper, Label: "Beeper"},
+			{ID: sourceTypeSlack, Label: "Slack"},
+			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
+		},
+	},
+	{
+		ID: settingsGroupAttachments, Label: "Attachments",
+		Description: "Which chat attachments future syncs download. Existing files are not fetched, removed, or re-checked.",
+		Sections: []SettingSection{
+			{ID: sourceTypeBeeper, Label: "Beeper"},
+			{ID: sourceTypeSlack, Label: "Slack"},
+			{ID: "discord", Label: "Discord"},
+			{ID: "teams", Label: "Teams"},
+		},
+	},
+	{
+		ID: settingsGroupEnrichment, Label: "Person enrichment",
+		Description: "Look up more about people through providers you have set up and consented to.",
+	},
+	{
+		ID: "integrations", Label: "Integrations",
+		Description: "Optional connections to outside services.",
+	},
 }
 
 var settingsMetadata = map[string]settingMetadata{
-	"web.default_search_mode":                   {"Default search mode", "Initial search mode used by the Web interface."},
-	"web.theme":                                 {"Theme", "Web color theme. Applied without a daemon restart."},
-	"web.density":                               {"Density", "Web layout density. Applied without a daemon restart."},
-	"server.bind_addr":                          {"Bind address", "Host-managed listener address; remote settings clients cannot change it."},
-	"server.api_port":                           {"API port", "Host-managed listener port; 0 asks the daemon to select a port."},
-	"server.api_key":                            {"API key", "Host-managed authentication bootstrap secret. Its value is never returned."},
-	"server.allow_insecure":                     {"Allow insecure access", "Host-managed authentication boundary; remote settings clients cannot change it."},
-	"server.trusted_proxies":                    {"Trusted proxies", "Host-managed proxy trust boundary; remote settings clients cannot change it."},
-	"server.daemon_idle_timeout":                {"Idle timeout", "How long an idle background daemon waits before stopping; 0 disables the timeout."},
-	"server.daemon_auto_restart":                {"Automatic restart", "Policy used when a compatible daemon executable changes."},
-	"analytics.engine":                          {"Analytics engine", "Engine used for aggregate analytics queries; auto selects the best available engine."},
-	"analytics.auto_build_cache":                {"Build stale analytics cache", "Build the analytics cache automatically when a query finds it stale."},
-	"analytics.min_rebuild_interval":            {"Minimum cache rebuild interval", "Minimum time between automatic analytics cache rebuilds."},
-	"analytics.builder_memory_limit":            {"Cache-builder memory limit", "Optional memory limit applied while building the analytics cache."},
-	"analytics.builder_threads":                 {"Cache-builder threads", "Maximum analytics cache-builder threads; 0 uses the engine default."},
-	"analytics.builder_temp_limit":              {"Cache-builder temporary storage limit", "Optional temporary-storage limit applied while building the analytics cache."},
-	"sync.rate_limit_qps":                       {"Sync requests per second", "Positive shared request-rate limit used by source synchronization."},
-	"log.enabled":                               {"Persistent logs", "Write structured logs to the daemon log directory."},
-	"log.level":                                 {"Log level", "Minimum persistent log severity; an empty value uses the built-in default."},
-	"log.sql_slow_ms":                           {"Slow SQL threshold", "Warn when a SQL statement exceeds this many milliseconds; 0 uses the built-in default."},
-	"log.sql_trace":                             {"Trace every SQL statement", "High-volume diagnostic mode that logs every SQL statement. Enable only while debugging."},
-	"vector.enabled":                            {"Vector search master switch", "Master gate for text semantic indexing and search. Visual embeddings have an additional lane gate."},
-	"vector.backend":                            {"Vector backend", "Host-managed storage backend; changing it requires local migration decisions."},
-	"vector.db_path":                            {"Vector database path", "Host-managed filesystem/database location."},
-	"vector.skip_extension_create":              {"Skip extension creation", "Host-managed database privilege setting."},
-	"vector.embeddings.api_format":              {"Text embedding API format", "Request and response format used by the configured text embedding provider."},
-	"vector.embeddings.endpoint":                {"Text embedding endpoint", "API root used for text embedding requests. Save endpoint changes before storing a credential."},
-	"vector.embeddings.api_key_env":             {"Text embedding credential environment variable", "Host-managed environment variable used when no stored text embedding credential exists."},
-	"vector.embeddings.api_key":                 {"Text embedding API key", "Write-only credential for the text embedding endpoint. Stored credentials override the configured environment variable."},
-	"vector.embeddings.model":                   {"Text embedding model", "Provider model identifier included in the embedding generation fingerprint."},
-	"vector.embeddings.document_prefix":         {"Document embedding prefix", "Optional provider-specific prefix prepended to text when indexing documents."},
-	"vector.embeddings.query_prefix":            {"Query embedding prefix", "Optional provider-specific prefix prepended to text when embedding search queries."},
-	"vector.embeddings.dimension":               {"Text embedding dimension", "Vector dimension returned by the configured text embedding model."},
-	"vector.embeddings.batch_size":              {"Text embedding batch size", "Maximum number of inputs sent in one text embedding request."},
-	"vector.embeddings.timeout":                 {"Text embedding timeout", "Maximum duration allowed for one text embedding provider request."},
-	"vector.embeddings.max_retries":             {"Text embedding retries", "Maximum transient request retries; 0 uses the built-in default."},
-	"vector.embeddings.max_input_chars":         {"Maximum text embedding input", "Maximum characters sent for one text embedding input."},
-	"vector.embeddings.eta_window":              {"Text embedding ETA window", "Recent progress samples used to estimate completion time."},
-	"vector.people.enabled":                     {"Embed curated person fields", "Allow the explicitly consented person fields to use the text embedding provider when the vector master gate is enabled."},
-	"vector.people.retention_posture":           {"Person embedding retention posture", "Operator assertion describing provider retention for curated person embeddings."},
-	"vector.people.training_posture":            {"Person embedding training posture", "Operator assertion describing provider training use for curated person embeddings."},
-	"vector.embed.schedule.cron":                {"Text embedding schedule", "Five-field cron schedule for background text embedding; empty disables the schedule."},
-	"vector.embed.schedule.run_after_sync":      {"Embed text after sync", "Run text embedding after a successful source synchronization."},
-	"vector.embed.scope.message_types":          {"Text embedding message types", "Optional message-type allowlist for text embedding; empty uses all supported types."},
-	"vector.embed.scope.accounts":               {"Text embedding accounts", "Optional account-ID allowlist for text embedding; empty uses all accounts."},
-	"vector.embed.backstop_interval":            {"Text embedding backstop interval", "Maximum interval between background embedding checks when no schedule or sync trigger runs."},
-	"vector.multimodal.enabled":                 {"Visual embedding lane", "Additional gate for hosted visual attachment indexing; the vector master gate must also be enabled."},
-	"vector.multimodal.provider":                {"Visual embedding provider", "Hosted provider used for visual attachment embeddings."},
-	"vector.multimodal.endpoint":                {"Visual embedding endpoint", "Pinned API root used for visual embedding requests. Save endpoint changes before storing a credential."},
-	"vector.multimodal.api_key_env":             {"Visual embedding credential environment variable", "Host-managed environment variable used when no stored visual embedding credential exists."},
-	"vector.multimodal.api_key":                 {"Voyage API key", "Write-only credential for visual Voyage embeddings. Stored credentials override the configured environment variable."},
-	"vector.multimodal.capabilities_file":       {"Visual capability manifest", "Host-managed path to the locally probed provider capability manifest."},
-	"vector.multimodal.model":                   {"Visual embedding model", "Provider model identifier included in the visual embedding generation fingerprint."},
-	"vector.multimodal.dimension":               {"Visual embedding dimension", "Vector dimension required by the pinned visual embedding model."},
-	"vector.multimodal.max_context_chars":       {"Maximum visual context", "Maximum normalized owning-message characters sent with one visual attachment."},
-	"vector.multimodal.include_images":          {"Index still images", "Allow supported still-image attachments to be sent to the visual embedding provider."},
-	"vector.multimodal.include_animated_gifs":   {"Index animated GIFs", "Allow animated GIF attachments only when the provider capability manifest permits them."},
-	"vector.multimodal.include_video":           {"Index videos", "Allow bounded supported video attachments to be sent to the visual embedding provider."},
-	"vector.multimodal.allow_image_queries":     {"Allow image queries", "Allow bounded query images to be sent to the visual embedding provider."},
-	"vector.multimodal.scope.message_types":     {"Visual embedding message types", "Optional message-type allowlist for visual attachment indexing."},
-	"vector.multimodal.schedule.cron":           {"Visual embedding schedule", "Five-field cron schedule for background visual indexing; empty disables the schedule."},
-	"vector.multimodal.schedule.run_after_sync": {"Embed visuals after sync", "Run visual attachment indexing after a successful source synchronization."},
-	"vector.search.rrf_k":                       {"Hybrid RRF constant", "Reciprocal-rank-fusion constant used to combine hybrid search signals."},
-	"vector.search.k_per_signal":                {"Hybrid candidates per signal", "Candidate count retained from each hybrid search signal."},
-	"vector.search.subject_boost":               {"Subject match boost", "Non-negative hybrid-ranking weight applied to subject matches."},
-	"vector.search.max_page_size_hybrid":        {"Maximum hybrid page size", "Maximum page size accepted for hybrid search; 0 disables this clamp."},
-	"vector.preprocess.strip_quotes":            {"Strip quoted replies", "Remove quoted reply blocks before text embedding when enabled."},
-	"vector.preprocess.strip_signatures":        {"Strip signatures", "Remove detected message signatures before text embedding when enabled."},
-	"vector.preprocess.strip_html":              {"Strip HTML", "Remove HTML markup before text embedding when enabled."},
-	"vector.preprocess.strip_base64":            {"Strip base64 payloads", "Remove embedded base64 payloads before text embedding when enabled."},
-	"vector.preprocess.strip_url_tracking":      {"Strip URL tracking parameters", "Remove common tracking parameters from URLs before text embedding when enabled."},
-	"vector.preprocess.collapse_whitespace":     {"Collapse whitespace", "Normalize repeated whitespace before text embedding when enabled."},
-	"people.enrichment.enabled":                 {"Enable person enrichment", "Global gate. At least one named provider and a durable suppression key must be available before enablement."},
-	"people.enrichment.schedule":                {"Enrichment schedule", "Five-field cron schedule for person enrichment."},
-	"people.enrichment.batch_size":              {"Enrichment batch size", "Positive number of people leased per enrichment run."},
-	"people.enrichment.lease_duration":          {"Enrichment lease", "Positive duration for enrichment work leases."},
-	"beeper.enabled":                            {"Scheduled Beeper sync", "Enable scheduled synchronization for configured Beeper accounts."},
-	"beeper.schedule":                           {"Beeper sync schedule", "Five-field cron schedule for Beeper synchronization; empty disables the schedule."},
-	"beeper.accounts":                           {"Included Beeper accounts", "Beeper account IDs to include; empty includes all accounts not explicitly excluded."},
-	"beeper.exclude_accounts":                   {"Excluded Beeper accounts", "Beeper account IDs skipped during synchronization."},
-	"beeper.rate_limit_qps":                     {"Beeper requests per second", "Non-negative request-rate limit; 0 uses the provider default."},
-	"slack.enabled":                             {"Scheduled Slack sync", "Enable scheduled synchronization for configured Slack channels."},
-	"slack.schedule":                            {"Slack sync schedule", "Five-field cron schedule for Slack synchronization; empty disables the schedule."},
-	"slack.channels":                            {"Included Slack channels", "Channel names to include; direct messages are never filtered by this list."},
-	"slack.exclude_channels":                    {"Excluded Slack channels", "Channel names to skip."},
-	"beeper.media":                              {"Download Beeper attachments", "Provider default is enabled; changes affect future downloads only."},
-	"slack.media":                               {"Download Slack files", "Provider default is enabled; changes affect future downloads only."},
-	"discord.media":                             {"Download Discord attachments", "Provider default is enabled; changes affect future downloads only."},
-	"teams.media":                               {"Download Teams attachments", "Provider default is enabled; changes affect future downloads only."},
-	"beeper.media_scope":                        {"Beeper attachment scope", "Choose all conversations, direct conversations only, or none for future downloads."},
-	"slack.media_scope":                         {"Slack attachment scope", "Choose all conversations, direct conversations only, or none for future downloads."},
-	"discord.media_scope":                       {"Discord attachment scope", "Choose all conversations, direct conversations only, or none for future downloads."},
-	"teams.media_scope":                         {"Teams attachment scope", "Choose all conversations, direct conversations only, or none for future downloads."},
-	"beeper.media_max_participants":             {"Beeper participant limit", "Skip future attachment downloads in conversations over this participant count; 0 means no participant limit."},
-	"slack.media_max_participants":              {"Slack participant limit", "Skip future attachment downloads in conversations over this participant count; 0 means no participant limit."},
-	"discord.media_max_participants":            {"Discord participant limit", "Skip future attachment downloads in conversations over this participant count; 0 means no participant limit."},
-	"teams.media_max_participants":              {"Teams participant limit", "Skip future attachment downloads in conversations over this participant count; 0 means no participant limit."},
-	"beeper.max_media_mb":                       {"Beeper maximum attachment size", "Maximum future attachment size in MiB; 0 uses the Beeper default of 100 MiB."},
-	"slack.max_media_mb":                        {"Slack maximum attachment size", "Maximum future attachment size in MiB; 0 uses the Slack default of 100 MiB."},
-	"discord.max_media_mb":                      {"Discord maximum attachment size", "Maximum future attachment size in MiB; 0 uses the Discord default of 50 MiB."},
-	"teams.max_media_mb":                        {"Teams maximum attachment size", "Maximum future attachment size in MiB; 0 uses the Teams default of 100 MiB."},
-	"activity.timezone":                         {"Activity timezone", "IANA timezone used to group events into local calendar dates."},
-	"activity.max_direct_counterparts":          {"Maximum direct counterparts", "Bounded number of direct-message counterparts included in one activity projection pass."},
-	"activity.batch_size":                       {"Activity batch size", "Bounded number of source records processed in one activity projection batch."},
-	"activity.schedule":                         {"Activity projection schedule", "Five-field cron schedule for dated activity projection; empty disables the schedule."},
-	"backup.zstd_level":                         {"Backup compression level", "Zstandard compression level for portable backups; 0 uses the encoder default."},
-	"carddav.base_url":                          {"CardDAV base URL", "Current CardDAV server URL. Change it through the dedicated CardDAV account workflow."},
-	"carddav.username":                          {"CardDAV username", "Current CardDAV account name. Change it through the dedicated CardDAV account workflow."},
-	"carddav.schedule":                          {"CardDAV sync schedule", "Current CardDAV sync schedule. Change it through the dedicated CardDAV account workflow."},
-	"carddav.enabled":                           {"CardDAV synchronization", "Current CardDAV synchronization state. Change it through the dedicated CardDAV account workflow."},
-	"carddav.password":                          {"CardDAV password", "Write-only CardDAV credential managed through the dedicated CardDAV account workflow."},
-	"integrations.tasks.enabled":                {"Task integration", "Enable the configured provider-neutral outbound task integration."},
-	"integrations.tasks.endpoint":               {"Task integration endpoint", "HTTPS, loopback HTTP, owner-controlled Unix socket, or local discovery endpoint."},
-	"integrations.tasks.api_key":                {"Task integration API key", "Write-only bearer credential used only by the daemon for the task integration."},
-	"integrations.tasks.default_project":        {"Default task project", "Project used by default for task creation and lookup."},
+	"web.default_search_mode": {"Default search mode", "Search mode the web app opens with.", ""},
+	"web.theme":               {"Theme", "Light, dark, or follow the system.", ""},
+	"web.density":             {"Density", "Spacing of tables and toolbars.", ""},
+
+	"server.bind_addr":           {"Bind address", "Address the daemon listens on.", "listener"},
+	"server.api_port":            {"API port", "Port the daemon listens on.", "listener"},
+	"server.api_key":             {"API key", "Key that remote clients and browser logins use.", "listener"},
+	"server.allow_insecure":      {"Allow insecure access", "Allow connections from other machines without an API key.", "listener"},
+	"server.trusted_proxies":     {"Trusted proxies", "IP addresses or ranges allowed to forward HTTPS details for a request.", "listener"},
+	"server.daemon_idle_timeout": {"Idle timeout", "How long a background daemon waits with nothing to do before it stops.", "lifecycle"},
+	"server.daemon_auto_restart": {"Automatic restart", "When the CLI restarts a running daemon after its binary changes.", "lifecycle"},
+	"log.enabled":                {"Persistent logs", "Write structured logs to the daemon log directory.", "logging"},
+	"log.level":                  {"Log level", "Lowest severity written to the log. Empty uses the default.", "logging"},
+	"log.sql_slow_ms":            {"Slow SQL threshold", "Log a warning when a SQL statement takes longer than this many milliseconds.", "logging"},
+	"log.sql_trace":              {"Trace every SQL statement", "Log every SQL statement. Produces a lot of output, so turn it on only while debugging.", "logging"},
+
+	"analytics.engine":                 {"Analytics engine", "Engine for aggregate queries. Auto picks the best one available.", "analytics"},
+	"analytics.auto_build_cache":       {"Rebuild stale cache automatically", "Rebuild the analytics cache when a query finds it out of date.", "analytics"},
+	"analytics.min_rebuild_interval":   {"Minimum rebuild interval", "Shortest gap between automatic cache rebuilds.", "analytics"},
+	"analytics.builder_memory_limit":   {"Builder memory limit", "Memory the cache builder may use.", "analytics"},
+	"analytics.builder_threads":        {"Builder threads", "Threads the cache builder may use.", "analytics"},
+	"analytics.builder_temp_limit":     {"Builder temporary storage limit", "Disk space the cache builder may use for temporary files.", "analytics"},
+	"activity.timezone":                {"Timezone", "Timezone used to sort events into calendar days.", "activity"},
+	"activity.max_direct_counterparts": {"Direct conversation limit", "Conversations with more other people than this count as broadcasts, not direct activity.", "activity"},
+	"activity.batch_size":              {"Batch size", "Records processed per projection batch.", "activity"},
+	"activity.schedule":                {"Schedule", "When the activity projection runs.", "activity"},
+	"backup.zstd_level":                {"Compression level", "Zstandard level for portable backups.", "backups"},
+
+	"vector.enabled":               {"Semantic search", "Index message text with an embedding provider so semantic and hybrid search work.", "semantic"},
+	"vector.backend":               {"Vector backend", "Where embeddings are stored.", "semantic"},
+	"vector.db_path":               {"Vector database path", "Override the vector database location.", "semantic"},
+	"vector.skip_extension_create": {"Skip extension creation", "Use a vector extension an administrator already installed.", "semantic"},
+
+	"vector.embeddings.api_format":      {"Text embedding API format", "Request format the provider expects.", sectionProvider},
+	"vector.embeddings.endpoint":        {"Text embedding endpoint", "Base URL of the embedding API.", sectionProvider},
+	"vector.embeddings.api_key_env":     {"Text embedding key variable", "Environment variable the daemon reads when no stored credential exists.", sectionProvider},
+	"vector.embeddings.api_key":         {"Text embedding API key", "Stored key for the endpoint. It overrides the environment variable.", sectionProvider},
+	"vector.embeddings.model":           {"Text embedding model", "Model identifier. Changing it starts a new index generation.", sectionProvider},
+	"vector.embeddings.document_prefix": {"Document prefix", "Text added in front of each document before embedding. Some providers need one.", sectionProvider},
+	"vector.embeddings.query_prefix":    {"Query prefix", "Text added in front of each search query before embedding.", sectionProvider},
+	"vector.embeddings.dimension":       {"Text embedding dimension", "Vector size the model returns.", sectionProvider},
+	"vector.embeddings.batch_size":      {"Text embedding batch size", "Inputs sent per request.", sectionProvider},
+	"vector.embeddings.timeout":         {"Text embedding timeout", "Longest wait for one provider request.", sectionProvider},
+	"vector.embeddings.max_retries":     {"Text embedding retries", "How many times a failed request is retried.", sectionProvider},
+	"vector.embeddings.max_input_chars": {"Maximum input characters", "Longest text sent as one input.", sectionProvider},
+	"vector.embeddings.eta_window":      {"Progress window", "Recent samples used to estimate time remaining.", sectionProvider},
+
+	"vector.embed.schedule.cron":           {"Embedding schedule", "When background embedding runs.", "schedule"},
+	"vector.embed.schedule.run_after_sync": {"Embed after sync", "Run embedding after each successful source sync.", "schedule"},
+	"vector.embed.scope.message_types":     {"Embedded message types", "Only embed these message types. Empty means all.", "schedule"},
+	"vector.embed.scope.accounts":          {"Embedded accounts", "Only embed these account IDs. Empty means all.", "schedule"},
+	"vector.embed.backstop_interval":       {"Backstop interval", "Longest gap between embedding checks when neither the schedule nor a sync triggers one.", "schedule"},
+
+	"vector.people.enabled":           {"Embed person fields", "Send the consented fields of each person to the text embedding provider. Semantic search must be on.", "people"},
+	"vector.people.retention_posture": {"Provider retention statement", "Your statement of how long the provider keeps person data.", "people"},
+	"vector.people.training_posture":  {"Provider training statement", "Your statement of whether the provider trains on person data.", "people"},
+
+	"vector.multimodal.enabled":                 {"Visual attachment search", "Index images and videos with a hosted visual model. Semantic search must also be on.", sectionVisual},
+	"vector.multimodal.provider":                {"Visual embedding provider", "Hosted provider for visual embeddings.", sectionVisual},
+	"vector.multimodal.endpoint":                {"Visual embedding endpoint", "Base URL of the visual embedding API.", sectionVisual},
+	"vector.multimodal.api_key_env":             {"Visual embedding key variable", "Environment variable the daemon reads when no stored credential exists.", sectionVisual},
+	"vector.multimodal.api_key":                 {"Visual embedding API key", "Stored Voyage key. It overrides the environment variable.", sectionVisual},
+	"vector.multimodal.capabilities_file":       {"Capability manifest", "Path to the provider capability file probed on this host.", sectionVisual},
+	"vector.multimodal.model":                   {"Visual embedding model", "Visual model identifier. Changing it starts a new index generation.", sectionVisual},
+	"vector.multimodal.dimension":               {"Visual embedding dimension", "Vector size the visual model returns.", sectionVisual},
+	"vector.multimodal.max_context_chars":       {"Maximum context characters", "Longest excerpt of the owning message sent with each attachment.", sectionVisual},
+	"vector.multimodal.include_images":          {"Index still images", "Send still images to the provider.", sectionVisual},
+	"vector.multimodal.include_animated_gifs":   {"Index animated GIFs", "Send animated GIFs when the capability manifest allows them.", sectionVisual},
+	"vector.multimodal.include_video":           {"Index videos", "Send videos within the size limit to the provider.", sectionVisual},
+	"vector.multimodal.allow_image_queries":     {"Allow image queries", "Let searches send a query image to the provider.", sectionVisual},
+	"vector.multimodal.scope.message_types":     {"Visual message types", "Only index attachments from these message types. Empty means all.", sectionVisual},
+	"vector.multimodal.schedule.cron":           {"Visual indexing schedule", "When background visual indexing runs.", sectionVisual},
+	"vector.multimodal.schedule.run_after_sync": {"Index visuals after sync", "Run visual indexing after each successful source sync.", sectionVisual},
+
+	"vector.search.rrf_k":                {"RRF constant", "Reciprocal rank fusion constant used to merge result lists.", "ranking"},
+	"vector.search.k_per_signal":         {"Candidates per signal", "Results each signal contributes before merging.", "ranking"},
+	"vector.search.subject_boost":        {"Subject boost", "Extra weight for matches in the subject line.", "ranking"},
+	"vector.search.max_page_size_hybrid": {"Maximum hybrid page size", "Largest page a hybrid search returns.", "ranking"},
+
+	"vector.preprocess.strip_quotes":        {"Strip quoted replies", "Remove quoted earlier messages before embedding.", "preprocess"},
+	"vector.preprocess.strip_signatures":    {"Strip signatures", "Remove detected signatures before embedding.", "preprocess"},
+	"vector.preprocess.strip_html":          {"Strip HTML", "Remove HTML markup before embedding.", "preprocess"},
+	"vector.preprocess.strip_base64":        {"Strip base64 payloads", "Remove embedded base64 data before embedding.", "preprocess"},
+	"vector.preprocess.strip_url_tracking":  {"Strip URL tracking parameters", "Remove common tracking parameters from links before embedding.", "preprocess"},
+	"vector.preprocess.collapse_whitespace": {"Collapse whitespace", "Squeeze repeated spaces and blank lines before embedding.", "preprocess"},
+
+	"sync.rate_limit_qps":     {"Requests per second", "Request rate limit shared by all source syncs.", "shared"},
+	"beeper.enabled":          {"Scheduled Beeper sync", "Sync Beeper accounts on the schedule below.", sourceTypeBeeper},
+	"beeper.schedule":         {"Beeper schedule", "When Beeper sync runs.", sourceTypeBeeper},
+	"beeper.accounts":         {"Included Beeper accounts", "Beeper account IDs to sync. Empty means all that are not excluded.", sourceTypeBeeper},
+	"beeper.exclude_accounts": {"Excluded Beeper accounts", "Beeper account IDs to skip.", sourceTypeBeeper},
+	"beeper.rate_limit_qps":   {"Beeper requests per second", "Request rate limit for Beeper.", sourceTypeBeeper},
+	"slack.enabled":           {"Scheduled Slack sync", "Sync Slack channels on the schedule below.", sourceTypeSlack},
+	"slack.schedule":          {"Slack schedule", "When Slack sync runs.", sourceTypeSlack},
+	"slack.channels":          {"Included Slack channels", "Channel names to sync. Direct messages are always included.", sourceTypeSlack},
+	"slack.exclude_channels":  {"Excluded Slack channels", "Channel names to skip.", sourceTypeSlack},
+	"carddav.base_url":        {"CardDAV server URL", "Server this archive syncs contacts with.", "carddav"},
+	"carddav.username":        {"CardDAV username", "Account used to sign in to the CardDAV server.", "carddav"},
+	"carddav.schedule":        {"CardDAV schedule", "When contact sync runs.", "carddav"},
+	"carddav.enabled":         {"Scheduled CardDAV sync", "Whether contact sync runs on the schedule.", "carddav"},
+	"carddav.password":        {"CardDAV password", "Sign-in secret for the CardDAV server. Its value is never shown.", "carddav"},
+
+	"beeper.media":                   {"Download Beeper attachments", "Download attachments from future Beeper syncs.", sourceTypeBeeper},
+	"beeper.media_scope":             {"Beeper conversations", "Which Beeper conversations to download attachments from.", sourceTypeBeeper},
+	"beeper.media_max_participants":  {"Beeper participant limit", "Skip Beeper conversations with more people than this.", sourceTypeBeeper},
+	"beeper.max_media_mb":            {"Beeper maximum size", "Largest Beeper attachment to download, in MiB.", sourceTypeBeeper},
+	"slack.media":                    {"Download Slack files", "Download files from future Slack syncs.", sourceTypeSlack},
+	"slack.media_scope":              {"Slack conversations", "Which Slack conversations to download files from.", sourceTypeSlack},
+	"slack.media_max_participants":   {"Slack participant limit", "Skip Slack conversations with more people than this.", sourceTypeSlack},
+	"slack.max_media_mb":             {"Slack maximum size", "Largest Slack file to download, in MiB.", sourceTypeSlack},
+	"discord.media":                  {"Download Discord attachments", "Download attachments from future Discord syncs.", "discord"},
+	"discord.media_scope":            {"Discord conversations", "Which Discord conversations to download attachments from.", "discord"},
+	"discord.media_max_participants": {"Discord participant limit", "Skip Discord conversations with more people than this.", "discord"},
+	"discord.max_media_mb":           {"Discord maximum size", "Largest Discord attachment to download, in MiB.", "discord"},
+	"teams.media":                    {"Download Teams attachments", "Download attachments from future Teams syncs.", "teams"},
+	"teams.media_scope":              {"Teams conversations", "Which Teams conversations to download attachments from.", "teams"},
+	"teams.media_max_participants":   {"Teams participant limit", "Skip Teams conversations with more people than this.", "teams"},
+	"teams.max_media_mb":             {"Teams maximum size", "Largest Teams attachment to download, in MiB.", "teams"},
+
+	"people.enrichment.enabled":        {"Enable person enrichment", "Run enrichment. Needs at least one provider policy and a durable suppression key.", ""},
+	"people.enrichment.schedule":       {"Enrichment schedule", "When enrichment runs.", ""},
+	"people.enrichment.batch_size":     {"Enrichment batch size", "People handled per run.", ""},
+	"people.enrichment.lease_duration": {"Enrichment lease", "How long one run holds a batch before another run may take it.", ""},
+
+	"integrations.tasks.enabled":         {"Task integration", "Send tasks to the configured task service.", ""},
+	"integrations.tasks.endpoint":        {"Task endpoint", "Where the task service listens.", ""},
+	"integrations.tasks.api_key":         {"Task API key", "Bearer key the daemon sends to the task service.", ""},
+	"integrations.tasks.default_project": {"Default task project", "Project used when creating or looking up tasks.", ""},
 }
 
+// settingsValidation carries format and range rules. A hint says how to
+// write a valid value; it never restates what the setting does, and it
+// never spells out a bound that Minimum, Maximum, or Off already carry.
 var settingsValidation = map[string]SettingValidation{
-	"server.api_port":                numberValidation(0, new(float64(65_535)), "0 asks the daemon to select an available port."),
-	"server.daemon_idle_timeout":     {Hint: "Go duration such as 30s, 15m, or 2h; 0 disables the idle timeout.", Required: true},
-	"analytics.min_rebuild_interval": {Hint: "Go duration such as 15m or 2h; 0 allows immediate rebuilds.", Required: true},
-	"analytics.builder_memory_limit": {Hint: "Optional positive size such as 512MiB or 2GB."},
-	"analytics.builder_threads":      numberValidation(0, nil, "0 uses the analytics engine default."),
-	"analytics.builder_temp_limit":   {Hint: "Optional positive size such as 1GiB or 10GB."},
-	"sync.rate_limit_qps":            numberValidation(1, nil, "Positive requests-per-second limit."),
-	"log.sql_slow_ms":                numberValidation(0, nil, "0 uses the built-in threshold."),
+	"server.api_port":                withOff(numberRange(1, 65_535), "The daemon picks a free port", "8080"),
+	"server.daemon_idle_timeout":     withOffValue(durationValidation("30s, 15m, or 2h"), "0s", "Never stops for being idle", "20m"),
+	"analytics.min_rebuild_interval": withOffValue(durationValidation("15m or 2h"), "0s", "Rebuilds can run back to back", "15m"),
+	"analytics.builder_memory_limit": withOffValue(sizeValidation("512MiB or 2GB"), "", "No limit", "512MiB"),
+	"analytics.builder_threads":      withOff(atLeast(1), "Engine default", "4"),
+	"analytics.builder_temp_limit":   withOffValue(sizeValidation("1GiB or 10GB"), "", "No limit", "1GiB"),
+	"sync.rate_limit_qps":            atLeast(1),
+	"log.sql_slow_ms":                withOff(atLeast(1), "Built-in threshold of 100 ms", "100"),
 
 	"vector.embeddings.endpoint": {
-		Hint: "Absolute HTTP or HTTPS URL without credentials, query, or fragment.", Required: true,
+		Hint: "HTTP or HTTPS URL without credentials, query, or fragment.", Required: true,
 	},
-	"vector.embeddings.model":           {Hint: "Provider model identifier used in the vector generation fingerprint.", Required: true},
-	"vector.embeddings.dimension":       numberValidation(1, nil, "Positive embedding vector dimension."),
-	"vector.embeddings.batch_size":      numberValidation(1, nil, "Positive provider request batch size."),
-	"vector.embeddings.timeout":         {Hint: "Positive Go duration such as 30s or 2m.", Required: true},
-	"vector.embeddings.max_retries":     numberValidation(0, nil, "0 uses the built-in retry default."),
-	"vector.embeddings.max_input_chars": numberValidation(1, nil, "Maximum characters sent for one embedding input."),
-	"vector.embeddings.eta_window":      numberValidation(1, nil, "Positive rolling window used for progress estimates."),
-	"vector.people.retention_posture":   {Hint: "Explicit provider data-retention posture.", Required: true},
-	"vector.people.training_posture":    {Hint: "Explicit provider model-training posture.", Required: true},
-	"vector.embed.schedule.cron":        {Hint: "Five-field cron expression; leave empty to disable scheduled embedding."},
-	"vector.embed.backstop_interval":    {Hint: "Go duration; 0 uses the default and a negative duration disables the backstop.", Required: true},
+	"vector.embeddings.model":      {Required: true},
+	"vector.embeddings.dimension":  atLeast(1),
+	"vector.embeddings.batch_size": atLeast(1),
+	"vector.embeddings.timeout":    {Hint: "Duration such as 30s or 2m.", Required: true},
+	// Loading the config turns a stored 0 into 3, so zero cannot be a
+	// persistent off state here; the control shows the effective value.
+	"vector.embeddings.max_retries":     atLeast(1),
+	"vector.embeddings.max_input_chars": atLeast(1),
+	"vector.embeddings.eta_window":      atLeast(1),
+	"vector.people.retention_posture":   {Required: true},
+	"vector.people.training_posture":    {Required: true},
+	"vector.embed.schedule.cron":        cronValidation(false),
+	"vector.embed.backstop_interval":    {Hint: "Duration. 0 uses the default. A negative value disables the backstop.", Required: true},
 	"vector.multimodal.endpoint": {
-		Hint: "Pinned Voyage HTTPS API root without credentials, query, or fragment.", Required: true,
+		Hint: "Only https://api.voyageai.com/v1 is accepted.", Required: true,
 	},
-	"vector.multimodal.model":             {Hint: "Pinned visual embedding model identifier.", Required: true},
-	"vector.multimodal.dimension":         numberValidation(1024, new(float64(1024)), "Voyage visual embeddings require 1024 dimensions."),
-	"vector.multimodal.max_context_chars": numberValidation(1, nil, "Positive maximum context characters per visual document."),
-	"vector.multimodal.schedule.cron":     {Hint: "Five-field cron expression; leave empty to disable scheduled visual embedding."},
-	"vector.search.rrf_k":                 numberValidation(1, nil, "Positive reciprocal-rank-fusion constant."),
-	"vector.search.k_per_signal":          numberValidation(1, nil, "Positive candidates retained per search signal."),
-	"vector.search.subject_boost":         numberValidation(0, nil, "Non-negative subject-match weight."),
-	"vector.search.max_page_size_hybrid":  numberValidation(0, nil, "0 disables the hybrid-result page-size clamp."),
+	"vector.multimodal.model":             {Required: true},
+	"vector.multimodal.dimension":         withHint(numberRange(1024, 1024), "Voyage visual models require 1024."),
+	"vector.multimodal.max_context_chars": atLeast(1),
+	"vector.multimodal.schedule.cron":     cronValidation(false),
+	"vector.search.rrf_k":                 atLeast(1),
+	"vector.search.k_per_signal":          atLeast(1),
+	"vector.search.subject_boost":         atLeast(0),
+	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", strconv.Itoa(vector.DefaultMaxPageSizeHybrid)),
 
-	"beeper.schedule":                {Hint: "Five-field cron expression; leave empty to disable scheduled sync."},
-	"slack.schedule":                 {Hint: "Five-field cron expression; leave empty to disable scheduled sync."},
-	"beeper.rate_limit_qps":          numberValidation(0, nil, "0 uses the Beeper provider default."),
-	"beeper.media_max_participants":  numberValidation(0, nil, "0 means no participant limit."),
-	"slack.media_max_participants":   numberValidation(0, nil, "0 means no participant limit."),
-	"discord.media_max_participants": numberValidation(0, nil, "0 means no participant limit."),
-	"teams.media_max_participants":   numberValidation(0, nil, "0 means no participant limit."),
-	"beeper.max_media_mb":            numberValidation(0, nil, "0 uses the Beeper default of 100 MiB."),
-	"slack.max_media_mb":             numberValidation(0, nil, "0 uses the Slack default of 100 MiB."),
-	"discord.max_media_mb":           numberValidation(0, nil, "0 uses the Discord default of 50 MiB."),
-	"teams.max_media_mb":             numberValidation(0, nil, "0 uses the Teams default of 100 MiB."),
+	"beeper.schedule": cronValidation(false),
+	"slack.schedule":  cronValidation(false),
+	// A float has no "greater than zero" bound a number control can carry,
+	// so the on range starts at 0.1 requests per second. A smaller positive
+	// rate is raised to 0.1 on save rather than rejected; zero stays off.
+	"beeper.rate_limit_qps":          withOff(atLeast(0.1), "Provider default", "5"),
+	"beeper.media_max_participants":  withOff(atLeast(1), "No limit", "20"),
+	"slack.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
+	"discord.media_max_participants": withOff(atLeast(1), "No limit", "20"),
+	"teams.media_max_participants":   withOff(atLeast(1), "No limit", "20"),
+	"beeper.max_media_mb":            mediaSizeOff("Beeper", config.DefaultChatMaxMediaBytes),
+	"slack.max_media_mb":             mediaSizeOff("Slack", config.DefaultChatMaxMediaBytes),
+	"discord.max_media_mb":           mediaSizeOff("Discord", config.DefaultDiscordMaxMediaBytes),
+	"teams.max_media_mb":             mediaSizeOff("Teams", config.DefaultChatMaxMediaBytes),
 
-	"activity.timezone":                {Hint: "UTC or an IANA timezone such as America/New_York.", Required: true},
-	"activity.max_direct_counterparts": numberValidation(1, new(float64(10_000)), "Bounded direct-counterpart count."),
-	"activity.batch_size":              numberValidation(1, new(float64(10_000)), "Bounded projection batch size."),
-	"activity.schedule":                {Hint: "Five-field cron expression; leave empty to disable scheduled projection."},
-	"backup.zstd_level":                numberValidation(0, new(float64(19)), "0 uses the backup encoder default; explicit levels are 1 through 19."),
-	"people.enrichment.schedule":       {Hint: "Required five-field cron expression.", Required: true},
-	"people.enrichment.batch_size":     numberValidation(1, nil, "Positive number of people leased per run."),
-	"people.enrichment.lease_duration": {Hint: "Positive Go duration such as 5m or 1h.", Required: true},
-	"integrations.tasks.endpoint":      {Hint: "Optional HTTPS URL, loopback HTTP URL, or owner-controlled Unix socket."},
+	"activity.timezone":                {Hint: "UTC or an IANA name such as America/New_York.", Required: true},
+	"activity.max_direct_counterparts": numberRange(1, 10_000),
+	"activity.batch_size":              numberRange(1, 10_000),
+	"activity.schedule":                cronValidation(false),
+	"backup.zstd_level":                withOff(numberRange(1, 19), "Encoder default", "3"),
+	"people.enrichment.schedule":       cronValidation(true),
+	"people.enrichment.batch_size":     atLeast(1),
+	"people.enrichment.lease_duration": {Hint: "Duration such as 5m or 1h.", Required: true},
+	"integrations.tasks.endpoint":      {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
 }
 
-func numberValidation(minimum float64, maximum *float64, hint string) SettingValidation {
-	return SettingValidation{Hint: hint, Minimum: new(minimum), Maximum: maximum}
+func atLeast(minimum float64) SettingValidation {
+	return SettingValidation{Minimum: new(minimum)}
+}
+
+func numberRange(minimum, maximum float64) SettingValidation {
+	return SettingValidation{Minimum: new(minimum), Maximum: new(maximum)}
+}
+
+func durationValidation(examples string) SettingValidation {
+	return SettingValidation{Hint: "Duration such as " + examples + ".", Required: true}
+}
+
+func sizeValidation(examples string) SettingValidation {
+	return SettingValidation{Hint: "Size such as " + examples + "."}
+}
+
+const settingFormatCron = "cron"
+
+func cronValidation(required bool) SettingValidation {
+	return SettingValidation{Format: settingFormatCron, Required: required}
+}
+
+// mediaSizeOff describes a per-attachment size cap whose zero means the
+// provider default, derived from the same constant the sync path applies.
+func mediaSizeOff(provider string, defaultBytes int64) SettingValidation {
+	mib := strconv.FormatInt(defaultBytes>>20, 10)
+	return withOff(atLeast(1), provider+" default of "+mib+" MiB", mib)
+}
+
+func withHint(validation SettingValidation, hint string) SettingValidation {
+	validation.Hint = hint
+	return validation
+}
+
+// withOff marks zero as the value that switches a numeric setting off. The
+// range the validation carried becomes the on range; Minimum widens to
+// include zero so clients that ignore Off still accept a stored zero.
+func withOff(validation SettingValidation, label, suggest string) SettingValidation {
+	validation = withOffValue(validation, "0", label, suggest)
+	if validation.Minimum != nil && *validation.Minimum > 0 {
+		validation.Off.OnMinimum = validation.Minimum
+		validation.Minimum = new(float64(0))
+	}
+	return validation
+}
+
+func withOffValue(validation SettingValidation, value, label, suggest string) SettingValidation {
+	validation.Off = &SettingOff{Value: &value, Label: label, Suggest: suggest}
+	return validation
 }
 
 func validationForSetting(key string) *SettingValidation {
@@ -229,6 +366,14 @@ func validateSettingBounds(key string, value any) error {
 		number = typed
 	default:
 		return nil
+	}
+	if validation.Off != nil {
+		if off, err := strconv.ParseFloat(validation.Off.text(), 64); err == nil && off == number {
+			return nil
+		}
+		if validation.Off.OnMinimum != nil && number < *validation.Off.OnMinimum {
+			return errors.New("below minimum")
+		}
 	}
 	if validation.Minimum != nil && number < *validation.Minimum {
 		return errors.New("below minimum")

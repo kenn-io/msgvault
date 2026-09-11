@@ -227,7 +227,7 @@
   }
 
   .year-navigation button:disabled {
-    opacity: 0.35;
+    opacity: var(--opacity-disabled);
     cursor: default;
   }
 

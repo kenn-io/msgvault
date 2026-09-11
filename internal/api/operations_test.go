@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1181,6 +1182,15 @@ func TestOperationHistoryAPIDependencyFailures(t *testing.T) {
 	}
 }
 
+// opaqueOperationTokens matches run IDs and cursors. They are keyed random
+// material, so any short digit sequence such as a private database ID can
+// appear inside them by chance; the privacy check masks them first.
+var opaqueOperationTokens = regexp.MustCompile(`op2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+
+func withoutOpaqueOperationTokens(body string) string {
+	return opaqueOperationTokens.ReplaceAllString(body, "op2.<token>")
+}
+
 func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1258,7 +1268,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		w := doGet(srv, target)
 		require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 		for _, marker := range privateMarkers {
-			assert.NotContains(w.Body.String(), marker)
+			assert.NotContains(withoutOpaqueOperationTokens(w.Body.String()), marker)
 		}
 		var page OperationRunsResponse
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
@@ -1279,7 +1289,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		w := doGet(srv, "/api/v1/operations/runs/"+summary.ID)
 		require.Equal(http.StatusOK, w.Code)
 		for _, marker := range privateMarkers {
-			assert.NotContains(w.Body.String(), marker)
+			assert.NotContains(withoutOpaqueOperationTokens(w.Body.String()), marker)
 		}
 		var detail OperationRunDetail
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &detail))

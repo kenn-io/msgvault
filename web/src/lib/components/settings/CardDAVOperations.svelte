@@ -12,6 +12,7 @@
     type ChipTone,
   } from '@kenn-io/kit-ui';
   import { getContext } from 'svelte';
+  import { scheduleSummary } from '../../settings/cron';
 
   import type { CardDAVBook, CardDAVBookRoles, CardDAVController } from '../../carddav/controller.svelte';
   import type {
@@ -102,7 +103,10 @@
           {status.credential_configured ? 'Credential ready' : 'Credential needs attention'}</span
         >
         <span>{status.enabled ? 'Scheduled sync enabled' : 'Scheduled sync disabled'}</span>
-        <span>{status.scheduled ? `Scheduled · ${status.schedule || 'Schedule unavailable'}` : 'Manual sync only'}</span
+        <span
+          >{#if status.scheduled && status.schedule}Scheduled · <span title={status.schedule}
+              >{scheduleSummary(status.schedule)}</span
+            >{:else if status.scheduled}Scheduled · Schedule unavailable{:else}Manual sync only{/if}</span
         >
         {#if status.next_scheduled_at}
           <span

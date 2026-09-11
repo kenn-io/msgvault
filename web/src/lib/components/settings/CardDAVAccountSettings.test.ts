@@ -55,6 +55,7 @@ describe('CardDAVAccountSettings', () => {
     expect((screen.getByRole('switch', { name: 'Enabled' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Schedule') as HTMLInputElement).value).toBe('0 4 * * *');
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(true);
+    expect(screen.getByText('Saving the account applies right away. No daemon restart is needed.')).toBeDefined();
   });
 
   it('preserves an intentional local edit while refreshing untouched fields', async () => {

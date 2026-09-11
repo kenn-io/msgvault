@@ -266,13 +266,14 @@ func personEnrichmentProviderSettings(
 				return nil, err
 			}
 		} else {
-			_, state, resolveErr := credentials.Resolve(credentialID, credentialEndpoint, provider.APIKeyEnv, osLookupEnv)
+			value, state, resolveErr := credentials.Resolve(credentialID, credentialEndpoint, provider.APIKeyEnv, osLookupEnv)
 			if errors.Is(resolveErr, providercredentials.ErrOriginMismatch) {
 				state = providercredentials.State{Configured: false, Source: providercredentials.SourceNone}
 			} else if resolveErr != nil {
 				return nil, resolveErr
 			}
-			credentialState = &SecretSettingState{Configured: state.Configured, Source: string(state.Source)}
+			secret := secretStateOf(value, state)
+			credentialState = &secret
 		}
 		result = append(result, PersonEnrichmentProviderSetting{
 			Name: provider.Name, Kind: provider.Kind, Enabled: provider.Enabled,

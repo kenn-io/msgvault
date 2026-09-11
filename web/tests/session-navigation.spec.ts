@@ -118,11 +118,12 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   expect(patch.body).toEqual({
     updates: [{ key: 'web.theme', value: { string: 'dark' } }]
   });
-  await expect(page.getByText('Changes are pending restart.')).toBeVisible();
+  await expect(page.getByText('Restart the daemon to apply these changes.')).toBeVisible();
 });
 
 function settingsDocument(theme: string, pendingRestart: boolean) {
   return {
+    groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
     settings: [
       {
         key: 'web.theme',

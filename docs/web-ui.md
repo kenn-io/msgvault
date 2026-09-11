@@ -341,16 +341,53 @@ Shortcuts are suspended while typing and inside message/file content.
 
 ## Settings and restart behavior
 
-Settings edits supported browser, server, search, source, and integration
-settings on the daemon host. The daemon supplies the editable fields and their
-allowed values. Saving makes targeted edits to `config.toml` while preserving
-comments. A stale edit is rejected after another browser or a hand edit
-changes the configuration; reload before saving again.
+Settings edits the daemon's `config.toml` from the browser. For every
+`config.toml` setting the daemon supplies the category, section, label,
+description, and allowed values, so the browser never decides on its own what
+a setting means. Those categories are Appearance, Daemon, Archive, Search,
+Sources, Attachments, Person enrichment, and Integrations. Larger categories
+split into titled sections, for example Search has separate sections for the
+text embedding provider, the embedding schedule, and visual attachment search.
+The CardDAV account category is a separate browser-owned workflow with its own
+save action; it is not part of the daemon's settings catalog.
 
-Keys marked restart-required show a pending-restart state until the daemon
-restarts. The server API key (`server.api_key`) is read-only in the browser;
-change it in `config.toml` on the daemon host. After that key changes and the
-daemon restarts, old browser sessions end and the login screen appears.
+Each row shows the setting name and one sentence about what it does. Limits
+live on the control itself: a number input carries its minimum and maximum,
+and a syntax hint such as the accepted duration format sits under the control
+only when the syntax needs one. Settings where zero means "off", such as an
+attachment size cap that falls back to the provider default, show a switch.
+Switch it off and the row states what happens instead; switch it on and a
+value input appears, starting from a suggested value. Rows you have changed
+carry an amber dot, the footer counts unsaved changes, and Discard throws them
+away. Save is disabled until something changes.
+
+Schedules are one line. A Presets menu offers common schedules such as every
+hour, every day at 03:00, or weekdays at 09:00, plus Off for schedules that
+can be empty and Custom. Choosing Custom opens the expression editor beside
+the menu, starting from the preset you had. The five fields are tinted, and
+while the editor has focus or the pointer is over it a small card names the
+fields (minute, hour, day, month, weekday) and says in plain English when the
+schedule runs; a mistake names the field and the problem before you save. A
+Time zone menu at the end of the line runs the schedule in a chosen IANA zone
+instead of the daemon's own clock, shown as "Server time"; the choice is
+stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
+the same field, and the Sources and CardDAV status views describe stored
+schedules the same way.
+
+Each category states once how its changes take effect. Appearance settings
+apply right away. Every other `config.toml` category takes effect after the
+daemon restarts, and after a save the page shows "Saved. Restart the daemon to
+apply these changes." until it does. Two exceptions apply right away and say
+so beside their controls: person-enrichment provider API keys, and the CardDAV
+account, which saves through its own form. Saving makes targeted edits to `config.toml`
+while preserving comments. A stale edit is rejected after another browser or
+a hand edit changes the configuration; reload before saving again.
+
+Host-managed values, such as the listener address and the server API key
+(`server.api_key`), show their current value with a Host-managed tag and no
+input. Change them in `config.toml` on the daemon host. After the API key
+changes and the daemon restarts, old browser sessions end and the login
+screen appears.
 
 ### Provider policies and credentials
 
@@ -360,9 +397,18 @@ run; configuration alone does not authorize a provider. The TUI shows these
 policies read-only. See [External Person Enrichment](/docs/usage/people-enrichment/)
 for the provider lifecycle.
 
-Provider credentials for embeddings, enrichment, and sweeps are write-only.
-You can add, replace, or remove a key. After saving, the UI shows whether a key
-is configured and where it comes from, but never its value.
+Provider credentials for embeddings, enrichment, and sweeps are write-only,
+and so are the task integration key and the daemon's own API key. Each key is
+one line: a read-only box, a pencil button, and a trash button that removes
+a stored key. The box shows `None` when no key is set, or a masked
+hint of the set key, its first three and last three characters, such as
+`sk-…x9Q`, so you can tell which key is in place. A key under twelve
+characters shows as dots instead. The pencil opens a dialog to paste the
+new key, and the dialog says when it takes effect: a person-enrichment key
+applies right away, the text and visual embedding keys are stored at once
+but used after the daemon restarts, and the task integration key is saved
+with the rest of the page. A key that comes from an environment variable
+says so under the line and cannot be cleared from the browser.
 
 Credentials have a separate revision from `config.toml`. When changing both
 an endpoint or model and its credential, save the endpoint/model first, then

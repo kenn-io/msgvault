@@ -29,9 +29,10 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"synthetic-settings"' },
     json: {
+      groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
       settings: [
-        { key: 'web.theme', group: 'browser', kind: 'string', value: { string: 'system' }, options: ['system', 'light', 'dark'], restart_required: true },
-        { key: 'web.density', group: 'browser', kind: 'string', value: { string: 'compact' }, options: ['compact', 'comfortable'], restart_required: true }
+        { key: 'web.theme', group: 'browser', label: 'Theme', description: 'Light, dark, or follow the system.', kind: 'string', value: { string: 'system' }, options: ['system', 'light', 'dark'], restart_required: true },
+        { key: 'web.density', group: 'browser', label: 'Density', description: 'Spacing of tables and toolbars.', kind: 'string', value: { string: 'compact' }, options: ['compact', 'comfortable'], restart_required: true }
       ],
       pending_restart: true
     }
@@ -186,10 +187,9 @@ for (const theme of ['light', 'dark'] as const) {
     await selectKitTopBarTab(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
-    await expectRenderedContrast(settings.locator('.field-copy span').first(), 4.5);
-    await expectRenderedContrast(settings.locator('.pending'), 4.5);
-    await expectRenderedBoundary(settings.locator('.field').first(), 'borderTopColor', 3);
-    await expectRenderedBoundary(settings.locator('.pending'), 'borderLeftColor', 3);
+    await expectRenderedContrast(settings.locator('.row__hint').first(), 4.5);
+    await expectRenderedContrast(settings.locator('.notice--pending'), 4.5);
+    await expectRenderedBoundary(settings.locator('.notice--pending'), 'borderLeftColor', 3);
   });
 }
 

@@ -367,10 +367,12 @@ describe('application foundation', () => {
 function settingsResponse(theme: string, etag: string, pendingRestart = false): Response {
   return Response.json(
     {
+      groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
       settings: [
         {
           key: 'web.theme',
           group: 'browser',
+          label: 'Theme',
           kind: 'string',
           value: { string: theme },
           options: ['system', 'light', 'dark'],

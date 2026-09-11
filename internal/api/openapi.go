@@ -296,7 +296,13 @@ import (
 // Saved View responses include incompatibility_reason for invalid definitions.
 // Additive (minor bump): existing Saved View and Explore routes are unchanged.
 // 2.22.0 adds the optional rfc822_message_id to CLI message detail responses.
-const APISchemaVersion = "2.22.0"
+// 2.23.0 adds `section` on settings in sectioned groups, `sections` on those
+// groups, and `validation.format` and `validation.off`. `minimum` and
+// `maximum` keep covering every accepted value, so clients that ignore `off`
+// still accept a stored off value. The daemon stops emitting the sync,
+// logging, activity, and backup groups but keeps them in the enum.
+// Additive (minor bump): existing settings routes are unchanged.
+const APISchemaVersion = "2.23.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -609,10 +615,17 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	if setting := schemas["Setting"]; setting != nil {
-		setting.Properties["group"].Enum = []any{
-			"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
-			"activity", "backup", "enrichment", "integrations",
+		// The enum keeps group IDs that older daemons in the compatibility
+		// range still emit, so a newer generated client can validate their
+		// responses. The daemon itself emits only settingsGroups.
+		groupIDs := make([]any, 0, len(settingsGroups)+len(legacySettingsGroupIDs))
+		for _, group := range settingsGroups {
+			groupIDs = append(groupIDs, group.ID)
 		}
+		for _, id := range legacySettingsGroupIDs {
+			groupIDs = append(groupIDs, id)
+		}
+		setting.Properties["group"].Enum = groupIDs
 		setting.Properties["kind"].Enum = []any{"string", "integer", "number", "boolean", "string_array", "secret"}
 	}
 	if request := schemas["SettingsPatchRequest"]; request != nil {

@@ -2170,6 +2170,26 @@ func TestScheduler_VisualRunAfterSyncDoesNotExtendSync(t *testing.T) {
 	close(releaseVisual)
 }
 
+func TestNormalizeCronExpr(t *testing.T) {
+	assertions := assert.New(t)
+	assertions.Equal("0 3 * * *", NormalizeCronExpr("  0 3 * * *  "))
+	assertions.Empty(NormalizeCronExpr("   "))
+	assertions.Empty(NormalizeCronExpr("CRON_TZ=UTC"))
+	assertions.Empty(NormalizeCronExpr(" TZ=Europe/Berlin "))
+	assertions.Equal("CRON_TZ=UTC 0 3 * * *", NormalizeCronExpr("CRON_TZ=UTC 0 3 * * *"))
+}
+
+func TestRegistrationPathsRejectWhatTheValidatorRejects(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, expr := range []string{"CRON_TZ=UTC", ", * * * *", "0 3 * * ,,"} {
+		s := New(func(context.Context, string) error { return nil })
+		requirements.Error(s.AddAccount("user-a@example.com", expr), "AddAccount(%q)", expr)
+		assertions.Empty(s.schedules, "AddAccount(%q) must not register", expr)
+		requirements.Error(s.AddJob(Job{Name: "job", Schedule: expr, Run: func(context.Context) error { return nil }}), "AddJob(%q)", expr)
+	}
+}
+
 func TestValidateCronExpr(t *testing.T) {
 	tests := []struct {
 		expr    string
@@ -2182,6 +2202,13 @@ func TestValidateCronExpr(t *testing.T) {
 		{"invalid", true},
 		{"* * * * * *", true}, // Too many fields
 		{"", true},
+		{"CRON_TZ=Europe/Berlin 0 2 * * *", false},
+		{"TZ=UTC 0 2 * * *", false},
+		{"CRON_TZ=Nowhere/Place 0 2 * * *", true},
+		{"CRON_TZ=UTC", true}, // Zone with no fields would slice past the end
+		{", * * * *", true},   // A list with no values never fires
+		{"0 2 * * ,,", true},
+		{"0, 2 * * *", false}, // Empty pieces are dropped, not empty lists
 	}
 
 	for _, tt := range tests {

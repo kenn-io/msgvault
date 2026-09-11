@@ -27,7 +27,7 @@ rebuild the cache; see [recovery instructions](usage/importing.md#message-identi
   outside your archive home. PostgreSQL users need their own database backup;
   see [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.22.0**. Old analytical
+  compatibility boundary; the current schema is **2.23.0**. Old analytical
   `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
   profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
   removed, not aliased. Local and remote clients reject incompatible daemons;
@@ -137,6 +137,37 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   survives daemon restarts.
 - Add Web Settings with write-only provider credential management and visible
   restart-pending state, plus keyboard-only TUI Settings.
+- Reorganize Web Settings. The daemon now publishes sections inside each
+  category (API schema 2.23.0 adds `section` on settings and `sections` on
+  groups and keeps the folded group IDs in the enum for older daemons),
+  folds the Sync, Logging, Activity, and Backups categories into Sources,
+  Daemon, and Archive, and rewrites every label, description, and hint in
+  plain language with no repeated text. Restart posture is stated once per
+  category instead of on every row, host-managed values show a tag instead of
+  an input, and the footer counts unsaved changes with a Discard action.
+- Move Web Settings limits into the controls. Number inputs carry their
+  bounds instead of "At least 1" hints, settings where zero means off publish
+  an `off` state (API schema adds `validation.off` with a label and suggested
+  value) and render as a switch beside the value, and cron schedules publish
+  `validation.format: "cron"` and use a cron field with tinted fields, a
+  plain-English description, inline validation, and presets. API keys are
+  one line too: a read-only box showing `None` or a masked hint of the set
+  key (its first three and last three characters, which the daemon now
+  publishes as `secret.hint`), a pencil button that opens a dialog for the
+  new key, and a trash button. The schedule control is
+  one line: a Presets menu (with Off and Custom), the expression editor when
+  Custom is chosen, and a Time zone menu that shows "Server time" until a
+  zone is picked. The zone is stored as a `CRON_TZ=` prefix, and the field
+  legend shows while the editor is focused or hovered. On a Settings
+  save or a CardDAV account save the daemon trims the schedule and stores a
+  zone with no fields as off; a schedule in `config.toml` must be a full
+  expression or empty, and the scheduler now reports a bad one instead of
+  panicking. The daemon rejects a field made only of commas and raises a
+  rate below the on minimum instead of rejecting it. The CardDAV
+  account form, Sources, and CardDAV status describe schedules the same way.
+  API keys and other secrets share one line: where the current key comes
+  from, a box for a new key, Save where a key saves on its own, and a trash
+  button that removes a stored key.
 - Expand the TUI with People, attachment browsing/download/open/ZIP export,
   semantic search, Emacs-style navigation, mailing lists, and Email collections.
   Multi-source collections offer Fast search only. Empty collections match

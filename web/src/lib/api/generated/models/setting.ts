@@ -19,6 +19,7 @@ export interface Setting {
   read_only?: boolean;
   restart_required: boolean;
   secret?: SecretSettingState;
+  section?: string;
   testable?: boolean;
   validation?: SettingValidation;
   value?: SettingValue;

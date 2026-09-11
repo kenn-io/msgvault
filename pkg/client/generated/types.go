@@ -9875,8 +9875,11 @@ func (s SearchResult) Validate() error {
 }
 
 type SecretSettingState struct {
-	Configured bool                      `json:"configured"`
-	Source     *SecretSettingStateSource `json:"source,omitempty"`
+	Configured bool `json:"configured"`
+
+	// Hint First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Omitted for a value under twelve characters, for passwords, and when nothing is set.
+	Hint   *string                   `json:"hint,omitempty"`
+	Source *SecretSettingStateSource `json:"source,omitempty"`
 }
 
 func (s SecretSettingState) Validate() error {
@@ -10032,6 +10035,7 @@ type Setting struct {
 	ReadOnly        *bool               `json:"read_only,omitempty"`
 	RestartRequired bool                `json:"restart_required"`
 	Secret          *SecretSettingState `json:"secret,omitempty"`
+	Section         *string             `json:"section,omitempty"`
 	Testable        *bool               `json:"testable,omitempty"`
 	Validation      *SettingValidation  `json:"validation,omitempty"`
 	Value           *SettingValue       `json:"value,omitempty"`
@@ -10086,12 +10090,54 @@ func (s Setting) Validate() error {
 }
 
 type SettingGroup struct {
-	Description string `json:"description" validate:"required"`
-	ID          string `json:"id" validate:"required"`
-	Label       string `json:"label" validate:"required"`
+	Description string           `json:"description" validate:"required"`
+	ID          string           `json:"id" validate:"required"`
+	Label       string           `json:"label" validate:"required"`
+	Sections    []SettingSection `json:"sections,omitempty"`
 }
 
 func (s SettingGroup) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Description, "required"); err != nil {
+		errors = errors.Append("Description", err)
+	}
+	if err := typesValidator.Var(s.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(s.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	for i, item := range s.Sections {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sections[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SettingOff struct {
+	Label     string   `json:"label" validate:"required"`
+	OnMinimum *float64 `json:"on_minimum,omitempty"`
+	Suggest   *string  `json:"suggest,omitempty"`
+	Value     *string  `json:"value,omitempty" validate:"required"`
+}
+
+func (s SettingOff) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SettingSection struct {
+	Description *string `json:"description,omitempty"`
+	ID          string  `json:"id" validate:"required"`
+	Label       string  `json:"label" validate:"required"`
+}
+
+func (s SettingSection) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
@@ -10127,10 +10173,34 @@ func (s SettingUpdate) Validate() error {
 }
 
 type SettingValidation struct {
-	Hint     *string  `json:"hint,omitempty"`
-	Maximum  *float64 `json:"maximum,omitempty"`
-	Minimum  *float64 `json:"minimum,omitempty"`
-	Required *bool    `json:"required,omitempty"`
+	Format   *SettingValidationFormat `json:"format,omitempty"`
+	Hint     *string                  `json:"hint,omitempty"`
+	Maximum  *float64                 `json:"maximum,omitempty"`
+	Minimum  *float64                 `json:"minimum,omitempty"`
+	Off      *SettingOff              `json:"off,omitempty"`
+	Required *bool                    `json:"required,omitempty"`
+}
+
+func (s SettingValidation) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Format != nil {
+		if v, ok := any(s.Format).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Format", err)
+			}
+		}
+	}
+	if s.Off != nil {
+		if v, ok := any(s.Off).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Off", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SettingValue struct {

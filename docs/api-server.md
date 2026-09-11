@@ -29,9 +29,40 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.22.0**.
+it is separate from the binary release version. The current schema is **2.23.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.23.0 describes Settings structure. A sectioned group lists its
+`sections`, and each setting in such a group names its `section`; groups
+without sections omit both. A secret's state gains an optional `hint`: the
+first three and last three characters of the value joined by an ellipsis
+(`sk-…x9Q`), so a client can show which key is set. It is omitted for a
+value under twelve characters, for the CardDAV password, and when nothing
+is set; the value itself is never returned. `validation` gains two optional
+fields:
+
+- `format: "cron"` marks a five-field cron schedule (minute, hour, day of
+  month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,
+  numbers, ranges, comma lists, `/step`, and three-letter month and weekday
+  names. A `CRON_TZ=<zone>` or `TZ=<zone>` prefix with an IANA zone name runs
+  the schedule in that zone instead of the daemon's local time. Descriptors
+  such as `@hourly`, the `L`, `W`, and `#` extensions, and a field made only
+  of commas are rejected. The daemon trims surrounding whitespace and treats
+  a zone prefix with no fields after it as the empty value, then validates
+  the expression on PATCH; an empty value is rejected when the setting is
+  `required`.
+- `off` names the value that switches a setting off (`value`), what happens
+  while it is off (`label`), a starting value for switching it on (`suggest`),
+  and `on_minimum`, the smallest value accepted while on. A value between the
+  off value and `on_minimum` is raised to `on_minimum` on PATCH rather than
+  rejected. `minimum` and `maximum` keep covering every accepted value
+  including the off value, so a client that ignores `off` still accepts what
+  the daemon stores.
+
+The daemon no longer emits the `sync`, `logging`, `activity`, and `backup`
+groups, which folded into `sources`, `server`, and `archive`; the `group` enum
+keeps them so clients still accept older daemons.
 
 Schema 2.21.0 adds Saved View execution at
 `POST /api/v1/saved-views/{id}/run`, publishes the accepted Saved View

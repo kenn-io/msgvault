@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	requirements.NotNil(byKey["web.theme"].Value)
 	requirements.NotNil(byKey["web.theme"].Value.String)
 	assertions.Equal("dark", *byKey["web.theme"].Value.String)
-	assertions.Equal(&SecretSettingState{Configured: true}, byKey["server.api_key"].Secret)
+	assertions.Equal(&SecretSettingState{Configured: true, Hint: "tes…key"}, byKey["server.api_key"].Secret)
 	assertions.Nil(byKey["server.api_key"].Value)
 	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
 	requirements.NotNil(byKey["vector.embeddings.api_format"].Value)
@@ -170,13 +171,31 @@ func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T
 
 	backupLevel, ok := byKey["backup.zstd_level"]["validation"].(map[string]any)
 	requirements.True(ok, "backup.zstd_level must publish validation metadata")
-	assertions.InDelta(float64(0), backupLevel["minimum"], 0)
+	assertions.InDelta(float64(0), backupLevel["minimum"], 0, "minimum keeps covering the stored off value for older clients")
 	assertions.InDelta(float64(19), backupLevel["maximum"], 0)
+	backupOff, ok := backupLevel["off"].(map[string]any)
+	requirements.True(ok, "backup.zstd_level must publish zero as its off value")
+	assertions.Equal("0", backupOff["value"])
+	assertions.Equal("Encoder default", backupOff["label"])
+	assertions.InDelta(float64(1), backupOff["on_minimum"], 0)
+	assertions.Nil(backupLevel["hint"], "bounds belong on the control, not in hint text")
 
 	mediaSize, ok := byKey["discord.max_media_mb"]["validation"].(map[string]any)
 	requirements.True(ok, "attachment size controls must publish validation metadata")
 	assertions.InDelta(float64(0), mediaSize["minimum"], 0)
-	assertions.Contains(mediaSize["hint"], "0 uses the Discord default of 50 MiB")
+	mediaOff, ok := mediaSize["off"].(map[string]any)
+	requirements.True(ok, "attachment size controls must publish their provider default as the off state")
+	assertions.Equal("Discord default of 50 MiB", mediaOff["label"])
+	assertions.Equal("50", mediaOff["suggest"])
+	assertions.InDelta(float64(1), mediaOff["on_minimum"], 0)
+	chatSize, ok := byKey["beeper.max_media_mb"]["validation"].(map[string]any)
+	requirements.True(ok)
+	chatOff, ok := chatSize["off"].(map[string]any)
+	requirements.True(ok)
+	assertions.Equal("Beeper default of 250 MiB", chatOff["label"], "the label follows the shared chat default")
+	retries, ok := byKey["vector.embeddings.max_retries"]["validation"].(map[string]any)
+	requirements.True(ok)
+	assertions.Nil(retries["off"], "a zero that loading rewrites to the default cannot be an off state")
 
 	embeddingEndpoint, ok := byKey["vector.embeddings.endpoint"]["validation"].(map[string]any)
 	requirements.True(ok, "provider endpoints must publish safe input guidance")
@@ -185,9 +204,12 @@ func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T
 
 	activitySchedule, ok := byKey["activity.schedule"]["validation"].(map[string]any)
 	requirements.True(ok, "schedules must identify their accepted format")
-	hint, ok := activitySchedule["hint"].(string)
+	assertions.Equal("cron", activitySchedule["format"])
+	assertions.NotEqual(true, activitySchedule["required"])
+	enrichmentSchedule, ok := byKey["people.enrichment.schedule"]["validation"].(map[string]any)
 	requirements.True(ok)
-	assertions.Contains(strings.ToLower(hint), "five-field cron")
+	assertions.Equal("cron", enrichmentSchedule["format"])
+	assertions.Equal(true, enrichmentSchedule["required"])
 	assertions.NotEqual(true, byKey["integrations.tasks.endpoint"]["testable"],
 		"the daemon has no provider endpoint test operation")
 }
@@ -214,7 +236,7 @@ dimension = 8
 	first := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
 	assertions.NotContains(first.Body.String(), "environment-secret-must-not-leak")
-	assertions.Equal(map[string]any{"configured": true, "source": "environment"},
+	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, first.Body.Bytes()))
 	configETag := first.Header().Get("ETag")
 	credentialETag := first.Header().Get("Credential-Etag")
@@ -235,7 +257,7 @@ dimension = 8
 
 	stored := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, stored.Code, stored.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored"},
+	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "bro…eak"},
 		rawEmbeddingSecretState(t, stored.Body.Bytes()))
 	assertions.Equal(configETag, stored.Header().Get("ETag"), "credential writes must not masquerade as config writes")
 	assertions.Equal(storedCredentialETag, stored.Header().Get("Credential-Etag"))
@@ -265,7 +287,7 @@ dimension = 8
 	assertions.True(clearResponse.PendingRestart)
 	cleared := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, cleared.Code, cleared.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "environment"},
+	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, cleared.Body.Bytes()))
 	assertions.NotContains(cleared.Body.String(), "environment-secret-must-not-leak")
 }
@@ -612,10 +634,14 @@ max_media_mb = 30
 	for _, setting := range document.Settings {
 		if setting["key"] == "discord.media" {
 			assertions.Equal(true, setting["inherited"], "omitted provider policy must be identified as inherited/default")
-			assertions.Equal("Provider default is enabled; changes affect future downloads only.", setting["description"])
+			assertions.Contains(setting["description"], "future", "media policy copy must say it only affects future syncs")
 		}
 		if setting["key"] == "discord.max_media_mb" {
-			assertions.Contains(setting["description"], "0 uses the Discord default of 50 MiB")
+			validation, ok := setting["validation"].(map[string]any)
+			requirements.True(ok, "discord.max_media_mb must publish its provider default as its off state")
+			off, ok := validation["off"].(map[string]any)
+			requirements.True(ok)
+			assertions.Equal("Discord default of 50 MiB", off["label"])
 		}
 	}
 
@@ -960,7 +986,7 @@ func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T)
 
 	var body SettingsResponse
 	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	assertions.Equal(&SecretSettingState{Configured: true},
+	assertions.Equal(&SecretSettingState{Configured: true, Hint: "rot…ret"},
 		settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
 }
 
@@ -1229,9 +1255,13 @@ func TestSettingsOpenAPIContract(t *testing.T) {
 	setting := doc.Components.Schemas.Map()["Setting"]
 	requirements.NotNil(setting)
 	assertions.ElementsMatch([]any{
-		"browser", "server", "archive", "sync", "logging", "search", "sources", "attachments",
-		"activity", "backup", "enrichment", "integrations",
+		"browser", "server", "archive", "search", "sources", "attachments", "enrichment", "integrations",
+		"sync", "logging", "activity", "backup",
 	}, setting.Properties["group"].Enum)
+	for _, group := range settingsGroups {
+		assertions.NotContains(legacySettingsGroupIDs, group.ID, "legacy IDs are compatibility-only")
+	}
+	assertions.NotNil(setting.Properties["section"], "settings publish their section for sectioned groups")
 	assertions.ElementsMatch([]any{"string", "integer", "number", "boolean", "string_array", "secret"}, setting.Properties["kind"].Enum)
 	patchRequest := doc.Components.Schemas.Map()["SettingsPatchRequest"]
 	requirements.NotNil(patchRequest)
@@ -1341,7 +1371,7 @@ func TestPatchSettingsSeversStoredCredentialOnlyWhenEndpointOriginChanges(t *tes
 	samePath := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://first.example.test/v2"}}]}`)
 	requirements.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored"},
+	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "ori…ret"},
 		rawEmbeddingSecretState(t, samePath.Body.Bytes()))
 	retained, err := providercredentials.Read(srv.cfg.TokensDir())
 	requirements.NoError(err)
@@ -1435,7 +1465,7 @@ max_requests_per_day = 100
 	var retainedResponse SettingsResponse
 	requirements.NoError(json.Unmarshal(samePath.Body.Bytes(), &retainedResponse))
 	requirements.Len(retainedResponse.PersonEnrichmentProviders, 1)
-	assertions.Equal(&SecretSettingState{Configured: true, Source: "stored"},
+	assertions.Equal(&SecretSettingState{Configured: true, Source: "stored", Hint: "exa…ret"},
 		retainedResponse.PersonEnrichmentProviders[0].Credential)
 
 	moved := performSettingsRequest(t, srv, http.MethodPut,
@@ -1696,4 +1726,196 @@ max_requests_per_day = 100
 	requirements.Len(after.PersonEnrichmentProviders, 1)
 	assertions.Equal("https://api.exa.example/search", after.PersonEnrichmentProviders[0].Endpoint)
 	assertions.NotNil(after.PersonEnrichmentProviders[0].Credential)
+}
+
+func TestSettingsSectionsAreConsistentWithTheirGroups(t *testing.T) {
+	assertions := assert.New(t)
+	groupsByID := make(map[string]SettingGroup, len(settingsGroups))
+	for _, group := range settingsGroups {
+		groupsByID[group.ID] = group
+	}
+	populated := make(map[string]map[string]bool)
+	for _, definition := range settingsCatalog {
+		group, ok := groupsByID[definition.group]
+		if !assertions.True(ok, "%s uses undeclared group %q", definition.key, definition.group) {
+			continue
+		}
+		section := metadataForSetting(definition.key).section
+		if len(group.Sections) == 0 {
+			assertions.Empty(section, "%s names a section but group %q has none", definition.key, group.ID)
+			continue
+		}
+		known := false
+		for _, candidate := range group.Sections {
+			known = known || candidate.ID == section
+		}
+		assertions.True(known, "%s names section %q that group %q does not declare", definition.key, section, group.ID)
+		if populated[group.ID] == nil {
+			populated[group.ID] = make(map[string]bool)
+		}
+		populated[group.ID][section] = true
+	}
+	for _, group := range settingsGroups {
+		for _, section := range group.Sections {
+			assertions.True(populated[group.ID][section.ID], "section %s/%s has no settings", group.ID, section.ID)
+		}
+	}
+}
+
+func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	requirements.NoError(validateSettingBounds("backup.zstd_level", 0), "the off value sits outside the on range")
+	requirements.NoError(validateSettingBounds("backup.zstd_level", 19))
+	requirements.Error(validateSettingBounds("backup.zstd_level", 20))
+	requirements.Error(validateSettingBounds("backup.zstd_level", -1))
+	requirements.NoError(validateSettingBounds("discord.max_media_mb", 0))
+	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.0))
+	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", 0.05), "on values start at 0.1; PATCH raises smaller rates")
+	requirements.NoError(validateSettingBounds("beeper.rate_limit_qps", 0.5))
+	requirements.Error(validateSettingBounds("beeper.rate_limit_qps", -1.0))
+	requirements.Error(validateSettingBounds("sync.rate_limit_qps", 0), "settings without an off value keep their minimum")
+	for key, validation := range settingsValidation {
+		if validation.Off == nil || validation.Off.OnMinimum == nil {
+			continue
+		}
+		requirements.NotNil(validation.Minimum, "%s: minimum must stay published for clients that ignore off", key)
+		off, err := strconv.ParseFloat(validation.Off.text(), 64)
+		requirements.NoError(err, key)
+		assertions.LessOrEqual(*validation.Minimum, off, "%s: minimum must include the off value", key)
+		assertions.Greater(*validation.Off.OnMinimum, off, "%s: the on range must exclude the off value", key)
+	}
+	for key, validation := range settingsValidation {
+		if validation.Off == nil {
+			continue
+		}
+		assertions.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
+		assertions.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
+	}
+}
+
+func TestSettingsPatchEnforcesRequiredAndCronFormat(t *testing.T) {
+	assertions := assert.New(t)
+	srv, _ := newSettingsTestServer(t, "[people.enrichment]\nschedule = \"*/15 * * * *\"\n")
+
+	empty := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":""}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, empty.Code, empty.Body.String())
+
+	invalid := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 25 * * *"}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
+
+	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":""}}]}`)
+	assertions.Equal(http.StatusOK, off.Code, off.Body.String())
+
+	valid := patchSettings(t, srv, `{"updates":[{"key":"people.enrichment.schedule","value":{"string":"0 4 * * mon-fri"}}]}`)
+	assertions.Equal(http.StatusOK, valid.Code, valid.Body.String())
+
+	zoned := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=Europe/Berlin 0 4 * * *"}}]}`)
+	assertions.Equal(http.StatusOK, zoned.Code, zoned.Body.String())
+
+	emptyList := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"0 3 * * ,"}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, emptyList.Code, emptyList.Body.String())
+}
+
+func TestSettingsPatchTrimsCronSchedules(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, path := newSettingsTestServer(t, "[beeper]\nschedule = \"0 2 * * *\"\n")
+
+	padded := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"  0 3 * * *  "}}]}`)
+	requirements.Equal(http.StatusOK, padded.Code, padded.Body.String())
+	assertions.Equal("0 3 * * *", currentSettingString(t, srv, "beeper.schedule"))
+
+	blank := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"   "}}]}`)
+	requirements.Equal(http.StatusOK, blank.Code, blank.Body.String())
+	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"))
+
+	zoneOnly := patchSettings(t, srv, `{"updates":[{"key":"beeper.schedule","value":{"string":"CRON_TZ=UTC"}}]}`)
+	requirements.Equal(http.StatusOK, zoneOnly.Code, zoneOnly.Body.String())
+	assertions.Empty(currentSettingString(t, srv, "beeper.schedule"), "a zone with no fields is no schedule")
+
+	cfg, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.Empty(cfg.Beeper.Schedule)
+}
+
+func TestSettingsPatchRaisesRatesBelowTheOnMinimum(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, path := newSettingsTestServer(t, "[beeper]\nrate_limit_qps = 5\n")
+
+	small := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0.05}}]}`)
+	requirements.Equal(http.StatusOK, small.Code, small.Body.String())
+	cfg, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.InDelta(0.1, cfg.Beeper.RateLimitQPS, 1e-9, "a positive rate below the on minimum is raised, not rejected")
+
+	off := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":0}}]}`)
+	requirements.Equal(http.StatusOK, off.Code, off.Body.String())
+	cfg, err = config.Load(path, "")
+	requirements.NoError(err)
+	assertions.Zero(cfg.Beeper.RateLimitQPS, "zero stays the off value")
+
+	negative := patchSettings(t, srv, `{"updates":[{"key":"beeper.rate_limit_qps","value":{"number":-1}}]}`)
+	assertions.Equal(http.StatusUnprocessableEntity, negative.Code, negative.Body.String())
+}
+
+func currentSettingString(t *testing.T, srv *Server, key string) string {
+	t.Helper()
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+	var body SettingsResponse
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &body))
+	setting, ok := settingsByKey(body.Settings)[key]
+	require.True(t, ok, key)
+	require.NotNil(t, setting.Value, key)
+	require.NotNil(t, setting.Value.String, key)
+	return *setting.Value.String
+}
+
+func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {
+	assertions := assert.New(t)
+	for key, validation := range settingsValidation {
+		hint := strings.ToLower(validation.Hint)
+		for _, phrase := range []string{"at least", "or more", " to ", "between"} {
+			assertions.NotContains(hint, phrase, "%s spells out a bound in text; use minimum, maximum, or off", key)
+		}
+		if validation.Format != "" {
+			assertions.Empty(validation.Hint, "%s has a format; the control explains the syntax", key)
+		}
+	}
+}
+
+func TestSettingsHintsDoNotRepeatDescriptions(t *testing.T) {
+	assertions := assert.New(t)
+	for key, validation := range settingsValidation {
+		hint := strings.TrimSpace(validation.Hint)
+		if hint == "" {
+			continue
+		}
+		description := metadataForSetting(key).description
+		assertions.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
+			"%s repeats its hint inside its description", key)
+	}
+}
+
+func TestSecretHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty", value: "", want: ""},
+		{name: "eleven characters is too short", value: "task-secret", want: ""},
+		{name: "twelve characters", value: "test-api-key", want: "tes…key"},
+		{name: "long key", value: "sk-live-0123456789abcdefx9Q", want: "sk-…x9Q"},
+		{name: "multibyte characters count as one", value: "ééé-secret-ключ", want: "ééé…люч"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, secretHint(tc.value))
+		})
+	}
 }

@@ -552,10 +552,13 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-They are restart-required unless the UI explicitly says otherwise; a pending
-restart banner means the file is saved but the running daemon still has its old
-value. Changing `server.api_key` requires a confirmation and takes effect only
-after restart, which also invalidates browser sessions.
+Only the `[web]` keys apply right away; every other `config.toml` category takes
+effect after the daemon restarts, and the Settings page says so once per
+category. Two things saved from the Settings page are not `config.toml` rows and
+apply right away: person-enrichment provider API keys, and the CardDAV account,
+which has its own save action. A "Saved. Restart the daemon" banner means the
+file is saved but the running daemon still has its old value. Changing `server.api_key` requires a confirmation and takes
+effect only after restart, which also invalidates browser sessions.
 
 ### `[integrations.tasks]`
 
@@ -565,7 +568,7 @@ Optional provider-neutral task integration:
 |---|---|---|
 | `enabled` | `false` | Enable discovery and capability checks |
 | `endpoint` | — | Explicit loopback HTTP, Unix socket, or HTTPS endpoint; empty requests secure local discovery |
-| `api_key` | — | Server-side credential; never returned to the browser |
+| `api_key` | — | Server-side credential; the browser sees only a masked hint of it, never the key |
 | `default_project` | `msgvault` | Fixed project used for create/link/search operations |
 
 Remote plaintext HTTP is rejected. An endpoint is usable only when it supports
@@ -926,9 +929,10 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 Instead of naming an environment variable in `api_key_env`, you can store a
 provider API key through Settings in the Web UI or the TUI. Stored keys live in
 `tokens/provider-credentials.json` under the data directory with owner-only
-file permissions. They are never written to `config.toml` and are never shown
-again after saving; Settings only reports whether a key is configured and
-whether it comes from the store or from the environment.
+file permissions. They are never written to `config.toml`. After saving,
+Settings shows only a masked hint of the key, its first three and last three
+characters, and whether it comes from the store or from the environment; the
+key itself is never returned.
 
 A stored key takes precedence over the environment variable named by
 `api_key_env`. Each stored key is bound to the endpoint origin (scheme, host,

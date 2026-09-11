@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,6 +156,9 @@ func (s *Scheduler) WithWorkTracker(tracker WorkTracker) *Scheduler {
 // AddAccount schedules sync for an account using the given cron expression.
 // Returns an error if the cron expression is invalid.
 func (s *Scheduler) AddAccount(email, cronExpr string) error {
+	if err := ValidateCronExpr(cronExpr); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -211,6 +215,9 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 func (s *Scheduler) AddJob(job Job) error {
 	if job.Name == "" || job.Run == nil {
 		return errors.New("job name and run function are required")
+	}
+	if err := ValidateCronExpr(job.Schedule); err != nil {
+		return err
 	}
 	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		_ = s.TriggerJob(job.Name)
@@ -772,11 +779,40 @@ func (s *Scheduler) JobStatus() []JobStatus {
 	return out
 }
 
+// NormalizeCronExpr trims a schedule and turns a value that is only a time
+// zone prefix into the empty string: with no fields after the zone there is
+// no schedule, so it is off rather than an error.
+func NormalizeCronExpr(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	if strings.HasPrefix(trimmed, "TZ=") || strings.HasPrefix(trimmed, "CRON_TZ=") {
+		if !strings.ContainsAny(trimmed, " \t") {
+			return ""
+		}
+	}
+	return trimmed
+}
+
 // ValidateCronExpr validates a cron expression without scheduling anything.
+// It accepts what the scheduler's parser accepts: five fields, optionally
+// preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
+// field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
+	fields := expr
+	if strings.HasPrefix(fields, "TZ=") || strings.HasPrefix(fields, "CRON_TZ=") {
+		// The parser slices at the first space without checking for one.
+		space := strings.Index(fields, " ")
+		if space < 0 {
+			return errors.New("invalid cron expression: the time zone must be followed by the five schedule fields")
+		}
+		fields = fields[space:]
+	}
+	for field := range strings.FieldsSeq(fields) {
+		if strings.Trim(field, ",") == "" {
+			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
+		}
+	}
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	_, err := parser.Parse(expr)
-	if err != nil {
+	if _, err := parser.Parse(expr); err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
 	}
 	return nil

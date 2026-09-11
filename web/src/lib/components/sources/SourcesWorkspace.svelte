@@ -6,6 +6,7 @@
   import { Button, Chip, Spinner, Table, TableHeaderCell, type ChipTone } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { scheduleSummary } from '../../settings/cron';
   import type {
     SourceStatus as GeneratedSourceStatus,
     SyncRunStatus as GeneratedSyncRunStatus,
@@ -290,7 +291,12 @@
           <td>
             <div class="cell-stack">
               {#if source.scheduled}
-                <strong>{source.schedule ?? 'Schedule unavailable'}</strong>
+                {#if source.schedule}
+                  <strong title={source.schedule}>{scheduleSummary(source.schedule)}</strong>
+                  <span class="schedule-expression" data-mono>{source.schedule}</span>
+                {:else}
+                  <strong>Schedule unavailable</strong>
+                {/if}
                 {#if source.next_sync_at}
                   <span
                     >Next <time datetime={source.next_sync_at} title={source.next_sync_at}
@@ -442,6 +448,10 @@
   .source-name {
     color: var(--text-primary);
     font-size: var(--font-size-md);
+  }
+  .schedule-expression {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
   .working {
     display: flex;

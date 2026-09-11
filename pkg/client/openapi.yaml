@@ -10284,6 +10284,9 @@ components:
       properties:
         configured:
           type: boolean
+        hint:
+          description: First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Omitted for a value under twelve characters, for passwords, and when nothing is set.
+          type: string
         source:
           enum:
             - stored
@@ -10452,15 +10455,15 @@ components:
             - browser
             - server
             - archive
-            - sync
-            - logging
             - search
             - sources
             - attachments
-            - activity
-            - backup
             - enrichment
             - integrations
+            - sync
+            - logging
+            - activity
+            - backup
           type: string
         inherited:
           type: boolean
@@ -10487,6 +10490,8 @@ components:
           type: boolean
         secret:
           $ref: "#/components/schemas/SecretSettingState"
+        section:
+          type: string
         testable:
           type: boolean
         validation:
@@ -10509,10 +10514,42 @@ components:
           type: string
         label:
           type: string
+        sections:
+          items:
+            $ref: "#/components/schemas/SettingSection"
+          type: array
       required:
         - id
         - label
         - description
+      type: object
+    SettingOff:
+      properties:
+        label:
+          type: string
+        on_minimum:
+          format: double
+          type: number
+        suggest:
+          type: string
+        value:
+          nullable: true
+          type: string
+      required:
+        - value
+        - label
+      type: object
+    SettingSection:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+        - id
+        - label
       type: object
     SettingUpdate:
       additionalProperties: false
@@ -10528,6 +10565,10 @@ components:
       type: object
     SettingValidation:
       properties:
+        format:
+          enum:
+            - cron
+          type: string
         hint:
           type: string
         maximum:
@@ -10536,6 +10577,8 @@ components:
         minimum:
           format: double
           type: number
+        "off":
+          $ref: "#/components/schemas/SettingOff"
         required:
           type: boolean
       type: object
@@ -11927,7 +11970,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.22.0
+  version: 2.23.0
 openapi: 3.0.3
 paths:
   /api/ping:

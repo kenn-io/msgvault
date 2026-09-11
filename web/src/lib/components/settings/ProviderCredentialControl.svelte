@@ -3,7 +3,7 @@
     deleteSettingsProviderCredential as generatedDeleteSettingsProviderCredential,
     putSettingsProviderCredential as generatedPutSettingsProviderCredential,
   } from '../../api/generated/api/api';
-  import { Button, TextInput } from '@kenn-io/kit-ui';
+  import SecretField from './SecretField.svelte';
   import type { APIClient } from '../../api/client';
   import type {
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
@@ -18,6 +18,7 @@
     credentialState,
     credentialETag,
     disabledReason = '',
+    restartRequired = false,
     onSaved,
     onConflict,
   }: {
@@ -27,17 +28,17 @@
     credentialState: SecretState | undefined;
     credentialETag: string;
     disabledReason?: string;
+    /** The daemon stores the key at once but reads it only after a restart. */
+    restartRequired?: boolean;
     onSaved: (response: CredentialResponse, etag: string) => void;
     onConflict: () => void | Promise<void>;
   } = $props();
-  let value = $state('');
   let saving = $state(false);
   let error = $state('');
-  $effect(() => {
-    if (disabledReason) value = '';
-  });
-  async function saveCredential() {
-    if (!value || saving || disabledReason) return;
+  // Store the key the dialog handed over. Returns true when the dialog may
+  // close; a failure keeps it open with the error inside.
+  async function saveCredential(value: string): Promise<boolean> {
+    if (!value || saving || disabledReason) return false;
     saving = true;
     error = '';
     try {
@@ -56,17 +57,17 @@
       if (response.status === 412) {
         await onConflict();
         error = 'Provider credentials changed. Reloaded the latest state; enter the credential again.';
-        value = '';
-        return;
+        return false;
       }
       if (!data) {
         error = apiErrorMessage(responseError, 'Unable to save provider credential.');
-        return;
+        return false;
       }
-      value = '';
       onSaved(data, response.headers.get('ETag') ?? credentialETag);
+      return true;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to save provider credential.';
+      return false;
     } finally {
       saving = false;
     }
@@ -96,7 +97,6 @@
         error = apiErrorMessage(responseError, 'Unable to clear provider credential.');
         return;
       }
-      value = '';
       onSaved(data, response.headers.get('ETag') ?? credentialETag);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to clear provider credential.';
@@ -115,65 +115,21 @@
     }
     return fallback;
   }
-  function sourceLabel(secret: SecretState | undefined): string {
-    if (secret?.source === 'stored') return 'Stored credential';
-    if (secret?.source === 'environment') return 'Environment variable';
-    return secret?.configured ? 'Configured' : 'Not configured';
-  }
   function sentenceLabel(text: string): string {
     return text.charAt(0).toLowerCase() + text.slice(1);
   }
 </script>
 
-<div class="credential-control">
-  <span class="credential-source">{sourceLabel(credentialState)}</span>
-  <label>
-    New {sentenceLabel(label)}
-    <TextInput
-      type="password"
-      autocomplete="new-password"
-      bind:value
-      disabled={saving || Boolean(disabledReason)}
-      block
-    />
-  </label>
-  {#if disabledReason}<small class="credential-blocked">{disabledReason}</small>{/if}
-  <div class="credential-actions">
-    <Button
-      disabled={saving || value === '' || Boolean(disabledReason)}
-      label={saving ? 'Saving…' : `Save ${sentenceLabel(label)}`}
-      onclick={() => void saveCredential()}
-    />
-    {#if credentialState?.source === 'stored'}
-      <Button
-        disabled={saving || Boolean(disabledReason)}
-        label={`Clear stored ${sentenceLabel(label)}`}
-        onclick={() => void clearCredential()}
-      />
-    {/if}
-  </div>
-  {#if error}<small class="credential-error" role="alert">{error}</small>{/if}
-</div>
-
-<style>
-  .credential-control {
-    display: grid;
-    gap: 0.5rem;
-    width: 100%;
-    min-width: 0;
-  }
-  .credential-source {
-    color: var(--text-muted);
-  }
-  .credential-blocked {
-    color: var(--status-warning-ink);
-  }
-  .credential-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .credential-error {
-    color: var(--status-error-ink);
-  }
-</style>
+<SecretField
+  {label}
+  configured={credentialState?.configured ?? false}
+  hint={credentialState?.hint ?? ''}
+  source={credentialState?.source}
+  {saving}
+  {disabledReason}
+  {error}
+  applyNote={restartRequired ? 'Saved right away. The daemon uses it after a restart.' : 'Applies right away.'}
+  clearLabel={`Clear stored ${sentenceLabel(label)}`}
+  onreplace={saveCredential}
+  onclear={credentialState?.source === 'stored' ? () => void clearCredential() : undefined}
+/>

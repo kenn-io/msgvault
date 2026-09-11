@@ -111,10 +111,14 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
 test('daemon API key stays host-managed and never crosses the browser settings write boundary', async ({ page }) => {
 	let settingsPatch: unknown;
 	const daemonKey = {
-		key: 'server.api_key', group: 'server', label: 'Daemon API key',
-		description: 'Key used by remote clients and browser login.', kind: 'secret',
-		secret: { configured: true, source: 'environment' }, restart_required: true, read_only: true
+		key: 'server.api_key', group: 'server', section: 'listener', label: 'API key',
+		description: 'Key that remote clients and browser logins use.', kind: 'secret',
+		secret: { configured: true, source: 'environment', hint: 'dae…key' }, restart_required: true, read_only: true
 	};
+	const daemonGroups = [{
+		id: 'server', label: 'Daemon', description: 'How the daemon runs.',
+		sections: [{ id: 'listener', label: 'Listener and access' }]
+	}];
 	await page.route('**/api/session', (route) => {
 		return route.fulfill({
 			headers: { 'Set-Cookie': 'msgvault_session=old-authority; Path=/; HttpOnly; SameSite=Strict' },
@@ -128,7 +132,7 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 		}
     return route.fulfill({
       headers: { ETag: '"settings-a"' },
-      json: { settings: [daemonKey], pending_restart: false }
+      json: { groups: daemonGroups, settings: [daemonKey], pending_restart: false }
     });
 	});
 	await page.route('**/api/v1/explore', (route) => {
@@ -140,10 +144,11 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
 	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	await expect(page.getByText('Configured')).toBeVisible();
-	await expect(page.getByText('Set via config.toml on the daemon host.')).toBeVisible();
-	await expect(page.getByLabel('New daemon API key')).toHaveCount(0);
-	await page.getByRole('button', { name: 'Save settings' }).click();
+	await expect(page.getByText('dae…key')).toBeVisible();
+	await expect(page.getByText('Host-managed values are set in config.toml on the daemon host.')).toBeVisible();
+	await expect(page.getByLabel('New API key')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^(Add|Replace) API key$/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
 	expect(settingsPatch).toBeUndefined();
 
 	await page.getByRole('button', { name: 'Everything', exact: true }).click();
