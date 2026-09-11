@@ -18,6 +18,7 @@
     credentialState,
     credentialETag,
     disabledReason = '',
+    restartRequired = false,
     onSaved,
     onConflict,
   }: {
@@ -27,6 +28,8 @@
     credentialState: SecretState | undefined;
     credentialETag: string;
     disabledReason?: string;
+    /** The daemon stores the key at once but reads it only after a restart. */
+    restartRequired?: boolean;
     onSaved: (response: CredentialResponse, etag: string) => void;
     onConflict: () => void | Promise<void>;
   } = $props();
@@ -125,7 +128,7 @@
   {saving}
   {disabledReason}
   {error}
-  applyNote="Applies right away."
+  applyNote={restartRequired ? 'Saved right away. The daemon uses it after a restart.' : 'Applies right away.'}
   clearLabel={`Clear stored ${sentenceLabel(label)}`}
   onreplace={saveCredential}
   onclear={credentialState?.source === 'stored' ? () => void clearCredential() : undefined}

@@ -404,9 +404,11 @@ removes a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
 characters shows as dots instead. Replace opens a dialog to paste the new
-key; a provider key applies right away, and the task integration key is
-saved with the rest of the page. A key that comes from an environment
-variable says so under the line and cannot be cleared from the browser.
+key, and the dialog says when it takes effect: a person-enrichment key
+applies right away, the text and visual embedding keys are stored at once
+but used after the daemon restarts, and the task integration key is saved
+with the rest of the page. A key that comes from an environment variable
+says so under the line and cannot be cleared from the browser.
 
 Credentials have a separate revision from `config.toml`. When changing both
 an endpoint or model and its credential, save the endpoint/model first, then

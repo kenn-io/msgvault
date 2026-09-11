@@ -300,6 +300,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByText('From an environment variable on the daemon host.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Test .* connection/i })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Replace text embedding API key' }));
+    expect(screen.getByRole('dialog').textContent).toContain('Saved right away. The daemon uses it after a restart.');
     await fireEvent.input(screen.getByLabelText('New text embedding API key'), {
       target: { value: 'one-use-browser-secret' }
     });

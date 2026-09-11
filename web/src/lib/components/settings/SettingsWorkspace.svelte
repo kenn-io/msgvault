@@ -500,6 +500,7 @@
             credentialState={setting.secret}
             {credentialETag}
             disabledReason={credentialDisabledReason(setting.credential_id)}
+            restartRequired={Boolean(setting.restart_required)}
             onSaved={credentialSaved}
             onConflict={credentialConflict}
           />
