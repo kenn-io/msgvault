@@ -847,21 +847,42 @@ func (c Candidate) Validate() error {
 }
 
 type CardDAVAccountRequest struct {
-	BaseURL  string  `json:"base_url" validate:"required"`
-	Enabled  bool    `json:"enabled"`
-	Password *string `json:"password,omitempty"`
-	Schedule *string `json:"schedule,omitempty"`
-	Username string  `json:"username" validate:"required"`
+	BaseURL  string                         `json:"base_url" validate:"required"`
+	Enabled  bool                           `json:"enabled"`
+	OauthApp *string                        `json:"oauth_app,omitempty"`
+	Password *string                        `json:"password,omitempty"`
+	Provider *CardDAVAccountRequestProvider `json:"provider,omitempty"`
+	Schedule *string                        `json:"schedule,omitempty"`
+	Username string                         `json:"username" validate:"required"`
 }
 
 func (c CardDAVAccountRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.BaseURL, "required"); err != nil {
+		errors = errors.Append("BaseURL", err)
+	}
+	if c.Provider != nil {
+		if v, ok := any(c.Provider).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Provider", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Username, "required"); err != nil {
+		errors = errors.Append("Username", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CardDAVAccountResponse struct {
 	BaseURL  string  `json:"base_url" validate:"required"`
 	Books    int64   `json:"books"`
 	Enabled  bool    `json:"enabled"`
+	OauthApp *string `json:"oauth_app,omitempty"`
+	Provider *string `json:"provider,omitempty"`
 	Schedule *string `json:"schedule,omitempty"`
 	Username string  `json:"username" validate:"required"`
 }
@@ -1110,6 +1131,34 @@ func (c CardDAVContactSummaryResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type CardDAVGoogleAuthorizeRequest struct {
+	Email       string  `json:"email" validate:"required"`
+	OauthApp    *string `json:"oauth_app,omitempty"`
+	RedirectURI string  `json:"redirect_uri" validate:"required"`
+}
+
+func (c CardDAVGoogleAuthorizeRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVGoogleAuthorizeResponse struct {
+	State string `json:"state" validate:"required"`
+	URL   string `json:"url" validate:"required"`
+}
+
+func (c CardDAVGoogleAuthorizeResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVGoogleCallbackRequest struct {
+	Code  *string `json:"code,omitempty"`
+	State string  `json:"state" validate:"required"`
+}
+
+func (c CardDAVGoogleCallbackRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CardDAVPublicationResponse struct {

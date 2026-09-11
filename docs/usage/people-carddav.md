@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -30,6 +30,69 @@ the credential separately from `config.toml`, in its token directory's
 `--disabled` saves the connection without enabling synchronization. Add
 `--schedule "*/30 * * * *"` for background sync every 30 minutes. You can also
 change connection settings and scheduling in the Web UI.
+
+## Google Contacts
+
+Select **Google Contacts** under **Settings → CardDAV account → Provider**.
+Enter your Google account email and, if needed, the name of an OAuth app from
+`[oauth.apps]`. Google supplies the discovery URL; no password is needed.
+The contacts account and OAuth app are independent of your mail accounts.
+When a stored Google authorization matches both the account and selected app,
+setup reuses it and requests the combined permissions. Otherwise, setup stores
+separate CardDAV credentials. Use a different OAuth client when you want Google
+consent and revocation to be independent as well.
+
+1. Configure a Google OAuth client following the [OAuth setup guide](../guides/oauth-setup.md).
+   For Web UI sign-in, register the Web UI's root URL, including its trailing
+   slash, as an authorized redirect URI in a **Web application** OAuth client.
+   The settings form shows the exact URL. Remote Web UIs need HTTPS; loopback
+   HTTP is accepted for local use.
+2. Click **Connect Google**. A new window opens for Google sign-in. Choose the
+   requested account and keep existing permissions checked while granting
+   contacts access. Return to settings when the window closes.
+3. Click **Test CardDAV connection**, then **Save CardDAV account**. Review the
+   discovered book's roles before the first sync.
+
+The daemon requests Google's `https://www.googleapis.com/auth/carddav` scope
+and `userinfo.email` for account verification. It preserves Google permissions
+already recorded in the account's token, including Gmail and Calendar access.
+A mail token issued by another app, or with no recorded client ID, does not
+block setup and is left untouched. Once a separate CardDAV token exists, setup
+continues to use it even if a matching mail token is added later.
+An account mismatch, missing
+permission, or expired callback leaves the saved token intact.
+Sign-in expires after ten minutes; use **Cancel sign-in** to stop waiting sooner.
+
+For terminal setup, use a Desktop application OAuth client and run:
+
+```bash
+msgvault carddav authorize-google you@example.com
+msgvault add-carddav --google you@example.com --schedule "*/30 * * * *"
+msgvault sync-carddav
+```
+
+`authorize-google` opens the system browser and prints the saved token path. `--no-browser` prints the sign-in
+URL instead; the callback still returns to the machine running the command.
+Both commands accept `--oauth-app <name>`. Use the same app for authorization
+and the CardDAV connection.
+
+Web UI authorization stores the token on the daemon. Terminal authorization
+stores it on the machine running the command. For a remote daemon, authorize
+on a browser-equipped machine with the same OAuth client, then copy the account's
+JSON token file to the same relative location in the daemon's token directory,
+preserving private file permissions. Shared authorizations use the existing
+`tokens/<email>.json` file. Separate authorizations use
+`tokens/carddav-google/<SHA-256 of the OAuth app name>/<email>.json`; the default
+app uses the hash of an empty name. The `carddav.json` connection
+record references that account and app; it does not contain a Google password.
+The daemon refreshes expired access tokens during requests and saves refreshed
+tokens. After revoking access, connect Google again to reauthorize.
+
+Google's canonical entry point is
+`https://www.googleapis.com/.well-known/carddav`. Msgvault discovers the contact
+collection from Google's response and uses vCard 3.0 and incremental sync.
+Test and save the account again to rediscover its URLs; Google recommends
+rediscovery every two to four weeks. See [Google's CardDAV reference](https://developers.google.com/people/carddav).
 
 ## Choose what each book does
 

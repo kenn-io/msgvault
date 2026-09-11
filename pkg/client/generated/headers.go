@@ -24,6 +24,15 @@ func (p PatchAttributeDefinitionHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type BeginGoogleCardDAVAuthorizationHeaders struct {
+	// Origin Origin of the msgvault Web UI, matching redirect_uri
+	Origin string `json:"Origin" validate:"required"`
+}
+
+func (b BeginGoogleCardDAVAuthorizationHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
 type DeleteEmploymentHeaders struct {
 	// IfMatch Strong ETag returned by the latest employment read
 	IfMatch string `json:"If-Match" validate:"required"`

@@ -3,16 +3,19 @@
     saveCardDAVAccount as generatedSaveCardDAVAccount,
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
-  import { Button, SettingsSection, TextInput, Toggle } from '@kenn-io/kit-ui';
+  import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
   import ZapIcon from '@lucide/svelte/icons/zap';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
+  import { authorizeGoogleContacts } from '../../settings/google-authorization';
   import type { SettingState } from '../../settings/catalog';
   import CronField from './CronField.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
-  type Action = 'test' | 'save';
+  type Action = 'test' | 'save' | 'authorize';
   interface AccountSettingsSnapshot {
+    provider: string;
+    oauthApp: string;
     baseURL: string;
     username: string;
     passwordConfigured: boolean;
@@ -28,8 +31,21 @@
     settings: SettingState[];
     onSaved?: () => void | Promise<void>;
   } = $props();
+  let provider = $state(settingString('carddav.provider'));
+  let oauthApp = $state(settingString('carddav.oauth_app'));
+  let persistedProvider = $state(settingString('carddav.provider'));
+  let persistedOAuthApp = $state(settingString('carddav.oauth_app'));
+  const googleURL = 'https://www.googleapis.com/.well-known/carddav';
+  const google = $derived(provider === 'google');
+  function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
+  function selectProvider(value: string) {
+    provider = value;
+    password = '';
+    if (value !== 'google') oauthApp = '';
+  }
   let baseURL = $state(settingString('carddav.base_url'));
   let username = $state(settingString('carddav.username'));
+  const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
   let password = $state('');
   let persistedBaseURL = $state(settingString('carddav.base_url'));
   let persistedUsername = $state(settingString('carddav.username'));
@@ -77,6 +93,8 @@
   }
   function settingsSnapshot(source: SettingState[]): AccountSettingsSnapshot {
     return {
+      provider: settingString('carddav.provider', source),
+      oauthApp: settingString('carddav.oauth_app', source),
       baseURL: settingString('carddav.base_url', source),
       username: settingString('carddav.username', source),
       passwordConfigured: settingSecretConfigured('carddav.password', source),
@@ -85,6 +103,10 @@
     };
   }
   function reconcileSettings(next: AccountSettingsSnapshot) {
+    if (provider === persistedProvider) provider = next.provider;
+    if (oauthApp === persistedOAuthApp) oauthApp = next.oauthApp;
+    persistedProvider = next.provider;
+    persistedOAuthApp = next.oauthApp;
     if (baseURL === persistedBaseURL) baseURL = next.baseURL;
     if (username === persistedUsername) username = next.username;
     if (enabled === persistedEnabled) enabled = next.enabled;
@@ -102,29 +124,48 @@
       enabled,
       schedule,
     };
-    if (password !== '') body.password = password;
+    if (google) { body.provider = 'google'; body.oauth_app = oauthApp; body.base_url = googleURL; }
+    else if (password !== '') body.password = password;
     return body;
   }
   function identityTuple(): string {
-    return `${baseURL}\u0000${username}`;
+    return `${provider}\u0000${oauthApp}\u0000${baseURL}\u0000${username}`;
   }
   function canReusePersistedPassword(): boolean {
-    return persistedPasswordConfigured && baseURL === persistedBaseURL && username === persistedUsername;
+    return provider === persistedProvider && oauthApp === persistedOAuthApp && persistedPasswordConfigured && baseURL === persistedBaseURL && username === persistedUsername;
   }
   // Only a stored account can be switched off without its password; a blank
   // form has nothing to disable.
   function canDisableWithoutPassword(): boolean {
-    return !enabled && persistedBaseURL !== '' && baseURL === persistedBaseURL && username === persistedUsername;
+    return provider === persistedProvider && oauthApp === persistedOAuthApp && !enabled && persistedBaseURL !== '' && baseURL === persistedBaseURL && username === persistedUsername;
   }
   function passwordRequiredForSave(): boolean {
-    return !canReusePersistedPassword() && !canDisableWithoutPassword();
+    return !google && !canReusePersistedPassword() && !canDisableWithoutPassword();
   }
   function validatePassword(allowCredentialFreeDisable: boolean): boolean {
-    if (canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
+    if (google || canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
       return true;
     status = '';
     error = 'Password is required for a new or changed CardDAV account.';
     return false;
+  }
+  async function connectGoogle() {
+    if (activeAction !== undefined) return;
+    if (!username.trim()) { error = 'Enter your Google account email first.'; return; }
+    const controller = new AbortController();
+    requestController = controller;
+    const generation = ++actionGeneration;
+    activeAction = 'authorize';
+    error = '';
+    status = '';
+    try {
+      await authorizeGoogleContacts(client, username, oauthApp, controller.signal);
+      if (current(generation)) status = 'Google Contacts authorized. Test and save the connection to use it.';
+    } catch (cause) {
+      if (current(generation)) error = cause instanceof Error ? cause.message : 'Google sign-in failed.';
+    } finally {
+      if (current(generation)) { activeAction = undefined; requestController = undefined; }
+    }
   }
   async function testConnection() {
     if (activeAction !== undefined || !validatePassword(false)) return;
@@ -175,6 +216,8 @@
       username = data.username;
       enabled = data.enabled;
       schedule = data.schedule ?? '';
+      persistedProvider = provider;
+      persistedOAuthApp = oauthApp;
       persistedBaseURL = data.base_url;
       persistedUsername = data.username;
       persistedPasswordConfigured = passwordConfigured;
@@ -224,13 +267,19 @@
       void saveAccount();
     }}
   >
+    <label>
+      Provider
+      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
+    </label>
     <div class="fields">
+      {#if !google}
       <div class="field">
         <label class="field__label" for={`${uid}-url`}>Base URL</label>
         <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
       </div>
+      {/if}
       <div class="field">
-        <label class="field__label" for={`${uid}-username`}>Username</label>
+        <label class="field__label" for={`${uid}-username`}>{google ? 'Google account email' : 'Username'}</label>
         <TextInput
           id={`${uid}-username`}
           autocomplete="username"
@@ -240,6 +289,22 @@
           block
         />
       </div>
+    {#if google}
+      <label>
+        OAuth app
+        <TextInput bind:value={oauthApp} disabled={activeAction !== undefined} placeholder="Default Google OAuth app" block />
+      </label>
+      <div class="actions">
+        <Button label={activeAction === 'authorize' ? 'Waiting for Google…' : 'Connect Google'} disabled={activeAction !== undefined} onclick={() => void connectGoogle()} />
+        {#if activeAction === 'authorize'}<Button label="Cancel sign-in" onclick={() => requestController?.abort()} />{/if}
+      </div>
+      <p>Register <code>{window.location.origin}/</code> as an authorized redirect URI in your Google OAuth app. Keep existing permissions checked when granting contacts access.</p>
+      <p>Your contacts account and OAuth app can differ from your mail accounts. A matching Google authorization is reused; otherwise, CardDAV stores separate credentials.</p>
+      <details><summary>Authorize from the terminal instead</summary>
+        <code class="authorization-command">{authorizationCommand}</code>
+        <p>For a remote daemon, copy the authorized token to that host before testing. <a href="https://msgvault.io/docs/usage/people-carddav/#google-contacts" target="_blank" rel="noreferrer">Google Contacts setup</a></p>
+      </details>
+    {:else}
       <div class="field">
         <label class="field__label" for={`${uid}-password`}>Password</label>
         <TextInput
@@ -260,6 +325,7 @@
               : 'Not needed to disable the account.'}
         </span>
       </div>
+      {/if}
     </div>
     <div class="field">
       <div class="field__head">
@@ -287,6 +353,8 @@
 </SettingsSection>
 
 <style>
+  .authorization-command { overflow-wrap: anywhere; user-select: all; }
+  p { margin: 0; color: var(--text-secondary); }
   form {
     display: grid;
     gap: var(--space-5);

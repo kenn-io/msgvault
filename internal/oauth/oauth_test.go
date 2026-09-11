@@ -769,6 +769,60 @@ func TestAuthorizePreservingGrantedScopesRejectsTokenMissingPreservedScope(t *te
 	assert.ElementsMatch(existingScopes, loaded.Scopes, "existing scopes must be preserved")
 }
 
+// saveToken seeds OAuth fixtures without a pending authorization or refresh.
+func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string) error {
+	return m.saveTokenCompared(email, token, scopes, nil)
+}
+
+func TestTerminalAuthorizationCannotOverwriteNewerAuthorization(t *testing.T) {
+	for _, mode := range []string{"browser", "manual", "preserve-browser", "preserve-manual"} {
+		t.Run(mode, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
+			const email = "person@example.com"
+			oldScopes := []string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}
+			newScopes := append(append([]string(nil), oldScopes...), ScopeCalendarReadonly)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/profile" {
+					_, _ = fmt.Fprintf(w, `{"email":%q}`, email)
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600,"scope":%q}`, strings.Join(newScopes, " "))
+			}))
+			t.Cleanup(server.Close)
+			mgr := setupTestManager(t, oldScopes)
+			mgr.config.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.example/authorize", TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams}
+			mgr.profileURL = server.URL + "/profile"
+			required.NoError(mgr.saveToken(email, &oauth2.Token{AccessToken: "initial-access"}, []string{ScopeGmailReadonly}))
+			newer, err := mgr.withScopes(newScopes).BeginWebAuthorization(email, "https://archive.example/")
+			required.NoError(err)
+			// A browser wait lets another sign-in complete before the CLI returns.
+			mgr.browserFlowFn = func(ctx context.Context, _ string, _ bool) (*oauth2.Token, error) {
+				if err := newer.Complete(ctx, newer.State, "new"); err != nil {
+					return nil, err
+				}
+				return (&oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh"}).WithExtra(map[string]any{"scope": strings.Join(oldScopes, " ")}), nil
+			}
+			switch mode {
+			case "browser":
+				err = mgr.Authorize(t.Context(), email)
+			case "manual":
+				err = mgr.AuthorizeManual(t.Context(), email)
+			case "preserve-browser":
+				err = mgr.AuthorizePreservingGrantedScopes(t.Context(), email)
+			case "preserve-manual":
+				err = mgr.AuthorizeManualPreservingGrantedScopes(t.Context(), email)
+			}
+			required.ErrorIs(err, ErrTokenChanged)
+			saved, err := mgr.loadTokenFile(email)
+			required.NoError(err)
+			assertions.Equal("new-refresh", saved.RefreshToken)
+			assertions.ElementsMatch(newScopes, saved.Scopes)
+		})
+	}
+}
+
 // TestAuthorize_RejectsMismatch verifies that authorize() rejects
 // tokens where the profile email is for a different account and
 // does NOT persist a token file.

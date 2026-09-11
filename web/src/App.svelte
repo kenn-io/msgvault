@@ -2,6 +2,7 @@
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
+  import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
@@ -14,13 +15,15 @@
   }: {
     session?: SessionController;
   } = $props();
+  let oauthCallback = $state(false);
   let appearanceDefaults = $state<AppearanceDefaults>({ theme: 'system', density: 'compact' });
   let shellMounted = $derived(session.status !== undefined && session.authMode !== 'required');
   let searchModeDefault = $state<ExploreSearchMode | undefined>();
   let authenticated = false;
   let browserDefaultsRequestGeneration = 0;
   onMount(() => {
-    void session.bootstrap();
+    oauthCallback = receiveGoogleContactsCallback();
+    if (!oauthCallback) void session.bootstrap();
   });
   // AppShell owns appearance while mounted; the boot and login screens apply
   // the same defaults and stored override so they render in the right theme.
@@ -76,7 +79,9 @@
   <title>Everything · msgvault</title>
 </svelte:head>
 
-{#if session.authMode === 'required'}
+{#if oauthCallback}
+  <main class="boot"><p>Return to CardDAV settings to finish connecting. You can close this window.</p></main>
+{:else if session.authMode === 'required'}
   <Login {session} />
 {:else if shellMounted}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>

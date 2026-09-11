@@ -87,10 +87,13 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
-  it('shows fixed repair copy and keeps sync disabled without a ready runtime', async () => {
+  it.each([
+    { reason: 'credential_missing', available: false, message: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.' },
+    { reason: 'google_authorization_required', available: true, message: 'Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.' },
+  ])('shows repair instructions for $reason and keeps sync disabled', async ({ reason, available, message }) => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ configured: true, available: false, credential_configured: false, enabled: true, scheduled: false, schedule: '', repair_reason: 'credential_missing' });
+      if (path.endsWith('/status')) return Response.json({ configured: true, available, credential_configured: false, enabled: true, scheduled: false, schedule: '', repair_reason: reason });
       if (path.endsWith('/books')) return Response.json({ books: [] });
       return Response.json({ runs: [] });
     });
@@ -98,7 +101,7 @@ describe('CardDAVOperations', () => {
     await controller.load();
     render(CardDAVOperations, { controller });
 
-    expect(screen.getByRole('alert').textContent).toContain('No CardDAV password is stored. Enter the password and save the account.');
+    expect(screen.getByRole('alert').textContent).toContain(message);
     expect((screen.getByRole('button', { name: 'Sync now' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('No discovered address books.')).toBeDefined();
     controller.destroy();

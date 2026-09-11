@@ -353,7 +353,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cardDAVController.SetScheduleReconciler(func(cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
 		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger)
 	})
-	if err := reconcileCardDAVSchedulerJob(sched, cfg.CardDAV, cardDAVController.Current(), logger); err != nil {
+	if err := cardDAVController.ReconcileSchedule(); err != nil {
 		return err
 	}
 
@@ -799,8 +799,12 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	}
 	if service == nil {
 		sched.RemoveJob(api.CardDAVJobName)
+		hint := "save the CardDAV account with its password to repair the connection"
+		if cardDAVConfig.Provider == "google" {
+			hint = "connect Google in CardDAV account settings, then test and save the account"
+		}
 		logger.Warn("carddav credentials are unavailable or do not match saved discovery; skipping scheduled sync",
-			"hint", "save the CardDAV account with its password to repair the connection")
+			"hint", hint)
 		return nil
 	}
 	if err := sched.AddJob(scheduler.Job{

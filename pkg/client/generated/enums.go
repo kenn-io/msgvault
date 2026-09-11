@@ -81,6 +81,23 @@ func (c CandidateClassification) Validate() error {
 	}
 }
 
+type CardDAVAccountRequestProvider string
+
+const (
+	Empty  CardDAVAccountRequestProvider = ""
+	Google CardDAVAccountRequestProvider = "google"
+)
+
+// Validate checks if the CardDAVAccountRequestProvider value is valid
+func (c CardDAVAccountRequestProvider) Validate() error {
+	switch c {
+	case Empty, Google:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVAccountRequestProvider value, got: %v", c))
+	}
+}
+
 type CardDAVConflictDetailResponseResolution string
 
 const (
@@ -370,17 +387,18 @@ func (c CardDAVRunResponseTrigger) Validate() error {
 type CardDAVStatusResponseRepairReason string
 
 const (
-	AccountMissing        CardDAVStatusResponseRepairReason = "account_missing"
-	CredentialMismatch    CardDAVStatusResponseRepairReason = "credential_mismatch"
-	CredentialMissing     CardDAVStatusResponseRepairReason = "credential_missing"
-	CredentialUnavailable CardDAVStatusResponseRepairReason = "credential_unavailable"
-	RuntimeUnavailable    CardDAVStatusResponseRepairReason = "runtime_unavailable"
+	AccountMissing              CardDAVStatusResponseRepairReason = "account_missing"
+	CredentialMismatch          CardDAVStatusResponseRepairReason = "credential_mismatch"
+	CredentialMissing           CardDAVStatusResponseRepairReason = "credential_missing"
+	CredentialUnavailable       CardDAVStatusResponseRepairReason = "credential_unavailable"
+	GoogleAuthorizationRequired CardDAVStatusResponseRepairReason = "google_authorization_required"
+	RuntimeUnavailable          CardDAVStatusResponseRepairReason = "runtime_unavailable"
 )
 
 // Validate checks if the CardDAVStatusResponseRepairReason value is valid
 func (c CardDAVStatusResponseRepairReason) Validate() error {
 	switch c {
-	case AccountMissing, CredentialMismatch, CredentialMissing, CredentialUnavailable, RuntimeUnavailable:
+	case AccountMissing, CredentialMismatch, CredentialMissing, CredentialUnavailable, GoogleAuthorizationRequired, RuntimeUnavailable:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVStatusResponseRepairReason value, got: %v", c))

@@ -113,6 +113,9 @@ func (s *Service) DiscoverConnection(ctx context.Context, baseURL string) (Disco
 	if s == nil || s.client == nil {
 		return Discovery{}, errors.New("CardDAV service is not configured")
 	}
+	if s.google {
+		return discoverGoogle(ctx, s.client, baseURL)
+	}
 	return Discover(ctx, s.client, baseURL)
 }
 
@@ -383,6 +386,12 @@ func mergeSuccessfulProperties(propStats []PropStat) Properties {
 			continue
 		}
 		properties := propStat.Properties
+		if properties.SyncToken != "" {
+			merged.SyncToken = properties.SyncToken
+		}
+		if properties.CurrentUserPrincipal != "" {
+			merged.CurrentUserPrincipal = properties.CurrentUserPrincipal
+		}
 		if properties.DisplayName != "" {
 			merged.DisplayName = properties.DisplayName
 		}

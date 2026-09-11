@@ -38,6 +38,8 @@ type ClientOptions struct {
 	CredentialOrigin *url.URL
 	Username         string
 	Password         string
+	// BearerToken obtains a current token after the request target is validated.
+	BearerToken      func(context.Context) (string, error)
 	RequestTimeout   time.Duration
 	OperationTimeout time.Duration
 	ResponseBytes    int64

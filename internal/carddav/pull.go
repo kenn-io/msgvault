@@ -32,6 +32,7 @@ const (
 type Service struct {
 	store  *store.Store
 	client *Client
+	google bool
 }
 
 func NewService(st *store.Store, client *Client) *Service {

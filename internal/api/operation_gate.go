@@ -340,9 +340,11 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 }
 
 // operationGateExemptPaths bypass the generic mutation gate. Most only read;
-// the session endpoints mutate process-local authentication state. Verify is
-// NOT exempt: its subprocess opens the store read-write and runs schema
-// init/migrations.
+// session endpoints mutate process-local authentication state. Google OAuth
+// endpoints manage pending authorization under their own mutex and write token
+// files without changing the archive. They remain available during archive work.
+// Verify is NOT exempt: its subprocess opens the store read-write and runs
+// schema init/migrations.
 //
 // Backup freeze begin, meeting import, and historical import jobs coordinate
 // the gate in their handlers.
@@ -351,17 +353,19 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 // gate so it can release the freeze held by begin. Routing these through the
 // generic middleware would deadlock their coordination.
 var operationGateExemptPaths = map[string]bool{
-	queryEndpointPath:                true,
-	sessionPath:                      true,
-	sessionLoginPath:                 true,
-	importJobsEndpointPath:           true,
-	meetingImportEndpointPath:        true,
-	"/api/v1/cli/add-calendar/plan":  true,
-	"/api/v1/cli/delete-staged/plan": true,
-	"/api/v1/cli/embeddings/plan":    true,
-	"/api/v1/cli/deduplicate/plan":   true,
-	backupFreezeBeginPath:            true,
-	backupFreezeEndPath:              true,
+	"/api/v1/carddav/google/authorize": true,
+	"/api/v1/carddav/google/callback":  true,
+	queryEndpointPath:                  true,
+	sessionPath:                        true,
+	sessionLoginPath:                   true,
+	importJobsEndpointPath:             true,
+	meetingImportEndpointPath:          true,
+	"/api/v1/cli/add-calendar/plan":    true,
+	"/api/v1/cli/delete-staged/plan":   true,
+	"/api/v1/cli/embeddings/plan":      true,
+	"/api/v1/cli/deduplicate/plan":     true,
+	backupFreezeBeginPath:              true,
+	backupFreezeEndPath:                true,
 }
 
 // readOnlyPostRoutePatterns lists the analytical POST routes whose handlers

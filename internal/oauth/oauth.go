@@ -2,6 +2,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -192,6 +194,12 @@ func IsNarrowedGmailGrant(scopes []string) bool {
 	return HasAnyGmailScope(scopes) && !HasGmailWriteScope(scopes)
 }
 
+// ScopeCardDAV grants access to Google Contacts through CardDAV.
+const ScopeCardDAV = "https://www.googleapis.com/auth/carddav"
+
+// ScopeUserinfoEmail allows account verification without requesting Gmail access.
+const ScopeUserinfoEmail = "https://www.googleapis.com/auth/userinfo.email"
+
 // ScopeCalendarReadonly is the read-only Calendar scope: it covers both
 // calendarList enumeration and event reads, so an archival tool needs nothing
 // finer-grained.
@@ -212,6 +220,9 @@ var ScopesGmailCalendar = append(append([]string{}, Scopes...), ScopesCalendar..
 
 const defaultProfileURL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 const defaultCalendarProfileURL = "https://www.googleapis.com/calendar/v3/users/me/calendarList/primary"
+
+// ErrTokenChanged means another operation replaced the saved credentials.
+var ErrTokenChanged = errors.New("saved Google credentials changed during sign-in; start sign-in again to use the current permissions")
 
 // TokenMismatchError is returned when the authorized Google account
 // does not match the expected email. Callers can inspect Expected
@@ -271,7 +282,7 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (oauth2.TokenSo
 		if len(scopes) == 0 {
 			scopes = m.config.Scopes // fallback for legacy tokens
 		}
-		if err := m.saveToken(email, newToken, scopes); err != nil {
+		if err := m.saveTokenCompared(email, newToken, scopes, tf); err != nil && !errors.Is(err, ErrTokenChanged) {
 			m.logger.Warn("failed to save refreshed token", "email", email, "error", err)
 		}
 	}
@@ -314,7 +325,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
 		if len(scopes) == 0 {
 			scopes = m.config.Scopes // fallback for legacy tokens
 		}
-		if err := m.saveToken(email, newToken, scopes); err != nil {
+		if err := m.saveTokenCompared(email, newToken, scopes, tf); err != nil && !errors.Is(err, ErrTokenChanged) {
 			m.logger.Warn("failed to save refreshed token", "email", email, "error", err)
 		}
 	}
@@ -467,7 +478,7 @@ func ShellQuote(s string) string {
 // It opens the default browser and validates that the authorized
 // account matches the expected email.
 func (m *Manager) Authorize(ctx context.Context, email string) error {
-	return m.authorize(ctx, email, true)
+	return m.authorize(ctx, email, true, false)
 }
 
 // AuthorizeManual performs the OAuth flow without opening a browser.
@@ -475,14 +486,13 @@ func (m *Manager) Authorize(ctx context.Context, email string) error {
 // user knows exactly which account to authorize. Used during sync
 // re-auth to prevent accidental account mismatch.
 func (m *Manager) AuthorizeManual(ctx context.Context, email string) error {
-	return m.authorize(ctx, email, false)
+	return m.authorize(ctx, email, false, false)
 }
 
 // AuthorizeManualPreservingGrantedScopes reauthorizes with the manager's
 // required scopes plus any scopes already recorded on the token file.
 func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error {
-	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
-	return scoped.AuthorizeManual(ctx, email)
+	return m.authorize(ctx, email, false, true)
 }
 
 // AuthorizePreservingGrantedScopes is the browser twin of
@@ -492,8 +502,25 @@ func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, em
 // re-authorizing with the bare required scopes would silently drop previously
 // granted grants (Calendar, permanent-delete); the union preserves them.
 func (m *Manager) AuthorizePreservingGrantedScopes(ctx context.Context, email string) error {
-	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
-	return scoped.Authorize(ctx, email)
+	return m.authorize(ctx, email, true, true)
+}
+
+func (m *Manager) prepareAuthorization(email string, preserveGrants bool) (*Manager, *tokenFile, error) {
+	data, err := os.ReadFile(m.tokenPath(email))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("read token before authorization: %w", err)
+	}
+	var existing tokenFile
+	if err := json.Unmarshal(data, &existing); err != nil {
+		// Fresh authorization can replace a missing or malformed token.
+		existing = tokenFile{}
+	}
+	existing.snapshot = data
+	if preserveGrants {
+		// Derive permissions from the same snapshot used by the final write.
+		m = m.withScopes(scopesWithPreservedGrants(m.config.Scopes, existing.Scopes))
+	}
+	return m, &existing, nil
 }
 
 func (m *Manager) withScopes(scopes []string) *Manager {
@@ -530,8 +557,12 @@ func scopesWithPreservedGrants(required, granted []string) []string {
 }
 
 func (m *Manager) authorize(
-	ctx context.Context, email string, launchBrowser bool,
+	ctx context.Context, email string, launchBrowser, preserveGrants bool,
 ) error {
+	m, expected, err := m.prepareAuthorization(email, preserveGrants)
+	if err != nil {
+		return err
+	}
 	flow := m.browserFlow
 	if m.browserFlowFn != nil {
 		flow = m.browserFlowFn
@@ -541,6 +572,10 @@ func (m *Manager) authorize(
 		return err
 	}
 
+	return m.verifyAndSaveToken(ctx, email, token, expected)
+}
+
+func (m *Manager) verifyAndSaveToken(ctx context.Context, email string, token *oauth2.Token, expected *tokenFile) error {
 	// Validate the token belongs to the expected account before
 	// persisting it. This prevents token pollution where selecting
 	// the wrong Google account would overwrite a valid token file.
@@ -555,7 +590,7 @@ func (m *Manager) authorize(
 		return fmt.Errorf("authorized token missing required OAuth scopes: %s", strings.Join(missing, ", "))
 	}
 
-	return m.saveToken(email, token, grantedScopes)
+	return m.saveTokenCompared(email, token, grantedScopes, expected)
 }
 
 const (
@@ -716,6 +751,9 @@ type tokenProfileEndpoint struct {
 }
 
 func tokenProfileEndpointForScopes(scopes []string) tokenProfileEndpoint {
+	if slices.Contains(scopes, ScopeUserinfoEmail) {
+		return tokenProfileEndpoint{url: "https://www.googleapis.com/oauth2/v2/userinfo", serviceName: "Google account API"}
+	}
 	if slices.Contains(scopes, ScopeCalendarReadonly) && !hasGmailProfileScope(scopes) {
 		return tokenProfileEndpoint{
 			url:         defaultCalendarProfileURL,
@@ -844,6 +882,9 @@ func normalizeGmailAddress(email string) string {
 type tokenFile struct {
 	oauth2.Token
 
+	// snapshot is the exact file read before a refresh starts.
+	snapshot []byte
+
 	Scopes   []string `json:"scopes,omitempty"`
 	ClientID string   `json:"client_id,omitempty"`
 }
@@ -877,6 +918,7 @@ func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
 		return nil, err
 	}
 
+	tf.snapshot = data
 	return &tf, nil
 }
 
@@ -942,10 +984,27 @@ func (m *Manager) GrantedScopes(email string) []string {
 	return append([]string(nil), tf.Scopes...)
 }
 
-// saveToken saves a token for the given email with the specified scopes.
-func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string) error {
+// saveTokenCompared writes a token only if its original snapshot is still current.
+// The lock covers comparison and replacement, never the network exchange, and
+// coordinates separate managers and CLI/daemon processes sharing this account.
+func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []string, expected *tokenFile) (err error) {
 	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
 		return err
+	}
+
+	lock := flock.New(m.tokenPath(email)+".lock", flock.SetPermissions(0600))
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("lock token file: %w", err)
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	if expected != nil {
+		current, err := os.ReadFile(m.tokenPath(email))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read token before save: %w", err)
+		}
+		if !bytes.Equal(current, expected.snapshot) {
+			return ErrTokenChanged
+		}
 	}
 
 	tf := tokenFile{
