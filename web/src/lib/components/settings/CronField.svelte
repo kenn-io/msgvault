@@ -88,12 +88,16 @@
     ...(required ? [] : [{ value: 'off', label: 'Off' }]),
     ...CRON_PRESETS.map((preset) => ({ value: preset.expression, label: preset.label })),
   ]);
-  // Choosing Custom keeps the editor open even while the text still equals a
-  // preset, so the expression can be edited from a preset's starting point.
+  // Choosing Custom, or typing in the editor, keeps the editor open even
+  // while the text equals a preset, so a schedule can be edited through a
+  // preset's text without the editor closing mid-keystroke. The latch is
+  // tied to the value it was set for: a value replaced from outside (Discard,
+  // a reload, a conflict) shows whatever preset matches the new value.
   let customMode = $state(false);
+  const customActive = $derived(customMode && local !== undefined && local.source === value);
   const presetValue = $derived.by(() => {
     if (empty) return required ? 'custom' : 'off';
-    if (customMode) return 'custom';
+    if (customActive) return 'custom';
     const normalized = tokens.map((token) => token.text).join(' ');
     return CRON_PRESETS.some((preset) => preset.expression === normalized) ? normalized : 'custom';
   });
@@ -130,6 +134,7 @@
     if (next === 'custom') {
       customMode = true;
       if (empty) update(parts.zone, '0 3 * * *');
+      else local = { source: value, zone: parts.zone, expression: parts.expression };
       return;
     }
     customMode = false;
@@ -167,7 +172,10 @@
           {required}
           {disabled}
           value={parts.expression}
-          oninput={(event) => update(parts.zone, event.currentTarget.value)}
+          oninput={(event) => {
+            customMode = true;
+            update(parts.zone, event.currentTarget.value);
+          }}
           onscroll={(event) => {
             if (mirror) mirror.scrollLeft = event.currentTarget.scrollLeft;
           }}
@@ -298,31 +306,31 @@
   .cron--disabled .cron__editor {
     opacity: 0.6;
   }
+  /* One line where it fits (the settings row gives it 30rem); the zone
+     wraps under the presets on a narrow screen instead of running off it. */
   .cron__row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
   }
   .cron__presets {
-    flex: 0 0 auto;
-    width: 9.5rem;
+    flex: 0 0 9.5rem;
     min-width: 0;
   }
   .cron__editor {
     flex: 1 1 7rem;
     min-width: 6.5rem;
   }
+  /* Fixed width, so opening the menu (which swaps the button for a search
+     box) moves nothing beside it. Zone names are long; the list opens wider
+     than the trigger and the toolkit keeps it inside the window. */
   .cron__zone {
-    flex: 0 1 11rem;
-    min-width: 7rem;
+    flex: 0 0 11rem;
     --typeahead-min-width: 0;
     --typeahead-max-width: none;
-  }
-  /* Zone names are long; the list grows past its trigger instead of
-     truncating every entry. */
-  .cron__zone :global(.kit-typeahead__panel) {
-    min-width: 18rem;
+    --typeahead-panel-min-width: 18rem;
   }
   .cron__legend {
     position: absolute;
