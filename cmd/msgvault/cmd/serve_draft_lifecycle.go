@@ -597,6 +597,15 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		}
 		return draftReplyError("invalid_reply_metadata", err)
 	}
+	// The persist builder indexes Parsed.From[0], and it runs after Begin has
+	// claimed the draft and AppendDraft has landed the new copy, so refuse here
+	// where a refusal costs nothing. ReplaceDraftBody copies the existing From
+	// verbatim without the address validation BuildReply applies, and enmime can
+	// resolve a header net/mail accepts to zero addresses.
+	if len(newDraft.Parsed.From) != 1 {
+		return draftReplyError("invalid_reply_metadata",
+			errors.New("composed draft needs exactly one From address"))
+	}
 	messageIDValue := mime.NormalizeMessageID(newDraft.Parsed.MessageID)
 	if messageIDValue == "" {
 		return draftReplyError("invalid_reply_metadata", errors.New("composed draft has no usable Message-ID"))
@@ -1264,6 +1273,9 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		MessageID:   draft.CurrentMessageID,
 	})
 	if finishErr != nil {
+		logger.Error("finish replayed draft discard", "draft_id", draft.DraftID, "error", finishErr)
+		// The server copy is gone; only the local record is unfinished, and
+		// another draft-delete at the reloaded revision completes it.
 		return refuseDraftLifecycle(emit, intent, "remote_deleted_local_failed",
 			draftCompleteDiscardInstruction, 0, finishErr)
 	}

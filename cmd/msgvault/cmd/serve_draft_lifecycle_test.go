@@ -1767,3 +1767,251 @@ func TestDraftInspectFailureDeliversRecoveryInstructions(t *testing.T) {
 		})
 	}
 }
+
+// countingAppendClient wraps a real IMAP client and records every AppendDraft
+// call, so a test can prove a refusal landed before the mailbox was touched.
+type countingAppendClient struct {
+	*imaplib.Client
+	mu      *sync.Mutex
+	appends *int
+}
+
+func (c *countingAppendClient) AppendDraft(
+	ctx context.Context, mailbox string, raw []byte,
+) (imaplib.DraftAppendResult, error) {
+	c.mu.Lock()
+	*c.appends++
+	c.mu.Unlock()
+	return c.Client.AppendDraft(ctx, mailbox, raw)
+}
+
+// replaceDraftArchivedRaw overwrites the archived RFC822 bytes of the draft's
+// current message. GetIMAPDraftContext projects from_address from the sender
+// participant row rather than from these bytes, so the draft keeps its
+// confirmed identity and the substituted header matters only where the edit
+// path actually reads it: ReplaceDraftBody, which copies From verbatim.
+func replaceDraftArchivedRaw(t *testing.T, f draftLifecycleFixture, raw []byte) {
+	t.Helper()
+	var currentMessageID int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT current_message_id FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&currentMessageID))
+	result, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?
+	`), raw, currentMessageID)
+	require.NoError(t, err)
+	affected, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected, "the draft must have archived raw bytes to replace")
+}
+
+// TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress covers the archived
+// draft whose From header survives net/mail — which is all ReplaceDraftBody
+// requires of it — but resolves to zero addresses once enmime parses the
+// recomposed bytes. A null group is exactly that header.
+//
+// The persist builder indexes Parsed.From[0], and it runs only after Begin has
+// claimed the draft and AppendDraft has landed the second copy, so a refusal
+// arriving there would leave two copies on the server, no local persist, a
+// pending marker, and an unrun sync-lock release. The refusal therefore has to
+// happen while the composed bytes are still the only thing that exists, which
+// is what the append count and the untouched ownership row prove here.
+func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+	replaceDraftArchivedRaw(t, f, []byte(
+		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n"+
+			"From: Undisclosed recipients:;\r\n"+
+			"To: parent@example.com\r\n"+
+			"Subject: Re: Parent\r\n"+
+			"Message-ID: <null-group-from@example.test>\r\n"+
+			"MIME-Version: 1.0\r\n"+
+			"Content-Type: text/plain; charset=\"utf-8\"\r\n"+
+			"\r\n"+
+			"Initial draft body\r\n"))
+
+	var appends int
+	refreshesBefore := len(*f.refreshed)
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+		return &countingAppendClient{
+			Client:  imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+			mu:      new(sync.Mutex),
+			appends: &appends,
+		}, nil
+	}
+
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10),
+			"--revision=1", "--body=Body that must not be appended", "--json"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "invalid_reply_metadata", err.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
+	require.True(t, ok)
+	assert.ErrorContains(t, coded.Err, "exactly one From address")
+	assert.NotContains(t, coded.Err.Error(), "Body that must not be appended",
+		"a refusal must not echo the supplied body")
+	assert.Empty(t, evs, "a refusal with nothing to recover reports no result")
+
+	// The refusal lands before the mailbox is touched at all.
+	assert.Zero(t, appends, "no copy may be appended for a draft that cannot be persisted")
+	assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
+		"the original copy must still be the one the mailbox holds")
+
+	// The ownership row is untouched: no claim, no marker, no revision bump.
+	var lifecycle string
+	var revision, currentMessageID int64
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle, revision, pending_kind, current_message_id
+		FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle, &revision, &pendingKind, &currentMessageID))
+	assert.Equal(t, "active", lifecycle)
+	assert.Equal(t, int64(1), revision, "the refusal must leave the original revision")
+	assert.False(t, pendingKind.Valid, "no pending marker may survive a pre-claim refusal")
+	assert.Equal(t, f.draftID, currentMessageID)
+	assert.Len(t, *f.refreshed, refreshesBefore, "a refused edit refreshes no cache")
+}
+
+// bumpRevisionAfterRemove wraps a real IMAP client, performs the real removal,
+// and then advances imap_drafts.revision so the Finish that follows finds its
+// CAS no longer matching. It is the seam for the one outcome where the server
+// copy is already expunged and only the local record is behind: the expunge is
+// genuine, and only the local completion fails.
+type bumpRevisionAfterRemove struct {
+	*imaplib.Client
+	store   *store.Store
+	draftID int64
+	t       *testing.T
+}
+
+func (c *bumpRevisionAfterRemove) RemoveDraft(
+	ctx context.Context, target imaplib.DraftTarget,
+) (imaplib.DraftInspectResult, error) {
+	result, err := c.Client.RemoveDraft(ctx, target)
+	if err != nil {
+		return result, err
+	}
+	_, execErr := c.store.DB().Exec(c.store.Rebind(`
+		UPDATE imap_drafts SET revision = revision + 1 WHERE draft_id = ?
+	`), c.draftID)
+	require.NoError(c.t, execErr)
+	return result, nil
+}
+
+// TestDraftDeleteReportsRemoteDeletedLocalFailed covers both sites that emit
+// remote_deleted_local_failed: the ordinary draft-delete whose Finish fails
+// after the expunge, and the pending-discard replay's equivalent.
+//
+// This is the only post-expunge state where the mail is already destroyed and
+// only the local record is behind, so draftCompleteDiscardInstruction is the
+// guidance the operator most needs. A CLIRunCodedError carries only its code
+// across the daemon boundary, so the instruction reaches them only as a CLI
+// event; the logged cause never crosses. The recovery it names — another
+// draft-delete at the reloaded revision — is available only while the pending
+// marker survives, so the row must still carry it.
+func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
+	testCases := []struct {
+		name string
+		// leaveState prepares the draft and returns the revision the failing
+		// draft-delete must supply.
+		leaveState func(t *testing.T, f draftLifecycleFixture) int64
+	}{
+		{
+			name:       "ordinary delete",
+			leaveState: func(*testing.T, draftLifecycleFixture) int64 { return 1 },
+		},
+		{
+			name: "pending discard replay",
+			leaveState: func(t *testing.T, f draftLifecycleFixture) int64 {
+				// Fail the first RemoveDraft so the claim survives as
+				// pending_kind='discard' and the retry replays it.
+				adapter := f.grantedAdapter()
+				adapter.draftLifecycleClientFactory = f.makeFaultyFactory(&sharedRemoveCounter{}, 1)
+				err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+					Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+				}, nil)
+				require.Error(t, err)
+				require.Equal(t, "delete_failed", err.Error())
+				var pendingKind sql.NullString
+				require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+					SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
+				`), f.draftID).Scan(&pendingKind))
+				require.Equal(t, "discard", pendingKind.String)
+				return storedDraftRevision(t, f)
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newDraftLifecycleFixture(t)
+			revision := testCase.leaveState(t, f)
+			refreshesBefore := len(*f.refreshed)
+
+			adapter := f.grantedAdapter()
+			adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+				return &bumpRevisionAfterRemove{
+					Client:  imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+					store:   f.store,
+					draftID: f.draftID,
+					t:       t,
+				}, nil
+			}
+
+			var evs []api.CLIRunEvent
+			err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10),
+					"--revision=" + strconv.FormatInt(revision, 10), "--json"},
+			}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+			require.Error(t, err)
+			assert.Equal(t, "remote_deleted_local_failed", err.Error())
+			coded, ok := errors.AsType[*api.CLIRunCodedError](err)
+			require.True(t, ok)
+			assert.ErrorContains(t, coded.Err, "revision_conflict")
+
+			// The code alone is what the daemon streams as the error, so the
+			// instruction is actionable only if it travels as an event.
+			assert.NotContains(t, err.Error(), draftCompleteDiscardInstruction)
+			require.Len(t, evs, 1, "a partial operation must report a result")
+			assert.Equal(t, cliStreamStderr, evs[0].Type)
+			delivered := decodeDraftLifecycleEvent(t, evs[0])
+			assert.Equal(t, "remote_deleted_local_failed", delivered["status"])
+			assert.Equal(t, draftCompleteDiscardInstruction, delivered["instructions"])
+			assert.NotContains(t, delivered, "uid",
+				"no live check ran here, so no copy may be named")
+			assert.NotContains(t, delivered, "operation_ref",
+				"the expunged copy's coordinates name nothing that still exists")
+			_, hasRevision := delivered["revision"]
+			assert.False(t, hasRevision, "a partial result must carry no retry revision")
+
+			// The server copy really is gone: only the local record is behind.
+			assert.False(t, draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
+				"the expunge must have landed before Finish was attempted")
+
+			// The pending marker survives, which is what makes the instruction's
+			// recovery — another draft-delete at the reloaded revision — available.
+			var lifecycle string
+			var pendingKind sql.NullString
+			var pendingUID sql.NullInt64
+			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+				SELECT lifecycle, pending_kind, pending_uid FROM imap_drafts WHERE draft_id = ?
+			`), f.draftID).Scan(&lifecycle, &pendingKind, &pendingUID))
+			assert.Equal(t, "active", lifecycle, "Finish never committed, so lifecycle is unchanged")
+			assert.Equal(t, "discard", pendingKind.String, "the pending discard must survive")
+			assert.True(t, pendingUID.Valid, "the pending receipt must survive with the marker")
+			assert.Len(t, *f.refreshed, refreshesBefore, "a failed completion refreshes no cache")
+
+			// The documented recovery works: draft-delete at the reloaded
+			// revision completes the discard against an already-absent copy.
+			_, retryErr := f.runLifecycle(t, "draft-delete", strconv.FormatInt(f.draftID, 10),
+				"--revision="+strconv.FormatInt(storedDraftRevision(t, f), 10))
+			require.NoError(t, retryErr, "the instructed recovery must complete the discard")
+			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+				SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
+			`), f.draftID).Scan(&lifecycle))
+			assert.Equal(t, "discarded", lifecycle)
+		})
+	}
+}
