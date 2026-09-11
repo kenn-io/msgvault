@@ -61,7 +61,15 @@ try {
         exit 0
     }
 
-    $activeShards = [Math]::Min($ShardCount, $testNames.Count)
+    # Windows limits a process command line to 32,767 characters. Increase the
+    # shard count when the test-name patterns need more room, leaving space for
+    # the executable path and the other test flags.
+    $patternCharacters = 3
+    foreach ($testName in $testNames) {
+        $patternCharacters += [regex]::Escape($testName).Length + 1
+    }
+    $requiredShards = [int][Math]::Ceiling($patternCharacters / 24000.0)
+    $activeShards = [Math]::Min([Math]::Max($ShardCount, $requiredShards), $testNames.Count)
     $shards = [object[]]::new($activeShards)
     for ($i = 0; $i -lt $activeShards; $i++) {
         $shards[$i] = [System.Collections.Generic.List[string]]::new()
