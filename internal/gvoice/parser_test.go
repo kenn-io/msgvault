@@ -1,6 +1,8 @@
 package gvoice
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +240,7 @@ func TestParseCallHTML_Received(t *testing.T) {
 	assert.Equal("+12023065386", record.Phone)
 	assert.Equal("Keith Stern", record.Name)
 	assert.Equal("PT1M23S", record.Duration)
+	assert.Empty(record.AudioSrc)
 
 	expectedTime := time.Date(2020, 2, 5, 23, 26, 28, 0, time.UTC)
 	assert.True(record.Timestamp.Equal(expectedTime), "Timestamp = %v, want %v", record.Timestamp, expectedTime)
@@ -261,11 +264,53 @@ Kicy Motley</span>
 </div></body></html>`
 
 func TestParseCallHTML_Placed(t *testing.T) {
+	assert := assert.New(t)
 	record, err := parseCallHTML(strings.NewReader(samplePlacedCallHTML))
 	require.NoError(t, err, "parseCallHTML")
 
-	assert.Equal(t, fileTypePlaced, record.CallType)
-	assert.Equal(t, "+17188096446", record.Phone)
+	assert.Equal(fileTypePlaced, record.CallType)
+	assert.Equal("+17188096446", record.Phone)
+	assert.Empty(record.AudioSrc)
+}
+
+func TestParseCallHTML_VoicemailAudioSrc(t *testing.T) {
+	record := parseVoicemailFixture(t, "with-audio.html")
+	assert.Equal(t, "Test User - Voicemail - 2024-01-02T03_04_05Z.mp3", record.AudioSrc)
+}
+
+func TestParseCallHTML_VoicemailAudioSrcLeadingSpace(t *testing.T) {
+	record := parseVoicemailFixture(t, "leading-space-src.html")
+	assert.Equal(t, " Test User - Voicemail - 2024-01-03T03_04_05Z.mp3", record.AudioSrc)
+}
+
+func TestParseCallHTML_VoicemailNoAudio(t *testing.T) {
+	record := parseVoicemailFixture(t, "no-audio.html")
+	assert.Empty(t, record.AudioSrc)
+}
+
+func TestParseCallHTML_AudioOutsideHaudio(t *testing.T) {
+	record := parseVoicemailFixture(t, "audio-outside-haudio.html")
+	assert.Empty(t, record.AudioSrc)
+}
+
+func TestParseCallHTML_MultipleAudio(t *testing.T) {
+	record := parseVoicemailFixture(t, "two-audio.html")
+	assert.Empty(t, record.AudioSrc)
+}
+
+func TestParseCallHTML_EmptyAudioSrc(t *testing.T) {
+	record := parseVoicemailFixture(t, "empty-src.html")
+	assert.Empty(t, record.AudioSrc)
+}
+
+func parseVoicemailFixture(t *testing.T, name string) *callRecord {
+	t.Helper()
+	f, err := os.Open(filepath.Join("testdata", "voicemail", name))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	record, err := parseCallHTML(f)
+	require.NoError(t, err)
+	return record
 }
 
 func TestComputeMessageID(t *testing.T) {
