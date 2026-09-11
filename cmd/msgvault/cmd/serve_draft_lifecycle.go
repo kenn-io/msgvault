@@ -685,6 +685,12 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 				return refuseDraftLifecycle(emit, intent, "edit_recovery_unverifiable", draftLocateDuplicateInstruction, 0,
 					fmt.Errorf("draft %d pending edit copy could not be verified; keep the pending marker until the mailbox is resolved", intent.DraftID))
 			}
+			if verifiedState == imaplib.DraftRemotePresent && pendingUID != draft.UID {
+				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
+					verifiedUID,
+					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d remains in the Drafts mailbox — remove it, then %s",
+						intent.DraftID, verifiedUID, draftReloadInstruction))
+			}
 			if verifiedState == imaplib.DraftRemoteAbsent && pendingUID != draft.UID {
 				finishErr := a.store.FinishIMAPDraftOperationContext(context.WithoutCancel(ctx), intent.DraftID, draft.Revision, store.IMAPDraftOutcome{
 					Lifecycle:   "active",
@@ -704,19 +710,13 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 				return refuseDraftLifecycle(emit, intent, "internal", draftInspectInstruction, 0,
 					fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
 			}
-			// Recovery only clears the marker. It never applies the body this
-			// call supplied and never reuses the revision this call supplied,
-			// so the caller must re-read the draft before editing again.
+			// Recovery only clears the marker after the old remote copy is gone.
+			// It never applies the body this call supplied or reuses the revision
+			// this call supplied, so the caller must re-read before editing again.
 			//
 			// pending_uid differing from uid means Persist committed, so the
 			// pending receipt names the pre-edit copy rather than the live one.
 			// The live verification above settles whether that UID can be named.
-			if pendingUID != draft.UID && verifiedState != imaplib.DraftRemoteAbsent {
-				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
-					verifiedUID,
-					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
-						intent.DraftID, verifiedUID, draftReloadInstruction))
-			}
 			return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftInspectInstruction, 0,
 				fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an untracked duplicate may remain in the Drafts mailbox — the tracked copy is the one local state still points at, so remove a duplicate only if you see one, then %s",
 					intent.DraftID, draftReloadInstruction))

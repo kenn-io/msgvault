@@ -1005,6 +1005,12 @@ func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
 	assert.Equal("edit_interrupted", delivered["status"])
 	assert.InDelta(float64(origUID), delivered["uid"], 0)
 	assert.Equal(draftRemoveStaleInstruction, delivered["instructions"])
+	var pendingKind sql.NullString
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&pendingKind))
+	assert.Equal("edit", pendingKind.String,
+		"the marker must remain until the verified stale copy is removed")
 }
 
 // draftGetRevision runs draft-get and returns the revision it reports, which
