@@ -235,9 +235,8 @@ the server the deletion is treated as successful. Deleting a draft that is
 already `discarded` locally reports `discarded` again and opens no IMAP
 connection.
 
-A present remote copy currently returns `atomic_expunge_required` before the
-command claims local state. Servers without CONDSTORE return
-`conditional_store_required`. These refusals leave the local draft unchanged.
+A present remote copy returns `atomic_expunge_required` before the command
+claims local state. This refusal leaves the local draft unchanged.
 
 No failure or partial result carries a revision to feed back into a retry. Each
 one prints its code and, on stderr, the status line and fixed instruction
