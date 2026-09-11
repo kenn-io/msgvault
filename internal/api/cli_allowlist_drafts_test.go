@@ -163,19 +163,19 @@ func TestDelegatedCLIRunLifecycleAdmission(t *testing.T) {
 		return w.Code, resp
 	}
 
-	t.Run("draft-get rejected from table executable false", func(t *testing.T) {
+	t.Run("draft-get rejected by parent owner allowlist", func(t *testing.T) {
 		code, resp := sendDelegated([]string{"draft-get", "42"})
 		assert.Equal(t, http.StatusBadRequest, code)
 		assert.Equal(t, "command_not_allowed", resp.Error)
 	})
 
-	t.Run("draft-edit rejected from table executable false", func(t *testing.T) {
+	t.Run("draft-edit rejected by parent owner allowlist", func(t *testing.T) {
 		code, resp := sendDelegated([]string{"draft-edit", "42"})
 		assert.Equal(t, http.StatusBadRequest, code)
 		assert.Equal(t, "command_not_allowed", resp.Error)
 	})
 
-	t.Run("draft-delete rejected from table executable false", func(t *testing.T) {
+	t.Run("draft-delete rejected by parent owner allowlist", func(t *testing.T) {
 		code, resp := sendDelegated([]string{"draft-delete", "42"})
 		assert.Equal(t, http.StatusBadRequest, code)
 		assert.Equal(t, "command_not_allowed", resp.Error)
