@@ -395,40 +395,51 @@ func verifiedStaleDraftUID(ctx context.Context, client draftClient, target imapl
 // current_message_id names the replacement, while the pending receipt names the
 // copy that held the previous bytes. Those bytes belong to the message the
 // pending receipt's membership still points at, which only Finish removes.
-// Returns 0 whenever any step of the verification cannot run.
+// It returns the live state even when the copy is confirmed absent, so recovery
+// can distinguish a completed remote removal from an unresolved mailbox.
 func (a *storeAPIAdapter) verifyInterruptedEditStaleCopy(
 	ctx context.Context,
 	source *store.Source,
 	draft *store.IMAPDraft,
-) uint32 {
+) (uint32, string) {
 	pendingUIDValidity, ok := draftUIDValue(draft.PendingUIDValidity)
 	if !ok {
-		return 0
+		return 0, ""
 	}
 	pendingUID, ok := draftUIDValue(draft.PendingUID)
 	if !ok {
-		return 0
+		return 0, ""
 	}
 	messageID, err := a.store.GetIMAPDraftPendingMessageIDContext(
 		ctx, source.ID, draft.Mailbox, pendingUIDValidity, pendingUID)
-	if err != nil {
-		return 0
-	}
-	raw, err := a.store.GetMessageRawContext(ctx, messageID)
-	if err != nil {
-		return 0
+	var rawSHA256 [32]byte
+	if err == nil {
+		raw, rawErr := a.store.GetMessageRawContext(ctx, messageID)
+		if rawErr != nil {
+			return 0, ""
+		}
+		rawSHA256 = sha256.Sum256(raw)
+	} else if opserr.KindOf(err) != opserr.KindNotFound {
+		return 0, ""
 	}
 	client, err := a.lifecycleDraftClient(ctx, source)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
 	defer func() { _ = client.Close() }()
-	return verifiedStaleDraftUID(ctx, client, imaplib.DraftTarget{
+	result, err := client.InspectDraft(ctx, imaplib.DraftTarget{
 		Mailbox:     draft.Mailbox,
 		UIDValidity: pendingUIDValidity,
 		UID:         pendingUID,
-		RawSHA256:   sha256.Sum256(raw),
+		RawSHA256:   rawSHA256,
 	})
+	if err != nil {
+		return 0, ""
+	}
+	if result.State == imaplib.DraftRemotePresent {
+		return pendingUID, result.State
+	}
+	return 0, result.State
 }
 
 func draftUIDValue(value sql.NullInt64) (uint32, bool) {
@@ -664,16 +675,29 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 					fmt.Errorf("draft %d has a recent pending edit", intent.DraftID))
 			}
 			pendingUID, pendingUIDOK := draftUIDValue(draft.PendingUID)
-			if !pendingUIDOK {
+			pendingUIDValidity, pendingUIDValidityOK := draftUIDValue(draft.PendingUIDValidity)
+			if !pendingUIDOK || !pendingUIDValidityOK {
 				return refuseDraftLifecycle(emit, intent, "edit_recovery_unverifiable", draftLocateDuplicateInstruction, 0,
 					fmt.Errorf("draft %d has an invalid pending edit receipt", intent.DraftID))
 			}
-			verifiedUID := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft)
-			if verifiedUID == 0 {
+			verifiedUID, verifiedState := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft)
+			if verifiedUID == 0 && verifiedState != imaplib.DraftRemoteAbsent {
 				return refuseDraftLifecycle(emit, intent, "edit_recovery_unverifiable", draftLocateDuplicateInstruction, 0,
 					fmt.Errorf("draft %d pending edit copy could not be verified; keep the pending marker until the mailbox is resolved", intent.DraftID))
 			}
-			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
+			if verifiedState == imaplib.DraftRemoteAbsent && pendingUID != draft.UID {
+				finishErr := a.store.FinishIMAPDraftOperationContext(context.WithoutCancel(ctx), intent.DraftID, draft.Revision, store.IMAPDraftOutcome{
+					Lifecycle:   "active",
+					SourceID:    target.source.ID,
+					Mailbox:     draft.Mailbox,
+					UIDValidity: pendingUIDValidity,
+					UID:         pendingUID,
+					MessageID:   draft.CurrentMessageID,
+				})
+				if finishErr != nil {
+					return refuseDraftLifecycle(emit, intent, "remote_accepted_local_failed", draftReloadInstruction, 0, finishErr)
+				}
+			} else if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
 				// The marker survives, and the interrupted edit it records may
 				// have left a second copy in the mailbox, so the operator has
 				// both something to look at and something to re-read.
@@ -687,7 +711,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			// pending_uid differing from uid means Persist committed, so the
 			// pending receipt names the pre-edit copy rather than the live one.
 			// The live verification above settles whether that UID can be named.
-			if pendingUID != draft.UID {
+			if pendingUID != draft.UID && verifiedState != imaplib.DraftRemoteAbsent {
 				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
 					verifiedUID,
 					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
@@ -919,18 +943,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		logger.Error("release source after draft edit", "source_id", target.source.ID, "error", err)
 	}
 
-	// Load updated draft to get new revision.
-	updatedDraft, _ := a.store.GetIMAPDraftContext(recordCtx, intent.DraftID)
-	var newRevision int64
-	if updatedDraft != nil {
-		newRevision = updatedDraft.Revision
-	}
-
 	output := draftLifecycleOutput{
 		Status:          "replaced",
 		DraftID:         intent.DraftID,
 		Lifecycle:       "active",
-		Revision:        newRevision,
+		Revision:        claimedDraft.Revision,
 		RFC822MessageID: messageIDValue,
 		OperationRef:    draftOperationRef(*newReceipt),
 		SourceID:        target.source.ID,

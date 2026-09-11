@@ -540,6 +540,11 @@ func (s *Store) FinishIMAPDraftOperationContext(ctx context.Context, draftID, ex
 		} else if lookupErr != nil {
 			return fmt.Errorf("finish IMAP draft operation lookup membership: %w", lookupErr)
 		}
+		if err := invalidateIMAPSourceKeyForMembership(
+			tx, outcome.SourceID, outcome.Mailbox, int64(outcome.UIDValidity), int64(outcome.UID),
+		); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, s.Rebind(`
 			DELETE FROM imap_message_memberships
 			WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?

@@ -191,6 +191,12 @@ func TestFinishIMAPDraftOperationTombstonesOnlyMembershiplessMessage(t *testing.
 
 	// Message must NOT be tombstoned (still has Sent membership).
 	assertions.False(messageTombstoned(t, st, draftID))
+	var sourceMessageID string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT source_message_id FROM messages WHERE id = ?
+	`), draftID).Scan(&sourceMessageID))
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID,
+		"removing the Drafts membership must retire its reusable source key")
 
 	// Now remove the second membership and tombstone manually (simulate second finish).
 	_, err = st.DB().Exec(st.Rebind(`

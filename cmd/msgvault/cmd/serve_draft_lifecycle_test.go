@@ -1703,6 +1703,39 @@ func TestDraftEditInterruptedKeepsMarkerAfterEpochChange(t *testing.T) {
 		"the bystander must survive the recovery untouched")
 }
 
+func TestDraftEditFinalizesPendingEditWhenRemoteCopyIsAbsent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	f := newDraftLifecycleFixture(t)
+	staleTime := time.Now().Add(-(pendingEditStalenessThreshold + time.Minute))
+	origUID := int64(f.draftUID)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1, uid = 99999
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(err)
+	testutil.ExpungeIMAPMessage(t, f.config.Host+":"+strconv.Itoa(f.config.Port), "Drafts", emersionimap.UID(origUID))
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		DELETE FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), f.source.ID, "Drafts", f.draftUIDVal, f.draftUID)
+	require.NoError(err)
+
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
+
+	var pendingKind sql.NullString
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&pendingKind))
+	assert.False(pendingKind.Valid, "confirmed remote absence must clear the completed pending edit")
+}
+
 // failRemoveUnverifiableCopy fails RemoveDraft and makes every InspectDraft
 // after the first report an epoch change. The first call is the pre-Begin
 // ownership check the edit path makes before it claims; the later one is the

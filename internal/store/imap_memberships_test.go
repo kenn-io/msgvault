@@ -1,8 +1,10 @@
 package store_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -338,6 +340,68 @@ func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
 	assert.True(messageTombstoned(t, f.store, removedID))
 	assert.False(messageTombstoned(t, f.store, survivingID))
 	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, survivingID))
+}
+
+func TestApplyIMAPMailboxDeltas_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "<draft-shared@example.com>")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+		{
+			Mailbox: "Drafts",
+			State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Drafts", UIDValidity: 10, UID: 1, SourceMessageID: "Drafts|1",
+			}},
+		},
+		{
+			Mailbox: "Archive",
+			State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 20, UIDNext: 8},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Archive", UIDValidity: 20, UID: 7, SourceMessageID: "Drafts|1",
+			}},
+		},
+	}))
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+		{
+			Mailbox: "Drafts",
+			State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 30, UIDNext: 2},
+			Reset:   true,
+		},
+		{
+			Mailbox: "Archive",
+			State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 20, UIDNext: 8},
+		},
+	}))
+
+	var sourceMessageID string
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT source_message_id FROM messages WHERE id = ?
+	`), oldID).Scan(&sourceMessageID))
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), sourceMessageID)
+
+	newReceipt := store.IMAPDraftReceipt{
+		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 30, UID: 1,
+	}
+	newID, err := f.store.PersistIMAPDraftContext(context.Background(), newReceipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        f.source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(newReceipt),
+					ConversationID:  f.convID,
+					MessageType:     "email",
+					RFC822MessageID: sql.NullString{String: "<draft-reused@example.com>", Valid: true},
+				},
+				BodyText: sql.NullString{String: "reused", Valid: true},
+				RawMIME:  []byte("From: alice@example.com\r\n\r\nreused\r\n"),
+			}
+		})
+	require.NoError(err)
+	assert.NotEqual(oldID, newID)
 }
 
 func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(t *testing.T) {

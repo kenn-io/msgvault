@@ -247,6 +247,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 				); err != nil {
 					return fmt.Errorf("capture vanished UID %d in mailbox %q: %w", uid, normalized.mailbox, err)
 				}
+				if err := invalidateIMAPSourceKeyForMembership(
+					tx, sourceID, normalized.mailbox, int64(normalized.uidValidity), int64(uid),
+				); err != nil {
+					return err
+				}
 				if _, err := tx.Exec(`
 					DELETE FROM imap_message_memberships
 					WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
@@ -424,6 +429,32 @@ func loadIMAPMailboxMemberships(
 	return stored, rows.Err()
 }
 
+func invalidateIMAPSourceKeyForMembership(
+	tx *loggedTx,
+	sourceID int64,
+	mailbox string,
+	uidValidity, uid int64,
+) error {
+	_, err := tx.Exec(`
+		UPDATE messages
+		SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
+		WHERE source_id = ?
+		  AND source_message_id = ?
+		  AND EXISTS (
+			SELECT 1 FROM imap_message_memberships
+			WHERE source_id = messages.source_id
+			  AND message_id = messages.id
+			  AND mailbox = ?
+			  AND uidvalidity = ?
+			  AND uid = ?
+		  )
+	`, sourceID, fmt.Sprintf("%s|%d", mailbox, uid), mailbox, uidValidity, uid)
+	if err != nil {
+		return fmt.Errorf("invalidate IMAP source key %s|%d:%d: %w", mailbox, uidValidity, uid, err)
+	}
+	return nil
+}
+
 // deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a
 // Reset delta does not republish, drops them from stored, and marks their
 // messages for label reconciliation.
@@ -447,6 +478,19 @@ func deleteUnobservedIMAPMemberships(
 	if len(keys) == 0 {
 		return nil
 	}
+	slices.SortFunc(keys, func(a, b imapMembershipUID) int {
+		if a.uidValidity != b.uidValidity {
+			return cmp.Compare(a.uidValidity, b.uidValidity)
+		}
+		return cmp.Compare(a.uid, b.uid)
+	})
+	for _, key := range keys {
+		if err := invalidateIMAPSourceKeyForMembership(
+			tx, sourceID, mailbox, int64(key.uidValidity), int64(key.uid),
+		); err != nil {
+			return err
+		}
+	}
 	if len(stored) == 0 {
 		// Nothing survived: an emptied mailbox, or a new UIDVALIDITY epoch.
 		// One statement instead of one per row.
@@ -458,12 +502,6 @@ func deleteUnobservedIMAPMemberships(
 		}
 		return nil
 	}
-	slices.SortFunc(keys, func(a, b imapMembershipUID) int {
-		if a.uidValidity != b.uidValidity {
-			return cmp.Compare(a.uidValidity, b.uidValidity)
-		}
-		return cmp.Compare(a.uid, b.uid)
-	})
 	for _, key := range keys {
 		if _, err := tx.Exec(`
 			DELETE FROM imap_message_memberships
@@ -565,6 +603,41 @@ func retireAbsentIMAPMailboxes(
 			sourceID, mailbox,
 		); err != nil {
 			return fmt.Errorf("capture retired memberships for mailbox %q: %w", mailbox, err)
+		}
+		membershipRows, err := tx.Query(`
+			SELECT uidvalidity, uid
+			FROM imap_message_memberships
+			WHERE source_id = ? AND mailbox = ?
+		`, sourceID, mailbox)
+		if err != nil {
+			return fmt.Errorf("query retired memberships for mailbox %q: %w", mailbox, err)
+		}
+		type retiredMembership struct {
+			uidValidity int64
+			uid         int64
+		}
+		var memberships []retiredMembership
+		for membershipRows.Next() {
+			var uidValidity, uid int64
+			if err := membershipRows.Scan(&uidValidity, &uid); err != nil {
+				_ = membershipRows.Close()
+				return fmt.Errorf("scan retired membership for mailbox %q: %w", mailbox, err)
+			}
+			memberships = append(memberships, retiredMembership{uidValidity: uidValidity, uid: uid})
+		}
+		if err := membershipRows.Err(); err != nil {
+			_ = membershipRows.Close()
+			return fmt.Errorf("iterate retired memberships for mailbox %q: %w", mailbox, err)
+		}
+		if err := membershipRows.Close(); err != nil {
+			return fmt.Errorf("close retired memberships for mailbox %q: %w", mailbox, err)
+		}
+		for _, membership := range memberships {
+			if err := invalidateIMAPSourceKeyForMembership(
+				tx, sourceID, mailbox, membership.uidValidity, membership.uid,
+			); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(`
 			DELETE FROM imap_message_memberships
