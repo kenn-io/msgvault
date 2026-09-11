@@ -548,11 +548,11 @@ func cliRunGateDecision(r *http.Request, delegated bool) (label string, skip boo
 		Args []string `json:"args"`
 	}
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
-		// Delegated callers may only reach draft-reply; any other command is
-		// rejected by the handler before it does any work, so do not take a
-		// gate slot or surface a label to the owner.
-		if delegated && !IsCLIRunDraftReply(req.Args) {
-			return "", true, nil
+		if delegated {
+			cmd, ok := lookupDelegatedCLICommand(req.Args)
+			if !ok || !cmd.executable {
+				return "", true, nil
+			}
 		}
 		command := cliRunCommandWords(req.Args)
 		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] {

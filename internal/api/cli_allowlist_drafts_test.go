@@ -144,6 +144,61 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	})
 }
 
+// TestDelegatedCLIRunLifecycleAdmission verifies that mapped but non-executable
+// lifecycle commands are rejected for delegated callers through the table's
+// executable false status, not through cliRunCommandAllowed.
+func TestDelegatedCLIRunLifecycleAdmission(t *testing.T) {
+	srv, secret := newDelegatedTestServer(t)
+
+	sendDelegated := func(args []string) (int, ErrorResponse) {
+		bs, marshalErr := json.Marshal(CLIRunRequest{Args: args})
+		require.NoError(t, marshalErr)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		var resp ErrorResponse
+		_ = json.NewDecoder(w.Body).Decode(&resp)
+		return w.Code, resp
+	}
+
+	t.Run("draft-get rejected from table executable false", func(t *testing.T) {
+		code, resp := sendDelegated([]string{"draft-get", "42"})
+		assert.Equal(t, http.StatusBadRequest, code)
+		assert.Equal(t, "command_not_allowed", resp.Error)
+	})
+
+	t.Run("draft-edit rejected from table executable false", func(t *testing.T) {
+		code, resp := sendDelegated([]string{"draft-edit", "42"})
+		assert.Equal(t, http.StatusBadRequest, code)
+		assert.Equal(t, "command_not_allowed", resp.Error)
+	})
+
+	t.Run("draft-delete rejected from table executable false", func(t *testing.T) {
+		code, resp := sendDelegated([]string{"draft-delete", "42"})
+		assert.Equal(t, http.StatusBadRequest, code)
+		assert.Equal(t, "command_not_allowed", resp.Error)
+	})
+
+	t.Run("draft-reply-all rejected as unknown command", func(t *testing.T) {
+		code, resp := sendDelegated([]string{"draft-reply-all", "42"})
+		assert.Equal(t, http.StatusBadRequest, code)
+		assert.Equal(t, "command_not_allowed", resp.Error)
+	})
+
+	t.Run("draft-repl rejected as unknown command", func(t *testing.T) {
+		code, resp := sendDelegated([]string{"draft-repl", "42"})
+		assert.Equal(t, http.StatusBadRequest, code)
+		assert.Equal(t, "command_not_allowed", resp.Error)
+	})
+
+	t.Run("draft-reply with valid args admitted", func(t *testing.T) {
+		code, _ := sendDelegated([]string{"draft-reply", "42", "--from=alice@example.com", "--body=hi"})
+		assert.Equal(t, http.StatusOK, code)
+	})
+}
+
 // TestDelegatedGrantScopesSource is the mutation probe for cli_handlers.go:1315.
 // It drives a delegated draft-reply through the real handler against a source
 // that is not in the grant, and asserts the request is refused.

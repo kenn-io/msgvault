@@ -16,10 +16,16 @@ type Permission string
 
 const (
 	PermissionDraftCreate Permission = "draft.create"
+	PermissionDraftRead   Permission = "draft.read"
+	PermissionDraftEdit   Permission = "draft.edit"
+	PermissionDraftDelete Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
 	string(PermissionDraftCreate): PermissionDraftCreate,
+	string(PermissionDraftRead):   PermissionDraftRead,
+	string(PermissionDraftEdit):   PermissionDraftEdit,
+	string(PermissionDraftDelete): PermissionDraftDelete,
 }
 
 func KnownPermission(s string) (Permission, bool) {
@@ -28,7 +34,7 @@ func KnownPermission(s string) (Permission, bool) {
 }
 
 func AllPermissions() []Permission {
-	return []Permission{PermissionDraftCreate}
+	return []Permission{PermissionDraftCreate, PermissionDraftRead, PermissionDraftEdit, PermissionDraftDelete}
 }
 
 // SourceRef carries the repo's durable source identity: (id, type, identifier).

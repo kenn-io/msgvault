@@ -203,6 +203,79 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 	assert.Equal(0, done, "done calls")
 }
 
+func TestOperationGateSkipsDelegatedNonExecutableCommands(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"draft-get", `{"args":["draft-get","42"]}`},
+		{"draft-edit", `{"args":["draft-edit","42","--body=new"]}`},
+		{"draft-delete", `{"args":["draft-delete","42"]}`},
+		{"unknown delegated", `{"args":["gc"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			gate := &recordingOperationGate{allow: false}
+			called := false
+			handler := operationGateMiddleware(gate, nil, func(*http.Request) bool { return true })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(tc.body))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			assert.True(called, "rejected delegated command should skip gate and reach handler")
+			begin, _ := gate.counts()
+			assert.Equal(0, begin, "gate must not be acquired for non-executable delegated command")
+		})
+	}
+}
+
+func TestOperationGateRetainsDelegatedDraftReply(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: true}
+	handler := operationGateMiddleware(gate, nil, func(*http.Request) bool { return true })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["draft-reply","42","--from=alice@example.com","--body=hi"]}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusNoContent, resp.Code)
+	begin, done := gate.counts()
+	assert.Equal(1, begin, "draft-reply must acquire gate")
+	assert.Equal(1, done, "draft-reply must release gate")
+}
+
+func TestOperationGateDelegatedHolderLabelRedacted(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault sync")
+	require.True(ok, "occupy gate")
+	defer release()
+
+	handler := operationGateMiddleware(gate, nil, func(*http.Request) bool { return true })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["draft-reply","42","--from=alice@example.com","--body=hi"]}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusServiceUnavailable, resp.Code)
+	var errResp ErrorResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp))
+	assert.Equal("operation_in_progress", errResp.Error)
+	assert.NotContains(errResp.Message, "msgvault sync", "holder label must be redacted for delegated callers")
+}
+
 func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}

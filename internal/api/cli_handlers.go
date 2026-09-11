@@ -1309,7 +1309,8 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
-		if !IsCLIRunDraftReply(req.Args) {
+		cmd, ok := lookupDelegatedCLICommand(req.Args)
+		if !ok || !cmd.executable {
 			writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 			return
 		}

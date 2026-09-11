@@ -13,6 +13,10 @@ background operations, and more ways to import and maintain your history.
 These changes cover current `main` through **September 9, 2026** and are not
 included in 0.19.3. Follow the linked task guides for current usage details.
 
+### Agent grants
+
+Agent tokens now accept four independent draft permissions: `draft.create`, `draft.read`, `draft.edit`, and `draft.delete`. Only `draft-reply` (`draft.create`) is currently executable by a delegated caller; the lifecycle commands remain closed until their handlers carry grants and source checks. Sending remains a separate permission and workflow.
+
 ### Email identifiers
 
 Apple Mail imports now preserve RFC Message-ID and link unambiguous replies
