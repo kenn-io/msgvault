@@ -28,7 +28,7 @@ func TestPackageShardsWindows(t *testing.T) {
 
 	var source strings.Builder
 	source.WriteString(`package shardfixture
-import ("flag"; "fmt"; "os"; "testing")
+import ("flag"; "fmt"; "os"; "strings"; "testing"; "time")
 var output *os.File
 func TestMain(m *testing.M) {
     flag.Parse()
@@ -37,6 +37,18 @@ func TestMain(m *testing.M) {
     os.Exit(code)
 }
 func record(t *testing.T) {
+    if os.Getenv("SHARD_COORDINATE") != "" {
+        signal := os.Getenv("SHARD_OUTPUT") + "/released"
+        if strings.HasPrefix(t.Name(), "Test1199_") {
+            if err := os.WriteFile(signal, nil, 0600); err != nil { panic(err) }
+        }
+        if strings.HasPrefix(t.Name(), "Test0000_") {
+            for {
+                if _, err := os.Stat(signal); err == nil { break } else if !os.IsNotExist(err) { panic(err) }
+                time.Sleep(10 * time.Millisecond)
+            }
+        }
+    }
     if output == nil {
         var err error
         output, err = os.Create(fmt.Sprintf("%s/%d", os.Getenv("SHARD_OUTPUT"), os.Getpid()))
@@ -121,6 +133,13 @@ func record(t *testing.T) {
 			}
 		})
 	}
+	t.Run("independent shards", func(t *testing.T) {
+		require := require.New(t)
+		t.Setenv("SHARD_COORDINATE", "1")
+		output, result, err := run(t, "30s", "")
+		require.NoError(err, result)
+		require.FileExists(filepath.Join(output, "released"))
+	})
 	t.Run("later batch failure", func(t *testing.T) {
 		require := require.New(t)
 		_, result, err := run(t, "1m30s", want[count-1])
