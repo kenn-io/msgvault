@@ -70,3 +70,51 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(wantID, revokedID, "revoke must use the id from the issue response")
 }
+
+// TestAgentTokenBusyResponseRetriesAndNotifies proves the P2 fix: a 503
+// operation_in_progress response from the daemon triggers the busy-retry seam
+// (notify + delay + retry) rather than returning a hard error immediately.
+func TestAgentTokenBusyResponseRetriesAndNotifies(t *testing.T) {
+	t.Cleanup(func() { operationBusyRetryDelay = time.Second })
+	operationBusyRetryDelay = time.Millisecond
+
+	var (
+		callCount   int
+		notifyCount int
+		notifyMsg   string
+	)
+
+	const busyBody = `{"error":"operation_in_progress","message":"msgvault sync alice@example.com has been running for 4m12s"}`
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/agent-tokens/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		callCount++
+		if callCount < 3 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(busyBody))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
+	require.New(t).NoError(err)
+	c.SetBusyNotifier(func(msg string) {
+		notifyCount++
+		notifyMsg = msg
+	})
+
+	err = c.RevokeAgentToken(context.Background(), "tok_abc")
+	assert.New(t).NoError(err, "must succeed after retries")
+	assert.Equal(t, 3, callCount, "must have retried twice before succeeding")
+	assert.GreaterOrEqual(t, notifyCount, 1, "busy notifier must have fired at least once")
+	assert.Contains(t, notifyMsg, "msgvault sync", "notifier message must name the holder")
+}

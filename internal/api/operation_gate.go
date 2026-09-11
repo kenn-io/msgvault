@@ -344,9 +344,10 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate, redact bo
 }
 
 // operationGateExemptPaths bypass the generic mutation gate. Most only read;
-// the session endpoints mutate process-local authentication state. Verify is
-// NOT exempt: its subprocess opens the store read-write and runs schema
-// init/migrations.
+// the session endpoints mutate process-local authentication state, and the
+// agent-token management endpoints mutate only in-memory, process-scoped
+// grant state (agentgrant.Registry). Verify is NOT exempt: its subprocess
+// opens the store read-write and runs schema init/migrations.
 //
 // Backup freeze begin, meeting import, and historical import jobs coordinate
 // the gate in their handlers.
@@ -354,10 +355,14 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate, redact bo
 // authenticated upload cannot hold the gate. Backup freeze end bypasses the
 // gate so it can release the freeze held by begin. Routing these through the
 // generic middleware would deadlock their coordination.
+//
+// DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
+// handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
 	sessionPath:                      true,
 	sessionLoginPath:                 true,
+	agentTokensPath:                  true,
 	importJobsEndpointPath:           true,
 	meetingImportEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":  true,
@@ -449,7 +454,7 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false, "", nil
 	}
-	if operationGateExemptPaths[r.URL.Path] {
+	if operationGateExemptPaths[r.URL.Path] || strings.HasPrefix(r.URL.Path, agentTokensPath+"/") {
 		return false, "", nil
 	}
 	if readOnlyPostRouteRequest(r) {

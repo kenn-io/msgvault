@@ -10,6 +10,14 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// agentTokensPath is the base path for all agent-token management routes.
+// It is used by operationGateExemptPaths to exempt both the collection
+// endpoint (POST/GET /api/v1/agent-tokens) and the member endpoint
+// (DELETE /api/v1/agent-tokens/{id}) from the generic mutation gate.
+// agentgrant.Registry is in-memory and process-scoped; revoke touches no
+// archive state, so these routes belong with the session endpoints.
+const agentTokensPath = "/api/v1/agent-tokens"
+
 // agentGrantSourceResolver is the narrow interface on s.store needed by
 // handleIssueAgentToken to resolve a source ID to a SourceRef.
 type agentGrantSourceResolver interface {
@@ -73,21 +81,11 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 	}
 }
 
-// ownerAPIKeyPresented returns true when the request carries the owner API key
-// via X-Api-Key or Authorization Bearer. Session and loopback-only modes are
-// not sufficient for agent-token management.
+// ownerAPIKeyPresented returns true when the request carries the owner API key.
+// Routes through the classifier cached by requestSecurityMiddleware so header
+// normalization is handled in exactly one place.
 func (s *Server) ownerAPIKeyPresented(r *http.Request) bool {
-	if s.cfg.Server.APIKey == "" {
-		return false
-	}
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		authHeader = r.Header.Get("X-Api-Key")
-	}
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		authHeader = authHeader[7:]
-	}
-	return constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey)
+	return s.requestAuthentication(r).Mode == AuthModeAPIKey
 }
 
 // handleIssueAgentToken issues a new restricted agent grant.

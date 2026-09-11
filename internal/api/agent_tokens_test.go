@@ -271,6 +271,253 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 	assert.NotContains(t, w2.Body.String(), issueResp.Secret, "secret must not appear in list response")
 }
 
+// TestAgentTokenRoutesExemptFromOperationGate proves the P1 fix: revoke and
+// issue succeed with a 204/201 while the operation gate is held by another
+// operation. This is the kill-switch invariant: a leaked agent token can be
+// revoked even during a multi-hour sync or import, and the revoked grant is
+// gone immediately.
+func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
+	gate := NewSerialOperationGate()
+	stub := &stubSourceStore{
+		src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	}
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			APIKey:      agentTokenTestAPIKey,
+			AgentAccess: true,
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         stub,
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
+
+	// Issue a grant before holding the gate so we have an ID to revoke.
+	prereq := agentTokenIssueRequest{
+		Label:       "pre-hold",
+		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs:   []int64{1},
+	}
+	prereqBytes, err := json.Marshal(prereq)
+	require.NoError(t, err)
+	preReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(prereqBytes))
+	preReq.Header.Set("Content-Type", "application/json")
+	preReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	preW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(preW, preReq)
+	require.Equal(t, http.StatusCreated, preW.Code, "pre-hold issue: %s", preW.Body.String())
+	var preIssued agentTokenIssueResponse
+	require.NoError(t, json.NewDecoder(preW.Body).Decode(&preIssued))
+	require.NotEmpty(t, preIssued.ID)
+
+	// Hold the gate so all normal mutations would block.
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault sync alice@example.com")
+	require.True(t, ok, "must acquire gate")
+	defer release()
+
+	// Revoke must succeed (204) while gate is held.
+	t.Run("revoke succeeds under gate contention", func(t *testing.T) {
+		revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/"+preIssued.ID, nil)
+		revokeReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+		revokeW := httptest.NewRecorder()
+		srv.Router().ServeHTTP(revokeW, revokeReq)
+		assert.Equal(t, http.StatusNoContent, revokeW.Code, "revoke while gate held: %s", revokeW.Body.String())
+
+		// Grant must be gone immediately.
+		grants := reg.List()
+		for _, g := range grants {
+			assert.NotEqual(t, preIssued.ID, g.ID, "revoked grant must not appear in registry")
+		}
+	})
+
+	// Issue must also succeed (201) while gate is held.
+	t.Run("issue succeeds under gate contention", func(t *testing.T) {
+		issueReq := agentTokenIssueRequest{
+			Label:       "under-contention",
+			Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+			SourceIDs:   []int64{1},
+		}
+		issueBytes, marshalErr := json.Marshal(issueReq)
+		require.NoError(t, marshalErr)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(issueBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code, "issue while gate held: %s", w.Body.String())
+	})
+}
+
+// TestHandleIssueAgentTokenValidation covers every validation branch added by
+// this diff to handleIssueAgentToken. The registry enforces the same rules
+// independently, but these tests pin the HTTP error contract (status + code)
+// documented in docs/cli-reference.md.
+func TestHandleIssueAgentTokenValidation(t *testing.T) {
+	validBody := agentTokenIssueRequest{
+		Label:       "test-agent",
+		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs:   []int64{1},
+	}
+
+	cases := []struct {
+		name       string
+		body       any
+		rawBody    string
+		wantStatus int
+		wantCode   string
+		agentGrant bool // if false, server has agentGrants == nil
+		srcErr     bool // if true, stubSourceStore returns an error
+		noResolver bool // if true, use a store that does not implement agentGrantSourceResolver
+	}{
+		{
+			name:       "agent_access_disabled",
+			body:       validBody,
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "agent_access_disabled",
+			agentGrant: false,
+		},
+		{
+			name:       "invalid_json_body",
+			rawBody:    `{not valid json`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_request",
+			agentGrant: true,
+		},
+		{
+			name: "label_required",
+			body: agentTokenIssueRequest{
+				Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+				SourceIDs:   []int64{1},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_request",
+			agentGrant: true,
+		},
+		{
+			name: "permissions_required",
+			body: agentTokenIssueRequest{
+				Label:     "test",
+				SourceIDs: []int64{1},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_request",
+			agentGrant: true,
+		},
+		{
+			name: "source_ids_required",
+			body: agentTokenIssueRequest{
+				Label:       "test",
+				Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_request",
+			agentGrant: true,
+		},
+		{
+			name: "invalid_permission",
+			body: agentTokenIssueRequest{
+				Label:       "test",
+				Permissions: []string{"unknown.operation"},
+				SourceIDs:   []int64{1},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_permission",
+			agentGrant: true,
+		},
+		{
+			name:       "store_does_not_support_source_resolution",
+			body:       validBody,
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "internal_error",
+			agentGrant: true,
+			noResolver: true,
+		},
+		{
+			name:       "invalid_source",
+			body:       validBody,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_source",
+			agentGrant: true,
+			srcErr:     true,
+		},
+		{
+			name: "issue_error_remapped_to_400",
+			// Two source IDs that both resolve to the same (Type, Identifier)
+			// via the stub store trigger the registry's duplicate-source guard.
+			body: agentTokenIssueRequest{
+				Label:       "dup-source",
+				Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+				SourceIDs:   []int64{1, 2},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_request",
+			agentGrant: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var st MessageStore
+			if tc.noResolver {
+				// mockStore does not implement agentGrantSourceResolver.
+				st = &mockStore{}
+			} else {
+				stub := &stubSourceStore{
+					src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+				}
+				if tc.srcErr {
+					stub.src = nil
+					stub.srcErr = assert.AnError
+				}
+				st = stub
+			}
+			cfg := &config.Config{
+				Server: config.ServerConfig{
+					APIKey:      agentTokenTestAPIKey,
+					AgentAccess: tc.agentGrant,
+				},
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config:    cfg,
+				Store:     st,
+				Logger:    testLogger(),
+				Scheduler: newMockScheduler(),
+			})
+			if tc.agentGrant {
+				srv.agentGrants = agentgrant.NewRegistry()
+			}
+
+			var bodyBytes []byte
+			if tc.rawBody != "" {
+				bodyBytes = []byte(tc.rawBody)
+			} else {
+				var marshalErr error
+				bodyBytes, marshalErr = json.Marshal(tc.body)
+				require.NoError(t, marshalErr)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			assert.Equal(t, tc.wantStatus, w.Code, "status: %s", w.Body.String())
+			var errResp struct {
+				Error string `json:"error"`
+			}
+			if assert.NoError(t, json.NewDecoder(w.Body).Decode(&errResp)) {
+				assert.Equal(t, tc.wantCode, errResp.Error, "error code")
+			}
+		})
+	}
+}
+
 // TestRevocationDeniesSubsequentAuthentication verifies the full HTTP
 // issue → authenticate → revoke → authenticate cycle using only the HTTP
 // endpoints (POST /api/v1/agent-tokens, GET /api/v1/health,

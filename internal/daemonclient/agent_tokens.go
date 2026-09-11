@@ -55,18 +55,33 @@ func (o *agentTokenOptions) GetHeader() (map[string]string, error) {
 
 // doAgentTokenRequest performs a raw HTTP request to the agent-token API and
 // returns the response body bytes and status code. Auth headers are applied by the
-// daemonclient's standard request editor.
+// daemonclient's standard request editor. It routes through the same
+// operationBusyWaiter seam as all generated-client calls, so a 503
+// operation_in_progress response triggers the notify-and-retry loop instead of
+// returning a hard error to the caller.
 func (c *Client) doAgentTokenRequest(ctx context.Context, method, path string, body any) ([]byte, int, error) {
-	resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, &agentTokenOptions{body: body})
-	if err != nil {
-		return nil, 0, err
+	waiter := &operationBusyWaiter{c: c}
+	for {
+		resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, &agentTokenOptions{body: body})
+		if err != nil {
+			return nil, 0, err
+		}
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, resp.StatusCode, readErr
+		}
+		if busyErr := operationInProgressFromBody(raw); busyErr != nil {
+			waitCtx := c.requestContext()
+			if waiter.wait(waitCtx, busyErr) {
+				continue
+			}
+			if ctxErr := waitCtx.Err(); ctxErr != nil {
+				return nil, resp.StatusCode, ctxErr
+			}
+		}
+		return raw, resp.StatusCode, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-	return raw, resp.StatusCode, nil
 }
 
 // errorResponseFromBytes wraps pre-read bytes into a minimal http.Response so
