@@ -10,8 +10,12 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
-// ErrGoogleAuthorizationRequired identifies credentials that need Google sign-in.
-var ErrGoogleAuthorizationRequired = errors.New("authorization for Google Contacts is required")
+var (
+	// ErrGoogleAuthorizationRequired identifies credentials that need Google sign-in.
+	ErrGoogleAuthorizationRequired = errors.New("authorization for Google Contacts is required")
+	// ErrGoogleTokenUnavailable identifies an account-wide token acquisition failure.
+	ErrGoogleTokenUnavailable = errors.New("token endpoint for Google Contacts is unavailable")
+)
 
 // googleTokensDir separates CardDAV authorizations by configured OAuth app.
 // Hashing the app name keeps arbitrary configuration keys out of path segments.

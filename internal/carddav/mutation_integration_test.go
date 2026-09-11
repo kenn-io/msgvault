@@ -34,6 +34,7 @@ type mutationFixture struct {
 	deleteTimeout       bool
 	throttleDeletes     int
 	putStatus           int
+	putRetryAfter       string
 	deleteStatus        int
 	putFailures         int
 	href                string
@@ -71,6 +72,9 @@ func (f *mutationFixture) handler(t *testing.T) http.HandlerFunc {
 				assert.Empty(t, r.Header.Get("If-None-Match"))
 			}
 			if f.putStatus != 0 {
+				if f.putRetryAfter != "" {
+					w.Header().Set("Retry-After", f.putRetryAfter)
+				}
 				w.WriteHeader(f.putStatus)
 				return
 			}
@@ -755,6 +759,33 @@ func TestRetryAfterRollsBackIntentAndClampsGateToOneHour(t *testing.T) {
 	err = service.PublishPerson(t.Context(), personID)
 	require.ErrorIs(err, store.ErrCardDAVRetryAfter)
 	assert.Equal(1, fixture.puts)
+}
+
+func TestNon429RetryAfterRollsBackIntentAndPersistsGate(t *testing.T) {
+	assertions := assert.New(t)
+	required := require.New(t)
+
+	fixture := &mutationFixture{}
+	service, st, personID, _ := seededMutationService(t, fixture)
+	required.NoError(service.PublishPerson(t.Context(), personID))
+	addProjectedEmail(t, st, personID)
+	fixture.putStatus = http.StatusServiceUnavailable
+	fixture.putRetryAfter = "17"
+	putsBefore := fixture.puts
+	before := time.Now()
+
+	err := service.PublishPerson(t.Context(), personID)
+	var status *StatusError
+	required.ErrorAs(err, &status)
+	assertions.Equal(http.StatusServiceUnavailable, status.StatusCode)
+	assertions.Equal(putsBefore+1, fixture.puts)
+	publication, getErr := st.GetCardDAVPublicationContext(t.Context(), personID)
+	required.NoError(getErr)
+	assertions.Empty(publication.PendingOperation)
+	gate, getErr := st.GetCardDAVRetryAfterContext(t.Context())
+	required.NoError(getErr)
+	required.NotNil(gate)
+	assertions.WithinDuration(before.Add(17*time.Second), *gate, 5*time.Second)
 }
 
 func TestThrottledUnpublishRetriesAfterGateExpires(t *testing.T) {

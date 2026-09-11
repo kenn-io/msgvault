@@ -92,15 +92,18 @@ func googleCardDAVTokenError(err error) error {
 		if value := strings.TrimSpace(retrieveErr.Response.Header.Get("Retry-After")); value != "" {
 			retryAfter = httpretry.RetryAfter(value, 0, time.Hour)
 		}
-		return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{
-			StatusCode: code,
-			RetryAfter: retryAfter,
-		}))
+		return fmt.Errorf("obtain Google access token: %w", errors.Join(
+			err,
+			carddav.ErrGoogleTokenUnavailable,
+			&carddav.StatusError{StatusCode: code, RetryAfter: retryAfter},
+		))
 	}
 	// oauth2 formats response-body read failures with %v, losing the cause.
 	bodyReadFailure := strings.Contains(err.Error(), "oauth2: cannot fetch token: ")
 	if _, ok := errors.AsType[net.Error](err); ok || syncerr.IsTransientNetwork(err) || errors.Is(err, context.Canceled) || bodyReadFailure {
-		return fmt.Errorf("obtain Google access token: %w", errors.Join(err, &carddav.StatusError{StatusCode: http.StatusBadGateway}))
+		return fmt.Errorf("obtain Google access token: %w", errors.Join(
+			err, carddav.ErrGoogleTokenUnavailable, &carddav.StatusError{StatusCode: http.StatusBadGateway},
+		))
 	}
 	return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
 }

@@ -123,10 +123,12 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			required := require.New(t)
+			tokenRequests := 0
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !assertions.NoError(r.ParseForm()) {
 					return
 				}
+				tokenRequests++
 				assertions.Equal("refresh_token", r.Form.Get("grant_type"))
 				w.Header().Set("Content-Type", "application/json")
 				if tc.retryAfter != "" {
@@ -157,7 +159,10 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 			_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 				BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username,
 				PrincipalURL: origin.String() + "/principal/", HomeURL: origin.String() + "/books/",
-				Books: []store.CardDAVDiscoveredBook{{CanonicalURL: origin.String() + "/books/contacts/", CanCreate: new(true)}},
+				Books: []store.CardDAVDiscoveredBook{
+					{CanonicalURL: origin.String() + "/books/contacts/", CanCreate: new(true)},
+					{CanonicalURL: origin.String() + "/books/other/", CanCreate: new(true)},
+				},
 			})
 			required.NoError(err)
 			davDials := 0
@@ -172,6 +177,11 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 			required.NoError(err)
 			_, syncErr := carddav.NewGoogleService(st, client).Sync(t.Context(), carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 			required.Error(syncErr)
+			if !tc.closeEndpoint {
+				// x/oauth2 may try both endpoint authentication styles. Two
+				// requests are one bounded Token call, not one call per book.
+				assertions.Equal(2, tokenRequests, "token failures are account-wide")
+			}
 			assertions.Zero(davDials)
 			runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 1, nil)
 			required.NoError(err)

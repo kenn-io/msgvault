@@ -214,7 +214,8 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 		return false
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) || errors.Is(err, ErrGoogleAuthorizationRequired) {
+		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) || errors.Is(err, ErrGoogleAuthorizationRequired) ||
+		errors.Is(err, ErrGoogleTokenUnavailable) {
 		return true
 	}
 	var status *StatusError
