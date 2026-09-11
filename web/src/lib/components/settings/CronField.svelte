@@ -95,6 +95,15 @@
   // a reload, a conflict) shows whatever preset matches the new value.
   let customMode = $state(false);
   const customActive = $derived(customMode && local !== undefined && local.source === value);
+  // A value replaced from outside drops the latch and the stale split for
+  // good, so neither a later zone change nor the value returning to the
+  // latched text can reopen the editor without the user asking for it.
+  $effect(() => {
+    if (local !== undefined && local.source !== value) {
+      local = undefined;
+      customMode = false;
+    }
+  });
   const presetValue = $derived.by(() => {
     if (empty) return required ? 'custom' : 'off';
     if (customActive) return 'custom';

@@ -81,6 +81,28 @@ describe('CronField', () => {
     expect(screen.queryByLabelText('Schedule')).toBeNull();
   });
 
+  it('does not reopen the editor when the value returns to the latched text or the zone changes', async () => {
+    const oninput = vi.fn();
+    const { rerender } = render(CronField, { value: '0 4 * * *', label: 'Schedule', oninput });
+
+    await fireEvent.input(screen.getByLabelText('Schedule'), { target: { value: '0 3 * * *' } });
+    expect(screen.getByRole('combobox', { name: 'Presets: Custom' })).toBeDefined();
+
+    // Another client stores an hourly run, then puts the daily run back.
+    await rerender({ value: '0 * * * *', label: 'Schedule', oninput });
+    await rerender({ value: '0 3 * * *', label: 'Schedule', oninput });
+    expect(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeDefined();
+    expect(screen.queryByLabelText('Schedule')).toBeNull();
+
+    // Changing only the zone after an outside reset keeps the preset by name.
+    await fireEvent.click(screen.getByRole('button', { name: /^Time zone/ }));
+    await fireEvent.input(screen.getByRole('combobox', { name: 'Time zone' }), { target: { value: 'utc' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /^UTC/ }));
+    expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=UTC 0 3 * * *');
+    expect(screen.getByRole('combobox', { name: 'Presets: Every day at 03:00' })).toBeDefined();
+    expect(screen.queryByLabelText('Schedule')).toBeNull();
+  });
+
   it('shows the preset by name when Custom is discarded back to a preset', async () => {
     const { rerender } = render(CronField, { value: '0 3 * * *', label: 'Schedule' });
 
