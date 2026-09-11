@@ -96,10 +96,20 @@ type SettingValidation struct {
 
 // SettingOff describes the one value that turns a setting off or hands it
 // back to a default.
+// text returns the off value as text; an absent value reads as "".
+func (o *SettingOff) text() string {
+	if o == nil || o.Value == nil {
+		return ""
+	}
+	return *o.Value
+}
+
 type SettingOff struct {
 	// Value is the off value in the same text form the value control shows:
-	// "0" for a count, "0s" for a duration, "" for an optional size.
-	Value string `json:"value"`
+	// "0" for a count, "0s" for a duration, "" for an optional size. It is
+	// a pointer so a generated client can tell an empty off value, which is
+	// a real value, from a missing one.
+	Value *string `json:"value"`
 	// Label says what happens while the setting is off, such as "No limit".
 	Label string `json:"label"`
 	// Suggest is the value the control starts from when switched on.
@@ -1027,7 +1037,7 @@ func normalizeSettingValue(key string, value any) any {
 	if validation.Off == nil || validation.Off.OnMinimum == nil {
 		return value
 	}
-	off, err := strconv.ParseFloat(validation.Off.Value, 64)
+	off, err := strconv.ParseFloat(validation.Off.text(), 64)
 	if err != nil {
 		return value
 	}

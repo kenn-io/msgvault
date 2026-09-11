@@ -10533,6 +10533,7 @@ components:
         suggest:
           type: string
         value:
+          nullable: true
           type: string
       required:
         - value

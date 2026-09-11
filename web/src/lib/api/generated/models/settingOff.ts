@@ -6,6 +6,7 @@ export interface SettingOff {
   label: string;
   on_minimum?: number;
   suggest?: string;
-  value: string;
+  /** @nullable */
+  value: string | null;
   [key: string]: unknown;
 }

@@ -325,18 +325,18 @@
       return setting.secret.hint || '••••••••';
     }
     const off = setting.validation?.off;
-    if (off && stringValue(setting) === off.value) return off.label;
+    if (off && stringValue(setting) === (off.value ?? '')) return off.label;
     return stringValue(setting) || 'Not set';
   }
   // A setting with an off value renders as a switch beside its control:
   // off stores the daemon's off value, on starts from the suggested value.
   function isSwitchedOff(setting: SettingState, off: SettingOff | undefined): boolean {
-    return off !== undefined && stringValue(setting) === off.value;
+    return off !== undefined && stringValue(setting) === (off.value ?? '');
   }
   function switchSetting(setting: SettingState, off: SettingOff, on: boolean) {
     const numeric = setting.kind === 'integer' || setting.kind === 'number';
     if (!on) {
-      setDraft(setting.key, numeric ? Number(off.value) : off.value);
+      setDraft(setting.key, numeric ? Number(off.value ?? '') : (off.value ?? ''));
       return;
     }
     if (numeric) {

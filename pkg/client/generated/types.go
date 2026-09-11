@@ -10124,7 +10124,7 @@ type SettingOff struct {
 	Label     string   `json:"label" validate:"required"`
 	OnMinimum *float64 `json:"on_minimum,omitempty"`
 	Suggest   *string  `json:"suggest,omitempty"`
-	Value     string   `json:"value" validate:"required"`
+	Value     *string  `json:"value,omitempty" validate:"required"`
 }
 
 func (s SettingOff) Validate() error {

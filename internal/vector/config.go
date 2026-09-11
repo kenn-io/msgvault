@@ -370,6 +370,11 @@ type SearchConfig struct {
 	MaxPageSizeHybrid *int    `toml:"max_page_size_hybrid"`
 }
 
+// DefaultMaxPageSizeHybrid is the hybrid page cap applied when config.toml
+// omits max_page_size_hybrid. Settings suggests the same value when the cap
+// is switched back on, so the two cannot drift apart.
+const DefaultMaxPageSizeHybrid = 50
+
 // MaxPageSizeHybridClamp returns the effective per-request limit
 // clamp: zero means "no clamp", a positive value means "clamp to N".
 // Helper exists because callers want a flat int and need to handle
@@ -658,7 +663,7 @@ func (c *Config) ApplyDefaults() {
 		c.Search.SubjectBoost = 2.0
 	}
 	if c.Search.MaxPageSizeHybrid == nil {
-		v := 50
+		v := DefaultMaxPageSizeHybrid
 		c.Search.MaxPageSizeHybrid = &v
 	}
 	c.Multimodal.Provider = strings.ToLower(strings.TrimSpace(c.Multimodal.Provider))

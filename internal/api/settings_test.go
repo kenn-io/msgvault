@@ -1780,7 +1780,7 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 			continue
 		}
 		requirements.NotNil(validation.Minimum, "%s: minimum must stay published for clients that ignore off", key)
-		off, err := strconv.ParseFloat(validation.Off.Value, 64)
+		off, err := strconv.ParseFloat(validation.Off.text(), 64)
 		requirements.NoError(err, key)
 		assertions.LessOrEqual(*validation.Minimum, off, "%s: minimum must include the off value", key)
 		assertions.Greater(*validation.Off.OnMinimum, off, "%s: the on range must exclude the off value", key)

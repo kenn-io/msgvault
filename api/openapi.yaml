@@ -10755,7 +10755,9 @@ components:
         suggest:
           type: string
         value:
-          type: string
+          type:
+            - string
+            - "null"
       required:
         - value
         - label

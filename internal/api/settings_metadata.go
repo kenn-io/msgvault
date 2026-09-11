@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"go.kenn.io/msgvault/internal/vector"
 	"strconv"
 	"strings"
 
@@ -263,7 +264,7 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.search.rrf_k":                 atLeast(1),
 	"vector.search.k_per_signal":          atLeast(1),
 	"vector.search.subject_boost":         atLeast(0),
-	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", "200"),
+	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", strconv.Itoa(vector.DefaultMaxPageSizeHybrid)),
 
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),
@@ -338,7 +339,7 @@ func withOff(validation SettingValidation, label, suggest string) SettingValidat
 }
 
 func withOffValue(validation SettingValidation, value, label, suggest string) SettingValidation {
-	validation.Off = &SettingOff{Value: value, Label: label, Suggest: suggest}
+	validation.Off = &SettingOff{Value: &value, Label: label, Suggest: suggest}
 	return validation
 }
 
@@ -367,7 +368,7 @@ func validateSettingBounds(key string, value any) error {
 		return nil
 	}
 	if validation.Off != nil {
-		if off, err := strconv.ParseFloat(validation.Off.Value, 64); err == nil && off == number {
+		if off, err := strconv.ParseFloat(validation.Off.text(), 64); err == nil && off == number {
 			return nil
 		}
 		if validation.Off.OnMinimum != nil && number < *validation.Off.OnMinimum {
