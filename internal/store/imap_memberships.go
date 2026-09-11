@@ -223,16 +223,16 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("load memberships for mailbox %q: %w", normalized.mailbox, err)
 				}
 				stored = loaded
-				observed := make(map[imapMembershipUID]struct{}, len(delta.Memberships))
+				observed := make(map[imapMembershipUID]IMAPMembershipObservation, len(delta.Memberships))
 				for _, observation := range delta.Memberships {
-					observed[imapMembershipUID{
-						uidValidity: normalized.uidValidity, uid: observation.UID,
-					}] = struct{}{}
+					observation.Mailbox = normalized.mailbox
+					observation.UIDValidity = normalized.uidValidity
+					observed[imapMembershipUID{uidValidity: normalized.uidValidity, uid: observation.UID}] = observation
 				}
 				// Whatever the reset does not republish is gone from the mailbox.
 				// This runs before any insert, as the wholesale delete did.
 				if err := deleteUnobservedIMAPMemberships(
-					tx, sourceID, normalized.mailbox, stored, observed, affected,
+					tx, sourceID, normalized.mailbox, normalized.uidValidity, stored, observed, affected,
 				); err != nil {
 					return err
 				}
@@ -246,11 +246,6 @@ func (s *Store) applyIMAPMailboxDeltas(
 					sourceID, normalized.mailbox, normalized.uidValidity, uid,
 				); err != nil {
 					return fmt.Errorf("capture vanished UID %d in mailbox %q: %w", uid, normalized.mailbox, err)
-				}
-				if err := invalidateIMAPSourceKeyForMembership(
-					tx, sourceID, normalized.mailbox, int64(normalized.uidValidity), int64(uid),
-				); err != nil {
-					return err
 				}
 				if _, err := tx.Exec(`
 					DELETE FROM imap_message_memberships
@@ -448,11 +443,46 @@ func invalidateIMAPSourceKeyForMembership(
 			  AND uidvalidity = ?
 			  AND uid = ?
 		  )
-	`, sourceID, fmt.Sprintf("%s|%d", mailbox, uid), mailbox, uidValidity, uid)
+		  AND NOT EXISTS (
+			SELECT 1 FROM imap_message_memberships
+			WHERE source_id = messages.source_id
+			  AND message_id = messages.id
+			  AND mailbox = ?
+			  AND uidvalidity <> ?
+			  AND uid = ?
+		  )
+	`, sourceID, fmt.Sprintf("%s|%d", mailbox, uid), mailbox, uidValidity, uid,
+		mailbox, uidValidity, uid)
 	if err != nil {
 		return fmt.Errorf("invalidate IMAP source key %s|%d:%d: %w", mailbox, uidValidity, uid, err)
 	}
 	return nil
+}
+
+func imapObservationMatchesMessage(
+	tx *loggedTx,
+	messageID int64,
+	observation IMAPMembershipObservation,
+) (bool, error) {
+	if observation.RFC822MessageID == "" {
+		return false, nil
+	}
+	var stored sql.NullString
+	if err := tx.QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = ?`, messageID).Scan(&stored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read IMAP message %d identity: %w", messageID, err)
+	}
+	if !stored.Valid {
+		return false, nil
+	}
+	for _, candidate := range imapRFC822MessageIDCandidates(observation.RFC822MessageID) {
+		if stored.String == candidate {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a
@@ -462,16 +492,19 @@ func deleteUnobservedIMAPMemberships(
 	tx *loggedTx,
 	sourceID int64,
 	mailbox string,
+	currentUIDValidity uint32,
 	stored map[imapMembershipUID]storedIMAPMembership,
-	observed map[imapMembershipUID]struct{},
+	observed map[imapMembershipUID]IMAPMembershipObservation,
 	affected map[int64]struct{},
 ) error {
 	keys := make([]imapMembershipUID, 0, len(stored))
+	removed := make(map[imapMembershipUID]int64, len(stored))
 	for key, prior := range stored {
 		if _, kept := observed[key]; kept {
 			continue
 		}
 		keys = append(keys, key)
+		removed[key] = prior.messageID
 		affected[prior.messageID] = struct{}{}
 		delete(stored, key)
 	}
@@ -485,6 +518,24 @@ func deleteUnobservedIMAPMemberships(
 		return cmp.Compare(a.uid, b.uid)
 	})
 	for _, key := range keys {
+		if key.uidValidity == currentUIDValidity {
+			continue
+		}
+		keepSourceKey := false
+		for observedKey, observation := range observed {
+			if observedKey.uid != key.uid || observation.Mailbox != mailbox {
+				continue
+			}
+			matches, err := imapObservationMatchesMessage(tx, removed[key], observation)
+			if err != nil {
+				return err
+			}
+			keepSourceKey = matches
+			break
+		}
+		if keepSourceKey {
+			continue
+		}
 		if err := invalidateIMAPSourceKeyForMembership(
 			tx, sourceID, mailbox, int64(key.uidValidity), int64(key.uid),
 		); err != nil {
