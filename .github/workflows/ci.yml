@@ -384,7 +384,6 @@ jobs:
           go test -timeout 60m -tags "fts5 sqlite_vec" `
             ./internal/api `
             ./internal/importer `
-            ./internal/store `
             ./scripts
 
   test-windows-sharded:
@@ -401,6 +400,9 @@ jobs:
             # executing schema setup (no deadlock; tests kept progressing).
             # Give only this package the larger per-shard budget.
             timeout: 120m
+          - name: store
+            package: ./internal/store
+            timeout: 60m
           - name: sync-vector-embed
             package: ./internal/sync
             package2: ./internal/vector/embed
