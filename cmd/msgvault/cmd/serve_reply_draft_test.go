@@ -235,6 +235,54 @@ func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {
 	assertions.Contains(string(raw), "reply body")
 }
 
+func TestRunCLIReplyDraftUsesConfirmedAlias(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	alias := "alias@example.test"
+	requirements.NoError(fixture.store.AddAccountIdentity(fixture.source.ID, alias, "manual"))
+
+	var events []api.CLIRunEvent
+	err := fixture.grantedAdapter().runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+		Args: []string{
+			"draft-reply", strconv.FormatInt(fixture.parentID, 10),
+			"--from", alias, "--body", "reply body", "--json",
+		},
+	}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result draftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal(draftReplyStatusCreated, result.Status)
+	assertions.Equal(fixture.source.ID, result.SourceID)
+	assertions.Equal("Drafts", result.Mailbox)
+
+	remoteClient := imaplib.NewClient(fixture.config, testutil.IMAPTestPassword)
+	defer func() { _ = remoteClient.Close() }()
+	remote, err := remoteClient.GetMessageRaw(t.Context(), fmt.Sprintf("Drafts|%d", result.UID))
+	requirements.NoError(err)
+	assertions.Contains(string(remote.Raw), "From: <alias@example.test>")
+
+	localRaw, err := fixture.store.GetMessageRaw(result.MessageID)
+	requirements.NoError(err)
+	assertions.Contains(string(localRaw), "From: <alias@example.test>")
+	var sourceID, senderID int64
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT m.source_id, p.id
+		FROM messages m JOIN participants p ON p.id = m.sender_id
+		WHERE m.id = ?
+	`), result.MessageID).Scan(&sourceID, &senderID))
+	assertions.Equal(fixture.source.ID, sourceID)
+	var sender string
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT email_address FROM participants WHERE id = ?
+	`), senderID).Scan(&sender))
+	assertions.Equal(alias, sender)
+}
+
 func TestRunCLIReplyDraftDeniesBeforeConnecting(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	refuseConnect := func(context.Context, *store.Source) (*imaplib.Client, error) {
@@ -302,6 +350,35 @@ func TestRunCLIReplyDraftDeniesBeforeConnecting(t *testing.T) {
 		requirements.True(ok)
 		requirements.ErrorContains(coded.Err, "not a confirmed identity")
 		assertions.NotContains(coded.Err.Error(), "other@example.com")
+	})
+
+	t.Run("identity confirmed on another source", func(t *testing.T) {
+		requirements := require.New(t)
+		const alias = "alias@example.test"
+		otherSource, err := fixture.store.GetOrCreateSource("imap", "other-source@example.test")
+		requirements.NoError(err)
+		requirements.NoError(fixture.store.AddAccountIdentity(otherSource.ID, alias, "manual"))
+		calls := 0
+		adapter := &storeAPIAdapter{
+			store:       fixture.store,
+			draftPolicy: []config.IMAPDraftSource{{SourceID: fixture.source.ID, Enabled: true, Mailbox: "Drafts"}},
+			draftClientFactory: func(context.Context, *store.Source) (*imaplib.Client, error) {
+				calls++
+				return nil, errors.New("source-scoped denial must not open an IMAP connection")
+			},
+		}
+		var events []api.CLIRunEvent
+		err = adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+			Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", alias, "--body", "reply body"},
+		}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		assertions := assert.New(t)
+		requirements.Error(err)
+		assertions.Equal("invalid_from", err.Error())
+		assertions.Empty(events)
+		assertions.Zero(calls)
 	})
 }
 

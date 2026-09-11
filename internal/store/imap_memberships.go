@@ -477,12 +477,7 @@ func imapObservationMatchesMessage(
 	if !stored.Valid {
 		return false, nil
 	}
-	for _, candidate := range imapRFC822MessageIDCandidates(observation.RFC822MessageID) {
-		if stored.String == candidate {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.Contains(imapRFC822MessageIDCandidates(observation.RFC822MessageID), stored.String), nil
 }
 
 // deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a

@@ -194,10 +194,20 @@ mailbox = "Drafts"
 Restart the daemon after changing the grant. The grant applies to the source,
 not to the caller: any client that can reach the daemon can create drafts on a
 granted source. The `draft-reply` command accepts
-one archived message ID, one confirmed `--from` identity, and `--body`. The
-daemon composes a plain-text reply with the parent message's threading headers,
-then sends one IMAP `APPEND` to the literal mailbox with `\Draft`. The source
-must advertise UIDPLUS. An empty body is valid when supplied as `--body=`.
+one archived message ID, one confirmed `--from` identity, and `--body`.
+The `--from` address may be a confirmed alias on the same source, even when it
+differs from the IMAP login. For Fastmail, review and apply the send-as alias
+inventory as described in [Fastmail alias inventory](people.md#fastmail-alias-inventory),
+then run:
+
+```bash
+msgvault draft-reply 123 --from alias@example.test --body "Draft reply"
+```
+
+The daemon composes a plain-text reply with the parent message's threading
+headers, then sends one IMAP `APPEND` to the literal mailbox with `\Draft`.
+The source must advertise UIDPLUS. An empty body is valid when supplied as
+`--body=`.
 
 The daemon stores the accepted message and its mailbox, UIDVALIDITY, and UID in
 one local transaction. It leaves `imap_folder_state` unchanged. A later sync
