@@ -144,9 +144,9 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	})
 }
 
-// TestDelegatedCLIRunLifecycleAdmission verifies that mapped but non-executable
-// lifecycle commands are rejected for delegated callers through the table's
-// executable false status, not through cliRunCommandAllowed.
+// TestDelegatedCLIRunLifecycleAdmission verifies that mapped lifecycle commands
+// remain unavailable to delegated callers on the parent stack. The table's
+// executable status is covered directly by TestDelegatedCLICommandTable.
 func TestDelegatedCLIRunLifecycleAdmission(t *testing.T) {
 	srv, secret := newDelegatedTestServer(t)
 
