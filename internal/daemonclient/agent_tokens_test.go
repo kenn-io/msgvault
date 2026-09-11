@@ -24,13 +24,17 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 		wantSecret = "mva1_dGVzdHNlY3JldA"
 	)
 
-	var revokedID string
+	var (
+		revokedID        string
+		issueContentType string
+	)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		issueContentType = r.Header.Get("Content-Type")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -63,6 +67,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	result, err := c.IssueAgentToken(context.Background(), "round-trip-test", []string{"draft.create"}, []int64{1})
 	require.NoError(err)
 	require.NotNil(result)
+	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
 	assert.Equal(wantID, result.ID, "id must be decoded from the 201 body")
 	assert.Equal(wantSecret, result.Secret)
 

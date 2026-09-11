@@ -51,6 +51,9 @@ func (o *agentTokenOptions) GetPathParams() (map[string]any, error) { return map
 func (o *agentTokenOptions) GetQuery() (map[string]any, error)      { return map[string]any{}, nil }
 func (o *agentTokenOptions) GetBody() any                           { return o.body }
 func (o *agentTokenOptions) GetHeader() (map[string]string, error) {
+	if o.body != nil {
+		return map[string]string{"Content-Type": "application/json"}, nil
+	}
 	return map[string]string{}, nil
 }
 
