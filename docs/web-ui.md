@@ -398,8 +398,10 @@ policies read-only. See [External Person Enrichment](/docs/usage/people-enrichme
 for the provider lifecycle.
 
 Provider credentials for embeddings, enrichment, and sweeps are write-only.
-You can add, replace, or remove a key. After saving, the UI shows whether a key
-is configured and where it comes from, but never its value.
+You can add, replace, or remove a key. Each key is one line: where the current
+key comes from, a box for a new key, Save, and a trash button that removes a
+stored key. After saving, the UI shows whether a key is configured and where
+it comes from, but never its value.
 
 Credentials have a separate revision from `config.toml`. When changing both
 an endpoint or model and its credential, save the endpoint/model first, then

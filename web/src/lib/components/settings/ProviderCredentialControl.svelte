@@ -3,7 +3,7 @@
     deleteSettingsProviderCredential as generatedDeleteSettingsProviderCredential,
     putSettingsProviderCredential as generatedPutSettingsProviderCredential,
   } from '../../api/generated/api/api';
-  import { Button, TextInput } from '@kenn-io/kit-ui';
+  import SecretField from './SecretField.svelte';
   import type { APIClient } from '../../api/client';
   import type {
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
@@ -125,55 +125,15 @@
   }
 </script>
 
-<div class="credential-control">
-  <span class="credential-source">{sourceLabel(credentialState)}</span>
-  <label>
-    New {sentenceLabel(label)}
-    <TextInput
-      type="password"
-      autocomplete="new-password"
-      bind:value
-      disabled={saving || Boolean(disabledReason)}
-      block
-    />
-  </label>
-  {#if disabledReason}<small class="credential-blocked">{disabledReason}</small>{/if}
-  <div class="credential-actions">
-    <Button
-      disabled={saving || value === '' || Boolean(disabledReason)}
-      label={saving ? 'Saving…' : `Save ${sentenceLabel(label)}`}
-      onclick={() => void saveCredential()}
-    />
-    {#if credentialState?.source === 'stored'}
-      <Button
-        disabled={saving || Boolean(disabledReason)}
-        label={`Clear stored ${sentenceLabel(label)}`}
-        onclick={() => void clearCredential()}
-      />
-    {/if}
-  </div>
-  {#if error}<small class="credential-error" role="alert">{error}</small>{/if}
-</div>
-
-<style>
-  .credential-control {
-    display: grid;
-    gap: 0.5rem;
-    width: 100%;
-    min-width: 0;
-  }
-  .credential-source {
-    color: var(--text-muted);
-  }
-  .credential-blocked {
-    color: var(--status-warning-ink);
-  }
-  .credential-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .credential-error {
-    color: var(--status-error-ink);
-  }
-</style>
+<SecretField
+  {label}
+  status={sourceLabel(credentialState)}
+  unset={!credentialState?.configured}
+  bind:value
+  {saving}
+  {disabledReason}
+  {error}
+  clearLabel={`Clear stored ${sentenceLabel(label)}`}
+  onsave={() => void saveCredential()}
+  onclear={credentialState?.source === 'stored' ? () => void clearCredential() : undefined}
+/>

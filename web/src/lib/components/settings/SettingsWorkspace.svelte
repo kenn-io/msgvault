@@ -51,6 +51,7 @@
   import PersonEnrichmentProviderCard from './PersonEnrichmentProviderCard.svelte';
   import PersonEnrichmentProviderCreator from './PersonEnrichmentProviderCreator.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
+  import SecretField from './SecretField.svelte';
   import {
     groupSettings,
     hasHostManaged,
@@ -417,9 +418,6 @@
         return { string: String(value ?? '') };
     }
   }
-  function sentenceLabel(label: string): string {
-    return label.charAt(0).toLowerCase() + label.slice(1);
-  }
   function humanizeKey(key: string): string {
     const tail = key.split('.').at(-1) ?? key;
     const words = tail.replaceAll('_', ' ');
@@ -503,23 +501,14 @@
             onConflict={credentialConflict}
           />
         {:else if setting.kind === 'secret'}
-          <div class="secret-control">
-            <span class="row__value" class:row__value--unset={!setting.secret?.configured}>
-              {setting.secret?.configured ? 'Set' : 'Not set'}
-            </span>
-            <label class="secret-control__field">
-              <span class="kit-sr-only">New {sentenceLabel(label)}</span>
-              <TextInput
-                type="password"
-                autocomplete="new-password"
-                placeholder={`New ${sentenceLabel(label)}`}
-                value={secretValues[setting.key] ?? ''}
-                oninput={(value) => setSecret(setting.key, value)}
-                block
-              />
-            </label>
-            <Button label={`Clear ${sentenceLabel(label)}`} onclick={() => clearSecret(setting.key)} />
-          </div>
+          <SecretField
+            {label}
+            status={setting.secret?.configured ? 'Set' : 'Not set'}
+            unset={!setting.secret?.configured}
+            value={secretValues[setting.key] ?? ''}
+            oninput={(value) => setSecret(setting.key, value)}
+            onclear={() => clearSecret(setting.key)}
+          />
         {:else if optionValues(setting).length > 0}
           <label class="row__field" data-size="md">
             <span class="kit-sr-only">{label}</span>
@@ -909,15 +898,6 @@
     outline-offset: 1px;
     border-color: var(--accent-blue);
   }
-  .secret-control {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .secret-control__field {
-    display: block;
-    width: 13rem;
-  }
   .provider-list {
     display: grid;
     gap: var(--space-4);
@@ -947,13 +927,9 @@
     .row__format {
       text-align: left;
     }
-    .row__field[data-size],
-    .secret-control__field {
+    .row__field[data-size] {
       width: 100%;
       max-width: 20rem;
-    }
-    .secret-control {
-      flex-wrap: wrap;
     }
   }
 </style>
