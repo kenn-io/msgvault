@@ -144,7 +144,10 @@ describe('CronField', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /^Time zone/ }));
     await fireEvent.input(screen.getByRole('combobox', { name: 'Time zone' }), { target: { value: 'tokyo' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Asia\/Tokyo/ }));
+    const tokyo = await screen.findByRole('option', { name: /Asia\/Tokyo/ });
+    expect(tokyo.textContent).toContain('+9');
+    expect(tokyo.textContent).not.toContain('GMT');
+    await fireEvent.mouseDown(tokyo);
     expect(oninput).toHaveBeenLastCalledWith('CRON_TZ=Asia/Tokyo 0 4 * * *');
     expect(input.value).toBe('0 4 * * *');
 

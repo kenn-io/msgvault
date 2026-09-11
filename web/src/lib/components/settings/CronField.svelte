@@ -14,11 +14,16 @@
     return zoneOptionsCache;
   }
 
+  // The current offset as "+3", "-4" or "+5:30". The browser spells it
+  // "GMT+3"; the prefix says nothing the sign does not, so it is dropped.
   function zoneOffset(zone: string): string | undefined {
     try {
-      return new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' })
+      const name = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' })
         .formatToParts(new Date())
         .find((part) => part.type === 'timeZoneName')?.value;
+      if (name === undefined) return undefined;
+      const offset = name.replace(/^(GMT|UTC)/, '');
+      return offset === '' ? '+0' : offset;
     } catch {
       return undefined;
     }
@@ -153,7 +158,7 @@
 
 <div class="cron" class:cron--disabled={disabled}>
   <div class="cron__row">
-    <div class="cron__presets">
+    <div class="cron__presets" class:cron__presets--custom={presetValue === 'custom'}>
       <SelectDropdown title="Presets" value={presetValue} options={presetMenu} onchange={applyPreset} {disabled} />
     </div>
     {#if presetValue === 'custom'}
@@ -328,6 +333,15 @@
     flex: 0 0 9.5rem;
     min-width: 0;
   }
+  /* "Custom" is a short word; the slot shrinks so the expression editor
+     beside it gets the line length instead. The open menu keeps the
+     toolkit's own minimum width, so the preset names still read in full. */
+  .cron__presets--custom {
+    flex-basis: 6.25rem;
+  }
+  .cron__presets--custom :global(.kit-select-dropdown) {
+    min-width: 0;
+  }
   .cron__editor {
     flex: 1 1 7rem;
     min-width: 6.5rem;
@@ -336,7 +350,7 @@
      box) moves nothing beside it. Zone names are long; the list opens wider
      than the trigger and the toolkit keeps it inside the window. */
   .cron__zone {
-    flex: 0 0 11rem;
+    flex: 0 0 9.5rem;
     --typeahead-min-width: 0;
     --typeahead-max-width: none;
     --typeahead-panel-min-width: 18rem;
