@@ -94,7 +94,7 @@ func TestTUISettingsBackendSeparatesConfigAndCredentialWrites(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{
   "groups":[{"id":"search","label":"Search"}],
-  "settings":[{"key":"vector.embeddings.api_key","group":"search","label":"Embedding API key","description":"Write-only credential.","kind":"secret","secret":{"configured":true,"source":"stored"},"restart_required":true}],
+  "settings":[{"key":"vector.embeddings.api_key","group":"search","label":"Embedding API key","description":"Write-only credential.","kind":"secret","secret":{"configured":true,"source":"stored","hint":"pro…ret"},"restart_required":true}],
   "pending_restart":true
 }`)
 		default:
@@ -136,6 +136,7 @@ func TestTUISettingsBackendSeparatesConfigAndCredentialWrites(t *testing.T) {
 	requirements.Len(snapshot.Fields, 1)
 	requirements.NotNil(snapshot.Fields[0].Secret)
 	assertions.Equal("stored", snapshot.Fields[0].Secret.Source)
+	assertions.Equal("pro…ret", snapshot.Fields[0].Secret.Hint)
 }
 
 func TestTUISettingsBackendClassifiesStaleCredentialETag(t *testing.T) {

@@ -100,10 +100,12 @@ type SettingValidation struct {
 }
 
 // SecretSettingState is the only secret state that may be loaded or rendered.
-// Secret values themselves are write-only.
+// Secret values themselves are write-only; Hint is the daemon's masked
+// "sk-…x9Q" form of a set key, empty when it gives none.
 type SecretSettingState struct {
 	Configured bool
 	Source     string
+	Hint       string
 }
 
 // SettingValue mirrors the daemon's explicit scalar union without importing a

@@ -70,6 +70,7 @@ type tuiSettingsHTTPValue struct {
 type tuiSettingsHTTPSecret struct {
 	Configured bool   `json:"configured"`
 	Source     string `json:"source"`
+	Hint       string `json:"hint"`
 }
 
 type tuiSettingsHTTPValidation struct {
@@ -160,6 +161,7 @@ func tuiSettingsSnapshot(
 			converted.Secret = &tui.SecretSettingState{
 				Configured: field.Secret.Configured,
 				Source:     field.Secret.Source,
+				Hint:       field.Secret.Hint,
 			}
 		}
 		snapshot.Fields = append(snapshot.Fields, converted)
@@ -186,6 +188,7 @@ func tuiSettingsSnapshot(
 			Secret: &tui.SecretSettingState{
 				Configured: provider.Credential.Configured,
 				Source:     provider.Credential.Source,
+				Hint:       provider.Credential.Hint,
 			},
 		})
 	}

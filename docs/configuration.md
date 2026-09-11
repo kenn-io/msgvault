@@ -568,7 +568,7 @@ Optional provider-neutral task integration:
 |---|---|---|
 | `enabled` | `false` | Enable discovery and capability checks |
 | `endpoint` | — | Explicit loopback HTTP, Unix socket, or HTTPS endpoint; empty requests secure local discovery |
-| `api_key` | — | Server-side credential; never returned to the browser |
+| `api_key` | — | Server-side credential; the browser sees only a masked hint of it, never the key |
 | `default_project` | `msgvault` | Fixed project used for create/link/search operations |
 
 Remote plaintext HTTP is rejected. An endpoint is usable only when it supports

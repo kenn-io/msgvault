@@ -5,7 +5,7 @@ import type { SecretSettingStateSource } from "./secretSettingStateSource";
 
 export interface SecretSettingState {
   configured: boolean;
-  /** First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Empty for a value under twelve characters, for passwords, and when nothing is set. */
+  /** First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Omitted for a value under twelve characters, for passwords, and when nothing is set. */
   hint?: string;
   source?: SecretSettingStateSource;
   [key: string]: unknown;

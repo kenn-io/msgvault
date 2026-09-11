@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"go.kenn.io/msgvault/internal/textutil"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -317,8 +318,14 @@ func (m Model) secretSettingDisplay(field SettingField) string {
 	if field.Secret == nil || !field.Secret.Configured {
 		return "not configured"
 	}
-	if source := strings.TrimSpace(field.Secret.Source); source != "" {
-		return "configured (" + source + ")"
+	// The daemon's masked hint names which key is set; without one, only
+	// that a key is set.
+	display := "configured"
+	if hint := strings.TrimSpace(field.Secret.Hint); hint != "" {
+		display = textutil.SanitizeTerminal(hint)
 	}
-	return "configured"
+	if source := strings.TrimSpace(field.Secret.Source); source != "" {
+		return display + " (" + source + ")"
+	}
+	return display
 }

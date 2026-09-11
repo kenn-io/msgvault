@@ -113,7 +113,7 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	const daemonKey = {
 		key: 'server.api_key', group: 'server', section: 'listener', label: 'API key',
 		description: 'Key that remote clients and browser logins use.', kind: 'secret',
-		secret: { configured: true, source: 'environment' }, restart_required: true, read_only: true
+		secret: { configured: true, source: 'environment', hint: 'dae…key' }, restart_required: true, read_only: true
 	};
 	const daemonGroups = [{
 		id: 'server', label: 'Daemon', description: 'How the daemon runs.',
@@ -144,9 +144,10 @@ test('daemon API key stays host-managed and never crosses the browser settings w
 	await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
 	await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();
-	await expect(page.getByText('Configured')).toBeVisible();
+	await expect(page.getByText('dae…key')).toBeVisible();
 	await expect(page.getByText('Host-managed values are set in config.toml on the daemon host.')).toBeVisible();
 	await expect(page.getByLabel('New API key')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^(Add|Replace) API key$/ })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
 	expect(settingsPatch).toBeUndefined();
 

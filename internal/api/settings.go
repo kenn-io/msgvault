@@ -36,9 +36,9 @@ type SecretSettingState struct {
 	Source     string `json:"source,omitempty" enum:"stored,environment,none"`
 	// Hint is the first three and last three characters of the value joined
 	// by an ellipsis, so a person can tell which key is set without seeing
-	// it. It is empty for a value under twelve characters, for passwords,
+	// it. It is omitted for a value under twelve characters, for passwords,
 	// and when nothing is set.
-	Hint string `json:"hint,omitempty" doc:"First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Empty for a value under twelve characters, for passwords, and when nothing is set."`
+	Hint string `json:"hint,omitempty" doc:"First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Omitted for a value under twelve characters, for passwords, and when nothing is set."`
 }
 
 // secretHintMinimumLength is the shortest value that gets a hint: six of

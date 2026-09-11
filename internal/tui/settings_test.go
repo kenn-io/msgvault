@@ -744,3 +744,25 @@ func boolSettingValue(value bool) *SettingValue {
 func intSettingValue(value int) *SettingValue {
 	return &SettingValue{Integer: &value}
 }
+
+func TestSecretSettingDisplayShowsTheDaemonHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		secret *SecretSettingState
+		want   string
+	}{
+		{name: "hint and source", secret: &SecretSettingState{Configured: true, Source: "stored", Hint: "sk-…x9Q"}, want: "sk-…x9Q (stored)"},
+		{name: "hint without source", secret: &SecretSettingState{Configured: true, Hint: "tes…key"}, want: "tes…key"},
+		{name: "set without hint", secret: &SecretSettingState{Configured: true, Source: "environment"}, want: "configured (environment)"},
+		{name: "control characters are stripped", secret: &SecretSettingState{Configured: true, Hint: "sk-\x1b[31m…x9Q"}, want: "sk-…x9Q"},
+		{name: "not set", secret: &SecretSettingState{Configured: false}, want: "not configured"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			model := Model{}
+			assert.Equal(t, tc.want, model.secretSettingDisplay(SettingField{Key: "k", Kind: SettingKindSecret, Secret: tc.secret}))
+		})
+	}
+}
