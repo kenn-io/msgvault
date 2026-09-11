@@ -55,6 +55,9 @@ type AnalyticsConfig struct {
 	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
 	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
 	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
+	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit; empty uses the default
+	QueryThreads       int           `toml:"query_threads"`        // Optional DuckDB daemon-query threads; zero uses the default
+	QueryTempLimit     string        `toml:"query_temp_limit"`     // Optional DuckDB daemon-query temp-directory limit; empty uses the default
 }
 
 const (
@@ -164,6 +167,8 @@ func (a *AnalyticsConfig) Validate() error {
 	}{
 		{key: "builder_memory_limit", value: a.BuilderMemoryLimit},
 		{key: "builder_temp_limit", value: a.BuilderTempLimit},
+		{key: "query_memory_limit", value: a.QueryMemoryLimit},
+		{key: "query_temp_limit", value: a.QueryTempLimit},
 	} {
 		if size.value != "" && !duckdbutil.ValidSize(size.value) {
 			return fmt.Errorf("invalid [analytics] %s %q: want a positive integer followed by B, KB, MB, GB, TB, KiB, MiB, GiB, or TiB",
@@ -172,6 +177,9 @@ func (a *AnalyticsConfig) Validate() error {
 	}
 	if a.BuilderThreads < 0 {
 		return fmt.Errorf("invalid [analytics] builder_threads %d: must be zero or positive", a.BuilderThreads)
+	}
+	if a.QueryThreads < 0 {
+		return fmt.Errorf("invalid [analytics] query_threads %d: must be zero or positive", a.QueryThreads)
 	}
 	if a.MinRebuildInterval < 0 {
 		return fmt.Errorf("invalid [analytics] min_rebuild_interval %q: must be zero or positive",
@@ -667,6 +675,16 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
+	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
+	// "imaps://user@example.com@imap.example.com:993") to that source's
+	// Sent-folder mailbox names, for servers whose (possibly localized) Sent
+	// folder advertises no RFC 6154 \Sent role. The mapping is per source:
+	// a same-named mailbox in another account never gains trust. Each entry
+	// is an explicit trust assumption, not evidence. Untrusted-by-default:
+	// a missing entry leaves snapshot refresh authorized only by
+	// unambiguous advertised \Sent or \Drafts placement.
+	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
 // DefaultHome returns the default msgvault home directory.

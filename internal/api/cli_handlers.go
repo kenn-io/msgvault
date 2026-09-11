@@ -827,6 +827,7 @@ type cliAccountResponse struct {
 type cliMessageResponse struct {
 	ID                   int64                  `json:"id"`
 	SourceMessageID      string                 `json:"source_message_id"`
+	RFC822MessageID      string                 `json:"rfc822_message_id,omitempty"`
 	ConversationID       int64                  `json:"conversation_id"`
 	SourceConversationID string                 `json:"source_conversation_id"`
 	Subject              string                 `json:"subject"`
@@ -3303,6 +3304,7 @@ func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
+		RFC822MessageID:      msg.RFC822MessageID,
 		ConversationID:       msg.ConversationID,
 		SourceConversationID: msg.SourceConversationID,
 		Subject:              msg.Subject,

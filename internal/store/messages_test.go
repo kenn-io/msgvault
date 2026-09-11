@@ -57,6 +57,39 @@ func TestUpsertMessagePersistsListID(t *testing.T) {
 	assert.Equal("<announce.example.org>", listID.String, "list ID")
 }
 
+func TestUpsertMessagePreservesRFCMessageID(t *testing.T) {
+	stored := sql.NullString{String: "<Original-ID@example.test>", Valid: true}
+	incoming := sql.NullString{String: "incoming@example.test", Valid: true}
+	for _, tc := range []struct {
+		name                 string
+		before, update, want sql.NullString
+	}{
+		{"retain when absent", stored, sql.NullString{}, stored},
+		{"retain when empty", stored, sql.NullString{Valid: true}, stored},
+		{"retain when different", stored, incoming, stored},
+		{"fill null", sql.NullString{}, incoming, incoming},
+		{"fill empty", sql.NullString{Valid: true}, incoming, incoming},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			message := &store.Message{
+				SourceID: f.Source.ID, SourceMessageID: "message", ConversationID: f.ConvID,
+				MessageType: store.MessageTypeEmail, RFC822MessageID: tc.before,
+			}
+			id, err := f.Store.UpsertMessage(message)
+			require.NoError(err)
+			message.RFC822MessageID = tc.update
+			_, err = f.Store.UpsertMessage(message)
+			require.NoError(err)
+			var got sql.NullString
+			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&got))
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 type siblingRecipientSnapshot struct {
 	Type          string
 	ParticipantID int64
@@ -939,6 +972,7 @@ func TestPersistRepairMessageReplacesCompleteSnapshotAtomically(t *testing.T) {
 
 	after := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
 	assert.Equal("repair-target", after.SourceMessageID)
+	assert.Equal("<repair-new@example.test>", after.RFC822MessageID.String)
 	assert.Equal("Repaired target", after.Subject.String)
 	assert.Equal("repaired target body", after.BodyText.String)
 	assert.Equal("<p>repaired target body</p>", after.BodyHTML.String)

@@ -25,6 +25,17 @@ type Policy struct {
 	MaxTempDirectorySize string
 }
 
+// InteractiveOverrides contains optional interactive/daemon-query policy
+// values. Empty size values and zero threads retain InteractivePolicy
+// defaults, which are sized for a laptop-scale archive: a query that spills
+// past max_temp_directory_size fails outright with a DuckDB out-of-memory
+// error rather than running slowly, so a large archive needs to raise them.
+type InteractiveOverrides struct {
+	MemoryLimit          string
+	Threads              int
+	MaxTempDirectorySize string
+}
+
 // BuilderOverrides contains optional cache-builder policy values. Empty size
 // values and zero threads retain BuilderPolicy defaults.
 type BuilderOverrides struct {
@@ -41,6 +52,22 @@ func InteractivePolicy(tempDirectory string) Policy {
 		TempDirectory:        tempDirectory,
 		MaxTempDirectorySize: "2GB",
 	}
+}
+
+// InteractivePolicyWithOverrides applies non-zero overrides to
+// InteractivePolicy.
+func InteractivePolicyWithOverrides(tempDirectory string, overrides InteractiveOverrides) Policy {
+	policy := InteractivePolicy(tempDirectory)
+	if overrides.MemoryLimit != "" {
+		policy.MemoryLimit = overrides.MemoryLimit
+	}
+	if overrides.Threads != 0 {
+		policy.Threads = overrides.Threads
+	}
+	if overrides.MaxTempDirectorySize != "" {
+		policy.MaxTempDirectorySize = overrides.MaxTempDirectorySize
+	}
+	return policy
 }
 
 // BuilderPolicy returns the bounded policy for cache derivation processes.

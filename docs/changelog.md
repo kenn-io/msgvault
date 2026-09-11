@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,8 +10,15 @@ All notable changes to msgvault, grouped by release.
 
 Work after **0.19.3** adds richer people profiles, document and image search,
 background operations, and more ways to import and maintain your history.
-These changes cover current `main` through **September 8, 2026** and are not
+These changes cover current `main` through **September 9, 2026** and are not
 included in 0.19.3. Follow the linked task guides for current usage details.
+
+### Email identifiers
+
+Apple Mail imports now preserve RFC Message-ID and link unambiguous replies
+within the same source. `show-message --json` and analytics SQL expose
+`rfc822_message_id`. Re-import an existing archive to fill missing IDs, then
+rebuild the cache; see [recovery instructions](usage/importing.md#message-identifiers-and-replies).
 
 ### Upgrade and compatibility
 
@@ -20,7 +27,7 @@ included in 0.19.3. Follow the linked task guides for current usage details.
   outside your archive home. PostgreSQL users need their own database backup;
   see [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.21.0**. Old analytical
+  compatibility boundary; the current schema is **2.22.0**. Old analytical
   `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
   profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
   removed, not aliased. Local and remote clients reject incompatible daemons;

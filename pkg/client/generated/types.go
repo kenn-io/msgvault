@@ -1792,6 +1792,7 @@ type CliMessageResponse struct {
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitempty"`
 	ReceivedAt           *time.Time             `json:"received_at,omitempty" validate:"required"`
+	Rfc822MessageID      *string                `json:"rfc822_message_id,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`

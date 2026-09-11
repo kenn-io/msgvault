@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -466,6 +466,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 |---|---|---|
 | `rate_limit_qps` | `5` | Gmail API requests per second |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+| `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
@@ -474,6 +475,38 @@ It applies to new ingestion; existing mail needs an explicit backfill.
 
 See [remote email images](usage/remote-images.md) for the opt-in workflow,
 supported formats, download limits, and effect on attachment counts.
+
+`trusted_imap_sent_mailboxes` names each IMAP account's Sent folder for
+servers — such as some Exchange/Outlook accounts — whose (possibly localized)
+Sent folder advertises no RFC 6154 `\Sent` special-use role. A survivor copy in
+that unadvertised folder never replaces the archived snapshot by default:
+the sync adopts the surviving location but keeps the previously archived
+body, raw MIME, recipients, and attachments, because a sender can forge any
+RFC822 `Message-ID`. Placement the server does advertise — an unambiguous
+`\Sent` or `\Drafts` role — remains trusted automatically regardless of
+this setting. Naming a mailbox here states that it is that account's Sent
+folder and holds only mail the account itself authored, which re-enables
+refreshing the archived snapshot from an edited copy found there.
+
+The mapping is keyed by the exact source identifier — copy the `ACCOUNT`
+value printed by `msgvault list-accounts` (for example
+`imaps://user@example.com@imap.example.com:993`), not the email or display
+name. Trust never crosses accounts: a same-named mailbox in another synced
+account stays untrusted, and an account with no entry has no explicit trust.
+
+```toml
+[sync]
+trusted_imap_sent_mailboxes = { "imaps://user@example.com@imap.example.com:993" = ["Gesendete Elemente"] }
+```
+
+This is an explicit trust assumption, not evidence: filters or IMAP rules
+that file received mail into the listed mailbox would let that mail replace
+an archived snapshot under the same Message-ID. Advertised unambiguous
+`\Sent` and `\Drafts` placement is trusted automatically, and a mailbox
+that carries `\All`, `\Junk`, or `\Trash` roles, or INBOX, is never
+trusted — not even when listed here explicitly. A configured name the server
+itself advertises as `\Drafts` keeps its Drafts meaning: explicit
+configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 
@@ -550,6 +583,12 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
 | `auto_build_cache` | `true` | Build a stale or missing Parquet cache during daemon startup and after scheduled syncs; `false` skips both automatic paths |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync may rebuild it; zero preserves rebuilding after each sync |
+| `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
+| `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
+| `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
+| `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
+| `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
+| `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
@@ -880,7 +919,7 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
 | `timeout` | `30s` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
-| `max_input_chars` | `32768` | Character cap per embedding chunk. Set below your model's context window (e.g., `2000` for Ollama's default `nomic-embed-text`). |
+| `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
 
 ##### Stored provider credentials

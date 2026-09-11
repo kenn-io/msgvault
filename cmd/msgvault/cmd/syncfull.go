@@ -341,6 +341,19 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 	}
 }
 
+// configuredTrustedSentMailboxes exposes the explicit Sent-folder trust
+// configured for exactly this IMAP source, keyed by its identifier (the
+// ACCOUNT value printed by `msgvault list-accounts`). Trust never crosses
+// accounts: another source with a same-named mailbox gets no entry. Nil-safe
+// because several command tests run without a loaded global config; a
+// missing entry means no explicit trust.
+func configuredTrustedSentMailboxes(identifier string) []string {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Sync.TrustedIMAPSentMailboxes[identifier]
+}
+
 // loadIMAPFolderStates returns the saved per-mailbox states in the map
 // form the IMAP client consumes.
 func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.FolderState, error) {
@@ -385,7 +398,26 @@ func imapFolderStateOptions(
 	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
 		func(mailbox string, uids []uint32) (map[string]string, error) {
 			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
-		}))
+		}), imaplib.WithRelocationCandidateLoader(
+		func(ctx context.Context, lost []string) ([]imaplib.RelocationCandidate, error) {
+			candidates, err := s.GetIMAPRelocationCandidatesContext(ctx, src.ID, lost)
+			if err != nil {
+				return nil, err
+			}
+			result := make([]imaplib.RelocationCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				result = append(result, imaplib.RelocationCandidate{
+					Target: gmail.MessageRelocationTarget{
+						InternalID: candidate.ID, SourceID: candidate.SourceID,
+						SourceMessageID: candidate.SourceMessageID,
+						RFC822MessageID: candidate.RFC822MessageID,
+					},
+					Mailbox: candidate.Mailbox, UIDValidity: candidate.UIDValidity, UID: candidate.UID,
+				})
+			}
+			return result, nil
+		}),
+		imaplib.WithTrustedSentMailboxes(configuredTrustedSentMailboxes(src.Identifier)))
 	if forceRescan {
 		opts = append(opts, imaplib.WithForceFullEnumeration())
 	}

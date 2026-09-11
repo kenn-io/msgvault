@@ -1,0 +1,65 @@
+{
+  "description": "Synthetic media transcript fixture in msgvault eval mailbox shape. Each message body represents one source transcript version, and the two media-a-v1 messages represent independent visible occurrences of shared media.",
+  "messages": [
+    {
+      "message_id": "<media-a-v1-1@example.test>",
+      "conversation_id": "media-a-v1",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-12T09:14:00Z",
+      "from": "alice@example.test",
+      "to": ["bob@example.test"],
+      "cc": [],
+      "subject": "Synthetic audio transcript a-v1",
+      "body": "The telescope delivery arrives Friday at three."
+    },
+    {
+      "message_id": "<media-a-v1-2@example.test>",
+      "conversation_id": "media-a-v1",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-12T09:15:00Z",
+      "from": "alice@example.test",
+      "to": ["carol@example.test"],
+      "cc": [],
+      "subject": "Synthetic audio transcript a-v1 shared occurrence",
+      "body": "The telescope delivery arrives Friday at three."
+    },
+    {
+      "message_id": "<media-a-v2@example.test>",
+      "conversation_id": "media-a-v2",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-13T09:14:00Z",
+      "from": "alice@example.test",
+      "to": ["bob@example.test"],
+      "cc": [],
+      "subject": "Synthetic audio transcript a-v2 replacement",
+      "body": "The telescope delivery now arrives Monday at noon."
+    },
+    {
+      "message_id": "<media-b-v1@example.test>",
+      "conversation_id": "media-b-v1",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-14T09:14:00Z",
+      "from": "alice@example.test",
+      "to": ["bob@example.test"],
+      "cc": [],
+      "subject": "Synthetic audio transcript b-v1",
+      "body": "The observatory receives its new telescope on Friday at 3 PM."
+    },
+    {
+      "message_id": "<media-c-v1@example.test>",
+      "conversation_id": "media-c-v1",
+      "in_reply_to": "",
+      "references": [],
+      "date": "2026-01-15T09:14:00Z",
+      "from": "alice@example.test",
+      "to": ["bob@example.test"],
+      "cc": [],
+      "subject": "Synthetic audio transcript c-v1",
+      "body": "The grocery delivery arrives Friday at three."
+    }
+  ]
+}

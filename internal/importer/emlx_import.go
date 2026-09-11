@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -79,6 +80,8 @@ type EmlxImportSummary struct {
 }
 
 type emlxCheckpoint struct {
+	Phase        string `json:"phase,omitempty"`
+	ReplyAfterID int64  `json:"reply_after_id,omitempty"`
 	RootDir      string `json:"root_dir"`
 	MailboxIndex int    `json:"mailbox_index"`
 	MailboxPath  string `json:"mailbox_path,omitempty"`
@@ -159,10 +162,12 @@ func ImportEmlxDir(
 
 	// Resume support.
 	var (
-		syncID     int64
-		cp         store.Checkpoint
-		startMbox  int
-		startAfter string // skip files <= this name within the start mailbox
+		phase        string
+		replyAfterID int64
+		syncID       int64
+		cp           store.Checkpoint
+		startMbox    int
+		startAfter   string // skip files <= this name within the start mailbox
 	)
 
 	if !opts.NoResume {
@@ -199,6 +204,13 @@ func ImportEmlxDir(
 							mailboxes[ecp.MailboxIndex].Path,
 						)
 					}
+					if ecp.Phase != "" && ecp.Phase != "email-replies" {
+						return nil, fmt.Errorf("unknown emlx checkpoint phase %q", ecp.Phase)
+					}
+					if ecp.ReplyAfterID < 0 {
+						return nil, errors.New("invalid emlx reply checkpoint")
+					}
+					phase, replyAfterID = ecp.Phase, ecp.ReplyAfterID
 					cp.MessagesProcessed = active.MessagesProcessed
 					cp.MessagesAdded = active.MessagesAdded
 					cp.MessagesUpdated = active.MessagesUpdated
@@ -272,14 +284,16 @@ func ImportEmlxDir(
 	lastCpFile := startAfter
 	checkpointBlocked := false
 
-	// Save initial checkpoint.
-	if err := saveEmlxCheckpoint(
-		st, syncID, absRoot, startMbox, lastCpMboxPath,
-		startAfter, &cp,
-	); err != nil {
-		cp.ErrorsCount++
-		summary.Errors++
-		log.Warn("failed to save initial checkpoint", "error", err)
+	if phase != "email-replies" {
+		// Save initial checkpoint.
+		if err := saveEmlxCheckpoint(
+			st, syncID, absRoot, startMbox, lastCpMboxPath,
+			startAfter, &cp,
+		); err != nil {
+			cp.ErrorsCount++
+			summary.Errors++
+			log.Warn("failed to save initial checkpoint", "error", err)
+		}
 	}
 
 	// flushPending writes the buffered batch and returns true when the
@@ -328,10 +342,12 @@ func ImportEmlxDir(
 
 			// Check if fully exists (with raw).
 			exists := false
+			var existingID int64
 			if batchOK {
 				msgID, ok := existingWithRaw[p.SourceMsg]
 				if ok {
 					exists = true
+					existingID = msgID
 					// Add labels from this mailbox to the existing message.
 					if len(p.LabelIDs) > 0 {
 						if err := st.AddMessageLabels(
@@ -352,6 +368,7 @@ func ImportEmlxDir(
 					summary.Errors++
 				} else if msgID, ok := one[p.SourceMsg]; ok {
 					exists = true
+					existingID = msgID
 					if len(p.LabelIDs) > 0 {
 						if err := st.AddMessageLabels(
 							msgID, p.LabelIDs,
@@ -365,6 +382,14 @@ func ImportEmlxDir(
 			}
 
 			if exists {
+				rfcID, inReplyTo := mime.ParseMessageIDs(p.Raw)
+				if err := st.RecordEmailHeadersContext(ctx, src.ID, existingID, rfcID, inReplyTo); err != nil {
+					cp.ErrorsCount++
+					summary.Errors++
+					hardErrors, checkpointBlocked = true, true
+					log.Warn("failed to repair email headers", "message_id", existingID, "error", err)
+					continue
+				}
 				summary.MessagesSkipped++
 				if !checkpointBlocked {
 					lastCpMbox = p.MboxIdx
@@ -429,7 +454,7 @@ func ImportEmlxDir(
 		return false
 	}
 
-	for mboxIdx := startMbox; mboxIdx < len(mailboxes); mboxIdx++ {
+	for mboxIdx := startMbox; mboxIdx < len(mailboxes) && phase != "email-replies"; mboxIdx++ {
 		mb := mailboxes[mboxIdx]
 
 		labelID, err := st.EnsureLabel(
@@ -536,14 +561,14 @@ func ImportEmlxDir(
 
 			if len(pending) >= batchSize || pendingBytes >= batchBytes {
 				if flushPending() {
-					return summary, nil
+					return summary, ctx.Err()
 				}
 			}
 		}
 
 		// Flush remaining for this mailbox.
 		if flushPending() {
-			return summary, nil
+			return summary, ctx.Err()
 		}
 
 		summary.MailboxesImported++
@@ -556,19 +581,21 @@ func ImportEmlxDir(
 	summary.Duration = time.Since(start)
 	summary.HardErrors = hardErrors
 
-	// Final checkpoint.
-	if err := saveEmlxCheckpoint(
-		st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
-		lastCpFile, &cp,
-	); err != nil {
-		cp.ErrorsCount++
-		summary.Errors++
-		log.Warn("failed to save final checkpoint", "error", err)
+	if phase != "email-replies" {
+		// Final checkpoint.
+		if err := saveEmlxCheckpoint(
+			st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
+			lastCpFile, &cp,
+		); err != nil {
+			cp.ErrorsCount++
+			summary.Errors++
+			log.Warn("failed to save final checkpoint", "error", err)
+		}
 	}
 
 	// If cancelled, leave the sync run as "running" so resume works.
 	if ctx.Err() != nil {
-		return summary, nil // Cancellation is signalled via summary, not error.
+		return summary, ctx.Err()
 	}
 
 	if hardErrors {
@@ -578,6 +605,20 @@ func ImportEmlxDir(
 			return summary, fmt.Errorf("fail sync: %w", err)
 		}
 		return summary, nil
+	}
+
+	if phase != "email-replies" {
+		replyAfterID = 0
+	}
+	saveReplies := func(afterID int64) error {
+		return saveEmlxCheckpointPhase(st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
+			lastCpFile, &cp, "email-replies", afterID)
+	}
+	if err := saveReplies(replyAfterID); err != nil {
+		return summary, fmt.Errorf("start email reply resolution: %w", err)
+	}
+	if err := st.ResolveEmailReplyParentsContext(ctx, src.ID, replyAfterID, saveReplies); err != nil {
+		return summary, fmt.Errorf("resolve email replies: %w", err)
 	}
 
 	finalMsg := fmt.Sprintf(
@@ -591,7 +632,7 @@ func ImportEmlxDir(
 			cp.ErrorsCount,
 		)
 	}
-	if err := st.CompleteSync(syncID, finalMsg); err != nil {
+	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 
@@ -623,7 +664,16 @@ func saveEmlxCheckpoint(
 	rootDir string, mboxIdx int, mboxPath string,
 	lastFile string, cp *store.Checkpoint,
 ) error {
+	return saveEmlxCheckpointPhase(st, syncID, rootDir, mboxIdx, mboxPath, lastFile, cp, "", 0)
+}
+
+func saveEmlxCheckpointPhase(st *store.Store, syncID int64,
+	rootDir string, mboxIdx int, mboxPath, lastFile string, cp *store.Checkpoint,
+	phase string, replyAfterID int64,
+) error {
 	b, err := json.Marshal(emlxCheckpoint{
+		Phase:        phase,
+		ReplyAfterID: replyAfterID,
 		RootDir:      rootDir,
 		MailboxIndex: mboxIdx,
 		MailboxPath:  mboxPath,

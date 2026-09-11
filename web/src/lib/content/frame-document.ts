@@ -19,8 +19,8 @@ export const ARCHIVED_FRAME_STYLE_PATH = '/archived-frame.css';
 export type FrameColorScheme = 'light' | 'dark';
 
 export interface FrameAppearance {
-  /** 'canvas': designed mail on its own white canvas. 'themed': simple mail
-   * rendered transparently on the shell surface with shell inks. */
+  /** 'canvas': original email colors on a white canvas. 'themed': mail
+   * rendered transparently with the shell's reading colors. */
   mode: 'canvas' | 'themed';
   colorScheme: FrameColorScheme;
 }
@@ -94,9 +94,8 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     "form-action 'none'"
   ].join('; ');
 
-  // Designed mail keeps its assumed white light canvas in both shell themes;
-  // simple mail adopts the shell scheme and renders transparently on the
-  // theme surface. archived-frame.css keys on the data attributes.
+  // Original email colors assume a white canvas; themed mail adopts the
+  // shell scheme. archived-frame.css keys on these data attributes.
   return '<!doctype html>' +
     `<html data-bridge-nonce="${escapeAttribute(options.nonce)}"` +
     ` data-bridge-origin="${escapeAttribute(origin)}"` +

@@ -295,7 +295,8 @@ import (
 // pages declare a semantic narrowing the same way entry and group pages do.
 // Saved View responses include incompatibility_reason for invalid definitions.
 // Additive (minor bump): existing Saved View and Explore routes are unchanged.
-const APISchemaVersion = "2.21.0"
+// 2.22.0 adds the optional rfc822_message_id to CLI message detail responses.
+const APISchemaVersion = "2.22.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

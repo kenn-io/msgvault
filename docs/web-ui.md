@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-09"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -129,6 +129,21 @@ error, not an empty result, and the query and filters remain available to retry.
 cannot safely honor the selected search mode. Update or rebuild the named
 component, or deliberately select a supported mode. Msgvault does not quietly
 substitute full-text search for either state.
+
+## Read messages
+
+Click an entry in Everything to open its preview below the results. On wide
+windows, choose **Preview position → Right** to read beside the results.
+Drag the divider to resize either layout, or focus it and use the arrow keys.
+Double-click the divider to reset its size. The browser remembers your layout
+choice and each layout's size. Narrow windows use the preview below the results
+and restore your right-side layout when there is room again.
+
+HTML email follows the app's dark theme by replacing sender-defined text,
+background, and border colors. Images keep their original colors. Choose
+**Use original colors** above a message to see its authored colors on a white
+background, or **Use app colors** to return to dark reading. This override
+applies to the open message. Light mode preserves designed email colors.
 
 ## Cache states
 

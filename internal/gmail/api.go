@@ -168,3 +168,13 @@ type HistoryLabelChange struct {
 	Message  MessageID
 	LabelIDs []string
 }
+
+// MessageRelocationTarget retains the archived identity selected for adopting
+// a fetched snapshot after its previous IMAP location disappears.
+type MessageRelocationTarget struct {
+	InternalID         int64
+	SourceID           int64
+	SourceMessageID    string // Expected old archived composite ID.
+	RFC822MessageID    string
+	NewSourceMessageID string
+}

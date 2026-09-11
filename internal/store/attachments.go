@@ -444,6 +444,82 @@ func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []Attachm
 	return s.replaceMessageProviderAttachments(messageID, "discord:", refs)
 }
 
+// SetDiscordAttachmentMetadata refreshes only derived Discord attachment JSON.
+// It leaves media identity, storage, policy, and occurrence fields unchanged.
+func (s *Store) SetDiscordAttachmentMetadata(
+	messageID int64, metadata map[string]string,
+) (int64, error) {
+	if len(metadata) == 0 {
+		var exists bool
+		if err := s.db.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM attachments
+				WHERE message_id = ? AND source_attachment_id LIKE 'discord:%'
+				  AND attachment_metadata IS NOT NULL
+			)
+		`, messageID).Scan(&exists); err != nil {
+			return 0, fmt.Errorf("check Discord attachment metadata: %w", err)
+		}
+		if !exists {
+			return 0, nil
+		}
+	}
+
+	var changed int64
+	err := s.withTx(func(tx *loggedTx) error {
+		resetQuery := fmt.Sprintf(`
+			UPDATE attachments
+			SET attachment_metadata = %s
+			WHERE message_id = ? AND source_attachment_id LIKE 'discord:%%'
+			  AND (
+			      %s
+			  )
+		`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))
+		resetArgs := []any{nullIfEmpty(""), messageID, nullIfEmpty("")}
+		if len(metadata) > 0 {
+			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(metadata)), ",")
+			resetQuery += " AND source_attachment_id NOT IN (" + placeholders + ")"
+			for sourceAttachmentID := range metadata {
+				resetArgs = append(resetArgs, sourceAttachmentID)
+			}
+		}
+		result, err := tx.Exec(resetQuery, resetArgs...)
+		if err != nil {
+			return fmt.Errorf("clear stale Discord attachment metadata: %w", err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count stale Discord attachment metadata: %w", err)
+		}
+		changed += n
+
+		for sourceAttachmentID, value := range metadata {
+			result, err := tx.Exec(fmt.Sprintf(`
+				UPDATE attachments
+				SET attachment_metadata = %s
+				WHERE message_id = ? AND source_attachment_id = ?
+				  AND %s
+			`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata")),
+				nullIfEmpty(value), messageID, sourceAttachmentID, nullIfEmpty(value))
+			if err != nil {
+				return fmt.Errorf("update Discord attachment metadata %s: %w", sourceAttachmentID, err)
+			}
+			n, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count Discord attachment metadata %s: %w", sourceAttachmentID, err)
+			}
+			changed += n
+		}
+		if changed > 0 {
+			if err := s.bumpDerivedDataRevision(tx); err != nil {
+				return fmt.Errorf("advance Discord attachment metadata revision: %w", err)
+			}
+		}
+		return nil
+	})
+	return changed, err
+}
+
 // normalizeDiscordAttachmentRefs fills deterministic pending markers and
 // recovers hashes from trusted CAS paths. Stable Discord attachment IDs become
 // source-part keys in the generic replacement path, so duplicate bytes no

@@ -3054,6 +3054,7 @@ func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
 			SourceID:        src.ID,
 			ConversationID:  convID,
 			SourceMessageID: "gmail-42",
+			RFC822MessageID: sql.NullString{String: "Case-ID@example.test", Valid: true},
 			MessageType:     "email",
 			Subject:         sql.NullString{String: "Hello", Valid: true},
 			SentAt:          sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
@@ -3072,12 +3073,14 @@ func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
 	var resp struct {
 		ID              int64  `json:"id"`
 		SourceMessageID string `json:"source_message_id"`
+		RFC822MessageID string `json:"rfc822_message_id"`
 		Subject         string `json:"subject"`
 		BodyText        string `json:"body_text"`
 	}
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
 	assert.Equal(int64(1), resp.ID, "ID")
 	assert.Equal("gmail-42", resp.SourceMessageID, "SourceMessageID")
+	assert.Equal("Case-ID@example.test", resp.RFC822MessageID)
 	assert.Equal("Hello", resp.Subject, "Subject")
 	assert.Equal("Body text", resp.BodyText, "BodyText")
 }

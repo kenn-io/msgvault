@@ -101,3 +101,38 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 	}
 	assertMessageDetailSenderFallback(t, engine)
 }
+
+func TestMessageDetailExposesRFCMessageID(t *testing.T) {
+	for _, backend := range []string{"sqlite", "duckdb"} {
+		t.Run(backend, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			dbPath, db := seedMessageDetailSenderFixture(t)
+			t.Cleanup(func() { _ = db.Close() })
+			_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
+			requirements.NoError(err)
+			var reader messageDetailReader = NewSQLiteEngine(db)
+			if backend == "duckdb" {
+				engine, err := NewDuckDBEngine("", dbPath, db, DuckDBOptions{DisableSQLiteScanner: true})
+				requirements.NoError(err)
+				t.Cleanup(func() { _ = engine.Close() })
+				reader = engine
+			}
+			for _, ref := range []string{"numeric", "source"} {
+				var msg *MessageDetail
+				if ref == "numeric" {
+					msg, err = reader.GetMessage(t.Context(), 1)
+				} else {
+					msg, err = reader.GetMessageBySourceID(t.Context(), "sender-only")
+				}
+				requirements.NoError(err)
+				requirements.NotNil(msg)
+				assertions.Equal("Case-ID@example.test", msg.RFC822MessageID)
+			}
+			msg, err := reader.GetMessage(t.Context(), 2)
+			requirements.NoError(err)
+			requirements.NotNil(msg)
+			assertions.Empty(msg.RFC822MessageID)
+		})
+	}
+}

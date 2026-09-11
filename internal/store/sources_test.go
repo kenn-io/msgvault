@@ -1437,6 +1437,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 			archived_at DATETIME,
 			rfc822_message_id TEXT,
 			sender_id INTEGER,
+			reply_to_message_id INTEGER REFERENCES messages(id),
 			message_type TEXT NOT NULL DEFAULT 'email',
 			attachment_count INTEGER DEFAULT 0,
 			deleted_from_source_at DATETIME

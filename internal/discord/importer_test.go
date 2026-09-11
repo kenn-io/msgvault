@@ -193,6 +193,139 @@ func newTestImporter(st *store.Store, api API) *Importer {
 	return importer
 }
 
+func TestImporterArchivesDiscordVoiceMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	voice := importerTestMessage("501", "300", "voice one")
+	voice.Flags = discordVoiceMessageFlag
+	voice.Attachments = []Attachment{{
+		ID: "attachment-one", Filename: "one.ogg", ContentType: "audio/ogg", Size: 12,
+		Duration: 5.940000057220459, Waveform: "%%%",
+	}}
+	second := importerTestMessage("502", "300", "voice two")
+	second.Flags = discordVoiceMessageFlag
+	second.Attachments = []Attachment{{
+		ID: "attachment-two", Filename: "two.ogg", ContentType: "audio/ogg", Size: 18,
+		Duration: 1.25, Waveform: "exact waveform",
+	}}
+	api.messages["300"] = []Message{voice, second}
+
+	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	for _, want := range []struct {
+		messageID, attachmentID, waveform string
+		duration                          int64
+	}{
+		{messageID: "501", attachmentID: "attachment-one", waveform: "%%%", duration: 5940},
+		{messageID: "502", attachmentID: "attachment-two", waveform: "exact waveform", duration: 1250},
+	} {
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+		), source.ID, want.messageID).Scan(&id))
+		metadata, err := st.GetMessageMetadata(id)
+		require.NoError(err)
+		assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192,"author_kind":"user","author_display_name":"user-`+want.messageID+`"}`, metadata.String)
+		attachments, err := st.MessageDiscordAttachments(id)
+		require.NoError(err)
+		ref, ok := attachments["discord:"+want.attachmentID]
+		require.True(ok)
+		assert.Equal(`{"discord":{"waveform":"`+want.waveform+`"}}`, ref.Metadata)
+		assert.Equal("audio/ogg", ref.MimeType)
+		assert.Equal("audio", ref.MediaType)
+		assert.Equal(want.duration, ref.DurationMS)
+	}
+}
+
+func TestImporterReportsAutomaticDiscordMetadataRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "501",
+		MessageType: discordMessageType,
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"501","channel_id":"300","type":0,"flags":8192,"attachments":[{"id":"401","filename":"voice.ogg","content_type":"audio/ogg","waveform":"%%%"}]}`), discordRawFormat))
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{
+		{SourceAttachmentID: "discord:401", StoragePath: "discord:pending:401"},
+	}))
+
+	summary, err := newTestImporter(st, newImporterFakeAPI(importerTestChannel("300", "general"))).Import(
+		t.Context(), ImportOptions{GuildID: "200", Full: true},
+	)
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessageMetadataRepaired)
+	assert.Equal(int64(1), summary.AttachmentsRetagged)
+	assert.Zero(summary.RepairUndecodable)
+	assert.Zero(summary.RepairErrors)
+}
+
+func TestImporterDefersAutomaticRepairForBoundedSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "501",
+		MessageType: discordMessageType,
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"501","channel_id":"300","type":0,"flags":8192,"attachments":[]}`), discordRawFormat))
+
+	summary, err := newTestImporter(st, newImporterFakeAPI(importerTestChannel("300", "general"))).Import(
+		t.Context(), ImportOptions{GuildID: "200", After: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+	)
+	require.NoError(err)
+	assert.False(summary.RepairRan)
+	assert.Zero(summary.MessageMetadataRepaired)
+	assert.Zero(summary.AttachmentsRetagged)
+	metadata, err := st.GetMessageMetadata(messageID)
+	require.NoError(err)
+	assert.False(metadata.Valid)
+}
+
+func TestImporterReportsPreSyncRepairCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	for i := 1; i <= discordRepairBatchSize+1; i++ {
+		sourceMessageID := strconv.Itoa(i)
+		messageID, err := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversationID, SourceMessageID: sourceMessageID,
+			MessageType: discordMessageType,
+		})
+		require.NoError(err)
+		raw := []byte(`{"id":"` + sourceMessageID + `","channel_id":"300","type":0,"flags":0,"attachments":[]}`)
+		require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, discordRawFormat))
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	summary, err := newTestImporter(st, newImporterFakeAPI()).Import(ctx, ImportOptions{
+		GuildID: "200", Progress: func(string) { cancel() },
+	})
+	require.ErrorIs(err, context.Canceled)
+	assert.Zero(summary.SyncRunID)
+	assert.True(summary.RepairRan)
+	assert.Equal(int64(discordRepairBatchSize), summary.MessageMetadataRepaired)
+	assert.Positive(summary.Duration)
+}
+
 func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {
 	t.Helper()
 	lower, err := SnowflakeFromTimestamp(at)

@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -42,21 +43,27 @@ type ImportOptions struct {
 	Progress         func(string)
 }
 
-// ImportSummary reports durable core work and best-effort media outcomes.
+// ImportSummary reports automatic archive repair, durable core work, and
+// best-effort media outcomes.
 type ImportSummary struct {
-	Duration            time.Duration
-	SourceID            int64
-	SyncRunID           int64
-	ContainersProcessed int64
-	MessagesProcessed   int64
-	MessagesAdded       int64
-	MessagesUpdated     int64
-	MediaDownloaded     int64
-	MediaPending        int64
-	MediaSkipped        int64
-	CatalogIssues       []CatalogIssue
-	ContainerIssues     []ContainerIssue
-	processedMessageIDs map[string]struct{}
+	Duration                time.Duration
+	SourceID                int64
+	SyncRunID               int64
+	RepairRan               bool
+	ContainersProcessed     int64
+	MessagesProcessed       int64
+	MessagesAdded           int64
+	MessagesUpdated         int64
+	MessageMetadataRepaired int64
+	AttachmentsRetagged     int64
+	RepairUndecodable       int64
+	RepairErrors            int64
+	MediaDownloaded         int64
+	MediaPending            int64
+	MediaSkipped            int64
+	CatalogIssues           []CatalogIssue
+	ContainerIssues         []ContainerIssue
+	processedMessageIDs     map[string]struct{}
 }
 
 // ContainerIssueKind classifies a message-container scan that was skipped
@@ -114,6 +121,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err != nil {
 		return nil, fmt.Errorf("get Discord source: %w", err)
 	}
+	summary = &ImportSummary{
+		SourceID:            source.ID,
+		processedMessageIDs: make(map[string]struct{}),
+	}
 	lowerBound := ""
 	if !opts.After.IsZero() {
 		lowerBound, err = SnowflakeFromTimestamp(opts.After)
@@ -121,9 +132,29 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			return nil, fmt.Errorf("convert Discord after bound: %w", err)
 		}
 	}
+	defer func() {
+		summary.Duration = time.Since(started)
+	}()
+	if lowerBound == "" {
+		// The automatic pass scans the complete source. Defer it for bounded
+		// imports so --after leaves earlier archive rows untouched.
+		repairSummary, repairRan, repairErr := rederive.RunIfStale(
+			ctx, imp.store, sourceTypeDiscord, opts.GuildID, source.ID, opts.Progress,
+		)
+		summary.RepairRan = repairRan
+		if repairSummary != nil {
+			summary.MessageMetadataRepaired = repairSummary.MessageMetadataRewritten
+			summary.AttachmentsRetagged = repairSummary.AttachmentsTagged
+			summary.RepairUndecodable = repairSummary.Undecodable
+			summary.RepairErrors = repairSummary.Errors
+		}
+		if repairErr != nil {
+			return summary, fmt.Errorf("repair Discord derived metadata: %w", repairErr)
+		}
+	}
 	state, hadBaseline, stateErr := imp.initialState(source.ID, opts.Full, lowerBound)
 	if stateErr != nil {
-		return nil, stateErr
+		return summary, stateErr
 	}
 	if state == nil {
 		state = NewSyncState()
@@ -133,18 +164,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 
 	syncID, err := imp.store.StartSync(source.ID, sourceTypeDiscord)
 	if err != nil {
-		return nil, fmt.Errorf("start Discord sync: %w", err)
+		return summary, fmt.Errorf("start Discord sync: %w", err)
 	}
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
-	summary = &ImportSummary{
-		SourceID: source.ID, SyncRunID: syncID,
-		processedMessageIDs: make(map[string]struct{}),
-	}
+	summary.SyncRunID = syncID
 	completed := false
 	defer func() {
-		summary.Duration = time.Since(started)
 		if completed || retErr == nil {
 			return
 		}
@@ -1463,7 +1490,9 @@ func (imp *Importer) persistPage(
 				conversation.ParticipantCount = media.conversation.ParticipantCount
 			}
 			media.SetPolicy(media.policy, conversation)
-			result, err := media.persistAttachments(ctx, messageID, message.Attachments, !alreadyProcessed)
+			result, err := media.persistAttachments(
+				ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags,
+			)
 			if err != nil {
 				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
 			}

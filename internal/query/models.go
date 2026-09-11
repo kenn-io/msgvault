@@ -64,6 +64,7 @@ type MessageDetail struct {
 	ID                   int64      `json:"id"`
 	SourceID             int64      `json:"source_id,omitempty"`
 	SourceMessageID      string     `json:"source_message_id"`
+	RFC822MessageID      string     `json:"rfc822_message_id"`
 	ConversationID       int64      `json:"conversation_id"`
 	SourceConversationID string     `json:"source_conversation_id"` // Gmail Thread ID
 	Subject              string     `json:"subject"`

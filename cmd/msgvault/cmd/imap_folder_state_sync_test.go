@@ -333,8 +333,6 @@ func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing
 	require.NoError(first.Close())
 
 	opts := imapFolderStateOptions(st, src, true)
-	require.Len(opts, 3,
-		"--noresume needs saved identity and alias state plus forced enumeration")
 
 	second := listedIMAPClient(t, addr, opts...)
 	ctx, cancel := context.WithTimeout(

@@ -16,6 +16,7 @@ import (
 	gomessage "github.com/emersion/go-message"
 	gomail "github.com/emersion/go-message/mail"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 var errIMAPRawBodyMissing = errors.New("IMAP fetch result did not include raw body")
@@ -149,6 +150,18 @@ func (c *Client) applyFetchResults(
 		// skip, not a fetch error.
 		msgID := compositeID(mailbox, msgBuf.UID)
 		rfc822MessageID := rawMIMEMessageID(rawMIME)
+		target, forced := c.relocationTargets[msgID]
+		if state, observed := c.observedFolderStates[mailbox]; forced &&
+			(!observed || c.selectedUIDValidity != state.UIDValidity) {
+			results[idx].Message = nil
+			results[idx].Err = fmt.Errorf("IMAP relocation candidate %q changed mailbox epoch", msgID)
+			continue
+		}
+		if forced && mime.NormalizeMessageID(rfc822MessageID) != target.RFC822MessageID {
+			results[idx].Message = nil
+			results[idx].Err = fmt.Errorf("IMAP relocation candidate %q changed RFC822 identity", msgID)
+			continue
+		}
 		canonicalSourceMessageID := ""
 		var rawSHA256 [32]byte
 		if rfc822MessageID == "" && c.preferredRawSourceIDs != nil {
@@ -176,6 +189,9 @@ func (c *Client) applyFetchResults(
 				}
 			}
 		}
+		if forced {
+			canonicalSourceMessageID = msgID
+		}
 		c.recordMembershipLocked(
 			mailbox, msgBuf.UID, canonicalSourceMessageID, rfc822MessageID,
 			rawSHA256, msgBuf.RFC822Size, msgBuf.Flags)
@@ -184,14 +200,31 @@ func (c *Client) applyFetchResults(
 			results[idx].Err = nil
 			continue
 		}
-		if c.seenRFC822IDs != nil &&
+		if !forced && c.seenRFC822IDs != nil &&
 			rfc822MessageID != "" {
 			if c.seenRFC822IDs[rfc822MessageID] {
-				results[idx].Message = &gmailapi.RawMessage{ID: msgID}
-				results[idx].Err = nil
-				continue
+				// A duplicate copy in Sent placement still gets its full
+				// raw — once per identity per run — because that copy may
+				// be the one that must refresh a stale archived snapshot;
+				// an untrusted mirror fetched first must not consume the
+				// only trusted refresh opportunity. Drafts-placement and
+				// further duplicates keep stubbing: a resurrected stale
+				// draft must not overwrite an already-fresh snapshot, and
+				// one row plus the preferred source-key behavior are
+				// preserved.
+				if !c.isSentPlacementMailboxLocked(mailbox) ||
+					c.seenTrustedRFC822IDs[rfc822MessageID] {
+					results[idx].Message = &gmailapi.RawMessage{ID: msgID}
+					results[idx].Err = nil
+					continue
+				}
+				c.seenTrustedRFC822IDs[rfc822MessageID] = true
+			} else {
+				c.seenRFC822IDs[rfc822MessageID] = true
+				if c.isSentPlacementMailboxLocked(mailbox) {
+					c.seenTrustedRFC822IDs[rfc822MessageID] = true
+				}
 			}
-			c.seenRFC822IDs[rfc822MessageID] = true
 		}
 
 		// Merge labels from other mailboxes via the label map built during
@@ -882,6 +915,113 @@ func (c *Client) IsPreferredSourceMessageID(messageID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.allMailFolder != "" && mailbox == c.allMailFolder
+}
+
+// IsSentPlacementMailbox reports whether the mailbox this composite source
+// ID names is a Sent placement: unambiguously advertised \Sent, or
+// explicitly configured as this source's Sent folder. The shared
+// conflicting-role denial applies, and a mailbox advertised as both \Sent
+// and \Drafts is ambiguous and never a Sent placement.
+func (c *Client) IsSentPlacementMailbox(messageID string) bool {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.isSentPlacementMailboxLocked(mailbox)
+}
+
+// IsDraftsPlacementMailbox reports whether the mailbox this composite source
+// ID names is a Drafts placement and nothing stronger: unambiguously
+// advertised \Drafts and not a Sent placement. An advertised \Drafts role
+// keeps its Drafts meaning even when the account also lists the mailbox in
+// its Sent-folder configuration — advertised roles outrank explicit
+// configuration — so configuration cannot suppress the Sent-over-Drafts
+// precedence for such a canonical. The predicate never identifies a
+// destination that could itself authorize a snapshot replacement.
+func (c *Client) IsDraftsPlacementMailbox(messageID string) bool {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.isDraftsPlacementMailboxLocked(mailbox)
+}
+
+// isDraftsPlacementMailboxLocked is the lock-holding form of
+// IsDraftsPlacementMailbox.
+func (c *Client) isDraftsPlacementMailboxLocked(mailbox string) bool {
+	if c.conflictingRoleMailboxes[mailbox] {
+		return false
+	}
+	return c.advertisedDraftsMailboxes[mailbox] &&
+		!c.advertisedSentMailboxes[mailbox]
+}
+
+// IsTrustedOutgoingMailbox reports whether the mailbox this composite source
+// ID names is trusted to hold only mail the account itself authored, either
+// because the authenticated LIST response advertised an unambiguous \Sent or
+// \Drafts special-use role for it, or because the user explicitly configured
+// it for servers without role discovery. This is an explicit trust assumption,
+// not an authorship proof: RFC 6154 roles advise intent, and user filters or
+// client APPEND/COPY can place other mail there. It is still the narrow
+// evidence that authorizes replacing an archived snapshot from that placement,
+// because a sender-controlled RFC822 Message-ID alone never does. Mailbox
+// names alone are never trusted from the server response, and absent
+// advertisement without explicit configuration denies.
+func (c *Client) IsTrustedOutgoingMailbox(messageID string) bool {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.isTrustedOutgoingMailboxLocked(mailbox)
+}
+
+// isSentPlacementMailbox reports whether a mailbox name is a Sent
+// placement: unambiguously advertised \Sent, or explicitly configured as
+// this source's Sent folder (the configuration exists for localized Sent
+// folders without role discovery). The shared conflicting-role denial
+// applies to both sources of Sent semantics, and an advertised \Drafts role
+// outranks explicit configuration: a configured name the server calls
+// Drafts is not a Sent placement, so it cannot gain the trusted dedup
+// bypass. Caller must hold mu.
+func (c *Client) isSentPlacementMailboxLocked(mailbox string) bool {
+	if c.conflictingRoleMailboxes[mailbox] {
+		return false
+	}
+	if c.advertisedSentMailboxes[mailbox] {
+		return true
+	}
+	if c.configuredSentMailboxes[mailbox] {
+		return !c.advertisedDraftsMailboxes[mailbox]
+	}
+	return false
+}
+
+// isTrustedOutgoingMailbox reports whether a mailbox name carries trusted
+// outgoing placement. Caller must hold mu. Explicit trust is honored only
+// where the server's own advertisement does not contradict it: a mailbox the
+// authenticated LIST response shows carrying a received-mail role (\All,
+// \Junk, \Trash) or the INBOX name is never trusted, even when named
+// explicitly. A mailbox the response shows without those roles is honored;
+// one not yet seen is honored until discovery observes a conflict.
+func (c *Client) isTrustedOutgoingMailboxLocked(mailbox string) bool {
+	if strings.EqualFold(mailbox, "INBOX") {
+		// Delivery lands in INBOX; it is never trusted, even before
+		// discovery has observed the LIST response.
+		return false
+	}
+	if c.conflictingRoleMailboxes[mailbox] {
+		return false
+	}
+	return c.trustedOutgoingMailboxes[mailbox] || c.advertisedOutgoingMailboxes[mailbox]
 }
 
 // DefersAuthoritativeLabelReconciliation reports that complete IMAP mailbox

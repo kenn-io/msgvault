@@ -142,10 +142,12 @@ func ingestRawMessage(
 	hasAttachments := len(parsed.Attachments) > 0
 	attachmentCount := len(parsed.Attachments)
 
+	rfcID := mime.NormalizeMessageID(parsed.MessageID)
 	rec := &store.Message{
 		ConversationID:  conversationID,
 		SourceID:        sourceID,
 		SourceMessageID: sourceMsgID,
+		RFC822MessageID: sql.NullString{String: rfcID, Valid: rfcID != ""},
 		ListID:          sql.NullString{String: parsed.ListID, Valid: parsed.ListID != ""},
 		MessageType:     "email",
 		SentAt:          sentAt,
@@ -172,7 +174,7 @@ func ingestRawMessage(
 	}
 
 	// Persist atomically
-	messageID, err := st.PersistMessage(&store.MessagePersistData{
+	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:    rec,
 		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
 		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
@@ -240,6 +242,10 @@ func ingestRawMessage(
 				"message", messageID, "error", err,
 			)
 		}
+	}
+
+	if err := st.RecordEmailHeadersContext(ctx, sourceID, messageID, "", parsed.InReplyTo); err != nil {
+		return fmt.Errorf("record email reply header: %w", err)
 	}
 
 	return nil
