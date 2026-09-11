@@ -9875,8 +9875,11 @@ func (s SearchResult) Validate() error {
 }
 
 type SecretSettingState struct {
-	Configured bool                      `json:"configured"`
-	Source     *SecretSettingStateSource `json:"source,omitempty"`
+	Configured bool `json:"configured"`
+
+	// Hint First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Empty for a value under twelve characters, for passwords, and when nothing is set.
+	Hint   *string                   `json:"hint,omitempty"`
+	Source *SecretSettingStateSource `json:"source,omitempty"`
 }
 
 func (s SecretSettingState) Validate() error {

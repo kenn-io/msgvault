@@ -44,7 +44,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	requirements.NotNil(byKey["web.theme"].Value)
 	requirements.NotNil(byKey["web.theme"].Value.String)
 	assertions.Equal("dark", *byKey["web.theme"].Value.String)
-	assertions.Equal(&SecretSettingState{Configured: true}, byKey["server.api_key"].Secret)
+	assertions.Equal(&SecretSettingState{Configured: true, Hint: "tes…key"}, byKey["server.api_key"].Secret)
 	assertions.Nil(byKey["server.api_key"].Value)
 	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
 	requirements.NotNil(byKey["vector.embeddings.api_format"].Value)
@@ -236,7 +236,7 @@ dimension = 8
 	first := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
 	assertions.NotContains(first.Body.String(), "environment-secret-must-not-leak")
-	assertions.Equal(map[string]any{"configured": true, "source": "environment"},
+	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, first.Body.Bytes()))
 	configETag := first.Header().Get("ETag")
 	credentialETag := first.Header().Get("Credential-Etag")
@@ -257,7 +257,7 @@ dimension = 8
 
 	stored := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, stored.Code, stored.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored"},
+	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "bro…eak"},
 		rawEmbeddingSecretState(t, stored.Body.Bytes()))
 	assertions.Equal(configETag, stored.Header().Get("ETag"), "credential writes must not masquerade as config writes")
 	assertions.Equal(storedCredentialETag, stored.Header().Get("Credential-Etag"))
@@ -287,7 +287,7 @@ dimension = 8
 	assertions.True(clearResponse.PendingRestart)
 	cleared := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	requirements.Equal(http.StatusOK, cleared.Code, cleared.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "environment"},
+	assertions.Equal(map[string]any{"configured": true, "source": "environment", "hint": "env…eak"},
 		rawEmbeddingSecretState(t, cleared.Body.Bytes()))
 	assertions.NotContains(cleared.Body.String(), "environment-secret-must-not-leak")
 }
@@ -986,7 +986,7 @@ func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T)
 
 	var body SettingsResponse
 	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
-	assertions.Equal(&SecretSettingState{Configured: true},
+	assertions.Equal(&SecretSettingState{Configured: true, Hint: "rot…ret"},
 		settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
 }
 
@@ -1371,7 +1371,7 @@ func TestPatchSettingsSeversStoredCredentialOnlyWhenEndpointOriginChanges(t *tes
 	samePath := patchSettings(t, srv,
 		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://first.example.test/v2"}}]}`)
 	requirements.Equal(http.StatusOK, samePath.Code, samePath.Body.String())
-	assertions.Equal(map[string]any{"configured": true, "source": "stored"},
+	assertions.Equal(map[string]any{"configured": true, "source": "stored", "hint": "ori…ret"},
 		rawEmbeddingSecretState(t, samePath.Body.Bytes()))
 	retained, err := providercredentials.Read(srv.cfg.TokensDir())
 	requirements.NoError(err)
@@ -1465,7 +1465,7 @@ max_requests_per_day = 100
 	var retainedResponse SettingsResponse
 	requirements.NoError(json.Unmarshal(samePath.Body.Bytes(), &retainedResponse))
 	requirements.Len(retainedResponse.PersonEnrichmentProviders, 1)
-	assertions.Equal(&SecretSettingState{Configured: true, Source: "stored"},
+	assertions.Equal(&SecretSettingState{Configured: true, Source: "stored", Hint: "exa…ret"},
 		retainedResponse.PersonEnrichmentProviders[0].Credential)
 
 	moved := performSettingsRequest(t, srv, http.MethodPut,
@@ -1896,5 +1896,26 @@ func TestSettingsHintsDoNotRepeatDescriptions(t *testing.T) {
 		description := metadataForSetting(key).description
 		assertions.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
 			"%s repeats its hint inside its description", key)
+	}
+}
+
+func TestSecretHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty", value: "", want: ""},
+		{name: "eleven characters is too short", value: "task-secret", want: ""},
+		{name: "twelve characters", value: "test-api-key", want: "tes…key"},
+		{name: "long key", value: "sk-live-0123456789abcdefx9Q", want: "sk-…x9Q"},
+		{name: "multibyte characters count as one", value: "ééé-secret-ключ", want: "ééé…люч"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, secretHint(tc.value))
+		})
 	}
 }

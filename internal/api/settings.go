@@ -34,6 +34,34 @@ const (
 type SecretSettingState struct {
 	Configured bool   `json:"configured"`
 	Source     string `json:"source,omitempty" enum:"stored,environment,none"`
+	// Hint is the first three and last three characters of the value joined
+	// by an ellipsis, so a person can tell which key is set without seeing
+	// it. It is empty for a value under twelve characters, for passwords,
+	// and when nothing is set.
+	Hint string `json:"hint,omitempty" doc:"First three and last three characters of the value joined by an ellipsis, so a person can tell which key is set. Empty for a value under twelve characters, for passwords, and when nothing is set."`
+}
+
+// secretHintMinimumLength is the shortest value that gets a hint: six of
+// twelve characters leaves as much hidden as shown.
+const secretHintMinimumLength = 12
+
+// secretHint masks a secret for display: "sk-…x9Q". Values too short to
+// hide most of themselves get no hint.
+func secretHint(value string) string {
+	runes := []rune(value)
+	if len(runes) < secretHintMinimumLength {
+		return ""
+	}
+	return string(runes[:3]) + "…" + string(runes[len(runes)-3:])
+}
+
+// secretStateOf reports a resolved credential to a client: whether it is
+// set, where it comes from, and a masked hint of its value.
+func secretStateOf(value string, state providercredentials.State) SecretSettingState {
+	if !state.Configured {
+		value = ""
+	}
+	return SecretSettingState{Configured: state.Configured, Source: string(state.Source), Hint: secretHint(value)}
 }
 
 // SettingValue is an explicit JSON union. Exactly one member is populated,
@@ -163,7 +191,7 @@ type settingDefinition struct {
 	// daemon-side resources (such as environment variable names) which a
 	// remote session must never control.
 	localOnly             bool
-	secret                func(*config.Config) bool
+	secret                func(*config.Config) string
 	serverSecret          func(context.Context, *Server, *config.Config) bool
 	credentialID          string
 	credentialEndpoint    func(*config.Config) string
@@ -178,7 +206,7 @@ var settingsCatalog = []settingDefinition{
 	liveStringSetting("web.density", "browser", []string{"compact", "comfortable"}, func(c *config.Config) string { return c.Web.Density }),
 	readOnlyStringSetting("server.bind_addr", "server", func(c *config.Config) string { return c.Server.BindAddr }),
 	readOnlyIntSetting("server.api_port", "server", func(c *config.Config) int { return c.Server.APIPort }),
-	readOnlySecretSetting("server.api_key", "server", func(c *config.Config) bool { return c.Server.APIKey != "" }),
+	readOnlySecretSetting("server.api_key", "server", func(c *config.Config) string { return c.Server.APIKey }),
 	readOnlyBoolSetting("server.allow_insecure", "server", func(c *config.Config) bool { return c.Server.AllowInsecure }),
 	readOnlyStringArraySetting("server.trusted_proxies", "server", func(c *config.Config) []string { return c.Server.TrustedProxies }),
 	stringSetting("server.daemon_idle_timeout", "server", nil, func(c *config.Config) string { return c.Server.DaemonIdleTimeout.String() }),
@@ -300,7 +328,7 @@ var settingsCatalog = []settingDefinition{
 	readOnlyCardDAVSecretSetting(),
 	boolSetting("integrations.tasks.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Tasks.Enabled }),
 	stringSetting("integrations.tasks.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.Endpoint }),
-	secretSetting("integrations.tasks.api_key", "integrations", func(c *config.Config) bool { return c.Integrations.Tasks.APIKey != "" }),
+	secretSetting("integrations.tasks.api_key", "integrations", func(c *config.Config) string { return c.Integrations.Tasks.APIKey }),
 	stringSetting("integrations.tasks.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.DefaultProject }),
 }
 
@@ -400,8 +428,8 @@ func readOnlyStringArraySetting(key, group string, read func(*config.Config) []s
 	return definition
 }
 
-func readOnlySecretSetting(key, group string, configured func(*config.Config) bool) settingDefinition {
-	definition := secretSetting(key, group, configured)
+func readOnlySecretSetting(key, group string, value func(*config.Config) string) settingDefinition {
+	definition := secretSetting(key, group, value)
 	definition.localOnly = true
 	return definition
 }
@@ -446,8 +474,8 @@ func stringArraySetting(key, group string, read func(*config.Config) []string) s
 	return settingDefinition{key: key, group: group, kind: "string_array", restartRequired: true, read: func(c *config.Config) any { return read(c) }}
 }
 
-func secretSetting(key, group string, configured func(*config.Config) bool) settingDefinition {
-	return settingDefinition{key: key, group: group, kind: "secret", restartRequired: true, secret: configured}
+func secretSetting(key, group string, value func(*config.Config) string) settingDefinition {
+	return settingDefinition{key: key, group: group, kind: "secret", restartRequired: true, secret: value}
 }
 
 func providerCredentialSetting(
@@ -685,18 +713,20 @@ func (s *Server) buildSettingsResponse(
 			setting.Inherited = definition.inherited(cfg)
 		}
 		if definition.credentialID != "" {
-			_, state, err := credentials.Resolve(definition.credentialID,
+			value, state, err := credentials.Resolve(definition.credentialID,
 				definition.credentialEndpoint(cfg), definition.credentialEnvironment(cfg), osLookupEnv)
 			if errors.Is(err, providercredentials.ErrOriginMismatch) {
 				state = providercredentials.State{Configured: false, Source: providercredentials.SourceNone}
 			} else if err != nil {
 				return SettingsResponse{}, err
 			}
-			setting.Secret = &SecretSettingState{Configured: state.Configured, Source: string(state.Source)}
+			secret := secretStateOf(value, state)
+			setting.Secret = &secret
 		} else if definition.serverSecret != nil {
 			setting.Secret = &SecretSettingState{Configured: definition.serverSecret(ctx, s, cfg)}
 		} else if definition.secret != nil {
-			setting.Secret = &SecretSettingState{Configured: definition.secret(cfg)}
+			value := definition.secret(cfg)
+			setting.Secret = &SecretSettingState{Configured: value != "", Hint: secretHint(value)}
 		} else {
 			setting.Value = settingValue(definition.kind, definition.read(cfg))
 		}

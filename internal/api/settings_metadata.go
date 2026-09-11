@@ -100,7 +100,7 @@ var settingsMetadata = map[string]settingMetadata{
 
 	"server.bind_addr":           {"Bind address", "Address the daemon listens on.", "listener"},
 	"server.api_port":            {"API port", "Port the daemon listens on.", "listener"},
-	"server.api_key":             {"API key", "Key that remote clients and browser logins use. Its value is never shown.", "listener"},
+	"server.api_key":             {"API key", "Key that remote clients and browser logins use.", "listener"},
 	"server.allow_insecure":      {"Allow insecure access", "Allow connections from other machines without an API key.", "listener"},
 	"server.trusted_proxies":     {"Trusted proxies", "IP addresses or ranges allowed to forward HTTPS details for a request.", "listener"},
 	"server.daemon_idle_timeout": {"Idle timeout", "How long a background daemon waits with nothing to do before it stops.", "lifecycle"},
@@ -220,7 +220,7 @@ var settingsMetadata = map[string]settingMetadata{
 
 	"integrations.tasks.enabled":         {"Task integration", "Send tasks to the configured task service.", ""},
 	"integrations.tasks.endpoint":        {"Task endpoint", "Where the task service listens.", ""},
-	"integrations.tasks.api_key":         {"Task API key", "Bearer key the daemon sends to the task service. Its value is never shown.", ""},
+	"integrations.tasks.api_key":         {"Task API key", "Bearer key the daemon sends to the task service.", ""},
 	"integrations.tasks.default_project": {"Default task project", "Project used when creating or looking up tasks.", ""},
 }
 

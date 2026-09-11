@@ -120,7 +120,8 @@ func (s *Server) handlePutProviderCredential(w http.ResponseWriter, r *http.Requ
 		s.settingsPendingRestart.Store(true)
 	}
 	writeProviderCredentialResponse(w, snapshot.ETag, credentialID,
-		providercredentials.State{Configured: true, Source: providercredentials.SourceStored}, pendingRestart)
+		secretStateOf(request.Value, providercredentials.State{Configured: true, Source: providercredentials.SourceStored}),
+		pendingRestart)
 }
 
 func (s *Server) handleDeleteProviderCredential(w http.ResponseWriter, r *http.Request) {
@@ -156,9 +157,10 @@ func (s *Server) handleDeleteProviderCredential(w http.ResponseWriter, r *http.R
 	// it was stored; deleting it must not depend on that provider still being
 	// configured. The reported state falls back to the environment only when
 	// the provider is still known.
+	value := ""
 	state := providercredentials.State{Configured: false, Source: providercredentials.SourceNone}
 	if binding, ok := providerCredentialBindingForID(cfg, credentialID); ok {
-		_, state, err = snapshot.Resolve(credentialID, binding.endpoint, binding.environment, osLookupEnv)
+		value, state, err = snapshot.Resolve(credentialID, binding.endpoint, binding.environment, osLookupEnv)
 		if err != nil {
 			writeProviderCredentialError(w, err)
 			return
@@ -168,7 +170,7 @@ func (s *Server) handleDeleteProviderCredential(w http.ResponseWriter, r *http.R
 	if pendingRestart {
 		s.settingsPendingRestart.Store(true)
 	}
-	writeProviderCredentialResponse(w, snapshot.ETag, credentialID, state, pendingRestart)
+	writeProviderCredentialResponse(w, snapshot.ETag, credentialID, secretStateOf(value, state), pendingRestart)
 }
 
 func providerCredentialRestartRequired(id string) bool {
@@ -216,14 +218,14 @@ func writeProviderCredentialError(w http.ResponseWriter, err error) {
 func writeProviderCredentialResponse(
 	w http.ResponseWriter,
 	etag, id string,
-	state providercredentials.State,
+	state SecretSettingState,
 	pendingRestart bool,
 ) {
 	w.Header().Set(etagHeaderName, etag)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, ProviderCredentialResponse{
 		CredentialID:   id,
-		State:          SecretSettingState{Configured: state.Configured, Source: string(state.Source)},
+		State:          state,
 		PendingRestart: pendingRestart,
 	})
 }

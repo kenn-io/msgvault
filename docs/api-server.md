@@ -35,7 +35,12 @@ including remote deployments.
 
 Schema 2.23.0 describes Settings structure. A sectioned group lists its
 `sections`, and each setting in such a group names its `section`; groups
-without sections omit both. `validation` gains two optional fields:
+without sections omit both. A secret's state gains an optional `hint`: the
+first three and last three characters of the value joined by an ellipsis
+(`sk-…x9Q`), so a client can show which key is set. It is omitted for a
+value under twelve characters, for the CardDAV password, and when nothing
+is set; the value itself is never returned. `validation` gains two optional
+fields:
 
 - `format: "cron"` marks a five-field cron schedule (minute, hour, day of
   month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,

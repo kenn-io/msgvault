@@ -929,9 +929,10 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 Instead of naming an environment variable in `api_key_env`, you can store a
 provider API key through Settings in the Web UI or the TUI. Stored keys live in
 `tokens/provider-credentials.json` under the data directory with owner-only
-file permissions. They are never written to `config.toml` and are never shown
-again after saving; Settings only reports whether a key is configured and
-whether it comes from the store or from the environment.
+file permissions. They are never written to `config.toml`. After saving,
+Settings shows only a masked hint of the key, its first three and last three
+characters, and whether it comes from the store or from the environment; the
+key itself is never returned.
 
 A stored key takes precedence over the environment variable named by
 `api_key_env`. Each stored key is bound to the endpoint origin (scheme, host,
