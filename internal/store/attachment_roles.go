@@ -151,6 +151,31 @@ func (s *Store) UpsertAttachmentRecord(
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
 }
 
+// UpsertAttachmentRecordWithDerivedDataRevision updates an attachment and its
+// message stats together with the revision that invalidates published analytics.
+// Callers skip unchanged records and use UpsertAttachmentRecord for new messages
+// whose attachments will be included in an incremental export.
+func (s *Store) UpsertAttachmentRecordWithDerivedDataRevision(
+	ctx context.Context, messageID int64, write AttachmentWrite,
+) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
+			return err
+		}
+		if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+			return err
+		}
+		return s.bumpDerivedDataRevision(tx)
+	})
+}
+
 // UpdateAttachmentMediaMetadataContext records provider media dimensions on
 // attachment occurrences belonging to one message.
 func (s *Store) UpdateAttachmentMediaMetadataContext(

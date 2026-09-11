@@ -1023,7 +1023,7 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
-See [Text Messages](/docs/usage/text-messages/) for usage examples.
+See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
 
 ---
 

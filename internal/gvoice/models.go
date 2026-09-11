@@ -95,6 +95,9 @@ type callRecord struct {
 	Timestamp time.Time
 	Duration  string   // ISO 8601 duration (e.g., "PT1M23S")
 	Labels    []string // from the HTML tags section
+	// AudioSrc is the raw src attribute of the audio element inside the
+	// .haudio subtree. It is empty when the export names no audio.
+	AudioSrc string
 }
 
 // ImportSummary holds statistics from a completed import run.
@@ -119,3 +122,6 @@ func MessageTypeForFileType(ft fileType) string {
 		return "google_voice_text"
 	}
 }
+
+// voicemailAudioPartKey identifies the recording occurrence for a voicemail.
+const voicemailAudioPartKey = "gvoice:voicemail:audio"

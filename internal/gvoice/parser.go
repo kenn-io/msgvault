@@ -349,6 +349,20 @@ func parseCallHTML(r io.Reader) (*callRecord, error) {
 				return false
 			})
 
+			var audioSrcs []string
+			walkNodes(n, func(child *html.Node) bool {
+				if child.Type == html.ElementNode && child.Data == "audio" {
+					if src := getAttr(child, "src"); strings.TrimSpace(src) != "" {
+						audioSrcs = append(audioSrcs, src)
+					}
+					return true
+				}
+				return false
+			})
+			if len(audioSrcs) == 1 {
+				record.AudioSrc = audioSrcs[0]
+			}
+
 			// Extract labels
 			walkNodes(n, func(child *html.Node) bool {
 				if child.Type == html.ElementNode && child.Data == "div" && hasClass(child, "tags") {

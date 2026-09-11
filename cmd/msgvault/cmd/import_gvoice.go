@@ -54,6 +54,9 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	clientOpts = append(
+		clientOpts, gvoice.WithAttachmentsDir(cfg.AttachmentsDir()),
+	)
 
 	client, err := gvoice.NewClient(takeoutDir, clientOpts...)
 	if err != nil {

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
@@ -20,16 +22,17 @@ const defaultPageSize = 500
 // Client reads from a Google Voice Takeout export and imports messages
 // into the msgvault store.
 type Client struct {
-	takeoutDir string
-	owner      ownerPhones
-	identifier string // GV phone number used as source identifier
-	afterDate  time.Time
-	beforeDate time.Time
-	limit      int
-	index      []indexEntry
-	indexBuilt bool
-	logger     *slog.Logger
-	pageSize   int
+	takeoutDir     string
+	owner          ownerPhones
+	identifier     string // GV phone number used as source identifier
+	afterDate      time.Time
+	beforeDate     time.Time
+	limit          int
+	index          []indexEntry
+	indexBuilt     bool
+	logger         *slog.Logger
+	pageSize       int
+	attachmentsDir string
 
 	// LRU cache for parsed HTML files (avoid re-parsing when
 	// consecutive messages come from the same file)
@@ -59,6 +62,12 @@ func WithLimit(n int) ClientOption {
 // WithLogger sets the logger for the client.
 func WithLogger(l *slog.Logger) ClientOption {
 	return func(c *Client) { c.logger = l }
+}
+
+// WithAttachmentsDir sets the archive attachment root. When it is empty the
+// client stores no voicemail audio and behaves as before.
+func WithAttachmentsDir(dir string) ClientOption {
+	return func(c *Client) { c.attachmentsDir = dir }
 }
 
 // NewClient creates a Client from a Google Voice Takeout directory.
@@ -132,6 +141,11 @@ func (c *Client) Import(
 
 	summary := &ImportSummary{}
 
+	var maxMessageID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM messages`).Scan(&maxMessageID); err != nil {
+		return nil, fmt.Errorf("read message boundary: %w", err)
+	}
+
 	// Ensure labels
 	labelIDs, err := c.ensureLabels(s, sourceID)
 	if err != nil {
@@ -179,8 +193,9 @@ func (c *Client) Import(
 
 		default:
 			if err := c.importCallEntry(
-				s, sourceID, &entry, ownerID,
+				ctx, s, sourceID, &entry, ownerID,
 				labelIDs, phoneCache, convCache, summary,
+				maxMessageID,
 			); err != nil {
 				c.logger.Warn(
 					"failed to import call entry",
@@ -381,6 +396,7 @@ func (c *Client) importTextEntry(
 }
 
 func (c *Client) importCallEntry(
+	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
 	entry *indexEntry,
@@ -389,6 +405,7 @@ func (c *Client) importCallEntry(
 	phoneCache map[string]int64,
 	convCache map[string]int64,
 	summary *ImportSummary,
+	maxMessageID int64,
 ) error {
 	f, err := os.Open(entry.FilePath)
 	if err != nil {
@@ -523,8 +540,108 @@ func (c *Client) importCallEntry(
 		}
 	}
 
+	// New messages' attachments are included in the incremental cache export.
+	if err := c.storeVoicemailAudio(ctx, s, msgID, entry, record, msgID <= maxMessageID); err != nil {
+		c.logger.Warn(
+			"failed to associate voicemail audio",
+			"id", entry.ID,
+			"error", err,
+		)
+	}
+
 	summary.MessagesImported++
 	return nil
+}
+
+// storeVoicemailAudio associates the recording named by one voicemail HTML
+// record with its message, or records a typed acquisition gap.
+func (c *Client) storeVoicemailAudio(
+	ctx context.Context,
+	s *store.Store,
+	msgID int64,
+	entry *indexEntry,
+	record *callRecord,
+	invalidateCache bool,
+) error {
+	if entry.FileType != fileTypeVoicemail {
+		return nil
+	}
+	if c.attachmentsDir == "" {
+		return s.RecomputeMessageAttachmentStats(msgID)
+	}
+
+	name := record.AudioSrc
+	var previous store.AttachmentWrite
+	err := s.DB().QueryRowContext(ctx, s.Rebind(`
+		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''),
+		       COALESCE(content_hash, ''), COALESCE(size, 0),
+		       COALESCE(source_attachment_id, ''), COALESCE(media_type, ''),
+		       COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
+		       COALESCE(CAST(attachment_metadata AS TEXT), ''),
+		       COALESCE(attachment_role, ''), COALESCE(role_source, ''),
+		       COALESCE(source_part_key, ''), COALESCE(content_id, ''),
+		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+		FROM attachments
+		WHERE message_id = ? AND source_part_key = ?
+	`), msgID, voicemailAudioPartKey).Scan(
+		&previous.Filename, &previous.MIMEType, &previous.StoragePath, &previous.ContentHash, &previous.Size,
+		&previous.SourceAttachmentID, &previous.MediaType, &previous.Width, &previous.Height, &previous.DurationMS,
+		&previous.Metadata, &previous.Role, &previous.RoleSource, &previous.SourcePartKey, &previous.ContentID,
+		&previous.State, &previous.SkipReason,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check existing voicemail audio: %w", err)
+	}
+	existing := err == nil
+
+	write := store.AttachmentWrite{
+		Filename:      name,
+		MediaType:     "audio",
+		Role:          store.AttachmentRoleStandalone,
+		RoleSource:    store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: voicemailAudioPartKey,
+		State:         attachmentpolicy.StateFailed,
+		SkipReason:    attachmentpolicy.SkipFetchFailure,
+	}
+
+	if name != "" &&
+		!strings.ContainsAny(name, "/\\:\x00") &&
+		strings.EqualFold(filepath.Ext(name), ".mp3") {
+		write.MIMEType = "audio/mpeg"
+		srcPath := filepath.Join(filepath.Dir(entry.FilePath), name)
+		relPath, contentHash, size, err := export.StoreAttachmentFromPath(
+			c.attachmentsDir, srcPath, 0,
+		)
+		if err == nil {
+			write.StoragePath = relPath
+			write.ContentHash = contentHash
+			write.Size = size
+			write.State = attachmentpolicy.StateStored
+			write.SkipReason = ""
+		} else {
+			write.ContentHash = contentHash
+		}
+	}
+
+	if write.State == attachmentpolicy.StateFailed && existing &&
+		previous.State == attachmentpolicy.StateStored &&
+		previous.StoragePath != "" && previous.ContentHash != "" {
+		return s.RecomputeMessageAttachmentStats(msgID)
+	}
+	if existing && write == previous {
+		return s.RecomputeMessageAttachmentStats(msgID)
+	}
+
+	if invalidateCache {
+		if err := s.UpsertAttachmentRecordWithDerivedDataRevision(ctx, msgID, write); err != nil {
+			return fmt.Errorf("write voicemail audio and cache revision: %w", err)
+		}
+		return nil
+	}
+	if err := s.UpsertAttachmentRecord(ctx, msgID, write); err != nil {
+		return fmt.Errorf("write voicemail audio record: %w", err)
+	}
+	return s.RecomputeMessageAttachmentStats(msgID)
 }
 
 // writeTextRecipients writes from/to rows for a text message.

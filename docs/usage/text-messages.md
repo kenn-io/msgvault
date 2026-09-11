@@ -143,6 +143,8 @@ The directory must be the "Voice" folder from a [Google Takeout](https://takeout
 !!! note
     Only text messages appear in TUI text mode. Call logs and voicemails are stored but not currently browsable in the TUI.
 
+Voicemail recordings shipped beside their HTML files are stored in the content-addressed attachment archive and attached to their voicemail message. A voicemail with no usable reference keeps a failed/fetch_failure attachment occurrence with zero stored bytes, so attachment queries still include the message.
+
 ### Flags
 
 | Flag | Default | Description |
