@@ -1524,3 +1524,246 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 	assert.Equal(t, "discarded", lifecycle)
 	assert.False(t, pendingKind.Valid, "pending marker must be cleared exactly once")
 }
+
+// recreateDraftsMailbox deletes and recreates the Drafts mailbox and returns the
+// new UIDVALIDITY. DELETE followed by CREATE is how a mailbox's epoch changes,
+// and it is the one epoch change the in-tree fake models. Every UID recorded
+// under the old epoch then names a different message, or no message at all.
+func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) uint32 {
+	t.Helper()
+	client, err := imapclient.DialInsecure(f.config.Host+":"+strconv.Itoa(f.config.Port), nil)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	require.NoError(t, client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	require.NoError(t, client.Delete("Drafts").Wait())
+	require.NoError(t, client.Create("Drafts", nil).Wait())
+	selected, err := client.Select("Drafts", nil).Wait()
+	require.NoError(t, err)
+	require.NotEqual(t, f.draftUIDVal, selected.UIDValidity,
+		"recreating the mailbox must change its UIDVALIDITY")
+	return selected.UIDValidity
+}
+
+// TestDraftEditInterruptedNamesNoUIDAfterEpochChange is the destructive case the
+// pending receipt alone cannot rule out. pending_uid differs from uid, so the
+// marker says Persist committed and the pre-edit copy is the removable one — but
+// the mailbox epoch moved after the marker was written, so that UID now names an
+// unrelated message. The recovery must name no UID at all and must describe the
+// copy instead, because the operator acts on a named UID by deleting it.
+func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Post-Persist marker shape: pending_uid names the pre-edit copy, uid names
+	// the replacement, and the marker is older than the staleness threshold.
+	origUID := int64(f.draftUID)
+	staleTime := time.Now().Add(-(pendingEditStalenessThreshold + time.Minute))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1, uid = 99999
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	// The epoch changes after the marker was written. A bystander then takes the
+	// pre-edit copy's UID under the new epoch, so naming that UID would tell the
+	// operator to delete a message this draft never owned.
+	recreateDraftsMailbox(t, f)
+	bystanderRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n" +
+		"Subject: Not a draft\r\nMessage-ID: <bystander-epoch@example.com>\r\n\r\nBystander\r\n")
+	bystanderUID := appendRawToServer(t, f.config.Host+":"+strconv.Itoa(f.config.Port), "Drafts", bystanderRaw)
+	require.Equal(t, origUID, int64(bystanderUID),
+		"the bystander must take the pre-edit copy's UID under the new epoch")
+
+	evs, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear", "--json")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
+	require.True(t, ok)
+	assert.NotContains(t, coded.Err.Error(), "UID=",
+		"an unverifiable copy must not be named in the logged cause either")
+
+	require.Len(t, evs, 1)
+	assert.Equal(t, cliStreamStderr, evs[0].Type)
+	delivered := decodeDraftLifecycleEvent(t, evs[0])
+	assert.Equal(t, "edit_interrupted", delivered["status"])
+	assert.NotContains(t, delivered, "uid",
+		"a UID whose epoch moved names a different message and must not be reported")
+	assert.NotContains(t, evs[0].Data, strconv.FormatInt(origUID, 10),
+		"the bystander's UID must appear nowhere in the delivered result")
+	assert.Equal(t, draftLocateDuplicateInstruction, delivered["instructions"])
+
+	// The recovery is still a recovery: the marker is cleared and nothing was
+	// removed from the mailbox.
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&pendingKind))
+	assert.False(t, pendingKind.Valid, "the interrupted marker must still be cleared")
+	assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(bystanderUID)),
+		"the bystander must survive the recovery untouched")
+}
+
+// failRemoveUnverifiableCopy fails RemoveDraft and makes every InspectDraft
+// after the first report an epoch change. The first call is the pre-Begin
+// ownership check the edit path makes before it claims; the later one is the
+// re-verification of the pre-edit copy after the removal failed. This is what a
+// mailbox recreated between the claim and the removal looks like to the daemon.
+type failRemoveUnverifiableCopy struct {
+	*imaplib.Client
+	mu       sync.Mutex
+	inspects int
+}
+
+func (c *failRemoveUnverifiableCopy) InspectDraft(
+	ctx context.Context, target imaplib.DraftTarget,
+) (imaplib.DraftInspectResult, error) {
+	c.mu.Lock()
+	c.inspects++
+	first := c.inspects == 1
+	c.mu.Unlock()
+	if first {
+		return c.Client.InspectDraft(ctx, target)
+	}
+	return imaplib.DraftInspectResult{}, &imaplib.DraftAppendError{
+		State: imaplib.DraftStateRejected,
+		Code:  "uidvalidity_changed",
+		Err:   errors.New("injected epoch change before re-verification"),
+	}
+}
+
+func (c *failRemoveUnverifiableCopy) RemoveDraft(
+	context.Context, imaplib.DraftTarget,
+) (imaplib.DraftInspectResult, error) {
+	return imaplib.DraftInspectResult{}, &imaplib.DraftAppendError{
+		State: imaplib.DraftStateRemoteUnknown,
+		Code:  "remote_unknown",
+		Err:   errors.New("injected RemoveDraft failure"),
+	}
+}
+
+// TestDraftEditNamesNoUIDWhenLeftoverCopyCannotBeVerified covers the same rule
+// on the post-persist arm: the edit applied, the removal of the pre-edit copy
+// failed, and the copy could not be re-verified live. The result still has to
+// report the partial outcome, but it must name no UID.
+func TestDraftEditNamesNoUIDWhenLeftoverCopyCannotBeVerified(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+		return &failRemoveUnverifiableCopy{
+			Client: imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+		}, nil
+	}
+
+	var evs []api.CLIRunEvent
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10),
+			"--revision=1", "--body=Body that did land", "--json"},
+	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+	require.Error(t, err)
+	assert.Equal(t, "edit_applied_old_copy_remains", err.Error())
+
+	require.Len(t, evs, 1)
+	result := decodeDraftLifecycleEvent(t, evs[0])
+	assert.Equal(t, "edit_applied_old_copy_remains", result["status"])
+	assert.NotContains(t, result, "uid",
+		"a leftover copy that cannot be verified live must not be named")
+	assert.Equal(t, draftLocateDuplicateInstruction, result["instructions"])
+	assert.NotContains(t, evs[0].Data, "Body that did land",
+		"a partial result must not echo the supplied body")
+
+	// The edit itself still committed: the local record points at the new copy.
+	var currentMessageID int64
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT current_message_id, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&currentMessageID, &pendingKind))
+	assert.NotEqual(t, f.draftID, currentMessageID)
+	assert.Equal(t, "edit", pendingKind.String)
+}
+
+// failInspectClient wraps a real IMAP client and fails every InspectDraft with a
+// caller-supplied error.
+type failInspectClient struct {
+	*imaplib.Client
+	inspectErr error
+}
+
+func (c *failInspectClient) InspectDraft(
+	context.Context, imaplib.DraftTarget,
+) (imaplib.DraftInspectResult, error) {
+	return imaplib.DraftInspectResult{}, c.inspectErr
+}
+
+// TestDraftInspectFailureDeliversRecoveryInstructions covers the pre-Begin
+// InspectDraft failure arms. CLIRunCodedError carries only its code across the
+// daemon boundary, so a code returned bare reaches the caller as a bare code
+// with nothing to act on, even though both of these codes are actionable: one
+// says every recorded UID now names something else, the other says the mailbox
+// state the operation depends on was never established.
+func TestDraftInspectFailureDeliversRecoveryInstructions(t *testing.T) {
+	epochChange := func() error {
+		return &imaplib.DraftAppendError{State: imaplib.DraftStateRejected,
+			Code: "uidvalidity_changed", Err: errors.New("injected epoch change")}
+	}
+	unknownRemote := func() error {
+		return &imaplib.DraftAppendError{State: imaplib.DraftStateRemoteUnknown,
+			Code: "remote_unknown", Err: errors.New("injected network failure")}
+	}
+	testCases := []struct {
+		name        string
+		command     string
+		code        string
+		instruction string
+		inspectErr  error
+	}{
+		{"edit after an epoch change", "draft-edit", "uidvalidity_changed", draftReloadInstruction, epochChange()},
+		{"delete after an epoch change", "draft-delete", "uidvalidity_changed", draftReloadInstruction, epochChange()},
+		{"edit with an unknown remote", "draft-edit", "remote_unknown", draftInspectInstruction, unknownRemote()},
+		{"delete with an unknown remote", "draft-delete", "remote_unknown", draftInspectInstruction, unknownRemote()},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newDraftLifecycleFixture(t)
+			adapter := f.grantedAdapter()
+			adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+				return &failInspectClient{
+					Client:     imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+					inspectErr: testCase.inspectErr,
+				}, nil
+			}
+
+			args := []string{testCase.command, strconv.FormatInt(f.draftID, 10), "--revision=1", "--json"}
+			if testCase.command == "draft-edit" {
+				args = append(args, "--body=never applied")
+			}
+			var evs []api.CLIRunEvent
+			err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args},
+				func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+			require.Error(t, err)
+			assert.Equal(t, testCase.code, err.Error())
+
+			require.Len(t, evs, 1, "an actionable refusal must reach the caller as an event")
+			assert.Equal(t, cliStreamStderr, evs[0].Type)
+			delivered := decodeDraftLifecycleEvent(t, evs[0])
+			assert.Equal(t, testCase.code, delivered["status"])
+			assert.Equal(t, testCase.instruction, delivered["instructions"])
+			assert.NotContains(t, delivered, "uid", "a refusal before any claim names no copy")
+			_, hasRevision := delivered["revision"]
+			assert.False(t, hasRevision, "a refusal must carry no retry revision")
+
+			// Nothing was claimed: the refusal is before Begin.
+			var lifecycle string
+			var revision int64
+			var pendingKind sql.NullString
+			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+				SELECT lifecycle, revision, pending_kind FROM imap_drafts WHERE draft_id = ?
+			`), f.draftID).Scan(&lifecycle, &revision, &pendingKind))
+			assert.Equal(t, "active", lifecycle)
+			assert.Equal(t, int64(1), revision)
+			assert.False(t, pendingKind.Valid)
+		})
+	}
+}

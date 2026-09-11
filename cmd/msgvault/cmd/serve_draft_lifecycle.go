@@ -38,9 +38,21 @@ const (
 		"then reload the draft with draft-get before another attempt"
 
 	// draftRemoveStaleInstruction is used only alongside a result that also
-	// names the leftover copy's UID. A UID identifies a copy to remove in a
-	// mail client; it is not a number any draft command accepts back.
+	// names the leftover copy's UID, and only after a live InspectDraft has
+	// re-established that the UID still identifies the copy msgvault wrote. A
+	// UID identifies a copy to remove in a mail client; it is not a number any
+	// draft command accepts back.
 	draftRemoveStaleInstruction = "remove the copy named by uid from the Drafts mailbox, " +
+		"then reload the draft with draft-get before another attempt"
+
+	// draftLocateDuplicateInstruction replaces draftRemoveStaleInstruction on
+	// every path where a leftover copy may exist but no UID could be confirmed
+	// live to still name it. A UID that fails that confirmation may identify a
+	// different message — a changed mailbox epoch reassigns every UID — so the
+	// operator is told how to recognize the copy instead of being handed a
+	// number to delete.
+	draftLocateDuplicateInstruction = "find the older copy of this draft in the Drafts mailbox " +
+		"by its subject and date and remove only that copy, " +
 		"then reload the draft with draft-get before another attempt"
 
 	draftCompleteDiscardInstruction = "complete the discard with draft-delete, " +
@@ -347,6 +359,107 @@ func refuseDraftLifecycle(
 	return draftReplyError(code, cause)
 }
 
+// verifiedStaleDraftUID returns target.UID only when a live InspectDraft finds
+// that the UID still identifies the copy msgvault wrote: the mailbox epoch this
+// SELECT reports matches the recorded one, the \Draft flag is present, and the
+// remote bytes hash to target.RawSHA256. InspectDraft is exactly that
+// conjunction, so this asks it rather than deriving the answer a second way.
+//
+// Every other outcome returns 0, including an error, an unknown remote state, a
+// changed epoch, a cleared flag, and different bytes. A caller must name no UID
+// when this returns 0: under a changed epoch the same number identifies a
+// different message, and naming it tells an operator to delete someone's mail.
+func verifiedStaleDraftUID(ctx context.Context, client draftClient, target imaplib.DraftTarget) uint32 {
+	if client == nil {
+		return 0
+	}
+	result, err := client.InspectDraft(ctx, target)
+	if err != nil || result.State != imaplib.DraftRemotePresent {
+		return 0
+	}
+	return target.UID
+}
+
+// verifyInterruptedEditStaleCopy re-establishes, live, whether the pending
+// receipt left by an interrupted edit still names the pre-edit copy. It opens
+// its own client because this branch refuses before the edit path builds one.
+//
+// The digest cannot come from the draft's current raw: once Persist committed,
+// current_message_id names the replacement, while the pending receipt names the
+// copy that held the previous bytes. Those bytes belong to the message the
+// pending receipt's membership still points at, which only Finish removes.
+// Returns 0 whenever any step of the verification cannot run.
+func (a *storeAPIAdapter) verifyInterruptedEditStaleCopy(
+	ctx context.Context,
+	source *store.Source,
+	draft *store.IMAPDraft,
+) uint32 {
+	pendingUIDValidity := uint32(draft.PendingUIDValidity.Int64)
+	pendingUID := uint32(draft.PendingUID.Int64)
+	messageID, err := a.store.GetIMAPDraftPendingMessageIDContext(
+		ctx, source.ID, draft.Mailbox, pendingUIDValidity, pendingUID)
+	if err != nil {
+		return 0
+	}
+	raw, err := a.store.GetMessageRawContext(ctx, messageID)
+	if err != nil {
+		return 0
+	}
+	client, err := a.lifecycleDraftClient(ctx, source)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = client.Close() }()
+	return verifiedStaleDraftUID(ctx, client, imaplib.DraftTarget{
+		Mailbox:     draft.Mailbox,
+		UIDValidity: pendingUIDValidity,
+		UID:         pendingUID,
+		RawSHA256:   sha256.Sum256(raw),
+	})
+}
+
+// draftInspectFailureInstruction returns the recovery instruction for a
+// pre-Begin InspectDraft failure, or "" when nothing in the mailbox and nothing
+// in the local record has to change before another attempt.
+//
+// The two actionable codes are actionable for different reasons.
+// uidvalidity_changed means every UID the caller holds — including the one
+// draft-get last reported — now names a different message, so the caller has to
+// re-read before acting on any of them. remote_unknown means the mailbox state
+// this operation depends on was never established, so the caller has to look at
+// the mailbox before deciding what a retry would do. The remaining codes
+// (invalid_mailbox, uidplus_required, cancelled) describe the configuration or
+// the request rather than the mailbox, and leave nothing to recover.
+func draftInspectFailureInstruction(code string) string {
+	switch code {
+	case "uidvalidity_changed":
+		return draftReloadInstruction
+	case "remote_unknown":
+		return draftInspectInstruction
+	}
+	return ""
+}
+
+// refuseDraftInspectFailure reports a pre-Begin InspectDraft failure, routing
+// the actionable codes through refuseDraftLifecycle so the instruction reaches
+// the caller. A CLIRunCodedError carries only its code across the daemon
+// boundary, so a code returned bare arrives as a bare code.
+func refuseDraftInspectFailure(
+	emit func(api.CLIRunEvent) error,
+	intent draftLifecycleIntent,
+	err error,
+) error {
+	code, cause := "remote_unknown", err
+	var appendErr *imaplib.DraftAppendError
+	if errors.As(err, &appendErr) {
+		code, cause = appendErr.Code, appendErr.Err
+	}
+	if instructions := draftInspectFailureInstruction(code); instructions != "" {
+		return refuseDraftLifecycle(emit, intent, code, instructions, 0, cause)
+	}
+	return draftReplyError(code, cause)
+}
+
 // runCLIDraftLifecycle dispatches draft-get, draft-edit, and draft-delete.
 func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	ctx context.Context,
@@ -537,17 +650,33 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 					fmt.Errorf("draft %d has a recent pending edit", intent.DraftID))
 			}
 			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
-				return draftReplyError("internal", fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
+				// The marker survives, and the interrupted edit it records may
+				// have left a second copy in the mailbox, so the operator has
+				// both something to look at and something to re-read.
+				return refuseDraftLifecycle(emit, intent, "internal", draftInspectInstruction, 0,
+					fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
 			}
 			// Recovery only clears the marker. It never applies the body this
 			// call supplied and never reuses the revision this call supplied,
 			// so the caller must re-read the draft before editing again.
+			//
+			// pending_uid differing from uid means Persist committed, so the
+			// pending receipt names the pre-edit copy rather than the live one.
+			// That is necessary for naming the UID to the operator but not
+			// sufficient: the recorded epoch may be stale, and under a new
+			// epoch the same number identifies a different message. Only a live
+			// InspectDraft against the pre-edit copy's archived bytes settles
+			// it, so a UID is named here and nowhere else in this branch.
 			if draft.PendingUID.Valid && uint32(draft.PendingUID.Int64) != draft.UID {
-				// Persist committed: pending_uid names the pre-edit copy; safe to remove.
-				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
-					uint32(draft.PendingUID.Int64),
-					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
-						intent.DraftID, draft.PendingUID.Int64, draftReloadInstruction))
+				if staleUID := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft); staleUID != 0 {
+					return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
+						staleUID,
+						fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
+							intent.DraftID, staleUID, draftReloadInstruction))
+				}
+				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftLocateDuplicateInstruction, 0,
+					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an older copy may remain in the Drafts mailbox, and its recorded UID could not be confirmed to still name it, so %s",
+						intent.DraftID, draftLocateDuplicateInstruction))
 			}
 			return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftInspectInstruction, 0,
 				fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an untracked duplicate may remain in the Drafts mailbox — the tracked copy is the one local state still points at, so remove a duplicate only if you see one, then %s",
@@ -575,11 +704,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	}
 	inspectResult, err := client.InspectDraft(ctx, oldTarget)
 	if err != nil {
-		var appendErr *imaplib.DraftAppendError
-		if errors.As(err, &appendErr) {
-			return draftReplyError(appendErr.Code, appendErr.Err)
-		}
-		return draftReplyError("remote_unknown", err)
+		return refuseDraftInspectFailure(emit, intent, err)
 	}
 	switch inspectResult.State {
 	case imaplib.DraftRemoteAbsent:
@@ -713,8 +838,17 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		if errors.As(removeErr, &dae) {
 			cause = fmt.Errorf("%s: %w", dae.Code, dae.Err)
 		}
+		// A failed removal leaves the remote side unsettled: the STORE may have
+		// landed, the EXPUNGE may have landed, the connection may have died
+		// before either, or the epoch may have moved. The pre-edit UID is a
+		// removal instruction addressed to a human, so it is named only when a
+		// live InspectDraft still finds the pre-edit bytes under that UID.
+		if staleUID := verifiedStaleDraftUID(ctx, client, oldTarget); staleUID != 0 {
+			return reportEditAppliedOldCopyRemains(emit, intent, *newReceipt,
+				staleUID, draftRemoveStaleInstruction, cause)
+		}
 		return reportEditAppliedOldCopyRemains(emit, intent, *newReceipt,
-			oldTarget.UID, draftRemoveStaleInstruction, cause)
+			0, draftLocateDuplicateInstruction, cause)
 	}
 	switch removeResult.State {
 	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
@@ -782,9 +916,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 // could not be removed. It is the inverse of remote_accepted_local_failed,
 // where the server holds the new copy and the local record does not.
 //
-// staleUID names the leftover copy when it still carries the bytes msgvault
-// wrote, and is 0 when another client changed it and it is no longer safe to
-// name as removable.
+// staleUID names the leftover copy only when the caller has re-established that
+// condition live through verifiedStaleDraftUID, and is 0 otherwise — including
+// when the removal's outcome is unknown, when the epoch moved, and when another
+// client changed the copy. A 0 here must be paired with an instruction that
+// names no UID.
 func reportEditAppliedOldCopyRemains(
 	emit func(api.CLIRunEvent) error,
 	intent draftLifecycleIntent,
@@ -904,11 +1040,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	}
 	inspectResult, err := client.InspectDraft(ctx, oldTarget)
 	if err != nil {
-		var appendErr *imaplib.DraftAppendError
-		if errors.As(err, &appendErr) {
-			return draftReplyError(appendErr.Code, appendErr.Err)
-		}
-		return draftReplyError("remote_unknown", err)
+		return refuseDraftInspectFailure(emit, intent, err)
 	}
 	switch inspectResult.State {
 	case imaplib.DraftRemoteAbsent:
@@ -947,18 +1079,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	// P1-A: only call Finish when RemoveDraft confirms absent or present (expunged).
 	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
+		// Leave pending state set; caller reloads and retries draft-delete.
+		cause := removeErr
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			// Leave pending state set; caller reloads and retries draft-delete.
-			output := draftLifecycleOutput{
-				Status:       "delete_failed",
-				DraftID:      intent.DraftID,
-				Lifecycle:    "active",
-				OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: draft.UIDValidity, UID: draft.UID}),
-				Instructions: draftInspectInstruction,
-			}
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
-			return draftReplyError("delete_failed", dae.Err)
+			cause = dae.Err
 		}
 		output := draftLifecycleOutput{
 			Status:       "delete_failed",
@@ -966,8 +1091,17 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			Lifecycle:    "active",
 			Instructions: draftInspectInstruction,
 		}
+		// The operation reference is the copy's live coordinates. A failed
+		// removal does not establish that they still are, so they are reported
+		// only when a live InspectDraft still finds the owned copy there.
+		if verifiedStaleDraftUID(ctx, client, oldTarget) != 0 {
+			output.OperationRef = draftOperationRef(store.IMAPDraftReceipt{
+				SourceID: target.source.ID, Mailbox: draft.Mailbox,
+				UIDValidity: draft.UIDValidity, UID: draft.UID,
+			})
+		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
-		return draftReplyError("delete_failed", removeErr)
+		return draftReplyError("delete_failed", cause)
 	}
 	// P1-A: soft failures (flag_missing or changed) mean the remote copy was
 	// externally modified after InspectDraft confirmed it; leave pending.
@@ -1061,15 +1195,20 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 	oldUID := uint32(draft.PendingUID.Int64)
 	oldUIDValidity := uint32(draft.PendingUIDValidity.Int64)
 
+	// The pending marker records a discard this daemon still owes, so a failure
+	// to reach the mailbox leaves owed work the operator has to drive to
+	// completion rather than a dead end.
 	client, err := a.lifecycleDraftClient(ctx, target.source)
 	if err != nil {
-		return draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
+		return refuseDraftLifecycle(emit, intent, "invalid_source", draftCompleteDiscardInstruction, 0,
+			fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
 	}
 	defer func() { _ = client.Close() }()
 
 	currentRaw, err := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
 	if err != nil {
-		return draftReplyError("internal", fmt.Errorf("load current raw for draft %d: %w", intent.DraftID, err))
+		return refuseDraftLifecycle(emit, intent, "internal", draftCompleteDiscardInstruction, 0,
+			fmt.Errorf("load current raw for draft %d: %w", intent.DraftID, err))
 	}
 	digest := sha256.Sum256(currentRaw)
 	oldTarget := imaplib.DraftTarget{
@@ -1080,14 +1219,21 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 	}
 
 	// A failed replay leaves the pending marker set and reports the same
-	// numberless guidance as the ordinary delete path.
+	// numberless guidance as the ordinary delete path. The operation reference
+	// is the copy's live coordinates, so it is reported only when a live
+	// InspectDraft still finds the owned copy at the pending receipt.
 	failReplay := func(cause error) error {
 		output := draftLifecycleOutput{
 			Status:       "delete_failed",
 			DraftID:      draft.DraftID,
 			Lifecycle:    "active",
-			OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: oldUIDValidity, UID: oldUID}),
 			Instructions: draftInspectInstruction,
+		}
+		if verifiedStaleDraftUID(ctx, client, oldTarget) != 0 {
+			output.OperationRef = draftOperationRef(store.IMAPDraftReceipt{
+				SourceID: target.source.ID, Mailbox: draft.Mailbox,
+				UIDValidity: oldUIDValidity, UID: oldUID,
+			})
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", cause)

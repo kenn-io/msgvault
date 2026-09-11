@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -366,4 +367,164 @@ func TestRemoveDraftIsIdempotentForAbsentUID(t *testing.T) {
 	r2, err := cl3.RemoveDraft(context.Background(), target)
 	require.NoError(t, err)
 	assert.Equal(t, DraftRemoteAbsent, r2.State)
+}
+
+// TestSelectedEpochBelongsToTheSelectionThatRemoves pins the invariant that
+// makes RemoveDraft's epoch guard sound when selectMailbox short-circuits on an
+// already-selected mailbox, which it does whenever one client inspects and then
+// removes. The guard compares target.UIDValidity against c.selectedUIDValidity,
+// and that field is only ever written in two shapes: set together with
+// c.selectedMailbox from a SELECT response on the live connection
+// (client.go:540-541, qresync.go:189-190), or zeroed together with it on every
+// path that can invalidate a selection — connect (client.go:336-337), reconnect
+// (client.go:499-500), a network error inside withConn (client.go:523-524), and
+// Close (client.go:1844-1845).
+//
+// A cache hit therefore requires a non-empty c.selectedMailbox, which only the
+// SELECT that also published the epoch can produce. UIDVALIDITY is reported at
+// SELECT and does not change underneath a selected mailbox, so the cached value
+// is the epoch of the selection the removal actually runs in, not an epoch
+// carried over from some earlier one.
+//
+// Written to be read instead of re-derived: a reviewer asking whether a stale
+// epoch can survive into a removal is asking whether this test can fail.
+func TestSelectedEpochBelongsToTheSelectionThatRemoves(t *testing.T) {
+	caps := emersionimap.CapSet{
+		emersionimap.CapIMAP4rev1: {},
+		emersionimap.CapUIDPlus:   {},
+	}
+	addr, _ := testutil.StartIMAPMemServerForDrafts(t, testutil.IMAPDraftServerOptions{
+		MessagesPerMailbox: map[string]int{"Drafts": 0},
+		Caps:               caps,
+	})
+
+	// liveEpoch reads the mailbox's current UIDVALIDITY over an independent
+	// connection, so the assertions compare against the server and not against
+	// another copy of the client's own cache.
+	liveEpoch := func(t *testing.T) uint32 {
+		t.Helper()
+		probe, err := imapclient.DialInsecure(addr, nil)
+		require.NoError(t, err)
+		defer func() { _ = probe.Close() }()
+		require.NoError(t, probe.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+		selected, err := probe.Select("Drafts", nil).Wait()
+		require.NoError(t, err)
+		return selected.UIDValidity
+	}
+
+	raw := []byte(testDraftRaw)
+	digest := sha256.Sum256(raw)
+
+	t.Run("a cached selection carries that selection's own epoch", func(t *testing.T) {
+		cl := newDraftTestClient(t, addr)
+		appended, err := cl.AppendDraft(context.Background(), "Drafts", raw)
+		require.NoError(t, err)
+		target := DraftTarget{
+			Mailbox: "Drafts", UIDValidity: appended.UIDValidity,
+			UID: appended.UID, RawSHA256: digest,
+		}
+
+		// The inspection establishes the selection. This is the ordinary edit
+		// and delete shape: one client, inspect then remove.
+		inspected, err := cl.InspectDraft(context.Background(), target)
+		require.NoError(t, err)
+		require.Equal(t, DraftRemotePresent, inspected.State)
+		require.Equal(t, "Drafts", cl.selectedMailbox,
+			"the inspection must leave the mailbox selected, so the removal hits the cache")
+		require.Equal(t, liveEpoch(t), cl.selectedUIDValidity,
+			"the cached epoch must be the one the server reported at SELECT")
+
+		// The removal reuses that selection and validates against its epoch.
+		removed, err := cl.RemoveDraft(context.Background(), target)
+		require.NoError(t, err)
+		assert.Equal(t, DraftRemotePresent, removed.State)
+		assert.Equal(t, liveEpoch(t), cl.selectedUIDValidity,
+			"reusing the selection cannot move the epoch it validated against")
+	})
+
+	t.Run("every invalidating path clears the mailbox and the epoch together", func(t *testing.T) {
+		for _, invalidate := range []struct {
+			name string
+			run  func(t *testing.T, cl *Client)
+		}{
+			{
+				name: "a network error inside withConn",
+				run: func(t *testing.T, cl *Client) {
+					err := cl.withConn(context.Background(), func(*imapclient.Client) error {
+						return io.ErrUnexpectedEOF
+					})
+					require.Error(t, err)
+				},
+			},
+			{
+				name: "reconnect",
+				run: func(t *testing.T, cl *Client) {
+					cl.mu.Lock()
+					defer cl.mu.Unlock()
+					require.NoError(t, cl.reconnect(context.Background()))
+				},
+			},
+			{
+				name: "Close",
+				run: func(t *testing.T, cl *Client) {
+					_ = cl.Close()
+				},
+			},
+		} {
+			t.Run(invalidate.name, func(t *testing.T) {
+				cl := newDraftTestClient(t, addr)
+				appended, err := cl.AppendDraft(context.Background(), "Drafts", raw)
+				require.NoError(t, err)
+				_, err = cl.InspectDraft(context.Background(), DraftTarget{
+					Mailbox: "Drafts", UIDValidity: appended.UIDValidity,
+					UID: appended.UID, RawSHA256: digest,
+				})
+				require.NoError(t, err)
+				require.NotEmpty(t, cl.selectedMailbox)
+				require.NotZero(t, cl.selectedUIDValidity)
+
+				invalidate.run(t, cl)
+
+				assert.Empty(t, cl.selectedMailbox,
+					"an invalidated connection must leave no mailbox cached to short-circuit on")
+				assert.Zero(t, cl.selectedUIDValidity,
+					"an invalidated connection must leave no epoch behind to validate against")
+			})
+		}
+	})
+
+	t.Run("a changed epoch is only ever observed through a new SELECT", func(t *testing.T) {
+		cl := newDraftTestClient(t, addr)
+		appended, err := cl.AppendDraft(context.Background(), "Drafts", raw)
+		require.NoError(t, err)
+		target := DraftTarget{
+			Mailbox: "Drafts", UIDValidity: appended.UIDValidity,
+			UID: appended.UID, RawSHA256: digest,
+		}
+		_, err = cl.InspectDraft(context.Background(), target)
+		require.NoError(t, err)
+		require.Equal(t, appended.UIDValidity, cl.selectedUIDValidity)
+
+		// Recreate the mailbox, which is how the epoch changes, then drop the
+		// connection the way any of the invalidating paths above would.
+		recreate, err := imapclient.DialInsecure(addr, nil)
+		require.NoError(t, err)
+		require.NoError(t, recreate.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+		require.NoError(t, recreate.Delete("Drafts").Wait())
+		require.NoError(t, recreate.Create("Drafts", nil).Wait())
+		_ = recreate.Close()
+		require.NotEqual(t, appended.UIDValidity, liveEpoch(t),
+			"recreating the mailbox must change the epoch")
+		require.NoError(t, cl.Close())
+
+		// The next removal re-SELECTs, so it validates against the new epoch and
+		// refuses rather than acting on a UID recorded under the old one.
+		_, err = cl.RemoveDraft(context.Background(), target)
+		require.Error(t, err)
+		appendErr, ok := errors.AsType[*DraftAppendError](err)
+		require.True(t, ok)
+		assert.Equal(t, "uidvalidity_changed", appendErr.Code)
+		assert.Equal(t, liveEpoch(t), cl.selectedUIDValidity,
+			"the refusal must have compared against the epoch of its own SELECT")
+	})
 }

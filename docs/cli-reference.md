@@ -200,20 +200,27 @@ The edit sequence is APPEND-then-EXPUNGE. If the operation is interrupted, the
 next `draft-edit` clears the stale marker and returns `edit_interrupted`; it
 does not apply the body that call supplied. A `draft-delete` that meets the
 same marker returns `operation_pending` and directs you to `draft-edit`, which
-is the only command that resolves an interrupted edit. The daemon names a UID
-to remove only when the stale copy is identifiable (the edit completed its
-server-side write before the crash); if no UID is named, an untracked duplicate
-may remain in the mailbox — the tracked copy is the one local state still points
-at, so remove a duplicate only if you see one. After `edit_interrupted`, run
+is the only command that resolves an interrupted edit. The daemon names a UID to
+remove only after it has re-checked that copy on the server and found it still
+under the recorded UIDVALIDITY, still flagged `\Draft`, and still holding the
+exact bytes msgvault wrote. If that check cannot run or does not hold — most
+often because the mailbox's UIDVALIDITY changed, which reassigns every UID — no
+UID is named, because the recorded number would now point at a different
+message. In that case the result tells you to find the draft's older copy by its
+subject and date and remove only that copy. After `edit_interrupted`, run
 `draft-get` again and edit with the revision that read reports: the revision
 passed to the recovering call is never applied and never carried forward.
 
 A refused or partially completed draft command prints its code on stderr and,
 on the same stream, a status line carrying the fixed recovery instruction and
-any UID the daemon can name. Under `--json` that line is a result object whose
-`status` is the code, whose `instructions` is the guidance, and whose `uid`, when
-present, names the copy to remove. The instruction never carries a revision; run
-`draft-get` for the value the next call needs.
+any UID the daemon has verified live. Under `--json` that line is a result object
+whose `status` is the code, whose `instructions` is the guidance, and whose
+`uid`, when present, names the copy to remove. The instruction never carries a
+revision; run `draft-get` for the value the next call needs. A refusal that lands
+before the operation is claimed carries guidance too: `uidvalidity_changed` means
+the mailbox was recreated and every UID you hold now names a different message,
+so reload before acting on any of them, and `remote_unknown` means the mailbox
+state could not be read at all, so look at the mailbox before retrying.
 
 If `remote_accepted_local_failed` is returned, the new copy was confirmed on the
 server but the local record could not be updated. Inspect the mailbox for an
@@ -222,9 +229,12 @@ extra copy, then reload with `draft-get` before another attempt.
 If `edit_applied_old_copy_remains` is returned, the inverse happened: the new
 body is live both on the server and in the local record, and only the pre-edit
 copy could not be removed, so the mailbox holds two copies. The result names
-that leftover copy in `uid` when it still carries the bytes msgvault wrote —
-remove it, then reload with `draft-get`. When another client has changed it, no
-UID is named and the result asks you to inspect the mailbox instead. The draft
+that leftover copy in `uid` only when a live re-check finds it still under the
+recorded UIDVALIDITY, still flagged `\Draft`, and still holding the bytes
+msgvault wrote — remove it, then reload with `draft-get`. When the removal's
+outcome is unknown, when another client has changed the copy, or when the
+mailbox's UIDVALIDITY moved, no UID is named and the result asks you to find the
+older copy by its subject and date instead. The draft
 keeps its pending-edit marker, so `draft-delete` refuses with `operation_pending`
 and the next `draft-edit` is what clears it.
 

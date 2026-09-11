@@ -99,6 +99,37 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 	return &d, nil
 }
 
+// GetIMAPDraftPendingMessageIDContext returns the archived message whose IMAP
+// membership names one draft receipt. An interrupted edit is the case that
+// needs it: Finish is what removes the pre-edit copy's membership, so while a
+// pending marker is still set that membership is intact and names the message
+// whose raw bytes the pre-edit copy carries. Those bytes, not the draft's
+// current raw, are what the ownership digest has to be computed over once
+// Persist has moved current_message_id to the replacement.
+//
+// sql.ErrNoRows → opserr.NotFound, which is the ordinary state for a receipt
+// whose Finish already ran.
+func (s *Store) GetIMAPDraftPendingMessageIDContext(
+	ctx context.Context,
+	sourceID int64,
+	mailbox string,
+	uidValidity, uid uint32,
+) (int64, error) {
+	var messageID int64
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT message_id FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), sourceID, mailbox, int64(uidValidity), int64(uid)).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, opserr.NotFound(fmt.Errorf(
+			"draft receipt %s|%d:%d: no membership", mailbox, uidValidity, uid))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("get IMAP draft receipt message %s|%d:%d: %w", mailbox, uidValidity, uid, err)
+	}
+	return messageID, nil
+}
+
 // BeginIMAPDraftOperationContext claims the draft for a pending mutation using
 // a CAS update. It returns the current draft state (with pending fields set) on
 // success. On RowsAffected==0 it inspects why and returns "operation_pending"
