@@ -663,6 +663,16 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 				return refuseDraftLifecycle(emit, intent, "operation_pending", draftPendingWaitInstruction, 0,
 					fmt.Errorf("draft %d has a recent pending edit", intent.DraftID))
 			}
+			pendingUID, pendingUIDOK := draftUIDValue(draft.PendingUID)
+			if !pendingUIDOK {
+				return refuseDraftLifecycle(emit, intent, "edit_recovery_unverifiable", draftLocateDuplicateInstruction, 0,
+					fmt.Errorf("draft %d has an invalid pending edit receipt", intent.DraftID))
+			}
+			verifiedUID := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft)
+			if verifiedUID == 0 {
+				return refuseDraftLifecycle(emit, intent, "edit_recovery_unverifiable", draftLocateDuplicateInstruction, 0,
+					fmt.Errorf("draft %d pending edit copy could not be verified; keep the pending marker until the mailbox is resolved", intent.DraftID))
+			}
 			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
 				// The marker survives, and the interrupted edit it records may
 				// have left a second copy in the mailbox, so the operator has
@@ -676,21 +686,12 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			//
 			// pending_uid differing from uid means Persist committed, so the
 			// pending receipt names the pre-edit copy rather than the live one.
-			// That is necessary for naming the UID to the operator but not
-			// sufficient: the recorded epoch may be stale, and under a new
-			// epoch the same number identifies a different message. Only a live
-			// InspectDraft against the pre-edit copy's archived bytes settles
-			// it, so a UID is named here and nowhere else in this branch.
-			if pendingUID, ok := draftUIDValue(draft.PendingUID); ok && pendingUID != draft.UID {
-				if staleUID := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft); staleUID != 0 {
-					return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
-						staleUID,
-						fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
-							intent.DraftID, staleUID, draftReloadInstruction))
-				}
-				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftLocateDuplicateInstruction, 0,
-					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an older copy may remain in the Drafts mailbox, and its recorded UID could not be confirmed to still name it, so %s",
-						intent.DraftID, draftLocateDuplicateInstruction))
+			// The live verification above settles whether that UID can be named.
+			if pendingUID != draft.UID {
+				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
+					verifiedUID,
+					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
+						intent.DraftID, verifiedUID, draftReloadInstruction))
 			}
 			return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftInspectInstruction, 0,
 				fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an untracked duplicate may remain in the Drafts mailbox — the tracked copy is the one local state still points at, so remove a duplicate only if you see one, then %s",

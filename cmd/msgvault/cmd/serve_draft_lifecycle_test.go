@@ -1642,13 +1642,11 @@ func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) {
 		"recreating the mailbox must change its UIDVALIDITY")
 }
 
-// TestDraftEditInterruptedNamesNoUIDAfterEpochChange is the destructive case the
-// pending receipt alone cannot rule out. pending_uid differs from uid, so the
-// marker says Persist committed and the pre-edit copy is the removable one — but
-// the mailbox epoch moved after the marker was written, so that UID now names an
-// unrelated message. The recovery must name no UID at all and must describe the
-// copy instead, because the operator acts on a named UID by deleting it.
-func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
+// TestDraftEditInterruptedKeepsMarkerAfterEpochChange covers the case where
+// pending_uid differs from uid, but the mailbox epoch moved after the marker
+// was written. The recovery must retain the marker until the pending copy can
+// be verified, because that UID may name an unrelated message.
+func TestDraftEditInterruptedKeepsMarkerAfterEpochChange(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1679,7 +1677,7 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 	evs, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear", "--json")
 	require.Error(editErr)
-	assert.Equal("edit_interrupted", editErr.Error())
+	assert.Equal("edit_recovery_unverifiable", editErr.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
 	require.True(ok)
 	assert.NotContains(coded.Err.Error(), "UID=",
@@ -1688,20 +1686,19 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 	require.Len(evs, 1)
 	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal("edit_interrupted", delivered["status"])
+	assert.Equal("edit_recovery_unverifiable", delivered["status"])
 	assert.NotContains(delivered, "uid",
 		"a UID whose epoch moved names a different message and must not be reported")
 	assert.NotContains(evs[0].Data, strconv.FormatInt(origUID, 10),
 		"the bystander's UID must appear nowhere in the delivered result")
 	assert.Equal(draftLocateDuplicateInstruction, delivered["instructions"])
 
-	// The recovery is still a recovery: the marker is cleared and nothing was
-	// removed from the mailbox.
+	// The marker stays until a live check can identify the pending copy.
 	var pendingKind sql.NullString
 	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&pendingKind))
-	assert.False(pendingKind.Valid, "the interrupted marker must still be cleared")
+	assert.Equal("edit", pendingKind.String)
 	assert.True(draftUIDPresentOnServer(t, f, bystanderUID),
 		"the bystander must survive the recovery untouched")
 }
