@@ -150,7 +150,11 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
   an `off` state (API schema adds `validation.off` with a label and suggested
   value) and render as a switch beside the value, and cron schedules publish
   `validation.format: "cron"` and use a cron field with tinted fields, a
-  plain-English description, inline validation, and presets. The control is
+  plain-English description, inline validation, and presets. API keys are
+  one line too: a read-only box showing `None` or a masked hint of the set
+  key (its first three and last three characters, which the daemon now
+  publishes as `secret.hint`), an Add or Replace button that opens a dialog
+  for the new key, and a trash button. The schedule control is
   one line: a Presets menu (with Off and Custom), the expression editor when
   Custom is chosen, and a Time zone menu that shows "Server time" until a
   zone is picked. The zone is stored as a `CRON_TZ=` prefix, and the field

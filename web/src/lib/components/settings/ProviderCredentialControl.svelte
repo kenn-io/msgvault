@@ -30,14 +30,12 @@
     onSaved: (response: CredentialResponse, etag: string) => void;
     onConflict: () => void | Promise<void>;
   } = $props();
-  let value = $state('');
   let saving = $state(false);
   let error = $state('');
-  $effect(() => {
-    if (disabledReason) value = '';
-  });
-  async function saveCredential() {
-    if (!value || saving || disabledReason) return;
+  // Store the key the dialog handed over. Returns true when the dialog may
+  // close; a failure keeps it open with the error inside.
+  async function saveCredential(value: string): Promise<boolean> {
+    if (!value || saving || disabledReason) return false;
     saving = true;
     error = '';
     try {
@@ -56,17 +54,17 @@
       if (response.status === 412) {
         await onConflict();
         error = 'Provider credentials changed. Reloaded the latest state; enter the credential again.';
-        value = '';
-        return;
+        return false;
       }
       if (!data) {
         error = apiErrorMessage(responseError, 'Unable to save provider credential.');
-        return;
+        return false;
       }
-      value = '';
       onSaved(data, response.headers.get('ETag') ?? credentialETag);
+      return true;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to save provider credential.';
+      return false;
     } finally {
       saving = false;
     }
@@ -96,7 +94,6 @@
         error = apiErrorMessage(responseError, 'Unable to clear provider credential.');
         return;
       }
-      value = '';
       onSaved(data, response.headers.get('ETag') ?? credentialETag);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to clear provider credential.';
@@ -115,11 +112,6 @@
     }
     return fallback;
   }
-  function sourceLabel(secret: SecretState | undefined): string {
-    if (secret?.source === 'stored') return 'Stored credential';
-    if (secret?.source === 'environment') return 'Environment variable';
-    return secret?.configured ? 'Configured' : 'Not configured';
-  }
   function sentenceLabel(text: string): string {
     return text.charAt(0).toLowerCase() + text.slice(1);
   }
@@ -127,13 +119,14 @@
 
 <SecretField
   {label}
-  status={sourceLabel(credentialState)}
-  unset={!credentialState?.configured}
-  bind:value
+  configured={credentialState?.configured ?? false}
+  hint={credentialState?.hint ?? ''}
+  source={credentialState?.source}
   {saving}
   {disabledReason}
   {error}
+  applyNote="Applies right away."
   clearLabel={`Clear stored ${sentenceLabel(label)}`}
-  onsave={() => void saveCredential()}
+  onreplace={saveCredential}
   onclear={credentialState?.source === 'stored' ? () => void clearCredential() : undefined}
 />

@@ -52,6 +52,7 @@
   import PersonEnrichmentProviderCreator from './PersonEnrichmentProviderCreator.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   import SecretField from './SecretField.svelte';
+  import { maskSecret } from '../../settings/secrets';
   import {
     groupSettings,
     hasHostManaged,
@@ -96,7 +97,6 @@
   let credentialETag = $state('');
   let drafts = $state<Record<string, unknown>>({});
   let secretUpdates = $state<Record<string, SecretUpdate>>({});
-  let secretValues = $state<Record<string, string>>({});
   let pendingRestart = $state(false);
   let loading = $state(true);
   let saving = $state(false);
@@ -217,28 +217,28 @@
     }
     secretUpdates = nextSecrets;
   }
+  // A new key waits with the other drafts until Save settings; the row shows
+  // its masked hint meanwhile. Clearing drops a waiting key, and stages the
+  // removal of a stored one.
   function setSecret(key: string, value: string) {
-    secretValues = { ...secretValues, [key]: value };
-    if (value === '') {
-      const next = { ...secretUpdates };
-      delete next[key];
-      secretUpdates = next;
-      return;
-    }
     secretUpdates = { ...secretUpdates, [key]: { action: 'set', value } };
   }
   function clearSecret(key: string) {
-    secretValues = { ...secretValues, [key]: '' };
     const next = { ...secretUpdates };
     delete next[key];
     const configured = settings.find((candidate) => candidate.key === key)?.secret?.configured;
     if (configured) next[key] = { action: 'clear' };
     secretUpdates = next;
   }
+  function secretShown(setting: SettingState): { configured: boolean; hint: string } {
+    const update = secretUpdates[setting.key];
+    if (update?.action === 'set') return { configured: true, hint: maskSecret(update.value) };
+    if (update?.action === 'clear') return { configured: false, hint: '' };
+    return { configured: setting.secret?.configured ?? false, hint: setting.secret?.hint ?? '' };
+  }
   function discardChanges() {
     drafts = {};
     secretUpdates = {};
-    secretValues = {};
   }
   function isDirty(key: string): boolean {
     return Object.hasOwn(drafts, key) || Object.hasOwn(secretUpdates, key);
@@ -320,7 +320,10 @@
     return Boolean(setting.read_only) || hostManagedKeys.has(setting.key);
   }
   function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') return setting.secret?.configured ? 'Configured' : 'Not configured';
+    if (setting.kind === 'secret') {
+      if (!setting.secret?.configured) return 'None';
+      return setting.secret.hint || '••••••••';
+    }
     const off = setting.validation?.off;
     if (off && stringValue(setting) === off.value) return off.label;
     return stringValue(setting) || 'Not set';
@@ -483,8 +486,8 @@
       <div class="row__widgets">
         {#if readOnly}
           {@const value = readOnlyValue(setting)}
-          {#if setting.kind === 'secret' || value === 'Not set'}
-            <span class="row__value" class:row__value--unset={value === 'Not set'}>{value}</span>
+          {#if value === 'Not set' || value === 'None'}
+            <span class="row__value row__value--unset">{value}</span>
           {:else}
             <span class="row__value" data-mono>{value}</span>
           {/if}
@@ -501,13 +504,18 @@
             onConflict={credentialConflict}
           />
         {:else if setting.kind === 'secret'}
+          {@const shown = secretShown(setting)}
           <SecretField
             {label}
-            status={setting.secret?.configured ? 'Set' : 'Not set'}
-            unset={!setting.secret?.configured}
-            value={secretValues[setting.key] ?? ''}
-            oninput={(value) => setSecret(setting.key, value)}
-            onclear={() => clearSecret(setting.key)}
+            configured={shown.configured}
+            hint={shown.hint}
+            source={setting.secret?.source}
+            applyNote="Applied when you save settings."
+            onreplace={(value) => {
+              setSecret(setting.key, value);
+              return true;
+            }}
+            onclear={shown.configured ? () => clearSecret(setting.key) : undefined}
           />
         {:else if optionValues(setting).length > 0}
           <label class="row__field" data-size="md">

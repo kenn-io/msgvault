@@ -28,7 +28,7 @@ const initialSettings = {
       label: 'API key',
       kind: 'secret',
       read_only: true,
-      secret: { configured: true, source: 'environment' }
+      secret: { configured: true, source: 'environment', hint: 'tes…key' }
     }),
     setting('vector.embeddings.endpoint', 'http://127.0.0.1:11434', {
       group: 'search', section: 'provider', label: 'Text embedding endpoint'
@@ -88,11 +88,12 @@ describe('SettingsWorkspace', () => {
     expect(screen.queryByText(/Restart required/)).toBeNull();
     await openSettingsCategory('Daemon');
     expect(screen.getByRole('heading', { name: 'Listener and access' })).toBeDefined();
-    expect(screen.getByText('Configured')).toBeDefined();
+    expect(screen.getByText('tes…key')).toBeDefined();
     expect(screen.getByText('Host-managed')).toBeDefined();
     expect(screen.getByText('Set in config.toml on the daemon host.')).toBeDefined();
     await openSettingsCategory('Integrations');
-    expect(screen.getByText('Not set')).toBeDefined();
+    expect(screen.getByText('None')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Clear task integration API key' })).toBeNull();
     expect(screen.getByText('Changes take effect after the daemon restarts.')).toBeDefined();
     expect(screen.getByRole('alert').textContent).toContain('plain HTTP');
   });
@@ -157,7 +158,7 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('Daemon');
-    expect(await screen.findByText('Configured')).toBeDefined();
+    expect(await screen.findByText('tes…key')).toBeDefined();
     expect(screen.getByText('Host-managed values are set in config.toml on the daemon host.')).toBeDefined();
     expect(screen.queryByLabelText('New API key')).toBeNull();
     expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
@@ -207,8 +208,17 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByText('No unsaved changes')).toBeDefined();
 
     await openSettingsCategory('Integrations');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add task integration API key' }));
+    await fireEvent.input(screen.getByLabelText('New task integration API key'), {
+      target: { value: 'typed-then-removed' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save task integration API key' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect(screen.getByText('typ…ved')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear task integration API key' }));
     expect(screen.getByText('No unsaved changes')).toBeDefined();
+    expect(screen.getByText('None')).toBeDefined();
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -235,8 +245,11 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('Integrations');
+    expect(screen.getByText('••••••••')).toBeDefined();
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
     expect(screen.getByText('1 unsaved change')).toBeDefined();
+    expect(screen.getByText('None')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Clear task integration API key' })).toBeNull();
     await openSettingsCategory('Search');
     expect(screen.queryByRole('button', { name: /Test .* connection/i })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
@@ -273,7 +286,7 @@ describe('SettingsWorkspace', () => {
       if (request.method === 'PUT' && path === '/api/v1/settings/provider-credentials/vector.embeddings') {
         return Response.json({
           credential_id: 'vector.embeddings',
-          state: { configured: true, source: 'stored' },
+          state: { configured: true, source: 'stored', hint: 'one…ret' },
           pending_restart: true
         }, { headers: { ETag: '"credential-b"' } });
       }
@@ -284,8 +297,9 @@ describe('SettingsWorkspace', () => {
     expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeDefined();
     await openSettingsCategory('Search');
     expect(screen.getByText('Semantic search')).toBeDefined();
-    expect(screen.getByText('Environment variable')).toBeDefined();
+    expect(screen.getByText('From an environment variable on the daemon host.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Test .* connection/i })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace text embedding API key' }));
     await fireEvent.input(screen.getByLabelText('New text embedding API key'), {
       target: { value: 'one-use-browser-secret' }
     });
@@ -296,8 +310,9 @@ describe('SettingsWorkspace', () => {
     expect(write.method).toBe('PUT');
     expect(write.headers.get('If-Match')).toBe('"credential-a"');
     await expect(write.clone().json()).resolves.toEqual({ value: 'one-use-browser-secret' });
-    expect(await screen.findByText('Stored credential')).toBeDefined();
-    expect((screen.getByLabelText('New text embedding API key') as HTMLInputElement).value).toBe('');
+    expect(await screen.findByText('one…ret')).toBeDefined();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('From an environment variable on the daemon host.')).toBeNull();
     expect(JSON.stringify(requests.map((request) => request.url))).not.toContain('one-use-browser-secret');
     expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
   });
@@ -316,10 +331,11 @@ describe('SettingsWorkspace', () => {
       target: { value: 'https://new-embedding.example.test/v1' }
     });
 
-    const credential = screen.getByLabelText('New text embedding API key') as HTMLInputElement;
-    expect(credential.disabled).toBe(true);
+    const replace = screen.getByRole('button', { name: /^(Replace|Add) text embedding API key$/ }) as HTMLButtonElement;
+    expect(replace.disabled).toBe(true);
     expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
-    expect((screen.getByRole('button', { name: 'Save text embedding API key' }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(replace);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(requests).toHaveLength(1);
   });
 
@@ -446,7 +462,12 @@ describe('SettingsWorkspace', () => {
 
     await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
     await openSettingsCategory('Integrations');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Clear task integration API key' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add task integration API key' }));
+    await fireEvent.input(screen.getByLabelText('New task integration API key'), {
+      target: { value: 'typed-then-removed' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save task integration API key' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear task integration API key' }));
     await openSettingsCategory('Appearance');
     await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -545,10 +566,9 @@ describe('SettingsWorkspace', () => {
       target: { value: 'https://new-exa.example.test/search' }
     });
 
-    const credential = screen.getByLabelText('New exa API key for exa-primary') as HTMLInputElement;
-    expect(credential.disabled).toBe(true);
+    const replace = screen.getByRole('button', { name: /^(Replace|Add) exa API key for exa-primary$/ }) as HTMLButtonElement;
+    expect(replace.disabled).toBe(true);
     expect(screen.getByText('Save provider settings first before changing this credential.')).toBeDefined();
-    expect((screen.getByRole('button', { name: 'Save exa API key for exa-primary' }) as HTMLButtonElement).disabled).toBe(true);
     expect(requests).toHaveLength(1);
   });
 
