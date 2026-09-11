@@ -583,7 +583,9 @@ func (s *Store) FinishIMAPDraftOperationContext(ctx context.Context, draftID, ex
 		// 3. Tombstone old message if membership-free.
 		if len(mailboxes) == 0 && oldMessageID != 0 {
 			if _, err := tx.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
-				UPDATE messages SET deleted_from_source_at = %s
+				UPDATE messages
+				SET deleted_from_source_at = %s,
+				    source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
 				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
 			`, s.dialect.Now())), oldMessageID, outcome.SourceID); err != nil {
 				return fmt.Errorf("finish IMAP draft operation tombstone message %d: %w", oldMessageID, err)

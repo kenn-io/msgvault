@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -432,6 +433,54 @@ func TestDraftOwnershipSurvivesGCAfterEdit(t *testing.T) {
 		SELECT COUNT(*) FROM imap_drafts WHERE draft_id = ?
 	`), draftID).Scan(&count))
 	assertions.Equal(1, count, "imap_drafts row must survive GC of the first-gen message")
+}
+
+func TestDiscardedDraftReleasesSourceKeyForUIDReuse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, source, draftID, receipt := newIMAPDraftFixture(t)
+	draft, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+		DraftID: draftID, ExpectedRevision: 1, Kind: "discard",
+	})
+	require.NoError(err)
+	require.NoError(st.FinishIMAPDraftOperationContext(
+		context.Background(), draftID, draft.Revision,
+		store.IMAPDraftOutcome{
+			Lifecycle: "discarded", SourceID: source.ID, Mailbox: receipt.Mailbox,
+			UIDValidity: receipt.UIDValidity, UID: receipt.UID, MessageID: draftID,
+		},
+	))
+
+	var sourceMessageID string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT source_message_id FROM messages WHERE id = ?
+	`), draftID).Scan(&sourceMessageID))
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
+
+	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Test Thread")
+	require.NoError(err)
+	newReceipt := receipt
+	newReceipt.UIDValidity++
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "alice@example.com", Domain: "example.com"},
+		{EmailAddress: "bob@example.com", Domain: "example.com"},
+	}
+	newID, err := st.PersistIMAPDraftContext(context.Background(), newReceipt, participants, func(ids []int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(newReceipt),
+				ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+				SenderID:        sql.NullInt64{Int64: ids[0], Valid: true},
+				RFC822MessageID: sql.NullString{String: "<reused@example.com>", Valid: true},
+				Subject:         sql.NullString{String: "Reused UID", Valid: true},
+				IsFromMe:        true, IdentityDerivedIsFromMe: true,
+			},
+			BodyText: sql.NullString{String: "Reused UID", Valid: true},
+			RawMIME:  []byte("From: alice@example.com\r\n\r\nReused UID\r\n"),
+		}
+	})
+	require.NoError(err)
+	assert.NotEqual(draftID, newID)
 }
 
 func TestPersistIMAPDraftReplacementRejectsReceiptReuse(t *testing.T) {
