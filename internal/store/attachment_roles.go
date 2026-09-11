@@ -151,12 +151,11 @@ func (s *Store) UpsertAttachmentRecord(
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
 }
 
-// UpsertAttachmentRecordWithDerivedDataRevision updates an attachment and its
-// message stats together with the revision that invalidates published analytics.
-// Callers skip unchanged records and use UpsertAttachmentRecord for new messages
-// whose attachments will be included in an incremental export.
-func (s *Store) UpsertAttachmentRecordWithDerivedDataRevision(
-	ctx context.Context, messageID int64, write AttachmentWrite,
+// UpsertAttachmentRecordWithStats atomically updates an attachment and its message
+// stats. Callers skip unchanged records and request cache invalidation unless the
+// message is new and its attachments will be included in an incremental export.
+func (s *Store) UpsertAttachmentRecordWithStats(
+	ctx context.Context, messageID int64, write AttachmentWrite, invalidateCache bool,
 ) error {
 	write = write.normalized()
 	if err := write.validate(); err != nil {
@@ -172,7 +171,10 @@ func (s *Store) UpsertAttachmentRecordWithDerivedDataRevision(
 		if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
 			return err
 		}
-		return s.bumpDerivedDataRevision(tx)
+		if invalidateCache {
+			return s.bumpDerivedDataRevision(tx)
+		}
+		return nil
 	})
 }
 

@@ -359,6 +359,14 @@ func TestImportVoicemailRollsBackAudioWhenRevisionFails(t *testing.T) {
 	require.NoError(err)
 	importVoice(t, st, voice, attachments)
 	assert.Equal(before, attachmentRows(t, st)[0])
+	messageID := messageIDBySource(t, st, sourceMessageID(t, "with-audio.html"))
+	var hasAttachments bool
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT has_attachments, attachment_count FROM messages WHERE id = ?
+	`), messageID).Scan(&hasAttachments, &attachmentCount))
+	assert.True(hasAttachments)
+	assert.Equal(1, attachmentCount)
 	unchangedRevision, err := st.DerivedDataRevision()
 	require.NoError(err)
 	assert.Equal(revision, unchangedRevision)
@@ -370,6 +378,35 @@ func TestImportVoicemailRollsBackAudioWhenRevisionFails(t *testing.T) {
 	updatedRevision, err := st.DerivedDataRevision()
 	require.NoError(err)
 	assert.Greater(updatedRevision, revision)
+}
+
+func TestImportVoicemailRollsBackAudioWhenStatsFail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	voice := writeVoice(t, voicemailFixture{
+		fixture: "with-audio.html", html: withAudioHTML,
+		audio: withAudioMP3, bytes: []byte("voicemail bytes"),
+	})
+	st := testutil.NewSQLiteTestStore(t)
+	attachments := t.TempDir()
+	_, err := st.DB().Exec(`CREATE TRIGGER reject_audio_stats
+		BEFORE UPDATE ON messages WHEN NEW.attachment_count > 0
+		BEGIN SELECT RAISE(ABORT, 'stats write rejected'); END`)
+	require.NoError(err)
+	importVoice(t, st, voice, attachments)
+	assert.Empty(attachmentRows(t, st))
+	assert.False(messageHasAttachments(t, st, sourceMessageID(t, "with-audio.html")))
+	before, err := st.DerivedDataRevision()
+	require.NoError(err)
+
+	_, err = st.DB().Exec(`DROP TRIGGER reject_audio_stats`)
+	require.NoError(err)
+	importVoice(t, st, voice, attachments)
+	assert.Len(attachmentRows(t, st), 1)
+	assert.True(messageHasAttachments(t, st, sourceMessageID(t, "with-audio.html")))
+	after, err := st.DerivedDataRevision()
+	require.NoError(err)
+	assert.Greater(after, before)
 }
 
 func TestImportNonVoicemailCallIgnoresAudio(t *testing.T) {

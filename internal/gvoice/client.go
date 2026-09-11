@@ -495,15 +495,16 @@ func (c *Client) importCallEntry(
 
 	bodyStr := body.String()
 	msgID, err := s.UpsertMessage(&store.Message{
-		SourceID:        sourceID,
-		SourceMessageID: entry.ID,
-		ConversationID:  convID,
-		Snippet:         nullStr(snippet(bodyStr)),
-		SentAt:          sentAt,
-		MessageType:     msgType,
-		SenderID:        senderIDNull,
-		IsFromMe:        isFromMe,
-		SizeEstimate:    int64(len(bodyStr)),
+		SourceID:                sourceID,
+		SourceMessageID:         entry.ID,
+		ConversationID:          convID,
+		Snippet:                 nullStr(snippet(bodyStr)),
+		SentAt:                  sentAt,
+		MessageType:             msgType,
+		SenderID:                senderIDNull,
+		IsFromMe:                isFromMe,
+		SizeEstimate:            int64(len(bodyStr)),
+		PreserveAttachmentStats: true,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
@@ -567,7 +568,7 @@ func (c *Client) storeVoicemailAudio(
 		return nil
 	}
 	if c.attachmentsDir == "" {
-		return s.RecomputeMessageAttachmentStats(msgID)
+		return nil
 	}
 
 	name := record.AudioSrc
@@ -626,22 +627,16 @@ func (c *Client) storeVoicemailAudio(
 	if write.State == attachmentpolicy.StateFailed && existing &&
 		previous.State == attachmentpolicy.StateStored &&
 		previous.StoragePath != "" && previous.ContentHash != "" {
-		return s.RecomputeMessageAttachmentStats(msgID)
-	}
-	if existing && write == previous {
-		return s.RecomputeMessageAttachmentStats(msgID)
-	}
-
-	if invalidateCache {
-		if err := s.UpsertAttachmentRecordWithDerivedDataRevision(ctx, msgID, write); err != nil {
-			return fmt.Errorf("write voicemail audio and cache revision: %w", err)
-		}
 		return nil
 	}
-	if err := s.UpsertAttachmentRecord(ctx, msgID, write); err != nil {
+	if existing && write == previous {
+		return nil
+	}
+
+	if err := s.UpsertAttachmentRecordWithStats(ctx, msgID, write, invalidateCache); err != nil {
 		return fmt.Errorf("write voicemail audio record: %w", err)
 	}
-	return s.RecomputeMessageAttachmentStats(msgID)
+	return nil
 }
 
 // writeTextRecipients writes from/to rows for a text message.

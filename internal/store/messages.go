@@ -408,6 +408,8 @@ type Message struct {
 	SizeEstimate            int64
 	HasAttachments          bool
 	AttachmentCount         int
+	// PreserveAttachmentStats keeps existing counts when attachments are written separately.
+	PreserveAttachmentStats bool
 	DeletedAt               sql.NullTime
 	ArchivedAt              time.Time
 }
@@ -1159,8 +1161,8 @@ func upsertMessageSQL(now string) string {
 		subject = excluded.subject,
 		snippet = excluded.snippet,
 		size_estimate = excluded.size_estimate,
-		has_attachments = excluded.has_attachments,
-		attachment_count = excluded.attachment_count`, now)
+		has_attachments = CASE WHEN ? THEN messages.has_attachments ELSE excluded.has_attachments END,
+		attachment_count = CASE WHEN ? THEN messages.attachment_count ELSE excluded.attachment_count END`, now)
 }
 
 // UpsertMessage inserts or updates a message.
@@ -1258,6 +1260,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.ReplyToMessageID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
 		msg.HasAttachments, msg.AttachmentCount,
+		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
 	}
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.
