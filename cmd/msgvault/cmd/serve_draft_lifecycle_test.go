@@ -330,7 +330,8 @@ func (f *failOnNthRemove) RemoveDraft(ctx context.Context, target imaplib.DraftT
 }
 
 // sharedRemoveCounter holds state that must outlive a single IMAP client so
-// that the factory-injected failure counter persists across --resume calls.
+// that the factory-injected failure counter persists across retries, which
+// build a fresh client each time.
 type sharedRemoveCounter struct{ n int }
 
 // makeFaultyFactory returns a draftClientFactory that wraps the real IMAP
@@ -673,10 +674,10 @@ func TestDraftReplayPendingDiscard(t *testing.T) {
 	assert.Equal(t, "discard", pendingKind.String)
 	assert.Equal(t, int64(2), revision)
 
-	// Retry with --revision=1 (pre-Begin revision) and real RemoveDraft.
+	// Retry with the stored current revision and a real RemoveDraft.
 	evs = nil
 	_, retryErr := f.runLifecycle(t,
-		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=2")
 	require.NoError(t, retryErr, "replay of pending discard must succeed")
 
 	// Draft must now be discarded.
@@ -689,7 +690,7 @@ func TestDraftReplayPendingDiscard(t *testing.T) {
 
 // TestDraftReplayPendingDiscardRejectsStaleRevision verifies that
 // replayPendingDiscard refuses a caller-supplied revision that does not match
-// the current pre-Begin revision (draft.Revision-1).
+// the stored current revision.
 func TestDraftReplayPendingDiscardRejectsStaleRevision(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
 
@@ -708,11 +709,15 @@ func TestDraftReplayPendingDiscardRejectsStaleRevision(t *testing.T) {
 	}, nil)
 	require.Error(t, err)
 
-	// Retry with the original stale revision=1 (pre-Begin was 2, so 1 != 3-1=2) must fail.
-	_, staleErr := f.runLifecycle(t,
-		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.Error(t, staleErr)
-	assert.Equal(t, "revision_conflict", staleErr.Error(), "stale revision must produce revision_conflict")
+	// Stored revision is now 3. Both the original revision=1 and the pre-Begin
+	// revision=2 are stale and must be refused; only the current value works.
+	for _, stale := range []string{"--revision=1", "--revision=2"} {
+		_, staleErr := f.runLifecycle(t,
+			"draft-delete", strconv.FormatInt(f.draftID, 10), stale)
+		require.Error(t, staleErr)
+		assert.Equal(t, "revision_conflict", staleErr.Error(),
+			"stale revision must produce revision_conflict: %s", stale)
+	}
 }
 
 // TestDraftEditReturnsPendingOperationForPendingDiscard verifies that
@@ -877,17 +882,97 @@ func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
 	assert.NotContains(t, coded.Err.Error(), "UID=99999")
 }
 
-// TestDraftDeleteRevisionRoundTrip verifies that the revision in delete_failed
-// JSON output is the value the retry must pass as --revision. A consumer that
-// reads revision off the failure event and retries with it must succeed.
-func TestDraftDeleteRevisionRoundTrip(t *testing.T) {
+// draftGetRevision runs draft-get and returns the revision it reports, which
+// is the stored current revision with no arithmetic.
+func draftGetRevision(t *testing.T, f draftLifecycleFixture) int64 {
+	t.Helper()
+	events, err := f.runLifecycle(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
+	revision, ok := result["revision"].(float64)
+	require.True(t, ok, "draft-get must report a revision")
+	return int64(revision)
+}
+
+// storedDraftRevision reads the revision directly from the ownership row.
+func storedDraftRevision(t *testing.T, f draftLifecycleFixture) int64 {
+	t.Helper()
+	var revision int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT revision FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&revision))
+	return revision
+}
+
+// TestDraftEditInterruptedReloadsAndEdits drives the whole caller-level
+// recovery sequence for an interrupted edit: the recovery call reports
+// edit_interrupted, the caller re-reads the draft, and the revision that read
+// reports is accepted by the next edit.
+func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
 
-	// Fail the first RemoveDraft call to produce delete_failed.
+	// Simulate a crash between Begin and Finish: pending marker set, revision
+	// already advanced to 2, marker older than the staleness threshold.
+	staleTime := time.Now().Add(-(pendingEditStalenessThreshold + time.Minute))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_drafts
+		SET pending_kind = 'edit', pending_uid = uid, pending_uidvalidity = uidvalidity,
+		    pending_started_at = ?, revision = revision + 1
+		WHERE draft_id = ?
+	`), staleTime, f.draftID)
+	require.NoError(t, err)
+
+	// 1. The recovery call clears the marker and refuses the requested edit.
+	_, editErr := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=Body that must not be applied")
+	require.Error(t, editErr)
+	assert.Equal(t, "edit_interrupted", editErr.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
+	require.True(t, ok)
+	assert.Contains(t, coded.Err.Error(), "was not applied",
+		"recovery must not read as a promise that the requested body landed")
+
+	// 2. The caller re-reads. draft-get reports the stored current revision.
+	reloaded := draftGetRevision(t, f)
+	assert.Equal(t, storedDraftRevision(t, f), reloaded,
+		"draft-get must report the stored revision with no arithmetic")
+	assert.Equal(t, int64(2), reloaded)
+
+	// 3. The reloaded revision is accepted by the next edit.
+	events, err := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10),
+		"--revision="+strconv.FormatInt(reloaded, 10), "--body=Recovered body", "--json")
+	require.NoError(t, err, "edit at the reloaded revision must succeed")
+	require.Len(t, events, 1)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal(t, "replaced", result["status"])
+	assert.Equal(t, float64(3), result["revision"], "successful edit reports the committed revision")
+
+	// The new body is what the archive holds.
+	var newMessageID int64
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT current_message_id FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&newMessageID))
+	rawData, rawErr := f.store.GetMessageRawContext(t.Context(), newMessageID)
+	require.NoError(t, rawErr)
+	assert.Contains(t, string(rawData), "Recovered body")
+	assert.NotContains(t, string(rawData), "Body that must not be applied")
+}
+
+// TestDraftDeleteInterruptedReloadsAndCompletes drives the caller-level
+// recovery sequence for an interrupted discard: the failure carries no
+// revision, the caller re-reads, and the reloaded revision completes the
+// discard.
+func TestDraftDeleteInterruptedReloadsAndCompletes(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// 1. Fail the first RemoveDraft so the discard is left pending.
 	counter := &sharedRemoveCounter{}
 	adapter := f.grantedAdapter()
 	adapter.draftLifecycleClientFactory = f.makeFaultyFactory(counter, 1)
-
 	var evs []api.CLIRunEvent
 	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1", "--json"},
@@ -896,17 +981,130 @@ func TestDraftDeleteRevisionRoundTrip(t *testing.T) {
 	assert.Equal(t, "delete_failed", err.Error())
 	require.NotEmpty(t, evs, "delete_failed must emit an event")
 
-	// Read revision from the emitted JSON — this is what a --json consumer would do.
 	var failOutput map[string]any
 	require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &failOutput))
-	revisionVal, ok := failOutput["revision"].(float64)
-	require.True(t, ok, "emitted JSON must contain revision field")
-	retryRevision := strconv.FormatInt(int64(revisionVal), 10)
+	_, hasRevision := failOutput["revision"]
+	assert.False(t, hasRevision, "a failure result must carry no retry revision")
+	assert.Equal(t, draftInspectInstruction, failOutput["instructions"],
+		"the failure must carry numberless reload-and-inspect guidance")
 
-	// Retry with the emitted revision; must succeed.
+	// 2. The caller re-reads. draft-get reports the stored current revision
+	//    even while the pending marker is set.
+	reloaded := draftGetRevision(t, f)
+	assert.Equal(t, storedDraftRevision(t, f), reloaded,
+		"draft-get must report the stored revision while a marker exists")
+	assert.Equal(t, int64(2), reloaded)
+
+	// 3. The reloaded revision completes the discard.
 	_, retryErr := f.runLifecycle(t,
-		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision="+retryRevision)
-	require.NoError(t, retryErr, "retry with emitted revision must succeed")
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision="+strconv.FormatInt(reloaded, 10))
+	require.NoError(t, retryErr, "delete at the reloaded revision must complete")
+
+	var lifecycle string
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle, &pendingKind))
+	assert.Equal(t, "discarded", lifecycle)
+	assert.False(t, pendingKind.Valid, "pending marker must be cleared")
+}
+
+// TestDraftDeleteRejectsStaleRevision verifies the ordinary stale-revision
+// path for draft-delete: a revision the draft has moved past is a
+// reload-and-retry conflict and mutates nothing.
+func TestDraftDeleteRejectsStaleRevision(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// An ordinary edit advances the revision to 2.
+	_, err := f.runLifecycle(t,
+		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=First edit")
+	require.NoError(t, err)
+
+	_, staleErr := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.Error(t, staleErr)
+	assert.Equal(t, "revision_conflict", staleErr.Error())
+
+	var lifecycle string
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle, &pendingKind))
+	assert.Equal(t, "active", lifecycle)
+	assert.False(t, pendingKind.Valid, "a refused delete must not claim the draft")
+	assert.Equal(t, int64(2), storedDraftRevision(t, f))
+
+	// The reloaded revision is accepted.
+	_, err = f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10),
+		"--revision="+strconv.FormatInt(draftGetRevision(t, f), 10))
+	require.NoError(t, err)
+}
+
+// TestDraftLifecycleOnDiscardedDraft verifies that an already-discarded draft
+// is classified before any IMAP connection is opened: a current-revision
+// delete reports discarded, an edit refuses with draft_missing, and a stale
+// revision stays a reload-and-retry conflict. None of them reports a pending
+// operation that does not exist.
+func TestDraftLifecycleOnDiscardedDraft(t *testing.T) {
+	f := newDraftLifecycleFixture(t)
+
+	// Discard the draft through the ordinary path.
+	_, err := f.runLifecycle(t,
+		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+	require.NoError(t, err)
+	discardedRevision := storedDraftRevision(t, f)
+	require.Equal(t, int64(2), discardedRevision)
+	current := strconv.FormatInt(discardedRevision, 10)
+
+	// A factory that fails loudly if any command opens an IMAP connection.
+	newAdapter := func(opened *bool) *storeAPIAdapter {
+		adapter := f.grantedAdapter()
+		adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+			*opened = true
+			return nil, errors.New("must not open IMAP connection for a discarded draft")
+		}
+		return adapter
+	}
+
+	t.Run("delete at the current revision reports discarded", func(t *testing.T) {
+		opened := false
+		var evs []api.CLIRunEvent
+		err := newAdapter(&opened).runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+			Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=" + current, "--json"},
+		}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
+		require.NoError(t, err)
+		require.Len(t, evs, 1)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &result))
+		assert.Equal(t, "discarded", result["status"])
+		assert.Equal(t, "discarded", result["lifecycle"])
+		assert.False(t, opened, "a discarded draft must not open an IMAP connection")
+	})
+
+	t.Run("edit at the current revision refuses draft_missing", func(t *testing.T) {
+		opened := false
+		err := newAdapter(&opened).runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+			Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=" + current, "--body=too late"},
+		}, nil)
+		require.Error(t, err)
+		assert.Equal(t, "draft_missing", err.Error())
+		assert.False(t, opened, "a discarded draft must not open an IMAP connection")
+	})
+
+	t.Run("a stale revision stays a reload-and-retry conflict", func(t *testing.T) {
+		for _, command := range []string{"draft-delete", "draft-edit"} {
+			opened := false
+			args := []string{command, strconv.FormatInt(f.draftID, 10), "--revision=1"}
+			if command == "draft-edit" {
+				args = append(args, "--body=too late")
+			}
+			err := newAdapter(&opened).runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args}, nil)
+			require.Error(t, err)
+			assert.Equal(t, "revision_conflict", err.Error(), "command %s", command)
+			assert.False(t, opened, "a discarded draft must not open an IMAP connection")
+		}
+	})
 }
 
 // TestDraftEditRefusesWrongGrantMailbox verifies that draft-edit returns
@@ -982,10 +1180,27 @@ func TestDraftGetReportsNotCheckedForWrongGrantMailbox(t *testing.T) {
 	assert.False(t, imapOpened, "IMAP must not be opened when grant mailbox mismatches")
 }
 
+// countingRemoveClient wraps a real IMAP client and counts RemoveDraft calls
+// across every client the factory hands out.
+type countingRemoveClient struct {
+	*imaplib.Client
+	mu      *sync.Mutex
+	removes *int
+}
+
+func (c *countingRemoveClient) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
+	c.mu.Lock()
+	*c.removes++
+	c.mu.Unlock()
+	return c.Client.RemoveDraft(ctx, target)
+}
+
 // TestConcurrentDraftDeletePendingDiscard verifies that two concurrent
-// draft-delete calls against a pending-discard state produce exactly one
-// completion and one refusal, with no intermediate window between lock release
-// and re-acquire.
+// draft-delete calls against a pending-discard state issue exactly one remote
+// removal, with no intermediate window between lock release and re-acquire.
+// The loser either blocks on the lock and is refused, or arrives after the
+// replay committed and reports the already-discarded draft without opening a
+// connection; neither outcome removes anything a second time.
 func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 	f := newDraftLifecycleFixture(t)
 
@@ -999,36 +1214,59 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 	`), time.Now().Add(-time.Minute), f.draftID)
 	require.NoError(t, err)
 
+	var removeMu sync.Mutex
+	removes := 0
+	factory := func(context.Context, *store.Source) (draftClient, error) {
+		return &countingRemoveClient{
+			Client:  imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+			mu:      &removeMu,
+			removes: &removes,
+		}, nil
+	}
+
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	for i := range errs {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			// Both callers present revision=1 (the pre-Begin revision stored in intent).
-			_, errs[idx] = f.runLifecycle(t,
-				"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
+			// Both callers present the stored current revision, which is what
+			// draft-get reports while the marker is set.
+			adapter := f.grantedAdapter()
+			adapter.draftLifecycleClientFactory = factory
+			errs[idx] = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=2"},
+			}, nil)
 		}(i)
 	}
 	wg.Wait()
 
-	successes, failures := 0, 0
+	successes := 0
 	for _, e := range errs {
 		if e == nil {
 			successes++
-		} else {
-			failures++
-			// sync_active: second caller blocked on the lock while first held it.
-			// operation_pending: second caller got the lock after first finished;
-			//   BeginIMAPDraftOperationContext returns operation_pending when
-			//   lifecycle='discarded' (store imap_draft_lifecycle.go:148).
-			// revision_conflict: second caller's revision no longer matches.
-			assert.True(t,
-				e.Error() == "revision_conflict" || e.Error() == "sync_active" ||
-					e.Error() == "operation_pending" || e.Error() == "draft_not_found",
-				"unexpected error from losing caller: %v", e)
+			continue
 		}
+		// sync_active: the loser blocked on the lock while the winner held it.
+		// revision_conflict: the loser's revision no longer matches.
+		assert.True(t,
+			e.Error() == "revision_conflict" || e.Error() == "sync_active" ||
+				e.Error() == "draft_not_found",
+			"unexpected error from losing caller: %v", e)
 	}
-	assert.Equal(t, 1, successes, "exactly one delete must complete")
-	assert.Equal(t, 1, failures, "exactly one delete must be refused")
+	assert.GreaterOrEqual(t, successes, 1, "the pending discard must complete")
+
+	removeMu.Lock()
+	observedRemoves := removes
+	removeMu.Unlock()
+	assert.Equal(t, 1, observedRemoves,
+		"exactly one caller may act on the pending discard; the other must not reach RemoveDraft")
+
+	var lifecycle string
+	var pendingKind sql.NullString
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle, &pendingKind))
+	assert.Equal(t, "discarded", lifecycle)
+	assert.False(t, pendingKind.Valid, "pending marker must be cleared exactly once")
 }

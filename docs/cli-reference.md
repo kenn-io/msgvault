@@ -173,6 +173,12 @@ msgvault draft-get <draft-id> --json
 (grant absent or mailbox mismatch), or `unknown` (IMAP server unreachable).
 `draft-get` never mutates local or remote state.
 
+`revision` is the draft's current revision, reported as stored and without
+adjustment, including while an interrupted operation is still marked pending.
+It is the value `draft-edit` and `draft-delete` require as `--revision` now; it
+is not a reservation, because another client can advance the draft before your
+next call lands. Run `draft-get` again after any refusal.
+
 ---
 
 ## draft-edit
@@ -191,14 +197,20 @@ row is created with the updated body, the old row is tombstoned, and
 `revision` advances by 1.
 
 The edit sequence is APPEND-then-EXPUNGE. If the operation is interrupted, the
-next `draft-edit` or `draft-delete` call finds the stale marker and returns
-`edit_interrupted`. The daemon log names a UID to remove only when the stale
-copy is identifiable (the edit completed its server-side write before the crash);
-if no UID is named, an untracked duplicate may remain in the mailbox — the
-tracked copy is the one local state still points at, so remove a duplicate only
-if you see one. Then retry the command. If `remote_accepted_local_failed` is returned, the new copy was
-confirmed on the server but the local record could not be updated; retry the same
-`--revision` to recover.
+next `draft-edit` clears the stale marker and returns `edit_interrupted`; it
+does not apply the body that call supplied. A `draft-delete` that meets the
+same marker returns `operation_pending` and directs you to `draft-edit`, which
+is the only command that resolves an interrupted edit. The daemon names a UID
+to remove only when the stale copy is identifiable (the edit completed its
+server-side write before the crash); if no UID is named, an untracked duplicate
+may remain in the mailbox — the tracked copy is the one local state still points
+at, so remove a duplicate only if you see one. After `edit_interrupted`, run
+`draft-get` again and edit with the revision that read reports: the revision
+passed to the recovering call is never applied and never carried forward.
+
+If `remote_accepted_local_failed` is returned, the new copy was confirmed on the
+server but the local record could not be updated. Inspect the mailbox for an
+extra copy, then reload with `draft-get` before another attempt.
 
 ---
 
@@ -211,15 +223,18 @@ msgvault draft-delete <draft-id> --revision <n>
 ```
 
 `--revision` must match the current revision. If the draft is already absent on
-the server the deletion is treated as successful (idempotent). If a prior
-delete attempt left a pending state, pass the `revision` from the emitted JSON
-as `--revision` on the next call to resume (this is always the correct retry
-value). In `--json` output, `revision` always reflects the value to supply as
-`--revision` on the next call, including after a partial operation.
+the server the deletion is treated as successful (idempotent). Deleting a draft
+that is already `discarded` locally reports `discarded` again and opens no IMAP
+connection.
 
-If `remote_deleted_local_failed` is returned, the draft was confirmed deleted on
-the IMAP server but the local record could not be marked `discarded`; retry with
-the same `--revision` used for the original call to complete the local record.
+No failure or partial result carries a revision to feed back into a retry.
+After `delete_failed`, `remote_deleted_local_failed`, or `revision_conflict`,
+run `draft-get` and use the revision it reports. A `delete_failed` result
+leaves the removal owed: inspect the mailbox for a copy that may or may not
+have been removed, then reload and call `draft-delete` again with the current
+revision to complete it. `remote_deleted_local_failed` means the draft was
+confirmed deleted on the IMAP server but the local record could not be marked
+`discarded`; reload and call `draft-delete` again to finish the local record.
 
 ---
 

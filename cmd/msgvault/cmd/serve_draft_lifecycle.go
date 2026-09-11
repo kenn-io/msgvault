@@ -26,6 +26,18 @@ import (
 // conceivable lock hold time.
 const pendingEditStalenessThreshold = 5 * time.Minute
 
+// Fixed recovery instructions for a failed or partially-completed mutation.
+// They deliberately carry no revision: a revision read off a failure is only
+// a snapshot, and any other writer can invalidate it before the retry lands,
+// so the caller re-reads with draft-get exactly as the other conflict handlers
+// in this repository require.
+const (
+	draftReloadInstruction = "reload the draft with draft-get before another attempt"
+
+	draftInspectInstruction = "inspect the Drafts mailbox for an extra or leftover copy, " +
+		"then reload the draft with draft-get before another attempt"
+)
+
 // draftClient is the subset of imaplib.Client methods used by the draft reply
 // and lifecycle commands. Using an interface enables test injection of custom
 // behaviour (e.g. injecting a failing RemoveDraft) without requiring a real
@@ -83,6 +95,10 @@ type draftLifecycleOutput struct {
 	Subject         string `json:"subject,omitempty"`
 	FromAddress     string `json:"from_address,omitempty"`
 	BodyText        string `json:"body_text,omitempty"`
+	// Instructions is the fixed recovery guidance for a failed or partially
+	// completed operation. It never contains a revision, a UID, or any other
+	// value a client could feed back into a retry.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
@@ -238,17 +254,6 @@ func (a *storeAPIAdapter) resolveDraftLifecycleTarget(ctx context.Context, inten
 	return draftLifecycleTarget{draft: draft, source: source, mailbox: draft.Mailbox, raw: raw}, nil
 }
 
-// draftRevisionForOutput returns the revision value a caller should supply as
-// --revision on their next invocation. While a pending marker is set the
-// stored revision is post-Begin (N+1), so the retry value is N; without a
-// marker the stored value is already correct.
-func draftRevisionForOutput(draft *store.IMAPDraft) int64 {
-	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
-		return draft.Revision - 1
-	}
-	return draft.Revision
-}
-
 // marshalDraftLifecycleOutput serializes output to JSON.
 func marshalDraftLifecycleOutput(output draftLifecycleOutput) []byte {
 	data, err := json.Marshal(output)
@@ -272,12 +277,19 @@ func emitDraftLifecycleOutput(emit func(api.CLIRunEvent) error, stream string, a
 			text = fmt.Sprintf("draft %d: lifecycle=%s revision=%d provider=%s\n",
 				output.DraftID, output.Lifecycle, output.Revision, output.ProviderStatus)
 		case "discarded":
-			text = fmt.Sprintf("draft %d discarded (operation %s)\n", output.DraftID, output.OperationRef)
+			if output.OperationRef == "" {
+				text = fmt.Sprintf("draft %d is already discarded\n", output.DraftID)
+			} else {
+				text = fmt.Sprintf("draft %d discarded (operation %s)\n", output.DraftID, output.OperationRef)
+			}
 		case "replaced":
 			text = fmt.Sprintf("draft %d replaced: new uid=%d revision=%d (operation %s)\n",
 				output.DraftID, output.UID, output.Revision, output.OperationRef)
 		default:
 			text = fmt.Sprintf("draft %d: status=%s\n", output.DraftID, output.Status)
+			if output.Instructions != "" {
+				text = fmt.Sprintf("draft %d: status=%s; %s\n", output.DraftID, output.Status, output.Instructions)
+			}
 		}
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: text})
@@ -379,11 +391,15 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		providerStatus = "unknown"
 	}
 
+	// Revision is the stored current revision with no arithmetic, including
+	// while a pending marker is set. It is the value an ordinary mutation must
+	// present as --revision now; it is not a promise that a later call will
+	// still accept it, because another writer may advance the draft first.
 	output := draftLifecycleOutput{
 		Status:          "active",
 		DraftID:         draft.DraftID,
 		Lifecycle:       draft.Lifecycle,
-		Revision:        draftRevisionForOutput(draft),
+		Revision:        draft.Revision,
 		RFC822MessageID: draft.RFC822MessageID,
 		ProviderStatus:  providerStatus,
 		SourceID:        draft.SourceID,
@@ -443,6 +459,17 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		}
 		return draftReplyError("internal", fmt.Errorf("reload draft %d: %w", intent.DraftID, err))
 	}
+	// A discarded draft is a terminal local state, decided here so no IMAP
+	// connection is opened for a draft that no longer exists. A stale revision
+	// stays an ordinary reload-and-retry conflict.
+	if draft.Lifecycle == "discarded" {
+		if intent.Revision != draft.Revision {
+			return draftReplyError("revision_conflict",
+				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
+		}
+		return draftReplyError("draft_missing",
+			fmt.Errorf("draft %d is discarded and has no remote copy to edit", intent.DraftID))
+	}
 	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
 		switch draft.PendingKind.String {
 		case "discard":
@@ -458,13 +485,18 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
 				return draftReplyError("internal", fmt.Errorf("clear pending edit for draft %d: %w", intent.DraftID, clearErr))
 			}
+			// Recovery only clears the marker. It never applies the body this
+			// call supplied and never reuses the revision this call supplied,
+			// so the caller must re-read the draft before editing again.
 			if draft.PendingUID.Valid && uint32(draft.PendingUID.Int64) != draft.UID {
 				// Persist committed: pending_uid names the pre-edit copy; safe to remove.
 				return draftReplyError("edit_interrupted",
-					fmt.Errorf("draft %d had an interrupted edit; stale copy UID=%d may remain in Drafts mailbox — remove it and retry", intent.DraftID, draft.PendingUID.Int64))
+					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
+						intent.DraftID, draft.PendingUID.Int64, draftReloadInstruction))
 			}
 			return draftReplyError("edit_interrupted",
-				fmt.Errorf("draft %d had an interrupted edit; an untracked duplicate of the draft may remain in the Drafts mailbox — the tracked copy is the one local state still points at; remove a duplicate only if you see one, then retry", intent.DraftID))
+				fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an untracked duplicate may remain in the Drafts mailbox — the tracked copy is the one local state still points at, so remove a duplicate only if you see one, then %s",
+					intent.DraftID, draftReloadInstruction))
 		}
 	}
 
@@ -514,9 +546,13 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "revision_conflict"):
-			return draftReplyError("revision_conflict", err)
+			return draftReplyError("revision_conflict", fmt.Errorf("%w; %s", err, draftReloadInstruction))
 		case strings.Contains(msg, "operation_pending"):
 			return draftReplyError("operation_pending", err)
+		case strings.Contains(msg, "draft_discarded"):
+			// Raced with a concurrent discard between the reload and the claim.
+			return draftReplyError("draft_missing",
+				fmt.Errorf("draft %d was discarded concurrently: %w", intent.DraftID, err))
 		}
 		return draftReplyError("internal", err)
 	}
@@ -588,6 +624,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			Status:       "remote_accepted_local_failed",
 			DraftID:      intent.DraftID,
 			OperationRef: draftOperationRef(*newReceipt),
+			Instructions: draftInspectInstruction,
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("remote_accepted_local_failed", persistErr)
@@ -607,6 +644,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 				Status:       "remote_accepted_local_failed",
 				DraftID:      intent.DraftID,
 				OperationRef: draftOperationRef(*newReceipt),
+				Instructions: draftInspectInstruction,
 			}
 			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 			return draftReplyError(dae.Code, dae.Err)
@@ -707,6 +745,31 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	}
 	target.draft = draft
 
+	// A discarded draft is a terminal local state, decided here so no IMAP
+	// connection is opened for a draft that no longer exists. Deleting an
+	// already-discarded draft at its current revision is the idempotent
+	// success the state table records; a stale revision stays an ordinary
+	// reload-and-retry conflict.
+	if draft.Lifecycle == "discarded" {
+		if intent.Revision != draft.Revision {
+			return draftReplyError("revision_conflict",
+				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
+		}
+		lockReleased = true
+		if releaseErr := execution.Release(); releaseErr != nil {
+			logger.Error("release source after discarded draft delete", "source_id", target.source.ID, "error", releaseErr)
+		}
+		output := draftLifecycleOutput{
+			Status:    "discarded",
+			DraftID:   intent.DraftID,
+			Lifecycle: "discarded",
+		}
+		if emitErr := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); emitErr != nil {
+			return draftReplyError("output_failed", emitErr)
+		}
+		return nil
+	}
+
 	// Handle a prior interrupted operation (under the lock so state is authoritative).
 	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
 		switch draft.PendingKind.String {
@@ -764,9 +827,13 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "revision_conflict"):
-			return draftReplyError("revision_conflict", err)
+			return draftReplyError("revision_conflict", fmt.Errorf("%w; %s", err, draftReloadInstruction))
 		case strings.Contains(err.Error(), "operation_pending"):
 			return draftReplyError("operation_pending", err)
+		case strings.Contains(err.Error(), "draft_discarded"):
+			// Raced with a concurrent discard between the reload and the claim.
+			return draftReplyError("draft_discarded",
+				fmt.Errorf("draft %d was discarded concurrently: %w", intent.DraftID, err))
 		case opserr.KindOf(err) == opserr.KindNotFound:
 			return draftReplyError("draft_not_found", err)
 		}
@@ -781,22 +848,22 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			// Leave pending state set; caller can retry draft-delete.
+			// Leave pending state set; caller reloads and retries draft-delete.
 			output := draftLifecycleOutput{
 				Status:       "delete_failed",
 				DraftID:      intent.DraftID,
 				Lifecycle:    "active",
-				Revision:     draftRevisionForOutput(claimedDraft),
 				OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: draft.UIDValidity, UID: draft.UID}),
+				Instructions: draftInspectInstruction,
 			}
 			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 			return draftReplyError("delete_failed", dae.Err)
 		}
 		output := draftLifecycleOutput{
-			Status:    "delete_failed",
-			DraftID:   intent.DraftID,
-			Lifecycle: "active",
-			Revision:  draftRevisionForOutput(claimedDraft),
+			Status:       "delete_failed",
+			DraftID:      intent.DraftID,
+			Lifecycle:    "active",
+			Instructions: draftInspectInstruction,
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", removeErr)
@@ -808,10 +875,10 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		// Success: proceed to local cleanup.
 	default:
 		output := draftLifecycleOutput{
-			Status:    "delete_failed",
-			DraftID:   intent.DraftID,
-			Lifecycle: "active",
-			Revision:  draftRevisionForOutput(claimedDraft),
+			Status:       "delete_failed",
+			DraftID:      intent.DraftID,
+			Lifecycle:    "active",
+			Instructions: draftInspectInstruction,
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", fmt.Errorf("remote draft state changed: %s", removeResult.State))
@@ -876,11 +943,13 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		}
 		return draftReplyError("internal", fmt.Errorf("reload draft %d for replay: %w", intent.DraftID, err))
 	}
-	// intent.Revision is the caller's pre-Begin revision; Begin incremented it
-	// by 1. Reject if the stored post-Begin revision no longer matches.
-	if intent.Revision != draft.Revision-1 {
+	// The supplied revision is validated against the stored current revision,
+	// exactly as an ordinary mutation is. A caller still holding the pre-Begin
+	// revision gets a conflict, reloads with draft-get, and supplies the
+	// current value; there is no second meaning for --revision here.
+	if intent.Revision != draft.Revision {
 		return draftReplyError("revision_conflict",
-			fmt.Errorf("draft %d: revision %d is stale", intent.DraftID, intent.Revision))
+			fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
 	}
 
 	// The schema CHECK guarantees pending_uid IS NOT NULL when pending_kind IS NOT NULL,
@@ -906,19 +975,33 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		RawSHA256:   digest,
 	}
 
+	// A failed replay leaves the pending marker set and reports the same
+	// numberless guidance as the ordinary delete path.
+	failReplay := func(cause error) error {
+		output := draftLifecycleOutput{
+			Status:       "delete_failed",
+			DraftID:      draft.DraftID,
+			Lifecycle:    "active",
+			OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: oldUIDValidity, UID: oldUID}),
+			Instructions: draftInspectInstruction,
+		}
+		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+		return draftReplyError("delete_failed", cause)
+	}
+
 	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			return draftReplyError("delete_failed", dae.Err)
+			return failReplay(dae.Err)
 		}
-		return draftReplyError("delete_failed", removeErr)
+		return failReplay(removeErr)
 	}
 	switch removeResult.State {
 	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
 		// proceed
 	default:
-		return draftReplyError("delete_failed", fmt.Errorf("remote draft state is %s", removeResult.State))
+		return failReplay(fmt.Errorf("remote draft state is %s", removeResult.State))
 	}
 
 	recordCtx := context.WithoutCancel(ctx)

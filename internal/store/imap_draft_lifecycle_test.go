@@ -254,6 +254,21 @@ func TestIMAPDraftLifecycleContract(t *testing.T) {
 
 	// Message must be tombstoned (no remaining memberships).
 	assertions.True(messageTombstoned(t, st, draftID))
+
+	// A claim on the discarded row at its current revision is a terminal
+	// lifecycle, not a pending operation.
+	_, err = st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+		DraftID: draftID, ExpectedRevision: 2, Kind: "discard",
+	})
+	requirements.ErrorContains(err, "draft_discarded")
+	assertions.NotContains(err.Error(), "operation_pending")
+
+	// A stale revision on the same discarded row stays a reload-and-retry
+	// conflict.
+	_, err = st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+		DraftID: draftID, ExpectedRevision: 1, Kind: "discard",
+	})
+	requirements.ErrorContains(err, "revision_conflict")
 }
 
 // TestIMAPDraftLifecycleSurvivesAuthoritativeSync verifies that after

@@ -101,8 +101,9 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 
 // BeginIMAPDraftOperationContext claims the draft for a pending mutation using
 // a CAS update. It returns the current draft state (with pending fields set) on
-// success. On RowsAffected==0 it inspects why and returns either
-// "revision_conflict" or "operation_pending" wrapped in opserr.Invalid.
+// success. On RowsAffected==0 it inspects why and returns "operation_pending"
+// for an actual pending operation, "draft_discarded" for a terminal lifecycle,
+// or "revision_conflict" for a stale revision, wrapped in opserr.Invalid.
 func (s *Store) BeginIMAPDraftOperationContext(ctx context.Context, intent IMAPDraftIntent) (*IMAPDraft, error) {
 	now := s.dialect.Now()
 
@@ -145,9 +146,21 @@ func (s *Store) BeginIMAPDraftOperationContext(ctx context.Context, intent IMAPD
 	if err != nil {
 		return nil, fmt.Errorf("inspect IMAP draft %d after CAS miss: %w", intent.DraftID, err)
 	}
-	if lifecycle != "active" || pendingKind.Valid {
+	// operation_pending is reserved for an actual pending operation. A
+	// discarded draft is a terminal lifecycle, not a mutation in flight, and
+	// a revision that no longer matches is an ordinary reload-and-retry
+	// conflict whichever lifecycle the row carries.
+	if pendingKind.Valid {
 		return nil, opserr.Invalid(errors.New("operation_pending"))
 	}
+	if revision != intent.ExpectedRevision {
+		return nil, opserr.Invalid(errors.New("revision_conflict"))
+	}
+	if lifecycle != "active" {
+		return nil, opserr.Invalid(errors.New("draft_discarded"))
+	}
+	// Nothing distinguishable remains: a concurrent writer moved the row
+	// between the CAS and this read.
 	return nil, opserr.Invalid(errors.New("revision_conflict"))
 }
 
