@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,14 @@ func (s *Server) handleGoogleCardDAVCallback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := flow.Complete(r.Context(), req.State, req.Code); err != nil {
+		if unavailable, ok := errors.AsType[*oauth.AuthorizationUnavailableError](err); ok {
+			if unavailable.RetryAfter > 0 {
+				seconds := max(int64(1), int64((unavailable.RetryAfter+time.Second-1)/time.Second))
+				w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+			}
+			writeError(w, http.StatusServiceUnavailable, "oauth_unavailable", "Google authorization is temporarily unavailable. Start sign-in again to retry")
+			return
+		}
 		if errors.Is(err, oauth.ErrTokenChanged) {
 			writeError(w, http.StatusBadRequest, "oauth_changed", oauth.ErrTokenChanged.Error())
 			return

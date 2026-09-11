@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -593,10 +594,7 @@ func (m *Manager) verifyAndSaveToken(ctx context.Context, email string, token *o
 	return m.saveTokenCompared(email, token, grantedScopes, expected)
 }
 
-const (
-	redirectPort = "8089"
-	callbackPath = "/callback"
-)
+const callbackPath = "/callback"
 
 // newCallbackHandler returns an HTTP handler that processes the OAuth callback.
 func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- string, errChan chan<- error) http.HandlerFunc {
@@ -629,12 +627,19 @@ func (m *Manager) browserFlow(
 		return nil, err
 	}
 
-	// Generate random state for CSRF protection
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("listen for OAuth callback: %w", err)
+	}
+
+	// Generate random state for CSRF protection.
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
+		_ = listener.Close()
 		return nil, fmt.Errorf("generate state: %w", err)
 	}
 	state := base64.URLEncoding.EncodeToString(stateBytes)
+	verifier := oauth2.GenerateVerifier()
 
 	// Start local server for callback
 	codeChan := make(chan string, 1)
@@ -643,13 +648,12 @@ func (m *Manager) browserFlow(
 	mux := http.NewServeMux()
 	mux.Handle(callbackPath, m.newCallbackHandler(state, codeChan, errChan))
 	server := &http.Server{
-		Addr:              "localhost:" + redirectPort,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != http.ErrServerClosed {
 			errChan <- err
 		}
 	}()
@@ -657,10 +661,17 @@ func (m *Manager) browserFlow(
 	defer func() { _ = server.Shutdown(ctx) }()
 
 	// Generate auth URL with login_hint to pre-select account
-	m.config.RedirectURL = "http://localhost:" + redirectPort + callbackPath
+	_, callbackPort, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		_ = server.Close()
+		return nil, fmt.Errorf("read OAuth callback port: %w", err)
+	}
+	callbackAddress := net.JoinHostPort("127.0.0.1", callbackPort)
+	m.config.RedirectURL = "http://" + callbackAddress + callbackPath
 	authOpts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
+		oauth2.S256ChallengeOption(verifier),
 	}
 	if email != "" {
 		authOpts = append(authOpts,
@@ -684,7 +695,7 @@ func (m *Manager) browserFlow(
 	// Wait for callback
 	select {
 	case code := <-codeChan:
-		token, err := m.config.Exchange(ctx, code)
+		token, err := m.config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 		if err != nil {
 			return nil, fmt.Errorf("exchange authorization code: %w", err)
 		}
@@ -1257,6 +1268,7 @@ func fetchTokenProfileEmailFromEndpoint(
 
 	resp, err := client.Do(req)
 	if err != nil {
+		err = authorizationProviderError(err, nil, "")
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
 				"could not verify token belongs to %s: %w "+
@@ -1268,14 +1280,14 @@ func fetchTokenProfileEmailFromEndpoint(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		providerErr := fmt.Errorf("%s returned HTTP %d: %s", endpoint.serviceName, resp.StatusCode, string(body))
+		providerErr = authorizationProviderError(providerErr, resp, "")
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
-				"could not verify token belongs to %s: "+
-					"%s returned HTTP %d: %s "+
-					"(re-run the command to try again)",
-				email, endpoint.serviceName, resp.StatusCode, string(body))
+				"could not verify token belongs to %s: %w "+
+					"(re-run the command to try again)", email, providerErr)
 		}
-		return "", fmt.Errorf("%s returned HTTP %d for %s: %s", endpoint.serviceName, resp.StatusCode, email, string(body))
+		return "", fmt.Errorf("verify access to %s: %w", email, providerErr)
 	}
 
 	var profile struct {

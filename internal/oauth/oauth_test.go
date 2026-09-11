@@ -1,13 +1,17 @@
 package oauth
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -531,6 +535,109 @@ func TestNewCallbackHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBrowserFlowBindsEphemeralCallbackBeforePublishingPKCEURL(t *testing.T) {
+	assertions := assert.New(t)
+	required := require.New(t)
+
+	occupied, err := net.Listen("tcp", "127.0.0.1:8089")
+	if err == nil {
+		t.Cleanup(func() { _ = occupied.Close() })
+	}
+
+	var exchanged url.Values
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assertions.NoError(r.ParseForm()) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		exchanged = r.Form
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}`)
+	}))
+	t.Cleanup(tokenEndpoint.Close)
+
+	mgr := setupTestManager(t, Scopes)
+	mgr.config.ClientID = "synthetic-client"
+	mgr.config.ClientSecret = "synthetic-secret"
+	mgr.config.Endpoint = oauth2.Endpoint{
+		AuthURL:   "https://accounts.example/authorize",
+		TokenURL:  tokenEndpoint.URL,
+		AuthStyle: oauth2.AuthStyleInParams,
+	}
+
+	readOutput, writeOutput, err := os.Pipe()
+	required.NoError(err)
+	oldStdout := os.Stdout
+	os.Stdout = writeOutput
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+		_ = writeOutput.Close()
+		_ = readOutput.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, flowErr := mgr.browserFlow(t.Context(), "person@example.com", false)
+		result <- flowErr
+	}()
+
+	authorizationURL := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(readOutput)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "https://accounts.example/authorize?") {
+				authorizationURL <- line
+				return
+			}
+		}
+	}()
+
+	var rawURL string
+	select {
+	case rawURL = <-authorizationURL:
+	case err := <-result:
+		required.NoError(err)
+	case <-time.After(5 * time.Second):
+		required.FailNow("terminal authorization did not publish a callback URL")
+	}
+
+	authURL, err := url.Parse(rawURL)
+	required.NoError(err)
+	redirectURI := authURL.Query().Get("redirect_uri")
+	redirect, err := url.Parse(redirectURI)
+	required.NoError(err)
+	assertions.Equal("127.0.0.1", redirect.Hostname())
+	assertions.NotEqual("8089", redirect.Port())
+	assertions.Equal("S256", authURL.Query().Get("code_challenge_method"))
+	challenge := authURL.Query().Get("code_challenge")
+	required.NotEmpty(challenge)
+
+	callback := *redirect
+	query := callback.Query()
+	query.Set("state", authURL.Query().Get("state"))
+	query.Set("code", "one-time-code")
+	callback.RawQuery = query.Encode()
+	response, err := http.Get(callback.String()) //nolint:noctx // callback is the loopback listener created by this test.
+	required.NoError(err)
+	_ = response.Body.Close()
+	assertions.Equal(http.StatusOK, response.StatusCode)
+
+	select {
+	case err := <-result:
+		required.NoError(err)
+	case <-time.After(5 * time.Second):
+		required.FailNow("terminal authorization did not exchange the callback code")
+	}
+
+	assertions.Equal("one-time-code", exchanged.Get("code"))
+	assertions.Equal(redirectURI, exchanged.Get("redirect_uri"))
+	verifier := exchanged.Get("code_verifier")
+	required.NotEmpty(verifier)
+	digest := sha256.Sum256([]byte(verifier))
+	assertions.Equal(challenge, base64.RawURLEncoding.EncodeToString(digest[:]))
 }
 
 // TestAuthorize_SavesUnderOriginalIdentifier exercises the real

@@ -336,3 +336,66 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) {
 	required.NoError(err)
 	assertions.Equal(mailToken, unchangedMail)
 }
+
+func TestGoogleAuthorizationCallbackReportsTransientProviderFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		failure    string
+		retryAfter string
+	}{
+		{name: "token exchange", failure: "token", retryAfter: "17"},
+		{name: "profile verification", failure: "profile", retryAfter: "23"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
+			cfg, st := savedGoogleCardDAVFixture(t)
+			required.NoError(os.WriteFile(cfg.OAuth.ClientSecrets, []byte(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","auth_uri":"https://accounts.example/authorize","token_uri":"https://accounts.example/token","redirect_uris":["https://archive.example/"]}}`), 0600))
+			controller, err := NewCardDAVController(cfg, st, testLogger())
+			required.NoError(err)
+			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
+			provider := &http.Client{Transport: googleAuthorizationTransport(func(r *http.Request) (*http.Response, error) {
+				header := http.Header{"Content-Type": {"application/json"}}
+				var status int
+				var body string
+				switch r.URL.String() {
+				case "https://accounts.example/token":
+					if tc.failure == "token" {
+						status = http.StatusServiceUnavailable
+						header.Set("Retry-After", tc.retryAfter)
+						body = `{"error":"server_error"}`
+					} else {
+						status = http.StatusOK
+						body = fmt.Sprintf(`{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","token_type":"Bearer","expires_in":3600,"scope":%q}`, oauth.ScopeCardDAV+" "+oauth.ScopeUserinfoEmail)
+					}
+				case "https://www.googleapis.com/oauth2/v2/userinfo":
+					status = http.StatusServiceUnavailable
+					header.Set("Retry-After", tc.retryAfter)
+					body = `{"error":"temporarily unavailable"}`
+				default:
+					return nil, fmt.Errorf("unexpected OAuth request: %s", r.URL)
+				}
+				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})}
+
+			start := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+			start.Header.Set("Content-Type", "application/json")
+			start.Header.Set("Origin", "https://archive.example")
+			started := httptest.NewRecorder()
+			srv.Router().ServeHTTP(started, start)
+			required.Equal(http.StatusOK, started.Code, started.Body.String())
+			var flow CardDAVGoogleAuthorizeResponse
+			required.NoError(json.Unmarshal(started.Body.Bytes(), &flow))
+
+			callback := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, flow.State)))
+			callback.Header.Set("Content-Type", "application/json")
+			callback = callback.WithContext(context.WithValue(callback.Context(), oauth2.HTTPClient, provider))
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, callback)
+
+			assertions.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+			assertions.Equal(tc.retryAfter, response.Header().Get("Retry-After"))
+			assertions.Contains(response.Body.String(), `"error":"oauth_unavailable"`)
+		})
+	}
+}
