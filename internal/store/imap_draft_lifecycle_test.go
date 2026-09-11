@@ -434,3 +434,49 @@ func TestDraftOwnershipSurvivesGCAfterEdit(t *testing.T) {
 	`), draftID).Scan(&count))
 	assertions.Equal(1, count, "imap_drafts row must survive GC of the first-gen message")
 }
+
+func TestGetIMAPDraftContextRefreshesReceiptFromCurrentMembership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, source, draftID, receipt := newIMAPDraftFixture(t)
+
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), source.ID, receipt.Mailbox, receipt.UIDValidity, receipt.UID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`), source.ID, "Archive", receipt.UIDValidity+1, receipt.UID+7, draftID, `["\\Draft"]`)
+	require.NoError(err)
+
+	draft, err := st.GetIMAPDraftContext(context.Background(), draftID)
+	require.NoError(err)
+	assert.Equal("Archive", draft.Mailbox)
+	assert.Equal(receipt.UIDValidity+1, draft.UIDValidity)
+	assert.Equal(receipt.UID+7, draft.UID)
+}
+
+func TestGCRetainsCurrentDraftMessageAndOwnership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, _, draftID, _ := newIMAPDraftFixture(t)
+
+	_, err := st.DB().Exec(st.Rebind(`
+		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?
+	`), draftID)
+	require.NoError(err)
+
+	plan, err := st.PlanGCContext(context.Background())
+	require.NoError(err)
+	assert.Zero(plan.SourceDeleted)
+	deleted, err := st.ExecuteGCContext(context.Background(), plan)
+	require.NoError(err)
+	assert.Zero(deleted)
+
+	draft, err := st.GetIMAPDraftContext(context.Background(), draftID)
+	require.NoError(err)
+	assert.Equal(draftID, draft.CurrentMessageID)
+}

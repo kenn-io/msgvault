@@ -34,9 +34,10 @@ func (s *Store) PlanGCContext(ctx context.Context) (GCPlan, error) {
 
 func planGCWith(q querier) (GCPlan, error) {
 	var plan GCPlan
+	sourceDeletedWhere := gcSourceDeletedWhere()
 	if err := q.QueryRow(`
 		SELECT
-			COUNT(*) FILTER (WHERE deleted_from_source_at IS NOT NULL),
+			COUNT(*) FILTER (WHERE `+sourceDeletedWhere+`),
 			COUNT(*) FILTER (
 				WHERE deleted_at IS NOT NULL
 				  AND deleted_from_source_at IS NULL
@@ -46,10 +47,10 @@ func planGCWith(q querier) (GCPlan, error) {
 		return GCPlan{}, fmt.Errorf("plan archive GC: %w", err)
 	}
 	ids, err := commaSeparatedIDs(q, `
-		SELECT COALESCE(GROUP_CONCAT(id, ','), '')
+	SELECT COALESCE(GROUP_CONCAT(id, ','), '')
 		FROM (
 			SELECT id FROM messages
-			WHERE deleted_from_source_at IS NOT NULL
+			WHERE `+sourceDeletedWhere+`
 			ORDER BY id
 		)
 	`)
@@ -58,6 +59,14 @@ func planGCWith(q querier) (GCPlan, error) {
 	}
 	plan.SourceDeletedIDs = ids
 	return plan, nil
+}
+
+func gcSourceDeletedWhere() string {
+	return `deleted_from_source_at IS NOT NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM imap_drafts
+			WHERE imap_drafts.current_message_id = messages.id
+		)`
 }
 
 func commaSeparatedIDs(q querier, query string) ([]int64, error) {
@@ -100,6 +109,7 @@ func (s *Store) ExecuteGCContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		sourceDeletedWhere := gcSourceDeletedWhere()
 		actual, err := planGCWith(q)
 		if err != nil {
 			return err
@@ -116,7 +126,7 @@ func (s *Store) ExecuteGCContext(
 			FROM (
 				SELECT DISTINCT conversation_id AS id
 				FROM messages
-				WHERE deleted_from_source_at IS NOT NULL
+				WHERE `+sourceDeletedWhere+`
 				  AND conversation_id IS NOT NULL
 				ORDER BY conversation_id
 			)
@@ -130,7 +140,7 @@ func (s *Store) ExecuteGCContext(
 				DELETE FROM messages_fts
 				WHERE rowid IN (
 					SELECT id FROM messages
-					WHERE deleted_from_source_at IS NOT NULL
+					WHERE ` + sourceDeletedWhere + `
 				)
 			`); err != nil {
 				return fmt.Errorf("delete source-deleted FTS rows: %w", err)
@@ -142,7 +152,7 @@ func (s *Store) ExecuteGCContext(
 			SET reply_to_message_id = NULL
 			WHERE reply_to_message_id IN (
 				SELECT id FROM messages
-				WHERE deleted_from_source_at IS NOT NULL
+				WHERE ` + sourceDeletedWhere + `
 			)
 		`); err != nil {
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
@@ -150,7 +160,7 @@ func (s *Store) ExecuteGCContext(
 
 		result, err := q.Exec(`
 			DELETE FROM messages
-			WHERE deleted_from_source_at IS NOT NULL
+			WHERE ` + sourceDeletedWhere + `
 		`)
 		if err != nil {
 			return fmt.Errorf("delete source-deleted messages: %w", err)

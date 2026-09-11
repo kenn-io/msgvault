@@ -53,9 +53,88 @@ type IMAPDraftOutcome struct {
 	MessageID int64
 }
 
+// refreshIMAPDraftReceiptContext follows the current message's membership
+// after a mailbox move or UIDVALIDITY reset. The message ID is the stable
+// ownership link; mailbox coordinates are provider state and can change.
+func (s *Store) refreshIMAPDraftReceiptContext(ctx context.Context, draftID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		var sourceID, messageID, oldUIDValidity, oldUID int64
+		var oldMailbox string
+		var pendingKind sql.NullString
+		err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT source_id, current_message_id, mailbox, uidvalidity, uid, pending_kind
+			FROM imap_drafts
+			WHERE draft_id = ?
+		`), draftID).Scan(&sourceID, &messageID, &oldMailbox, &oldUIDValidity, &oldUID, &pendingKind)
+		if errors.Is(err, sql.ErrNoRows) {
+			return opserr.NotFound(fmt.Errorf("draft %d: not found", draftID))
+		}
+		if err != nil {
+			return fmt.Errorf("read IMAP draft %d receipt: %w", draftID, err)
+		}
+		if pendingKind.Valid {
+			return nil
+		}
+
+		var mailbox string
+		var uidValidity, uid int64
+		err = tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT mailbox, uidvalidity, uid
+			FROM imap_message_memberships
+			WHERE source_id = ? AND message_id = ?
+			ORDER BY
+				CASE WHEN mailbox = ? AND uidvalidity = ? AND uid = ? THEN 0 ELSE 1 END,
+				updated_at DESC, mailbox, uidvalidity, uid
+			LIMIT 1
+		`), sourceID, messageID, oldMailbox, oldUIDValidity, oldUID).Scan(&mailbox, &uidValidity, &uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("find IMAP draft %d membership: %w", draftID, err)
+		}
+		if mailbox == oldMailbox && uidValidity == oldUIDValidity && uid == oldUID {
+			return nil
+		}
+
+		_, err = tx.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
+			UPDATE imap_drafts
+			SET mailbox = ?,
+			    uidvalidity = ?,
+			    uid = ?,
+			    pending_uidvalidity = CASE
+			        WHEN pending_uidvalidity = ? AND pending_uid = ? THEN ?
+			        ELSE pending_uidvalidity
+			    END,
+			    pending_uid = CASE
+			        WHEN pending_uidvalidity = ? AND pending_uid = ? THEN ?
+			        ELSE pending_uid
+			    END,
+			    updated_at = %s
+			WHERE draft_id = ?
+			  AND lifecycle = 'active'
+			  AND current_message_id = ?
+			  AND (mailbox <> ? OR uidvalidity <> ? OR uid <> ?)
+		`, s.dialect.Now())),
+			mailbox, uidValidity, uid,
+			oldUIDValidity, oldUID, uidValidity,
+			oldUIDValidity, oldUID, uid,
+			draftID, messageID, mailbox, uidValidity, uid,
+		)
+		if err != nil {
+			return fmt.Errorf("refresh IMAP draft %d receipt: %w", draftID, err)
+		}
+		return nil
+	})
+}
+
 // GetIMAPDraftContext loads the ownership row for one draft, joining the
-// current message for projected fields. sql.ErrNoRows → opserr.NotFound.
+// current message for projected fields. It refreshes provider coordinates from
+// the stable current message before reading them. sql.ErrNoRows → opserr.NotFound.
 func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDraft, error) {
+	if err := s.refreshIMAPDraftReceiptContext(ctx, draftID); err != nil {
+		return nil, err
+	}
 	var d IMAPDraft
 	var uidValidity, uid int64
 	var parentRFC822 sql.NullString

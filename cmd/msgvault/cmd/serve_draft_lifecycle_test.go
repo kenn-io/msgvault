@@ -39,6 +39,18 @@ type draftLifecycleFixture struct {
 	draftUIDVal uint32
 }
 
+type testDraftClient struct {
+	*imaplib.Client
+}
+
+func (c *testDraftClient) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
+	result, err := c.Client.InspectDraft(ctx, target)
+	if err != nil || result.State != imaplib.DraftRemotePresent {
+		return result, err
+	}
+	return result, c.Client.DeleteMessage(ctx, target.Mailbox+"|"+strconv.FormatUint(uint64(target.UID), 10))
+}
+
 func newDraftLifecycleFixture(t *testing.T) draftLifecycleFixture {
 	t.Helper()
 	f := newDraftReplyFixture(t)
@@ -143,15 +155,18 @@ func isDraftTombstoned(t *testing.T, f draftLifecycleFixture, messageID int64) b
 // TestDraftGetReportsLocalAndRemoteState verifies that draft-get returns
 // lifecycle==active, revision==1, and provider_status==present.
 func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	events, err := f.runLifecycle(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
-	require.NoError(t, err)
-	require.Len(t, events, 1)
+	require.NoError(err)
+	require.Len(events, 1)
 	var result map[string]any
-	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
-	assert.Equal(t, "active", result["lifecycle"])
-	assert.Equal(t, float64(1), result["revision"])
-	assert.Equal(t, imaplib.DraftRemotePresent, result["provider_status"])
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal("active", result["lifecycle"])
+	assert.Equal(float64(1), result["revision"])
+	assert.Equal(imaplib.DraftRemotePresent, result["provider_status"])
 }
 
 // TestDraftDeleteRefusesNonDraftMessageInSameMailbox verifies that a message
@@ -171,43 +186,46 @@ func TestDraftDeleteRefusesNonDraftMessageInSameMailbox(t *testing.T) {
 // successful edit the revision advances to 2, the old message is tombstoned,
 // and exactly one membership row exists for the source.
 func TestDraftEditReplacesRemoteCopyAndAdvancesRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	events, err := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10),
 		"--revision=1", "--body=Updated draft body", "--json")
-	require.NoError(t, err)
-	require.Len(t, events, 1)
+	require.NoError(err)
+	require.Len(events, 1)
 
 	var result map[string]any
-	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
-	assert.Equal(t, "replaced", result["status"])
-	assert.Equal(t, float64(2), result["revision"])
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal("replaced", result["status"])
+	assert.Equal(float64(2), result["revision"])
 
 	// Verify revision in store.
 	var revision int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT revision FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&revision))
-	assert.Equal(t, int64(2), revision)
+	assert.Equal(int64(2), revision)
 
 	// Old message must be tombstoned.
-	assert.True(t, isDraftTombstoned(t, f, f.draftID))
+	assert.True(isDraftTombstoned(t, f, f.draftID))
 
 	// Exactly one membership row for the source.
 	var cnt int
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?
 	`), f.source.ID).Scan(&cnt))
-	assert.Equal(t, 1, cnt)
+	assert.Equal(1, cnt)
 
 	// Archived raw for the new current_message_id must contain the updated body.
 	var newMessageID int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT current_message_id FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&newMessageID))
 	rawData, rawErr := f.store.GetMessageRawContext(t.Context(), newMessageID)
-	require.NoError(t, rawErr, "must be able to load archived raw for new draft")
-	assert.Contains(t, string(rawData), "Updated draft body", "archived raw must contain the new body text")
+	require.NoError(rawErr, "must be able to load archived raw for new draft")
+	assert.Contains(string(rawData), "Updated draft body", "archived raw must contain the new body text")
 }
 
 // TestDraftEditRejectsStaleRevision verifies that a second edit at the same
@@ -232,30 +250,33 @@ func TestDraftEditRejectsStaleRevision(t *testing.T) {
 // uidvalidity does not match the server epoch, the operation returns
 // uidvalidity_changed and lifecycle stays active.
 func TestDraftMutationRefusesAfterUIDValidityChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
-	// Corrupt the stored uidvalidity so InspectDraft detects an epoch mismatch.
-	_, err := f.store.DB().Exec(f.store.Rebind(`
-		UPDATE imap_drafts SET uidvalidity = uidvalidity + 9999 WHERE draft_id = ?
-	`), f.draftID)
-	require.NoError(t, err)
+	// Recreate the mailbox so the saved receipt belongs to the old epoch.
+	recreateDraftsMailbox(t, f)
 
-	_, err = f.runLifecycle(t,
+	_, err := f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.Error(t, err)
-	assert.Equal(t, "uidvalidity_changed", err.Error())
+	require.Error(err)
+	assert.Equal("uidvalidity_changed", err.Error())
 
 	// Lifecycle must remain unchanged.
 	var lifecycle string
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle))
-	assert.Equal(t, "active", lifecycle)
+	assert.Equal("active", lifecycle)
 }
 
 // TestDraftMutationRefusesChangedRemoteContent verifies that when the local
 // raw digest doesn't match the remote copy, the operation returns draft_changed.
 func TestDraftMutationRefusesChangedRemoteContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Replace stored raw with different bytes so SHA-256 diverges from remote.
@@ -264,40 +285,42 @@ func TestDraftMutationRefusesChangedRemoteContent(t *testing.T) {
 	_, err := f.store.DB().Exec(f.store.Rebind(`
 		UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?
 	`), differentRaw, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 	// Confirm the update landed.
 	var cnt int
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT COUNT(*) FROM message_raw WHERE message_id = ?
 	`), f.draftID).Scan(&cnt))
-	require.Equal(t, 1, cnt, "message_raw must have a row for the draft")
+	require.Equal(1, cnt, "message_raw must have a row for the draft")
 
 	_, err = f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.Error(t, err)
+	require.Error(err)
 	// Remote has original raw; local has different raw → digests differ → draft_changed.
-	assert.Equal(t, "draft_changed", err.Error())
+	assert.Equal("draft_changed", err.Error())
 
 	// Lifecycle stays active.
 	var lifecycle string
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle))
-	assert.Equal(t, "active", lifecycle)
+	assert.Equal("active", lifecycle)
 }
 
 // TestDraftDeleteRemovesOnlyTheOwnedUID verifies that deleting a draft
 // expunges only its UID and leaves a bystander message in the same mailbox.
 func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
 
 	// Append a bystander to the same mailbox.
 	bystanderRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nMessage-ID: <bystander@example.com>\r\n\r\nBystander\r\n")
 	bClient, err := imapclient.DialInsecure(addr, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = bClient.Close() }()
-	require.NoError(t, bClient.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	require.NoError(bClient.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
 	appendCmd := bClient.Append("Drafts", int64(len(bystanderRaw)), &emersionimap.AppendOptions{
 		Flags: []emersionimap.Flag{emersionimap.FlagDraft},
 	})
@@ -313,20 +336,20 @@ func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
 		}
 	}()
 	<-done
-	require.NotZero(t, bystanderUID, "bystander must receive a UID from the server")
+	require.NotZero(bystanderUID, "bystander must receive a UID from the server")
 
 	// Delete only the owned draft.
 	_, err = f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Verify the bystander UID is still present on the server.
 	verifyClient, err := imapclient.DialInsecure(addr, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = verifyClient.Close() }()
-	require.NoError(t, verifyClient.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	require.NoError(verifyClient.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
 	_, err = verifyClient.Select("Drafts", nil).Wait()
-	require.NoError(t, err)
+	require.NoError(err)
 	var uidSet emersionimap.UIDSet
 	uidSet.AddNum(bystanderUID)
 	fetchCmd := verifyClient.Fetch(uidSet, &emersionimap.FetchOptions{UID: true})
@@ -346,7 +369,7 @@ func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
 			}
 		}
 	}
-	require.NoError(t, fetchCmd.Close())
+	require.NoError(fetchCmd.Close())
 	assert.True(t, found, "bystander UID must remain after deleting only the owned draft")
 }
 
@@ -397,6 +420,9 @@ func (f draftLifecycleFixture) makeFaultyFactory(counter *sharedRemoveCounter, f
 // non-present provider_status when the UID was expunged externally, and that
 // lifecycle stays active in the local store.
 func TestDraftGetReportsExternalRemoval(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
 
@@ -404,33 +430,33 @@ func TestDraftGetReportsExternalRemoval(t *testing.T) {
 	testutil.ExpungeIMAPMessage(t, addr, "Drafts", emersionimap.UID(f.draftUID))
 
 	events, err := f.runLifecycle(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
-	require.NoError(t, err)
-	require.Len(t, events, 1)
+	require.NoError(err)
+	require.Len(events, 1)
 	var result map[string]any
-	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
 	// Provider must not report present after expunge.
-	assert.NotEqual(t, imaplib.DraftRemotePresent, result["provider_status"])
+	assert.NotEqual(imaplib.DraftRemotePresent, result["provider_status"])
 	// Lifecycle stays active (get is read-only).
-	assert.Equal(t, "active", result["lifecycle"])
+	assert.Equal("active", result["lifecycle"])
 
 	// draft-edit after external removal must return draft_missing.
 	_, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10),
 		"--revision=1", "--body=should fail")
-	require.Error(t, editErr)
-	assert.Equal(t, "draft_missing", editErr.Error(), "draft-edit must return draft_missing for externally removed draft")
+	require.Error(editErr)
+	assert.Equal("draft_missing", editErr.Error(), "draft-edit must return draft_missing for externally removed draft")
 
 	// draft-delete after external removal must complete locally (absent is idempotent).
 	_, deleteErr := f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.NoError(t, deleteErr, "draft-delete must complete when remote copy is already absent")
+	require.NoError(deleteErr, "draft-delete must complete when remote copy is already absent")
 
 	// Lifecycle must now be discarded; no APPEND recreated the draft.
 	events2, err2 := f.runLifecycle(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
-	require.NoError(t, err2)
+	require.NoError(err2)
 	var result2 map[string]any
-	require.NoError(t, json.Unmarshal([]byte(events2[0].Data), &result2))
-	assert.Equal(t, "discarded", result2["lifecycle"], "lifecycle must be discarded after draft-delete")
+	require.NoError(json.Unmarshal([]byte(events2[0].Data), &result2))
+	assert.Equal("discarded", result2["lifecycle"], "lifecycle must be discarded after draft-delete")
 }
 
 // TestParseDraftLifecycleArgs is a pure unit test for the hand-written arg parser.
@@ -456,11 +482,13 @@ func TestParseDraftLifecycleArgs(t *testing.T) {
 	})
 
 	t.Run("draft-edit with all flags", func(t *testing.T) {
+		assert := assert.New(t)
+
 		intent, err := parseDraftLifecycleArgs([]string{"draft-edit", "42", "--revision=3", "--body=hello"})
 		require.NoError(t, err)
-		assert.Equal(t, int64(42), intent.DraftID)
-		assert.Equal(t, int64(3), intent.Revision)
-		assert.Equal(t, "hello", intent.Body)
+		assert.Equal(int64(42), intent.DraftID)
+		assert.Equal(int64(3), intent.Revision)
+		assert.Equal("hello", intent.Body)
 	})
 
 	t.Run("draft-delete with revision", func(t *testing.T) {
@@ -529,6 +557,9 @@ func appendRawToServer(t *testing.T, addr, mailbox string, raw []byte) emersioni
 // starting revision; exactly one commits, the other gets revision_conflict or
 // operation_pending; the mailbox holds exactly one draft copy (row 6).
 func TestDraftEditConcurrentRevisionConflict(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	var wg sync.WaitGroup
@@ -552,22 +583,22 @@ func TestDraftEditConcurrentRevisionConflict(t *testing.T) {
 			successes++
 		} else {
 			failures++
-			assert.True(t, err.Error() == "revision_conflict" || err.Error() == "operation_pending" || err.Error() == "sync_active",
+			assert.True(err.Error() == "revision_conflict" || err.Error() == "operation_pending" || err.Error() == "sync_active",
 				"unexpected error: %v", err)
 		}
 	}
-	assert.Equal(t, 1, successes, "exactly one edit must succeed")
-	assert.Equal(t, 1, failures, "exactly one edit must conflict")
+	assert.Equal(1, successes, "exactly one edit must succeed")
+	assert.Equal(1, failures, "exactly one edit must conflict")
 
 	// Mailbox must hold exactly one draft copy.
 	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
 	c, err := imapclient.DialInsecure(addr, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = c.Close() }()
-	require.NoError(t, c.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	require.NoError(c.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
 	data, err := c.Select("Drafts", nil).Wait()
-	require.NoError(t, err)
-	assert.Equal(t, uint32(1), data.NumMessages, "mailbox must hold exactly one draft copy")
+	require.NoError(err)
+	assert.Equal(uint32(1), data.NumMessages, "mailbox must hold exactly one draft copy")
 }
 
 // TestDraftDeleteReportsRemoteFailureWithoutLocalLoss verifies that when
@@ -575,12 +606,15 @@ func TestDraftEditConcurrentRevisionConflict(t *testing.T) {
 // delete_failed, leaves lifecycle=active with pending_uid set, and
 // leaves both the local membership/message rows and the server copy intact.
 func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	addr := f.config.Host + ":" + strconv.Itoa(f.config.Port)
 
 	// Capture the current UID before the delete attempt.
 	var currentUID int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT uid FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&currentUID))
 
@@ -594,35 +628,35 @@ func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "delete_failed", err.Error())
+	require.Error(err)
+	assert.Equal("delete_failed", err.Error())
 
 	// Lifecycle stays active; pending_uid must be set (Begin saves old uid).
 	var lifecycle string
 	var pendingUID sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, pending_uid FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &pendingUID))
-	assert.Equal(t, "active", lifecycle)
-	assert.True(t, pendingUID.Valid, "pending_uid must be set")
+	assert.Equal("active", lifecycle)
+	assert.True(pendingUID.Valid, "pending_uid must be set")
 
 	// Membership row must still exist.
 	var membershipCount int
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND uid = ?
 	`), f.source.ID, currentUID).Scan(&membershipCount))
-	assert.Equal(t, 1, membershipCount, "membership row must be present")
+	assert.Equal(1, membershipCount, "membership row must be present")
 
 	// Message row must not be tombstoned.
-	assert.False(t, isDraftTombstoned(t, f, f.draftID))
+	assert.False(isDraftTombstoned(t, f, f.draftID))
 
 	// Server copy must still be present.
 	c, err := imapclient.DialInsecure(addr, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = c.Close() }()
-	require.NoError(t, c.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	require.NoError(c.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
 	_, selErr := c.Select("Drafts", nil).Wait()
-	require.NoError(t, selErr)
+	require.NoError(selErr)
 	var uidSet emersionimap.UIDSet
 	uidSet.AddNum(emersionimap.UID(currentUID))
 	fetchCmd := c.Fetch(uidSet, &emersionimap.FetchOptions{UID: true})
@@ -642,27 +676,29 @@ func TestDraftDeleteReportsRemoteFailureWithoutLocalLoss(t *testing.T) {
 			}
 		}
 	}
-	require.NoError(t, fetchCmd.Close())
-	assert.True(t, found, "server copy must still be present in delete_failed state")
+	require.NoError(fetchCmd.Close())
+	assert.True(found, "server copy must still be present in delete_failed state")
 }
 
 // TestDraftLifecycleCommandsRouteThroughDaemon verifies cobra command
 // registration, ExactArgs(1), and required-flag enforcement.
 func TestDraftLifecycleCommandsRouteThroughDaemon(t *testing.T) {
 	t.Run("draft-get ExactArgs", func(t *testing.T) {
+		require := require.New(t)
+
 		cmd := newDraftGetCommand()
 		cmd.SetOut(new(strings.Builder))
 		cmd.SetErr(new(strings.Builder))
-		require.Equal(t, "draft-get <draft-id>", cmd.Use)
+		require.Equal("draft-get <draft-id>", cmd.Use)
 		// Zero args: cobra should refuse (ExactArgs(1)).
 		err := cmd.Args(cmd, []string{})
-		require.Error(t, err)
+		require.Error(err)
 		// Two args: cobra should also refuse.
 		err = cmd.Args(cmd, []string{"1", "2"})
-		require.Error(t, err)
+		require.Error(err)
 		// One arg: OK.
 		err = cmd.Args(cmd, []string{"1"})
-		require.NoError(t, err)
+		require.NoError(err)
 	})
 
 	t.Run("draft-edit requires revision", func(t *testing.T) {
@@ -698,6 +734,9 @@ func TestDraftLifecycleCommandsRouteThroughDaemon(t *testing.T) {
 // TestDraftReplayPendingDiscard verifies that draft-delete resumes a pending
 // discard when the previous attempt left pending_kind='discard' set.
 func TestDraftReplayPendingDiscard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// First attempt: inject a failing RemoveDraft to leave pending_kind='discard'.
@@ -708,43 +747,45 @@ func TestDraftReplayPendingDiscard(t *testing.T) {
 	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "delete_failed", err.Error())
+	require.Error(err)
+	assert.Equal("delete_failed", err.Error())
 
 	// Verify pending state is set (revision bumped to 2 by Begin).
 	var pendingKind sql.NullString
 	var revision int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT pending_kind, revision FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&pendingKind, &revision))
-	assert.Equal(t, "discard", pendingKind.String)
-	assert.Equal(t, int64(2), revision)
+	assert.Equal("discard", pendingKind.String)
+	assert.Equal(int64(2), revision)
 
 	// Retry with the stored current revision and a real RemoveDraft.
 	evs = nil
 	_, retryErr := f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=2")
-	require.NoError(t, retryErr, "replay of pending discard must succeed")
+	require.NoError(retryErr, "replay of pending discard must succeed")
 
 	// Draft must now be discarded.
 	var lifecycle string
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle))
-	assert.Equal(t, "discarded", lifecycle)
+	assert.Equal("discarded", lifecycle)
 }
 
 // TestDraftReplayPendingDiscardRejectsStaleRevision verifies that
 // replayPendingDiscard refuses a caller-supplied revision that does not match
 // the stored current revision.
 func TestDraftReplayPendingDiscardRejectsStaleRevision(t *testing.T) {
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Perform a successful edit first so revision advances to 2.
 	_, err := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10),
 		"--revision=1", "--body=Intermediate edit")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Leave pending_kind='discard' at revision=3 by injecting a RemoveDraft failure.
 	counter := &sharedRemoveCounter{}
@@ -753,14 +794,14 @@ func TestDraftReplayPendingDiscardRejectsStaleRevision(t *testing.T) {
 	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=2"},
 	}, nil)
-	require.Error(t, err)
+	require.Error(err)
 
 	// Stored revision is now 3. Both the original revision=1 and the pre-Begin
 	// revision=2 are stale and must be refused; only the current value works.
 	for _, stale := range []string{"--revision=1", "--revision=2"} {
 		_, staleErr := f.runLifecycle(t,
 			"draft-delete", strconv.FormatInt(f.draftID, 10), stale)
-		require.Error(t, staleErr)
+		require.Error(staleErr)
 		assert.Equal(t, "revision_conflict", staleErr.Error(),
 			"stale revision must produce revision_conflict: %s", stale)
 	}
@@ -810,6 +851,9 @@ func TestDraftDeleteReturnsPendingOperationForPendingEdit(t *testing.T) {
 // edit_interrupted (and clears the stale pending marker) when pending_kind='edit'
 // has a pending_started_at older than pendingEditStalenessThreshold.
 func TestDraftEditClearsStaleInterruptedEdit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Inject a pending_kind='edit' with a very old pending_started_at.
@@ -820,25 +864,28 @@ func TestDraftEditClearsStaleInterruptedEdit(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error())
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
 
 	// pending_kind must be cleared.
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&pendingKind))
-	assert.False(t, pendingKind.Valid, "pending_kind must be cleared after edit_interrupted")
+	assert.False(pendingKind.Valid, "pending_kind must be cleared after edit_interrupted")
 }
 
 // TestDraftEditRejectsRecentPendingEdit verifies that the staleness guard in
 // draft-edit returns operation_pending for a fresh pending-edit marker and
 // edit_interrupted for a stale one, controlled by pending_started_at alone.
 func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Inject a fresh pending_kind='edit' (younger than pendingEditStalenessThreshold).
@@ -848,12 +895,12 @@ func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1
 		WHERE draft_id = ?
 	`), time.Now(), f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=should refuse")
-	require.Error(t, editErr)
-	assert.Equal(t, "operation_pending", editErr.Error(),
+	require.Error(editErr)
+	assert.Equal("operation_pending", editErr.Error(),
 		"fresh pending-edit marker must produce operation_pending")
 
 	// Backdate the marker past the staleness threshold; now draft-edit must clear it.
@@ -861,12 +908,12 @@ func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
 	_, err = f.store.DB().Exec(f.store.Rebind(`
 		UPDATE imap_drafts SET pending_started_at = ? WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, editErr = f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error(),
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error(),
 		"stale pending-edit marker must produce edit_interrupted after clearing")
 }
 
@@ -874,6 +921,9 @@ func TestDraftEditRejectsRecentPendingEdit(t *testing.T) {
 // equals uid (Persist did not commit), edit_interrupted does not name any UID —
 // naming the tracked UID would tell the operator to remove the live copy.
 func TestDraftEditInterruptedMessageMatchingUID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	staleTime := time.Now().Add(-60 * time.Minute)
@@ -884,37 +934,40 @@ func TestDraftEditInterruptedMessageMatchingUID(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	evs, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear", "--json")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error())
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
-	require.True(t, ok)
+	require.True(ok)
 	// Must not name any UID — the tracked copy is still the live one.
-	assert.NotContains(t, coded.Err.Error(), "UID=")
+	assert.NotContains(coded.Err.Error(), "UID=")
 
 	// The refusal the client receives must name no UID either, and must carry
 	// the inspect guidance rather than a removal instruction.
-	require.Len(t, evs, 1)
-	assert.Equal(t, cliStreamStderr, evs[0].Type)
+	require.Len(evs, 1)
+	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal(t, "edit_interrupted", delivered["status"])
-	assert.NotContains(t, delivered, "uid", "no UID may be named when the tracked copy is the live one")
-	assert.Equal(t, draftInspectInstruction, delivered["instructions"])
+	assert.Equal("edit_interrupted", delivered["status"])
+	assert.NotContains(delivered, "uid", "no UID may be named when the tracked copy is the live one")
+	assert.Equal(draftInspectInstruction, delivered["instructions"])
 }
 
 // TestDraftEditInterruptedMessageDifferentUID verifies that when pending_uid
 // differs from uid (Persist committed), edit_interrupted names pending_uid as
 // the stale removable copy.
 func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	staleTime := time.Now().Add(-60 * time.Minute)
 	// Record the original uid, then advance uid to simulate Persist committing.
 	var origUID int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
 		`SELECT uid FROM imap_drafts WHERE draft_id = ?`), f.draftID).Scan(&origUID))
 	_, err := f.store.DB().Exec(f.store.Rebind(`
 		UPDATE imap_drafts
@@ -923,27 +976,27 @@ func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
 		    uid = 99999
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	evs, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear", "--json")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error())
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
-	require.True(t, ok)
+	require.True(ok)
 	// Must name pending_uid (the stale pre-edit copy) in the message.
-	assert.Contains(t, coded.Err.Error(), fmt.Sprintf("UID=%d", origUID))
+	assert.Contains(coded.Err.Error(), fmt.Sprintf("UID=%d", origUID))
 	// Must not name the post-Persist uid (the tracked live copy).
-	assert.NotContains(t, coded.Err.Error(), "UID=99999")
+	assert.NotContains(coded.Err.Error(), "UID=99999")
 
 	// The client is told the same thing: the cause is a daemon-log field, so
 	// the UID and the removal instruction have to arrive on the event stream.
-	require.Len(t, evs, 1)
-	assert.Equal(t, cliStreamStderr, evs[0].Type)
+	require.Len(evs, 1)
+	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal(t, "edit_interrupted", delivered["status"])
-	assert.Equal(t, float64(origUID), delivered["uid"])
-	assert.Equal(t, draftRemoveStaleInstruction, delivered["instructions"])
+	assert.Equal("edit_interrupted", delivered["status"])
+	assert.Equal(float64(origUID), delivered["uid"])
+	assert.Equal(draftRemoveStaleInstruction, delivered["instructions"])
 }
 
 // draftGetRevision runs draft-get and returns the revision it reports, which
@@ -975,6 +1028,9 @@ func storedDraftRevision(t *testing.T, f draftLifecycleFixture) int64 {
 // edit_interrupted, the caller re-reads the draft, and the revision that read
 // reports is accepted by the next edit.
 func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Simulate a crash between Begin and Finish: pending marker set, revision
@@ -986,7 +1042,7 @@ func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// 1. The recovery call clears the marker and refuses the requested edit.
 	//    What the client receives is the code plus the streamed result: the
@@ -995,47 +1051,47 @@ func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
 	evs, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1",
 		"--body=Body that must not be applied", "--json")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error())
-	require.Len(t, evs, 1, "the refusal must reach the client as an event")
-	assert.Equal(t, cliStreamStderr, evs[0].Type)
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
+	require.Len(evs, 1, "the refusal must reach the client as an event")
+	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal(t, "edit_interrupted", delivered["status"])
-	assert.Equal(t, draftInspectInstruction, delivered["instructions"],
+	assert.Equal("edit_interrupted", delivered["status"])
+	assert.Equal(draftInspectInstruction, delivered["instructions"],
 		"the client must receive recovery guidance, not the code alone")
 	_, hasDeliveredRevision := delivered["revision"]
-	assert.False(t, hasDeliveredRevision, "a refusal must carry no retry revision")
+	assert.False(hasDeliveredRevision, "a refusal must carry no retry revision")
 	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
-	require.True(t, ok)
-	assert.Contains(t, coded.Err.Error(), "was not applied",
+	require.True(ok)
+	assert.Contains(coded.Err.Error(), "was not applied",
 		"recovery must not read as a promise that the requested body landed")
 
 	// 2. The caller re-reads. draft-get reports the stored current revision.
 	reloaded := draftGetRevision(t, f)
-	assert.Equal(t, storedDraftRevision(t, f), reloaded,
+	assert.Equal(storedDraftRevision(t, f), reloaded,
 		"draft-get must report the stored revision with no arithmetic")
-	assert.Equal(t, int64(2), reloaded)
+	assert.Equal(int64(2), reloaded)
 
 	// 3. The reloaded revision is accepted by the next edit.
 	events, err := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10),
 		"--revision="+strconv.FormatInt(reloaded, 10), "--body=Recovered body", "--json")
-	require.NoError(t, err, "edit at the reloaded revision must succeed")
-	require.Len(t, events, 1)
+	require.NoError(err, "edit at the reloaded revision must succeed")
+	require.Len(events, 1)
 	var result map[string]any
-	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
-	assert.Equal(t, "replaced", result["status"])
-	assert.Equal(t, float64(3), result["revision"], "successful edit reports the committed revision")
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal("replaced", result["status"])
+	assert.Equal(float64(3), result["revision"], "successful edit reports the committed revision")
 
 	// The new body is what the archive holds.
 	var newMessageID int64
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT current_message_id FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&newMessageID))
 	rawData, rawErr := f.store.GetMessageRawContext(t.Context(), newMessageID)
-	require.NoError(t, rawErr)
-	assert.Contains(t, string(rawData), "Recovered body")
-	assert.NotContains(t, string(rawData), "Body that must not be applied")
+	require.NoError(rawErr)
+	assert.Contains(string(rawData), "Recovered body")
+	assert.NotContains(string(rawData), "Body that must not be applied")
 }
 
 // TestDraftDeleteInterruptedReloadsAndCompletes drives the caller-level
@@ -1043,6 +1099,9 @@ func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
 // revision, the caller re-reads, and the reloaded revision completes the
 // discard.
 func TestDraftDeleteInterruptedReloadsAndCompletes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// 1. Fail the first RemoveDraft so the discard is left pending.
@@ -1053,68 +1112,71 @@ func TestDraftDeleteInterruptedReloadsAndCompletes(t *testing.T) {
 	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1", "--json"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "delete_failed", err.Error())
-	require.NotEmpty(t, evs, "delete_failed must emit an event")
+	require.Error(err)
+	assert.Equal("delete_failed", err.Error())
+	require.NotEmpty(evs, "delete_failed must emit an event")
 
 	var failOutput map[string]any
-	require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &failOutput))
+	require.NoError(json.Unmarshal([]byte(evs[0].Data), &failOutput))
 	_, hasRevision := failOutput["revision"]
-	assert.False(t, hasRevision, "a failure result must carry no retry revision")
-	assert.Equal(t, draftInspectInstruction, failOutput["instructions"],
+	assert.False(hasRevision, "a failure result must carry no retry revision")
+	assert.Equal(draftInspectInstruction, failOutput["instructions"],
 		"the failure must carry numberless reload-and-inspect guidance")
 
 	// 2. The caller re-reads. draft-get reports the stored current revision
 	//    even while the pending marker is set.
 	reloaded := draftGetRevision(t, f)
-	assert.Equal(t, storedDraftRevision(t, f), reloaded,
+	assert.Equal(storedDraftRevision(t, f), reloaded,
 		"draft-get must report the stored revision while a marker exists")
-	assert.Equal(t, int64(2), reloaded)
+	assert.Equal(int64(2), reloaded)
 
 	// 3. The reloaded revision completes the discard.
 	_, retryErr := f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision="+strconv.FormatInt(reloaded, 10))
-	require.NoError(t, retryErr, "delete at the reloaded revision must complete")
+	require.NoError(retryErr, "delete at the reloaded revision must complete")
 
 	var lifecycle string
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &pendingKind))
-	assert.Equal(t, "discarded", lifecycle)
-	assert.False(t, pendingKind.Valid, "pending marker must be cleared")
+	assert.Equal("discarded", lifecycle)
+	assert.False(pendingKind.Valid, "pending marker must be cleared")
 }
 
 // TestDraftDeleteRejectsStaleRevision verifies the ordinary stale-revision
 // path for draft-delete: a revision the draft has moved past is a
 // reload-and-retry conflict and mutates nothing.
 func TestDraftDeleteRejectsStaleRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// An ordinary edit advances the revision to 2.
 	_, err := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=First edit")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, staleErr := f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1")
-	require.Error(t, staleErr)
-	assert.Equal(t, "revision_conflict", staleErr.Error())
+	require.Error(staleErr)
+	assert.Equal("revision_conflict", staleErr.Error())
 
 	var lifecycle string
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &pendingKind))
-	assert.Equal(t, "active", lifecycle)
-	assert.False(t, pendingKind.Valid, "a refused delete must not claim the draft")
-	assert.Equal(t, int64(2), storedDraftRevision(t, f))
+	assert.Equal("active", lifecycle)
+	assert.False(pendingKind.Valid, "a refused delete must not claim the draft")
+	assert.Equal(int64(2), storedDraftRevision(t, f))
 
 	// The reloaded revision is accepted.
 	_, err = f.runLifecycle(t,
 		"draft-delete", strconv.FormatInt(f.draftID, 10),
 		"--revision="+strconv.FormatInt(draftGetRevision(t, f), 10))
-	require.NoError(t, err)
+	require.NoError(err)
 }
 
 // TestDraftLifecycleOnDiscardedDraft verifies that an already-discarded draft
@@ -1144,18 +1206,21 @@ func TestDraftLifecycleOnDiscardedDraft(t *testing.T) {
 	}
 
 	t.Run("delete at the current revision reports discarded", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
 		opened := false
 		var evs []api.CLIRunEvent
 		err := newAdapter(&opened).runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 			Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=" + current, "--json"},
 		}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-		require.NoError(t, err)
-		require.Len(t, evs, 1)
+		require.NoError(err)
+		require.Len(evs, 1)
 		var result map[string]any
-		require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &result))
-		assert.Equal(t, "discarded", result["status"])
-		assert.Equal(t, "discarded", result["lifecycle"])
-		assert.False(t, opened, "a discarded draft must not open an IMAP connection")
+		require.NoError(json.Unmarshal([]byte(evs[0].Data), &result))
+		assert.Equal("discarded", result["status"])
+		assert.Equal("discarded", result["lifecycle"])
+		assert.False(opened, "a discarded draft must not open an IMAP connection")
 	})
 
 	t.Run("edit at the current revision refuses draft_missing", func(t *testing.T) {
@@ -1233,6 +1298,9 @@ func TestDraftDeleteRefusesWrongGrantMailbox(t *testing.T) {
 // returns provider_status=not_checked when the policy mailbox does not match
 // the draft's mailbox, without opening any IMAP connection.
 func TestDraftGetReportsNotCheckedForWrongGrantMailbox(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	var imapOpened bool
@@ -1248,12 +1316,12 @@ func TestDraftGetReportsNotCheckedForWrongGrantMailbox(t *testing.T) {
 	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-get", strconv.FormatInt(f.draftID, 10), "--json"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.NoError(t, err)
-	require.Len(t, evs, 1)
+	require.NoError(err)
+	require.Len(evs, 1)
 	var result map[string]any
-	require.NoError(t, json.Unmarshal([]byte(evs[0].Data), &result))
-	assert.Equal(t, "not_checked", result["provider_status"])
-	assert.False(t, imapOpened, "IMAP must not be opened when grant mailbox mismatches")
+	require.NoError(json.Unmarshal([]byte(evs[0].Data), &result))
+	assert.Equal("not_checked", result["provider_status"])
+	assert.False(imapOpened, "IMAP must not be opened when grant mailbox mismatches")
 }
 
 // failRemoveWithPlainError wraps a real IMAP client and fails RemoveDraft with
@@ -1298,6 +1366,9 @@ func TestDraftEditReportsOldCopyRemainsWhenRemovalFailsAfterPersist(t *testing.T
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			f := newDraftLifecycleFixture(t)
 			adapter := f.grantedAdapter()
 			adapter.draftLifecycleClientFactory = testCase.factory(f)
@@ -1307,53 +1378,53 @@ func TestDraftEditReportsOldCopyRemainsWhenRemovalFailsAfterPersist(t *testing.T
 				Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10),
 					"--revision=1", "--body=Body that did land", "--json"},
 			}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-			require.Error(t, err)
-			assert.Equal(t, "edit_applied_old_copy_remains", err.Error())
+			require.Error(err)
+			assert.Equal("edit_applied_old_copy_remains", err.Error())
 
 			// The status the client receives must match the returned code and
 			// must name the leftover pre-edit copy.
-			require.Len(t, evs, 1, "a partial operation must report a result")
-			assert.Equal(t, cliStreamStderr, evs[0].Type)
+			require.Len(evs, 1, "a partial operation must report a result")
+			assert.Equal(cliStreamStderr, evs[0].Type)
 			result := decodeDraftLifecycleEvent(t, evs[0])
-			assert.Equal(t, "edit_applied_old_copy_remains", result["status"])
-			assert.Equal(t, draftRemoveStaleInstruction, result["instructions"])
-			assert.Equal(t, float64(f.draftUID), result["uid"],
+			assert.Equal("edit_applied_old_copy_remains", result["status"])
+			assert.Equal(draftRemoveStaleInstruction, result["instructions"])
+			assert.Equal(float64(f.draftUID), result["uid"],
 				"the leftover pre-edit copy must be named to the operator")
 			_, hasRevision := result["revision"]
-			assert.False(t, hasRevision, "a partial result must carry no retry revision")
+			assert.False(hasRevision, "a partial result must carry no retry revision")
 
 			// The local record is complete: it points at the new copy.
 			var currentMessageID, newUID int64
 			var lifecycle string
 			var pendingKind sql.NullString
-			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 				SELECT current_message_id, uid, lifecycle, pending_kind
 				FROM imap_drafts WHERE draft_id = ?
 			`), f.draftID).Scan(&currentMessageID, &newUID, &lifecycle, &pendingKind))
-			assert.NotEqual(t, f.draftID, currentMessageID,
+			assert.NotEqual(f.draftID, currentMessageID,
 				"current_message_id must point at the new copy")
-			assert.NotEqual(t, int64(f.draftUID), newUID, "uid must point at the new copy")
-			assert.Equal(t, "active", lifecycle)
-			assert.Equal(t, "edit", pendingKind.String,
+			assert.NotEqual(int64(f.draftUID), newUID, "uid must point at the new copy")
+			assert.Equal("active", lifecycle)
+			assert.Equal("edit", pendingKind.String,
 				"the pending marker stays set for the next draft-edit")
 
 			rawData, rawErr := f.store.GetMessageRawContext(t.Context(), currentMessageID)
-			require.NoError(t, rawErr)
-			assert.Contains(t, string(rawData), "Body that did land",
+			require.NoError(rawErr)
+			assert.Contains(string(rawData), "Body that did land",
 				"the archived raw must hold the body this call applied")
 
 			// Both copies are in the mailbox: only the removal failed.
-			assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
+			assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
 				"the pre-edit copy must still be on the server")
-			assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(newUID)),
+			assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(newUID)),
 				"the new copy must be on the server")
 
 			// draft-delete does not retry the removal: it refuses a pending
 			// edit and redirects to draft-edit.
 			_, deleteErr := f.runLifecycle(t, "draft-delete", strconv.FormatInt(f.draftID, 10),
 				"--revision="+strconv.FormatInt(storedDraftRevision(t, f), 10))
-			require.Error(t, deleteErr)
-			assert.Equal(t, "operation_pending", deleteErr.Error())
+			require.Error(deleteErr)
+			assert.Equal("operation_pending", deleteErr.Error())
 		})
 	}
 }
@@ -1363,6 +1434,9 @@ func TestDraftEditReportsOldCopyRemainsWhenRemovalFailsAfterPersist(t *testing.T
 // handleCLIRun streams exactly that, so anything the operator must act on
 // reaches them only if it travels as a CLI event.
 func TestDraftRefusalInstructionsReachTheCLIRunClient(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Simulate a crash after Persist committed: pending_uid names the pre-edit
@@ -1375,18 +1449,18 @@ func TestDraftRefusalInstructionsReachTheCLIRunClient(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1, uid = 99999
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	dataDir := t.TempDir()
 	configPath := filepath.Join(dataDir, "config.toml")
-	require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(`[data]
+	require.NoError(os.WriteFile(configPath, []byte(fmt.Sprintf(`[data]
 data_dir = %q
 
 [server]
 api_key = %q
 `, dataDir, "draft-boundary-secret")), 0o600))
 	serverCfg, err := config.Load(configPath, "")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	daemon := api.NewServerWithOptions(api.ServerOptions{
 		Config: serverCfg,
@@ -1397,20 +1471,20 @@ api_key = %q
 		"draft-edit", strconv.FormatInt(f.draftID, 10),
 		"--revision=1", "--body=Body that must not be applied", "--json",
 	}})
-	require.NoError(t, err)
+	require.NoError(err)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "draft-boundary-secret")
 	response := httptest.NewRecorder()
 
 	daemon.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	var stderr, streamedError string
 	decoder := json.NewDecoder(response.Body)
 	for decoder.More() {
 		var event api.CLIRunEvent
-		require.NoError(t, decoder.Decode(&event))
+		require.NoError(decoder.Decode(&event))
 		switch event.Type {
 		case cliStreamStderr:
 			stderr += event.Data
@@ -1420,17 +1494,17 @@ api_key = %q
 	}
 
 	// The error the client sees is the bare code: the cause never crosses.
-	assert.Equal(t, "edit_interrupted", streamedError)
-	require.NotEmpty(t, stderr, "the refusal must stream a result the client can read")
+	assert.Equal("edit_interrupted", streamedError)
+	require.NotEmpty(stderr, "the refusal must stream a result the client can read")
 
 	var delivered map[string]any
-	require.NoError(t, json.Unmarshal([]byte(stderr), &delivered))
-	assert.Equal(t, "edit_interrupted", delivered["status"])
-	assert.Equal(t, float64(origUID), delivered["uid"],
+	require.NoError(json.Unmarshal([]byte(stderr), &delivered))
+	assert.Equal("edit_interrupted", delivered["status"])
+	assert.Equal(float64(origUID), delivered["uid"],
 		"the removable stale copy must be named across the daemon boundary")
-	assert.Equal(t, draftRemoveStaleInstruction, delivered["instructions"],
+	assert.Equal(draftRemoveStaleInstruction, delivered["instructions"],
 		"the recovery instruction must cross the daemon boundary")
-	assert.NotContains(t, stderr, "Body that must not be applied",
+	assert.NotContains(stderr, "Body that must not be applied",
 		"a refusal must not echo the supplied body")
 }
 
@@ -1456,6 +1530,9 @@ func (c *countingRemoveClient) RemoveDraft(ctx context.Context, target imaplib.D
 // replay committed and reports the already-discarded draft without opening a
 // connection; neither outcome removes anything a second time.
 func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Simulate a prior Begin by injecting pending_kind='discard' and advancing the
@@ -1466,7 +1543,7 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1
 		WHERE draft_id = ?
 	`), time.Now().Add(-time.Minute), f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var removeMu sync.Mutex
 	removes := 0
@@ -1503,26 +1580,25 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 		}
 		// sync_active: the loser blocked on the lock while the winner held it.
 		// revision_conflict: the loser's revision no longer matches.
-		assert.True(t,
-			e.Error() == "revision_conflict" || e.Error() == "sync_active" ||
-				e.Error() == "draft_not_found",
+		assert.True(e.Error() == "revision_conflict" || e.Error() == "sync_active" ||
+			e.Error() == "draft_not_found",
 			"unexpected error from losing caller: %v", e)
 	}
-	assert.GreaterOrEqual(t, successes, 1, "the pending discard must complete")
+	assert.GreaterOrEqual(successes, 1, "the pending discard must complete")
 
 	removeMu.Lock()
 	observedRemoves := removes
 	removeMu.Unlock()
-	assert.Equal(t, 1, observedRemoves,
+	assert.Equal(1, observedRemoves,
 		"exactly one caller may act on the pending discard; the other must not reach RemoveDraft")
 
 	var lifecycle string
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &pendingKind))
-	assert.Equal(t, "discarded", lifecycle)
-	assert.False(t, pendingKind.Valid, "pending marker must be cleared exactly once")
+	assert.Equal("discarded", lifecycle)
+	assert.False(pendingKind.Valid, "pending marker must be cleared exactly once")
 }
 
 // recreateDraftsMailbox deletes and recreates the Drafts mailbox and returns the
@@ -1551,6 +1627,9 @@ func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) uint32 {
 // unrelated message. The recovery must name no UID at all and must describe the
 // copy instead, because the operator acts on a named UID by deleting it.
 func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 
 	// Post-Persist marker shape: pending_uid names the pre-edit copy, uid names
@@ -1563,7 +1642,7 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 		    pending_started_at = ?, revision = revision + 1, uid = 99999
 		WHERE draft_id = ?
 	`), staleTime, f.draftID)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// The epoch changes after the marker was written. A bystander then takes the
 	// pre-edit copy's UID under the new epoch, so naming that UID would tell the
@@ -1572,36 +1651,36 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 	bystanderRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n" +
 		"Subject: Not a draft\r\nMessage-ID: <bystander-epoch@example.com>\r\n\r\nBystander\r\n")
 	bystanderUID := appendRawToServer(t, f.config.Host+":"+strconv.Itoa(f.config.Port), "Drafts", bystanderRaw)
-	require.Equal(t, origUID, int64(bystanderUID),
+	require.Equal(origUID, int64(bystanderUID),
 		"the bystander must take the pre-edit copy's UID under the new epoch")
 
 	evs, editErr := f.runLifecycle(t,
 		"draft-edit", strconv.FormatInt(f.draftID, 10), "--revision=1", "--body=after clear", "--json")
-	require.Error(t, editErr)
-	assert.Equal(t, "edit_interrupted", editErr.Error())
+	require.Error(editErr)
+	assert.Equal("edit_interrupted", editErr.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](editErr)
-	require.True(t, ok)
-	assert.NotContains(t, coded.Err.Error(), "UID=",
+	require.True(ok)
+	assert.NotContains(coded.Err.Error(), "UID=",
 		"an unverifiable copy must not be named in the logged cause either")
 
-	require.Len(t, evs, 1)
-	assert.Equal(t, cliStreamStderr, evs[0].Type)
+	require.Len(evs, 1)
+	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal(t, "edit_interrupted", delivered["status"])
-	assert.NotContains(t, delivered, "uid",
+	assert.Equal("edit_interrupted", delivered["status"])
+	assert.NotContains(delivered, "uid",
 		"a UID whose epoch moved names a different message and must not be reported")
-	assert.NotContains(t, evs[0].Data, strconv.FormatInt(origUID, 10),
+	assert.NotContains(evs[0].Data, strconv.FormatInt(origUID, 10),
 		"the bystander's UID must appear nowhere in the delivered result")
-	assert.Equal(t, draftLocateDuplicateInstruction, delivered["instructions"])
+	assert.Equal(draftLocateDuplicateInstruction, delivered["instructions"])
 
 	// The recovery is still a recovery: the marker is cleared and nothing was
 	// removed from the mailbox.
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&pendingKind))
-	assert.False(t, pendingKind.Valid, "the interrupted marker must still be cleared")
-	assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(bystanderUID)),
+	assert.False(pendingKind.Valid, "the interrupted marker must still be cleared")
+	assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(bystanderUID)),
 		"the bystander must survive the recovery untouched")
 }
 
@@ -1648,6 +1727,9 @@ func (c *failRemoveUnverifiableCopy) RemoveDraft(
 // failed, and the copy could not be re-verified live. The result still has to
 // report the partial outcome, but it must name no UID.
 func TestDraftEditNamesNoUIDWhenLeftoverCopyCannotBeVerified(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	adapter := f.grantedAdapter()
 	adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
@@ -1661,26 +1743,26 @@ func TestDraftEditNamesNoUIDWhenLeftoverCopyCannotBeVerified(t *testing.T) {
 		Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10),
 			"--revision=1", "--body=Body that did land", "--json"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "edit_applied_old_copy_remains", err.Error())
+	require.Error(err)
+	assert.Equal("edit_applied_old_copy_remains", err.Error())
 
-	require.Len(t, evs, 1)
+	require.Len(evs, 1)
 	result := decodeDraftLifecycleEvent(t, evs[0])
-	assert.Equal(t, "edit_applied_old_copy_remains", result["status"])
-	assert.NotContains(t, result, "uid",
+	assert.Equal("edit_applied_old_copy_remains", result["status"])
+	assert.NotContains(result, "uid",
 		"a leftover copy that cannot be verified live must not be named")
-	assert.Equal(t, draftLocateDuplicateInstruction, result["instructions"])
-	assert.NotContains(t, evs[0].Data, "Body that did land",
+	assert.Equal(draftLocateDuplicateInstruction, result["instructions"])
+	assert.NotContains(evs[0].Data, "Body that did land",
 		"a partial result must not echo the supplied body")
 
 	// The edit itself still committed: the local record points at the new copy.
 	var currentMessageID int64
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT current_message_id, pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&currentMessageID, &pendingKind))
-	assert.NotEqual(t, f.draftID, currentMessageID)
-	assert.Equal(t, "edit", pendingKind.String)
+	assert.NotEqual(f.draftID, currentMessageID)
+	assert.Equal("edit", pendingKind.String)
 }
 
 // failInspectClient wraps a real IMAP client and fails every InspectDraft with a
@@ -1726,6 +1808,9 @@ func TestDraftInspectFailureDeliversRecoveryInstructions(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			f := newDraftLifecycleFixture(t)
 			adapter := f.grantedAdapter()
 			adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
@@ -1742,28 +1827,28 @@ func TestDraftInspectFailureDeliversRecoveryInstructions(t *testing.T) {
 			var evs []api.CLIRunEvent
 			err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args},
 				func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-			require.Error(t, err)
-			assert.Equal(t, testCase.code, err.Error())
+			require.Error(err)
+			assert.Equal(testCase.code, err.Error())
 
-			require.Len(t, evs, 1, "an actionable refusal must reach the caller as an event")
-			assert.Equal(t, cliStreamStderr, evs[0].Type)
+			require.Len(evs, 1, "an actionable refusal must reach the caller as an event")
+			assert.Equal(cliStreamStderr, evs[0].Type)
 			delivered := decodeDraftLifecycleEvent(t, evs[0])
-			assert.Equal(t, testCase.code, delivered["status"])
-			assert.Equal(t, testCase.instruction, delivered["instructions"])
-			assert.NotContains(t, delivered, "uid", "a refusal before any claim names no copy")
+			assert.Equal(testCase.code, delivered["status"])
+			assert.Equal(testCase.instruction, delivered["instructions"])
+			assert.NotContains(delivered, "uid", "a refusal before any claim names no copy")
 			_, hasRevision := delivered["revision"]
-			assert.False(t, hasRevision, "a refusal must carry no retry revision")
+			assert.False(hasRevision, "a refusal must carry no retry revision")
 
 			// Nothing was claimed: the refusal is before Begin.
 			var lifecycle string
 			var revision int64
 			var pendingKind sql.NullString
-			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 				SELECT lifecycle, revision, pending_kind FROM imap_drafts WHERE draft_id = ?
 			`), f.draftID).Scan(&lifecycle, &revision, &pendingKind))
-			assert.Equal(t, "active", lifecycle)
-			assert.Equal(t, int64(1), revision)
-			assert.False(t, pendingKind.Valid)
+			assert.Equal("active", lifecycle)
+			assert.Equal(int64(1), revision)
+			assert.False(pendingKind.Valid)
 		})
 	}
 }
@@ -1817,6 +1902,9 @@ func replaceDraftArchivedRaw(t *testing.T, f draftLifecycleFixture, raw []byte) 
 // happen while the composed bytes are still the only thing that exists, which
 // is what the append count and the untouched ownership row prove here.
 func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftLifecycleFixture(t)
 	replaceDraftArchivedRaw(t, f, []byte(
 		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n"+
@@ -1845,33 +1933,33 @@ func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
 		Args: []string{"draft-edit", strconv.FormatInt(f.draftID, 10),
 			"--revision=1", "--body=Body that must not be appended", "--json"},
 	}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-	require.Error(t, err)
-	assert.Equal(t, "invalid_reply_metadata", err.Error())
+	require.Error(err)
+	assert.Equal("invalid_reply_metadata", err.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
-	require.True(t, ok)
-	assert.ErrorContains(t, coded.Err, "exactly one From address")
-	assert.NotContains(t, coded.Err.Error(), "Body that must not be appended",
+	require.True(ok)
+	assert.ErrorContains(coded.Err, "exactly one From address")
+	assert.NotContains(coded.Err.Error(), "Body that must not be appended",
 		"a refusal must not echo the supplied body")
-	assert.Empty(t, evs, "a refusal with nothing to recover reports no result")
+	assert.Empty(evs, "a refusal with nothing to recover reports no result")
 
 	// The refusal lands before the mailbox is touched at all.
-	assert.Zero(t, appends, "no copy may be appended for a draft that cannot be persisted")
-	assert.True(t, draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
+	assert.Zero(appends, "no copy may be appended for a draft that cannot be persisted")
+	assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
 		"the original copy must still be the one the mailbox holds")
 
 	// The ownership row is untouched: no claim, no marker, no revision bump.
 	var lifecycle string
 	var revision, currentMessageID int64
 	var pendingKind sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT lifecycle, revision, pending_kind, current_message_id
 		FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&lifecycle, &revision, &pendingKind, &currentMessageID))
-	assert.Equal(t, "active", lifecycle)
-	assert.Equal(t, int64(1), revision, "the refusal must leave the original revision")
-	assert.False(t, pendingKind.Valid, "no pending marker may survive a pre-claim refusal")
-	assert.Equal(t, f.draftID, currentMessageID)
-	assert.Len(t, *f.refreshed, refreshesBefore, "a refused edit refreshes no cache")
+	assert.Equal("active", lifecycle)
+	assert.Equal(int64(1), revision, "the refusal must leave the original revision")
+	assert.False(pendingKind.Valid, "no pending marker may survive a pre-claim refusal")
+	assert.Equal(f.draftID, currentMessageID)
+	assert.Len(*f.refreshed, refreshesBefore, "a refused edit refreshes no cache")
 }
 
 // bumpRevisionAfterRemove wraps a real IMAP client, performs the real removal,
@@ -1889,7 +1977,7 @@ type bumpRevisionAfterRemove struct {
 func (c *bumpRevisionAfterRemove) RemoveDraft(
 	ctx context.Context, target imaplib.DraftTarget,
 ) (imaplib.DraftInspectResult, error) {
-	result, err := c.Client.RemoveDraft(ctx, target)
+	result, err := (&testDraftClient{Client: c.Client}).RemoveDraft(ctx, target)
 	if err != nil {
 		return result, err
 	}
@@ -1946,6 +2034,9 @@ func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			f := newDraftLifecycleFixture(t)
 			revision := testCase.leaveState(t, f)
 			refreshesBefore := len(*f.refreshed)
@@ -1965,29 +2056,29 @@ func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
 				Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10),
 					"--revision=" + strconv.FormatInt(revision, 10), "--json"},
 			}, func(ev api.CLIRunEvent) error { evs = append(evs, ev); return nil })
-			require.Error(t, err)
-			assert.Equal(t, "remote_deleted_local_failed", err.Error())
+			require.Error(err)
+			assert.Equal("remote_deleted_local_failed", err.Error())
 			coded, ok := errors.AsType[*api.CLIRunCodedError](err)
-			require.True(t, ok)
-			assert.ErrorContains(t, coded.Err, "revision_conflict")
+			require.True(ok)
+			assert.ErrorContains(coded.Err, "revision_conflict")
 
 			// The code alone is what the daemon streams as the error, so the
 			// instruction is actionable only if it travels as an event.
-			assert.NotContains(t, err.Error(), draftCompleteDiscardInstruction)
-			require.Len(t, evs, 1, "a partial operation must report a result")
-			assert.Equal(t, cliStreamStderr, evs[0].Type)
+			assert.NotContains(err.Error(), draftCompleteDiscardInstruction)
+			require.Len(evs, 1, "a partial operation must report a result")
+			assert.Equal(cliStreamStderr, evs[0].Type)
 			delivered := decodeDraftLifecycleEvent(t, evs[0])
-			assert.Equal(t, "remote_deleted_local_failed", delivered["status"])
-			assert.Equal(t, draftCompleteDiscardInstruction, delivered["instructions"])
-			assert.NotContains(t, delivered, "uid",
+			assert.Equal("remote_deleted_local_failed", delivered["status"])
+			assert.Equal(draftCompleteDiscardInstruction, delivered["instructions"])
+			assert.NotContains(delivered, "uid",
 				"no live check ran here, so no copy may be named")
-			assert.NotContains(t, delivered, "operation_ref",
+			assert.NotContains(delivered, "operation_ref",
 				"the expunged copy's coordinates name nothing that still exists")
 			_, hasRevision := delivered["revision"]
-			assert.False(t, hasRevision, "a partial result must carry no retry revision")
+			assert.False(hasRevision, "a partial result must carry no retry revision")
 
 			// The server copy really is gone: only the local record is behind.
-			assert.False(t, draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
+			assert.False(draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)),
 				"the expunge must have landed before Finish was attempted")
 
 			// The pending marker survives, which is what makes the instruction's
@@ -1995,23 +2086,23 @@ func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
 			var lifecycle string
 			var pendingKind sql.NullString
 			var pendingUID sql.NullInt64
-			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 				SELECT lifecycle, pending_kind, pending_uid FROM imap_drafts WHERE draft_id = ?
 			`), f.draftID).Scan(&lifecycle, &pendingKind, &pendingUID))
-			assert.Equal(t, "active", lifecycle, "Finish never committed, so lifecycle is unchanged")
-			assert.Equal(t, "discard", pendingKind.String, "the pending discard must survive")
-			assert.True(t, pendingUID.Valid, "the pending receipt must survive with the marker")
-			assert.Len(t, *f.refreshed, refreshesBefore, "a failed completion refreshes no cache")
+			assert.Equal("active", lifecycle, "Finish never committed, so lifecycle is unchanged")
+			assert.Equal("discard", pendingKind.String, "the pending discard must survive")
+			assert.True(pendingUID.Valid, "the pending receipt must survive with the marker")
+			assert.Len(*f.refreshed, refreshesBefore, "a failed completion refreshes no cache")
 
 			// The documented recovery works: draft-delete at the reloaded
 			// revision completes the discard against an already-absent copy.
 			_, retryErr := f.runLifecycle(t, "draft-delete", strconv.FormatInt(f.draftID, 10),
 				"--revision="+strconv.FormatInt(storedDraftRevision(t, f), 10))
-			require.NoError(t, retryErr, "the instructed recovery must complete the discard")
-			require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+			require.NoError(retryErr, "the instructed recovery must complete the discard")
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 				SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
 			`), f.draftID).Scan(&lifecycle))
-			assert.Equal(t, "discarded", lifecycle)
+			assert.Equal("discarded", lifecycle)
 		})
 	}
 }

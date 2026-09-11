@@ -155,7 +155,18 @@ func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInsp
 			return nil
 		}
 		result.State = DraftRemotePresent
-		if err := expungeUIDLocked(conn, target.UID); err != nil {
+		if !conn.Caps().Has(imap.CapCondStore) {
+			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
+				Err: errors.New("IMAP server does not advertise CONDSTORE")}
+		}
+		if err := ctx.Err(); err != nil {
+			return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+		}
+		if fetchResult.modSeq == 0 {
+			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
+				Err: errors.New("IMAP FETCH returned no MODSEQ for conditional removal")}
+		}
+		if err := conditionalExpungeUIDLocked(ctx, conn, target.UID, fetchResult.modSeq); err != nil {
 			return err
 		}
 		return nil
@@ -191,10 +202,38 @@ func expungeUIDLocked(conn *imapclient.Client, uid uint32) error {
 	return nil
 }
 
+func conditionalExpungeUIDLocked(ctx context.Context, conn *imapclient.Client, uid uint32, modSeq uint64) error {
+	if err := ctx.Err(); err != nil {
+		return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+	}
+	var uidSet imap.UIDSet
+	uidSet.AddNum(imap.UID(uid))
+	responses, err := conn.Store(uidSet, &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Silent: false,
+		Flags:  []imap.Flag{imap.FlagDeleted},
+	}, &imap.StoreOptions{UnchangedSince: modSeq}).Collect()
+	if err != nil {
+		return fmt.Errorf("conditional UID STORE \\Deleted: %w", err)
+	}
+	if len(responses) == 0 {
+		return &DraftAppendError{State: DraftRemoteChanged, Code: "remote_changed",
+			Err: errors.New("IMAP conditional STORE found a changed message")}
+	}
+	if err := ctx.Err(); err != nil {
+		return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+	}
+	if err := conn.UIDExpunge(uidSet).Close(); err != nil {
+		return fmt.Errorf("UID EXPUNGE: %w", err)
+	}
+	return nil
+}
+
 // draftFetchResult holds the raw data and metadata from a single UID FETCH.
 type draftFetchResult struct {
 	flags  []string
 	digest [32]byte
+	modSeq uint64
 }
 
 // fetchDraftUID performs a single FETCH for the given UID and returns nil when
@@ -205,9 +244,12 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 	options := &imap.FetchOptions{
 		UID:         true,
 		Flags:       true,
+		ModSeq:      conn.Caps().Has(imap.CapCondStore),
 		BodySection: []*imap.FetchItemBodySection{{Peek: true}},
 	}
 	cmd := conn.Fetch(uidSet, options)
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	var result *draftFetchResult
 	for {
 		msg := cmd.Next()
@@ -216,6 +258,7 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 		}
 		var rawBuf bytes.Buffer
 		var flags []imap.Flag
+		var modSeq uint64
 		for {
 			item := msg.Next()
 			if item == nil {
@@ -226,8 +269,13 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 				flags = v.Flags
 			case imapclient.FetchItemDataBodySection:
 				if _, err := io.Copy(&rawBuf, v.Literal); err != nil {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: ctxErr}
+					}
 					return nil, fmt.Errorf("read draft body: %w", err)
 				}
+			case imapclient.FetchItemDataModSeq:
+				modSeq = v.ModSeq
 			}
 		}
 		if result == nil {
@@ -236,12 +284,18 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 			for _, f := range flags {
 				r.flags = append(r.flags, string(f))
 			}
+			r.modSeq = modSeq
 			result = r
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+	}
 	if err := cmd.Close(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: ctxErr}
+		}
 		return nil, fmt.Errorf("inspect draft FETCH: %w", err)
 	}
-	_ = ctx // context checked by caller before withConn
 	return result, nil
 }

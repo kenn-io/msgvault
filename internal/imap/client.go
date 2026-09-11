@@ -549,7 +549,7 @@ func (c *Client) withConn(ctx context.Context, fn func(*imapclient.Client) error
 		return err
 	}
 	err := fn(c.conn)
-	if err != nil && isNetworkError(err) {
+	if err != nil && (isNetworkError(err) || ctx.Err() != nil) {
 		if c.conn != nil {
 			_ = c.conn.Close()
 		}

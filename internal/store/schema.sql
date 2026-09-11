@@ -1904,7 +1904,7 @@ CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
 CREATE TABLE IF NOT EXISTS imap_drafts (
     draft_id                 INTEGER PRIMARY KEY,
     source_id                INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-    current_message_id       INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    current_message_id       INTEGER NOT NULL REFERENCES messages(id),
     mailbox                  TEXT NOT NULL,
     uidvalidity              INTEGER NOT NULL,
     uid                      INTEGER NOT NULL,
