@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"go.kenn.io/msgvault/internal/mcpdiscovery"
+
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
@@ -103,9 +106,11 @@ type ServeOptions struct {
 }
 
 type HTTPOptions struct {
-	Addr        string
-	APIKey      string
-	AllowWrites bool
+	DiscoveryDirectory string
+	BackendURL         string
+	Addr               string
+	APIKey             string
+	AllowWrites        bool
 }
 
 func officialToolHandler(
@@ -263,13 +268,25 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over
 // StreamableHTTP on the given address.
-func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, httpOpts HTTPOptions) error {
+func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, httpOpts HTTPOptions) (result error) {
+	listener, err := net.Listen("tcp", httpOpts.Addr)
+	if err != nil {
+		return fmt.Errorf("listen for MCP HTTP: %w", err)
+	}
+	defer func() { _ = listener.Close() }()
+	if httpOpts.DiscoveryDirectory != "" {
+		cleanup, err := mcpdiscovery.Publish(httpOpts.DiscoveryDirectory, listener.Addr().String(), httpOpts.APIKey, httpOpts.BackendURL)
+		if err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, cleanup()) }()
+	}
 	stdlibServer := newMCPHTTPServer(opts, httpOpts)
 	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", httpOpts.Addr)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := stdlibServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := stdlibServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
