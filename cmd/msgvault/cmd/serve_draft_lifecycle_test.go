@@ -44,9 +44,7 @@ type testDraftClient struct {
 	*imaplib.Client
 }
 
-func (*testDraftClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*testDraftClient) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *testDraftClient) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
 	result, err := c.InspectDraft(ctx, target)
@@ -391,9 +389,7 @@ type failOnNthRemove struct {
 	failBefore int  // fail when the call number is <= failBefore
 }
 
-func (*failOnNthRemove) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*failOnNthRemove) SupportsAtomicDraftRemoval() bool { return true }
 
 func (f *failOnNthRemove) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
 	f.mu.Lock()
@@ -1352,9 +1348,7 @@ type failRemoveWithPlainError struct {
 	*imaplib.Client
 }
 
-func (*failRemoveWithPlainError) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*failRemoveWithPlainError) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *failRemoveWithPlainError) RemoveDraft(context.Context, imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
 	return imaplib.DraftInspectResult{}, errors.New("injected non-coded RemoveDraft failure")
@@ -1724,9 +1718,7 @@ type failRemoveUnverifiableCopy struct {
 	inspects int
 }
 
-func (*failRemoveUnverifiableCopy) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*failRemoveUnverifiableCopy) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *failRemoveUnverifiableCopy) InspectDraft(
 	ctx context.Context, target imaplib.DraftTarget,
@@ -1806,9 +1798,7 @@ type failInspectClient struct {
 	inspectErr error
 }
 
-func (*failInspectClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*failInspectClient) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *failInspectClient) InspectDraft(
 	context.Context, imaplib.DraftTarget,
@@ -1900,9 +1890,7 @@ type countingAppendClient struct {
 	appends *int
 }
 
-func (*countingAppendClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*countingAppendClient) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *countingAppendClient) AppendDraft(
 	ctx context.Context, mailbox string, raw []byte,
@@ -2042,7 +2030,7 @@ func TestDraftDeletePreflightsProductionClientBeforeClaim(t *testing.T) {
 		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
 	}, nil)
 	require.Error(err)
-	assert.Equal("conditional_store_required", err.Error())
+	assert.Equal("atomic_expunge_required", err.Error())
 	assert.Equal("active", storedDraftLifecycle(t, f))
 	var pendingKind sql.NullString
 	var revision int64
@@ -2067,9 +2055,7 @@ type bumpRevisionAfterRemove struct {
 	t       *testing.T
 }
 
-func (*bumpRevisionAfterRemove) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
-	return nil
-}
+func (*bumpRevisionAfterRemove) SupportsAtomicDraftRemoval() bool { return true }
 
 func (c *bumpRevisionAfterRemove) RemoveDraft(
 	ctx context.Context, target imaplib.DraftTarget,

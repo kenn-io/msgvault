@@ -74,7 +74,7 @@ const (
 type draftClient interface {
 	AppendDraft(ctx context.Context, mailbox string, raw []byte) (imaplib.DraftAppendResult, error)
 	InspectDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
-	CheckDraftRemovalCapabilities(ctx context.Context, target imaplib.DraftTarget) error
+	SupportsAtomicDraftRemoval() bool
 	RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
 	Close() error
 }
@@ -744,8 +744,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		return refuseDraftLifecycle(emit, intent, "draft_changed", draftReloadInstruction, 0,
 			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
 	}
-	if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
-		return refuseDraftInspectFailure(emit, intent, err)
+	if !client.SupportsAtomicDraftRemoval() {
+		return refuseDraftInspectFailure(emit, intent, &imaplib.DraftAppendError{
+			State: imaplib.DraftRemotePresent, Code: "atomic_expunge_required",
+			Err: errors.New("atomic conditional draft removal is unavailable"),
+		})
 	}
 
 	// 5. BeginIMAPDraftOperationContext.
@@ -1090,8 +1093,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
 	}
 	if inspectResult.State == imaplib.DraftRemotePresent {
-		if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
-			return refuseDraftInspectFailure(emit, intent, err)
+		if !client.SupportsAtomicDraftRemoval() {
+			return refuseDraftInspectFailure(emit, intent, &imaplib.DraftAppendError{
+				State: imaplib.DraftRemotePresent, Code: "atomic_expunge_required",
+				Err: errors.New("atomic conditional draft removal is unavailable"),
+			})
 		}
 	}
 
@@ -1317,8 +1323,11 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 			return failReplay(errors.New("remote draft changed during pending discard recovery"))
 		}
 		if inspectResult.State == imaplib.DraftRemotePresent {
-			if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
-				return failReplay(err)
+			if !client.SupportsAtomicDraftRemoval() {
+				return refuseDraftInspectFailure(emit, intent, &imaplib.DraftAppendError{
+					State: imaplib.DraftRemotePresent, Code: "atomic_expunge_required",
+					Err: errors.New("atomic conditional draft removal is unavailable"),
+				})
 			}
 		}
 
