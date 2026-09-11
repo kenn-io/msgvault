@@ -21,12 +21,13 @@ func NewGoogleService(st *store.Store, client *Client) *Service {
 func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discovery, error) {
 	ctx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
+	budget := &operationBudget{remaining: client.operationBytes}
 	body, err := PropfindBody([]PropertyName{CurrentUserPrincipalProperty, SyncTokenProperty, DisplayNameProperty, CurrentUserPrivilegesProperty})
 	if err != nil {
 		return Discovery{}, err
 	}
 	depth := 0
-	response, err := client.Do(ctx, Request{Method: "PROPFIND", URL: baseURL, Depth: &depth, Body: body})
+	response, err := client.doWithBudget(ctx, Request{Method: "PROPFIND", URL: baseURL, Depth: &depth, Body: body}, budget)
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -40,7 +41,7 @@ func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discov
 		}
 		properties := mergeSuccessfulProperties(entry.PropStats)
 		if len(properties.CurrentUserPrincipal) != 0 {
-			discovery, err := Discover(ctx, client, baseURL)
+			discovery, err := discoverWithBudget(ctx, client, baseURL, budget)
 			if err != nil {
 				return Discovery{}, err
 			}

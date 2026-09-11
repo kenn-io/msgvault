@@ -53,6 +53,12 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
+	return discoverWithBudget(operationCtx, client, enteredURL, &operationBudget{remaining: client.operationBytes})
+}
+
+func discoverWithBudget(
+	operationCtx context.Context, client *Client, enteredURL string, budget *operationBudget,
+) (Discovery, error) {
 	entered, err := url.Parse(enteredURL)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("parse CardDAV base URL: %w", ErrUnsafeTarget)
@@ -60,7 +66,6 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	if _, err := client.validateTarget(operationCtx, entered); err != nil {
 		return Discovery{}, err
 	}
-	budget := &operationBudget{remaining: client.operationBytes}
 
 	principal, directErr := discoverHref(operationCtx, client, entered, CurrentUserPrincipalProperty, budget)
 	if directErr != nil || principal == nil {

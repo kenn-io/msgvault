@@ -141,3 +141,28 @@ func TestGoogleDiscoveryPrincipalCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestGoogleDiscoverySharesTransferBudgetWithPrincipalDiscovery(t *testing.T) {
+	direct := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/dav</D:href><D:propstat><D:prop><D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
+	principal := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/principal/</D:href><D:propstat><D:prop><C:addressbook-home-set><D:href>/books/</D:href></C:addressbook-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
+	books := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/books/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response><D:response><D:href>/books/default/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		switch r.URL.Path {
+		case "/dav":
+			_, _ = w.Write(direct)
+		case "/principal/":
+			_, _ = w.Write(principal)
+		case "/books/":
+			_, _ = w.Write(books)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newFixtureClient(t, server.URL, "", "")
+	client.operationBytes = int64(len(direct) + len(principal) + len(books))
+
+	_, err := discoverGoogle(t.Context(), client, server.URL+"/dav")
+	require.ErrorIs(t, err, ErrOperationLimit)
+}
