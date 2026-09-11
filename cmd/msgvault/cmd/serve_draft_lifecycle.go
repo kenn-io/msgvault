@@ -36,6 +36,21 @@ const (
 
 	draftInspectInstruction = "inspect the Drafts mailbox for an extra or leftover copy, " +
 		"then reload the draft with draft-get before another attempt"
+
+	// draftRemoveStaleInstruction is used only alongside a result that also
+	// names the leftover copy's UID. A UID identifies a copy to remove in a
+	// mail client; it is not a number any draft command accepts back.
+	draftRemoveStaleInstruction = "remove the copy named by uid from the Drafts mailbox, " +
+		"then reload the draft with draft-get before another attempt"
+
+	draftCompleteDiscardInstruction = "complete the discard with draft-delete, " +
+		"then reload the draft with draft-get before another attempt"
+
+	draftResolveEditInstruction = "resolve the pending edit with draft-edit, " +
+		"then reload the draft with draft-get before another attempt"
+
+	draftPendingWaitInstruction = "wait for the in-flight operation to finish, " +
+		"then reload the draft with draft-get before another attempt"
 )
 
 // draftClient is the subset of imaplib.Client methods used by the draft reply
@@ -286,13 +301,50 @@ func emitDraftLifecycleOutput(emit func(api.CLIRunEvent) error, stream string, a
 			text = fmt.Sprintf("draft %d replaced: new uid=%d revision=%d (operation %s)\n",
 				output.DraftID, output.UID, output.Revision, output.OperationRef)
 		default:
-			text = fmt.Sprintf("draft %d: status=%s\n", output.DraftID, output.Status)
+			// A failure result names the removable copy before the guidance
+			// that refers to it, so the plain-text stream carries the same
+			// operator-actionable content the JSON form does.
+			details := make([]string, 0, 2)
+			if output.UID != 0 {
+				details = append(details, fmt.Sprintf("stale copy uid=%d", output.UID))
+			}
 			if output.Instructions != "" {
-				text = fmt.Sprintf("draft %d: status=%s; %s\n", output.DraftID, output.Status, output.Instructions)
+				details = append(details, output.Instructions)
+			}
+			text = fmt.Sprintf("draft %d: status=%s\n", output.DraftID, output.Status)
+			if len(details) > 0 {
+				text = fmt.Sprintf("draft %d: status=%s; %s\n",
+					output.DraftID, output.Status, strings.Join(details, "; "))
 			}
 		}
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: text})
+}
+
+// refuseDraftLifecycle reports a refused draft operation to the client and
+// returns the coded error the caller propagates.
+//
+// A CLIRunCodedError carries only its code across the daemon boundary:
+// handleCLIRun logs the cause server-side and streams err.Error(), which is
+// the code alone. Anything the operator has to act on therefore has to travel
+// as a CLI event — the fixed recovery instruction, and the UID of a leftover
+// copy when one is identifiable. staleUID is 0 when no copy is identifiable,
+// and no instruction ever carries a revision.
+func refuseDraftLifecycle(
+	emit func(api.CLIRunEvent) error,
+	intent draftLifecycleIntent,
+	code string,
+	instructions string,
+	staleUID uint32,
+	cause error,
+) error {
+	_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, draftLifecycleOutput{
+		Status:       code,
+		DraftID:      intent.DraftID,
+		UID:          staleUID,
+		Instructions: instructions,
+	})
+	return draftReplyError(code, cause)
 }
 
 // runCLIDraftLifecycle dispatches draft-get, draft-edit, and draft-delete.
@@ -464,22 +516,24 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	// stays an ordinary reload-and-retry conflict.
 	if draft.Lifecycle == "discarded" {
 		if intent.Revision != draft.Revision {
-			return draftReplyError("revision_conflict",
+			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
 		}
+		// Terminal: the draft has no remote copy and no later attempt can
+		// succeed, so there is nothing for the operator to act on.
 		return draftReplyError("draft_missing",
 			fmt.Errorf("draft %d is discarded and has no remote copy to edit", intent.DraftID))
 	}
 	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
 		switch draft.PendingKind.String {
 		case "discard":
-			return draftReplyError("operation_pending",
+			return refuseDraftLifecycle(emit, intent, "operation_pending", draftCompleteDiscardInstruction, 0,
 				fmt.Errorf("draft %d has a pending discard; use draft-delete to complete it", intent.DraftID))
 		case "edit":
 			// A marker younger than pendingEditStalenessThreshold is treated
 			// conservatively as a potentially-live operation (defense-in-depth).
 			if draft.PendingStartedAt.Valid && time.Since(draft.PendingStartedAt.Time) < pendingEditStalenessThreshold {
-				return draftReplyError("operation_pending",
+				return refuseDraftLifecycle(emit, intent, "operation_pending", draftPendingWaitInstruction, 0,
 					fmt.Errorf("draft %d has a recent pending edit", intent.DraftID))
 			}
 			if clearErr := a.store.ClearIMAPDraftPendingEditContext(ctx, intent.DraftID); clearErr != nil {
@@ -490,11 +544,12 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			// so the caller must re-read the draft before editing again.
 			if draft.PendingUID.Valid && uint32(draft.PendingUID.Int64) != draft.UID {
 				// Persist committed: pending_uid names the pre-edit copy; safe to remove.
-				return draftReplyError("edit_interrupted",
+				return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
+					uint32(draft.PendingUID.Int64),
 					fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; stale copy UID=%d may remain in the Drafts mailbox — remove it, then %s",
 						intent.DraftID, draft.PendingUID.Int64, draftReloadInstruction))
 			}
-			return draftReplyError("edit_interrupted",
+			return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftInspectInstruction, 0,
 				fmt.Errorf("draft %d had an interrupted edit and the requested body was not applied; an untracked duplicate may remain in the Drafts mailbox — the tracked copy is the one local state still points at, so remove a duplicate only if you see one, then %s",
 					intent.DraftID, draftReloadInstruction))
 		}
@@ -528,9 +583,11 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	}
 	switch inspectResult.State {
 	case imaplib.DraftRemoteAbsent:
-		return draftReplyError("draft_missing", fmt.Errorf("draft %d: remote copy absent", intent.DraftID))
+		return refuseDraftLifecycle(emit, intent, "draft_missing", draftReloadInstruction, 0,
+			fmt.Errorf("draft %d: remote copy absent", intent.DraftID))
 	case imaplib.DraftRemoteFlagMissing, imaplib.DraftRemoteChanged:
-		return draftReplyError("draft_changed", fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
+		return refuseDraftLifecycle(emit, intent, "draft_changed", draftReloadInstruction, 0,
+			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
 	}
 
 	// 5. BeginIMAPDraftOperationContext.
@@ -546,12 +603,13 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "revision_conflict"):
-			return draftReplyError("revision_conflict", fmt.Errorf("%w; %s", err, draftReloadInstruction))
+			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
+				fmt.Errorf("%w; %s", err, draftReloadInstruction))
 		case strings.Contains(msg, "operation_pending"):
-			return draftReplyError("operation_pending", err)
+			return refuseDraftLifecycle(emit, intent, "operation_pending", draftPendingWaitInstruction, 0, err)
 		case strings.Contains(msg, "draft_discarded"):
 			// Raced with a concurrent discard between the reload and the claim.
-			return draftReplyError("draft_missing",
+			return refuseDraftLifecycle(emit, intent, "draft_missing", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d was discarded concurrently: %w", intent.DraftID, err))
 		}
 		return draftReplyError("internal", err)
@@ -568,11 +626,14 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		}
 		newReceipt = &r
 	} else {
+		// The claim is already recorded, and an APPEND whose outcome the server
+		// did not confirm may still have landed a copy, so both arms carry the
+		// inspect-and-reload guidance.
 		var dae *imaplib.DraftAppendError
 		if errors.As(appendErr, &dae) {
-			return draftReplyError(dae.Code, dae.Err)
+			return refuseDraftLifecycle(emit, intent, dae.Code, draftInspectInstruction, 0, dae.Err)
 		}
-		return draftReplyError("remote_unknown", appendErr)
+		return refuseDraftLifecycle(emit, intent, "remote_unknown", draftInspectInstruction, 0, appendErr)
 	}
 
 	// 7. Persist the new message row locally.
@@ -634,31 +695,37 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	// Re-inspect the old copy to confirm it's still the same before deleting.
 	// P2-E: use ctx (not recordCtx) so the remote call is cancellable.
 	// P1-A: only call Finish when RemoveDraft confirms absent or present (expunged).
+	//
+	// Control only reaches here with persistErr == nil, so the new body is live
+	// both remotely and locally: current_message_id, uid, and uidvalidity all
+	// name the new copy. The only outcome still at risk is the removal of the
+	// pre-edit copy, which fails in the direction of a leftover old copy and
+	// never in the direction of an unapplied edit.
 	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
+		// Leave the pending marker set. draft-delete refuses a pending edit and
+		// redirects to draft-edit, so a later draft-edit is what clears the
+		// marker, and it names this leftover copy because pending_uid no longer
+		// equals uid.
+		logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
+		cause := removeErr
 		var dae *imaplib.DraftAppendError
 		if errors.As(removeErr, &dae) {
-			// Leave pending state so draft-delete can retry the removal.
-			logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
-			output := draftLifecycleOutput{
-				Status:       "remote_accepted_local_failed",
-				DraftID:      intent.DraftID,
-				OperationRef: draftOperationRef(*newReceipt),
-				Instructions: draftInspectInstruction,
-			}
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
-			return draftReplyError(dae.Code, dae.Err)
+			cause = fmt.Errorf("%s: %w", dae.Code, dae.Err)
 		}
-		logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
-		return draftReplyError("remote_unknown", removeErr)
+		return reportEditAppliedOldCopyRemains(emit, intent, *newReceipt,
+			oldTarget.UID, draftRemoveStaleInstruction, cause)
 	}
 	switch removeResult.State {
 	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
 		// Success: absent means already gone; present means just expunged.
 	default:
-		// Soft failure (flag_missing or changed): leave pending state.
+		// Soft failure (flag_missing or changed): leave pending state. The old
+		// copy no longer holds the bytes msgvault wrote, so it is not named as
+		// removable; the operator inspects it instead.
 		logger.Error("remove old draft copy soft fail", "draft_id", intent.DraftID, "state", removeResult.State)
-		return draftReplyError("delete_failed", fmt.Errorf("remote draft state changed during edit: %s", removeResult.State))
+		return reportEditAppliedOldCopyRemains(emit, intent, *newReceipt, 0, draftInspectInstruction,
+			fmt.Errorf("remote draft state changed during edit: %s", removeResult.State))
 	}
 
 	// 8. FinishIMAPDraftOperationContext.
@@ -672,7 +739,10 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	})
 	if finishErr != nil {
 		logger.Error("finish draft edit operation", "draft_id", intent.DraftID, "error", finishErr)
-		return draftReplyError("remote_accepted_local_failed", finishErr)
+		// The remote is correct and holds one copy; only the local record was
+		// left unfinished, so there is nothing extra in the mailbox to remove.
+		return refuseDraftLifecycle(emit, intent, "remote_accepted_local_failed",
+			draftReloadInstruction, 0, finishErr)
 	}
 
 	// Release lock before cache refresh.
@@ -704,6 +774,35 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	}
 	a.refreshDraftCache(recordCtx, target.source)
 	return nil
+}
+
+// reportEditAppliedOldCopyRemains reports the one partial outcome an edit can
+// reach once its APPEND and its local persist have both committed: the new body
+// is live on the server and in the local record, and only the pre-edit copy
+// could not be removed. It is the inverse of remote_accepted_local_failed,
+// where the server holds the new copy and the local record does not.
+//
+// staleUID names the leftover copy when it still carries the bytes msgvault
+// wrote, and is 0 when another client changed it and it is no longer safe to
+// name as removable.
+func reportEditAppliedOldCopyRemains(
+	emit func(api.CLIRunEvent) error,
+	intent draftLifecycleIntent,
+	newReceipt store.IMAPDraftReceipt,
+	staleUID uint32,
+	instructions string,
+	cause error,
+) error {
+	const code = "edit_applied_old_copy_remains"
+	_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, draftLifecycleOutput{
+		Status:       code,
+		DraftID:      intent.DraftID,
+		Lifecycle:    "active",
+		OperationRef: draftOperationRef(newReceipt),
+		UID:          staleUID,
+		Instructions: instructions,
+	})
+	return draftReplyError(code, cause)
 }
 
 // runCLIDraftDelete permanently deletes the draft from the remote server.
@@ -752,7 +851,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	// reload-and-retry conflict.
 	if draft.Lifecycle == "discarded" {
 		if intent.Revision != draft.Revision {
-			return draftReplyError("revision_conflict",
+			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
 		}
 		lockReleased = true
@@ -774,7 +873,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if draft.PendingKind.Valid && draft.PendingKind.String != "" {
 		switch draft.PendingKind.String {
 		case "edit":
-			return draftReplyError("operation_pending",
+			return refuseDraftLifecycle(emit, intent, "operation_pending", draftResolveEditInstruction, 0,
 				fmt.Errorf("draft %d has a pending edit; use draft-edit to resolve it", intent.DraftID))
 		case "discard":
 			// Pass the held execution into the replay so the entire operation
@@ -815,7 +914,8 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	case imaplib.DraftRemoteAbsent:
 		// For delete, absent is acceptable (idempotent). Continue to local cleanup.
 	case imaplib.DraftRemoteFlagMissing, imaplib.DraftRemoteChanged:
-		return draftReplyError("draft_changed", fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
+		return refuseDraftLifecycle(emit, intent, "draft_changed", draftReloadInstruction, 0,
+			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
 	}
 
 	// BeginIMAPDraftOperationContext.
@@ -827,12 +927,13 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "revision_conflict"):
-			return draftReplyError("revision_conflict", fmt.Errorf("%w; %s", err, draftReloadInstruction))
+			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
+				fmt.Errorf("%w; %s", err, draftReloadInstruction))
 		case strings.Contains(err.Error(), "operation_pending"):
-			return draftReplyError("operation_pending", err)
+			return refuseDraftLifecycle(emit, intent, "operation_pending", draftPendingWaitInstruction, 0, err)
 		case strings.Contains(err.Error(), "draft_discarded"):
 			// Raced with a concurrent discard between the reload and the claim.
-			return draftReplyError("draft_discarded",
+			return refuseDraftLifecycle(emit, intent, "draft_discarded", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d was discarded concurrently: %w", intent.DraftID, err))
 		case opserr.KindOf(err) == opserr.KindNotFound:
 			return draftReplyError("draft_not_found", err)
@@ -895,7 +996,10 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	})
 	if finishErr != nil {
 		logger.Error("finish draft delete operation", "draft_id", intent.DraftID, "error", finishErr)
-		return draftReplyError("remote_deleted_local_failed", finishErr)
+		// The server copy is gone; only the local record is unfinished, and
+		// another draft-delete at the reloaded revision completes it.
+		return refuseDraftLifecycle(emit, intent, "remote_deleted_local_failed",
+			draftCompleteDiscardInstruction, 0, finishErr)
 	}
 
 	// Release lock before cache refresh.
@@ -948,7 +1052,7 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 	// revision gets a conflict, reloads with draft-get, and supplies the
 	// current value; there is no second meaning for --revision here.
 	if intent.Revision != draft.Revision {
-		return draftReplyError("revision_conflict",
+		return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
 			fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
 	}
 
@@ -1014,7 +1118,8 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		MessageID:   draft.CurrentMessageID,
 	})
 	if finishErr != nil {
-		return draftReplyError("remote_deleted_local_failed", finishErr)
+		return refuseDraftLifecycle(emit, intent, "remote_deleted_local_failed",
+			draftCompleteDiscardInstruction, 0, finishErr)
 	}
 
 	replayReleased = true

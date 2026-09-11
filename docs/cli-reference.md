@@ -208,9 +208,25 @@ at, so remove a duplicate only if you see one. After `edit_interrupted`, run
 `draft-get` again and edit with the revision that read reports: the revision
 passed to the recovering call is never applied and never carried forward.
 
+A refused or partially completed draft command prints its code on stderr and,
+on the same stream, a status line carrying the fixed recovery instruction and
+any UID the daemon can name. Under `--json` that line is a result object whose
+`status` is the code, whose `instructions` is the guidance, and whose `uid`, when
+present, names the copy to remove. The instruction never carries a revision; run
+`draft-get` for the value the next call needs.
+
 If `remote_accepted_local_failed` is returned, the new copy was confirmed on the
 server but the local record could not be updated. Inspect the mailbox for an
 extra copy, then reload with `draft-get` before another attempt.
+
+If `edit_applied_old_copy_remains` is returned, the inverse happened: the new
+body is live both on the server and in the local record, and only the pre-edit
+copy could not be removed, so the mailbox holds two copies. The result names
+that leftover copy in `uid` when it still carries the bytes msgvault wrote —
+remove it, then reload with `draft-get`. When another client has changed it, no
+UID is named and the result asks you to inspect the mailbox instead. The draft
+keeps its pending-edit marker, so `draft-delete` refuses with `operation_pending`
+and the next `draft-edit` is what clears it.
 
 ---
 
@@ -227,7 +243,9 @@ the server the deletion is treated as successful (idempotent). Deleting a draft
 that is already `discarded` locally reports `discarded` again and opens no IMAP
 connection.
 
-No failure or partial result carries a revision to feed back into a retry.
+No failure or partial result carries a revision to feed back into a retry. Each
+one prints its code and, on stderr, the status line and fixed instruction
+described under [draft-edit](#draft-edit).
 After `delete_failed`, `remote_deleted_local_failed`, or `revision_conflict`,
 run `draft-get` and use the revision it reports. A `delete_failed` result
 leaves the removal owed: inspect the mailbox for a copy that may or may not
