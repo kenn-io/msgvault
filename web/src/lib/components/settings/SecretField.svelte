@@ -1,11 +1,12 @@
 <script lang="ts">
   import { Button, IconButton, Modal, TextInput } from '@kenn-io/kit-ui';
+  import Pencil from '@lucide/svelte/icons/pencil';
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
   // One line for a stored secret such as an API key: a read-only box that
-  // shows a masked hint of the key ("sk-…x9Q") or "None", a button that opens
-  // a dialog to paste a new key, and a trash button that removes the stored
-  // one. The daemon never sends the key itself, only the hint.
+  // shows a masked hint of the key ("sk-…x9Q") or "None", a pencil button
+  // that opens a dialog to paste a new key, and a trash button that removes
+  // the stored one. The daemon never sends the key itself, only the hint.
   let {
     label,
     configured = false,
@@ -74,7 +75,9 @@
 <div class="secret-field">
   <div class="secret-field__row">
     <output class="secret-field__value" class:secret-field__value--none={!configured} aria-label={label}>{shown}</output>
-    <Button label={verb} ariaLabel={`${verb} ${sentence}`} disabled={blocked} onclick={openDialog} />
+    <IconButton ariaLabel={`${verb} ${sentence}`} size="sm" disabled={blocked} onclick={openDialog}>
+      <Pencil size={14} />
+    </IconButton>
     {#if onclear && configured}
       <IconButton ariaLabel={clearLabel ?? `Clear ${sentence}`} size="sm" disabled={blocked} onclick={onclear}>
         <Trash2 size={14} />
@@ -133,19 +136,22 @@
     min-width: 0;
     justify-items: end;
   }
-  /* One line beside the row's title: the masked key, then the actions. */
+  /* One line beside the row's title, as wide as a text input (15rem). The
+     box fills whatever the buttons leave, so the trash button appearing
+     takes room from the box and never moves the line's left edge. */
   .secret-field__row {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
     gap: var(--space-2);
+    width: 15rem;
     min-width: 0;
   }
   .secret-field__value {
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    width: 11rem;
+    flex: 1 1 auto;
+    min-width: 0;
     height: 28px;
     padding: 0 var(--space-2);
     border: 1px solid var(--border-muted);
@@ -187,19 +193,5 @@
   .secret-field__apply {
     margin: 0;
     font-size: var(--font-size-xs);
-  }
-  @media (max-width: 640px) {
-    .secret-field {
-      justify-items: start;
-    }
-    .secret-field__row {
-      flex-wrap: wrap;
-      justify-content: flex-start;
-    }
-    .secret-field__value {
-      flex: 1 1 9rem;
-      width: auto;
-      max-width: 16rem;
-    }
   }
 </style>

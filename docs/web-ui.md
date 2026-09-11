@@ -399,12 +399,12 @@ for the provider lifecycle.
 
 Provider credentials for embeddings, enrichment, and sweeps are write-only,
 and so are the task integration key and the daemon's own API key. Each key is
-one line: a read-only box, an Add or Replace button, and a trash button that
-removes a stored key. The box shows `None` when no key is set, or a masked
+one line: a read-only box, a pencil button, and a trash button that removes
+a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
-characters shows as dots instead. Replace opens a dialog to paste the new
-key, and the dialog says when it takes effect: a person-enrichment key
+characters shows as dots instead. The pencil opens a dialog to paste the
+new key, and the dialog says when it takes effect: a person-enrichment key
 applies right away, the text and visual embedding keys are stored at once
 but used after the daemon restarts, and the task integration key is saved
 with the rest of the page. A key that comes from an environment variable
