@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -100,6 +102,88 @@ func TestGoogleCardDAVScheduleSaveDoesNotRequireAuthorization(t *testing.T) {
 	persisted, err := config.Load(cfg.ConfigFilePath(), cfg.HomeDir)
 	required.NoError(err)
 	assertions.Equal("0 3 * * *", persisted.CardDAV.Schedule)
+}
+
+func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, apiCode, runCode string
+		status, apiStatus            int
+		truncatedBody                bool
+		closeEndpoint                bool
+	}{
+		{name: "revoked", status: 400, body: `{"error":"invalid_grant"}`, apiStatus: 502, apiCode: "google_authorization_required", runCode: "google_authorization_required"},
+		{name: "unavailable", status: 503, body: `{"error":"server_error"}`, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
+		{name: "rate limited", status: 429, body: `{}`, apiStatus: 503, apiCode: "carddav_retry_after", runCode: "retry_after"},
+		{name: "connection refused", closeEndpoint: true, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
+		{name: "truncated response", status: 200, body: "{", truncatedBody: true, apiStatus: 502, apiCode: "carddav_upstream_failed", runCode: "upstream_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !assertions.NoError(r.ParseForm()) {
+					return
+				}
+				assertions.Equal("refresh_token", r.Form.Get("grant_type"))
+				w.Header().Set("Content-Type", "application/json")
+				if tc.truncatedBody {
+					w.Header().Set("Content-Length", "100")
+				}
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			t.Cleanup(endpoint.Close)
+			if tc.closeEndpoint {
+				endpoint.Close()
+			}
+			cfg, st := savedGoogleCardDAVFixture(t)
+			secrets := fmt.Sprintf(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","token_uri":%q,"redirect_uris":["https://archive.example/"]}}`, endpoint.URL)
+			required.NoError(os.WriteFile(cfg.OAuth.ClientSecrets, []byte(secrets), 0600))
+			token := fmt.Sprintf(`{"access_token":"expired-access","refresh_token":"synthetic-refresh","expiry":"2000-01-01T00:00:00Z","client_id":"synthetic-client","scopes":[%q]}`, oauth.ScopeCardDAV)
+			required.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), cfg.CardDAV.Username+".json"), []byte(token), 0600))
+			controller, err := NewCardDAVController(cfg, st, testLogger())
+			required.NoError(err)
+			credential, err := carddav.LoadCredential(cfg.TokensDir())
+			required.NoError(err)
+			// Only the external endpoints differ from production. The token
+			// callback, OAuth refresh, sync, and error projections are real.
+			origin := mustURL(t, "https://203.0.113.9")
+			_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+				BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username,
+				PrincipalURL: origin.String() + "/principal/", HomeURL: origin.String() + "/books/",
+				Books: []store.CardDAVDiscoveredBook{{CanonicalURL: origin.String() + "/books/contacts/", CanCreate: new(true)}},
+			})
+			required.NoError(err)
+			davDials := 0
+			client, err := carddav.NewClient(carddav.ClientOptions{
+				CredentialOrigin: origin,
+				BearerToken:      func(ctx context.Context) (string, error) { return controller.googleBearerToken(ctx, credential) },
+				DialContext: func(context.Context, string, string) (net.Conn, error) {
+					davDials++
+					return nil, errors.New("unexpected DAV connection")
+				},
+			})
+			required.NoError(err)
+			_, syncErr := carddav.NewGoogleService(st, client).Sync(t.Context(), carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			required.Error(syncErr)
+			assertions.Zero(davDials)
+			runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 1, nil)
+			required.NoError(err)
+			required.Len(runs, 1)
+			assertions.Equal(tc.runCode, runs[0].ErrorCode)
+			publicRun := cardDAVRunResponse(&runs[0])
+			assertions.Equal(tc.runCode, publicRun.ErrorCode)
+			if tc.runCode == "google_authorization_required" {
+				assertions.Contains(syncErr.Error(), "Connect Google")
+				assertions.Contains(publicRun.ErrorMessage, "Connect Google")
+			}
+			srv := &Server{cardDAV: controller}
+			response := httptest.NewRecorder()
+			srv.writeCardDAVOperationError(t.Context(), response, syncErr, "CardDAV sync failed")
+			assertions.Equal(tc.apiStatus, response.Code)
+			assertions.Contains(response.Body.String(), tc.apiCode)
+		})
+	}
 }
 
 func TestCardDAVGoogleAccountSelection(t *testing.T) {

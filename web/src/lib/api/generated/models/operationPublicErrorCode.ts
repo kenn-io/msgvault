@@ -12,6 +12,7 @@ export const OperationPublicErrorCode = {
   cancelled: "cancelled",
   carddav_sync_failed: "carddav_sync_failed",
   daemon_restarted: "daemon_restarted",
+  google_authorization_required: "google_authorization_required",
   internal: "internal",
   invalid_output: "invalid_output",
   invocation_archive_drift: "invocation_archive_drift",

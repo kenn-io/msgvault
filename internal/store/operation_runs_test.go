@@ -868,6 +868,7 @@ func TestOperationRunsCardDAVProjectsOnlyFixedFailureMessages(t *testing.T) {
 		{"cancelled", store.CardDAVSyncRunCancelled, operations.PublicErrorCancelled, "CardDAV sync was cancelled."},
 		{"retry_after", store.CardDAVSyncRunFailed, operations.PublicErrorRetryAfter, "CardDAV sync is temporarily paused."},
 		{"authentication_failed", store.CardDAVSyncRunFailed, operations.PublicErrorAuthenticationFailed, "CardDAV authentication failed."},
+		{"google_authorization_required", store.CardDAVSyncRunFailed, operations.PublicErrorGoogleAuthorizationRequired, "Google Contacts authorization is required. Connect Google in CardDAV account settings."},
 		{"upstream_failed", store.CardDAVSyncRunFailed, operations.PublicErrorUpstreamFailed, "CardDAV server request failed."},
 		{"safety_limit", store.CardDAVSyncRunFailed, operations.PublicErrorSafetyLimit, "CardDAV sync exceeded its safety limits."},
 		{"sync_failed", store.CardDAVSyncRunFailed, operations.PublicErrorSyncFailed, "CardDAV sync failed."},

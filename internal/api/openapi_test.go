@@ -1432,7 +1432,7 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 	require.NotNil(run)
 	assert.Equal([]any{"manual", "scheduled"}, run.Properties["trigger"].Enum)
 	assert.Equal([]any{"running", "succeeded", "failed", "cancelled", "partial"}, run.Properties["state"].Enum)
-	assert.Equal([]any{"cancelled", "retry_after", "authentication_failed", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
+	assert.Equal([]any{"cancelled", "retry_after", "authentication_failed", "google_authorization_required", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
 	page := doc.Components.Schemas.Map()["CardDAVRunsResponse"]
 	require.NotNil(page)
 	assert.Contains(page.Required, "runs")

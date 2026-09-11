@@ -600,7 +600,7 @@ type CardDAVRunResponse struct {
 	Created      int64      `json:"created"`
 	Updated      int64      `json:"updated"`
 	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
@@ -652,6 +652,8 @@ func cardDAVRunPublicFailure(code string) (string, string) {
 		return code, "CardDAV sync is temporarily paused."
 	case "authentication_failed":
 		return code, "CardDAV authentication failed."
+	case "google_authorization_required":
+		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings."
 	case "upstream_failed":
 		return code, "CardDAV server request failed."
 	case "safety_limit":
@@ -991,7 +993,7 @@ func (s *Server) writeCardDAVAccountError(
 ) {
 	var statusErr *carddav.StatusError
 	switch {
-	case errors.Is(err, errGoogleCardDAVAuthorization):
+	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, errCardDAVValidation):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
@@ -1014,7 +1016,7 @@ func (s *Server) writeCardDAVOperationError(
 	var statusErr *carddav.StatusError
 	var networkErr net.Error
 	switch {
-	case errors.Is(err, errGoogleCardDAVAuthorization):
+	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, carddav.ErrInvalidResolutionChoice):
 		writeError(w, http.StatusBadRequest, "bad_request", message)

@@ -1397,6 +1397,7 @@ components:
             - cancelled
             - retry_after
             - authentication_failed
+            - google_authorization_required
             - upstream_failed
             - safety_limit
             - sync_failed
@@ -5763,6 +5764,7 @@ components:
             - cancelled
             - carddav_sync_failed
             - daemon_restarted
+            - google_authorization_required
             - internal
             - invalid_output
             - invocation_archive_drift

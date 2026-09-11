@@ -9,6 +9,7 @@ export const CardDAVRunResponseErrorCode = {
   cancelled: "cancelled",
   retry_after: "retry_after",
   authentication_failed: "authentication_failed",
+  google_authorization_required: "google_authorization_required",
   upstream_failed: "upstream_failed",
   safety_limit: "safety_limit",
   sync_failed: "sync_failed",

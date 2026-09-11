@@ -2,12 +2,16 @@ package carddav
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 
 	"go.kenn.io/msgvault/internal/oauth"
 )
+
+// ErrGoogleAuthorizationRequired identifies credentials that need Google sign-in.
+var ErrGoogleAuthorizationRequired = errors.New("authorization for Google Contacts is required")
 
 // googleTokensDir separates CardDAV authorizations by configured OAuth app.
 // Hashing the app name keeps arbitrary configuration keys out of path segments.

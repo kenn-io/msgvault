@@ -433,6 +433,17 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
+		State: store.CardDAVSyncRunFailed, ErrorCode: "google_authorization_required", ErrorMessage: unsafe,
+	})
+	require.NoError(err)
+	assert.Equal("google_authorization_required", finished.ErrorCode)
+	assert.Equal("Google Contacts authorization is required. Connect Google in CardDAV account settings.", finished.ErrorMessage)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
+	assert.Equal(finished.ErrorMessage, stored)
+
+	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	require.NoError(err)
+	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, ErrorCode: "remote_failure", ErrorMessage: string([]byte{'o', 'k', 0xff}),
 	})
 	require.NoError(err)

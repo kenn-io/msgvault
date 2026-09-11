@@ -184,6 +184,9 @@ func cardDAVSyncPublicFailure(err error) (string, string) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "cancelled", "CardDAV sync was cancelled."
 	}
+	if errors.Is(err, ErrGoogleAuthorizationRequired) {
+		return "google_authorization_required", "Google Contacts authorization is required. Connect Google in CardDAV account settings."
+	}
 	if errors.Is(err, store.ErrCardDAVRetryAfter) {
 		return "retry_after", "CardDAV sync is temporarily paused."
 	}
@@ -208,7 +211,7 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 		return false
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) {
+		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) || errors.Is(err, ErrGoogleAuthorizationRequired) {
 		return true
 	}
 	var status *StatusError
