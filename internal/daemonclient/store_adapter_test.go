@@ -1936,6 +1936,7 @@ func TestGetCLIMessage_Success(t *testing.T) {
 	require.NotNil(t, msg, "message")
 	assert.Equal(int64(42), msg.ID, "ID")
 	assert.Equal("remote-42", msg.SourceMessageID, "SourceMessageID")
+	assert.Empty(msg.RFC822MessageID, "older daemons may omit the RFC Message-ID")
 	assert.Equal("Test Subject", msg.Subject, "Subject")
 	assert.Equal("alice@example.com", msg.From[0].Email, "From")
 	assert.Equal("Hello over HTTP", msg.BodyText, "BodyText")

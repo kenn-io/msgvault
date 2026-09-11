@@ -27,3 +27,11 @@ func NormalizeMessageID(id string) string {
 	}
 	return textutil.SanitizeUTF8(id)
 }
+
+// ParseMessageIDs extracts canonical message and reply IDs from the top-level
+// headers without decoding attachments or accepting header-shaped body text.
+func ParseMessageIDs(raw []byte) (messageID, inReplyTo string) {
+	headers := tokenizeHeaders(raw)
+	return NormalizeMessageID(firstHeader(headers, "message-id")),
+		NormalizeMessageID(firstHeader(headers, "in-reply-to"))
+}

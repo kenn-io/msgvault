@@ -94,7 +94,7 @@ func TestImportEmlxDir_DiscoveryErrorsOnResume(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			first, err := ImportEmlxDir(ctx, st, root, opts)
-			require.NoError(err)
+			require.ErrorIs(err, context.Canceled)
 			require.NotNil(first)
 			var firstErrors int64
 			if initiallyDenied {

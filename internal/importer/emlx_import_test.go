@@ -382,7 +382,7 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	require.NoError(t, err, "ImportEmlxDir")
+	require.ErrorIs(t, err, context.Canceled, "ImportEmlxDir")
 
 	// Sync run should still be in "running" state (not completed),
 	// so resume can pick it up.
@@ -672,6 +672,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	require.NoError(err, "select cursor")
 	var cp emlxCheckpoint
 	require.NoError(json.Unmarshal([]byte(cursor), &cp), "unmarshal checkpoint")
+	require.Empty(cp.Phase, "failed file import must not enter reply resolution")
 	require.Equal("1.emlx", filepath.Base(cp.LastFile),
 		"checkpoint LastFile should not advance past failed msg2; got %q", cp.LastFile)
 
