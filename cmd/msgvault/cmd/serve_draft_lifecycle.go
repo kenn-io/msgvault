@@ -74,6 +74,7 @@ const (
 type draftClient interface {
 	AppendDraft(ctx context.Context, mailbox string, raw []byte) (imaplib.DraftAppendResult, error)
 	InspectDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
+	CheckDraftRemovalCapabilities(ctx context.Context, target imaplib.DraftTarget) error
 	RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
 	Close() error
 }
@@ -102,10 +103,8 @@ type draftLifecycleIntent struct {
 
 // draftLifecycleTarget holds the resolved draft and its source.
 type draftLifecycleTarget struct {
-	draft   *store.IMAPDraft
-	source  *store.Source
-	mailbox string
-	raw     []byte // current raw MIME (nil for discard)
+	draft  *store.IMAPDraft
+	source *store.Source
 }
 
 // draftLifecycleOutput is the JSON output for a draft lifecycle operation.
@@ -273,14 +272,20 @@ func (a *storeAPIAdapter) resolveDraftLifecycleTarget(ctx context.Context, inten
 				"draft From address is not a confirmed identity on source %d", source.ID))
 		}
 	}
-	var raw []byte
-	if intent.Command == api.CLIRunDraftEditCommand {
-		raw, err = a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
-		if err != nil {
-			return draftLifecycleTarget{}, draftReplyError("internal", fmt.Errorf("load raw MIME for draft %d: %w", intent.DraftID, err))
-		}
+	return draftLifecycleTarget{draft: draft, source: source}, nil
+}
+
+func (a *storeAPIAdapter) verifyDraftMailboxGrant(source *store.Source, draft *store.IMAPDraft) error {
+	grantedMailbox, err := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
+	if err != nil {
+		return err
 	}
-	return draftLifecycleTarget{draft: draft, source: source, mailbox: draft.Mailbox, raw: raw}, nil
+	if grantedMailbox != draft.Mailbox {
+		return draftReplyError("draft_disabled", fmt.Errorf(
+			"draft %d mailbox %q does not match granted mailbox %q",
+			draft.DraftID, draft.Mailbox, grantedMailbox))
+	}
+	return nil
 }
 
 // marshalDraftLifecycleOutput serializes output to JSON.
@@ -603,29 +608,6 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		return err
 	}
 
-	// Build the new raw draft body before acquiring the lock (CPU-only).
-	newDraft, err := imaplib.ReplaceDraftBody(target.raw, intent.Body, time.Now())
-	if err != nil {
-		if err.Error() == "invalid_message" {
-			return draftReplyError("invalid_message", err)
-		}
-		return draftReplyError("invalid_reply_metadata", err)
-	}
-	// The persist builder indexes Parsed.From[0], and it runs after Begin has
-	// claimed the draft and AppendDraft has landed the new copy, so refuse here
-	// where a refusal costs nothing. ReplaceDraftBody copies the existing From
-	// verbatim without the address validation BuildReply applies, and enmime can
-	// resolve a header net/mail accepts to zero addresses.
-	if len(newDraft.Parsed.From) != 1 {
-		return draftReplyError("invalid_reply_metadata",
-			errors.New("composed draft needs exactly one From address"))
-	}
-	messageIDValue := mime.NormalizeMessageID(newDraft.Parsed.MessageID)
-	if messageIDValue == "" {
-		return draftReplyError("invalid_reply_metadata", errors.New("composed draft has no usable Message-ID"))
-	}
-	messageIDValue = "<" + messageIDValue + ">"
-
 	// Acquire the sync execution context.
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
 	if err != nil {
@@ -646,6 +628,9 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			return draftReplyError("draft_not_found", err)
 		}
 		return draftReplyError("internal", fmt.Errorf("reload draft %d: %w", intent.DraftID, err))
+	}
+	if err := a.verifyDraftMailboxGrant(target.source, draft); err != nil {
+		return err
 	}
 	// A discarded draft is a terminal local state, decided here so no IMAP
 	// connection is opened for a draft that no longer exists. A stale revision
@@ -718,6 +703,22 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	if err != nil {
 		return draftReplyError("internal", fmt.Errorf("load current raw for draft %d: %w", intent.DraftID, err))
 	}
+	newDraft, err := imaplib.ReplaceDraftBody(oldRaw, intent.Body, time.Now())
+	if err != nil {
+		if err.Error() == "invalid_message" {
+			return draftReplyError("invalid_message", err)
+		}
+		return draftReplyError("invalid_reply_metadata", err)
+	}
+	if len(newDraft.Parsed.From) != 1 {
+		return draftReplyError("invalid_reply_metadata",
+			errors.New("composed draft needs exactly one From address"))
+	}
+	messageIDValue := mime.NormalizeMessageID(newDraft.Parsed.MessageID)
+	if messageIDValue == "" {
+		return draftReplyError("invalid_reply_metadata", errors.New("composed draft has no usable Message-ID"))
+	}
+	messageIDValue = "<" + messageIDValue + ">"
 	oldDigest := sha256.Sum256(oldRaw)
 	oldTarget := imaplib.DraftTarget{
 		Mailbox:     draft.Mailbox,
@@ -736,6 +737,9 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	case imaplib.DraftRemoteFlagMissing, imaplib.DraftRemoteChanged:
 		return refuseDraftLifecycle(emit, intent, "draft_changed", draftReloadInstruction, 0,
 			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
+	}
+	if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
+		return refuseDraftInspectFailure(emit, intent, err)
 	}
 
 	// 5. BeginIMAPDraftOperationContext.
@@ -1000,6 +1004,9 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 		return draftReplyError("internal", fmt.Errorf("reload draft %d: %w", intent.DraftID, err))
 	}
 	target.draft = draft
+	if err := a.verifyDraftMailboxGrant(target.source, draft); err != nil {
+		return err
+	}
 
 	// A discarded draft is a terminal local state, decided here so no IMAP
 	// connection is opened for a draft that no longer exists. Deleting an
@@ -1069,6 +1076,11 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	case imaplib.DraftRemoteFlagMissing, imaplib.DraftRemoteChanged:
 		return refuseDraftLifecycle(emit, intent, "draft_changed", draftReloadInstruction, 0,
 			fmt.Errorf("draft %d: remote copy modified externally", intent.DraftID))
+	}
+	if inspectResult.State == imaplib.DraftRemotePresent {
+		if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
+			return refuseDraftInspectFailure(emit, intent, err)
+		}
 	}
 
 	// BeginIMAPDraftOperationContext.
@@ -1193,6 +1205,18 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		}
 	}()
 
+	hasMembership, err := a.store.RefreshIMAPDraftDiscardReceiptContext(ctx, intent.DraftID)
+	if err != nil {
+		if opserr.KindOf(err) == opserr.KindNotFound {
+			return draftReplyError("draft_not_found", err)
+		}
+		return draftReplyError("internal", fmt.Errorf("refresh pending discard for draft %d: %w", intent.DraftID, err))
+	}
+	if !hasMembership {
+		return refuseDraftLifecycle(emit, intent, "discard_recovery_unverifiable", draftInspectInstruction, 0,
+			fmt.Errorf("draft %d has no current archived membership to identify the pending discard copy", intent.DraftID))
+	}
+
 	// Reload under the lock for authoritative revision and pending coordinates.
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
@@ -1261,6 +1285,19 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		}
 		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		return draftReplyError("delete_failed", cause)
+	}
+
+	inspectResult, inspectErr := client.InspectDraft(ctx, oldTarget)
+	if inspectErr != nil {
+		return failReplay(inspectErr)
+	}
+	if inspectResult.State == imaplib.DraftRemoteFlagMissing || inspectResult.State == imaplib.DraftRemoteChanged {
+		return failReplay(errors.New("remote draft changed during pending discard recovery"))
+	}
+	if inspectResult.State == imaplib.DraftRemotePresent {
+		if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
+			return failReplay(err)
+		}
 	}
 
 	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)

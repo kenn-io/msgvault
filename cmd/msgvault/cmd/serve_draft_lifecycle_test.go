@@ -44,6 +44,10 @@ type testDraftClient struct {
 	*imaplib.Client
 }
 
+func (*testDraftClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
+}
+
 func (c *testDraftClient) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
 	result, err := c.InspectDraft(ctx, target)
 	if err != nil || result.State != imaplib.DraftRemotePresent {
@@ -385,6 +389,10 @@ type failOnNthRemove struct {
 	mu         sync.Mutex
 	counter    *int // shared across factory calls to survive re-creation
 	failBefore int  // fail when the call number is <= failBefore
+}
+
+func (*failOnNthRemove) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
 }
 
 func (f *failOnNthRemove) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
@@ -1335,6 +1343,10 @@ type failRemoveWithPlainError struct {
 	*imaplib.Client
 }
 
+func (*failRemoveWithPlainError) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
+}
+
 func (c *failRemoveWithPlainError) RemoveDraft(context.Context, imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
 	return imaplib.DraftInspectResult{}, errors.New("injected non-coded RemoveDraft failure")
 }
@@ -1703,6 +1715,10 @@ type failRemoveUnverifiableCopy struct {
 	inspects int
 }
 
+func (*failRemoveUnverifiableCopy) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
+}
+
 func (c *failRemoveUnverifiableCopy) InspectDraft(
 	ctx context.Context, target imaplib.DraftTarget,
 ) (imaplib.DraftInspectResult, error) {
@@ -1779,6 +1795,10 @@ type failInspectClient struct {
 	*imaplib.Client
 
 	inspectErr error
+}
+
+func (*failInspectClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
 }
 
 func (c *failInspectClient) InspectDraft(
@@ -1869,6 +1889,10 @@ type countingAppendClient struct {
 
 	mu      *sync.Mutex
 	appends *int
+}
+
+func (*countingAppendClient) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
 }
 
 func (c *countingAppendClient) AppendDraft(
@@ -1983,6 +2007,10 @@ type bumpRevisionAfterRemove struct {
 	store   *store.Store
 	draftID int64
 	t       *testing.T
+}
+
+func (*bumpRevisionAfterRemove) CheckDraftRemovalCapabilities(context.Context, imaplib.DraftTarget) error {
+	return nil
 }
 
 func (c *bumpRevisionAfterRemove) RemoveDraft(

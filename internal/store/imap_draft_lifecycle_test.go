@@ -458,6 +458,40 @@ func TestGetIMAPDraftContextRefreshesReceiptFromCurrentMembership(t *testing.T) 
 	assert.Equal(receipt.UID+7, draft.UID)
 }
 
+func TestRefreshIMAPDraftDiscardReceiptUsesCurrentMembership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, source, draftID, receipt := newIMAPDraftFixture(t)
+
+	_, err := st.BeginIMAPDraftOperationContext(context.Background(), store.IMAPDraftIntent{
+		DraftID: draftID, ExpectedRevision: 1, Kind: "discard",
+	})
+	require.NoError(err)
+
+	_, err = st.DB().Exec(st.Rebind(`
+		DELETE FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), source.ID, receipt.Mailbox, receipt.UIDValidity, receipt.UID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`), source.ID, "Archive", receipt.UIDValidity+1, receipt.UID+7, draftID, `["\\Draft"]`)
+	require.NoError(err)
+
+	found, err := st.RefreshIMAPDraftDiscardReceiptContext(context.Background(), draftID)
+	require.NoError(err)
+	assert.True(found)
+	draft, err := st.GetIMAPDraftContext(context.Background(), draftID)
+	require.NoError(err)
+	assert.Equal("Archive", draft.Mailbox)
+	assert.Equal(receipt.UIDValidity+1, draft.UIDValidity)
+	assert.Equal(receipt.UID+7, draft.UID)
+	assert.Equal(int64(receipt.UIDValidity+1), draft.PendingUIDValidity.Int64)
+	assert.Equal(int64(receipt.UID+7), draft.PendingUID.Int64)
+}
+
 func TestGCRetainsCurrentDraftMessageAndOwnership(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

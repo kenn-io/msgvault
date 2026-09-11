@@ -108,7 +108,7 @@ func startConditionalIMAPServer(t *testing.T, blockFetch bool) *conditionalIMAPS
 	return server
 }
 
-func TestRemoveDraftUsesConditionalStore(t *testing.T) {
+func TestRemoveDraftRequiresAtomicExpunge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server := startConditionalIMAPServer(t, false)
@@ -122,10 +122,21 @@ func TestRemoveDraftUsesConditionalStore(t *testing.T) {
 	}
 
 	result, err := client.RemoveDraft(context.Background(), target)
-	require.NoError(err)
+	require.Error(err)
+	var appendErr *DraftAppendError
+	require.ErrorAs(err, &appendErr)
+	assert.Equal("atomic_expunge_required", appendErr.Code)
 	assert.Equal(DraftRemotePresent, result.State)
-	assert.Contains(<-server.storeCommands, "UNCHANGEDSINCE 7")
-	<-server.expunged
+	select {
+	case command := <-server.storeCommands:
+		assert.Fail("atomic removal reached STORE", command)
+	default:
+	}
+	select {
+	case <-server.expunged:
+		assert.Fail("atomic removal reached EXPUNGE")
+	default:
+	}
 }
 
 func TestRemoveDraftCancellationClosesFetchBeforeMutation(t *testing.T) {

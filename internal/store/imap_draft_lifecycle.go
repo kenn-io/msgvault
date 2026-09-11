@@ -128,6 +128,78 @@ func (s *Store) refreshIMAPDraftReceiptContext(ctx context.Context, draftID int6
 	})
 }
 
+// RefreshIMAPDraftDiscardReceiptContext resolves a pending discard against
+// the current membership of the stable draft message. It returns false when
+// the archive has no membership that can safely identify the remote copy.
+func (s *Store) RefreshIMAPDraftDiscardReceiptContext(ctx context.Context, draftID int64) (bool, error) {
+	found := false
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var sourceID, messageID, oldUIDValidity, oldUID int64
+		var oldMailbox string
+		var pendingKind sql.NullString
+		err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT source_id, current_message_id, mailbox, uidvalidity, uid, pending_kind
+			FROM imap_drafts
+			WHERE draft_id = ?
+		`), draftID).Scan(&sourceID, &messageID, &oldMailbox, &oldUIDValidity, &oldUID, &pendingKind)
+		if errors.Is(err, sql.ErrNoRows) {
+			return opserr.NotFound(fmt.Errorf("draft %d: not found", draftID))
+		}
+		if err != nil {
+			return fmt.Errorf("read pending IMAP draft %d receipt: %w", draftID, err)
+		}
+		if !pendingKind.Valid || pendingKind.String != "discard" {
+			return nil
+		}
+
+		var mailbox string
+		var uidValidity, uid int64
+		err = tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT mailbox, uidvalidity, uid
+			FROM imap_message_memberships
+			WHERE source_id = ? AND message_id = ?
+			ORDER BY
+				CASE WHEN mailbox = ? AND uidvalidity = ? AND uid = ? THEN 0 ELSE 1 END,
+				updated_at DESC, mailbox, uidvalidity, uid
+			LIMIT 1
+		`), sourceID, messageID, oldMailbox, oldUIDValidity, oldUID).Scan(&mailbox, &uidValidity, &uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("find pending IMAP draft %d membership: %w", draftID, err)
+		}
+		if uidValidity < 0 || uidValidity > int64(^uint32(0)) || uid < 0 || uid > int64(^uint32(0)) {
+			return fmt.Errorf("pending IMAP draft %d has an out-of-range UID receipt", draftID)
+		}
+		found = true
+		if mailbox == oldMailbox && uidValidity == oldUIDValidity && uid == oldUID {
+			return nil
+		}
+
+		_, err = tx.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
+			UPDATE imap_drafts
+			SET mailbox = ?,
+			    uidvalidity = ?,
+			    uid = ?,
+			    pending_uidvalidity = ?,
+			    pending_uid = ?,
+			    updated_at = %s
+			WHERE draft_id = ?
+			  AND current_message_id = ?
+			  AND pending_kind = 'discard'
+		`, s.dialect.Now())),
+			mailbox, uidValidity, uid, uidValidity, uid,
+			draftID, messageID,
+		)
+		if err != nil {
+			return fmt.Errorf("refresh pending IMAP draft %d receipt: %w", draftID, err)
+		}
+		return nil
+	})
+	return found, err
+}
+
 // GetIMAPDraftContext loads the ownership row for one draft, joining the
 // current message for projected fields. It refreshes provider coordinates from
 // the stable current message before reading them. sql.ErrNoRows → opserr.NotFound.

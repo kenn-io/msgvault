@@ -159,17 +159,8 @@ func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInsp
 			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
 				Err: errors.New("IMAP server does not advertise CONDSTORE")}
 		}
-		if err := ctx.Err(); err != nil {
-			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
-		}
-		if fetchResult.modSeq == 0 {
-			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
-				Err: errors.New("IMAP FETCH returned no MODSEQ for conditional removal")}
-		}
-		if err := conditionalExpungeUIDLocked(ctx, conn, target.UID, fetchResult.modSeq); err != nil {
-			return err
-		}
-		return nil
+		return &DraftAppendError{State: DraftRemotePresent, Code: "atomic_expunge_required",
+			Err: errors.New("IMAP server does not advertise atomic conditional expunge")}
 	})
 	if err != nil {
 		if appendErr, ok := errors.AsType[*DraftAppendError](err); ok {
@@ -184,6 +175,39 @@ func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInsp
 	return result, nil
 }
 
+// CheckDraftRemovalCapabilities verifies that a server can perform the
+// destructive part of draft removal before the caller claims or replaces a
+// draft. Standard IMAP has no atomic conditional UID EXPUNGE, so callers must
+// leave the operation untouched and ask the operator to resolve it elsewhere.
+func (c *Client) CheckDraftRemovalCapabilities(ctx context.Context, target DraftTarget) error {
+	if err := ValidateDraftMailbox(target.Mailbox); err != nil {
+		return &DraftAppendError{State: DraftStateRejected, Code: "invalid_mailbox", Err: err}
+	}
+	return c.withConn(ctx, func(conn *imapclient.Client) error {
+		if err := ctx.Err(); err != nil {
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
+		}
+		if !conn.Caps().Has(imap.CapUIDPlus) {
+			return &DraftAppendError{State: DraftStateRejected, Code: "uidplus_required",
+				Err: errors.New("IMAP server does not advertise UIDPLUS")}
+		}
+		if !conn.Caps().Has(imap.CapCondStore) {
+			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
+				Err: errors.New("IMAP server does not advertise CONDSTORE")}
+		}
+		if err := c.selectMailbox(target.Mailbox); err != nil {
+			return err
+		}
+		if c.selectedUIDValidity != target.UIDValidity {
+			return &DraftAppendError{State: DraftStateRejected, Code: "uidvalidity_changed",
+				Err: fmt.Errorf("mailbox %q UIDVALIDITY changed from %d to %d",
+					target.Mailbox, target.UIDValidity, c.selectedUIDValidity)}
+		}
+		return &DraftAppendError{State: DraftRemotePresent, Code: "atomic_expunge_required",
+			Err: errors.New("IMAP server does not advertise atomic conditional expunge")}
+	})
+}
+
 // expungeUIDLocked permanently removes a single UID using UID STORE \Deleted +
 // UID EXPUNGE. Caller must hold c.mu and have the correct mailbox selected.
 func expungeUIDLocked(conn *imapclient.Client, uid uint32) error {
@@ -195,33 +219,6 @@ func expungeUIDLocked(conn *imapclient.Client, uid uint32) error {
 		Flags:  []imap.Flag{imap.FlagDeleted},
 	}, nil).Close(); err != nil {
 		return fmt.Errorf("UID STORE \\Deleted: %w", err)
-	}
-	if err := conn.UIDExpunge(uidSet).Close(); err != nil {
-		return fmt.Errorf("UID EXPUNGE: %w", err)
-	}
-	return nil
-}
-
-func conditionalExpungeUIDLocked(ctx context.Context, conn *imapclient.Client, uid uint32, modSeq uint64) error {
-	if err := ctx.Err(); err != nil {
-		return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
-	}
-	var uidSet imap.UIDSet
-	uidSet.AddNum(imap.UID(uid))
-	responses, err := conn.Store(uidSet, &imap.StoreFlags{
-		Op:     imap.StoreFlagsAdd,
-		Silent: false,
-		Flags:  []imap.Flag{imap.FlagDeleted},
-	}, &imap.StoreOptions{UnchangedSince: modSeq}).Collect()
-	if err != nil {
-		return fmt.Errorf("conditional UID STORE \\Deleted: %w", err)
-	}
-	if len(responses) == 0 {
-		return &DraftAppendError{State: DraftRemoteChanged, Code: "remote_changed",
-			Err: errors.New("IMAP conditional STORE found a changed message")}
-	}
-	if err := ctx.Err(); err != nil {
-		return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 	}
 	if err := conn.UIDExpunge(uidSet).Close(); err != nil {
 		return fmt.Errorf("UID EXPUNGE: %w", err)
