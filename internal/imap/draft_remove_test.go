@@ -476,6 +476,7 @@ func TestSelectedEpochBelongsToTheSelectionThatRemoves(t *testing.T) {
 			{
 				name: "a network error inside withConn",
 				run: func(t *testing.T, cl *Client) {
+					t.Helper()
 					err := cl.withConn(context.Background(), func(*imapclient.Client) error {
 						return io.ErrUnexpectedEOF
 					})
@@ -485,6 +486,7 @@ func TestSelectedEpochBelongsToTheSelectionThatRemoves(t *testing.T) {
 			{
 				name: "reconnect",
 				run: func(t *testing.T, cl *Client) {
+					t.Helper()
 					cl.mu.Lock()
 					defer cl.mu.Unlock()
 					require.NoError(t, cl.reconnect(context.Background()))
@@ -493,6 +495,7 @@ func TestSelectedEpochBelongsToTheSelectionThatRemoves(t *testing.T) {
 			{
 				name: "Close",
 				run: func(t *testing.T, cl *Client) {
+					t.Helper()
 					_ = cl.Close()
 				},
 			},

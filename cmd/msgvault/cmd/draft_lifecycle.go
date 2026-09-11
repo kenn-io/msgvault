@@ -22,9 +22,7 @@ func newDraftGetCommand() *cobra.Command {
 		Use:   "draft-get <draft-id>",
 		Short: "Inspect a locally tracked IMAP draft and its remote state",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
-		},
+		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command

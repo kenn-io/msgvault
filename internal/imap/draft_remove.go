@@ -45,7 +45,7 @@ func (c *Client) InspectDraft(ctx context.Context, target DraftTarget) (DraftIns
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
 		if err := ctx.Err(); err != nil {
 			result = DraftInspectResult{State: DraftStateCancelled}
-			return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 		}
 		if !conn.Caps().Has(imap.CapUIDPlus) {
 			return &DraftAppendError{State: DraftStateRejected, Code: "uidplus_required",
@@ -113,7 +113,7 @@ func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInsp
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
 		if err := ctx.Err(); err != nil {
 			result = DraftInspectResult{State: DraftStateCancelled}
-			return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 		}
 		if !conn.Caps().Has(imap.CapUIDPlus) {
 			return &DraftAppendError{State: DraftStateRejected, Code: "uidplus_required",
@@ -160,7 +160,7 @@ func (c *Client) RemoveDraft(ctx context.Context, target DraftTarget) (DraftInsp
 				Err: errors.New("IMAP server does not advertise CONDSTORE")}
 		}
 		if err := ctx.Err(); err != nil {
-			return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 		}
 		if fetchResult.modSeq == 0 {
 			return &DraftAppendError{State: DraftStateRejected, Code: "conditional_store_required",
@@ -204,7 +204,7 @@ func expungeUIDLocked(conn *imapclient.Client, uid uint32) error {
 
 func conditionalExpungeUIDLocked(ctx context.Context, conn *imapclient.Client, uid uint32, modSeq uint64) error {
 	if err := ctx.Err(); err != nil {
-		return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+		return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 	}
 	var uidSet imap.UIDSet
 	uidSet.AddNum(imap.UID(uid))
@@ -221,7 +221,7 @@ func conditionalExpungeUIDLocked(ctx context.Context, conn *imapclient.Client, u
 			Err: errors.New("IMAP conditional STORE found a changed message")}
 	}
 	if err := ctx.Err(); err != nil {
-		return &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+		return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 	}
 	if err := conn.UIDExpunge(uidSet).Close(); err != nil {
 		return fmt.Errorf("UID EXPUNGE: %w", err)
@@ -270,7 +270,7 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 			case imapclient.FetchItemDataBodySection:
 				if _, err := io.Copy(&rawBuf, v.Literal); err != nil {
 					if ctxErr := ctx.Err(); ctxErr != nil {
-						return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: ctxErr}
+						return nil, &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: ctxErr}
 					}
 					return nil, fmt.Errorf("read draft body: %w", err)
 				}
@@ -289,11 +289,11 @@ func fetchDraftUID(ctx context.Context, conn *imapclient.Client, uid uint32) (*d
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+		return nil, &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 	}
 	if err := cmd.Close(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &DraftAppendError{State: DraftStateCancelled, Code: "cancelled", Err: ctxErr}
+			return nil, &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: ctxErr}
 		}
 		return nil, fmt.Errorf("inspect draft FETCH: %w", err)
 	}

@@ -26,6 +26,8 @@ import (
 // conceivable lock hold time.
 const pendingEditStalenessThreshold = 5 * time.Minute
 
+const draftLifecycleDiscarded = "discarded"
+
 // Fixed recovery instructions for a failed or partially-completed mutation.
 // They deliberately carry no revision: a revision read off a failure is only
 // a snapshot, and any other writer can invalidate it before the retry lands,
@@ -300,10 +302,10 @@ func emitDraftLifecycleOutput(emit func(api.CLIRunEvent) error, stream string, a
 		text = string(marshalDraftLifecycleOutput(output)) + "\n"
 	} else {
 		switch output.Status {
-		case "present", "active":
+		case "present", consentActive:
 			text = fmt.Sprintf("draft %d: lifecycle=%s revision=%d provider=%s\n",
 				output.DraftID, output.Lifecycle, output.Revision, output.ProviderStatus)
-		case "discarded":
+		case draftLifecycleDiscarded:
 			if output.OperationRef == "" {
 				text = fmt.Sprintf("draft %d is already discarded\n", output.DraftID)
 			} else {
@@ -394,8 +396,14 @@ func (a *storeAPIAdapter) verifyInterruptedEditStaleCopy(
 	source *store.Source,
 	draft *store.IMAPDraft,
 ) uint32 {
-	pendingUIDValidity := uint32(draft.PendingUIDValidity.Int64)
-	pendingUID := uint32(draft.PendingUID.Int64)
+	pendingUIDValidity, ok := draftUIDValue(draft.PendingUIDValidity)
+	if !ok {
+		return 0
+	}
+	pendingUID, ok := draftUIDValue(draft.PendingUID)
+	if !ok {
+		return 0
+	}
 	messageID, err := a.store.GetIMAPDraftPendingMessageIDContext(
 		ctx, source.ID, draft.Mailbox, pendingUIDValidity, pendingUID)
 	if err != nil {
@@ -416,6 +424,13 @@ func (a *storeAPIAdapter) verifyInterruptedEditStaleCopy(
 		UID:         pendingUID,
 		RawSHA256:   sha256.Sum256(raw),
 	})
+}
+
+func draftUIDValue(value sql.NullInt64) (uint32, bool) {
+	if !value.Valid || value.Int64 < 0 || value.Int64 > int64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(value.Int64), true
 }
 
 // draftInspectFailureInstruction returns the recovery instruction for a
@@ -450,8 +465,7 @@ func refuseDraftInspectFailure(
 	err error,
 ) error {
 	code, cause := "remote_unknown", err
-	var appendErr *imaplib.DraftAppendError
-	if errors.As(err, &appendErr) {
+	if appendErr, ok := errors.AsType[*imaplib.DraftAppendError](err); ok {
 		code, cause = appendErr.Code, appendErr.Err
 	}
 	if instructions := draftInspectFailureInstruction(code); instructions != "" {
@@ -502,9 +516,9 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 	}
 
 	// Discarded drafts are returned from local snapshot without connecting.
-	if draft.Lifecycle == "discarded" {
+	if draft.Lifecycle == draftLifecycleDiscarded {
 		output := draftLifecycleOutput{
-			Status:          "discarded",
+			Status:          draftLifecycleDiscarded,
 			DraftID:         draft.DraftID,
 			Lifecycle:       draft.Lifecycle,
 			Revision:        draft.Revision,
@@ -636,7 +650,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 	// A discarded draft is a terminal local state, decided here so no IMAP
 	// connection is opened for a draft that no longer exists. A stale revision
 	// stays an ordinary reload-and-retry conflict.
-	if draft.Lifecycle == "discarded" {
+	if draft.Lifecycle == draftLifecycleDiscarded {
 		if intent.Revision != draft.Revision {
 			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
@@ -676,7 +690,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 			// epoch the same number identifies a different message. Only a live
 			// InspectDraft against the pre-edit copy's archived bytes settles
 			// it, so a UID is named here and nowhere else in this branch.
-			if draft.PendingUID.Valid && uint32(draft.PendingUID.Int64) != draft.UID {
+			if pendingUID, ok := draftUIDValue(draft.PendingUID); ok && pendingUID != draft.UID {
 				if staleUID := a.verifyInterruptedEditStaleCopy(ctx, target.source, draft); staleUID != 0 {
 					return refuseDraftLifecycle(emit, intent, "edit_interrupted", draftRemoveStaleInstruction,
 						staleUID,
@@ -763,8 +777,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		// The claim is already recorded, and an APPEND whose outcome the server
 		// did not confirm may still have landed a copy, so both arms carry the
 		// inspect-and-reload guidance.
-		var dae *imaplib.DraftAppendError
-		if errors.As(appendErr, &dae) {
+		if dae, ok := errors.AsType[*imaplib.DraftAppendError](appendErr); ok {
 			return refuseDraftLifecycle(emit, intent, dae.Code, draftInspectInstruction, 0, dae.Err)
 		}
 		return refuseDraftLifecycle(emit, intent, "remote_unknown", draftInspectInstruction, 0, appendErr)
@@ -843,8 +856,7 @@ func (a *storeAPIAdapter) runCLIDraftEdit(
 		// equals uid.
 		logger.Error("remove old draft copy failed", "draft_id", intent.DraftID, "error", removeErr)
 		cause := removeErr
-		var dae *imaplib.DraftAppendError
-		if errors.As(removeErr, &dae) {
+		if dae, ok := errors.AsType[*imaplib.DraftAppendError](removeErr); ok {
 			cause = fmt.Errorf("%s: %w", dae.Code, dae.Err)
 		}
 		// A failed removal leaves the remote side unsettled: the STORE may have
@@ -994,7 +1006,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	// already-discarded draft at its current revision is the idempotent
 	// success the state table records; a stale revision stays an ordinary
 	// reload-and-retry conflict.
-	if draft.Lifecycle == "discarded" {
+	if draft.Lifecycle == draftLifecycleDiscarded {
 		if intent.Revision != draft.Revision {
 			return refuseDraftLifecycle(emit, intent, "revision_conflict", draftReloadInstruction, 0,
 				fmt.Errorf("draft %d: revision %d is stale; %s", intent.DraftID, intent.Revision, draftReloadInstruction))
@@ -1004,9 +1016,9 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 			logger.Error("release source after discarded draft delete", "source_id", target.source.ID, "error", releaseErr)
 		}
 		output := draftLifecycleOutput{
-			Status:    "discarded",
+			Status:    draftLifecycleDiscarded,
 			DraftID:   intent.DraftID,
-			Lifecycle: "discarded",
+			Lifecycle: draftLifecycleDiscarded,
 		}
 		if emitErr := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); emitErr != nil {
 			return draftReplyError("output_failed", emitErr)
@@ -1090,8 +1102,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	if removeErr != nil {
 		// Leave pending state set; caller reloads and retries draft-delete.
 		cause := removeErr
-		var dae *imaplib.DraftAppendError
-		if errors.As(removeErr, &dae) {
+		if dae, ok := errors.AsType[*imaplib.DraftAppendError](removeErr); ok {
 			cause = dae.Err
 		}
 		output := draftLifecycleOutput{
@@ -1130,7 +1141,7 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 
 	// FinishIMAPDraftOperationContext.
 	finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, intent.DraftID, claimedDraft.Revision, store.IMAPDraftOutcome{
-		Lifecycle:   "discarded",
+		Lifecycle:   draftLifecycleDiscarded,
 		SourceID:    target.source.ID,
 		Mailbox:     draft.Mailbox,
 		UIDValidity: draft.UIDValidity,
@@ -1152,9 +1163,9 @@ func (a *storeAPIAdapter) runCLIDraftDelete(
 	}
 
 	output := draftLifecycleOutput{
-		Status:       "discarded",
+		Status:       draftLifecycleDiscarded,
 		DraftID:      intent.DraftID,
-		Lifecycle:    "discarded",
+		Lifecycle:    draftLifecycleDiscarded,
 		OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: draft.UIDValidity, UID: draft.UID}),
 	}
 	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
@@ -1201,8 +1212,12 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 
 	// The schema CHECK guarantees pending_uid IS NOT NULL when pending_kind IS NOT NULL,
 	// so PendingUID is always valid here and no fallback to draft.UID is needed.
-	oldUID := uint32(draft.PendingUID.Int64)
-	oldUIDValidity := uint32(draft.PendingUIDValidity.Int64)
+	oldUID, uidOK := draftUIDValue(draft.PendingUID)
+	oldUIDValidity, uidValidityOK := draftUIDValue(draft.PendingUIDValidity)
+	if !uidOK || !uidValidityOK {
+		return refuseDraftLifecycle(emit, intent, "internal", draftCompleteDiscardInstruction, 0,
+			fmt.Errorf("draft %d has an invalid pending IMAP receipt", intent.DraftID))
+	}
 
 	// The pending marker records a discard this daemon still owes, so a failure
 	// to reach the mailbox leaves owed work the operator has to drive to
@@ -1250,8 +1265,7 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 
 	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
 	if removeErr != nil {
-		var dae *imaplib.DraftAppendError
-		if errors.As(removeErr, &dae) {
+		if dae, ok := errors.AsType[*imaplib.DraftAppendError](removeErr); ok {
 			return failReplay(dae.Err)
 		}
 		return failReplay(removeErr)
@@ -1265,7 +1279,7 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 
 	recordCtx := context.WithoutCancel(ctx)
 	finishErr := a.store.FinishIMAPDraftOperationContext(recordCtx, draft.DraftID, draft.Revision, store.IMAPDraftOutcome{
-		Lifecycle:   "discarded",
+		Lifecycle:   draftLifecycleDiscarded,
 		SourceID:    target.source.ID,
 		Mailbox:     draft.Mailbox,
 		UIDValidity: oldUIDValidity,
@@ -1286,9 +1300,9 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 	}
 
 	output := draftLifecycleOutput{
-		Status:       "discarded",
+		Status:       draftLifecycleDiscarded,
 		DraftID:      draft.DraftID,
-		Lifecycle:    "discarded",
+		Lifecycle:    draftLifecycleDiscarded,
 		OperationRef: draftOperationRef(store.IMAPDraftReceipt{SourceID: target.source.ID, Mailbox: draft.Mailbox, UIDValidity: oldUIDValidity, UID: oldUID}),
 	}
 	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {

@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -334,7 +333,7 @@ func TestDraftCommandsRefuseUnregisteredHistoricalDraft(t *testing.T) {
 	requirements.NoError(err)
 	msgID, err := st.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{
-			SourceID: source.ID, SourceMessageID: fmt.Sprintf("Drafts|999"),
+			SourceID: source.ID, SourceMessageID: "Drafts|999",
 			ConversationID: conversationID, MessageType: store.MessageTypeEmail,
 			ArchivedAt: time.Now(), SizeEstimate: 10,
 		},
@@ -463,6 +462,9 @@ func TestGCRetainsCurrentDraftMessageAndOwnership(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, draftID, _ := newIMAPDraftFixture(t)
+	if st.IsPostgreSQL() {
+		t.Skip("GC retention test is SQLite-only")
+	}
 
 	_, err := st.DB().Exec(st.Rebind(`
 		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -165,5 +164,5 @@ func TestRemoveDraftCancellationClosesFetchBeforeMutation(t *testing.T) {
 		assert.Fail("cancellation reached EXPUNGE")
 	default:
 	}
-	assert.True(errors.Is(err, context.Canceled))
+	assert.ErrorIs(err, context.Canceled)
 }

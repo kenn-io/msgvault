@@ -1914,7 +1914,7 @@ func writePersonProviderStatus(
 	}
 	state := "inactive"
 	if output.Consent.Active {
-		state = "active"
+		state = consentActive
 	} else if output.Consent.LastRevoked != nil {
 		state = "revoked"
 	}
@@ -1953,7 +1953,7 @@ func writePersonSemanticProviderStatus(
 	printPersonSemanticProviderDisclosure(w, profile)
 	state := "inactive"
 	if status.Active {
-		state = "active"
+		state = consentActive
 	} else if status.LastRevoked != nil {
 		state = "revoked"
 	}

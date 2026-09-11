@@ -34,6 +34,7 @@ import (
 // IMAP draft via the existing draft-reply flow.
 type draftLifecycleFixture struct {
 	draftReplyFixture
+
 	draftID     int64
 	draftUID    uint32
 	draftUIDVal uint32
@@ -44,11 +45,11 @@ type testDraftClient struct {
 }
 
 func (c *testDraftClient) RemoveDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
-	result, err := c.Client.InspectDraft(ctx, target)
+	result, err := c.InspectDraft(ctx, target)
 	if err != nil || result.State != imaplib.DraftRemotePresent {
 		return result, err
 	}
-	return result, c.Client.DeleteMessage(ctx, target.Mailbox+"|"+strconv.FormatUint(uint64(target.UID), 10))
+	return result, c.DeleteMessage(ctx, target.Mailbox+"|"+strconv.FormatUint(uint64(target.UID), 10))
 }
 
 func newDraftLifecycleFixture(t *testing.T) draftLifecycleFixture {
@@ -73,7 +74,9 @@ func newDraftLifecycleFixture(t *testing.T) draftLifecycleFixture {
 
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &result))
-	draftID := int64(result["message_id"].(float64))
+	messageID, ok := result["message_id"].(float64)
+	require.True(t, ok)
+	draftID := int64(messageID)
 	require.Positive(t, draftID)
 
 	var uid, uidval int64
@@ -165,7 +168,7 @@ func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
 	var result map[string]any
 	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
 	assert.Equal("active", result["lifecycle"])
-	assert.Equal(float64(1), result["revision"])
+	assert.InDelta(float64(1), result["revision"], 0)
 	assert.Equal(imaplib.DraftRemotePresent, result["provider_status"])
 }
 
@@ -199,7 +202,7 @@ func TestDraftEditReplacesRemoteCopyAndAdvancesRevision(t *testing.T) {
 	var result map[string]any
 	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
 	assert.Equal("replaced", result["status"])
-	assert.Equal(float64(2), result["revision"])
+	assert.InDelta(float64(2), result["revision"], 0)
 
 	// Verify revision in store.
 	var revision int64
@@ -328,7 +331,7 @@ func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
 	var bystanderUID emersionimap.UID
 	go func() {
 		defer close(done)
-		_, _ = io.WriteString(appendCmd, string(bystanderRaw))
+		_, _ = appendCmd.Write(bystanderRaw)
 		_ = appendCmd.Close()
 		data, waitErr := appendCmd.Wait()
 		if waitErr == nil && data != nil {
@@ -378,6 +381,7 @@ func TestDraftDeleteRemovesOnlyTheOwnedUID(t *testing.T) {
 // to the embedded client unchanged.
 type failOnNthRemove struct {
 	*imaplib.Client
+
 	mu         sync.Mutex
 	counter    *int // shared across factory calls to survive re-creation
 	failBefore int  // fail when the call number is <= failBefore
@@ -995,7 +999,7 @@ func TestDraftEditInterruptedMessageDifferentUID(t *testing.T) {
 	assert.Equal(cliStreamStderr, evs[0].Type)
 	delivered := decodeDraftLifecycleEvent(t, evs[0])
 	assert.Equal("edit_interrupted", delivered["status"])
-	assert.Equal(float64(origUID), delivered["uid"])
+	assert.InDelta(float64(origUID), delivered["uid"], 0)
 	assert.Equal(draftRemoveStaleInstruction, delivered["instructions"])
 }
 
@@ -1081,7 +1085,7 @@ func TestDraftEditInterruptedReloadsAndEdits(t *testing.T) {
 	var result map[string]any
 	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
 	assert.Equal("replaced", result["status"])
-	assert.Equal(float64(3), result["revision"], "successful edit reports the committed revision")
+	assert.InDelta(float64(3), result["revision"], 0, "successful edit reports the committed revision")
 
 	// The new body is what the archive holds.
 	var newMessageID int64
@@ -1388,7 +1392,7 @@ func TestDraftEditReportsOldCopyRemainsWhenRemovalFailsAfterPersist(t *testing.T
 			result := decodeDraftLifecycleEvent(t, evs[0])
 			assert.Equal("edit_applied_old_copy_remains", result["status"])
 			assert.Equal(draftRemoveStaleInstruction, result["instructions"])
-			assert.Equal(float64(f.draftUID), result["uid"],
+			assert.InDelta(float64(f.draftUID), result["uid"], 0,
 				"the leftover pre-edit copy must be named to the operator")
 			_, hasRevision := result["revision"]
 			assert.False(hasRevision, "a partial result must carry no retry revision")
@@ -1500,7 +1504,7 @@ api_key = %q
 	var delivered map[string]any
 	require.NoError(json.Unmarshal([]byte(stderr), &delivered))
 	assert.Equal("edit_interrupted", delivered["status"])
-	assert.Equal(float64(origUID), delivered["uid"],
+	assert.InDelta(float64(origUID), delivered["uid"], 0,
 		"the removable stale copy must be named across the daemon boundary")
 	assert.Equal(draftRemoveStaleInstruction, delivered["instructions"],
 		"the recovery instruction must cross the daemon boundary")
@@ -1511,7 +1515,8 @@ api_key = %q
 // countingRemoveClient wraps a real IMAP client and counts RemoveDraft calls
 // across every client the factory hands out.
 type countingRemoveClient struct {
-	*imaplib.Client
+	*testDraftClient
+
 	mu      *sync.Mutex
 	removes *int
 }
@@ -1520,7 +1525,7 @@ func (c *countingRemoveClient) RemoveDraft(ctx context.Context, target imaplib.D
 	c.mu.Lock()
 	*c.removes++
 	c.mu.Unlock()
-	return c.Client.RemoveDraft(ctx, target)
+	return c.testDraftClient.RemoveDraft(ctx, target)
 }
 
 // TestConcurrentDraftDeletePendingDiscard verifies that two concurrent
@@ -1547,9 +1552,12 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 
 	var removeMu sync.Mutex
 	removes := 0
+	//nolint:unparam // the factory must match the production seam's error result.
 	factory := func(context.Context, *store.Source) (draftClient, error) {
 		return &countingRemoveClient{
-			Client:  imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+			testDraftClient: &testDraftClient{
+				Client: imaplib.NewClient(f.config, testutil.IMAPTestPassword),
+			},
 			mu:      &removeMu,
 			removes: &removes,
 		}, nil
@@ -1605,7 +1613,7 @@ func TestConcurrentDraftDeletePendingDiscard(t *testing.T) {
 // new UIDVALIDITY. DELETE followed by CREATE is how a mailbox's epoch changes,
 // and it is the one epoch change the in-tree fake models. Every UID recorded
 // under the old epoch then names a different message, or no message at all.
-func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) uint32 {
+func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) {
 	t.Helper()
 	client, err := imapclient.DialInsecure(f.config.Host+":"+strconv.Itoa(f.config.Port), nil)
 	require.NoError(t, err)
@@ -1617,7 +1625,6 @@ func recreateDraftsMailbox(t *testing.T, f draftLifecycleFixture) uint32 {
 	require.NoError(t, err)
 	require.NotEqual(t, f.draftUIDVal, selected.UIDValidity,
 		"recreating the mailbox must change its UIDVALIDITY")
-	return selected.UIDValidity
 }
 
 // TestDraftEditInterruptedNamesNoUIDAfterEpochChange is the destructive case the
@@ -1680,7 +1687,7 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 		SELECT pending_kind FROM imap_drafts WHERE draft_id = ?
 	`), f.draftID).Scan(&pendingKind))
 	assert.False(pendingKind.Valid, "the interrupted marker must still be cleared")
-	assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(bystanderUID)),
+	assert.True(draftUIDPresentOnServer(t, f, bystanderUID),
 		"the bystander must survive the recovery untouched")
 }
 
@@ -1691,6 +1698,7 @@ func TestDraftEditInterruptedNamesNoUIDAfterEpochChange(t *testing.T) {
 // mailbox recreated between the claim and the removal looks like to the daemon.
 type failRemoveUnverifiableCopy struct {
 	*imaplib.Client
+
 	mu       sync.Mutex
 	inspects int
 }
@@ -1769,6 +1777,7 @@ func TestDraftEditNamesNoUIDWhenLeftoverCopyCannotBeVerified(t *testing.T) {
 // caller-supplied error.
 type failInspectClient struct {
 	*imaplib.Client
+
 	inspectErr error
 }
 
@@ -1857,6 +1866,7 @@ func TestDraftInspectFailureDeliversRecoveryInstructions(t *testing.T) {
 // call, so a test can prove a refusal landed before the mailbox was touched.
 type countingAppendClient struct {
 	*imaplib.Client
+
 	mu      *sync.Mutex
 	appends *int
 }
@@ -1937,7 +1947,7 @@ func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
 	assert.Equal("invalid_reply_metadata", err.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
 	require.True(ok)
-	assert.ErrorContains(coded.Err, "exactly one From address")
+	require.ErrorContains(coded.Err, "exactly one From address")
 	assert.NotContains(coded.Err.Error(), "Body that must not be appended",
 		"a refusal must not echo the supplied body")
 	assert.Empty(evs, "a refusal with nothing to recover reports no result")
@@ -1969,6 +1979,7 @@ func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
 // genuine, and only the local completion fails.
 type bumpRevisionAfterRemove struct {
 	*imaplib.Client
+
 	store   *store.Store
 	draftID int64
 	t       *testing.T
@@ -2013,6 +2024,7 @@ func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
 		{
 			name: "pending discard replay",
 			leaveState: func(t *testing.T, f draftLifecycleFixture) int64 {
+				t.Helper()
 				// Fail the first RemoveDraft so the claim survives as
 				// pending_kind='discard' and the retry replays it.
 				adapter := f.grantedAdapter()
@@ -2060,7 +2072,7 @@ func TestDraftDeleteReportsRemoteDeletedLocalFailed(t *testing.T) {
 			assert.Equal("remote_deleted_local_failed", err.Error())
 			coded, ok := errors.AsType[*api.CLIRunCodedError](err)
 			require.True(ok)
-			assert.ErrorContains(coded.Err, "revision_conflict")
+			require.ErrorContains(coded.Err, "revision_conflict")
 
 			// The code alone is what the daemon streams as the error, so the
 			// instruction is actionable only if it travels as an event.

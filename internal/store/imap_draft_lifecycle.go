@@ -172,6 +172,9 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 	if err != nil {
 		return nil, fmt.Errorf("get IMAP draft %d: %w", draftID, err)
 	}
+	if uidValidity < 0 || uidValidity > int64(^uint32(0)) || uid < 0 || uid > int64(^uint32(0)) {
+		return nil, fmt.Errorf("get IMAP draft %d: UID receipt is out of range", draftID)
+	}
 	d.UIDValidity = uint32(uidValidity)
 	d.UID = uint32(uid)
 	d.ParentMessageID = parentRFC822
