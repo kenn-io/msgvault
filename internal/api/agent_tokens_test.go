@@ -189,6 +189,50 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	})
 }
 
+func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	reg := agentgrant.NewRegistry()
+	stub := &stubSourceStore{
+		src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	}
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			APIKey:         agentTokenTestAPIKey,
+			AgentAccess:    true,
+			TrustedProxies: []string{"127.0.0.1/32"},
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    cfg,
+		Store:     stub,
+		Logger:    testLogger(),
+		Scheduler: newMockScheduler(),
+	})
+	srv.agentGrants = reg
+
+	body, err := json.Marshal(agentTokenIssueRequest{
+		Label:       "proxy-issued-agent",
+		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs:   []int64{1},
+	})
+	require.NoError(err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	req.Header.Set("Forwarded", "for=192.0.2.20;proto=https;host=archive.example")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusCreated, w.Code, w.Body.String())
+	var response agentTokenIssueResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal("https://archive.example", response.DaemonURL)
+	assert.NotEmpty(response.Secret)
+}
+
 // TestAgentTokenListRequiresOwnerKey verifies proof matrix row 15.
 func TestAgentTokenListRequiresOwnerKey(t *testing.T) {
 	srv, _ := newAgentTokenTestServer(t)

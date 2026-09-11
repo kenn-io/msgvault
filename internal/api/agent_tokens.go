@@ -104,6 +104,12 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scheme, host, err := s.effectiveRequestOrigin(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_forwarded_headers", "Invalid forwarded scheme or host")
+		return
+	}
+
 	var req agentTokenIssueRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
@@ -162,12 +168,8 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Derive daemon URL from request Host
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	daemonURL := scheme + "://" + r.Host
+	// Derive daemon URL from the validated request origin, including trusted proxy headers.
+	daemonURL := scheme + "://" + host
 
 	v := grantToView(g)
 	writeJSON(w, http.StatusCreated, agentTokenIssueResponse{
