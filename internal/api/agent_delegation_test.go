@@ -533,6 +533,63 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
 		"holder label must be redacted for delegated callers")
 }
 
+// TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter verifies that a
+// delegated /api/v1/cli/run request carrying a non-draft-reply body bypasses
+// the operation gate entirely: the request must return immediately (no waiter
+// registered, no gate slot taken), the gate label is not influenced by the
+// caller-supplied args, and the response is 400 command_not_allowed.
+// Proof-matrix row 32.
+func TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter(t *testing.T) {
+	var gate LabeledOperationGate = NewSerialOperationGate()
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Store:         &stubSourceStore{},
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
+	})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
+	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	_, secret, _, err := reg.Issue("gate-nondraft", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	require.NoError(t, err)
+
+	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
+	require.True(t, ok)
+	defer holderDone()
+
+	body := `{"args":["sync","alice@example.com"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		srv.Router().ServeHTTP(w, req)
+	}()
+
+	select {
+	case <-reqDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("delegated non-draft-reply must not block on the operation gate")
+	}
+	assert.False(t, gate.HasRequestWaiters(),
+		"delegated non-draft-reply must not register as a gate waiter")
+	var resp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "command_not_allowed", resp.Error,
+		"delegated non-draft-reply must return command_not_allowed")
+
+	// The gate label must not reflect caller-supplied args.
+	label, _, held := gate.Holder()
+	assert.True(t, held, "gate must still be held by the owner")
+	assert.Equal(t, "owner-msgvault-sync", label,
+		"gate label must not be overwritten by the delegated caller's args")
+}
+
 // TestDelegationDefaultOff verifies that delegation is off when agent_access is
 // unset in config. The constructor (server.go:596-601) must leave agentGrants nil,
 // and a presented agent token must be refused with 401.
