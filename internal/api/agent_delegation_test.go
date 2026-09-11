@@ -25,6 +25,7 @@ var allowedDelegatedOps = []string{"runCLI", "getHealth"}
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {
 	mockStore
+
 	src    *store.Source
 	srcErr error
 }
@@ -33,16 +34,11 @@ func (s *stubSourceStore) GetSourceByIDContext(_ context.Context, _ int64) (*sto
 	return s.src, s.srcErr
 }
 
-// newTestServerWithStore creates a test server using any MessageStore.
-func newTestServerWithStore(st MessageStore) *Server {
-	return NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
-}
-
-func newTestServerWithAgentGrants(t *testing.T, apiKey string) (*Server, *agentgrant.Registry) {
+func newTestServerWithAgentGrants(t *testing.T) (*Server, *agentgrant.Registry) {
 	t.Helper()
 	reg := agentgrant.NewRegistry()
 	cfg := &config.Config{
-		Server: config.ServerConfig{APIKey: apiKey},
+		Server: config.ServerConfig{APIKey: "owner-key"},
 	}
 	srv := NewServerWithOptions(ServerOptions{
 		Config:    cfg,
@@ -81,7 +77,7 @@ func TestDelegatedOperationAllowedExact(t *testing.T) {
 // sites: the predicate itself, pprof guard, backup-freeze, getStats,
 // listMessages, and issueAgentToken.
 func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t, "owner-key")
+	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("priv-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
@@ -141,7 +137,7 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 // A request without an agent token header uses normal owner authentication
 // paths, behaving identically to before the feature was added.
 func TestOwnerPathsUnchangedWithoutAgentHeader(t *testing.T) {
-	srv, _ := newTestServerWithAgentGrants(t, "owner-key")
+	srv, _ := newTestServerWithAgentGrants(t)
 
 	t.Run("owner API key without agent header gets normal response", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
@@ -164,7 +160,7 @@ func TestOwnerPathsUnchangedWithoutAgentHeader(t *testing.T) {
 // revoked grant, owner credential alongside agent token —
 // gets 401 and never falls through to a success mode.
 func TestAgentTokenNeverFallsBack(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t, "owner-key")
+	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	grantID, validSecret, _, err := reg.Issue("fallback-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
@@ -235,7 +231,13 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 		require.NoError(t, issErr)
 		w := makeHealthReq(func(req *http.Request) {
 			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
-			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "spoofed-session-token"})
+			req.AddCookie(&http.Cookie{
+				Name:     sessionCookieName,
+				Value:    "spoofed-session-token",
+				Secure:   true,
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
 		})
 		assert.Equal(t, http.StatusUnauthorized, w.Code, "session cookie alongside agent token must classify AuthModeRequired")
 	})
@@ -256,25 +258,27 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 // OpenAPI spec and verifies that exactly the two allowed operations pass the
 // delegated auth middleware; every other /api/v1/* operation returns 401.
 func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t, "owner-key")
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("closedtest", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Fetch the live OpenAPI spec to derive all registered operation IDs and their methods/paths.
 	specReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	specRec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(specRec, specReq)
-	require.Equal(t, http.StatusOK, specRec.Code, "OpenAPI spec must be available at /openapi.json")
+	require.Equal(http.StatusOK, specRec.Code, "OpenAPI spec must be available at /openapi.json")
 
 	var spec struct {
 		Paths map[string]map[string]struct {
 			OperationID string `json:"operationId"`
 		} `json:"paths"`
 	}
-	require.NoError(t, json.NewDecoder(specRec.Body).Decode(&spec))
-	require.NotEmpty(t, spec.Paths, "OpenAPI spec must contain paths")
+	require.NoError(json.NewDecoder(specRec.Body).Decode(&spec))
+	require.NotEmpty(spec.Paths, "OpenAPI spec must contain paths")
 
 	allowed := make(map[string]bool, len(allowedDelegatedOps))
 	for _, op := range allowedDelegatedOps {
@@ -309,20 +313,20 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			srv.Router().ServeHTTP(w, req)
 
 			if allowed[op.OperationID] {
-				assert.NotEqual(t, http.StatusUnauthorized, w.Code,
+				assert.NotEqual(http.StatusUnauthorized, w.Code,
 					"allowed op %q (%s %s) must not return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 				testedAllowed++
 			} else {
-				assert.Equal(t, http.StatusUnauthorized, w.Code,
+				assert.Equal(http.StatusUnauthorized, w.Code,
 					"non-allowed op %q (%s %s) must return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 				testedDenied++
 			}
 		}
 	}
 
-	assert.GreaterOrEqual(t, testedAllowed, len(allowedDelegatedOps),
+	assert.GreaterOrEqual(testedAllowed, len(allowedDelegatedOps),
 		"all two allowed ops must appear under /api/v1/*")
-	assert.Greater(t, testedDenied, 10,
+	assert.Greater(testedDenied, 10,
 		"many non-allowed ops must be registered under /api/v1/")
 }
 
@@ -330,7 +334,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 // Delegation cannot enable or widen access over HTTP: settings routes (which
 // expose agent_access and imap.drafts) return 401 for any delegated caller.
 func TestDelegationNotReachableOverHTTP(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t, "owner-key")
+	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("http-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
@@ -448,6 +452,8 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
 // (e.g. POST /api/v1/accounts) is not admitted to the operation gate and
 // receives 401 directly from the auth layer without ever queuing as a waiter.
 func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var gate LabeledOperationGate = NewSerialOperationGate()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
 	srv := NewServerWithOptions(ServerOptions{
@@ -461,10 +467,10 @@ func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) {
 	srv.agentGrants = reg
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("gate-nonallowed", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	done, ok := gate.BeginWork()
-	require.True(t, ok, "must acquire the gate to hold it for this subtest")
+	require.True(ok, "must acquire the gate to hold it for this subtest")
 	defer done()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
@@ -483,9 +489,9 @@ func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("delegated request on non-allowlisted gated route must not block on the operation gate")
 	}
-	assert.Equal(t, http.StatusUnauthorized, w.Code,
+	assert.Equal(http.StatusUnauthorized, w.Code,
 		"delegated caller on non-allowlisted route must get 401, not 503")
-	assert.False(t, gate.HasRequestWaiters(),
+	assert.False(gate.HasRequestWaiters(),
 		"delegated caller on non-allowlisted route must not register as a gate waiter")
 }
 
@@ -493,6 +499,8 @@ func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) {
 // times out on the /api/v1/cli/run gate the 503 body does not contain the
 // internal holder label (which names configured account identifiers).
 func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var gate LabeledOperationGate = NewSerialOperationGate()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
 	srv := NewServerWithOptions(ServerOptions{
@@ -506,11 +514,11 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
 	srv.agentGrants = reg
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("label-redact", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Acquire gate with an identifiable holder label.
 	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
-	require.True(t, ok)
+	require.True(ok)
 	defer holderDone()
 
 	// Override the wait limit so the test doesn't take 10 s.
@@ -525,11 +533,11 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(http.StatusServiceUnavailable, w.Code)
 	body503 := w.Body.String()
-	assert.Contains(t, body503, "operation_in_progress",
+	assert.Contains(body503, "operation_in_progress",
 		"busy response must use operation_in_progress code")
-	assert.NotContains(t, body503, "owner-msgvault-sync",
+	assert.NotContains(body503, "owner-msgvault-sync",
 		"holder label must be redacted for delegated callers")
 }
 
@@ -540,6 +548,8 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) {
 // caller-supplied args, and the response is 400 command_not_allowed.
 // Proof-matrix row 32.
 func TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var gate LabeledOperationGate = NewSerialOperationGate()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
 	srv := NewServerWithOptions(ServerOptions{
@@ -553,10 +563,10 @@ func TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter(t *testing.T) {
 	srv.agentGrants = reg
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("gate-nondraft", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
-	require.True(t, ok)
+	require.True(ok)
 	defer holderDone()
 
 	body := `{"args":["sync","alice@example.com"]}`
@@ -576,17 +586,17 @@ func TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("delegated non-draft-reply must not block on the operation gate")
 	}
-	assert.False(t, gate.HasRequestWaiters(),
+	assert.False(gate.HasRequestWaiters(),
 		"delegated non-draft-reply must not register as a gate waiter")
 	var resp ErrorResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "command_not_allowed", resp.Error,
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("command_not_allowed", resp.Error,
 		"delegated non-draft-reply must return command_not_allowed")
 
 	// The gate label must not reflect caller-supplied args.
 	label, _, held := gate.Holder()
-	assert.True(t, held, "gate must still be held by the owner")
-	assert.Equal(t, "owner-msgvault-sync", label,
+	assert.True(held, "gate must still be held by the owner")
+	assert.Equal("owner-msgvault-sync", label,
 		"gate label must not be overwritten by the delegated caller's args")
 }
 

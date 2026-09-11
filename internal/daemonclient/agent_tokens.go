@@ -30,6 +30,7 @@ type AgentTokenView struct {
 // AgentTokenIssueResult holds the one-time result of issuing a new agent grant.
 type AgentTokenIssueResult struct {
 	AgentTokenView
+
 	Secret    string `json:"secret"`
 	DaemonURL string `json:"daemon_url"`
 }
@@ -46,11 +47,11 @@ type agentTokenOptions struct {
 	body any
 }
 
-func (o *agentTokenOptions) GetPathParams() (map[string]any, error) { return nil, nil }
-func (o *agentTokenOptions) GetQuery() (map[string]any, error)      { return nil, nil }
+func (o *agentTokenOptions) GetPathParams() (map[string]any, error) { return map[string]any{}, nil }
+func (o *agentTokenOptions) GetQuery() (map[string]any, error)      { return map[string]any{}, nil }
 func (o *agentTokenOptions) GetBody() any                           { return o.body }
 func (o *agentTokenOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	return map[string]string{}, nil
 }
 
 // doAgentTokenRequest performs a raw HTTP request to the agent-token API and
@@ -93,6 +94,12 @@ func errorResponseFromBytes(status int, body []byte) *http.Response {
 	}
 }
 
+func handleErrorResponseFromBytes(status int, body []byte) error {
+	resp := errorResponseFromBytes(status, body)
+	defer func() { _ = resp.Body.Close() }()
+	return HandleErrorResponse(resp)
+}
+
 // IssueAgentToken creates a new restricted agent grant and returns its metadata
 // and the one-time secret. The caller must store the secret immediately.
 func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64) (*AgentTokenIssueResult, error) {
@@ -106,7 +113,7 @@ func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions 
 		return nil, err
 	}
 	if status != http.StatusCreated {
-		return nil, HandleErrorResponse(errorResponseFromBytes(status, raw))
+		return nil, handleErrorResponseFromBytes(status, raw)
 	}
 	var result AgentTokenIssueResult
 	if err := json.Unmarshal(raw, &result); err != nil {
@@ -126,7 +133,7 @@ func (c *Client) ListAgentTokens(ctx context.Context) ([]AgentTokenView, error) 
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, HandleErrorResponse(errorResponseFromBytes(status, raw))
+		return nil, handleErrorResponseFromBytes(status, raw)
 	}
 	var resp struct {
 		Tokens []AgentTokenView `json:"tokens"`
@@ -145,7 +152,7 @@ func (c *Client) RevokeAgentToken(ctx context.Context, id string) error {
 		return err
 	}
 	if status != http.StatusNoContent {
-		return HandleErrorResponse(errorResponseFromBytes(status, raw))
+		return handleErrorResponseFromBytes(status, raw)
 	}
 	return nil
 }

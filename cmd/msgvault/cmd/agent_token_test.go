@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -41,38 +40,65 @@ func runAgentTokenCommand(
 
 // agentTokenIssueResponseJSON returns a minimal JSON issue response for tests.
 func agentTokenIssueResponseJSON(secret string) string {
-	resp := map[string]any{
-		"id":          "tok_abc123",
-		"label":       "Test Agent",
-		"permissions": []string{"draft.create"},
-		"sources": []map[string]any{
-			{"id": 1, "type": "imap", "identifier": "alice@example.com"},
-		},
-		"created_at": time.Now().UTC().Format(time.RFC3339),
-		"secret":     secret,
-		"daemon_url": "",
+	resp := agentTokenIssueFixture{
+		ID:          "tok_abc123",
+		Label:       "Test Agent",
+		Permissions: []string{"draft.create"},
+		Sources:     []agentTokenFixtureSource{{ID: 1, Type: "imap", Identifier: "alice@example.com"}},
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Secret:      secret,
 	}
-	b, _ := json.Marshal(resp)
+	b, err := json.Marshal(resp)
+	if err != nil {
+		panic(err)
+	}
 	return string(b)
 }
 
 // agentTokenListResponseJSON returns a minimal JSON list response for tests.
 func agentTokenListResponseJSON() string {
-	resp := map[string]any{
-		"tokens": []map[string]any{
-			{
-				"id":          "tok_abc123",
-				"label":       "Test Agent",
-				"permissions": []string{"draft.create"},
-				"sources": []map[string]any{
-					{"id": 1, "type": "imap", "identifier": "alice@example.com"},
-				},
-				"created_at": time.Now().UTC().Format(time.RFC3339),
-			},
-		},
+	resp := agentTokenListFixture{
+		Tokens: []agentTokenFixtureView{{
+			ID:          "tok_abc123",
+			Label:       "Test Agent",
+			Permissions: []string{"draft.create"},
+			Sources:     []agentTokenFixtureSource{{ID: 1, Type: "imap", Identifier: "alice@example.com"}},
+			CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		}},
 	}
-	b, _ := json.Marshal(resp)
+	b, err := json.Marshal(resp)
+	if err != nil {
+		panic(err)
+	}
 	return string(b)
+}
+
+type agentTokenFixtureSource struct {
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Identifier string `json:"identifier"`
+}
+
+type agentTokenFixtureView struct {
+	ID          string                    `json:"id"`
+	Label       string                    `json:"label"`
+	Permissions []string                  `json:"permissions"`
+	Sources     []agentTokenFixtureSource `json:"sources"`
+	CreatedAt   string                    `json:"created_at"`
+}
+
+type agentTokenIssueFixture struct {
+	ID          string                    `json:"id"`
+	Label       string                    `json:"label"`
+	Permissions []string                  `json:"permissions"`
+	Sources     []agentTokenFixtureSource `json:"sources"`
+	CreatedAt   string                    `json:"created_at"`
+	Secret      string                    `json:"secret"`
+	DaemonURL   string                    `json:"daemon_url"`
+}
+
+type agentTokenListFixture struct {
+	Tokens []agentTokenFixtureView `json:"tokens"`
 }
 
 // TestAgentTokenIssueOutputsSecret verifies that the issue subcommand (row 6):
@@ -240,7 +266,7 @@ func TestOpenAgentDelegatedStoreRejectsLocalFlag(t *testing.T) {
 
 	_, _, err := OpenHTTPStore(t.Context())
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "incompatible"), err.Error())
+	assert.Contains(t, err.Error(), "incompatible", err.Error())
 }
 
 // TestOpenAgentDelegatedStoreRequiresBothFlags verifies that providing only one

@@ -113,7 +113,7 @@ func TestAgentTokenBusyResponseRetriesAndNotifies(t *testing.T) {
 	})
 
 	err = c.RevokeAgentToken(context.Background(), "tok_abc")
-	assert.New(t).NoError(err, "must succeed after retries")
+	require.New(t).NoError(err, "must succeed after retries")
 	assert.Equal(t, 3, callCount, "must have retried twice before succeeding")
 	assert.GreaterOrEqual(t, notifyCount, 1, "busy notifier must have fired at least once")
 	assert.Contains(t, notifyMsg, "msgvault sync", "notifier message must name the holder")

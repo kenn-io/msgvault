@@ -16,7 +16,7 @@ import (
 // (DELETE /api/v1/agent-tokens/{id}) from the generic mutation gate.
 // agentgrant.Registry is in-memory and process-scoped; revoke touches no
 // archive state, so these routes belong with the session endpoints.
-const agentTokensPath = "/api/v1/agent-tokens"
+const agentTokensPath = "/api/v1/agent-tokens" //nolint:gosec // endpoint path, not a credential
 
 // agentGrantSourceResolver is the narrow interface on s.store needed by
 // handleIssueAgentToken to resolve a source ID to a SourceRef.

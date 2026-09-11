@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,7 +63,8 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	// Helper: send a run request as delegated caller with the full router
 	sendDelegated := func(args []string, extraHeaders ...func(*http.Request)) int {
 		body := CLIRunRequest{Args: args}
-		bs, _ := json.Marshal(body)
+		bs, marshalErr := json.Marshal(body)
+		require.NoError(t, marshalErr)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -83,7 +84,8 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	})
 
 	t.Run("add-imap returns command_not_allowed", func(t *testing.T) {
-		bs, _ := json.Marshal(CLIRunRequest{Args: []string{"add-imap", "imap://example.com"}})
+		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"add-imap", "imap://example.com"}})
+		require.NoError(t, marshalErr)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -96,7 +98,8 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	})
 
 	t.Run("remove-account returns command_not_allowed", func(t *testing.T) {
-		bs, _ := json.Marshal(CLIRunRequest{Args: []string{"remove-account"}})
+		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"remove-account"}})
+		require.NoError(t, marshalErr)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -109,7 +112,8 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 
 	t.Run("query returns command_not_allowed for delegated", func(t *testing.T) {
 		// query is allowlisted for owner but not for delegated
-		bs, _ := json.Marshal(CLIRunRequest{Args: []string{"query", "SELECT 1"}})
+		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"query", "SELECT 1"}})
+		require.NoError(t, marshalErr)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -127,7 +131,8 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		// Env: cliRunEnvAllowedForCommand returns false for every env name on
 		// draft-reply, so handleCLIRun writes env_not_allowed (HTTP 400) before
 		// calling the runner.
-		envBody, _ := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}, Env: map[string]string{"X": "y"}})
+		envBody, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}, Env: map[string]string{"X": "y"}})
+		require.NoError(t, marshalErr)
 		envReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
 		envReq.Header.Set("Content-Type", "application/json")
 		envReq.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -136,7 +141,6 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		var envResp ErrorResponse
 		require.NoError(t, json.NewDecoder(envW.Body).Decode(&envResp))
 		assert.Equal(t, "env_not_allowed", envResp.Error) // cliRunEnvAllowedForCommand
-
 	})
 }
 
@@ -147,10 +151,12 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 // grant, which bypasses the source check and produces a 200 with no error event,
 // making the assertion fail.
 func TestDelegatedGrantScopesSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	reg := agentgrant.NewRegistry()
 	grantedSrc := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("scope-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{grantedSrc})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// The store resolves the parent message to a source outside the grant.
 	outOfGrant := &store.Source{ID: 2, SourceType: "imap", Identifier: "bob@example.com"}
@@ -167,19 +173,20 @@ func TestDelegatedGrantScopesSource(t *testing.T) {
 		}
 		ref := agentgrant.SourceRef{ID: outOfGrant.ID, Type: outOfGrant.SourceType, Identifier: outOfGrant.Identifier}
 		if !req.Grant.Allows(agentgrant.PermissionDraftCreate, ref) {
-			return &CLIRunCodedError{Code: "not_permitted", Err: fmt.Errorf("source not in grant")}
+			return &CLIRunCodedError{Code: "not_permitted", Err: errors.New("source not in grant")}
 		}
 		return nil
 	}
 
-	body, _ := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}})
+	body, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}})
+	require.NoError(marshalErr)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "not_permitted",
+	assert.Equal(http.StatusOK, w.Code)
+	assert.Contains(w.Body.String(), "not_permitted",
 		"delegated draft-reply for out-of-grant source must be refused; if this fails, verify cli_handlers.go:1315 sets req.Grant = auth.Grant")
 }

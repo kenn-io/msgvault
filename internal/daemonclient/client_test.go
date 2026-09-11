@@ -325,14 +325,17 @@ func TestNewAgentTokenClientRejectsRedirects(t *testing.T) {
 	t.Cleanup(target.Close)
 
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+		http.Redirect(w, r, target.URL+"/health", http.StatusFound)
 	}))
 	t.Cleanup(redirector.Close)
 
 	c, err := New(Config{URL: redirector.URL, AgentToken: "mva1_token", AllowInsecure: true})
 	require.NoError(t, err)
 
-	_, err = c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	resp, err := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	require.Error(t, err, "agent token client must not follow redirects")
 	assert.Contains(t, err.Error(), "does not follow redirects")
 }
@@ -849,7 +852,10 @@ func TestRequestEditorDelegatedMode(t *testing.T) {
 		require.NoError(t, err)
 
 		// Make a request via the generated client to trigger requestEditor.
-		_, _ = c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+		resp, _ := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 
 		assert.Equal(t, token, gotAgentToken, "agent token header must be set in delegated mode")
 		assert.Empty(t, gotAPIKey, "X-Api-Key must not be set in delegated mode")

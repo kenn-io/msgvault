@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -37,7 +38,7 @@ var agentTokenIssueCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if agentTokenLabel == "" {
-			return fmt.Errorf("--label is required")
+			return errors.New("--label is required")
 		}
 		sourceIDs, err := parseAgentTokenSourceIDs(strings.Split(agentTokenSourceIDs, ","))
 		if err != nil {
@@ -57,7 +58,7 @@ var agentTokenIssueCmd = &cobra.Command{
 			return err
 		}
 		if agentTokenJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(result) //nolint:gosec // issue output intentionally contains the one-time secret
 		}
 		printAgentTokenIssueResult(cmd, result)
 		return nil
@@ -92,7 +93,7 @@ var agentTokenRevokeCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := strings.TrimSpace(args[0])
 		if id == "" {
-			return fmt.Errorf("token ID must not be empty")
+			return errors.New("token ID must not be empty")
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -111,7 +112,7 @@ func parseAgentTokenSourceIDs(raw []string) ([]int64, error) {
 	ids := make([]int64, 0, len(raw))
 	for _, s := range raw {
 		// Support comma-separated values in a single flag value.
-		for _, part := range strings.Split(s, ",") {
+		for part := range strings.SplitSeq(s, ",") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue

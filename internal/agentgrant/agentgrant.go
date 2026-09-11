@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -49,14 +50,7 @@ type Grant struct {
 
 // Allows returns true only when p is in the grant AND some SourceRef matches Type and Identifier.
 func (g Grant) Allows(p Permission, src SourceRef) bool {
-	hasPerm := false
-	for _, gp := range g.Permissions {
-		if gp == p {
-			hasPerm = true
-			break
-		}
-	}
-	if !hasPerm {
+	if !slices.Contains(g.Permissions, p) {
 		return false
 	}
 	for _, s := range g.Sources {
@@ -110,10 +104,10 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 			return "", "", Grant{}, fmt.Errorf("agentgrant: source ID must be positive, got %d", s.ID)
 		}
 		if s.Type == "" {
-			return "", "", Grant{}, fmt.Errorf("agentgrant: source Type must not be empty")
+			return "", "", Grant{}, errors.New("agentgrant: source Type must not be empty")
 		}
 		if s.Identifier == "" {
-			return "", "", Grant{}, fmt.Errorf("agentgrant: source Identifier must not be empty")
+			return "", "", Grant{}, errors.New("agentgrant: source Identifier must not be empty")
 		}
 		key := s.Type + "\x00" + s.Identifier
 		if _, dup := seen[key]; dup {
