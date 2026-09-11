@@ -174,6 +174,56 @@ func (f draftReplyFixture) run(t *testing.T, adapter *storeAPIAdapter, flags ...
 	return events, err
 }
 
+// runAs drives draft-reply with a delegated grant attached to the request, the
+// way handleCLIRun does for an agent-token caller.
+func (f draftReplyFixture) runAs(t *testing.T, adapter *storeAPIAdapter, grant *agentgrant.Grant, flags ...string) ([]api.CLIRunEvent, error) {
+	t.Helper()
+	args := append([]string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--from", testutil.IMAPTestUsername}, flags...)
+	var events []api.CLIRunEvent
+	err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	return events, err
+}
+
+// TestDelegatedDraftReplyCreatesDraft drives the allow branch of
+// authorizeDelegatedDraftSource through to the user-facing outcome. Without it
+// an inverted predicate would leave every deny test green while no delegated
+// caller could ever create a draft.
+func TestDelegatedDraftReplyCreatesDraft(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+
+	grant := &agentgrant.Grant{
+		ID:          "g-in-grant",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources: []agentgrant.SourceRef{{
+			ID:         fixture.source.ID,
+			Type:       fixture.source.SourceType,
+			Identifier: fixture.source.Identifier,
+		}},
+	}
+
+	events, err := fixture.runAs(t, adapter, grant, "--body", "reply body", "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result map[string]any
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal("created", result["status"])
+	assertions.Equal("Drafts", result["mailbox"])
+	assertions.Contains(result["operation_ref"], fmt.Sprintf("%d:Drafts|", fixture.source.ID))
+
+	// The draft is durable locally, not merely reported.
+	var localID int64
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
+	`), fixture.source.ID, "Drafts|1").Scan(&localID))
+	assertions.NotZero(localID)
+}
+
 func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
