@@ -1035,6 +1035,15 @@ func storedDraftRevision(t *testing.T, f draftLifecycleFixture) int64 {
 	return revision
 }
 
+func storedDraftLifecycle(t *testing.T, f draftLifecycleFixture) string {
+	t.Helper()
+	var lifecycle string
+	require.NoError(t, f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT lifecycle FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&lifecycle))
+	return lifecycle
+}
+
 // TestDraftEditInterruptedReloadsAndEdits drives the whole caller-level
 // recovery sequence for an interrupted edit: the recovery call reports
 // edit_interrupted, the caller re-reads the draft, and the revision that read
@@ -1994,6 +2003,55 @@ func TestDraftEditRefusesDraftWhoseFromResolvesToNoAddress(t *testing.T) {
 	assert.False(pendingKind.Valid, "no pending marker may survive a pre-claim refusal")
 	assert.Equal(f.draftID, currentMessageID)
 	assert.Len(*f.refreshed, refreshesBefore, "a refused edit refreshes no cache")
+}
+
+func TestPendingDiscardRecoveryFinalizesAfterMembershipReconciliation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newDraftLifecycleFixture(t)
+
+	pending, err := f.store.BeginIMAPDraftOperationContext(t.Context(), store.IMAPDraftIntent{
+		DraftID: f.draftID, ExpectedRevision: 1, Kind: "discard",
+	})
+	require.NoError(err)
+	testutil.ExpungeIMAPMessage(t, f.config.Host+":"+strconv.Itoa(f.config.Port), "Drafts", emersionimap.UID(f.draftUID))
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		DELETE FROM imap_message_memberships
+		WHERE source_id = ? AND message_id = ?
+	`), f.source.ID, f.draftID)
+	require.NoError(err)
+
+	events, err := f.runLifecycle(t, "draft-delete", strconv.FormatInt(f.draftID, 10),
+		"--revision="+strconv.FormatInt(pending.Revision, 10))
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Equal("discarded", storedDraftLifecycle(t, f))
+	assert.Contains(events[0].Data, "discarded")
+}
+
+func TestDraftDeletePreflightsProductionClientBeforeClaim(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newDraftLifecycleFixture(t)
+	adapter := f.grantedAdapter()
+	adapter.draftLifecycleClientFactory = func(context.Context, *store.Source) (draftClient, error) {
+		return imaplib.NewClient(f.config, testutil.IMAPTestPassword), nil
+	}
+
+	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-delete", strconv.FormatInt(f.draftID, 10), "--revision=1"},
+	}, nil)
+	require.Error(err)
+	assert.Equal("conditional_store_required", err.Error())
+	assert.Equal("active", storedDraftLifecycle(t, f))
+	var pendingKind sql.NullString
+	var revision int64
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT revision, pending_kind FROM imap_drafts WHERE draft_id = ?
+	`), f.draftID).Scan(&revision, &pendingKind))
+	assert.Equal(int64(1), revision)
+	assert.False(pendingKind.Valid)
+	assert.True(draftUIDPresentOnServer(t, f, emersionimap.UID(f.draftUID)))
 }
 
 // bumpRevisionAfterRemove wraps a real IMAP client, performs the real removal,

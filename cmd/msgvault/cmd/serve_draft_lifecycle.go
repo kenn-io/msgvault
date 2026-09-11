@@ -1212,11 +1212,6 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		}
 		return draftReplyError("internal", fmt.Errorf("refresh pending discard for draft %d: %w", intent.DraftID, err))
 	}
-	if !hasMembership {
-		return refuseDraftLifecycle(emit, intent, "discard_recovery_unverifiable", draftInspectInstruction, 0,
-			fmt.Errorf("draft %d has no current archived membership to identify the pending discard copy", intent.DraftID))
-	}
-
 	// Reload under the lock for authoritative revision and pending coordinates.
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
@@ -1287,25 +1282,39 @@ func (a *storeAPIAdapter) replayPendingDiscard(
 		return draftReplyError("delete_failed", cause)
 	}
 
-	inspectResult, inspectErr := client.InspectDraft(ctx, oldTarget)
-	if inspectErr != nil {
-		return failReplay(inspectErr)
-	}
-	if inspectResult.State == imaplib.DraftRemoteFlagMissing || inspectResult.State == imaplib.DraftRemoteChanged {
-		return failReplay(errors.New("remote draft changed during pending discard recovery"))
-	}
-	if inspectResult.State == imaplib.DraftRemotePresent {
-		if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
-			return failReplay(err)
+	var removeResult imaplib.DraftInspectResult
+	if !hasMembership {
+		inspectResult, inspectErr := client.InspectDraft(ctx, oldTarget)
+		if inspectErr != nil {
+			return failReplay(inspectErr)
 		}
-	}
+		if inspectResult.State != imaplib.DraftRemoteAbsent {
+			return refuseDraftLifecycle(emit, intent, "discard_recovery_unverifiable", draftInspectInstruction, 0,
+				fmt.Errorf("draft %d has no current archived membership and its pending receipt is not absent", intent.DraftID))
+		}
+		removeResult = inspectResult
+	} else {
+		inspectResult, inspectErr := client.InspectDraft(ctx, oldTarget)
+		if inspectErr != nil {
+			return failReplay(inspectErr)
+		}
+		if inspectResult.State == imaplib.DraftRemoteFlagMissing || inspectResult.State == imaplib.DraftRemoteChanged {
+			return failReplay(errors.New("remote draft changed during pending discard recovery"))
+		}
+		if inspectResult.State == imaplib.DraftRemotePresent {
+			if err := client.CheckDraftRemovalCapabilities(ctx, oldTarget); err != nil {
+				return failReplay(err)
+			}
+		}
 
-	removeResult, removeErr := client.RemoveDraft(ctx, oldTarget)
-	if removeErr != nil {
-		if dae, ok := errors.AsType[*imaplib.DraftAppendError](removeErr); ok {
-			return failReplay(dae.Err)
+		var removeErr error
+		removeResult, removeErr = client.RemoveDraft(ctx, oldTarget)
+		if removeErr != nil {
+			if dae, ok := errors.AsType[*imaplib.DraftAppendError](removeErr); ok {
+				return failReplay(dae.Err)
+			}
+			return failReplay(removeErr)
 		}
-		return failReplay(removeErr)
 	}
 	switch removeResult.State {
 	case imaplib.DraftRemoteAbsent, imaplib.DraftRemotePresent:
