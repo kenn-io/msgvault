@@ -1930,6 +1930,12 @@ func (c *Client) BatchDeleteMessages(_ context.Context, _ []string) error {
 
 // Close logs out and disconnects from the IMAP server.
 func (c *Client) Close() error {
+	return c.CloseContext(context.Background())
+}
+
+// CloseContext logs out and disconnects, closing the transport if the context
+// is cancelled while LOGOUT waits for the server.
+func (c *Client) CloseContext(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == nil {
@@ -1939,8 +1945,20 @@ func (c *Client) Close() error {
 	c.conn = nil
 	c.selectedMailbox = ""
 	c.selectedUIDValidity = 0
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return err
+	}
 	if err := conn.Logout().Wait(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return fmt.Errorf("IMAP logout: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }

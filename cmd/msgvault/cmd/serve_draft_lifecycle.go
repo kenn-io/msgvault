@@ -20,7 +20,7 @@ const draftLifecycleDiscarded = "discarded"
 // draftClient contains the read-only IMAP operations used by draft-get.
 type draftClient interface {
 	InspectDraft(context.Context, imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
-	Close() error
+	CloseContext(context.Context) error
 }
 
 // draftLifecycleIntent holds the parsed arguments for draft-get.
@@ -73,10 +73,10 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		switch name {
 		case "json":
-			if jsonSet || (hasValue && value != "true") {
-				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--json accepts no value and may appear once"))
+			if jsonSet || (hasValue && value != "true" && value != "false") {
+				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--json accepts true or false and may appear once"))
 			}
-			intent.JSON = true
+			intent.JSON = !hasValue || value == "true"
 			jsonSet = true
 		case "log-level", "log-sql-slow-ms":
 			if hasValue {
@@ -238,7 +238,7 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		output.ProviderStatus = "unknown"
 		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
 	}
-	defer func() { _ = client.Close() }()
+	defer func() { _ = client.CloseContext(ctx) }()
 	result, err := client.InspectDraft(ctx, imaplib.DraftTarget{
 		Mailbox:     draft.Mailbox,
 		UIDValidity: draft.UIDValidity,

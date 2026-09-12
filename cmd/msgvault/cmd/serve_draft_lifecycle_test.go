@@ -330,7 +330,7 @@ func TestParseDraftLifecycleArgsAcceptsInheritedBooleanValues(t *testing.T) {
 	requirements := require.New(t)
 
 	intent, err := parseDraftLifecycleArgs([]string{
-		"draft-get", "42", "--verbose=false", "--log-sql=false",
+		"draft-get", "42", "--json=false", "--verbose=false", "--log-sql=false",
 	})
 	requirements.NoError(err)
 	requirements.False(intent.JSON)
