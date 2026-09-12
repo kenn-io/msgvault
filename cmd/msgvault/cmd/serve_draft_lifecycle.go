@@ -192,6 +192,14 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		}
 		return draftReplyError("internal", fmt.Errorf("load draft %d: %w", intent.DraftID, err))
 	}
+	fromRecipients, err := a.store.GetMessageRecipientsContext(ctx, draft.CurrentMessageID, "from")
+	if err != nil {
+		return draftReplyError("internal", fmt.Errorf("load From address for draft %d: %w", draft.DraftID, err))
+	}
+	if len(fromRecipients) > 0 {
+		// The envelope address survives participant merges; participants can change.
+		draft.FromAddress = fromRecipients[0].EmailAddress
+	}
 
 	output := draftLifecycleOutput{
 		Status:          draft.Lifecycle,

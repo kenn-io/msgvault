@@ -93,6 +93,25 @@ func TestDraftGetTextIncludesHeadersAndBody(t *testing.T) {
 	assertions.Contains(events[0].Data, "body:\nInitial draft body")
 }
 
+func TestDraftGetPreservesEnvelopeFromAfterParticipantMerge(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newDraftLifecycleFixture(t)
+	var absorbedID int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT sender_id FROM messages WHERE id = ?
+	`), f.draftID).Scan(&absorbedID))
+	survivorID, err := f.store.EnsureParticipant("survivor@example.com", "Survivor", "example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.store.MergeParticipants(absorbedID, survivorID))
+
+	events, err := f.runGet(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	assertions.Equal("alice@example.com", decodeDraftLifecycleEvent(t, events[0])["from_address"])
+}
+
 func TestDraftGetReportsAbsentRemoteState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
