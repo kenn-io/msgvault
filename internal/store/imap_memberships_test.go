@@ -614,6 +614,8 @@ func TestApplyIMAPMailboxDeltas_AmbiguousRawDigestFallsBackToExactSourceID(t *te
 			{UID: 1, SourceMessageID: "[Gmail]/All Mail|1"},
 			{UID: 2, SourceMessageID: "[Gmail]/All Mail|2"},
 		},
+	}, {
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 17, UIDNext: 2},
 	}}))
 
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
