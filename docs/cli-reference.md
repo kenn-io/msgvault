@@ -19,7 +19,7 @@ in your installed binary. This reference follows current `main`; see
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
-| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [mcp](#mcp), [query](#query), [openapi](#openapi) |
+| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## Global Flags
 
@@ -35,6 +35,9 @@ in your installed binary. This reference follows current `main`; see
 | `--log-sql` | Log every SQL query at info level (verbose, for debugging) |
 | `--log-sql-slow-ms <ms>` | Slow query threshold in ms (default: 100; 0 uses built-in default) |
 | `--help` | Show help |
+| `--agent-url <url>` | Daemon base URL for delegated mode; must be supplied together with `--agent-token-file` |
+| `--agent-token-file <path>` | Path to a file containing a restricted agent token secret; must be supplied together with `--agent-url` |
+| `--agent-allow-insecure` | Allow a plain-HTTP `--agent-url`; rejected by default |
 
 ---
 
@@ -45,6 +48,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
+4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` is available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
@@ -151,10 +155,13 @@ mailbox = "Drafts"
 ```
 
 Requests, Settings, source JSON, environment variables, and client config do
-not grant access or change the mailbox. The grant is per source, not per
-caller: any client that can reach the daemon can create drafts on it. A later sync reconciles the saved
-membership when the mailbox's UIDVALIDITY changes. Draft creation never moves
-an IMAP cursor.
+not grant access or change the mailbox. The host policy applies per source. For
+owner callers (API key, browser session, or keyless loopback), any owner caller
+that can reach the daemon can create drafts on a granted source. A delegated
+caller authenticated with a restricted agent token additionally requires that
+the target source appear in the token's grant; see [agent-token](#agent-token).
+A later sync reconciles the saved membership when the mailbox's UIDVALIDITY
+changes. Draft creation never moves an IMAP cursor.
 
 ---
 
@@ -2890,3 +2897,75 @@ Print a quickstart guide for AI agents.
 ```bash
 msgvault quickstart
 ```
+
+---
+
+## agent-token
+
+Manage restricted agent grants. The daemon must be started with `[server] agent_access = true`
+and a non-empty `[server] api_key`. All three subcommands require owner authentication
+(the owner API key; keyless loopback is not sufficient); a delegated caller cannot issue or modify grants.
+
+### What a token does and does not defend against
+
+A restricted agent token scopes and revokes access for an agent process. It is not a
+boundary against an agent that holds shell access as the daemon owner: such an agent can
+read provider credentials, rewrite `config.toml`, or replace the daemon binary. What
+tokens buy is scoping and revocability for an agent already constrained by its deployment
+environment, plus a usable way to run the daemon somewhere the agent cannot reach.
+
+A token does not defend against a local agent process running under the same user account
+as the daemon. The supported model keeps owner credentials, provider credentials, daemon
+configuration, and daemon replacement outside the agent's authority — a remote
+user-managed daemon achieves that, and so does an isolated local agent environment, while
+a second daemon or data directory under the same unrestricted user does not.
+
+Tokens are in-memory and process-scoped. All grants are invalidated when the daemon
+restarts. A grant is valid until it is revoked or the daemon restarts.
+There is no persistence to disk and no migration needed.
+
+### agent-token issue
+
+Issue a new restricted grant for one agent. The secret is printed once and not stored by
+the daemon (only its SHA-256 digest is kept in memory). Write it to a file that the agent
+can read, never pass it as a flag or environment variable.
+
+```bash
+msgvault agent-token issue --label <name> \
+  --permissions draft.create \
+  --source-ids <id>[,<id>...]
+```
+
+| Flag | Description |
+|---|---|
+| `--label <name>` | (required) Human-readable name for the grant |
+| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create` |
+| `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
+
+The grant is valid until revoked or until the daemon restarts.
+
+The response includes the daemon address, the secret, and the granted source references.
+Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
+
+### agent-token list
+
+List all active grants. Secrets and digests are never returned.
+
+```bash
+msgvault agent-token list
+```
+
+Each row shows the grant ID, label, permissions, sources (as `id/type/identifier`), and creation time.
+
+### agent-token revoke
+
+Revoke a grant by ID. Returns `204` whether or not the ID existed, so grant IDs cannot be
+enumerated by probing revoke.
+
+```bash
+msgvault agent-token revoke <id>
+```
+
+The grant is removed from the in-memory registry immediately. Any request in flight that
+already passed authentication completes, but the next authentication attempt with the
+revoked secret is denied without fallback.

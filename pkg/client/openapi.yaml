@@ -167,6 +167,102 @@ components:
         - Email
         - Name
       type: object
+    AgentTokenIssueRequest:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        permissions:
+          items:
+            type: string
+          type: array
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - label
+        - permissions
+        - source_ids
+      type: object
+    AgentTokenIssueResponse:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        daemon_url:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        permissions:
+          items:
+            type: string
+          type: array
+        secret:
+          type: string
+        sources:
+          items:
+            $ref: "#/components/schemas/AgentTokenSourceView"
+          type: array
+      required:
+        - id
+        - label
+        - permissions
+        - sources
+        - created_at
+        - secret
+        - daemon_url
+      type: object
+    AgentTokenListResponse:
+      properties:
+        tokens:
+          items:
+            $ref: "#/components/schemas/AgentTokenView"
+          type: array
+      required:
+        - tokens
+      type: object
+    AgentTokenSourceView:
+      properties:
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+        - identifier
+      type: object
+    AgentTokenView:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        permissions:
+          items:
+            type: string
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/AgentTokenSourceView"
+          type: array
+      required:
+        - id
+        - label
+        - permissions
+        - sources
+        - created_at
+      type: object
     AggregateResponse:
       properties:
         applied_source_ids:
@@ -10337,6 +10433,7 @@ components:
             - api_key
             - session
             - required
+            - delegated
           type: string
         csrf_token:
           type: string
@@ -12107,6 +12204,73 @@ paths:
       security:
         - apiKey: []
       summary: Add an account
+      tags:
+        - API
+  /api/v1/agent-tokens:
+    get:
+      operationId: listAgentTokens
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTokenListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List active agent grants
+      tags:
+        - API
+    post:
+      operationId: issueAgentToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentTokenIssueRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTokenIssueResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Issue a restricted agent grant
+      tags:
+        - API
+  /api/v1/agent-tokens/{id}:
+    delete:
+      operationId: revokeAgentToken
+      parameters:
+        - description: Agent grant ID to revoke
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Revoke an agent grant by ID
       tags:
         - API
   /api/v1/aggregates:

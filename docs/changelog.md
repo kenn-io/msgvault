@@ -199,6 +199,7 @@ and [MCP](usage/chat.md).
 
 - Fix WhatsApp Apple imports silently skipping URL messages (type 7) with non-empty text.
 - Add `draft-reply`, an opt-in IMAP reply draft path: the daemon composes a plain-text reply with the parent's threading headers, appends it with UIDPLUS to the granted mailbox, and stores the message and its receipt locally in one transaction. msgvault never sends mail.
+- Add restricted agent grants: `agent-token issue/list/revoke` (owner-only) issue in-memory, scoped tokens with one `draft.create` permission that are valid until revoked or until the daemon restarts. A delegated caller presenting `--agent-url` and `--agent-token-file` can run only `draft-reply`, restricted to sources named in its grant. Enable with `[server] agent_access = true` alongside a non-empty `api_key`. See [agent-token](cli-reference.md#agent-token) and [configuration](configuration.md#server).
 - Sync Notion AI Meeting Notes with available transcripts, verified attendees,
   changed-note refresh, and bounded late-transcript retries.
 - Import Slackdump directories/ZIPs and MailMate-style `.mailbox` trees of EML

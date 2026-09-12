@@ -189,7 +189,17 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
-	if s.requestAuthentication(req).Mode != AuthModeRequired {
+	auth := s.requestAuthentication(req)
+	if auth.Mode == AuthModeDelegated {
+		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
+			next(ctx)
+			return
+		}
+		s.logUnauthorizedAPIRequest(req)
+		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
+		return
+	}
+	if auth.Mode != AuthModeRequired {
 		next(ctx)
 		return
 	}
@@ -333,6 +343,14 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
 	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRunRequest, CLIRunEvent](apiV1, "runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command", s.handleCLIRun)
 	registerAPIV1RawHumaJSONRoute[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage)
+	// Agent-token management routes: owner API key required.
+	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
+	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
+	{
+		op := rawAPIV1Operation("revokeAgentToken", http.MethodDelete, "/agent-tokens/{id}", "Revoke an agent grant by ID")
+		op.Responses = rawHumaResponses(http.StatusNoContent)
+		registerRawHumaRoute(apiV1, op, s.handleRevokeAgentToken)
+	}
 	registerAPIV1RawHumaBinaryRoute(
 		apiV1,
 		"getCLIMessageRaw",
@@ -969,6 +987,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "uploadToken":
 		return []*huma.Param{pathStringParam("email", "Account email address")}
+	case "revokeAgentToken":
+		return []*huma.Param{pathStringParam("id", "Agent grant ID to revoke")}
 	default:
 		return nil
 	}

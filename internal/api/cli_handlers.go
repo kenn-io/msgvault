@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/accountops"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/clirun"
@@ -517,6 +518,8 @@ type CLIRunRequest struct {
 	Env          map[string]string `json:"env,omitempty"`
 	Cwd          string            `json:"cwd,omitempty"`
 	GrantDecided bool              `json:"-"`
+	// Grant carries the authenticated agent grant when classified AuthModeDelegated. Never decoded from the wire.
+	Grant *agentgrant.Grant `json:"-"`
 }
 
 type CLIAddCalendarPlanRequest struct {
@@ -1303,6 +1306,14 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	if !cliRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
+	}
+	auth := s.requestAuthentication(r)
+	if auth.Mode == AuthModeDelegated {
+		if !IsCLIRunDraftReply(req.Args) {
+			writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
+			return
+		}
+		req.Grant = auth.Grant
 	}
 	if cliRunArgsContainFlag(req.Args, "grant-decided") {
 		writeError(w, http.StatusBadRequest, "invalid_args", "--grant-decided is not accepted through the daemon CLI runner")

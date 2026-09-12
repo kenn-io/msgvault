@@ -66,7 +66,7 @@ func TestOperationGateMiddlewareSkipsReadMethods(t *testing.T) {
 
 			gate := &recordingOperationGate{allow: true}
 			called := false
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusNoContent)
 			}))
@@ -91,7 +91,7 @@ func TestOperationGateMiddlewareBypassesUnauthenticatedRequests(t *testing.T) {
 	authorized := func(r *http.Request) bool {
 		return r.Header.Get("X-Api-Key") == "secret"
 	}
-	handler := operationGateMiddleware(gate, authorized)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, authorized, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -118,7 +118,7 @@ func TestOperationGateMiddlewareGatesMutatingMethods(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			gate := &recordingOperationGate{allow: true}
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 
@@ -139,7 +139,7 @@ func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
 
 	gate := &recordingOperationGate{allow: true}
 	called := false
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -157,7 +157,7 @@ func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
 func TestOperationGateMiddlewareSkipsLogCLIRunAndRestoresBody(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Args []string `json:"args"`
 		}
@@ -181,7 +181,7 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
 	handlerCalled := false
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		handlerCalled = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -206,7 +206,7 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -233,7 +233,7 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			gate := &recordingOperationGate{allow: true}
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 
@@ -252,7 +252,7 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -275,7 +275,7 @@ func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
 
 	gate := &recordingOperationGate{allow: false}
 	called := false
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -304,7 +304,7 @@ func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing
 	require.True(ok, "occupy gate")
 
 	handlerCalled := make(chan struct{}, 1)
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		handlerCalled <- struct{}{}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -599,7 +599,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 			assert := assert.New(t)
 			gate := &recordingOperationGate{allow: false}
 			called := false
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusNoContent)
 			}))
@@ -620,7 +620,7 @@ func TestOperationGateMiddlewareSkipsSelfGatedCLIRunCommands(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
 	called := false
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -648,7 +648,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 			assert := assert.New(t)
 			gate := &recordingOperationGate{allow: false}
 			called := false
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusNoContent)
 			}))
@@ -692,7 +692,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 			assert := assert.New(t)
 			gate := &recordingOperationGate{allow: false}
 			called := false
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusNoContent)
 			}))
@@ -723,7 +723,7 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 	defer release()
 
 	called := false
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -958,7 +958,7 @@ func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {
 	require.True(ok, "occupy gate")
 	defer release()
 
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["sync","user@example.com"]}`))
@@ -979,7 +979,7 @@ func TestOperationGateMiddlewareReportsShutdownWhenDraining(t *testing.T) {
 	gate := NewSerialOperationGate()
 	gate.StartDrain()
 
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := operationGateMiddleware(gate, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)

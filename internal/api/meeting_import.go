@@ -143,7 +143,7 @@ func (s *Server) handleMeetingImport(w http.ResponseWriter, r *http.Request) {
 		operationGateLabelFromPath(meetingImportEndpointPath),
 	)
 	if !ok {
-		writeOperationGateBusy(w, s.operationGate)
+		writeOperationGateBusy(w, s.operationGate, false)
 		return
 	}
 	defer done()

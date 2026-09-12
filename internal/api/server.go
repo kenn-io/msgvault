@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
@@ -387,6 +388,7 @@ type Server struct {
 	inlineCache *inlineParseCache
 	spaHandler  http.Handler
 	sessions    *sessionStore
+	agentGrants *agentgrant.Registry
 	// trustedProxies contains only explicitly configured direct proxy peers.
 	// Forwarded scheme/host data is ignored for every other RemoteAddr.
 	trustedProxies   []netip.Prefix
@@ -562,35 +564,41 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:                      opts.Config,
-		store:                    opts.Store,
-		savedViewStore:           opts.SavedViewStore,
-		sqlQueryRunner:           opts.SQLQueryRunner,
-		shutdownToken:            opts.ShutdownToken,
-		shutdownFunc:             opts.ShutdownFunc,
-		hybridEngine:             opts.HybridEngine,
-		vectorCfg:                opts.VectorCfg,
-		backend:                  opts.Backend,
-		personSearchEngine:       opts.PersonSearchEngine,
-		scheduler:                opts.Scheduler,
-		cardDAV:                  opts.CardDAV,
-		logger:                   opts.Logger,
-		requestTimeout:           timeout,
-		readTimeout:              daemonReadTimeout,
-		queryTimeout:             QueryEndpointTimeout,
-		inProgressThreshold:      inProgressLogThreshold,
-		inProgressInterval:       inProgressLogInterval,
-		daemonVersion:            opts.DaemonVersion,
-		idleTracker:              opts.IdleTracker,
-		operationGate:            opts.OperationGate,
-		operationHistoryReader:   opts.OperationHistoryReader,
-		importContext:            importContext,
-		cancelImports:            cancelImports,
-		blobStore:                opts.BlobStore,
-		remoteImages:             remoteimage.NewFetcher(),
-		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
-		spaHandler:               opts.SPAHandler,
-		sessions:                 newSessionStore(defaultSessionTTL),
+		cfg:                    opts.Config,
+		store:                  opts.Store,
+		savedViewStore:         opts.SavedViewStore,
+		sqlQueryRunner:         opts.SQLQueryRunner,
+		shutdownToken:          opts.ShutdownToken,
+		shutdownFunc:           opts.ShutdownFunc,
+		hybridEngine:           opts.HybridEngine,
+		vectorCfg:              opts.VectorCfg,
+		backend:                opts.Backend,
+		personSearchEngine:     opts.PersonSearchEngine,
+		scheduler:              opts.Scheduler,
+		cardDAV:                opts.CardDAV,
+		logger:                 opts.Logger,
+		requestTimeout:         timeout,
+		readTimeout:            daemonReadTimeout,
+		queryTimeout:           QueryEndpointTimeout,
+		inProgressThreshold:    inProgressLogThreshold,
+		inProgressInterval:     inProgressLogInterval,
+		daemonVersion:          opts.DaemonVersion,
+		idleTracker:            opts.IdleTracker,
+		operationGate:          opts.OperationGate,
+		operationHistoryReader: opts.OperationHistoryReader,
+		importContext:          importContext,
+		cancelImports:          cancelImports,
+		blobStore:              opts.BlobStore,
+		remoteImages:           remoteimage.NewFetcher(),
+		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
+		spaHandler:             opts.SPAHandler,
+		sessions:               newSessionStore(defaultSessionTTL),
+		agentGrants: func() *agentgrant.Registry {
+			if opts.Config != nil && opts.Config.Server.AgentAccess {
+				return agentgrant.NewRegistry()
+			}
+			return nil
+		}(),
 		exploreState:             newExploreServerState(time.Now),
 		exploreCursorKey:         newExploreCursorKey(),
 		trustedProxies:           trustedProxyPrefixes(opts.Config.Server.TrustedProxies),
@@ -673,7 +681,7 @@ func (s *Server) setupRouter() http.Handler {
 	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
 	h = s.analyticsEngineMiddleware(h)
-	h = operationGateMiddleware(s.operationGate, s.apiRequestAuthorized)(h)
+	h = operationGateMiddleware(s.operationGate, s.requestGateEligible, s.requestIsDelegated)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
@@ -854,6 +862,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.sessions != nil {
 		s.sessions.Close()
+	}
+	if s.agentGrants != nil {
+		s.agentGrants.Close()
 	}
 	s.serverMu.RLock()
 	server := s.server
@@ -1434,9 +1445,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthenticatedHealth returns health details that are safe behind the
-// API-key boundary.
+// API-key boundary. Delegated callers receive the public projection plus
+// APISchemaVersion only, so they can verify version compatibility without
+// seeing internal operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
+	auth := s.requestAuthentication(r)
+	if auth.Mode == AuthModeDelegated {
+		writeJSON(w, http.StatusOK, HealthResponse{
+			Status:           "ok",
+			Vector:           s.vectorHealthPublic(),
+			Operation:        s.operationBusyHealth(),
+			AnalyticsEngine:  s.analyticsModeForContext(r.Context()),
+			APISchemaVersion: APISchemaVersion,
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, HealthResponse{
 		Status:           "ok",
 		Vector:           s.vectorHealth(),

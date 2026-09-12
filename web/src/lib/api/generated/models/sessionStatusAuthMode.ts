@@ -10,4 +10,5 @@ export const SessionStatusAuthMode = {
   api_key: "api_key",
   session: "session",
   required: "required",
+  delegated: "delegated",
 } as const;

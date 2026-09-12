@@ -5,6 +5,9 @@ import type {
   AcceptIdentityMatchCandidatePathParameters,
   AccountListResponse,
   AddAccountRequest,
+  AgentTokenIssueRequest,
+  AgentTokenIssueResponse,
+  AgentTokenListResponse,
   AggregateResponse,
   AppendPersonNoteParams,
   AppendPersonNotePathParameters,
@@ -306,6 +309,7 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
+  RevokeAgentTokenPathParameters,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
   RunSavedViewResponse,
@@ -397,6 +401,49 @@ export const addAccount = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: addAccountRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List active agent grants
+ */
+export const listAgentTokens = (
+  options?: SecondParameter<typeof orvalFetch<AgentTokenListResponse>>,
+) => {
+  return orvalFetch<AgentTokenListResponse>(
+    { url: `/api/v1/agent-tokens`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Issue a restricted agent grant
+ */
+export const issueAgentToken = (
+  agentTokenIssueRequest: AgentTokenIssueRequest,
+  options?: SecondParameter<typeof orvalFetch<AgentTokenIssueResponse>>,
+) => {
+  return orvalFetch<AgentTokenIssueResponse>(
+    {
+      url: `/api/v1/agent-tokens`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: agentTokenIssueRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Revoke an agent grant by ID
+ */
+export const revokeAgentToken = (
+  { id }: RevokeAgentTokenPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/agent-tokens/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
     },
     options,
   );

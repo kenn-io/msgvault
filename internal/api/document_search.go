@@ -196,7 +196,7 @@ func (s *Server) documentSearchGuard(label string, next http.HandlerFunc) http.H
 		if s.operationGate != nil {
 			done, ok := beginGateWorkBounded(r.Context(), s.operationGate, label)
 			if !ok {
-				writeOperationGateBusy(w, s.operationGate)
+				writeOperationGateBusy(w, s.operationGate, false)
 				return
 			}
 			defer done()

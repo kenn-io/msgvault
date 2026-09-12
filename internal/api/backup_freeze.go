@@ -120,7 +120,7 @@ func (s *Server) handleBackupFreezeBegin(w http.ResponseWriter, r *http.Request)
 		state.mu.Lock()
 		state.active = false
 		state.mu.Unlock()
-		writeOperationGateBusy(w, s.operationGate)
+		writeOperationGateBusy(w, s.operationGate, false)
 		return
 	}
 

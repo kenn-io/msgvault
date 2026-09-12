@@ -2129,16 +2129,17 @@ func (s SecretSettingUpdateAction) Validate() error {
 type SessionStatusAuthMode string
 
 const (
-	APIKey   SessionStatusAuthMode = "api_key"
-	Loopback SessionStatusAuthMode = "loopback"
-	Required SessionStatusAuthMode = "required"
-	Session  SessionStatusAuthMode = "session"
+	APIKey    SessionStatusAuthMode = "api_key"
+	Delegated SessionStatusAuthMode = "delegated"
+	Loopback  SessionStatusAuthMode = "loopback"
+	Required  SessionStatusAuthMode = "required"
+	Session   SessionStatusAuthMode = "session"
 )
 
 // Validate checks if the SessionStatusAuthMode value is valid
 func (s SessionStatusAuthMode) Validate() error {
 	switch s {
-	case APIKey, Loopback, Required, Session:
+	case APIKey, Delegated, Loopback, Required, Session:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SessionStatusAuthMode value, got: %v", s))

@@ -69,6 +69,26 @@ in a single binary.`,
 		// invocation-contract violations.
 		cmd.SilenceUsage = true
 
+		// Agent-delegated mode: detect before any local owner lifecycle.
+		// Only commands in agentDelegatedCapable's set may run this way.
+		// Reject flags that are meaningless in delegated mode, then skip
+		// config.Load, EnsureHomeDir, and logging init entirely — a
+		// delegated invocation must not depend on local configuration or
+		// writable local storage.
+		if isAgentMode() {
+			if !agentDelegatedCapable(cmd) {
+				return fmt.Errorf("%s is not available in agent-delegated mode", cmd.Name())
+			}
+			if cfgFile != "" {
+				return errors.New("--config is not allowed in agent-delegated mode")
+			}
+			if homeDir != "" {
+				return errors.New("--home is not allowed in agent-delegated mode")
+			}
+			cmd.SilenceUsage = false
+			return nil
+		}
+
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
 		if skipsConfigLoad(cmd) {
@@ -213,6 +233,18 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		if c == skillsCmd {
 			return true
 		}
+	}
+	return false
+}
+
+// agentDelegatedCapable reports whether cmd may be invoked in agent-delegated
+// mode (i.e. with --agent-url and --agent-token-file). Only commands that
+// work without local configuration or a local daemon are permitted; all others
+// must be run by the owner.
+func agentDelegatedCapable(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "draft-reply":
+		return true
 	}
 	return false
 }
