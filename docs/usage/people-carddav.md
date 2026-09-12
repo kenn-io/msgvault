@@ -63,7 +63,9 @@ An account mismatch, missing
 permission, or expired callback leaves the saved token intact.
 Sign-in expires after ten minutes; use **Cancel sign-in** to stop waiting sooner.
 
-For terminal setup, use a Desktop application OAuth client and run:
+For terminal setup, use a Desktop application OAuth client, or register the
+[terminal callback](../guides/oauth-setup.md#step-4-create-oauth-client-credentials)
+in your Web application client, then run:
 
 ```bash
 msgvault carddav authorize-google you@example.com

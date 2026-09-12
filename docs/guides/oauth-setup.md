@@ -61,6 +61,11 @@ msgvault requires OAuth credentials to access the Gmail API. This section walks 
 7. Save it as `client_secret.json` in a secure location
 8. Click OK
 
+Terminal authorization uses `http://localhost:8089/callback`. If you use a
+**Web application** client instead of a Desktop app, register that exact URL
+as an additional authorized redirect URI and download the updated JSON.
+The Web UI's callback URL can remain registered alongside it.
+
 !!! warning
     Never commit `client_secret.json` to version control.
 
@@ -132,6 +137,9 @@ python3 -c "import json,os;print(*json.load(open(os.path.expanduser('~/.msgvault
 ```
 
 #### Headless Authorization
+
+msgvault binds `localhost:8089` before printing the sign-in URL. If that port is
+busy, close the application using it and retry.
 
 ```
 Starting browser authorization...

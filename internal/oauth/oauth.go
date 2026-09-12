@@ -247,6 +247,8 @@ type Manager struct {
 	logger     *slog.Logger
 	profileURL string // profile endpoint override for tests
 	revokeURL  string // revocation endpoint override for tests
+	// Nil for Desktop clients, whose loopback redirects need no registration.
+	webRedirectURIs []string
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -594,7 +596,11 @@ func (m *Manager) verifyAndSaveToken(ctx context.Context, email string, token *o
 	return m.saveTokenCompared(email, token, grantedScopes, expected)
 }
 
-const callbackPath = "/callback"
+const (
+	callbackPath            = "/callback"
+	terminalCallbackAddress = "localhost:8089"
+	terminalRedirectURL     = "http://" + terminalCallbackAddress + callbackPath
+)
 
 // newCallbackHandler returns an HTTP handler that processes the OAuth callback.
 func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- string, errChan chan<- error) http.HandlerFunc {
@@ -627,7 +633,11 @@ func (m *Manager) browserFlow(
 		return nil, err
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if m.webRedirectURIs != nil && !slices.Contains(m.webRedirectURIs, terminalRedirectURL) {
+		return nil, fmt.Errorf("to authorize from the terminal, register %s in this Web application OAuth client, or use a Desktop application client", terminalRedirectURL)
+	}
+
+	listener, err := net.Listen("tcp", terminalCallbackAddress)
 	if err != nil {
 		return nil, fmt.Errorf("listen for OAuth callback: %w", err)
 	}
@@ -661,13 +671,7 @@ func (m *Manager) browserFlow(
 	defer func() { _ = server.Shutdown(ctx) }()
 
 	// Generate auth URL with login_hint to pre-select account
-	_, callbackPort, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		_ = server.Close()
-		return nil, fmt.Errorf("read OAuth callback port: %w", err)
-	}
-	callbackAddress := net.JoinHostPort("127.0.0.1", callbackPort)
-	m.config.RedirectURL = "http://" + callbackAddress + callbackPath
+	m.config.RedirectURL = terminalRedirectURL
 	authOpts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
@@ -1179,7 +1183,7 @@ func NewManagerWithScopes(clientSecretsPath, tokensDir string, logger *slog.Logg
 		return nil, fmt.Errorf("read client secrets: %w", err)
 	}
 
-	config, err := parseClientSecrets(data, scopes)
+	config, webRedirectURIs, err := parseClientSecrets(data, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("parse client secrets: %w", err)
 	}
@@ -1189,37 +1193,42 @@ func NewManagerWithScopes(clientSecretsPath, tokensDir string, logger *slog.Logg
 	}
 
 	return &Manager{
-		config:    config,
-		tokensDir: tokensDir,
-		logger:    logger,
+		config:          config,
+		tokensDir:       tokensDir,
+		logger:          logger,
+		webRedirectURIs: webRedirectURIs,
 	}, nil
 }
 
 // parseClientSecrets parses Google OAuth client secrets JSON.
 // Requires credentials with redirect_uris (Desktop app or Web app).
 // TV/device clients are not supported (device flow doesn't work with Gmail).
-func parseClientSecrets(data []byte, scopes []string) (*oauth2.Config, error) {
+func parseClientSecrets(data []byte, scopes []string) (*oauth2.Config, []string, error) {
+	var secrets struct {
+		Installed *struct {
+			RedirectURIs []string `json:"redirect_uris"`
+		} `json:"installed"`
+		Web *struct {
+			RedirectURIs []string `json:"redirect_uris"`
+		} `json:"web"`
+	}
+	if err := json.Unmarshal(data, &secrets); err != nil {
+		return nil, nil, fmt.Errorf("parse OAuth client secrets: %w", err)
+	}
 	config, err := google.ConfigFromJSON(data, scopes...)
 	if err != nil {
 		// Check if it's a client missing redirect_uris (TV/device or misconfigured)
-		var secrets struct {
-			Installed *struct {
-				RedirectURIs []string `json:"redirect_uris"`
-			} `json:"installed"`
-			Web *struct {
-				RedirectURIs []string `json:"redirect_uris"`
-			} `json:"web"`
+		missingRedirects := (secrets.Installed != nil && len(secrets.Installed.RedirectURIs) == 0) ||
+			(secrets.Web != nil && len(secrets.Web.RedirectURIs) == 0)
+		if missingRedirects {
+			return nil, nil, errors.New("OAuth client is missing redirect_uris (TV/device clients are not supported - Gmail doesn't work with device flow). Please create a 'Desktop application' or 'Web application' OAuth client in Google Cloud Console")
 		}
-		if json.Unmarshal(data, &secrets) == nil {
-			missingRedirects := (secrets.Installed != nil && len(secrets.Installed.RedirectURIs) == 0) ||
-				(secrets.Web != nil && len(secrets.Web.RedirectURIs) == 0)
-			if missingRedirects {
-				return nil, errors.New("OAuth client is missing redirect_uris (TV/device clients are not supported - Gmail doesn't work with device flow). Please create a 'Desktop application' or 'Web application' OAuth client in Google Cloud Console")
-			}
-		}
-		return nil, fmt.Errorf("parse OAuth client secrets: %w", err)
+		return nil, nil, fmt.Errorf("parse OAuth client secrets: %w", err)
 	}
-	return config, nil
+	if secrets.Web != nil {
+		return config, secrets.Web.RedirectURIs, nil
+	}
+	return config, nil, nil
 }
 
 // TokenFilePath returns the token file path for an email within the

@@ -425,7 +425,7 @@ func TestParseClientSecrets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseClientSecrets([]byte(tt.data), Scopes)
+			_, _, err := parseClientSecrets([]byte(tt.data), Scopes)
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
 			} else {
@@ -537,107 +537,152 @@ func TestNewCallbackHandler(t *testing.T) {
 	}
 }
 
-func TestBrowserFlowBindsEphemeralCallbackBeforePublishingPKCEURL(t *testing.T) {
-	assertions := assert.New(t)
-	required := require.New(t)
+func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
+	for _, tc := range []struct {
+		kind, redirects string
+	}{
+		{"installed", `["http://localhost"]`},
+		{"web", `["https://archive.example/", "http://localhost:8089/callback"]`},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
 
-	occupied, err := net.Listen("tcp", "127.0.0.1:8089")
-	if err == nil {
-		t.Cleanup(func() { _ = occupied.Close() })
-	}
+			var exchanged url.Values
+			tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !assertions.NoError(r.ParseForm()) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				exchanged = r.Form
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}`)
+			}))
+			t.Cleanup(tokenEndpoint.Close)
 
-	var exchanged url.Values
-	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !assertions.NoError(r.ParseForm()) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		exchanged = r.Form
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}`)
-	}))
-	t.Cleanup(tokenEndpoint.Close)
-
-	mgr := setupTestManager(t, Scopes)
-	mgr.config.ClientID = "synthetic-client"
-	mgr.config.ClientSecret = "synthetic-secret"
-	mgr.config.Endpoint = oauth2.Endpoint{
-		AuthURL:   "https://accounts.example/authorize",
-		TokenURL:  tokenEndpoint.URL,
-		AuthStyle: oauth2.AuthStyleInParams,
-	}
-
-	readOutput, writeOutput, err := os.Pipe()
-	required.NoError(err)
-	oldStdout := os.Stdout
-	os.Stdout = writeOutput
-	t.Cleanup(func() {
-		os.Stdout = oldStdout
-		_ = writeOutput.Close()
-		_ = readOutput.Close()
-	})
-
-	result := make(chan error, 1)
-	go func() {
-		_, flowErr := mgr.browserFlow(t.Context(), "person@example.com", false)
-		result <- flowErr
-	}()
-
-	authorizationURL := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(readOutput)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if strings.HasPrefix(line, "https://accounts.example/authorize?") {
-				authorizationURL <- line
-				return
+			secretsPath := filepath.Join(t.TempDir(), "client.json")
+			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":%s}}`, tc.kind, tc.redirects)
+			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
+			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
+			required.NoError(err)
+			mgr.config.Endpoint = oauth2.Endpoint{
+				AuthURL:   "https://accounts.example/authorize",
+				TokenURL:  tokenEndpoint.URL,
+				AuthStyle: oauth2.AuthStyleInParams,
 			}
-		}
-	}()
 
-	var rawURL string
-	select {
-	case rawURL = <-authorizationURL:
-	case err := <-result:
-		required.NoError(err)
-	case <-time.After(5 * time.Second):
-		required.FailNow("terminal authorization did not publish a callback URL")
+			readOutput, writeOutput, err := os.Pipe()
+			required.NoError(err)
+			oldStdout := os.Stdout
+			os.Stdout = writeOutput
+			t.Cleanup(func() {
+				os.Stdout = oldStdout
+				_ = writeOutput.Close()
+				_ = readOutput.Close()
+			})
+
+			result := make(chan error, 1)
+			go func() {
+				_, flowErr := mgr.browserFlow(t.Context(), "person@example.com", false)
+				result <- flowErr
+			}()
+
+			authorizationURL := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(readOutput)
+				for scanner.Scan() {
+					line := strings.TrimSpace(scanner.Text())
+					if strings.HasPrefix(line, "https://accounts.example/authorize?") {
+						authorizationURL <- line
+						return
+					}
+				}
+			}()
+
+			var rawURL string
+			select {
+			case rawURL = <-authorizationURL:
+			case err := <-result:
+				required.NoError(err)
+			case <-time.After(5 * time.Second):
+				required.FailNow("terminal authorization did not publish a callback URL")
+			}
+
+			authURL, err := url.Parse(rawURL)
+			required.NoError(err)
+			redirectURI := authURL.Query().Get("redirect_uri")
+			redirect, err := url.Parse(redirectURI)
+			required.NoError(err)
+			assertions.Equal("http://localhost:8089/callback", redirectURI)
+			assertions.Equal("S256", authURL.Query().Get("code_challenge_method"))
+			challenge := authURL.Query().Get("code_challenge")
+			required.NotEmpty(challenge)
+
+			callback := *redirect
+			query := callback.Query()
+			query.Set("state", authURL.Query().Get("state"))
+			query.Set("code", "one-time-code")
+			callback.RawQuery = query.Encode()
+			response, err := http.Get(callback.String()) //nolint:noctx // callback is the loopback listener created by this test.
+			required.NoError(err)
+			_ = response.Body.Close()
+			assertions.Equal(http.StatusOK, response.StatusCode)
+
+			select {
+			case err := <-result:
+				required.NoError(err)
+			case <-time.After(5 * time.Second):
+				required.FailNow("terminal authorization did not exchange the callback code")
+			}
+
+			assertions.Equal("one-time-code", exchanged.Get("code"))
+			assertions.Equal(redirectURI, exchanged.Get("redirect_uri"))
+			verifier := exchanged.Get("code_verifier")
+			required.NotEmpty(verifier)
+			digest := sha256.Sum256([]byte(verifier))
+			assertions.Equal(challenge, base64.RawURLEncoding.EncodeToString(digest[:]))
+		})
 	}
+}
 
-	authURL, err := url.Parse(rawURL)
-	required.NoError(err)
-	redirectURI := authURL.Query().Get("redirect_uri")
-	redirect, err := url.Parse(redirectURI)
-	required.NoError(err)
-	assertions.Equal("127.0.0.1", redirect.Hostname())
-	assertions.NotEqual("8089", redirect.Port())
-	assertions.Equal("S256", authURL.Query().Get("code_challenge_method"))
-	challenge := authURL.Query().Get("code_challenge")
-	required.NotEmpty(challenge)
-
-	callback := *redirect
-	query := callback.Query()
-	query.Set("state", authURL.Query().Get("state"))
-	query.Set("code", "one-time-code")
-	callback.RawQuery = query.Encode()
-	response, err := http.Get(callback.String()) //nolint:noctx // callback is the loopback listener created by this test.
-	required.NoError(err)
-	_ = response.Body.Close()
-	assertions.Equal(http.StatusOK, response.StatusCode)
-
-	select {
-	case err := <-result:
-		required.NoError(err)
-	case <-time.After(5 * time.Second):
-		required.FailNow("terminal authorization did not exchange the callback code")
+func TestBrowserFlowRejectsUnusableCallbackBeforePrintingURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, redirect, wantErr string
+		occupyPort                    bool
+	}{
+		{"unregistered web callback", "web", "https://archive.example/", "register http://localhost:8089/callback", false},
+		{"different loopback host", "web", "http://127.0.0.1:8089/callback", "register http://localhost:8089/callback", false},
+		{"busy port", "installed", "http://localhost", "listen for OAuth callback", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			required := require.New(t)
+			if tc.occupyPort {
+				listener, err := net.Listen("tcp", "localhost:8089")
+				required.NoError(err)
+				t.Cleanup(func() { _ = listener.Close() })
+			}
+			secretsPath := filepath.Join(t.TempDir(), "client.json")
+			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","redirect_uris":[%q]}}`, tc.kind, tc.redirect)
+			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
+			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
+			required.NoError(err)
+			output, err := os.CreateTemp(t.TempDir(), "stdout")
+			required.NoError(err)
+			oldStdout := os.Stdout
+			os.Stdout = output
+			t.Cleanup(func() {
+				os.Stdout = oldStdout
+				_ = output.Close()
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			err = mgr.AuthorizeManual(ctx, "person@example.com")
+			required.ErrorContains(err, tc.wantErr)
+			printed, err := os.ReadFile(output.Name())
+			required.NoError(err)
+			assert.Empty(t, string(printed))
+		})
 	}
-
-	assertions.Equal("one-time-code", exchanged.Get("code"))
-	assertions.Equal(redirectURI, exchanged.Get("redirect_uri"))
-	verifier := exchanged.Get("code_verifier")
-	required.NotEmpty(verifier)
-	digest := sha256.Sum256([]byte(verifier))
-	assertions.Equal(challenge, base64.RawURLEncoding.EncodeToString(digest[:]))
 }
 
 // TestAuthorize_SavesUnderOriginalIdentifier exercises the real
