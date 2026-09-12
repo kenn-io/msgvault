@@ -445,6 +445,39 @@ func TestApplyIMAPMailboxDeltas_ResolvesQueuedCanonicalKeyAfterMailboxRetirement
 	assert.Equal(1, membershipCount(t, f.store, f.source.ID))
 }
 
+func TestApplyIMAPMailboxDeltas_InvalidatesEveryUnobservedUIDOnReset(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	keptID := f.createMessage(t, "Old|1", "<kept@example.com>")
+	removedID := f.createMessage(t, "Old|2", "<removed@example.com>")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Old",
+		State:   store.IMAPFolderState{Mailbox: "Old", UIDValidity: 10, UIDNext: 3},
+		Memberships: []store.IMAPMembershipObservation{
+			{Mailbox: "Old", UIDValidity: 10, UID: 1, SourceMessageID: "Old|1", RFC822MessageID: "<kept@example.com>"},
+			{Mailbox: "Old", UIDValidity: 10, UID: 2, SourceMessageID: "Old|2", RFC822MessageID: "<removed@example.com>"},
+		},
+	}}))
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Old",
+		State:   store.IMAPFolderState{Mailbox: "Old", UIDValidity: 20, UIDNext: 2},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "Old", UIDValidity: 20, UID: 1, SourceMessageID: "Old|1", RFC822MessageID: "<kept@example.com>",
+		}},
+	}}))
+
+	var keptSourceID, removedSourceID string
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		"SELECT source_message_id FROM messages WHERE id = ?"), keptID).Scan(&keptSourceID))
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		"SELECT source_message_id FROM messages WHERE id = ?"), removedID).Scan(&removedSourceID))
+	assert.Equal("Old|1", keptSourceID)
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", removedID), removedSourceID)
+}
+
 func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(t *testing.T) {
 	t.Run("deleted mailbox reconciles labels and tombstones last membership", func(t *testing.T) {
 		require := require.New(t)

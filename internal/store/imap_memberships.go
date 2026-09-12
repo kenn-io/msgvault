@@ -527,7 +527,6 @@ func deleteUnobservedIMAPMemberships(
 				return err
 			}
 			keepSourceKey = matches
-			break
 		}
 		if keepSourceKey {
 			continue
