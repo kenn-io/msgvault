@@ -1547,10 +1547,16 @@ func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]by
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	return s.GetMessageBodyTextContext(context.Background(), messageID)
+}
+
+// GetMessageBodyTextContext retrieves the archived plain-text body using the
+// caller's request context.
+func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT body_text FROM message_bodies WHERE message_id = ?
-	`, messageID).Scan(&body)
+	`), messageID).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

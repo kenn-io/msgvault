@@ -540,8 +540,8 @@ func (c *Client) reconnect(ctx context.Context) error {
 
 // withConn runs fn with the active connection, connecting if necessary.
 // It holds the mutex for the duration of fn.
-// If fn returns a network error the dead connection is cleared so the next
-// call reconnects cleanly.
+// If fn returns a network or context error the connection is cleared so the
+// next call reconnects cleanly.
 func (c *Client) withConn(ctx context.Context, fn func(*imapclient.Client) error) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -549,7 +549,8 @@ func (c *Client) withConn(ctx context.Context, fn func(*imapclient.Client) error
 		return err
 	}
 	err := fn(c.conn)
-	if err != nil && isNetworkError(err) {
+	if err != nil && (isNetworkError(err) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded)) {
 		if c.conn != nil {
 			_ = c.conn.Close()
 		}

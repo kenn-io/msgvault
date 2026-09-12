@@ -233,6 +233,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				// This runs before any insert, as the wholesale delete did.
 				if err := deleteUnobservedIMAPMemberships(
 					tx, sourceID, normalized.mailbox, normalized.uidValidity, stored, observed, affected,
+					resolver.sourceMessages,
 				); err != nil {
 					return err
 				}
@@ -496,6 +497,7 @@ func deleteUnobservedIMAPMemberships(
 	stored map[imapMembershipUID]storedIMAPMembership,
 	observed map[imapMembershipUID]IMAPMembershipObservation,
 	affected map[int64]struct{},
+	sourceMessages map[string]int64,
 ) error {
 	keys := make([]imapMembershipUID, 0, len(stored))
 	removed := make(map[imapMembershipUID]int64, len(stored))
@@ -536,6 +538,7 @@ func deleteUnobservedIMAPMemberships(
 		if keepSourceKey {
 			continue
 		}
+		delete(sourceMessages, fmt.Sprintf("%s|%d", mailbox, key.uid))
 		if err := invalidateIMAPSourceKeyForMembership(
 			tx, sourceID, mailbox, int64(key.uidValidity), int64(key.uid),
 		); err != nil {

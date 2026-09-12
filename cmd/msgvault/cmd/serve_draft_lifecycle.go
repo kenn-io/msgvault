@@ -219,7 +219,7 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 	if draft.Lifecycle == draftLifecycleDiscarded {
 		return emitDraftLifecycleOutput(emit, intent.JSON, output)
 	}
-	bodyText, err := a.store.GetMessageBodyText(draft.CurrentMessageID)
+	bodyText, err := a.store.GetMessageBodyTextContext(ctx, draft.CurrentMessageID)
 	if err != nil {
 		return draftReplyError("internal", fmt.Errorf("load body for draft %d: %w", draft.DraftID, err))
 	}

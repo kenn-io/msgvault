@@ -57,6 +57,44 @@ func TestUpsertMessagePersistsListID(t *testing.T) {
 	assert.Equal("<announce.example.org>", listID.String, "list ID")
 }
 
+func TestGetMessageBodyTextContextHonorsCancellationWhileConnectionIsHeld(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("context-body")
+	requirements.NoError(f.Store.UpsertMessageBody(messageID,
+		sql.NullString{String: "context body", Valid: true}, sql.NullString{}))
+	f.Store.DB().SetMaxOpenConns(1)
+	tx, err := f.Store.DB().BeginTx(context.Background(), nil)
+	requirements.NoError(err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	type bodyResult struct {
+		body string
+		err  error
+	}
+	result := make(chan bodyResult, 1)
+	go func() {
+		body, queryErr := f.Store.GetMessageBodyTextContext(ctx, messageID)
+		result <- bodyResult{body: body, err: queryErr}
+	}()
+
+	select {
+	case got := <-result:
+		requirements.ErrorIs(got.err, context.DeadlineExceeded)
+		assertions.Empty(got.body)
+	case <-time.After(2 * time.Second):
+		_ = tx.Rollback()
+		t.Fatal("body lookup did not honor its context")
+	}
+	requirements.NoError(tx.Rollback())
+
+	body, err := f.Store.GetMessageBodyTextContext(context.Background(), messageID)
+	requirements.NoError(err)
+	assertions.Equal("context body", body)
+}
+
 func TestUpsertMessagePreservesRFCMessageID(t *testing.T) {
 	stored := sql.NullString{String: "<Original-ID@example.test>", Valid: true}
 	incoming := sql.NullString{String: "incoming@example.test", Valid: true}

@@ -141,6 +141,33 @@ func TestInspectDraftCancellationInterruptsBlockingProtocolPhases(t *testing.T) 
 	}
 }
 
+func TestInspectDraftCancellationClearsClosedConnection(t *testing.T) {
+	addr, reached := startStalledDraftIMAPServer(t, "select")
+	client := newDraftTestClient(t, addr)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.InspectDraft(ctx, DraftTarget{Mailbox: "Drafts", UIDValidity: 123, UID: 1})
+		result <- err
+	}()
+	select {
+	case <-reached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("IMAP server did not reach stalled SELECT")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("draft inspection did not stop after cancellation")
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	assert.Nil(t, client.conn)
+}
+
 func TestCloseContextCancellationInterruptsBlockingLogout(t *testing.T) {
 	addr, reached := startStalledDraftIMAPServer(t, "logout")
 	client := newDraftTestClient(t, addr)
