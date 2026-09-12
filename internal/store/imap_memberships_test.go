@@ -560,6 +560,49 @@ func TestApplyIMAPMailboxDeltas_RekeysRemovedDraftKeyWithOtherMembership(t *test
 	assert.NotEqual(oldID, newID)
 }
 
+func TestApplyIMAPMailboxDeltas_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "Drafts", UIDValidity: 10, UID: 1, SourceMessageID: "Drafts|1",
+		}},
+	}}))
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Reset:   true,
+	}}))
+
+	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+
+	receipt := store.IMAPDraftReceipt{
+		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
+	}
+	newID, err := f.store.PersistIMAPDraftContext(context.Background(), receipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        f.source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					ConversationID:  f.convID,
+					MessageType:     "email",
+				},
+				BodyText: sql.NullString{String: "new draft", Valid: true},
+				RawMIME:  []byte("From: alice@example.com\r\n\r\nnew draft\r\n"),
+			}
+		})
+	require.NoError(err)
+	assert.NotEqual(oldID, newID)
+}
+
 func TestApplyIMAPMailboxDeltas_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
