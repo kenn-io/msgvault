@@ -320,6 +320,16 @@ func TestParseDraftLifecycleArgs(t *testing.T) {
 	}
 }
 
+func TestParseDraftLifecycleArgsAcceptsInheritedBooleanValues(t *testing.T) {
+	requirements := require.New(t)
+
+	intent, err := parseDraftLifecycleArgs([]string{
+		"draft-get", "42", "--verbose=false", "--log-sql=false",
+	})
+	requirements.NoError(err)
+	requirements.False(intent.JSON)
+}
+
 func TestDraftLifecycleRejectsEnvironmentAndWorkingDirectory(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

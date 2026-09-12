@@ -146,3 +146,45 @@ func TestIMAPDraftGCRetainsCurrentMessage(t *testing.T) {
 	assertions.Equal(draftID, draft.CurrentMessageID)
 	assertions.Equal("Draft body", draft.Snippet)
 }
+
+func TestDedupPurgeRemovesOwnedDraftBeforeMessageDelete(t *testing.T) {
+	for _, purgeAll := range []bool{false, true} {
+		name := "batch"
+		if purgeAll {
+			name = "all"
+		}
+		t.Run(name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			st, source, draftID, _ := newIMAPDraftLifecycleFixture(t)
+			conversationID, err := st.EnsureConversation(source.ID, "dedup-thread", "Dedup thread")
+			requirements.NoError(err)
+			keepID, err := st.UpsertMessage(&store.Message{
+				SourceID:        source.ID,
+				SourceMessageID: "dedup-survivor",
+				ConversationID:  conversationID,
+				MessageType:     store.MessageTypeEmail,
+				RFC822MessageID: sql.NullString{String: "<dedup-survivor@example.com>", Valid: true},
+			})
+			requirements.NoError(err)
+			_, err = st.MergeDuplicates(keepID, []int64{draftID}, "draft-dedup")
+			requirements.NoError(err)
+
+			if purgeAll {
+				_, _, err = st.DeleteAllDedupedContext(t.Context())
+			} else {
+				_, err = st.DeleteDedupedBatchContext(t.Context(), "draft-dedup")
+			}
+			requirements.NoError(err)
+
+			var ownershipCount, messageCount int
+			requirements.NoError(st.DB().QueryRow(st.Rebind(
+				"SELECT COUNT(*) FROM imap_drafts WHERE current_message_id = ?"), draftID).Scan(&ownershipCount))
+			requirements.NoError(st.DB().QueryRow(st.Rebind(
+				"SELECT COUNT(*) FROM messages WHERE id = ?"), draftID).Scan(&messageCount))
+			assertions.Zero(ownershipCount)
+			assertions.Zero(messageCount)
+		})
+	}
+}

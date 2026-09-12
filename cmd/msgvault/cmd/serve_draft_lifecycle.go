@@ -87,8 +87,8 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 			}
 			rest = rest[1:]
 		case "verbose", "log-sql":
-			if hasValue {
-				return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("--%s accepts no value", name))
+			if hasValue && value != "true" && value != "false" {
+				return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("--%s accepts true or false", name))
 			}
 		default:
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("unknown flag --%s", name))

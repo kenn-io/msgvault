@@ -713,6 +713,15 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM imap_drafts
+				WHERE current_message_id IN (
+					SELECT id FROM messages
+					WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
+				)
+			`, batchID); err != nil {
+				return fmt.Errorf("remove draft ownership for dedup batch %q: %w", batchID, err)
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -822,6 +831,15 @@ func (s *Store) DeleteAllDedupedContext(
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM imap_drafts
+			WHERE current_message_id IN (
+				SELECT id FROM messages
+				WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
+			)
+		`); err != nil {
+			return fmt.Errorf("remove draft ownership for dedup-hidden messages: %w", err)
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM messages
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
