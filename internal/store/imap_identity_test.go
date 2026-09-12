@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
