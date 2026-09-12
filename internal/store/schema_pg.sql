@@ -1706,7 +1706,6 @@ CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
 -- Local draft identity for drafts msgvault created over IMAP. draft_id is the
--- Local draft identity for drafts msgvault created over IMAP. draft_id is the
 -- stable local identity named after the first APPEND's message row. It
 -- identifies a draft msgvault owns, even when another archived message carries
 -- \Draft in the same mailbox.

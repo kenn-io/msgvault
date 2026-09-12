@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type draftLifecycleFixture struct {
@@ -62,6 +64,11 @@ func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
 	requirements := require.New(t)
 
 	f := newDraftLifecycleFixture(t)
+	const bodyText = "  Initial draft body\nwith a second line  "
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE message_bodies SET body_text = ? WHERE message_id = ?
+	`), bodyText, f.draftID)
+	requirements.NoError(err)
 	events, err := f.runGet(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
 	requirements.NoError(err)
 	requirements.Len(events, 1)
@@ -70,7 +77,39 @@ func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
 	assertions.Equal("present", result["provider_status"])
 	assertions.Equal(float64(f.draftID), result["draft_id"])
 	assertions.Equal("Re: Question", result["subject"])
-	assertions.Equal("Initial draft body", result["body_text"])
+	assertions.Equal(bodyText, result["body_text"])
+}
+
+func TestDraftGetReportsAbsentRemoteState(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newDraftLifecycleFixture(t)
+	remoteClient := imaplib.NewClient(f.config, testutil.IMAPTestPassword)
+	defer func() { _ = remoteClient.Close() }()
+	requirements.NoError(remoteClient.DeleteMessage(t.Context(), fmt.Sprintf("Drafts|%d", 1)))
+
+	events, err := f.runGet(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	assertions.Equal("absent", decodeDraftLifecycleEvent(t, events[0])["provider_status"])
+}
+
+func TestDraftGetReportsUnknownProviderOnUIDValidityChange(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newDraftLifecycleFixture(t)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE imap_message_memberships SET uidvalidity = uidvalidity + 1
+		WHERE source_id = ? AND message_id = ?
+	`), f.source.ID, f.draftID)
+	requirements.NoError(err)
+
+	events, err := f.runGet(t, "draft-get", strconv.FormatInt(f.draftID, 10), "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	assertions.Equal("unknown", decodeDraftLifecycleEvent(t, events[0])["provider_status"])
 }
 
 func TestDraftGetReportsNotCheckedWithoutMatchingGrant(t *testing.T) {

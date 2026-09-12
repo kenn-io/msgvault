@@ -200,11 +200,15 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		UIDValidity:     draft.UIDValidity,
 		Subject:         draft.Subject,
 		FromAddress:     draft.FromAddress,
-		BodyText:        draft.Snippet,
 	}
 	if draft.Lifecycle == draftLifecycleDiscarded {
 		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
 	}
+	bodyText, err := a.store.GetMessageBodyText(draft.CurrentMessageID)
+	if err != nil {
+		return draftReplyError("internal", fmt.Errorf("load body for draft %d: %w", draft.DraftID, err))
+	}
+	output.BodyText = bodyText
 
 	source, err := a.store.GetSourceByIDContext(ctx, draft.SourceID)
 	if err != nil {
