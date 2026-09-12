@@ -124,8 +124,13 @@ func emitDraftLifecycleOutput(
 	if asJSON {
 		data = string(marshalDraftLifecycleOutput(output)) + "\n"
 	} else if output.Status == "active" {
-		data = fmt.Sprintf("draft %d: lifecycle=%s revision=%d provider=%s\n",
-			output.DraftID, output.Lifecycle, output.Revision, output.ProviderStatus)
+		data = fmt.Sprintf(
+			"draft %d: lifecycle=%s revision=%d provider=%s\n"+
+				"subject: %s\nfrom: %s\nmessage_id: %s\nsource_id: %d\n"+
+				"mailbox: %s\nuidvalidity: %d\nuid: %d\nbody:\n%s\n",
+			output.DraftID, output.Lifecycle, output.Revision, output.ProviderStatus,
+			output.Subject, output.FromAddress, output.RFC822MessageID, output.SourceID,
+			output.Mailbox, output.UIDValidity, output.UID, output.BodyText)
 	} else {
 		data = fmt.Sprintf("draft %d: lifecycle=%s revision=%d\n",
 			output.DraftID, output.Lifecycle, output.Revision)

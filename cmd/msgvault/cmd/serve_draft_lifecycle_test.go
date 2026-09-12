@@ -80,6 +80,19 @@ func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
 	assertions.Equal(bodyText, result["body_text"])
 }
 
+func TestDraftGetTextIncludesHeadersAndBody(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newDraftLifecycleFixture(t)
+	events, err := f.runGet(t, "draft-get", strconv.FormatInt(f.draftID, 10))
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	assertions.Contains(events[0].Data, "subject: Re: Question")
+	assertions.Contains(events[0].Data, "from: alice@example.com")
+	assertions.Contains(events[0].Data, "body:\nInitial draft body")
+}
+
 func TestDraftGetReportsAbsentRemoteState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

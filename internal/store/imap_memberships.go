@@ -193,7 +193,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		resolver := imapMembershipResolver{tx: tx, sourceID: sourceID}
-		if err := resolver.primeRawIdentities(normalizedDeltas); err != nil {
+		if err := resolver.primeIdentities(normalizedDeltas); err != nil {
 			return err
 		}
 
@@ -770,29 +770,55 @@ func captureIMAPMembershipMessageIDs(
 }
 
 type imapMembershipResolver struct {
-	tx          *loggedTx
-	sourceID    int64
-	rawMessages map[int64]map[[32]byte]int64
+	tx             *loggedTx
+	sourceID       int64
+	sourceMessages map[string]int64
+	rawMessages    map[int64]map[[32]byte]int64
 }
 
-// primeRawIdentities snapshots durable raw candidates before mailbox resets,
-// VANISHED removals, or topology retirement can change which canonical rows
-// still have memberships. Later resolution is therefore independent of delta
-// order within the transaction.
-func (r *imapMembershipResolver) primeRawIdentities(
+// primeIdentities snapshots durable source keys and raw candidates before
+// mailbox resets, VANISHED removals, or topology retirement can change which
+// canonical rows still have memberships. Later resolution is therefore
+// independent of delta order within the transaction.
+func (r *imapMembershipResolver) primeIdentities(
 	deltas []normalizedIMAPMailboxDelta,
 ) error {
 	for _, normalized := range deltas {
 		for _, observation := range normalized.delta.Memberships {
-			if observation.CanonicalSourceMessageID != "" ||
-				observation.RawSHA256 == ([32]byte{}) {
-				continue
+			for _, sourceMessageID := range []string{
+				observation.CanonicalSourceMessageID,
+				observation.SourceMessageID,
+			} {
+				if sourceMessageID == "" {
+					continue
+				}
+				if _, loaded := r.sourceMessages[sourceMessageID]; loaded {
+					continue
+				}
+				var messageID int64
+				err := r.tx.QueryRow(`
+					SELECT id FROM messages
+					WHERE source_id = ? AND source_message_id = ?
+				`, r.sourceID, sourceMessageID).Scan(&messageID)
+				if err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						continue
+					}
+					return fmt.Errorf(
+						"snapshot IMAP source identity %q: %w", sourceMessageID, err)
+				}
+				if r.sourceMessages == nil {
+					r.sourceMessages = make(map[string]int64)
+				}
+				r.sourceMessages[sourceMessageID] = messageID
 			}
-			if _, _, err := r.resolveRawSHA256(observation.RawSHA256, observation.RawSize); err != nil {
-				return fmt.Errorf(
-					"snapshot IMAP raw identity for mailbox %q UID %d: %w",
-					normalized.mailbox, observation.UID, err,
-				)
+			if observation.RawSHA256 != ([32]byte{}) {
+				if _, _, err := r.resolveRawSHA256(observation.RawSHA256, observation.RawSize); err != nil {
+					return fmt.Errorf(
+						"snapshot IMAP raw identity for mailbox %q UID %d: %w",
+						normalized.mailbox, observation.UID, err,
+					)
+				}
 			}
 		}
 	}
@@ -802,6 +828,9 @@ func (r *imapMembershipResolver) primeRawIdentities(
 func (r *imapMembershipResolver) resolve(observation IMAPMembershipObservation) (int64, error) {
 	var messageID int64
 	if observation.CanonicalSourceMessageID != "" {
+		if messageID, ok := r.sourceMessages[observation.CanonicalSourceMessageID]; ok {
+			return messageID, nil
+		}
 		err := r.tx.QueryRow(`
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 		`, r.sourceID, observation.CanonicalSourceMessageID).Scan(&messageID)
@@ -822,6 +851,9 @@ func (r *imapMembershipResolver) resolve(observation IMAPMembershipObservation) 
 		}
 	}
 	if observation.SourceMessageID != "" {
+		if messageID, ok := r.sourceMessages[observation.SourceMessageID]; ok {
+			return messageID, nil
+		}
 		err := r.tx.QueryRow(`
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 		`, r.sourceID, observation.SourceMessageID).Scan(&messageID)
