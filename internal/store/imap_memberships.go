@@ -516,11 +516,12 @@ func deleteUnobservedIMAPMemberships(
 		if key.uidValidity == currentUIDValidity {
 			continue
 		}
+		observation, found := observed[imapMembershipUID{
+			uidValidity: currentUIDValidity,
+			uid:         key.uid,
+		}]
 		keepSourceKey := false
-		for observedKey, observation := range observed {
-			if observedKey.uid != key.uid || observation.Mailbox != mailbox {
-				continue
-			}
+		if found {
 			matches, err := imapObservationMatchesMessage(tx, removed[key], observation)
 			if err != nil {
 				return err
