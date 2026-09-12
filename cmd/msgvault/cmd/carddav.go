@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -19,19 +20,42 @@ import (
 
 func newAddCardDAVCmd() *cobra.Command {
 	var schedule string
-	var disabled bool
-	cmd := &cobra.Command{Use: "add-carddav <base-url> <username>", Short: "Discover and configure a CardDAV account", Args: cobra.ExactArgs(2)}
+	var disabled, google bool
+	var oauthApp string
+	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
+		if google {
+			return cobra.ExactArgs(1)(cmd, args)
+		}
+		return cobra.ExactArgs(2)(cmd, args)
+	}}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		password, err := readCardDAVPassword()
-		if err != nil {
-			return err
+		if !google && oauthApp != "" {
+			return usageErr(cmd, errors.New("--oauth-app requires --google"))
+		}
+		var password string
+		var err error
+		if !google {
+			password, err = readCardDAVPassword()
+			if err != nil {
+				return err
+			}
+		}
+		baseURL, username := carddav.GoogleDiscoveryURL, args[0]
+		if !google {
+			baseURL, username = args[0], args[1]
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		body := generated.SaveCardDAVAccountBody{BaseURL: args[0], Username: args[1], Password: &password, Enabled: !disabled}
+		body := generated.SaveCardDAVAccountBody{BaseURL: baseURL, Username: username, Password: &password, Enabled: !disabled}
+		if google {
+			provider := generated.Google
+			body.Provider = &provider
+			body.OauthApp = &oauthApp
+			body.Password = nil
+		}
 		if schedule != "" {
 			body.Schedule = &schedule
 		}
@@ -45,6 +69,8 @@ func newAddCardDAVCmd() *cobra.Command {
 			textutil.SanitizeTerminal(resp.JSON200.Username), resp.JSON200.Books)
 		return nil
 	}
+	cmd.Flags().BoolVar(&google, "google", false, "Use Google Contacts with an authorized OAuth token")
+	cmd.Flags().StringVar(&oauthApp, "oauth-app", "", "Named Google OAuth application")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "cron schedule for background synchronization")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "save the connection without enabling synchronization")
 	return cmd
@@ -95,7 +121,7 @@ func newSyncCardDAVCmd() *cobra.Command {
 }
 
 func newCardDAVCmd() *cobra.Command {
-	root := &cobra.Command{Use: "carddav", Short: "Inspect CardDAV books and conflicts"}
+	root := &cobra.Command{Use: "carddav", Short: "Manage CardDAV connections, books, and conflicts"}
 	books := &cobra.Command{Use: "books", Short: "List discovered CardDAV address books", Args: cobra.NoArgs, RunE: runCardDAVBooks}
 	var writeTarget, subscribed, lookup bool
 	setRole := &cobra.Command{Use: "set-role <book-id>", Short: "Set all roles for a CardDAV address book", Args: cobra.ExactArgs(1)}
@@ -127,7 +153,7 @@ func newCardDAVCmd() *cobra.Command {
 	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show safe base, local, and remote summaries for a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
 	resolve := &cobra.Command{Use: "resolve <conflict-id> <keep_local|keep_remote>", Short: "Resolve one CardDAV conflict", Args: cobra.ExactArgs(2), RunE: runCardDAVResolve}
 	conflicts.AddCommand(resolve)
-	root.AddCommand(books, conflicts)
+	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd())
 	return root
 }
 

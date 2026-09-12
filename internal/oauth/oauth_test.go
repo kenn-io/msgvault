@@ -1,13 +1,17 @@
 package oauth
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -421,7 +425,7 @@ func TestParseClientSecrets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseClientSecrets([]byte(tt.data), Scopes)
+			_, _, err := parseClientSecrets([]byte(tt.data), Scopes)
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
 			} else {
@@ -529,6 +533,154 @@ func TestNewCallbackHandler(t *testing.T) {
 			} else {
 				assertNoSend(t, errChan, "errChan")
 			}
+		})
+	}
+}
+
+func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
+	for _, tc := range []struct {
+		kind, redirects string
+	}{
+		{"installed", `["http://localhost"]`},
+		{"web", `["https://archive.example/", "http://localhost:8089/callback"]`},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
+
+			var exchanged url.Values
+			tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !assertions.NoError(r.ParseForm()) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				exchanged = r.Form
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}`)
+			}))
+			t.Cleanup(tokenEndpoint.Close)
+
+			secretsPath := filepath.Join(t.TempDir(), "client.json")
+			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":%s}}`, tc.kind, tc.redirects)
+			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
+			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
+			required.NoError(err)
+			mgr.config.Endpoint = oauth2.Endpoint{
+				AuthURL:   "https://accounts.example/authorize",
+				TokenURL:  tokenEndpoint.URL,
+				AuthStyle: oauth2.AuthStyleInParams,
+			}
+
+			readOutput, writeOutput, err := os.Pipe()
+			required.NoError(err)
+			oldStdout := os.Stdout
+			os.Stdout = writeOutput
+			t.Cleanup(func() {
+				os.Stdout = oldStdout
+				_ = writeOutput.Close()
+				_ = readOutput.Close()
+			})
+
+			result := make(chan error, 1)
+			go func() {
+				_, flowErr := mgr.browserFlow(t.Context(), "person@example.com", false)
+				result <- flowErr
+			}()
+
+			authorizationURL := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(readOutput)
+				for scanner.Scan() {
+					line := strings.TrimSpace(scanner.Text())
+					if strings.HasPrefix(line, "https://accounts.example/authorize?") {
+						authorizationURL <- line
+						return
+					}
+				}
+			}()
+
+			var rawURL string
+			select {
+			case rawURL = <-authorizationURL:
+			case err := <-result:
+				required.NoError(err)
+			case <-time.After(5 * time.Second):
+				required.FailNow("terminal authorization did not publish a callback URL")
+			}
+
+			authURL, err := url.Parse(rawURL)
+			required.NoError(err)
+			redirectURI := authURL.Query().Get("redirect_uri")
+			redirect, err := url.Parse(redirectURI)
+			required.NoError(err)
+			assertions.Equal("http://localhost:8089/callback", redirectURI)
+			assertions.Equal("S256", authURL.Query().Get("code_challenge_method"))
+			challenge := authURL.Query().Get("code_challenge")
+			required.NotEmpty(challenge)
+
+			callback := *redirect
+			query := callback.Query()
+			query.Set("state", authURL.Query().Get("state"))
+			query.Set("code", "one-time-code")
+			callback.RawQuery = query.Encode()
+			response, err := http.Get(callback.String()) //nolint:noctx // callback is the loopback listener created by this test.
+			required.NoError(err)
+			_ = response.Body.Close()
+			assertions.Equal(http.StatusOK, response.StatusCode)
+
+			select {
+			case err := <-result:
+				required.NoError(err)
+			case <-time.After(5 * time.Second):
+				required.FailNow("terminal authorization did not exchange the callback code")
+			}
+
+			assertions.Equal("one-time-code", exchanged.Get("code"))
+			assertions.Equal(redirectURI, exchanged.Get("redirect_uri"))
+			verifier := exchanged.Get("code_verifier")
+			required.NotEmpty(verifier)
+			digest := sha256.Sum256([]byte(verifier))
+			assertions.Equal(challenge, base64.RawURLEncoding.EncodeToString(digest[:]))
+		})
+	}
+}
+
+func TestBrowserFlowRejectsUnusableCallbackBeforePrintingURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, redirect, wantErr string
+		occupyPort                    bool
+	}{
+		{"unregistered web callback", "web", "https://archive.example/", "register http://localhost:8089/callback", false},
+		{"different loopback host", "web", "http://127.0.0.1:8089/callback", "register http://localhost:8089/callback", false},
+		{"busy port", "installed", "http://localhost", "listen for OAuth callback", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			required := require.New(t)
+			if tc.occupyPort {
+				listener, err := net.Listen("tcp", "localhost:8089")
+				required.NoError(err)
+				t.Cleanup(func() { _ = listener.Close() })
+			}
+			secretsPath := filepath.Join(t.TempDir(), "client.json")
+			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","redirect_uris":[%q]}}`, tc.kind, tc.redirect)
+			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
+			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
+			required.NoError(err)
+			output, err := os.CreateTemp(t.TempDir(), "stdout")
+			required.NoError(err)
+			oldStdout := os.Stdout
+			os.Stdout = output
+			t.Cleanup(func() {
+				os.Stdout = oldStdout
+				_ = output.Close()
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			err = mgr.AuthorizeManual(ctx, "person@example.com")
+			required.ErrorContains(err, tc.wantErr)
+			printed, err := os.ReadFile(output.Name())
+			required.NoError(err)
+			assert.Empty(t, string(printed))
 		})
 	}
 }
@@ -767,6 +919,60 @@ func TestAuthorizePreservingGrantedScopesRejectsTokenMissingPreservedScope(t *te
 	require.NoError(loadErr, "loadTokenFile")
 	assert.Equal("old-access", loaded.AccessToken, "existing token must not be overwritten")
 	assert.ElementsMatch(existingScopes, loaded.Scopes, "existing scopes must be preserved")
+}
+
+// saveToken seeds OAuth fixtures without a pending authorization or refresh.
+func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string) error {
+	return m.saveTokenCompared(email, token, scopes, nil)
+}
+
+func TestTerminalAuthorizationCannotOverwriteNewerAuthorization(t *testing.T) {
+	for _, mode := range []string{"browser", "manual", "preserve-browser", "preserve-manual"} {
+		t.Run(mode, func(t *testing.T) {
+			assertions := assert.New(t)
+			required := require.New(t)
+			const email = "person@example.com"
+			oldScopes := []string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}
+			newScopes := append(append([]string(nil), oldScopes...), ScopeCalendarReadonly)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/profile" {
+					_, _ = fmt.Fprintf(w, `{"email":%q}`, email)
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600,"scope":%q}`, strings.Join(newScopes, " "))
+			}))
+			t.Cleanup(server.Close)
+			mgr := setupTestManager(t, oldScopes)
+			mgr.config.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.example/authorize", TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams}
+			mgr.profileURL = server.URL + "/profile"
+			required.NoError(mgr.saveToken(email, &oauth2.Token{AccessToken: "initial-access"}, []string{ScopeGmailReadonly}))
+			newer, err := mgr.withScopes(newScopes).BeginWebAuthorization(email, "https://archive.example/")
+			required.NoError(err)
+			// A browser wait lets another sign-in complete before the CLI returns.
+			mgr.browserFlowFn = func(ctx context.Context, _ string, _ bool) (*oauth2.Token, error) {
+				if err := newer.Complete(ctx, newer.State, "new"); err != nil {
+					return nil, err
+				}
+				return (&oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh"}).WithExtra(map[string]any{"scope": strings.Join(oldScopes, " ")}), nil
+			}
+			switch mode {
+			case "browser":
+				err = mgr.Authorize(t.Context(), email)
+			case "manual":
+				err = mgr.AuthorizeManual(t.Context(), email)
+			case "preserve-browser":
+				err = mgr.AuthorizePreservingGrantedScopes(t.Context(), email)
+			case "preserve-manual":
+				err = mgr.AuthorizeManualPreservingGrantedScopes(t.Context(), email)
+			}
+			required.ErrorIs(err, ErrTokenChanged)
+			saved, err := mgr.loadTokenFile(email)
+			required.NoError(err)
+			assertions.Equal("new-refresh", saved.RefreshToken)
+			assertions.ElementsMatch(newScopes, saved.Scopes)
+		})
+	}
 }
 
 // TestAuthorize_RejectsMismatch verifies that authorize() rejects

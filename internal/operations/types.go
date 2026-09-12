@@ -477,6 +477,7 @@ const (
 	PublicErrorCancelled                      PublicErrorCode = "cancelled"
 	PublicErrorRetryAfter                     PublicErrorCode = "retry_after"
 	PublicErrorAuthenticationFailed           PublicErrorCode = "authentication_failed"
+	PublicErrorGoogleAuthorizationRequired    PublicErrorCode = "google_authorization_required"
 	PublicErrorUpstreamFailed                 PublicErrorCode = "upstream_failed"
 	PublicErrorSafetyLimit                    PublicErrorCode = "safety_limit"
 	PublicErrorSyncFailed                     PublicErrorCode = "sync_failed"
@@ -523,6 +524,7 @@ var fixedPublicErrorMessages = map[PublicErrorCode]string{
 	PublicErrorCancelled:                      "CardDAV sync was cancelled.",
 	PublicErrorRetryAfter:                     "CardDAV sync is temporarily paused.",
 	PublicErrorAuthenticationFailed:           "CardDAV authentication failed.",
+	PublicErrorGoogleAuthorizationRequired:    "Google Contacts authorization is required. Connect Google in CardDAV account settings.",
 	PublicErrorUpstreamFailed:                 "CardDAV server request failed.",
 	PublicErrorSafetyLimit:                    "CardDAV sync exceeded its safety limits.",
 	PublicErrorSyncFailed:                     "CardDAV sync failed.",
@@ -670,6 +672,8 @@ func ProjectCardDAVFailure(durableCode string) *PublicError {
 		code = PublicErrorRetryAfter
 	case "authentication_failed":
 		code = PublicErrorAuthenticationFailed
+	case "google_authorization_required":
+		code = PublicErrorGoogleAuthorizationRequired
 	case "upstream_failed":
 		code = PublicErrorUpstreamFailed
 	case "safety_limit":
@@ -961,6 +965,7 @@ func isPersonSweepError(code PublicErrorCode) bool {
 func isCardDAVError(code PublicErrorCode) bool {
 	switch code {
 	case PublicErrorCancelled, PublicErrorRetryAfter, PublicErrorAuthenticationFailed,
+		PublicErrorGoogleAuthorizationRequired,
 		PublicErrorUpstreamFailed, PublicErrorSafetyLimit, PublicErrorSyncFailed,
 		PublicErrorUnsafeErrorRedacted, PublicErrorDaemonRestarted,
 		PublicErrorCardDAVSyncFailed:

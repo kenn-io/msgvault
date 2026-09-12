@@ -260,6 +260,11 @@ func validateCardDAVSyncRunFinish(input CardDAVSyncRunFinish) (string, string, e
 	if !cardDAVSyncRunErrorCodePattern.MatchString(code) {
 		return "", "", fmt.Errorf("%w: terminal failure code is invalid", ErrCardDAVSyncRunInvalid)
 	}
+	if code == "google_authorization_required" {
+		// This fixed repair message contains a credential marker. Discard
+		// caller-supplied details before the generic redaction check.
+		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings.", nil
+	}
 	if cardDAVSyncRunMessageUnsafe(code) || cardDAVSyncRunMessageUnsafe(message) {
 		return cardDAVSyncRunRedactedErrorCode, cardDAVSyncRunRedactedError, nil
 	}

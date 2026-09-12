@@ -852,6 +852,103 @@ func (o *ResolveCardDAVConflictRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// BeginGoogleCardDAVAuthorizationRequestOptions is the options needed to make a request to BeginGoogleCardDAVAuthorization.
+type BeginGoogleCardDAVAuthorizationRequestOptions struct {
+	Body   *BeginGoogleCardDAVAuthorizationBody
+	Header *BeginGoogleCardDAVAuthorizationHeaders
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *BeginGoogleCardDAVAuthorizationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+
+	if o.Header != nil {
+		if v, ok := any(o.Header).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Header", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BeginGoogleCardDAVAuthorizationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BeginGoogleCardDAVAuthorizationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BeginGoogleCardDAVAuthorizationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BeginGoogleCardDAVAuthorizationRequestOptions) GetHeader() (map[string]string, error) {
+	return runtime.AsMap[string](o.Header)
+}
+
+// CompleteGoogleCardDAVAuthorizationRequestOptions is the options needed to make a request to CompleteGoogleCardDAVAuthorization.
+type CompleteGoogleCardDAVAuthorizationRequestOptions struct {
+	Body *CompleteGoogleCardDAVAuthorizationBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CompleteGoogleCardDAVAuthorizationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CompleteGoogleCardDAVAuthorizationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CompleteGoogleCardDAVAuthorizationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CompleteGoogleCardDAVAuthorizationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CompleteGoogleCardDAVAuthorizationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UnpublishCardDAVPersonRequestOptions is the options needed to make a request to UnpublishCardDAVPerson.
 type UnpublishCardDAVPersonRequestOptions struct {
 	PathParams *UnpublishCardDAVPersonPath

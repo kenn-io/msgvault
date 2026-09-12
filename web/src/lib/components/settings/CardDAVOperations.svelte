@@ -38,9 +38,10 @@
 
   const repairCopy: Record<RepairReason, string> = {
     account_missing: 'CardDAV account discovery is missing. Test and save the account again.',
-    credential_missing: 'No CardDAV password is stored. Enter the password and save the account.',
-    credential_mismatch: 'The stored password belongs to different CardDAV account settings. Enter it again and save.',
-    credential_unavailable: 'The stored CardDAV password cannot be read. Enter it again and save.',
+    credential_missing: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.',
+    credential_mismatch: 'The stored credential belongs to different CardDAV account settings. Connect the account again and save.',
+    credential_unavailable: 'The stored CardDAV credential cannot be read. Connect the account again and save.',
+    google_authorization_required: 'Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.',
     runtime_unavailable:
       'CardDAV is configured but unavailable in this daemon session. Test and save the account again, or restart the daemon.',
   };

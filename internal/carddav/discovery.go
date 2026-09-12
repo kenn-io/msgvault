@@ -53,6 +53,12 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
+	return discoverWithBudget(operationCtx, client, enteredURL, &operationBudget{remaining: client.operationBytes})
+}
+
+func discoverWithBudget(
+	operationCtx context.Context, client *Client, enteredURL string, budget *operationBudget,
+) (Discovery, error) {
 	entered, err := url.Parse(enteredURL)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("parse CardDAV base URL: %w", ErrUnsafeTarget)
@@ -60,7 +66,6 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	if _, err := client.validateTarget(operationCtx, entered); err != nil {
 		return Discovery{}, err
 	}
-	budget := &operationBudget{remaining: client.operationBytes}
 
 	principal, directErr := discoverHref(operationCtx, client, entered, CurrentUserPrincipalProperty, budget)
 	if directErr != nil || principal == nil {
@@ -112,6 +117,9 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 func (s *Service) DiscoverConnection(ctx context.Context, baseURL string) (Discovery, error) {
 	if s == nil || s.client == nil {
 		return Discovery{}, errors.New("CardDAV service is not configured")
+	}
+	if s.google {
+		return discoverGoogle(ctx, s.client, baseURL)
 	}
 	return Discover(ctx, s.client, baseURL)
 }
@@ -383,6 +391,12 @@ func mergeSuccessfulProperties(propStats []PropStat) Properties {
 			continue
 		}
 		properties := propStat.Properties
+		if properties.SyncToken != "" {
+			merged.SyncToken = properties.SyncToken
+		}
+		if properties.CurrentUserPrincipal != "" {
+			merged.CurrentUserPrincipal = properties.CurrentUserPrincipal
+		}
 		if properties.DisplayName != "" {
 			merged.DisplayName = properties.DisplayName
 		}

@@ -21,7 +21,9 @@ var ErrCredentialNotBound = errors.New("CardDAV credential is not bound to a con
 // filesystem pair and replacing the discovery snapshot: startup fails closed
 // until config, token, and database all describe the same connection.
 type Credential struct {
-	Password             string `json:"password"`
+	Password             string `json:"password,omitempty"`
+	Google               bool   `json:"google,omitempty"`
+	OAuthApp             string `json:"oauth_app,omitempty"`
 	BaseURL              string `json:"base_url,omitempty"`
 	Username             string `json:"username,omitempty"`
 	ConnectionGeneration int64  `json:"connection_generation,omitempty"`
@@ -53,7 +55,7 @@ func savePasswordWithPermissions(tokenDir, password string, permissions credenti
 
 // SaveCredential atomically publishes an identity-bound CardDAV credential.
 func SaveCredential(tokenDir string, credential Credential) error {
-	if credential.Password == "" || credential.BaseURL == "" || credential.Username == "" || credential.ConnectionGeneration <= 0 {
+	if (credential.Password == "" && !credential.Google) || credential.BaseURL == "" || credential.Username == "" || credential.ConnectionGeneration <= 0 {
 		return errors.New("CardDAV credential requires a connection identity")
 	}
 	return saveCredentialWithPermissions(tokenDir, credential, nativeCredentialPermissions{})
@@ -206,7 +208,10 @@ func loadCredentialWithPermissions(tokenDir string, permissions credentialPermis
 	if err := decoder.Decode(&saved); err != nil {
 		return Credential{}, fmt.Errorf("decode CardDAV token file: %w", err)
 	}
-	if saved.Password == "" {
+	if saved.Google && saved.Password != "" {
+		return Credential{}, errors.New("a Google CardDAV credential cannot contain a password")
+	}
+	if saved.Password == "" && !saved.Google {
 		return Credential{}, errors.New("CardDAV token file contains an empty password")
 	}
 	return saved, nil

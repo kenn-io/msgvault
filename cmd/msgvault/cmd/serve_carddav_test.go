@@ -3,7 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -118,6 +122,65 @@ func TestRegisterCardDAVSchedulerJobSkipsUnavailableService(t *testing.T) {
 		config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, nil,
 		slog.New(slog.DiscardHandler)))
 	assert.False(t, sched.IsJobScheduled(api.CardDAVJobName))
+}
+
+func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
+	assertions := assert.New(t)
+	required := require.New(t)
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "client.json")
+	required.NoError(os.WriteFile(secrets, []byte(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":["https://archive.example/"]}}`), 0600))
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.OAuth.ClientSecrets = secrets
+	cfg.CardDAV = config.CardDAVConfig{Provider: "google", BaseURL: carddav.GoogleDiscoveryURL, Username: "person@example.com", Enabled: true, Schedule: "0 1 * * *"}
+	required.NoError(cfg.Save())
+	st := testutil.NewTestStore(t)
+	_, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username,
+		PrincipalURL: "https://www.googleapis.com/principal/", HomeURL: "https://www.googleapis.com/contacts/",
+	})
+	required.NoError(err)
+	required.NoError(carddav.SaveCredential(cfg.TokensDir(), carddav.Credential{
+		Google: true, BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username, ConnectionGeneration: 1,
+	}))
+	logger := slog.New(slog.DiscardHandler)
+	controller, err := api.NewCardDAVController(cfg, st, logger)
+	required.NoError(err)
+	required.NotNil(controller.Current(), "manual operations retain a runtime that can load new credentials")
+	sched := scheduler.New(nil)
+	t.Cleanup(func() { sched.Stop() })
+	controller.SetScheduleReconciler(func(settings config.CardDAVConfig, service api.CardDAVOperations) error {
+		return reconcileCardDAVSchedulerJob(sched, settings, service, logger)
+	})
+	required.NoError(controller.ReconcileSchedule())
+	status, err := controller.Status(t.Context())
+	required.NoError(err)
+	assertions.Equal("google_authorization_required", status.RepairReason)
+	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "startup must skip an unauthorized Google account")
+
+	request := api.CardDAVAccountRequest{Provider: "google", Username: cfg.CardDAV.Username, Enabled: new(true), Schedule: "0 2 * * *"}
+	_, err = controller.Save(t.Context(), request)
+	required.NoError(err)
+	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "schedule-only saves must also skip missing authorization")
+
+	// A CLI authorization is picked up when the account is saved again.
+	tokenPath := filepath.Join(cfg.TokensDir(), cfg.CardDAV.Username+".json")
+	token := fmt.Sprintf(`{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","client_id":"synthetic-client","scopes":[%q]}`, oauth.ScopeCardDAV)
+	required.NoError(os.WriteFile(tokenPath, []byte(token), 0600))
+	request.Schedule = "0 3 * * *"
+	_, err = controller.Save(t.Context(), request)
+	required.NoError(err)
+	assertions.True(sched.IsJobScheduled(api.CardDAVJobName))
+	jobs := sched.JobStatus()
+	required.Len(jobs, 1)
+	assertions.Equal(request.Schedule, jobs[0].Schedule)
+
+	required.NoError(os.Remove(tokenPath))
+	request.Schedule = "0 4 * * *"
+	_, err = controller.Save(t.Context(), request)
+	required.NoError(err)
+	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "saving after credentials are removed must unschedule the account")
 }
 
 func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T) {

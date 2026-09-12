@@ -126,7 +126,7 @@ func record(t *testing.T) {
 						require.Equal(previous, batches[start])
 					} else {
 						require.Positive(batches[start])
-						require.Less(batches[start], previous)
+						require.LessOrEqual(batches[start], previous)
 					}
 					previous = batches[start]
 				}

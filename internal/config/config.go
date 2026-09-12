@@ -267,6 +267,8 @@ type AccountSchedule struct {
 // CardDAVConfig contains non-secret connection settings for the external
 // address book. The password is stored separately in tokens/carddav.json.
 type CardDAVConfig struct {
+	Provider string `toml:"provider"`
+	OAuthApp string `toml:"oauth_app"`
 	BaseURL  string `toml:"base_url"`
 	Username string `toml:"username"`
 	Schedule string `toml:"schedule"`

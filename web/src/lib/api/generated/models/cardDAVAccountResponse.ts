@@ -6,6 +6,8 @@ export interface CardDAVAccountResponse {
   base_url: string;
   books: number;
   enabled: boolean;
+  oauth_app?: string;
+  provider?: string;
   schedule?: string;
   username: string;
   [key: string]: unknown;

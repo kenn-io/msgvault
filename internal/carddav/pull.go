@@ -32,6 +32,7 @@ const (
 type Service struct {
 	store  *store.Store
 	client *Client
+	google bool
 }
 
 func NewService(st *store.Store, client *Client) *Service {
@@ -183,10 +184,16 @@ func cardDAVSyncPublicFailure(err error) (string, string) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "cancelled", "CardDAV sync was cancelled."
 	}
+	if errors.Is(err, ErrGoogleAuthorizationRequired) {
+		return "google_authorization_required", "Google Contacts authorization is required. Connect Google in CardDAV account settings."
+	}
 	if errors.Is(err, store.ErrCardDAVRetryAfter) {
 		return "retry_after", "CardDAV sync is temporarily paused."
 	}
 	if status, ok := errors.AsType[*StatusError](err); ok {
+		if status.RetryAfter > 0 {
+			return "retry_after", "CardDAV sync is temporarily paused."
+		}
 		switch status.StatusCode {
 		case http.StatusUnauthorized:
 			return "authentication_failed", "CardDAV authentication failed."
@@ -207,12 +214,13 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 		return false
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) {
+		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) || errors.Is(err, ErrGoogleAuthorizationRequired) ||
+		errors.Is(err, ErrGoogleTokenUnavailable) {
 		return true
 	}
 	var status *StatusError
 	return errors.As(err, &status) &&
-		(status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusTooManyRequests)
+		(status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusTooManyRequests || status.RetryAfter > 0)
 }
 
 func (s *Service) syncBook(

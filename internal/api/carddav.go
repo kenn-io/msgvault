@@ -53,26 +53,55 @@ type cardDAVServiceFactory func(*store.Store, string, string, string) (cardDAVCa
 // CardDAVController owns the currently configured shared service and the
 // discovery-first account setup transaction.
 type CardDAVController struct {
-	mu                sync.RWMutex
-	saveMu            sync.Mutex
-	cfg               *config.Config
-	store             *store.Store
-	service           CardDAVOperations
-	factory           cardDAVServiceFactory
-	persistDiscovery  func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error
-	saveConfig        func(*config.CardDAVConfig, config.CardDAVConfig) (config.CardDAVConfig, error)
-	saveCredential    func(string, carddav.Credential) error
-	loadCredential    func(string) (carddav.Credential, error)
-	removeCredential  func(string) error
-	reconcileSchedule func(config.CardDAVConfig, CardDAVOperations) error
+	mu                   sync.RWMutex
+	googleAuthMu         sync.Mutex
+	googleAuthorizations map[string]cardDAVGoogleAuthorization
+	saveMu               sync.Mutex
+	cfg                  *config.Config
+	store                *store.Store
+	service              CardDAVOperations
+	factory              cardDAVServiceFactory
+	persistDiscovery     func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error
+	saveConfig           func(*config.CardDAVConfig, config.CardDAVConfig) (config.CardDAVConfig, error)
+	saveCredential       func(string, carddav.Credential) error
+	loadCredential       func(string) (carddav.Credential, error)
+	removeCredential     func(string) error
+	reconcileSchedule    func(config.CardDAVConfig, CardDAVOperations) error
 }
 
-// SetScheduleReconciler wires the daemon's live scheduler into successful
-// account saves. The callback receives the newly persisted config and service.
+// SetScheduleReconciler wires the daemon's live scheduler into account saves
+// and authorization changes. A nil service means scheduling is unavailable.
 func (c *CardDAVController) SetScheduleReconciler(reconcile func(config.CardDAVConfig, CardDAVOperations) error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reconcileSchedule = reconcile
+}
+
+// ReconcileSchedule updates scheduling from the saved connection and current
+// credentials without contacting the CardDAV server.
+func (c *CardDAVController) ReconcileSchedule() error {
+	c.saveMu.Lock()
+	defer c.saveMu.Unlock()
+	return c.reconcileCurrentSchedule()
+}
+
+// reconcileCurrentSchedule runs while saveMu is held so an authorization
+// callback cannot schedule a connection that an account save is replacing.
+func (c *CardDAVController) reconcileCurrentSchedule() error {
+	c.mu.RLock()
+	service, reconcile := c.service, c.reconcileSchedule
+	c.mu.RUnlock()
+	if reconcile == nil {
+		return nil
+	}
+	configured := c.cardDAVConfigSnapshot()
+	if service != nil && configured.Provider == "google" {
+		credential := carddav.Credential{Username: configured.Username, OAuthApp: configured.OAuthApp}
+		if _, err := c.googleOAuthManager(credential); err != nil {
+			service = nil
+		}
+	}
+	return reconcile(configured, service)
 }
 
 // NewCardDAVController loads the saved account and credential. A credential
@@ -132,12 +161,16 @@ func NewCardDAVController(cfg *config.Config, st *store.Store, logger *slog.Logg
 	}
 	if account == nil || credential.BaseURL != configured.BaseURL || credential.Username != configured.Username ||
 		credential.BaseURL != account.BaseURL || credential.Username != account.Username ||
-		credential.ConnectionGeneration != account.ConnectionGeneration {
+		credential.ConnectionGeneration != account.ConnectionGeneration || !cardDAVCredentialMatchesConfig(credential, configured) {
 		return c, nil
 	}
-	service, err := newCardDAVService(st, configured.BaseURL, configured.Username, credential.Password)
+	service, err := c.serviceForCredential(credential)
 	if err != nil {
-		return nil, err
+		if !credential.Google {
+			return nil, err
+		}
+		logger.Warn("CardDAV authorization configuration is unavailable; repair the account settings", "error", err)
+		return c, nil
 	}
 	c.service = service
 	return c, nil
@@ -218,6 +251,8 @@ func (c *CardDAVController) saveCardDAVConfig(
 		return previous, fmt.Errorf("%w: CardDAV settings changed", config.ErrConfigConflict)
 	}
 	after, err := config.EditConfigFile(path, before.ETag, []config.Edit{
+		{Key: "carddav.provider", Value: next.Provider},
+		{Key: "carddav.oauth_app", Value: next.OAuthApp},
 		{Key: "carddav.base_url", Value: next.BaseURL},
 		{Key: "carddav.username", Value: next.Username},
 		{Key: "carddav.schedule", Value: next.Schedule},
@@ -237,14 +272,15 @@ func (c *CardDAVController) saveCardDAVConfig(
 func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest) (CardDAVAccountResponse, error) {
 	c.ensureDependencies()
 	req.Schedule = scheduler.NormalizeCronExpr(req.Schedule)
+	req = normalizeCardDAVAccountRequest(req)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}
-	password, err := c.passwordForRequest(ctx, req)
+	credential, err := c.credentialForRequest(ctx, req)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
 	}
-	service, err := c.factory(c.store, req.BaseURL, req.Username, password)
+	service, err := c.serviceForCredential(credential)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVValidation, err)
 	}
@@ -253,7 +289,7 @@ func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVUpstream, err)
 	}
-	return CardDAVAccountResponse{BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
+	return CardDAVAccountResponse{Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
 }
 
 func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest) (CardDAVAccountResponse, error) {
@@ -261,19 +297,22 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	defer c.saveMu.Unlock()
 	c.ensureDependencies()
 	req.Schedule = scheduler.NormalizeCronExpr(req.Schedule)
+	req = normalizeCardDAVAccountRequest(req)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}
 	next := config.CardDAVConfig{
-		BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,
+		Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,
 	}
 	current := c.cardDAVConfigSnapshot()
-	identityChanged := current.BaseURL != next.BaseURL || current.Username != next.Username
+	identityChanged := current.BaseURL != next.BaseURL || current.Username != next.Username || current.Provider != next.Provider || current.OAuthApp != next.OAuthApp
 	enabling := !current.Enabled && next.Enabled
-	if req.Password == "" && !identityChanged && !enabling {
+	// An unchanged Google save refreshes discovery; schedule edits stay offline.
+	if req.Password == "" && !identityChanged && !enabling &&
+		(req.Provider != "google" || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
 		return c.saveCardDAVConfigOnly(ctx, next)
 	}
-	password, err := c.passwordForRequest(ctx, req)
+	credential, err := c.credentialForRequest(ctx, req)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
 	}
@@ -286,7 +325,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	hadPreviousCredential := previousCredentialErr == nil
 	var previousCredentialFile carddav.CredentialFileSnapshot
 	hadPreviousCredentialFile := false
-	if req.Password != "" && previousCredentialErr != nil {
+	if (req.Password != "" || req.Provider == "google") && previousCredentialErr != nil {
 		previousCredentialFile, err = carddav.CaptureCredentialFile(tokenDir)
 		if err != nil {
 			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
@@ -295,14 +334,14 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	} else if previousCredentialErr != nil && !errors.Is(previousCredentialErr, os.ErrNotExist) {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, previousCredentialErr)
 	}
-	credentialsChanged := !hadPreviousCredential || previousCredential.Password != password ||
+	credentialsChanged := !hadPreviousCredential || previousCredential.Password != credential.Password || previousCredential.Google != credential.Google || previousCredential.OAuthApp != credential.OAuthApp ||
 		previousCredential.BaseURL != req.BaseURL || previousCredential.Username != req.Username
 	if err := c.store.ValidateCardDAVConnectionChangeContext(
 		ctx, req.BaseURL, req.Username, credentialsChanged,
 	); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	service, err := c.factory(c.store, req.BaseURL, req.Username, password)
+	service, err := c.serviceForCredential(credential)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVValidation, err)
 	}
@@ -326,9 +365,8 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		}
 		return c.removeCredential(tokenDir)
 	}
-	if err := c.saveCredential(tokenDir, carddav.Credential{
-		Password: password, BaseURL: req.BaseURL, Username: req.Username, ConnectionGeneration: generation,
-	}); err != nil {
+	credential.ConnectionGeneration = generation
+	if err := c.saveCredential(tokenDir, credential); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
 	previous, err := c.saveConfig(nil, next)
@@ -345,14 +383,11 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	}
 	c.mu.Lock()
 	c.service = service
-	reconcileSchedule := c.reconcileSchedule
 	c.mu.Unlock()
-	if reconcileSchedule != nil {
-		if err := reconcileSchedule(next, service); err != nil {
-			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, fmt.Errorf("reconcile CardDAV schedule: %w", err))
-		}
+	if err := c.reconcileCurrentSchedule(); err != nil {
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, fmt.Errorf("reconcile CardDAV schedule: %w", err))
 	}
-	return CardDAVAccountResponse{BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
+	return CardDAVAccountResponse{Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
 }
 
 func (c *CardDAVController) saveCardDAVConfigOnly(
@@ -362,10 +397,6 @@ func (c *CardDAVController) saveCardDAVConfigOnly(
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	c.mu.RLock()
-	service := c.service
-	reconcileSchedule := c.reconcileSchedule
-	c.mu.RUnlock()
 	previous, err := c.saveConfig(nil, next)
 	if err != nil {
 		var rollbackConfigErr error
@@ -374,14 +405,12 @@ func (c *CardDAVController) saveCardDAVConfigOnly(
 		}
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, rollbackConfigErr)
 	}
-	if reconcileSchedule != nil {
-		if err := reconcileSchedule(next, service); err != nil {
-			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
-				fmt.Errorf("reconcile CardDAV schedule: %w", err))
-		}
+	if err := c.reconcileCurrentSchedule(); err != nil {
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
+			fmt.Errorf("reconcile CardDAV schedule: %w", err))
 	}
 	return CardDAVAccountResponse{
-		BaseURL: next.BaseURL, Username: next.Username, Enabled: next.Enabled,
+		Provider: next.Provider, OAuthApp: next.OAuthApp, BaseURL: next.BaseURL, Username: next.Username, Enabled: next.Enabled,
 		Schedule: next.Schedule, Books: len(books),
 	}, nil
 }
@@ -399,6 +428,9 @@ func (c *CardDAVController) passwordForRequest(ctx context.Context, req CardDAVA
 			return "", fmt.Errorf("%w: CardDAV password is required because the saved connection identity does not match", errCardDAVValidation)
 		}
 		return "", errors.Join(errCardDAVStorage, err)
+	}
+	if credential.Google {
+		return "", fmt.Errorf("%w: select Google Contacts to reuse Google authorization", errCardDAVValidation)
 	}
 	return credential.Password, nil
 }
@@ -427,18 +459,27 @@ func (c *CardDAVController) reusableCredential(
 	}
 	if account == nil || credential.BaseURL != baseURL || credential.Username != username ||
 		account.BaseURL != baseURL || account.Username != username ||
-		credential.ConnectionGeneration != account.ConnectionGeneration {
+		credential.ConnectionGeneration != account.ConnectionGeneration || !cardDAVCredentialMatchesConfig(credential, configured) {
 		return carddav.Credential{}, carddav.ErrCredentialNotBound
 	}
 	return credential, nil
 }
 
 func (c *CardDAVController) passwordConfigured(ctx context.Context, baseURL, username string) bool {
-	_, err := c.reusableCredential(ctx, baseURL, username)
-	return err == nil
+	credential, err := c.reusableCredential(ctx, baseURL, username)
+	return err == nil && credential.Password != ""
 }
 
 func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
+	if req.Provider != "" && req.Provider != "google" {
+		return fmt.Errorf("%w: unknown CardDAV provider", errCardDAVValidation)
+	}
+	if req.Provider == "google" && req.Password != "" {
+		return fmt.Errorf("%w: Google Contacts uses OAuth, not a password", errCardDAVValidation)
+	}
+	if req.Provider != "google" && req.OAuthApp != "" {
+		return fmt.Errorf("%w: OAuth app requires Google Contacts", errCardDAVValidation)
+	}
 	if strings.TrimSpace(req.BaseURL) == "" || strings.TrimSpace(req.Username) == "" {
 		return fmt.Errorf("%w: CardDAV base URL and username are required", errCardDAVValidation)
 	}
@@ -458,6 +499,8 @@ func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
 }
 
 type CardDAVAccountRequest struct {
+	Provider string `json:"provider,omitempty" enum:",google"`
+	OAuthApp string `json:"oauth_app,omitempty"`
 	BaseURL  string `json:"base_url"`
 	Username string `json:"username"`
 	Password string `json:"password,omitempty" writeOnly:"true"`
@@ -465,6 +508,8 @@ type CardDAVAccountRequest struct {
 	Enabled  *bool  `json:"enabled" nullable:"false"`
 }
 type CardDAVAccountResponse struct {
+	Provider string `json:"provider,omitempty"`
+	OAuthApp string `json:"oauth_app,omitempty"`
 	BaseURL  string `json:"base_url"`
 	Username string `json:"username"`
 	Schedule string `json:"schedule,omitempty"`
@@ -555,7 +600,7 @@ type CardDAVRunResponse struct {
 	Created      int64      `json:"created"`
 	Updated      int64      `json:"updated"`
 	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
@@ -572,7 +617,7 @@ type CardDAVStatusResponse struct {
 	Scheduled            bool                  `json:"scheduled"`
 	Schedule             string                `json:"schedule"`
 	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
-	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,runtime_unavailable"`
+	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,runtime_unavailable"`
 	Account              *CardDAVStatusAccount `json:"account,omitempty"`
 	Active               *CardDAVRunResponse   `json:"active,omitempty"`
 	Latest               *CardDAVRunResponse   `json:"latest,omitempty"`
@@ -607,6 +652,8 @@ func cardDAVRunPublicFailure(code string) (string, string) {
 		return code, "CardDAV sync is temporarily paused."
 	case "authentication_failed":
 		return code, "CardDAV authentication failed."
+	case "google_authorization_required":
+		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings."
 	case "upstream_failed":
 		return code, "CardDAV server request failed."
 	case "safety_limit":
@@ -670,10 +717,19 @@ func (c *CardDAVController) Status(ctx context.Context) (CardDAVStatusResponse, 
 	}
 	status.CredentialConfigured = credential.BaseURL == cfg.BaseURL && credential.Username == cfg.Username &&
 		credential.BaseURL == account.BaseURL && credential.Username == account.Username &&
-		credential.ConnectionGeneration == account.ConnectionGeneration
+		credential.ConnectionGeneration == account.ConnectionGeneration && cardDAVCredentialMatchesConfig(credential, cfg)
 	if !status.CredentialConfigured {
 		status.RepairReason = "credential_mismatch"
-	} else if !status.Available {
+		return status, nil
+	}
+	if credential.Google {
+		if _, err := c.googleOAuthManager(credential); err != nil {
+			status.CredentialConfigured = false
+			status.RepairReason = "google_authorization_required"
+			return status, nil //nolint:nilerr // Status reports missing Google authorization without contacting Google.
+		}
+	}
+	if !status.Available {
 		status.RepairReason = "runtime_unavailable"
 	}
 	return status, nil
@@ -712,6 +768,16 @@ func (c *CardDAVController) Runs(ctx context.Context, limit int, beforeID *int64
 }
 
 func (s *Server) registerCardDAVRoutes(api huma.API) {
+	authorize := rawAPIV1Operation("beginGoogleCardDAVAuthorization", http.MethodPost, "/carddav/google/authorize", "Start Google Contacts authorization in a browser")
+	authorize.Description = "Start sign-in from the msgvault Web UI. The Origin header must match the redirect_uri origin, and redirect_uri must be the Web UI's root URL. For terminal authorization, use msgvault carddav authorize-google."
+	authorize.Parameters = append(authorize.Parameters, &huma.Param{Name: "Origin", In: "header", Required: true,
+		Description: "Origin of the msgvault Web UI, matching redirect_uri", Schema: &huma.Schema{Type: huma.TypeString}})
+	authorize.RequestBody = jsonRequestBodyFor[CardDAVGoogleAuthorizeRequest](api)
+	authorize.Responses = jsonResponsesFor[CardDAVGoogleAuthorizeResponse](api)
+	addErrorResponses(api, authorize.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	addCardDAVRetryAfterHeader(authorize.Responses)
+	registerRawHumaRoute(api, authorize, s.handleGoogleCardDAVAuthorize)
+	registerCardDAVJSONRouteWithRequest[CardDAVGoogleCallbackRequest, StatusMessageResponse](api, "completeGoogleCardDAVAuthorization", http.MethodPost, "/carddav/google/callback", "Complete Google Contacts authorization", s.handleGoogleCardDAVCallback, http.StatusBadRequest, http.StatusServiceUnavailable)
 	registerCardDAVJSONRoute[CardDAVStatusResponse](api, "getCardDAVStatus", http.MethodGet, "/carddav/status", "Get CardDAV synchronization status", s.handleCardDAVStatus, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	runs := rawAPIV1Operation("listCardDAVRuns", http.MethodGet, "/carddav/runs", "List CardDAV synchronization runs")
 	limit := queryIntegerParam("limit", "Maximum runs to return (default 25, max 100)")
@@ -927,12 +993,15 @@ func (s *Server) writeCardDAVAccountError(
 ) {
 	var statusErr *carddav.StatusError
 	switch {
+	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, errCardDAVValidation):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, store.ErrCardDAVCredentialChangePending),
 		errors.Is(err, store.ErrCardDAVIdentityChangeOwned):
 		writeError(w, http.StatusConflict, "conflict", message)
-	case errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusTooManyRequests:
+	case errors.As(err, &statusErr) &&
+		(statusErr.StatusCode == http.StatusTooManyRequests || statusErr.RetryAfter > 0):
 		s.setCardDAVRetryAfterHeader(ctx, w, statusErr.RetryAfter)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
 	case errors.Is(err, errCardDAVUpstream):
@@ -948,6 +1017,8 @@ func (s *Server) writeCardDAVOperationError(
 	var statusErr *carddav.StatusError
 	var networkErr net.Error
 	switch {
+	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, carddav.ErrInvalidResolutionChoice):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, store.ErrCardDAVAddressBookNotFound),
@@ -973,7 +1044,8 @@ func (s *Server) writeCardDAVOperationError(
 	case errors.Is(err, store.ErrCardDAVRetryAfter):
 		s.setCardDAVRetryAfterHeader(ctx, w, 0)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
-	case errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusTooManyRequests:
+	case errors.As(err, &statusErr) &&
+		(statusErr.StatusCode == http.StatusTooManyRequests || statusErr.RetryAfter > 0):
 		s.setCardDAVRetryAfterHeader(ctx, w, statusErr.RetryAfter)
 		writeError(w, http.StatusServiceUnavailable, "carddav_retry_after", message)
 	case errors.As(err, &statusErr), errors.As(err, &networkErr):

@@ -24,6 +24,7 @@ type Client struct {
 	origin             *url.URL
 	username           string
 	password           string
+	bearerToken        func(context.Context) (string, error)
 	requestTimeout     time.Duration
 	operationTimeout   time.Duration
 	responseBytes      int64
@@ -43,7 +44,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if !validHTTPURL(&origin) {
 		return nil, fmt.Errorf("credential origin: %w", ErrUnsafeTarget)
 	}
-	if origin.Scheme != "https" && (options.Username != "" || options.Password != "") &&
+	if origin.Scheme != "https" && (options.Username != "" || options.Password != "" || options.BearerToken != nil) &&
 		!options.AllowInsecureCredentials {
 		return nil, fmt.Errorf("credential origin requires HTTPS: %w", ErrUnsafeTarget)
 	}
@@ -72,7 +73,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		options.DialContext = dialer.DialContext
 	}
 	return &Client{
-		origin: originURL(&origin), username: options.Username, password: options.Password,
+		origin: originURL(&origin), username: options.Username, password: options.Password, bearerToken: options.BearerToken,
 		requestTimeout: options.RequestTimeout, operationTimeout: options.OperationTimeout,
 		responseBytes: options.ResponseBytes, operationBytes: options.OperationBytes,
 		resolver: options.Resolver, dialContext: options.DialContext,
@@ -255,7 +256,16 @@ func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.A
 	} else if davRequest.ETag != "" {
 		req.Header.Set("If-Match", davRequest.ETag)
 	}
-	if c.username != "" || c.password != "" {
+	if c.bearerToken != nil {
+		token, err := c.bearerToken(requestCtx)
+		if err != nil {
+			return nil, 0, fmt.Errorf("CardDAV authorization: %w", err)
+		}
+		if token == "" {
+			return nil, 0, errors.New("CardDAV authorization returned an empty token")
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if c.username != "" || c.password != "" {
 		req.SetBasicAuth(c.username, c.password)
 	}
 	httpResponse, err := client.Do(req)

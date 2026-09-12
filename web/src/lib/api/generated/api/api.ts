@@ -42,6 +42,9 @@ import type {
   CardDAVConflictDetailResponse,
   CardDAVConflictResolutionResponse,
   CardDAVConflictsResponse,
+  CardDAVGoogleAuthorizeRequest,
+  CardDAVGoogleAuthorizeResponse,
+  CardDAVGoogleCallbackRequest,
   CardDAVPublicationResponse,
   CardDAVResolveRequest,
   CardDAVRunsResponse,
@@ -684,6 +687,41 @@ export const resolveCardDAVConflict = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: cardDAVResolveRequest,
+    },
+    options,
+  );
+};
+/**
+ * Start sign-in from the msgvault Web UI. The Origin header must match the redirect_uri origin, and redirect_uri must be the Web UI's root URL. For terminal authorization, use msgvault carddav authorize-google.
+ * @summary Start Google Contacts authorization in a browser
+ */
+export const beginGoogleCardDAVAuthorization = (
+  cardDAVGoogleAuthorizeRequest: CardDAVGoogleAuthorizeRequest,
+  options?: SecondParameter<typeof orvalFetch<CardDAVGoogleAuthorizeResponse>>,
+) => {
+  return orvalFetch<CardDAVGoogleAuthorizeResponse>(
+    {
+      url: `/api/v1/carddav/google/authorize`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVGoogleAuthorizeRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Complete Google Contacts authorization
+ */
+export const completeGoogleCardDAVAuthorization = (
+  cardDAVGoogleCallbackRequest: CardDAVGoogleCallbackRequest,
+  options?: SecondParameter<typeof orvalFetch<StatusMessageResponse>>,
+) => {
+  return orvalFetch<StatusMessageResponse>(
+    {
+      url: `/api/v1/carddav/google/callback`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVGoogleCallbackRequest,
     },
     options,
   );

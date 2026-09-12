@@ -38,6 +38,8 @@ type ClientOptions struct {
 	CredentialOrigin *url.URL
 	Username         string
 	Password         string
+	// BearerToken obtains a current token after the request target is validated.
+	BearerToken      func(context.Context) (string, error)
 	RequestTimeout   time.Duration
 	OperationTimeout time.Duration
 	ResponseBytes    int64
@@ -90,8 +92,8 @@ func (b *operationBudget) consume(response *Response) error {
 }
 
 // StatusError represents an HTTP error response that callers can branch on
-// without parsing strings. RetryAfter is populated for 429 responses when the
-// server supplied a valid value, clamped to one hour.
+// without parsing strings. RetryAfter is populated when the server supplied a
+// valid value, clamped to one hour.
 type StatusError struct {
 	StatusCode   int
 	RetryAfter   time.Duration

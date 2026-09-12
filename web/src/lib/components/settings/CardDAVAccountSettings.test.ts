@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { chooseSelectOption } from '../../../test/kit-ui';
 import { createAPIClient } from '../../api/client';
 import type { SettingState } from '../../settings/catalog';
 import CardDAVAccountSettings from './CardDAVAccountSettings.svelte';
@@ -44,6 +45,17 @@ function deferredResponse() {
 }
 
 describe('CardDAVAccountSettings', () => {
+  it.each(['https://old.example.test/', 'https://draft.example.test/'])('preserves the CardDAV URL %s when switching providers without saving', async (baseURL) => {
+    render(CardDAVAccountSettings, { client: createAPIClient(async () => Response.json({})), settings });
+    await fireEvent.input(screen.getByLabelText('Base URL'), { target: { value: baseURL } });
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV provider/ }), 'Google Contacts');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV provider/ }), 'Other CardDAV server');
+
+    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(baseURL);
+    expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(baseURL !== 'https://old.example.test/');
+  });
+
   it('refreshes a clean account form when settings props change', async () => {
     const client = createAPIClient(async () => Response.json({}));
     const rendered = render(CardDAVAccountSettings, { client, settings });

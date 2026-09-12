@@ -302,7 +302,10 @@ import (
 // still accept a stored off value. The daemon stops emitting the sync,
 // logging, activity, and backup groups but keeps them in the enum.
 // Additive (minor bump): existing settings routes are unchanged.
-const APISchemaVersion = "2.23.0"
+// 2.24.0 adds Google Contacts authorization endpoints and optional provider
+// and oauth_app fields to CardDAV account setup. Password-based CardDAV
+// requests retain their existing meaning.
+const APISchemaVersion = "2.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

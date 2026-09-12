@@ -111,6 +111,7 @@ func TestOperationPublicEnumDomainsEnumerateEveryRuntimeValue(t *testing.T) {
 	assert.Equal(t, []PublicErrorCode{
 		PublicErrorArchiveGap, PublicErrorAuthenticationFailed, PublicErrorBudget,
 		PublicErrorCancelled, PublicErrorCardDAVSyncFailed, PublicErrorDaemonRestarted,
+		PublicErrorGoogleAuthorizationRequired,
 		PublicErrorInternal, PublicErrorInvalidOutput, PublicErrorInvocationArchiveDrift,
 		PublicErrorInvocationAuthenticationFailed, PublicErrorInvocationCancelled,
 		PublicErrorInvocationDaemonRestarted, PublicErrorInvocationInternal,

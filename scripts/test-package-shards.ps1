@@ -61,13 +61,40 @@ try {
         exit 0
     }
 
-    $activeShards = [Math]::Min($ShardCount, $testNames.Count)
-    $shards = [object[]]::new($activeShards)
-    for ($i = 0; $i -lt $activeShards; $i++) {
-        $shards[$i] = [System.Collections.Generic.List[string]]::new()
+    # Windows limits a process command line to 32,767 characters. Increase the
+    # shard count when the test-name patterns need more room, leaving space for
+    # the executable path and the other test flags.
+    $maxPatternCharacters = 24000
+    $patternCharacters = 3
+    foreach ($testName in $testNames) {
+        $patternCharacters += [regex]::Escape($testName).Length + 1
     }
-    for ($i = 0; $i -lt $testNames.Count; $i++) {
-        $shards[$i % $activeShards].Add($testNames[$i])
+    $requiredShards = [int][Math]::Ceiling($patternCharacters / $maxPatternCharacters)
+    $activeShards = [Math]::Min([Math]::Max($ShardCount, $requiredShards), $testNames.Count)
+    while ($true) {
+        $shards = [object[]]::new($activeShards)
+        for ($i = 0; $i -lt $activeShards; $i++) {
+            $shards[$i] = [System.Collections.Generic.List[string]]::new()
+        }
+        for ($i = 0; $i -lt $testNames.Count; $i++) {
+            $shards[$i % $activeShards].Add($testNames[$i])
+        }
+
+        $largestPatternCharacters = 0
+        foreach ($shard in $shards) {
+            $shardPatternCharacters = 3
+            foreach ($testName in $shard) {
+                $shardPatternCharacters += [regex]::Escape($testName).Length + 1
+            }
+            $largestPatternCharacters = [Math]::Max($largestPatternCharacters, $shardPatternCharacters)
+        }
+        if ($largestPatternCharacters -le $maxPatternCharacters) {
+            break
+        }
+        if ($activeShards -eq $testNames.Count) {
+            throw "A test name in $Package exceeds the $maxPatternCharacters-character shard limit"
+        }
+        $activeShards++
     }
 
     Write-Host "Running $($testNames.Count) tests from $Package in $activeShards shards"

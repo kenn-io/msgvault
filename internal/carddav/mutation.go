@@ -29,7 +29,7 @@ func (s *Service) UnpublishPerson(ctx context.Context, personID int64) error {
 }
 
 // ReconcilePublications runs in person-ID order. A person's failure does not
-// prevent later people from being considered; an account-wide 429 gate stops
+// prevent later people from being considered; an account-wide retry gate stops
 // the sweep immediately.
 func (s *Service) ReconcilePublications(ctx context.Context) error {
 	return s.reconcilePublications(ctx, nil)
@@ -57,7 +57,7 @@ func (s *Service) recoverPendingPublications(ctx context.Context) (map[int64]boo
 		}
 		recovered[personID] = true
 		err = s.mutate(ctx, Mutation{PersonID: personID, Desired: publication.Desired})
-		if errors.Is(err, store.ErrCardDAVRetryAfter) || isStatus(err, http.StatusTooManyRequests) {
+		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
 			return recovered, err
 		}
 		if errors.Is(err, ErrCardDAVConflictPending) {
@@ -86,7 +86,7 @@ func (s *Service) reconcilePublications(ctx context.Context, skip map[int64]bool
 			continue
 		}
 		err = s.mutate(ctx, Mutation{PersonID: personID, Desired: publication.Desired})
-		if errors.Is(err, store.ErrCardDAVRetryAfter) || isStatus(err, http.StatusTooManyRequests) {
+		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
 			return err
 		}
 		if errors.Is(err, ErrCardDAVConflictPending) {
@@ -366,8 +366,7 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 	}
 	_, err = s.doRequest(ctx, request)
 	if err != nil {
-		var status *StatusError
-		if errors.As(err, &status) && status.StatusCode == http.StatusTooManyRequests {
+		if status := retryStatus(err); status != nil {
 			if pending.PersonID == 0 && pending.ResolutionConflictID != 0 {
 				if rollbackErr := s.store.RollbackCardDAVConflictMutationContext(ctx, pending); rollbackErr != nil {
 					return errors.Join(err, rollbackErr)
@@ -437,11 +436,9 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 		Body: pending.OutgoingBody, Create: true,
 	})
 	if err != nil && !isStatus(err, http.StatusPreconditionFailed) {
-		if isStatus(err, http.StatusTooManyRequests) {
-			if status, ok := errors.AsType[*StatusError](err); ok {
-				gate := time.Now().Add(status.RetryAfter).UTC()
-				_ = s.store.RollbackCardDAVPublicationThrottleContext(ctx, pending, gate)
-			}
+		if status := retryStatus(err); status != nil {
+			gate := time.Now().Add(status.RetryAfter).UTC()
+			_ = s.store.RollbackCardDAVPublicationThrottleContext(ctx, pending, gate)
 		}
 		if isDefinitiveMutationRejection(err) {
 			if rollbackErr := s.rollbackDefinitiveMutation(ctx, pending); rollbackErr != nil {
@@ -556,8 +553,7 @@ func (s *Service) doRequest(ctx context.Context, request Request) (*Response, er
 		return nil, err
 	}
 	response, err := s.client.Do(ctx, request)
-	var status *StatusError
-	if errors.As(err, &status) && status.StatusCode == http.StatusTooManyRequests {
+	if status := retryStatus(err); status != nil {
 		gate := time.Now().Add(status.RetryAfter).UTC()
 		if gateErr := s.store.SetCardDAVRetryAfterContext(ctx, gate); gateErr != nil {
 			return response, errors.Join(err, gateErr)
@@ -569,6 +565,14 @@ func (s *Service) doRequest(ctx context.Context, request Request) (*Response, er
 func isStatus(err error, code int) bool {
 	var status *StatusError
 	return errors.As(err, &status) && status.StatusCode == code
+}
+
+func retryStatus(err error) *StatusError {
+	status, ok := errors.AsType[*StatusError](err)
+	if !ok || (status.StatusCode != http.StatusTooManyRequests && status.RetryAfter <= 0) {
+		return nil
+	}
+	return status
 }
 
 func isAbsentStatus(err error) bool {

@@ -334,6 +334,24 @@ provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
 
+### `[carddav]`
+
+Connect through the [CardDAV account workflow](usage/people-carddav.md) so the
+daemon validates discovery before saving these settings.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `provider` | `""` | Empty for a password-based server, or `google` for Google Contacts |
+| `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
+| `base_url` | `""` | CardDAV discovery URL; Google setup supplies its canonical URL |
+| `username` | `""` | Server username or Google account email |
+| `schedule` | `""` | Cron schedule; empty disables scheduled sync |
+| `enabled` | `false` | Enable the configured connection |
+
+Passwords and Google tokens stay in the configured token directory, outside
+`config.toml`. See [Google Contacts setup](usage/people-carddav.md#google-contacts)
+for browser and terminal authorization.
+
 ### `[microsoft]`
 
 Configuration for Microsoft 365 / Outlook.com OAuth and Microsoft Teams Graph

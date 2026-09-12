@@ -331,6 +331,8 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("people.enrichment.schedule", settingsGroupEnrichment, nil, func(c *config.Config) string { return c.People.Enrichment.Schedule }),
 	intSetting("people.enrichment.batch_size", settingsGroupEnrichment, func(c *config.Config) int { return c.People.Enrichment.BatchSize }),
 	stringSetting("people.enrichment.lease_duration", settingsGroupEnrichment, nil, func(c *config.Config) string { return c.People.Enrichment.LeaseDuration.String() }),
+	readOnlyStringSetting("carddav.provider", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.Provider }),
+	readOnlyStringSetting("carddav.oauth_app", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.OAuthApp }),
 	readOnlyStringSetting("carddav.base_url", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.BaseURL }),
 	readOnlyStringSetting("carddav.username", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.Username }),
 	readOnlyStringSetting("carddav.schedule", settingsGroupSources, func(c *config.Config) string { return c.CardDAV.Schedule }),

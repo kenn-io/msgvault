@@ -1686,6 +1686,8 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 | Command | Purpose |
 |---|---|
 | `add-carddav <base-url> <username> [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
+| `add-carddav --google <email> [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
 | `sync-carddav [--full]` | Synchronize the account; `--full` reconciles complete books |
 | `person publish <person-id>` / `person unpublish <person-id>` | Publish a saved profile or remove its remote card |
 | `carddav books` | List discovered books and their roles |

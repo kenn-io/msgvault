@@ -22,6 +22,10 @@ type UpdateCardDAVBookRolesBody = CardDAVBookRolesRequest
 
 type ResolveCardDAVConflictBody = CardDAVResolveRequest
 
+type BeginGoogleCardDAVAuthorizationBody = CardDAVGoogleAuthorizeRequest
+
+type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
+
 type SyncCardDAVBody = CardDAVSyncRequest
 
 type UpdateCLIAccountBody = UpdateRequest

@@ -29,9 +29,11 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.23.0**.
+it is separate from the binary release version. The current schema is **2.24.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.24.0 adds Google Contacts authorization and CardDAV provider selection.
 
 Schema 2.23.0 describes Settings structure. A sectioned group lists its
 `sections`, and each setting in such a group names its `section`; groups
