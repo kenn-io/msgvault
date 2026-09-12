@@ -1230,10 +1230,9 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store                       *store.Store
-	draftPolicy                 []config.IMAPDraftSource
-	draftClientFactory          func(context.Context, *store.Source) (*imaplib.Client, error)
-	draftLifecycleClientFactory func(context.Context, *store.Source) (draftClient, error)
+	store              *store.Store
+	draftPolicy        []config.IMAPDraftSource
+	draftClientFactory func(context.Context, *store.Source) (*imaplib.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error

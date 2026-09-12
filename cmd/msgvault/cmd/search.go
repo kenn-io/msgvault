@@ -76,7 +76,7 @@ Examples:
 		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
 			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
-		if searchDeletionScope != consentActive && searchDeletionScope != "deleted" && searchDeletionScope != "any" {
+		if searchDeletionScope != "active" && searchDeletionScope != "deleted" && searchDeletionScope != "any" {
 			return usageErr(cmd, fmt.Errorf(
 				"invalid --deletion-scope: %q (want active|deleted|any)", searchDeletionScope))
 		}

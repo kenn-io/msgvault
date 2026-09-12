@@ -1706,15 +1706,10 @@ CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
 -- Local draft identity for drafts msgvault created over IMAP. draft_id is the
--- stable local identity named after the first APPEND's message row and never
--- moves; current_message_id follows each replacement. draft_id deliberately
--- outlives the archive row it was named after (the first APPEND is tombstoned
--- after a successful edit), so it must NOT carry ON DELETE CASCADE. Provenance:
--- only the draft path writes this table, so a row here distinguishes a draft
--- msgvault owns from an ordinary archived message that happens to carry \Draft
--- in the same mailbox. The pending_* columns are the in-flight remote mutation,
--- following carddav_publications: one object row carrying its own pending
--- operation, cleared together once a live read proves the outcome.
+-- Local draft identity for drafts msgvault created over IMAP. draft_id is the
+-- stable local identity named after the first APPEND's message row. It
+-- identifies a draft msgvault owns, even when another archived message carries
+-- \Draft in the same mailbox.
 CREATE TABLE IF NOT EXISTS imap_drafts (
     draft_id                 BIGINT PRIMARY KEY,
     source_id                BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1725,13 +1720,8 @@ CREATE TABLE IF NOT EXISTS imap_drafts (
     revision                 BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
     lifecycle                TEXT NOT NULL DEFAULT 'active'
         CHECK (lifecycle IN ('active','discarded')),
-    pending_kind             TEXT CHECK (pending_kind IN ('edit','discard')),
-    pending_uidvalidity      BIGINT,
-    pending_uid              BIGINT,
-    pending_started_at       TIMESTAMPTZ,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK ((pending_kind IS NULL) OR (pending_uid IS NOT NULL AND pending_uidvalidity IS NOT NULL))
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 COMMENT ON TABLE imap_drafts IS 'Ownership rows for IMAP drafts created by msgvault. draft_id is stable; current_message_id follows each replacement.';
 CREATE INDEX IF NOT EXISTS idx_imap_drafts_source_current

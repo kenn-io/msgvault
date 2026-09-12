@@ -150,11 +150,6 @@ func (f draftReplyFixture) grantedAdapter() *storeAPIAdapter {
 		draftClientFactory: func(context.Context, *store.Source) (*imaplib.Client, error) {
 			return imaplib.NewClient(f.config, testutil.IMAPTestPassword), nil
 		},
-		draftLifecycleClientFactory: func(context.Context, *store.Source) (draftClient, error) {
-			return &testDraftClient{
-				Client: imaplib.NewClient(f.config, testutil.IMAPTestPassword),
-			}, nil
-		},
 		draftCacheRefresh: func(ctx context.Context, label string) error {
 			// The refresh must run with the source lock already released.
 			execution, err := f.store.AcquireSyncExecutionContext(ctx, f.source.ID)

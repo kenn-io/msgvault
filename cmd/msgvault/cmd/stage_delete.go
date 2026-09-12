@@ -112,7 +112,7 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 	limit := int64(1)
 	filters := []generated.ExploreFilter{{
 		Dimension: generated.ExploreFilterDimensionDeletion,
-		Values:    []string{consentActive},
+		Values:    []string{"active"},
 	}}
 	if cmd.Flags().Changed("source-id") {
 		filters = append(filters, generated.ExploreFilter{

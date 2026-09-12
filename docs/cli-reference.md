@@ -160,94 +160,21 @@ an IMAP cursor.
 
 ## draft-get
 
-Inspect a draft created by `draft-reply`. Returns the local lifecycle state and
-the live provider state (whether the remote UID is still present).
+Inspect a draft created by `draft-reply`.
 
 ```bash
 msgvault draft-get <draft-id>
 msgvault draft-get <draft-id> --json
 ```
 
-`lifecycle` is `active` or `discarded`.
-`provider_status` is `present`, `absent`, `flag_missing`, `changed`, `not_checked`
-(grant absent or mailbox mismatch), or `unknown` (IMAP server unreachable).
-`draft-get` never mutates local or remote state.
+The command reports the stored lifecycle, revision, current mailbox receipt,
+parsed message fields, and the live provider state. `provider_status` is
+`present`, `absent`, `flag_missing`, `changed`, `unknown`, or `not_checked`.
+The last value means the startup grant is absent or names another mailbox.
 
-`revision` is the draft's current revision, reported as stored and without
-adjustment, including while an interrupted operation is still marked pending.
-It is the value `draft-edit` and `draft-delete` require as `--revision` now; it
-is not a reservation, because another client can advance the draft before your
-next call lands. Run `draft-get` again after any refusal.
-
----
-
-## draft-edit
-
-Replace the body of a draft, advancing its revision when the server supports
-the required atomic removal operation.
-
-```bash
-msgvault draft-edit <draft-id> --revision <n> --body <text>
-msgvault draft-edit <draft-id> --revision <n> --body <text> --json
-```
-
-`--revision` must match the current revision or the command returns
-`revision_conflict`. If the remote copy has been externally modified or
-deleted, the command returns `draft_changed` or `draft_missing`. A present
-remote copy currently returns `atomic_expunge_required` before the command
-claims local state or appends a replacement. The local draft remains unchanged.
-
-An interrupted edit keeps its pending marker. A later `draft-edit` or
-`draft-delete` reports `operation_pending` until the pending copy has been
-resolved. The daemon names a UID for cleanup only after it verifies that copy
-under the recorded UIDVALIDITY, with the `\Draft` flag and the exact bytes
-msgvault wrote. A UID is omitted when that check cannot identify the same
-message.
-
-A refused or partially completed draft command prints its code on stderr and,
-on the same stream, a status line carrying the fixed recovery instruction and
-any UID the daemon has verified live. Under `--json` that line is a result object
-whose `status` is the code, whose `instructions` is the guidance, and whose
-`uid`, when present, names the copy to remove. The instruction never carries a
-revision; run `draft-get` for the value the next call needs. A refusal that lands
-before the operation is claimed carries guidance too: `uidvalidity_changed` means
-the mailbox was recreated and every UID you hold now names a different message,
-so reload before acting on any of them, and `remote_unknown` means the mailbox
-state could not be read at all, so look at the mailbox before retrying.
-
-If a pending edit came from an earlier implementation, inspect the mailbox and
-reload with `draft-get` before acting on the pending copy. The command keeps the
-pending marker when it cannot verify or remove that copy.
-
----
-
-## draft-delete
-
-Permanently delete a draft from the IMAP server and mark it `discarded` locally
-when the server supports the required atomic removal operation.
-
-```bash
-msgvault draft-delete <draft-id> --revision <n>
-```
-
-`--revision` must match the current revision. If the draft is already absent on
-the server the deletion is treated as successful. Deleting a draft that is
-already `discarded` locally reports `discarded` again and opens no IMAP
-connection.
-
-A present remote copy returns `atomic_expunge_required` before the command
-claims local state. This refusal leaves the local draft unchanged.
-
-No failure or partial result carries a revision to feed back into a retry. Each
-one prints its code and, on stderr, the status line and fixed instruction
-described under [draft-edit](#draft-edit).
-After `delete_failed`, `remote_deleted_local_failed`, or `revision_conflict`,
-run `draft-get` and use the revision it reports. A `delete_failed` result
-leaves the removal owed: inspect the mailbox for a copy that may or may not
-have been removed, then reload and call `draft-delete` again with the current
-revision to complete it. `remote_deleted_local_failed` means the draft was
-confirmed deleted on the IMAP server but the local record could not be marked
-`discarded`; reload and call `draft-delete` again to finish the local record.
+`draft-get` reads the archive and IMAP server. It doesn't change either one.
+An ordinary archived message with a `\\Draft` flag has no draft ID and returns
+`draft_not_found`.
 
 ---
 

@@ -216,9 +216,7 @@ change, including a reused UID that identifies different mail. An uncertain
 APPEND requires mailbox inspection before another request.
 
 The message ID that `draft-reply` prints is the stable draft ID. `draft-get`
-reports its local state and checks the remote copy. `draft-edit` and
-`draft-delete` validate a present copy before changing it. Standard IMAP has no
-atomic conditional removal for one UID, so msgvault returns
-`atomic_expunge_required` before APPEND, STORE, EXPUNGE, or a local operation
-claim. A draft-delete can still mark a draft discarded when its remote copy is
-already absent. Draft creation never moves an IMAP cursor.
+reports its local state, current mailbox receipt, parsed message fields, and
+the remote copy's state. It reads the archive and IMAP server without changing
+either one. An ordinary archived message with a `\\Draft` flag has no draft ID
+and returns `draft_not_found`. Draft creation never moves an IMAP cursor.

@@ -217,7 +217,7 @@ func runVisualBuildLoop(cmd *cobra.Command, consent bool) error {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "visual embeddings: baseline scan in progress (journal cursor %d/%d)\n",
 				status.JournalCursor, status.JournalHighWater)
 		}
-		if status.Generation.State == consentActive && status.ReconciliationComplete &&
+		if status.Generation.State == "active" && status.ReconciliationComplete &&
 			status.JournalLag == 0 && status.Stale == 0 && status.Converged == status.ConvergenceTotal {
 			return nil
 		}

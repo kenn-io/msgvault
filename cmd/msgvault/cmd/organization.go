@@ -60,7 +60,7 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tNAME\tKIND\tDOMAIN\tSTATUS\tREVISION")
 	for _, org := range resp.JSON200.Organizations {
-		status := consentActive
+		status := "active"
 		if org.RetiredAt != nil {
 			status = "retired"
 		}
@@ -440,7 +440,7 @@ func writeCLIOrganization(cmd *cobra.Command, org *generated.Organization) error
 	if organizationJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(org)
 	}
-	status := consentActive
+	status := "active"
 	if org.RetiredAt != nil {
 		status = "retired"
 	}
