@@ -928,6 +928,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Web.Validate(); err != nil {
 		return nil, err
 	}
+	if cfg.CardDAV.Provider != "" && cfg.CardDAV.Provider != "google" {
+		return nil, errors.New("carddav.provider must be empty or \"google\"")
+	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {
 		return nil, err
