@@ -1615,6 +1615,7 @@ func newPersonFactProjectionStore(t *testing.T) (*Store, int64, map[string]perso
 	return st, personID, map[string]personfacts.TargetDescriptor{
 		AttributeSlugPrimaryChannel: projectionTargetBySlug(t, st, AttributeSlugPrimaryChannel),
 		AttributeSlugAskMeAbout:     projectionTargetBySlug(t, st, AttributeSlugAskMeAbout),
+		AttributeSlugNotes:          projectionTargetBySlug(t, st, AttributeSlugNotes),
 	}
 }
 

@@ -1040,8 +1040,12 @@ func (f cardDAVListFixture) SetBookRoles(context.Context, int64, carddav.BookRol
 func (f cardDAVListFixture) PublicationView(context.Context, int64) (*carddav.PublicationView, error) {
 	return &carddav.PublicationView{PersonID: 7, State: carddav.PublicationUnpublished}, nil
 }
-func (f cardDAVListFixture) PublishPerson(context.Context, int64) error   { return nil }
-func (f cardDAVListFixture) UnpublishPerson(context.Context, int64) error { return nil }
+func (f cardDAVListFixture) PublishPerson(context.Context, int64) error { return nil }
+func (f cardDAVListFixture) PreviewPublication(context.Context, int64) (*carddav.PublicationPreview, error) {
+	return &carddav.PublicationPreview{PersonID: 7, Kind: carddav.PublicationReviewCurrent}, nil
+}
+func (f cardDAVListFixture) PublishReviewedPerson(context.Context, int64, string) error { return nil }
+func (f cardDAVListFixture) UnpublishPerson(context.Context, int64) error               { return nil }
 func (f cardDAVListFixture) ListConflicts(context.Context) ([]store.CardDAVConflict, error) {
 	return []store.CardDAVConflict{f.conflict}, nil
 }
@@ -1158,6 +1162,8 @@ func TestCardDAVMutationPendingErrorsHaveStable409Codes(t *testing.T) {
 	}{
 		{name: "conflict pending", err: carddav.ErrCardDAVConflictPending, code: "carddav_conflict_pending"},
 		{name: "publication pending", err: store.ErrCardDAVPublicationPending, code: "carddav_publication_pending"},
+		{name: "inference review required", err: store.ErrCardDAVInferenceReviewRequired, code: "carddav_inference_review_required"},
+		{name: "review stale", err: store.ErrCardDAVReviewStale, code: "carddav_review_stale"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1169,6 +1175,73 @@ func TestCardDAVMutationPendingErrorsHaveStable409Codes(t *testing.T) {
 	}
 }
 
+func TestCardDAVPublicationTooLargeResponses(t *testing.T) {
+	document := OpenAPIDocument()
+	for _, route := range []struct {
+		method, suffix, body string
+	}{
+		{http.MethodPost, "", ""},
+		{http.MethodGet, "/preview", ""},
+		{http.MethodPost, "/approve", `{"approval_token":"token-1"}`},
+	} {
+		t.Run(route.method+route.suffix, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			service := cardDAVErrorFixture{
+				mutateErr: carddav.ErrCardDAVPreviewTooLarge, previewErr: carddav.ErrCardDAVPreviewTooLarge,
+			}
+			resp := cardDAVRouteResponse(t, service, route.method,
+				"/api/v1/carddav/publications/7"+route.suffix, route.body)
+			require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
+			assert.Contains(resp.Body.String(), `"error":"carddav_preview_too_large"`)
+			path := document.Paths["/api/v1/carddav/publications/{person_id}"+route.suffix]
+			require.NotNil(path)
+			operation := path.Post
+			if route.method == http.MethodGet {
+				operation = path.Get
+			}
+			require.NotNil(operation)
+			assert.Contains(operation.Responses, "413")
+		})
+	}
+}
+
+func TestCardDAVPublicationPreviewAndApprovalRoutes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	conflictID := int64(3)
+	preview := &carddav.PublicationPreview{
+		PersonID: 7, AddressBook: carddav.AddressBookIdentity{ID: 2, Name: "Personal"},
+		Kind: carddav.PublicationReviewConflict, VCard: "BEGIN:VCARD\r\nEND:VCARD\r\n",
+		ApprovalToken: "token-1", ReviewRequired: true, ConflictID: &conflictID,
+	}
+	approved := ""
+	service := cardDAVErrorFixture{
+		preview: preview, approved: &approved,
+		publication: &carddav.PublicationView{PersonID: 7, State: carddav.PublicationConflict, Desired: true, ConflictID: &conflictID},
+	}
+
+	resp := cardDAVRouteResponse(t, service, http.MethodGet, "/api/v1/carddav/publications/7/preview", "")
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	assert.JSONEq(`{"person_id":7,"address_book":{"id":2,"name":"Personal"},"kind":"conflict","vcard":"BEGIN:VCARD\r\nEND:VCARD\r\n","approval_token":"token-1","review_required":true,"conflict_id":3}`, resp.Body.String())
+
+	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":"token-1"}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	assert.Equal("token-1", approved)
+	assert.JSONEq(`{"person_id":7,"state":"conflict","desired":true,"conflict_id":3}`, resp.Body.String())
+
+	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":""}`)
+	assert.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
+	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{}`)
+	assert.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
+
+	resp = cardDAVRouteResponse(t, cardDAVErrorFixture{previewErr: store.ErrCardDAVReviewStale}, http.MethodGet, "/api/v1/carddav/publications/7/preview", "")
+	assert.Equal(http.StatusConflict, resp.Code, resp.Body.String())
+	assert.Contains(resp.Body.String(), `"error":"carddav_review_stale"`)
+	resp = cardDAVRouteResponse(t, cardDAVErrorFixture{previewErr: store.ErrPersonNotFound}, http.MethodGet, "/api/v1/carddav/publications/7/preview", "")
+	assert.Equal(http.StatusNotFound, resp.Code, resp.Body.String())
+}
+
 type cardDAVErrorFixture struct {
 	cardDAVListFixture
 
@@ -1178,6 +1251,9 @@ type cardDAVErrorFixture struct {
 	publication *carddav.PublicationView
 	pubErr      error
 	mutateErr   error
+	preview     *carddav.PublicationPreview
+	previewErr  error
+	approved    *string
 	conflictErr error
 	resolveErr  error
 	syncResult  carddav.SyncResult
@@ -1197,7 +1273,16 @@ func (f cardDAVErrorFixture) SetBookRoles(context.Context, int64, carddav.BookRo
 func (f cardDAVErrorFixture) PublicationView(context.Context, int64) (*carddav.PublicationView, error) {
 	return f.publication, f.pubErr
 }
-func (f cardDAVErrorFixture) PublishPerson(context.Context, int64) error   { return f.mutateErr }
+func (f cardDAVErrorFixture) PublishPerson(context.Context, int64) error { return f.mutateErr }
+func (f cardDAVErrorFixture) PreviewPublication(context.Context, int64) (*carddav.PublicationPreview, error) {
+	return f.preview, f.previewErr
+}
+func (f cardDAVErrorFixture) PublishReviewedPerson(_ context.Context, _ int64, token string) error {
+	if f.approved != nil {
+		*f.approved = token
+	}
+	return f.mutateErr
+}
 func (f cardDAVErrorFixture) UnpublishPerson(context.Context, int64) error { return f.mutateErr }
 func (f cardDAVErrorFixture) GetConflictView(context.Context, int64) (*carddav.ConflictDetail, error) {
 	if f.conflictErr != nil {

@@ -323,3 +323,7 @@ func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int))
 	s.personNetworkSourceReadHook = fn
 	return func() { s.personNetworkSourceReadHook = nil }
 }
+
+func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()) {
+	s.cardDAVReviewPersonLockHook = fn
+}

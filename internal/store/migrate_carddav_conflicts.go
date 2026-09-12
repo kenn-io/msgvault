@@ -67,6 +67,13 @@ func (s *Store) ensureCardDAVConflictPendingInvariant(ctx context.Context) error
 			base_remote_etag           TEXT NOT NULL,
 			remote_etag                TEXT,
 			mapping_revision           INTEGER NOT NULL CHECK (mapping_revision > 0),
+			review_revision INTEGER NOT NULL DEFAULT 1,
+			local_inference_revision INTEGER,
+			approved_local_body_sha256 TEXT,
+			approved_local_inference_revision INTEGER,
+			approved_conflict_revision INTEGER,
+			local_envelope_metadata BLOB,
+    local_mutation_intent BLOB,
 			local_body                 BLOB,
 			remote_body                BLOB,
 			local_tombstone            BOOLEAN NOT NULL DEFAULT FALSE,
@@ -95,13 +102,15 @@ func (s *Store) ensureCardDAVConflictPendingInvariant(ctx context.Context) error
 			base_remote_etag, remote_etag, mapping_revision, local_body, remote_body,
 			local_tombstone, remote_tombstone, pending_operation, connection_generation,
 			book_sync_revision, previous_mapping_revision, pending_started_at, status,
-			resolution, resolved_at, created_at, updated_at
+			resolution, resolved_at, created_at, updated_at, review_revision, local_inference_revision,
+			approved_local_body_sha256, approved_local_inference_revision, approved_conflict_revision, local_envelope_metadata, local_mutation_intent
 		) SELECT
 			id, address_book_id, href, base_local_hash, local_hash, base_remote_hash,
 			base_remote_etag, remote_etag, mapping_revision, local_body, remote_body,
 			local_tombstone, remote_tombstone, pending_operation, connection_generation,
 			book_sync_revision, previous_mapping_revision, pending_started_at, status,
-			resolution, resolved_at, created_at, updated_at
+			resolution, resolved_at, created_at, updated_at, review_revision, local_inference_revision,
+			approved_local_body_sha256, approved_local_inference_revision, approved_conflict_revision, local_envelope_metadata, local_mutation_intent
 		FROM carddav_conflicts`); err != nil {
 			return fmt.Errorf("copy SQLite conflict rows: %w", err)
 		}

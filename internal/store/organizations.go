@@ -109,6 +109,10 @@ func (s *Store) mergeOrganizationsOnce(
 				ErrOrganizationInvalid)
 		}
 
+		inferenceBefore, err := s.captureOrganizationInferenceExportTx(ctx, tx, survivorID, losingID)
+		if err != nil {
+			return err
+		}
 		// Both sides before anything moves: the losing organization's people
 		// keep their employments but gain a different employer profile, and
 		// the survivor's people gain the retained 'former' name.
@@ -204,6 +208,9 @@ func (s *Store) mergeOrganizationsOnce(
 			WHERE id = ? AND revision = ?
 		`, s.dialect.Now()), survivorID, survivorRevision); err != nil {
 			return fmt.Errorf("bump surviving organization revision: %w", err)
+		}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+			return err
 		}
 		survivor, err = getOrganizationTx(ctx, tx, survivorID)
 		return err
@@ -364,7 +371,10 @@ func (s *Store) replaceOrganizationOnce(
 			}
 			return fmt.Errorf("lock organization %d before replacement: %w", id, err)
 		}
-		var err error
+		inferenceBefore, err := s.captureOrganizationInferenceExportTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		organization, err = scanOrganization(tx.QueryRowContext(ctx, fmt.Sprintf(`
 			UPDATE organizations
 			SET name = ?, name_normalized = ?, kind = ?, primary_domain = ?,
@@ -383,6 +393,9 @@ func (s *Store) replaceOrganizationOnce(
 			return fmt.Errorf("replace organization %d: %w", id, err)
 		}
 		if err := s.bumpEmployedPersonVCardProjectionsTx(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
 			return err
 		}
 		if previousName != organization.Name || previousRetired != retired {

@@ -1161,13 +1161,64 @@ func (c CardDAVGoogleCallbackRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CardDAVPublicationApprovalRequest struct {
+	ApprovalToken string `json:"approval_token" validate:"required,min=1"`
+}
+
+func (c CardDAVPublicationApprovalRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CardDAVPublicationPreviewResponse struct {
+	AddressBook    CardDAVAddressBookIdentityResponse    `json:"address_book"`
+	ApprovalToken  string                                `json:"approval_token" validate:"required"`
+	ConflictID     *int64                                `json:"conflict_id,omitempty" validate:"omitempty,gte=1"`
+	Kind           CardDAVPublicationPreviewResponseKind `json:"kind" validate:"required"`
+	PersonID       int64                                 `json:"person_id" validate:"gte=1"`
+	ReviewRequired bool                                  `json:"review_required"`
+	Vcard          string                                `json:"vcard" validate:"required"`
+}
+
+func (c CardDAVPublicationPreviewResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.AddressBook).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AddressBook", err)
+		}
+	}
+	if err := typesValidator.Var(c.ApprovalToken, "required"); err != nil {
+		errors = errors.Append("ApprovalToken", err)
+	}
+	if c.ConflictID != nil {
+		if err := typesValidator.Var(c.ConflictID, "omitempty,gte=1"); err != nil {
+			errors = errors.Append("ConflictID", err)
+		}
+	}
+	if v, ok := any(c.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(c.PersonID, "gte=1"); err != nil {
+		errors = errors.Append("PersonID", err)
+	}
+	if err := typesValidator.Var(c.Vcard, "required"); err != nil {
+		errors = errors.Append("Vcard", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CardDAVPublicationResponse struct {
-	AddressBook      *CardDAVAddressBookIdentityResponse         `json:"address_book,omitempty"`
-	ConflictID       *int64                                      `json:"conflict_id,omitempty" validate:"omitempty,gte=1"`
-	Desired          bool                                        `json:"desired"`
-	PendingOperation *CardDAVPublicationResponsePendingOperation `json:"pending_operation,omitempty"`
-	PersonID         int64                                       `json:"person_id" validate:"gte=1"`
-	State            CardDAVPublicationResponseState             `json:"state" validate:"required"`
+	AddressBook             *CardDAVAddressBookIdentityResponse         `json:"address_book,omitempty"`
+	ConflictID              *int64                                      `json:"conflict_id,omitempty" validate:"omitempty,gte=1"`
+	Desired                 bool                                        `json:"desired"`
+	InferenceReviewRequired *bool                                       `json:"inference_review_required,omitempty"`
+	PendingOperation        *CardDAVPublicationResponsePendingOperation `json:"pending_operation,omitempty"`
+	PersonID                int64                                       `json:"person_id" validate:"gte=1"`
+	State                   CardDAVPublicationResponseState             `json:"state" validate:"required"`
 }
 
 func (c CardDAVPublicationResponse) Validate() error {

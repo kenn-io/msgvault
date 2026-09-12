@@ -148,6 +148,10 @@ export class CardDAVPublicationController {
         this.applyConfirmed(confirmed, action);
         return { kind: 'confirmed', action };
       }
+      if (result.response.status === 409 && result.error?.error === 'carddav_inference_review_required') {
+        this.error = `Inferred profile changes need review. In your terminal, run msgvault person publish ${personID} --preview, review the vCard, then run msgvault person publish ${personID} --approve <token> with the returned approval token.`;
+        return { kind: 'error', action };
+      }
       if (result.response.status === 400 || result.response.status === 404) {
         this.error =
           action === 'publish'

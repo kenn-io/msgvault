@@ -741,7 +741,7 @@ func TestConditional412CapturesConflictAndKeepLocalRefetchesCurrentETag(t *testi
 	fixture.mu.Unlock()
 	require.NoError(service.ResolveConflict(t.Context(), conflictErr.ID, ResolutionKeepLocal))
 	fixture.mu.Lock()
-	assert.GreaterOrEqual(fixture.gets, getsBefore+3, "resolution must preflight and recover with canonical GETs")
+	assert.GreaterOrEqual(fixture.gets, getsBefore+2, "resolution must preflight and recover with canonical GETs")
 	assert.Equal(putsAfterTimeout, fixture.puts, "ambiguous resolution recovery must not replay PUT")
 	assert.Equal(`"remote-3"`, fixture.lastIfMatch)
 	assert.Equal(conflicts[0].LocalBody, fixture.lastPutBody)

@@ -23,12 +23,13 @@ const (
 )
 
 type PublicationView struct {
-	PersonID         int64
-	State            PublicationState
-	Desired          bool
-	PendingOperation store.CardDAVMutationOperation
-	AddressBook      *AddressBookIdentity
-	ConflictID       *int64
+	InferenceReviewRequired bool
+	PersonID                int64
+	State                   PublicationState
+	Desired                 bool
+	PendingOperation        store.CardDAVMutationOperation
+	AddressBook             *AddressBookIdentity
+	ConflictID              *int64
 }
 
 func (s *Service) ListBooks(ctx context.Context) ([]store.CardDAVAddressBook, error) {
@@ -62,7 +63,7 @@ func (s *Service) PublicationView(ctx context.Context, personID int64) (*Publica
 
 func publicationViewFromSource(source *store.CardDAVPublicationStateSource) *PublicationView {
 	personID := source.PersonID
-	view := &PublicationView{PersonID: personID, State: PublicationUnpublished}
+	view := &PublicationView{PersonID: personID, State: PublicationUnpublished, InferenceReviewRequired: source.InferenceReviewRequired}
 	if !source.HasPublication {
 		if source.ProspectiveBookID > 0 {
 			book := publicAddressBookIdentity(source.ProspectiveBookID, source.ProspectiveName)

@@ -67,6 +67,9 @@ type Store struct {
 	// owned by the worker process, not by a durable sync_runs row.
 	syncExecutionLocks *syncExecutionLockState
 
+	cardDAVPersonOperationsMu sync.Mutex
+	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
+
 	sqliteOptimizeMu          sync.Mutex
 	documentVectorOperationMu sync.Mutex
 	// Test-only seams into migration, backfill, and transaction paths, nil in
@@ -89,6 +92,8 @@ type Store struct {
 	imapLabelRepairPerMessageHook         func(messageID int64)
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
+	cardDAVReviewPersonLockHook           func()
+	cardDAVCollisionIdentityLockHook      func()
 	cardDAVPublicationStateReadHook       func()
 	identityMatchAcceptBeforeDecisionHook func()
 	senderRepairMessageLockHook           func()
@@ -1985,6 +1990,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 
 	if err := s.EnsureSeededAttributeDefinitionsContext(ctx); err != nil {
 		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
+	}
+
+	// The CardDAV inference export backfill projects every person's vCard
+	// attributes, so it must run after LegacyColumnMigrations has added the
+	// attribute_definitions columns it selects and after seeding has installed
+	// the vCard mappings that decide which inferred facts are exportable.
+	if err := s.runOnceMigration(
+		ctx, migrationCardDAVInferenceExportState, 1, false,
+		s.backfillCardDAVInferenceExportState,
+	); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert

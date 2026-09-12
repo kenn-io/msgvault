@@ -152,6 +152,8 @@ For integrations, the publication API is:
 |---|---|
 | `GET /api/v1/carddav/publications/{person_id}` | Read publication state |
 | `POST /api/v1/carddav/publications/{person_id}` | Publish the saved person |
+| `GET /api/v1/carddav/publications/{person_id}/preview` | Return the exact vCard the next write would send and its approval token |
+| `POST /api/v1/carddav/publications/{person_id}/approve` | Publish with a reviewed `approval_token` |
 | `DELETE /api/v1/carddav/publications/{person_id}` | Remove their publication |
 
 Publication state is `unpublished`, `published`, `pending`, or `conflict`.
@@ -162,6 +164,39 @@ or removal has finished.
 The vCard includes supported contact/profile fields. Private Notes map to
 `NOTE`, so review them before publishing. Generated person briefs stay in the
 archive and are not included in CardDAV.
+
+### Review inferred changes before they are exported
+
+Profile facts that msgvault inferred from messages or enrichment, rather than
+facts you declared, are never sent to the address book without a review of the
+exact card. The first publication and every later reconciliation compare the
+inferred facts against the last approved export. When they differ, sync skips
+that person, the publication response reports
+`inference_review_required: true`, and a plain publish fails with HTTP 409
+`carddav_inference_review_required`.
+
+To review and approve, preview the card and then publish with its token:
+
+```bash
+msgvault person publish 7 --preview
+msgvault person publish 7 --approve <approval_token>
+```
+
+`--preview` prints JSON with the full `vcard`, an `approval_token`, and
+`review_required`. The token binds the approval to that exact card, the
+address book, and the current inferred facts. If any of them change before
+approval, the approve request fails with HTTP 409 `carddav_review_stale`; run
+the preview again and review the new card. The preview also covers a pending
+create that has not settled and a conflict whose `keep_local` side would
+export inferred changes. When `kind` is `conflict`, approval records the review
+without publishing or resolving the conflict. Then run
+`msgvault carddav conflicts resolve <conflict_id> keep_local`, using the preview's
+`conflict_id`, to publish the reviewed card. API clients follow approval with
+`POST /api/v1/carddav/conflicts/{id}/resolve` and `{"choice":"keep_local"}`.
+
+The preview route is the one CardDAV response that returns a raw vCard, and
+it can include Private Notes. The Directory UI directs you to the CLI review
+commands when approval is required.
 
 ## Resolve competing edits
 

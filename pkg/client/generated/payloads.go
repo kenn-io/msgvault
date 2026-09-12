@@ -26,6 +26,8 @@ type BeginGoogleCardDAVAuthorizationBody = CardDAVGoogleAuthorizeRequest
 
 type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
+type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
+
 type SyncCardDAVBody = CardDAVSyncRequest
 
 type UpdateCLIAccountBody = UpdateRequest

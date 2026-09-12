@@ -305,7 +305,17 @@ import (
 // 2.24.0 adds Google Contacts authorization endpoints and optional provider
 // and oauth_app fields to CardDAV account setup. Password-based CardDAV
 // requests retain their existing meaning.
-const APISchemaVersion = "2.24.0"
+// 2.25.0 adds the CardDAV publication review flow: GET
+// /api/v1/carddav/publications/{person_id}/preview returns the exact vCard a
+// publication would send plus an approval token, and POST
+// /api/v1/carddav/publications/{person_id}/approve approves that token. Conflict
+// previews require explicit keep_local resolution afterward; other previews
+// publish on approval. Oversized previews return 413.
+// Publication responses gain inference_review_required, and publishing a person
+// whose inferred facts changed since the last approval fails with 409
+// carddav_inference_review_required. Additive (minor bump): existing CardDAV
+// routes are unchanged.
+const APISchemaVersion = "2.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -943,6 +953,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		"CardDAVPublicationResponse": {
 			"pending_operation": {"CardDAVPublicationResponsePendingOperationCreate", "CardDAVPublicationResponsePendingOperationUpdate", "CardDAVPublicationResponsePendingOperationDelete"},
 			"state":             {"CardDAVPublicationResponseStateUnpublished", "CardDAVPublicationResponseStatePublished", "CardDAVPublicationResponseStatePending", "CardDAVPublicationResponseStateConflict"},
+		},
+		"CardDAVPublicationPreviewResponse": {
+			"kind": {"CardDAVPublicationPreviewResponseKindCurrent", "CardDAVPublicationPreviewResponseKindPending", "CardDAVPublicationPreviewResponseKindConflict"},
 		},
 		"ExploreCacheUnavailableResponse": {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},

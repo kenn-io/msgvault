@@ -157,6 +157,31 @@ describe('CardDAVPublicationControl', () => {
     expect(reads).toBe(1);
   });
 
+  it('shows the CLI review and approval steps when inferred changes block publication', async () => {
+    const onAnnounce = vi.fn();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST') return Response.json({
+        error: 'carddav_inference_review_required', message: unsafe.private_marker
+      }, { status: 409 });
+      return Response.json(state('unpublished'));
+    });
+    render(CardDAVPublicationControl, {
+      client: createAPIClient(fetchFn), personID: 7, onAnnounce
+    });
+
+    await fireEvent.click(await screen.findByRole('switch', { name: 'Publish person to CardDAV' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Inferred profile changes need review.');
+    expect(alert.textContent).toContain('msgvault person publish 7 --preview');
+    expect(alert.textContent).toContain('msgvault person publish 7 --approve <token>');
+    expect(alert.textContent).not.toContain(unsafe.private_marker);
+    expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(false);
+    expect(onAnnounce).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it('uses a connected heading fallback and truthful status when clean success returns pending', async () => {
     const onAnnounce = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

@@ -281,7 +281,7 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		}
 		var hasCardDAVPublication bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM carddav_publications WHERE person_id = ?)`, id,
+			`SELECT EXISTS (SELECT 1 FROM carddav_publications WHERE person_id = ? UNION ALL SELECT 1 FROM carddav_conflicts c JOIN carddav_resources r ON r.address_book_id=c.address_book_id AND r.href=c.href WHERE c.status='unresolved' AND c.local_mutation_intent IS NOT NULL AND r.person_id=?)`, id, id,
 		).Scan(&hasCardDAVPublication); err != nil {
 			return fmt.Errorf("check CardDAV publication for person %d: %w", id, err)
 		}

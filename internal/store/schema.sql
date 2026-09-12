@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS carddav_address_books (
     CHECK (NOT is_write_target OR is_subscribed)
 );
 
+
 -- Canonical and discovery-alias URLs share one normalized identity namespace.
 -- Raw URLs remain on the book for lossless round-tripping; this child table is
 -- replaced atomically with each complete discovery snapshot.
@@ -383,6 +384,18 @@ CREATE TABLE IF NOT EXISTS persons (
     vcard_projection_revision INTEGER NOT NULL DEFAULT 1,
     created_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Inferred export inputs must be explicitly reviewed before publication. A
+-- missing row is the all-zero state so ordinary contacts cost no durable row.
+CREATE TABLE IF NOT EXISTS person_carddav_inference_state (
+    person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    inference_revision INTEGER NOT NULL DEFAULT 0 CHECK (inference_revision >= 0),
+    approved_revision INTEGER NOT NULL DEFAULT 0
+        CHECK (approved_revision >= 0 AND approved_revision <= inference_revision),
+    approved_connection_generation INTEGER,
+    approved_address_book_id INTEGER REFERENCES carddav_address_books(id) ON DELETE SET NULL,
+    CHECK ((approved_connection_generation IS NULL) = (approved_address_book_id IS NULL))
 );
 
 -- Bindings are deliberately participant-local and are the source of truth
@@ -1253,6 +1266,10 @@ CREATE TABLE IF NOT EXISTS carddav_publications (
     previous_mapping_revision   INTEGER,
     create_recovery_used        BOOLEAN NOT NULL DEFAULT FALSE,
     mutation_revision           INTEGER NOT NULL DEFAULT 0 CHECK (mutation_revision >= 0),
+    outgoing_envelope_metadata  BLOB,
+    approved_body_sha256        TEXT,
+    approved_inference_revision INTEGER,
+    approved_mutation_revision  INTEGER,
     pending_started_at          DATETIME,
     created_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1277,6 +1294,13 @@ CREATE TABLE IF NOT EXISTS carddav_conflicts (
     base_remote_etag         TEXT NOT NULL,
     remote_etag              TEXT,
     mapping_revision         INTEGER NOT NULL CHECK (mapping_revision > 0),
+    review_revision          INTEGER NOT NULL DEFAULT 1,
+    local_inference_revision INTEGER,
+    approved_local_body_sha256 TEXT,
+    approved_local_inference_revision INTEGER,
+    approved_conflict_revision INTEGER,
+    local_envelope_metadata BLOB,
+    local_mutation_intent BLOB,
     local_body               BLOB,
     remote_body              BLOB,
     local_tombstone          BOOLEAN NOT NULL DEFAULT FALSE,

@@ -225,11 +225,45 @@ type PublishCardDAVPersonErrorResponseJSON = ErrorResponse
 
 type PublishCardDAVPersonErrorResponseJSON409 = ErrorResponse
 
+type PublishCardDAVPersonErrorResponseJSON413 = ErrorResponse
+
 type PublishCardDAVPersonErrorResponseJSON500 = ErrorResponse
 
 type PublishCardDAVPersonErrorResponseJSON502 = ErrorResponse
 
 type PublishCardDAVPersonErrorResponseJSON503 = ErrorResponse
+
+type ApproveCardDAVPublicationResponse = CardDAVPublicationResponse
+
+type ApproveCardDAVPublicationErrorResponse = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON409 = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON413 = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON500 = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON502 = ErrorResponse
+
+type ApproveCardDAVPublicationErrorResponseJSON503 = ErrorResponse
+
+type PreviewCardDAVPublicationResponse = CardDAVPublicationPreviewResponse
+
+type PreviewCardDAVPublicationErrorResponse = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON409 = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON413 = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON500 = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON502 = ErrorResponse
+
+type PreviewCardDAVPublicationErrorResponseJSON503 = ErrorResponse
 
 type ListCardDAVRunsResponse = CardDAVRunsResponse
 
@@ -3200,10 +3234,49 @@ type PublishCardDAVPersonResp struct {
 	JSON400      *PublishCardDAVPersonErrorResponse
 	JSON404      *PublishCardDAVPersonErrorResponseJSON
 	JSON409      *PublishCardDAVPersonErrorResponseJSON409
+	JSON413      *PublishCardDAVPersonErrorResponseJSON413
 	JSON500      *PublishCardDAVPersonErrorResponseJSON500
 	JSON502      *PublishCardDAVPersonErrorResponseJSON502
 	JSON503      *PublishCardDAVPersonErrorResponseJSON503
 	Headers503   *PublishCardDAVPersonResp503Headers
+}
+
+type ApproveCardDAVPublicationResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ApproveCardDAVPublicationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ApproveCardDAVPublicationResponse
+	JSON400      *ApproveCardDAVPublicationErrorResponse
+	JSON404      *ApproveCardDAVPublicationErrorResponseJSON
+	JSON409      *ApproveCardDAVPublicationErrorResponseJSON409
+	JSON413      *ApproveCardDAVPublicationErrorResponseJSON413
+	JSON500      *ApproveCardDAVPublicationErrorResponseJSON500
+	JSON502      *ApproveCardDAVPublicationErrorResponseJSON502
+	JSON503      *ApproveCardDAVPublicationErrorResponseJSON503
+	Headers503   *ApproveCardDAVPublicationResp503Headers
+}
+
+type PreviewCardDAVPublicationResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type PreviewCardDAVPublicationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewCardDAVPublicationResponse
+	JSON400      *PreviewCardDAVPublicationErrorResponse
+	JSON404      *PreviewCardDAVPublicationErrorResponseJSON
+	JSON409      *PreviewCardDAVPublicationErrorResponseJSON409
+	JSON413      *PreviewCardDAVPublicationErrorResponseJSON413
+	JSON500      *PreviewCardDAVPublicationErrorResponseJSON500
+	JSON502      *PreviewCardDAVPublicationErrorResponseJSON502
+	JSON503      *PreviewCardDAVPublicationErrorResponseJSON503
+	Headers503   *PreviewCardDAVPublicationResp503Headers
 }
 
 type ListCardDAVRunsResp struct {

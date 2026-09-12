@@ -244,3 +244,22 @@ func (d PartialDate) String() string {
 		return ""
 	}
 }
+
+// OrganizationComponents normalizes the components of an ORG value. Slash
+// and greater-than separators in a department describe nested units. An
+// empty organization name has no representable ORG value.
+func OrganizationComponents(name, department string) []string {
+	organization := strings.TrimSpace(name)
+	if organization == "" {
+		return nil
+	}
+	components := []string{organization}
+	for _, unit := range strings.FieldsFunc(department, func(r rune) bool {
+		return strings.ContainsRune("/>", r)
+	}) {
+		if unit = strings.TrimSpace(unit); unit != "" {
+			components = append(components, unit)
+		}
+	}
+	return components
+}

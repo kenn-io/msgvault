@@ -422,7 +422,14 @@ func (s *Store) reconcileSeededDefinition(
 	// envelope commit sees the new definition and no reason to reject a
 	// render made from the old one.
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		inferenceBefore, err := s.captureDefinitionInferenceExportTx(ctx, tx, existing.ID)
+		if err != nil {
+			return err
+		}
 		if err := s.reconcileSeededDefinitionWith(ctx, tx, existing, seed); err != nil {
+			return err
+		}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
 			return err
 		}
 		return s.bumpAllVCardProjectionsTx(ctx, tx)

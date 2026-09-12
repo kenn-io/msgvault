@@ -326,6 +326,10 @@ func (s *Store) mergePersonsOnce(
 			return err
 		}
 
+		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, survivor.ID)
+		if err != nil {
+			return err
+		}
 		snapshot, err := s.capturePersonMergeSnapshotTx(ctx, tx, survivor.ID, absorbed.ID)
 		if err != nil {
 			return err
@@ -451,6 +455,9 @@ func (s *Store) mergePersonsOnce(
 		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 			ctx, tx, survivor.ID,
 		); err != nil {
+			return err
+		}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
 			return err
 		}
 		if err := s.recordPersonMergePostRowsTx(
@@ -612,7 +619,8 @@ func ensurePersonMergeCardDAVStateTx(
 	var published bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM carddav_publications WHERE person_id IN (?, ?)
-	)`, survivorID, absorbedID).Scan(&published); err != nil {
+ UNION ALL SELECT 1 FROM carddav_conflicts c JOIN carddav_resources r ON r.address_book_id=c.address_book_id AND r.href=c.href WHERE c.status='unresolved' AND c.local_mutation_intent IS NOT NULL AND r.person_id IN (?,?)
+	)`, survivorID, absorbedID, survivorID, absorbedID).Scan(&published); err != nil {
 		return fmt.Errorf("check person merge CardDAV publications: %w", err)
 	}
 	if published {

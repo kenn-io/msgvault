@@ -274,6 +274,12 @@ func (s *Store) commitPreparedPersonEnrichmentResult(
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
+		// The nested fact resolver needs the catalog after recheck locks the
+		// person. Join catalog coordination first, retaining authority as the
+		// outermost gate, so definition exposure cannot invert those locks.
+		if err := s.lockAttributeDefinitionCatalogTx(ctx, tx, false); err != nil {
+			return err
+		}
 		disposition, err := s.recheckPersonEnrichmentCommitTx(
 			ctx, tx, prepared.Commit, prepared.Profile, prepared.Generation,
 			prepared.OwnershipRejectedGeneration)

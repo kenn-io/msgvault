@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS carddav_address_books (
     CHECK (NOT is_write_target OR is_subscribed)
 );
 
+
 CREATE TABLE IF NOT EXISTS carddav_address_book_urls (
     account_id       SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
     address_book_id  BIGINT NOT NULL REFERENCES carddav_address_books(id) ON DELETE CASCADE,
@@ -357,6 +358,16 @@ CREATE TABLE IF NOT EXISTS persons (
     vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS person_carddav_inference_state (
+    person_id BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    inference_revision BIGINT NOT NULL DEFAULT 0 CHECK (inference_revision >= 0),
+    approved_revision BIGINT NOT NULL DEFAULT 0
+        CHECK (approved_revision >= 0 AND approved_revision <= inference_revision),
+    approved_connection_generation BIGINT,
+    approved_address_book_id BIGINT REFERENCES carddav_address_books(id) ON DELETE SET NULL,
+    CHECK ((approved_connection_generation IS NULL) = (approved_address_book_id IS NULL))
 );
 
 -- Bindings are deliberately participant-local and are the source of truth
@@ -1208,6 +1219,10 @@ CREATE TABLE IF NOT EXISTS carddav_publications (
     previous_mapping_revision   BIGINT,
     create_recovery_used        BOOLEAN NOT NULL DEFAULT FALSE,
     mutation_revision           BIGINT NOT NULL DEFAULT 0 CHECK (mutation_revision >= 0),
+    outgoing_envelope_metadata  BYTEA,
+    approved_body_sha256        TEXT,
+    approved_inference_revision BIGINT,
+    approved_mutation_revision  BIGINT,
     pending_started_at          TIMESTAMPTZ,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1228,6 +1243,13 @@ CREATE TABLE IF NOT EXISTS carddav_conflicts (
     base_remote_etag         TEXT NOT NULL,
     remote_etag              TEXT,
     mapping_revision         BIGINT NOT NULL CHECK (mapping_revision > 0),
+    review_revision          BIGINT NOT NULL DEFAULT 1,
+    local_inference_revision BIGINT,
+    approved_local_body_sha256 TEXT,
+    approved_local_inference_revision BIGINT,
+    approved_conflict_revision BIGINT,
+    local_envelope_metadata BYTEA,
+    local_mutation_intent BYTEA,
     local_body               BYTEA,
     remote_body              BYTEA,
     local_tombstone          BOOLEAN NOT NULL DEFAULT FALSE,

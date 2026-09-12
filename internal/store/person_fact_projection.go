@@ -155,6 +155,9 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 			return nil, personFactApplyMetadata{}, err
 		}
 	}
+	if err := s.lockAttributeDefinitionCatalogTx(ctx, tx, false); err != nil {
+		return nil, personFactApplyMetadata{}, err
+	}
 	organizationRefs, employmentTouched, err := s.personFactGenerationEmploymentOrganizationReferencesTx(
 		ctx, tx, input.PersonID, touched, claims)
 	if err != nil {
@@ -173,6 +176,14 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 			}
 			break
 		}
+	}
+
+	if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+		return nil, personFactApplyMetadata{}, err
+	}
+	inferenceProjectionBefore, err := s.loadPersonInferenceExportProjectionTx(ctx, tx, input.PersonID)
+	if err != nil {
+		return nil, personFactApplyMetadata{}, fmt.Errorf("load inference export projection before fact generation: %w", err)
 	}
 
 	generation, replay, err := s.insertPersonFactGenerationTx(ctx, tx, prepared)
@@ -249,6 +260,7 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 	}
 
 	transactionTime := time.Now().UTC()
+	systemRetirements := make(map[personfacts.ProjectionRef]struct{})
 	projectionChanged := false
 	for _, touchedTarget := range touched {
 		descriptor, eligibility, loadErr := s.loadPersonFactTargetDescriptorTx(
@@ -259,7 +271,7 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 		}
 		changed, resolveErr := s.resolvePersonFactTargetWithOrganizationLocksTx(
 			ctx, tx, generation, descriptor, eligibility, input.Policy,
-			preparedFailures, organizationLocks, transactionTime)
+			preparedFailures, organizationLocks, transactionTime, systemRetirements)
 		if resolveErr != nil {
 			return nil, personFactApplyMetadata{}, resolveErr
 		}
@@ -267,6 +279,9 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 	}
 	if projectionChanged {
 		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
+		if err := s.invalidateResolverInferenceExportTx(ctx, tx, input.PersonID, inferenceProjectionBefore, systemRetirements); err != nil {
 			return nil, personFactApplyMetadata{}, err
 		}
 	}
@@ -584,10 +599,11 @@ func (s *Store) resolvePersonFactTargetTx(
 	descriptor personfacts.TargetDescriptor, eligibility personFactTargetEligibility,
 	policyContext personfacts.PolicyContext,
 	preparedFailures map[string]*personfacts.ValidationFailure, transactionTime time.Time,
+	systemRetirements map[personfacts.ProjectionRef]struct{},
 ) (bool, error) {
 	return s.resolvePersonFactTargetWithOrganizationLocksTx(
 		ctx, tx, generation, descriptor, eligibility, policyContext,
-		preparedFailures, nil, transactionTime)
+		preparedFailures, nil, transactionTime, systemRetirements)
 }
 
 func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
@@ -596,6 +612,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	policyContext personfacts.PolicyContext,
 	preparedFailures map[string]*personfacts.ValidationFailure,
 	organizationLocks *personFactOrganizationLockSet, transactionTime time.Time,
+	systemRetirements map[personfacts.ProjectionRef]struct{},
 ) (bool, error) {
 	resolvedClaims, chronology, err := s.loadPersonFactResolvedClaimsTx(
 		ctx, tx, generation.PersonID, descriptor, preparedFailures)
@@ -721,6 +738,13 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		}
 		if ref != nil {
 			resolution.Decisions[index].Projection = ref
+		}
+		// Only a successfully applied, supported system retirement is
+		// deterministic removal. retireUnsupported/retireExpired below
+		// remain attributable to the old inferred contributor.
+		if planChanged && plan.Operation == personfacts.ProjectionRetire &&
+			claim.Claim.Origin == personfacts.OriginSystem && plan.CurrentRef != nil {
+			systemRetirements[*plan.CurrentRef] = struct{}{}
 		}
 		changed = changed || planChanged
 	}

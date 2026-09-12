@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -253,4 +254,106 @@ func personAttributePostgreSQLBlockedWriterPID(t *testing.T, st *Store, blockerP
 		  AND activity.wait_event_type = 'Lock'
 		  AND $1 = ANY(pg_blocking_pids(activity.pid))`, blockerPID).Scan(&writerPID))
 	return writerPID
+}
+
+func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) {
+	dbURL := os.Getenv("MSGVAULT_TEST_DB")
+	if !IsPostgresURL(dbURL) {
+		t.Skip("PostgreSQL catalog/person lock barrier")
+	}
+	for _, exposure := range []string{"activation", "seed mapping"} {
+		for _, writer := range []string{"same definition note", "unrelated definition value"} {
+			t.Run(exposure+"/"+writer, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				gate := newPersonFactEmploymentLockOrderGate(personFactEmploymentStagePerson)
+				defer gate.release()
+				st := newPersonFactEmploymentPostgresGateStore(t, dbURL, gate)
+				first := inferencePerson(t, st, "catalog-writer@example.com")
+				contributor := inferencePerson(t, st, "catalog-contributor@example.com")
+				inferenceNote(t, st, contributor.ID, ProvenanceExtraction, "Seed")
+				personID := contributor.ID
+				if writer == "unrelated definition value" {
+					personID = first.ID
+				}
+				definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), AttributeObjectPerson, AttributeSlugNotes)
+				require.NoError(err)
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+				defer cancel()
+				writeCtx := context.WithValue(ctx, personFactEmploymentLockActorKey{}, personFactEmploymentActorDeclared)
+				writeDone := make(chan error, 1)
+				go func() {
+					var err error
+					if writer == "same definition note" {
+						_, err = st.AppendPersonNoteContext(writeCtx, PersonNoteAppendInput{PersonID: personID, Text: "Curated", Source: ProvenanceUser})
+					} else {
+						_, err = st.SetPersonAttributeValueContext(writeCtx, PersonAttributeValueInput{PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel, Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser})
+					}
+					writeDone <- err
+				}()
+				waitPersonFactEmploymentLockSignal(t, gate.declaredPaused, "value writer did not reach person barrier")
+				var writerPID int
+				require.NoError(st.db.QueryRowContext(ctx, `SELECT activity.pid FROM pg_stat_activity activity
+ WHERE activity.datname=current_database() AND activity.state='idle in transaction'
+ AND EXISTS (SELECT 1 FROM pg_locks held WHERE held.pid=activity.pid
+ AND held.relation='attribute_definitions'::regclass AND held.mode='RowShareLock' AND held.granted)`).Scan(&writerPID))
+				exposureDone := make(chan error, 1)
+				go func() {
+					var err error
+					if exposure == "activation" {
+						_, err = st.UpdateAttributeDefinitionContext(ctx, definition.ID, definition.Revision, AttributeDefinitionUpdate{IsActive: new(false)})
+					} else {
+						var seed AttributeDefinitionInput
+						for _, candidate := range SeededAttributeDefinitions() {
+							if candidate.Slug == AttributeSlugNotes {
+								seed = candidate
+							}
+						}
+						seed.VCardProperty = nil
+						err = st.reconcileSeededDefinition(ctx, definition, seed)
+					}
+					exposureDone <- err
+				}()
+				var early *error
+				require.Eventually(func() bool {
+					select {
+					case err := <-exposureDone:
+						early = &err
+						return true
+					default:
+					}
+					var blocked bool
+					err := st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity activity
+ WHERE activity.datname=current_database() AND ?=ANY(pg_blocking_pids(activity.pid)))`, writerPID).Scan(&blocked)
+					require.NoError(err)
+					return blocked
+				}, 5*time.Second, 10*time.Millisecond, "catalog exposure neither waited nor completed")
+				assert.Nil(early, "global catalog exposure must wait for unrelated definition writers before locking people")
+				gate.release()
+				select {
+				case err := <-writeDone:
+					require.NoError(err)
+				case <-ctx.Done():
+					require.FailNow("value mutation did not finish", ctx.Err())
+				}
+				if early == nil {
+					select {
+					case err := <-exposureDone:
+						require.NoError(err)
+					case <-ctx.Done():
+						require.FailNow("catalog exposure did not finish", ctx.Err())
+					}
+				} else {
+					require.NoError(*early)
+				}
+				got, err := st.GetAttributeDefinitionBySlugContext(ctx, AttributeObjectPerson, AttributeSlugNotes)
+				require.NoError(err)
+				if exposure == "activation" {
+					assert.False(got.IsActive)
+				} else {
+					assert.Nil(got.VCardProperty)
+				}
+			})
+		}
+	}
 }

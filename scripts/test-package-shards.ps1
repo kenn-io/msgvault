@@ -121,7 +121,7 @@ try {
 
     $failed = $false
     $runs = @(for ($i = 0; $i -lt $activeShards; $i++) {
-        [pscustomobject]@{ Batch = 0; Process = $null; StandardOut = $null; StandardErr = $null }
+        [pscustomobject]@{ Batch = 0; Process = $null; StartedAt = $null; StandardOut = $null; StandardErr = $null }
     })
     try {
         do {
@@ -133,7 +133,7 @@ try {
                         $active = $true
                         continue
                     }
-                    $elapsed = $run.Process.ExitTime - $run.Process.StartTime
+                    $elapsed = $run.Process.ExitTime - $run.StartedAt
                     $spent[$i] += $elapsed.TotalSeconds
                     $stdout = $run.StandardOut.GetAwaiter().GetResult()
                     $stderr = $run.StandardErr.GetAwaiter().GetResult()
@@ -173,6 +173,7 @@ try {
 
                 $process = [System.Diagnostics.Process]::new()
                 $process.StartInfo = $startInfo
+                $run.StartedAt = [DateTime]::Now
                 if (-not $process.Start()) { throw "Failed to start test shard $i" }
                 $run.Process = $process
                 $run.StandardOut = $process.StandardOutput.ReadToEndAsync()

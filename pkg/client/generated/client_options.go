@@ -1081,6 +1081,103 @@ func (o *PublishCardDAVPersonRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// ApproveCardDAVPublicationRequestOptions is the options needed to make a request to ApproveCardDAVPublication.
+type ApproveCardDAVPublicationRequestOptions struct {
+	PathParams *ApproveCardDAVPublicationPath
+	Body       *ApproveCardDAVPublicationBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ApproveCardDAVPublicationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApproveCardDAVPublicationRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApproveCardDAVPublicationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApproveCardDAVPublicationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApproveCardDAVPublicationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewCardDAVPublicationRequestOptions is the options needed to make a request to PreviewCardDAVPublication.
+type PreviewCardDAVPublicationRequestOptions struct {
+	PathParams *PreviewCardDAVPublicationPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *PreviewCardDAVPublicationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewCardDAVPublicationRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewCardDAVPublicationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewCardDAVPublicationRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewCardDAVPublicationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListCardDAVRunsRequestOptions is the options needed to make a request to ListCardDAVRuns.
 type ListCardDAVRunsRequestOptions struct {
 	Query *ListCardDAVRunsQuery

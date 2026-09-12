@@ -36,6 +36,8 @@ type CardDAVOperations interface {
 	SetBookRoles(ctx context.Context, bookID int64, roles carddav.BookRoles) error
 	PublicationView(ctx context.Context, personID int64) (*carddav.PublicationView, error)
 	PublishPerson(ctx context.Context, personID int64) error
+	PreviewPublication(ctx context.Context, personID int64) (*carddav.PublicationPreview, error)
+	PublishReviewedPerson(ctx context.Context, personID int64, approvalToken string) error
 	UnpublishPerson(ctx context.Context, personID int64) error
 	ListConflictViews(ctx context.Context) ([]carddav.ConflictListItem, error)
 	GetConflictView(ctx context.Context, conflictID int64) (*carddav.ConflictDetail, error)
@@ -540,10 +542,25 @@ type CardDAVPublicationResponse struct {
 	PendingOperation store.CardDAVMutationOperation      `json:"pending_operation,omitempty" enum:"create,update,delete"`
 	AddressBook      *CardDAVAddressBookIdentityResponse `json:"address_book,omitempty"`
 	ConflictID       *int64                              `json:"conflict_id,omitempty" minimum:"1"`
+	// InferenceReviewRequired reports that inferred profile facts changed since
+	// the last approved export, so publishing needs a reviewed approval token.
+	InferenceReviewRequired bool `json:"inference_review_required,omitempty"`
 }
 type CardDAVAddressBookIdentityResponse struct {
 	ID   int64  `json:"id" minimum:"1"`
 	Name string `json:"name"`
+}
+type CardDAVPublicationPreviewResponse struct {
+	PersonID       int64                              `json:"person_id" minimum:"1"`
+	AddressBook    CardDAVAddressBookIdentityResponse `json:"address_book"`
+	Kind           carddav.PublicationReviewKind      `json:"kind" enum:"current,pending,conflict"`
+	VCard          string                             `json:"vcard"`
+	ApprovalToken  string                             `json:"approval_token"`
+	ReviewRequired bool                               `json:"review_required"`
+	ConflictID     *int64                             `json:"conflict_id,omitempty" minimum:"1"`
+}
+type CardDAVPublicationApprovalRequest struct {
+	ApprovalToken string `json:"approval_token" minLength:"1"`
 }
 type CardDAVContactSummaryResponse struct {
 	State       carddav.ConflictSideState `json:"state" enum:"present,deleted,unavailable"`
@@ -794,7 +811,9 @@ func (s *Server) registerCardDAVRoutes(api huma.API) {
 	registerCardDAVJSONRoute[CardDAVBooksResponse](api, "listCardDAVBooks", http.MethodGet, "/carddav/books", "List CardDAV address books", s.handleCardDAVBooks, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRouteWithRequest[CardDAVBookRolesRequest, CardDAVBookResponse](api, "updateCardDAVBookRoles", http.MethodPatch, "/carddav/books/{id}", "id", "Update CardDAV address book roles", s.handleCardDAVBookRoles, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRoute[CardDAVPublicationResponse](api, "getCardDAVPublication", http.MethodGet, "/carddav/publications/{person_id}", "person_id", "Get CardDAV publication state", s.handleCardDAVPublication, http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable)
-	registerCardDAVIDJSONRoute[CardDAVPublicationResponse](api, "publishCardDAVPerson", http.MethodPost, "/carddav/publications/{person_id}", "person_id", "Publish a person to CardDAV", s.handleCardDAVPublish, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+	registerCardDAVIDJSONRoute[CardDAVPublicationResponse](api, "publishCardDAVPerson", http.MethodPost, "/carddav/publications/{person_id}", "person_id", "Publish a person to CardDAV", s.handleCardDAVPublish, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+	registerCardDAVIDJSONRoute[CardDAVPublicationPreviewResponse](api, "previewCardDAVPublication", http.MethodGet, "/carddav/publications/{person_id}/preview", "person_id", "Preview the exact vCard and approval token for a person's publication", s.handleCardDAVPublicationPreview, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+	registerCardDAVIDJSONRouteWithRequest[CardDAVPublicationApprovalRequest, CardDAVPublicationResponse](api, "approveCardDAVPublication", http.MethodPost, "/carddav/publications/{person_id}/approve", "person_id", "Approve a publication preview; conflicts require explicit resolution", s.handleCardDAVPublicationApprove, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRoute[CardDAVPublicationResponse](api, "unpublishCardDAVPerson", http.MethodDelete, "/carddav/publications/{person_id}", "person_id", "Unpublish a person from CardDAV", s.handleCardDAVUnpublish, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVJSONRoute[CardDAVConflictsResponse](api, "listCardDAVConflicts", http.MethodGet, "/carddav/conflicts", "List unresolved CardDAV conflicts", s.handleCardDAVConflicts, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRoute[CardDAVConflictDetailResponse](api, "getCardDAVConflict", http.MethodGet, "/carddav/conflicts/{id}", "id", "Inspect a CardDAV conflict", s.handleCardDAVConflict, http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable)
@@ -1021,6 +1040,8 @@ func (s *Server) writeCardDAVOperationError(
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, carddav.ErrInvalidResolutionChoice):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
+	case errors.Is(err, carddav.ErrCardDAVPreviewTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "carddav_preview_too_large", "CardDAV publication preview exceeds the 32 MiB limit")
 	case errors.Is(err, store.ErrCardDAVAddressBookNotFound),
 		errors.Is(err, store.ErrCardDAVPublicationNotFound),
 		errors.Is(err, store.ErrCardDAVConflictNotFound),
@@ -1032,6 +1053,10 @@ func (s *Server) writeCardDAVOperationError(
 		writeError(w, http.StatusConflict, "carddav_conflict_pending", "Resolve the existing CardDAV conflict before trying again")
 	case errors.Is(err, store.ErrCardDAVPublicationPending):
 		writeError(w, http.StatusConflict, "carddav_publication_pending", "CardDAV publication is pending; refresh before trying again")
+	case errors.Is(err, store.ErrCardDAVInferenceReviewRequired):
+		writeError(w, http.StatusConflict, "carddav_inference_review_required", "Inferred profile changes need review; preview the publication and approve it with the returned token")
+	case errors.Is(err, store.ErrCardDAVReviewStale):
+		writeError(w, http.StatusConflict, "carddav_review_stale", "CardDAV publication review is stale; preview again before approving")
 	case errors.Is(err, store.ErrCardDAVStalePlan),
 		errors.Is(err, store.ErrCardDAVSyncActive),
 		errors.Is(err, store.ErrCardDAVWriteTargetSubscribed),
@@ -1134,6 +1159,7 @@ func publicationResponse(view *carddav.PublicationView) CardDAVPublicationRespon
 	response := CardDAVPublicationResponse{
 		PersonID: view.PersonID, State: view.State, Desired: view.Desired,
 		PendingOperation: view.PendingOperation, ConflictID: view.ConflictID,
+		InferenceReviewRequired: view.InferenceReviewRequired,
 	}
 	if view.AddressBook != nil {
 		book := addressBookIdentityResponse(*view.AddressBook)
@@ -1158,7 +1184,7 @@ func (s *Server) handleCardDAVPublication(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, 200, publicationResponse(p))
 }
-func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, publish bool) {
+func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, mutate func(CardDAVOperations, int64) error) {
 	svc := s.cardDAVService(w)
 	if svc == nil {
 		return
@@ -1168,12 +1194,7 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, publi
 		writeError(w, 400, "bad_request", err.Error())
 		return
 	}
-	if publish {
-		err = svc.PublishPerson(r.Context(), id)
-	} else {
-		err = svc.UnpublishPerson(r.Context(), id)
-	}
-	if err != nil {
+	if err = mutate(svc, id); err != nil {
 		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV publication failed")
 		return
 	}
@@ -1185,10 +1206,44 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, publi
 	writeJSON(w, 200, publicationResponse(p))
 }
 func (s *Server) handleCardDAVPublish(w http.ResponseWriter, r *http.Request) {
-	s.mutatePublication(w, r, true)
+	s.mutatePublication(w, r, func(svc CardDAVOperations, id int64) error { return svc.PublishPerson(r.Context(), id) })
 }
 func (s *Server) handleCardDAVUnpublish(w http.ResponseWriter, r *http.Request) {
-	s.mutatePublication(w, r, false)
+	s.mutatePublication(w, r, func(svc CardDAVOperations, id int64) error { return svc.UnpublishPerson(r.Context(), id) })
+}
+func (s *Server) handleCardDAVPublicationApprove(w http.ResponseWriter, r *http.Request) {
+	var req CardDAVPublicationApprovalRequest
+	if !decodeCardDAV(w, r, &req) {
+		return
+	}
+	if req.ApprovalToken == "" {
+		writeError(w, 400, "bad_request", "approval_token is required; preview the publication to obtain one")
+		return
+	}
+	s.mutatePublication(w, r, func(svc CardDAVOperations, id int64) error {
+		return svc.PublishReviewedPerson(r.Context(), id, req.ApprovalToken)
+	})
+}
+func (s *Server) handleCardDAVPublicationPreview(w http.ResponseWriter, r *http.Request) {
+	svc := s.cardDAVService(w)
+	if svc == nil {
+		return
+	}
+	id, err := cardDAVPositivePathID(r, "person_id")
+	if err != nil {
+		writeError(w, 400, "bad_request", err.Error())
+		return
+	}
+	preview, err := svc.PreviewPublication(r.Context(), id)
+	if err != nil {
+		s.writeCardDAVOperationError(r.Context(), w, err, "CardDAV publication preview failed")
+		return
+	}
+	writeJSON(w, 200, CardDAVPublicationPreviewResponse{
+		PersonID: preview.PersonID, AddressBook: addressBookIdentityResponse(preview.AddressBook),
+		Kind: preview.Kind, VCard: preview.VCard, ApprovalToken: preview.ApprovalToken,
+		ReviewRequired: preview.ReviewRequired, ConflictID: preview.ConflictID,
+	})
 }
 func conflictResponse(c carddav.ConflictListItem) CardDAVConflictResponse {
 	return CardDAVConflictResponse{

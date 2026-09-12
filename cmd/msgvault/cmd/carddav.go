@@ -247,21 +247,44 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 		direction = "to"
 	}
 	cmd := &cobra.Command{Use: action + " <person-id>", Short: action + " a person " + direction + " CardDAV", Args: cobra.ExactArgs(1)}
+	var preview bool
+	var approvalToken string
+	if publish {
+		cmd.Flags().BoolVar(&preview, "preview", false, "Print the exact vCard and approval token as JSON without publishing")
+		cmd.Flags().StringVar(&approvalToken, "approve", "", "Approve a --preview token; conflicts also need explicit keep_local resolution")
+	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := cardDAVCLIPositiveID(cmd, args[0])
 		if err != nil {
 			return err
+		}
+		if preview && approvalToken != "" {
+			return usageErr(cmd, errors.New("--preview and --approve cannot be combined"))
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		if publish {
+		switch {
+		case preview:
+			resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.PreviewCardDAVPublicationResp, error) {
+				return api.PreviewCardDAVPublicationWithResponse(cmd.Context(), &generated.PreviewCardDAVPublicationRequestOptions{PathParams: &generated.PreviewCardDAVPublicationPath{PersonID: id}})
+			})
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+		case approvalToken != "":
+			body := generated.ApproveCardDAVPublicationBody{ApprovalToken: approvalToken}
+			_, err = daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ApproveCardDAVPublicationResp, error) {
+				return api.ApproveCardDAVPublicationWithResponse(cmd.Context(), &generated.ApproveCardDAVPublicationRequestOptions{PathParams: &generated.ApproveCardDAVPublicationPath{PersonID: id}, Body: &body})
+			})
+		case publish:
 			_, err = daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.PublishCardDAVPersonResp, error) {
 				return api.PublishCardDAVPersonWithResponse(cmd.Context(), &generated.PublishCardDAVPersonRequestOptions{PathParams: &generated.PublishCardDAVPersonPath{PersonID: id}})
 			})
-		} else {
+		default:
 			_, err = daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.UnpublishCardDAVPersonResp, error) {
 				return api.UnpublishCardDAVPersonWithResponse(cmd.Context(), &generated.UnpublishCardDAVPersonRequestOptions{PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: id}})
 			})

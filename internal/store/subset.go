@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -261,16 +262,26 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("close copied subset database: %w", err)
 	}
-	if options.IncludeAttributes {
+	if options.IncludeAttributes || options.IncludeProfiles {
 		normalized, err := Open(dstDBPath)
 		if err != nil {
 			cleanup()
-			return nil, fmt.Errorf("open copied subset for attribute reconciliation: %w", err)
+			return nil, fmt.Errorf("open copied subset for profile reconciliation: %w", err)
 		}
-		if err := normalized.InitSchema(); err != nil {
+		if options.IncludeAttributes {
+			if err := normalized.InitSchema(); err != nil {
+				_ = normalized.Close()
+				cleanup()
+				return nil, fmt.Errorf("reconcile copied subset attributes: %w", err)
+			}
+		}
+		// Initial schema creation ledgered the inference migration before any
+		// people existed. Recheck the transferred projection for legacy source
+		// rows without state, preserving every copied positive revision.
+		if err := normalized.backfillCardDAVInferenceExportState(context.Background()); err != nil {
 			_ = normalized.Close()
 			cleanup()
-			return nil, fmt.Errorf("reconcile copied subset attributes: %w", err)
+			return nil, fmt.Errorf("initialize copied subset inference review: %w", err)
 		}
 		if err := normalized.Close(); err != nil {
 			cleanup()
@@ -703,6 +714,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			  )`); err != nil {
 				return nil, fmt.Errorf("copy organization attribute values: %w", err)
 			}
+		}
+	}
+	if options.IncludeAttributes || options.IncludeProfiles {
+		if err := copySubsetInferenceRevisions(tx); err != nil {
+			return nil, err
 		}
 	}
 	if err := copyPersonMergePackets(tx, options, result); err != nil {
@@ -2087,6 +2103,25 @@ func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
 	}
 	if result.Employments, err = employmentsCopied.RowsAffected(); err != nil {
 		return fmt.Errorf("employments rows affected: %w", err)
+	}
+	return nil
+}
+
+// copySubsetInferenceRevisions preserves review debt for transferred profiles.
+// Approval belongs to the source account and book, so it never crosses into
+// the new archive. Missing or zero legacy state is backfilled after copying.
+func copySubsetInferenceRevisions(tx *sql.Tx) error {
+	exists, err := sourceTableExists(tx, "person_carddav_inference_state")
+	if err != nil {
+		return fmt.Errorf("check source inference review state: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := tx.Exec(`INSERT INTO person_carddav_inference_state (person_id, inference_revision)
+        SELECT person_id, inference_revision FROM src.person_carddav_inference_state
+        WHERE person_id IN (SELECT id FROM persons) AND inference_revision > 0`); err != nil {
+		return fmt.Errorf("copy person inference review revisions: %w", err)
 	}
 	return nil
 }
