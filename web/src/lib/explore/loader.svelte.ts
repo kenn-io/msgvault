@@ -14,6 +14,7 @@ import type {
 } from './models';
 import { createExploreAPI, type ExploreAPI } from './api';
 import { parseAttachmentSelection } from './attachment-authority';
+import { parseArchiveMeetingSelection } from '../meetings/archive-selection';
 import { parseGroupSelection } from './group-context';
 import { LOAD_THROUGH_END_MAX_PAGES } from './paging';
 import { canonicalFingerprint, predicateFingerprint } from './selection';
@@ -235,7 +236,7 @@ export class ExploreLoader {
           this.rows = [];
           this.groupRows = groupResult.rows;
           this.fileFacts = [];
-          this.resultFingerprint = '';
+          this.resultFingerprint = fingerprint;
           this.pageAuthority = groupResult;
         } else {
           const filesResult = loaded.result as ExploreFilesResult;
@@ -408,7 +409,7 @@ export class ExploreLoader {
   private restorationKeys(): string[] {
     const current = this.state.current;
     const selectedAttachmentID = parseAttachmentSelection(current.selectedRow);
-    const selected = selectedAttachmentID === undefined ? current.selectedRow : null;
+    const selected = selectedAttachmentID === undefined && parseArchiveMeetingSelection(current.selectedRow) === undefined ? current.selectedRow : null;
     return [...new Set([
       current.activeRow,
       current.scrollAnchor?.key,

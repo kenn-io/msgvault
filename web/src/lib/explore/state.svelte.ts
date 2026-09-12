@@ -28,6 +28,7 @@ import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
+import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
 import { normalizeSettingsNavigationAuthority } from '../carddav/navigation';
 import {
   availableSearchModeStorage,
@@ -802,7 +803,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState(historyEntry(priorSearch, priorEntry), '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -821,7 +822,12 @@ export class ExploreState {
       this.browser.history.pushState(history, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState(history, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow) }, '', url);
+  }
+
+  private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {
+    const marker = parseArchiveMeetingHistory(this.browser.history.state, selectedRow);
+    return marker ? { [ARCHIVE_MEETING_HISTORY_KEY]: marker } : null;
   }
 }
 

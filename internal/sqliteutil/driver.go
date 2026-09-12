@@ -27,12 +27,24 @@ func RegisterUnicodeLower(conn *sqlite3.SQLiteConn) error {
 	return nil
 }
 
+// RegisterFunctions installs the deterministic functions used by Store queries.
+// Custom connections used with Store must install the same function set.
+func RegisterFunctions(conn *sqlite3.SQLiteConn) error {
+	if err := RegisterUnicodeLower(conn); err != nil {
+		return err
+	}
+	if err := conn.RegisterFunc(TimestampKeyFunction, timestampKey, true); err != nil {
+		return fmt.Errorf("register %s: %w", TimestampKeyFunction, err)
+	}
+	return nil
+}
+
 // DriverName returns a go-sqlite3 driver whose every connection exposes the
-// deterministic Unicode-aware lowercasing function used by metadata search.
+// deterministic functions used by Store queries.
 func DriverName() string {
 	registerDriverOnce.Do(func() {
 		sql.Register(driverName, &sqlite3.SQLiteDriver{
-			ConnectHook: RegisterUnicodeLower,
+			ConnectHook: RegisterFunctions,
 		})
 	})
 	return driverName
