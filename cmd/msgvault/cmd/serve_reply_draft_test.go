@@ -457,10 +457,13 @@ func TestAppendDraftReplyRetainsFailureCause(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			var events []api.CLIRunEvent
-			_, err := adapter.appendDraftReply(t.Context(), draftReplyTarget{source: &store.Source{}, mailbox: tc.mailbox}, []byte("Subject: Reply\r\n\r\nreply body\r\n"), func(event api.CLIRunEvent) error {
+			_, client, err := adapter.appendDraftReply(t.Context(), draftReplyTarget{source: &store.Source{}, mailbox: tc.mailbox}, []byte("Subject: Reply\r\n\r\nreply body\r\n"), func(event api.CLIRunEvent) error {
 				events = append(events, event)
 				return nil
 			})
+			if client != nil {
+				t.Cleanup(func() { _ = client.Close() })
+			}
 			requirements.EqualError(err, tc.code)
 			coded, ok := errors.AsType[*api.CLIRunCodedError](err)
 			requirements.True(ok)

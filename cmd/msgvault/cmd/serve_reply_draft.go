@@ -205,7 +205,10 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	}
 	defer func() { _ = execution.Release() }()
 
-	receipt, err := a.appendDraftReply(ctx, target, reply.Raw, emit)
+	receipt, client, err := a.appendDraftReply(ctx, target, reply.Raw, emit)
+	if client != nil {
+		defer func() { _ = client.CloseContext(ctx) }()
+	}
 	if err != nil {
 		return err
 	}
@@ -317,16 +320,15 @@ func (a *storeAPIAdapter) appendDraftReply(
 	target draftReplyTarget,
 	raw []byte,
 	emit func(api.CLIRunEvent) error,
-) (imaplib.DraftAppendResult, error) {
+) (imaplib.DraftAppendResult, *imaplib.Client, error) {
 	clientFactory := a.draftClientFactory
 	if clientFactory == nil {
 		clientFactory = defaultDraftClientFactory
 	}
 	client, err := clientFactory(ctx, target.source)
 	if err != nil {
-		return imaplib.DraftAppendResult{}, draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
+		return imaplib.DraftAppendResult{}, nil, draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
 	}
-	defer func() { _ = client.Close() }()
 	receipt, err := client.AppendDraft(ctx, target.mailbox, raw)
 	if err != nil {
 		if emit != nil {
@@ -335,9 +337,9 @@ func (a *storeAPIAdapter) appendDraftReply(
 		if appendErr, ok := errors.AsType[*imaplib.DraftAppendError](err); ok {
 			err = appendErr.Err
 		}
-		return receipt, draftReplyError(receipt.Code, err)
+		return receipt, client, draftReplyError(receipt.Code, err)
 	}
-	return receipt, nil
+	return receipt, client, nil
 }
 
 func draftReplyParticipants(parsed *mime.Message) []store.ParticipantPersistData {
