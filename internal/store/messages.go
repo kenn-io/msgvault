@@ -733,15 +733,19 @@ func (s *Store) listUnresolvedMessageReplies(
 // JSONB cast on PG (?::JSONB) and a bare ? on SQLite, so a JSON string binds in
 // both backends.
 func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
-				return err
-			}
-			return setMessageMetadataWith(tx, s.dialect, messageID, metadata)
-		})
-	}
-	return setMessageMetadataWith(s.db, s.dialect, messageID, metadata)
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+			return err
+		}
+		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
+			return err
+		}
+		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+	})
 }
 
 func setMessageMetadataWith(q querier, dialect Dialect, messageID int64, metadata sql.NullString) error {
@@ -1174,34 +1178,22 @@ func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 	if err := s.requireSyncSource(msg.SourceID); err != nil {
 		return 0, err
 	}
-	if !isBodylessMessageJournalCandidate(msg) {
-		if s.syncGeneration != nil {
-			var id int64
-			err := s.withTx(func(tx *loggedTx) error {
-				var err error
-				id, err = upsertMessageWith(tx, s.dialect, msg)
-				return err
-			})
-			return id, err
-		}
-		return upsertMessageWith(s.db, s.dialect, msg)
-	}
+	ctx := context.Background()
 	var id int64
-	err := s.withTx(func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
 		if s.dialect.DriverName() != postgresDriverName {
-			// Acquire SQLite's writer slot before the prior-state read. This
-			// prevents a deferred read transaction from failing to upgrade when
-			// another writer commits between the read and the message upsert.
-			// The no-op UPDATE dirties the clock page even when the journal is
-			// disabled — an accepted per-persist cost so the transaction can
-			// never fail its writer upgrade mid-persist.
-			if _, err := tx.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-				return fmt.Errorf("lock bodyless message journal: %w", err)
+			// Reserve the writer before upsertMessageWith reads prior journal state.
+			if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+				return fmt.Errorf("lock message upsert: %w", err)
 			}
 		}
 		var err error
-		id, err = upsertMessageWith(tx, s.dialect, msg)
-		return err
+		id, err = upsertMessageWith(q, s.dialect, msg)
+		if err != nil {
+			return err
+		}
+		return s.refreshMeetingProjectionWith(ctx, tx, id)
 	})
 	return id, err
 }
@@ -1492,11 +1484,7 @@ func nullStringValue(ns sql.NullString) string {
 
 // UpsertMessageRaw stores the compressed raw MIME data for a message.
 func (s *Store) UpsertMessageRaw(messageID int64, rawData []byte) error {
-	return upsertMessageRaw(s.db, messageID, rawData)
-}
-
-func upsertMessageRaw(q querier, messageID int64, rawData []byte) error {
-	return upsertMessageRawWithFormat(q, messageID, rawData, "mime")
+	return s.UpsertMessageRawWithFormat(messageID, rawData, "mime")
 }
 
 func upsertMessageRawWithFormat(q querier, messageID int64, rawData []byte, format string) error {
@@ -2042,6 +2030,10 @@ func (s *Store) persistMessageWith(
 	// CTE, which cannot see the envelope rows already in the table, so the
 	// recompute must settle attribution against them either way.
 	if err := refreshMessageAttributionWith(q, messageID); err != nil {
+		return 0, err
+	}
+
+	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -5196,15 +5188,19 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.
 // Unlike UpsertMessageRaw (which hardcodes 'mime'), this accepts the format as a parameter.
 func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, format string) error {
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
-				return err
-			}
-			return upsertMessageRawWithFormat(tx, messageID, rawData, format)
-		})
-	}
-	return upsertMessageRawWithFormat(s.db, messageID, rawData, format)
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+			return err
+		}
+		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
+			return err
+		}
+		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+	})
 }
 
 // AttachmentPathsUniqueToSource returns local content and thumbnail paths for

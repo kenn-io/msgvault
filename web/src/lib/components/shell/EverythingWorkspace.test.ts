@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
+import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
@@ -114,7 +115,6 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
-
   it('polls initializing semantic coverage until it reaches a terminal state', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -179,7 +179,6 @@ describe('EverythingWorkspace', () => {
       vi.useRealTimers();
     }
   });
-
 
   it('backs off exponentially while semantic coverage stays initializing', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -454,6 +453,146 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
     expect(anchorClick).toHaveBeenCalledOnce();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:raw-message');
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('exports exact explicit meeting row keys retained while later pages load', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const contextRequests: Request[] = [];
+    let resolveNext!: (response: Response) => void;
+    let pageRequests = 0;
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:meeting-context');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        return Response.json({
+          count: 2, deletable_count: 2, estimated_bytes: 20, cache_revision: 'cache-7', search_provenance: {},
+          unavailable_actions: [{ action: 'export', reason: 'raw_export_unavailable' }], action_targets: [],
+          operation_token: 'operation-1', expires_at: '2026-09-12T17:00:00Z',
+        });
+      }
+      if (path.endsWith('/meetings/context')) {
+        contextRequests.push(request);
+        return Response.json({
+          schema_version: 1, format: 'json', content: '{"meetings":[]}', content_bytes: 15,
+          truncated: false, omitted_message_ids: [],
+        });
+      }
+      if (path.endsWith('/explore')) {
+        pageRequests += 1;
+        if (pageRequests === 1) {
+          return Response.json(exploreResponse({
+            rows: [{
+              ...entry(7), message_type: 'meeting_transcript', source_type: 'zoom',
+              source_identifier: 'synthetic-zoom', anchor_message_id: 107,
+            }],
+            total_count: 2, cache_revision: 'cache-7', search_provenance: {}, next_cursor: 'page-2',
+          }));
+        }
+        return new Promise<Response>((resolve) => {
+          resolveNext = resolve;
+        });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 7');
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(await screen.findByText('1 selected')).toBeDefined();
+    const end = fireEvent.keyDown(grid, { key: 'End' });
+    await waitFor(() => expect(resolveNext).toBeTypeOf('function'));
+
+    resolveNext(Response.json(exploreResponse({
+      rows: [{
+        ...entry(91), message_type: 'meeting_transcript', source_type: 'teams',
+        source_identifier: 'synthetic-teams', anchor_message_id: 191,
+      }],
+      total_count: 2, cache_revision: 'cache-7', search_provenance: {},
+    })));
+    await end;
+    const secondRow = (await screen.findByText('Synthetic subject 91')).closest('[role="row"]')!;
+    await fireEvent.pointerDown(secondRow);
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(await screen.findByText('2 selected')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+
+    await waitFor(() => expect(contextRequests).toHaveLength(1));
+    const body = await contextRequests[0]!.clone().json();
+    expect(body.selection).toMatchObject({
+      mode: 'explicit',
+      row_keys: ['message:7', 'message:91'],
+      cache_revision: 'cache-7',
+      search_provenance: {},
+    });
+    expect(body).toMatchObject({ format: 'json', include_transcript: false });
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('passes all-matching exclusions and full search authority to meeting context unchanged', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const preflightSelections: unknown[] = [];
+    let contextSelection: unknown;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        const body = await request.clone().json();
+        preflightSelections.push(body.selection);
+        return Response.json({
+          count: 4, deletable_count: 4, estimated_bytes: 40, cache_revision: 'cache-search',
+          search_provenance: { lexical_index_revision: 'fts-9', vector_generation: 9 },
+          unavailable_actions: [], action_targets: [],
+          operation_token: 'operation-2', expires_at: '2026-09-12T17:00:00Z',
+        });
+      }
+      if (path.endsWith('/meetings/context')) {
+        const body = await request.clone().json();
+        contextSelection = body.selection;
+        return Response.json(
+          { error: 'selection_not_all_meetings', message: 'Meeting context selections may contain only meetings' },
+          { status: 400 },
+        );
+      }
+      return Response.json(exploreResponse({
+        rows: [
+          { ...entry(7), message_type: 'meeting_transcript', anchor_message_id: 107 },
+          { ...entry(8), message_type: 'email', anchor_message_id: 108 },
+        ],
+        total_count: 5,
+        cache_revision: 'cache-search',
+        search_provenance: { lexical_index_revision: 'fts-9', vector_generation: 9 },
+        candidate_snapshot_id: 'snapshot-5',
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode: 'hybrid' });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 8');
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'A' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching items' }));
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
+    expect(contextSelection).toMatchObject({
+      mode: 'all_matching',
+      exclusions: ['message:7'],
+      cache_revision: 'cache-search',
+      search_provenance: { lexical_index_revision: 'fts-9', vector_generation: 9 },
+      candidate_snapshot_id: 'snapshot-5',
+    });
+    expect(preflightSelections).toContainEqual(contextSelection);
     rendered.unmount();
     state.destroy();
   });
@@ -854,6 +993,8 @@ describe('EverythingWorkspace', () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/coverage')) return Response.json({
@@ -1166,6 +1307,8 @@ describe('EverythingWorkspace', () => {
     const groupRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       if (new URL(request.url).pathname.endsWith('/groups')) {
         groupRequests.push(request);
         return Response.json({
@@ -1260,6 +1403,8 @@ describe('EverythingWorkspace', () => {
     const groupRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       if (new URL(request.url).pathname.endsWith('/groups')) {
         groupRequests.push(request);
         const body = await request.clone().json();
@@ -1394,6 +1539,8 @@ describe('EverythingWorkspace', () => {
     }> = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return Promise.resolve(meetingResponse);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/groups')) {
         return new Promise<Response>((resolve) => pending.push({ request, resolve }));
@@ -1796,6 +1943,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 1');
     await fireEvent.scroll(grid);
     await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(resolveSecond).toBeTypeOf('function'));
 
     grid.focus();
     const end = fireEvent.keyDown(grid, { key: 'End' });

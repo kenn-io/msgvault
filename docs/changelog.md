@@ -16,6 +16,19 @@ are not included in 0.19.3; this is not a new release announcement.
 macOS analytics cache builds use the existing CSV export without the unusable
 SQLite extension download and warning.
 
+### Meeting context and follow-ups
+
+- Export selected archived meetings as JSON or Markdown from the Web UI, CLI,
+  HTTP API, or MCP. Transcripts are opt-in; packets report truncation and missing
+  evidence.
+- Read source action status and explicit assignees, and inspect meeting counts,
+  duration bases, unknown coverage, and monthly activity in people and domain
+  views. Generic meeting imports now accept structured `action_items`.
+- Existing raw archives gain these projections on upgrade without a provider
+  resync. Meeting reads retain source-deleted evidence by default and exclude
+  locally deleted records. Upgrade the daemon for API schema 2.27.0 support.
+  See the [meeting guide](usage/meetings.md).
+
 
 ### Upgrade and compatibility
 
