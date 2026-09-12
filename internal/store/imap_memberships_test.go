@@ -158,6 +158,33 @@ func TestApplyIMAPMailboxDeltas_PersistsMembershipsFlagsLabelsAndKnownUIDs(t *te
 	assert.Equal(2, membershipCount(t, f.store, f.source.ID), "replaying a delta must be idempotent")
 }
 
+func TestApplyIMAPMailboxDeltasCanonicalIdentitySkipsRawPriming(t *testing.T) {
+	requirements := require.New(t)
+	f := newIMAPMembershipFixture(t)
+	messageID := f.createMessage(t, "canonical", "")
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 17, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "canonical",
+		}},
+	}}))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
+		VALUES (?, ?, 'mime', 'zlib')
+	`), messageID, []byte("invalid zlib"))
+	requirements.NoError(err)
+
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 17, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "INBOX|1",
+			CanonicalSourceMessageID: "canonical", RawSHA256: sha256.Sum256([]byte("unused")),
+		}},
+	}}))
+}
+
 func TestApplyIMAPMailboxDeltas_RFC822FallbackDoesNotCrossSources(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

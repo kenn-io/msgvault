@@ -785,6 +785,7 @@ func (r *imapMembershipResolver) primeIdentities(
 ) error {
 	for _, normalized := range deltas {
 		for _, observation := range normalized.delta.Memberships {
+			canonicalResolved := false
 			for _, sourceMessageID := range []string{
 				observation.CanonicalSourceMessageID,
 				observation.SourceMessageID,
@@ -793,6 +794,9 @@ func (r *imapMembershipResolver) primeIdentities(
 					continue
 				}
 				if _, loaded := r.sourceMessages[sourceMessageID]; loaded {
+					if sourceMessageID == observation.CanonicalSourceMessageID {
+						canonicalResolved = true
+					}
 					continue
 				}
 				var messageID int64
@@ -811,8 +815,11 @@ func (r *imapMembershipResolver) primeIdentities(
 					r.sourceMessages = make(map[string]int64)
 				}
 				r.sourceMessages[sourceMessageID] = messageID
+				if sourceMessageID == observation.CanonicalSourceMessageID {
+					canonicalResolved = true
+				}
 			}
-			if observation.RawSHA256 != ([32]byte{}) {
+			if observation.RawSHA256 != ([32]byte{}) && !canonicalResolved {
 				if _, _, err := r.resolveRawSHA256(observation.RawSHA256, observation.RawSize); err != nil {
 					return fmt.Errorf(
 						"snapshot IMAP raw identity for mailbox %q UID %d: %w",
