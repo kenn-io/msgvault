@@ -759,3 +759,31 @@ func TestIMAPIdentity_DeletedKeyOwnerBesideOldCanonicalMembership(t *testing.T) 
 	assertions.Equal(newID, got)
 	assertions.True(messageTombstoned(t, f.store, oldID))
 }
+
+func TestIMAPIdentity_OmittedReplacedKeyAllowsAppend(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newIMAPIdentityFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "<old@example.com>")
+	f.createMessage(t, "canonical", "<canonical@example.com>")
+	raw := []byte("Subject: Retained\r\n\r\nold content\r\n")
+	requirements.NoError(f.store.UpsertMessageRaw(oldID, raw))
+	drafts := store.IMAPMailboxDelta{Mailbox: "Drafts", State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, CanonicalSourceMessageID: "canonical"}}}
+	archive := store.IMAPMailboxDelta{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 8}, Memberships: []store.IMAPMembershipObservation{{UID: 7, CanonicalSourceMessageID: "Drafts|1"}}}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	drafts.Reset = true
+	drafts.State = store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 1}
+	drafts.Memberships = nil
+	archive.Memberships = nil
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	receipt := store.IMAPDraftReceipt{SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1}
+	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{Message: &store.Message{SourceID: f.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), ConversationID: f.convID, MessageType: store.MessageTypeEmail}}
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
+	retainedRaw, err := f.store.GetMessageRaw(oldID)
+	requirements.NoError(err)
+	assertions.Equal(raw, retainedRaw)
+	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
+}
