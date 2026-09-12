@@ -452,6 +452,14 @@ func TestApprovedConflictRemoteChangeRequiresRefreshBeforeResolution(t *testing.
 	preview, err := service.PreviewConflictPublication(t.Context(), conflictErr.ID)
 	require.NoError(err)
 	require.NoError(service.ApproveConflictPublication(t.Context(), conflictErr.ID, preview.ApprovalToken))
+	approved, err := st.GetCardDAVConflictContext(t.Context(), conflictErr.ID)
+	require.NoError(err)
+	require.NotNil(approved.ApprovedConflictRevision)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	unchanged, err := st.GetCardDAVConflictContext(t.Context(), conflictErr.ID)
+	require.NoError(err)
+	assert.Equal(approved, unchanged)
 	fixture.body = conflictCard("person", "Newest Remote Person")
 	fixture.etag = `"newest"`
 	puts := fixture.puts

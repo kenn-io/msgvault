@@ -1032,6 +1032,16 @@ func (s *Store) recordCardDAVConflictTx(
 		}
 		localInferenceRevision = &state.InferenceRevision
 	}
+	if existingErr == nil && (!options.supersedePendingIntent || existing.PendingOperation == "") &&
+		existing.MappingRevision == revision && existing.BaseLocalHash == capture.BaseLocalHash &&
+		existing.LocalHash == capture.LocalHash && existing.BaseRemoteHash == capture.BaseRemoteHash &&
+		existing.BaseRemoteETag == capture.BaseRemoteETag && existing.RemoteETag == capture.RemoteETag &&
+		existing.LocalTombstone == capture.LocalTombstone && existing.RemoteTombstone == capture.RemoteTombstone &&
+		sameOptionalInt64(existing.LocalInferenceRevision, localInferenceRevision) &&
+		(capture.LocalTombstone || bytes.Equal(existing.LocalBody, capture.LocalBody)) &&
+		(capture.RemoteTombstone || bytes.Equal(existing.RemoteBody, capture.RemoteBody)) {
+		return existing, nil
+	}
 	nextRevision := revision + 1
 	result, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
 		mapping_revision = ?, updated_at = `+s.dialect.Now()+`

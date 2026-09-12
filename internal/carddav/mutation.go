@@ -487,9 +487,9 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 		validateRetry = s.store.ValidateCardDAVConflictCreateRetryContext
 	}
 	if err := validateRetry(ctx, *pending); err != nil {
-		if pending.ConflictOwned && errors.Is(err, store.ErrCardDAVReviewStale) {
+		if pending.ConflictOwned && (errors.Is(err, store.ErrCardDAVReviewStale) || errors.Is(err, store.ErrCardDAVNoWriteTarget)) {
 			// Canonical absence settles the ambiguous create. Release its stale
-			// authorization so a fresh preview can approve another attempt.
+			// or unavailable authorization so the conflict can be resolved again.
 			return errors.Join(err, s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending))
 		}
 		return err

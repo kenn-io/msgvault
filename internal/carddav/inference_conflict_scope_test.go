@@ -224,7 +224,7 @@ func TestLegacyNonWriteConflictRecoveryDoesNotEnrollPublication(t *testing.T) {
 }
 
 func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
-	for _, change := range []string{"inference", "book", "generation"} {
+	for _, change := range []string{"inference", "book", "generation", "capability"} {
 		t.Run(change, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -261,14 +261,23 @@ func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
 			require.True(pending.ConflictOwned)
 			appendInferenceReviewNote(t, st, personID, "New inference after captured intent")
 			if change != "inference" {
+				wantErr := store.ErrCardDAVReviewStale
 				switch change {
 				case "book":
 					_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: pending.ConnectionGeneration, SyncRevision: pending.BookSyncRevision, NextSyncToken: "advanced"})
 				case "generation":
 					_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
+				case "capability":
+					require.ErrorIs(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{}), store.ErrCardDAVRoleChangePending)
+					_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+						BaseURL: account.BaseURL, Username: account.Username,
+						PrincipalURL: account.PrincipalURL, HomeURL: account.HomeURL,
+						Books: []store.CardDAVDiscoveredBook{{CanonicalURL: book.CanonicalURL, CanCreate: new(false)}},
+					})
+					wantErr = store.ErrCardDAVNoWriteTarget
 				}
 				require.NoError(err)
-				require.ErrorIs(service.ResolveConflict(t.Context(), c.ID, ResolutionKeepLocal), store.ErrCardDAVReviewStale)
+				require.ErrorIs(service.ResolveConflict(t.Context(), c.ID, ResolutionKeepLocal), wantErr)
 				assert.Equal(1, fixture.gets)
 				assert.Zero(fixture.puts)
 				c, err = st.GetCardDAVConflictContext(t.Context(), c.ID)
@@ -277,6 +286,11 @@ func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
 				mapping, err = st.GetCardDAVResourceForPersonContext(t.Context(), book.ID, personID)
 				require.NoError(err)
 				assert.Equal(pending.PreviousMappingRevision, mapping.MappingRevision)
+				if change == "capability" {
+					require.NoError(service.ResolveConflict(t.Context(), c.ID, ResolutionKeepRemote))
+					require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{}))
+					return
+				}
 				preview, err = service.PreviewConflictPublication(t.Context(), c.ID)
 				require.NoError(err)
 				require.NoError(service.ApproveConflictPublication(t.Context(), c.ID, preview.ApprovalToken))
