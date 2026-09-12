@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -43,7 +44,7 @@ Add to Claude Desktop config:
 	    }
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		st, _, err := OpenHTTPStore(cmd.Context())
+		st, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
@@ -72,9 +73,11 @@ Add to Claude Desktop config:
 				return usageErr(cmd, err)
 			}
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:        normalized,
-				APIKey:      cfg.Server.APIKey,
-				AllowWrites: mcpHTTPAllowWrites,
+				Addr:               normalized,
+				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
+				BackendURL:         info.URL,
+				APIKey:             cfg.Server.APIKey,
+				AllowWrites:        mcpHTTPAllowWrites,
 			})
 		}
 		return mcpserver.ServeWithOptions(ctx, opts)
@@ -271,6 +274,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 }
 
 func init() {
+	mcpCmd.AddCommand(newMCPStatusCommand())
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")

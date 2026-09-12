@@ -24,11 +24,19 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	previousAfter := importGvoiceAfter
 	previousLimit := importGvoiceLimit
 	previousNoDefault := noDefaultIdentityImportGVoice
+	previousCfg, previousLogger := cfg, logger
+	previousCfgFile, previousHomeDir, previousVerbose := cfgFile, homeDir, verbose
+	previousOut, previousErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
 	t.Cleanup(func() {
 		importGvoiceBefore = previousBefore
 		importGvoiceAfter = previousAfter
 		importGvoiceLimit = previousLimit
 		noDefaultIdentityImportGVoice = previousNoDefault
+		cfg, logger = previousCfg, previousLogger
+		cfgFile, homeDir, verbose = previousCfgFile, previousHomeDir, previousVerbose
+		rootCmd.SetOut(previousOut)
+		rootCmd.SetErr(previousErr)
+		rootCmd.SetArgs(nil)
 	})
 
 	home := t.TempDir()

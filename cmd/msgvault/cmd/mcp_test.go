@@ -101,9 +101,11 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}))
 	t.Cleanup(daemon.Close)
 
+	home := t.TempDir()
 	withStoreResolverConfig(t, &config.Config{
-		Data:   config.DataConfig{DataDir: t.TempDir()},
-		Server: config.ServerConfig{APIKey: "mcp-http-key"},
+		HomeDir: home,
+		Data:    config.DataConfig{DataDir: t.TempDir()},
+		Server:  config.ServerConfig{APIKey: "mcp-http-key"},
 		Remote: config.RemoteConfig{
 			URL:           daemon.URL,
 			APIKey:        "daemon-key",
@@ -144,9 +146,11 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	require.ErrorIs(err, wantErr)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.Equal(mcpserver.HTTPOptions{
-		Addr:        "0.0.0.0:8081",
-		APIKey:      "mcp-http-key",
-		AllowWrites: true,
+		Addr:               "0.0.0.0:8081",
+		DiscoveryDirectory: filepath.Join(home, "mcp"),
+		BackendURL:         daemon.URL,
+		APIKey:             "mcp-http-key",
+		AllowWrites:        true,
 	}, gotHTTPOpts)
 }
 

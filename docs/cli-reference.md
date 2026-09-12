@@ -2244,6 +2244,21 @@ See [SQL Queries](/docs/usage/querying/) for available views and example queries
 
 ## mcp
 
+### Discover running HTTP listeners
+
+Run `msgvault mcp status --json` to list HTTP MCP listeners started by this
+version. The command reads local runtime records without starting a server.
+Each entry includes `transport`, `url`, `pid`, `backend_url` when known,
+and `token_path` when the listener requires a bearer token. Read the token
+from that private file; the status output does not print it.
+
+The listener publishes its actual bound port after startup, including when
+started with port zero, and removes its record on orderly shutdown. Status
+omits records whose process has exited or whose process-start identity cannot
+be verified, including when another process reuses the PID. Stdio sessions are
+not listening endpoints and do not appear. An empty JSON list means no HTTP
+listeners were found in this application's configured data directory.
+
 Start the Model Context Protocol server for AI assistant integration.
 
 ```bash
