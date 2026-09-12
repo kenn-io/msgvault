@@ -480,7 +480,7 @@ func TestIMAPIdentity_AmbiguousLiveAppendKeyRefuses(t *testing.T) {
 }
 
 func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
-	for _, mode := range []string{"unique", "same", "missing", "duplicate", "canonical"} {
+	for _, mode := range []string{"unique", "same", "missing", "duplicate", "canonical", "known-missing", "known-duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -488,28 +488,33 @@ func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
 			f := newIMAPIdentityFixture(t)
 			oldID := f.createMessage(t, "Drafts|1", "<old@example.com>")
 			requirements.NoError(f.store.MarkMessageDeleted(f.source.ID, "Drafts|1"))
+			if mode == "known-missing" || mode == "known-duplicate" {
+				requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2}}))
+			}
+			beforeStates, err := f.store.GetIMAPFolderStates(f.source.ID)
+			requirements.NoError(err)
 			newID := f.createMessage(t, "new-source", "<new@example.com>")
 			obs := store.IMAPMembershipObservation{Mailbox: "Drafts", UIDValidity: 20, UID: 1, SourceMessageID: "Drafts|1", RFC822MessageID: "<new@example.com>"}
 			if mode == "same" {
 				obs.RFC822MessageID = "<old@example.com>"
 				newID = oldID
 			}
-			if mode == "missing" {
+			if mode == "missing" || mode == "known-missing" {
 				obs.RFC822MessageID = ""
 			}
-			if mode == "duplicate" || mode == "canonical" {
+			if mode == "duplicate" || mode == "canonical" || mode == "known-duplicate" {
 				f.createMessage(t, "duplicate-source", "<new@example.com>")
 			}
 			if mode == "canonical" {
 				obs.CanonicalSourceMessageID = "new-source"
 			}
-			err := f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{Mailbox: "Drafts", Reset: true, State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{obs}}})
-			if mode == "missing" || mode == "duplicate" {
+			err = f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{Mailbox: "Drafts", Reset: true, State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{obs}}})
+			if mode == "missing" || mode == "duplicate" || mode == "known-missing" || mode == "known-duplicate" {
 				requirements.Error(err)
 				assertions.Zero(membershipCount(t, f.store, f.source.ID))
 				states, stateErr := f.store.GetIMAPFolderStates(f.source.ID)
 				requirements.NoError(stateErr)
-				assertions.Empty(states)
+				assertions.ElementsMatch(beforeStates, states)
 				key, keyErr := f.store.GetMessageSourceID(oldID)
 				requirements.NoError(keyErr)
 				assertions.Equal("Drafts|1", key)
@@ -590,4 +595,143 @@ func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 	assertions.Equal(oldRaw, retainedRaw)
 	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
 	assertions.Len(states, 2)
+}
+func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPIdentityFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "Drafts", UIDValidity: 10, UID: 1, SourceMessageID: "Drafts|1",
+		}},
+	}}))
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Reset:   true,
+	}}))
+
+	receipt := store.IMAPDraftReceipt{
+		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
+	}
+	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        f.source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					ConversationID:  f.convID,
+					MessageType:     "email",
+				},
+				BodyText: sql.NullString{String: "new draft", Valid: true},
+				RawMIME:  []byte("From: alice@example.com\r\n\r\nnew draft\r\n"),
+			}
+		})
+	require.NoError(err)
+	assert.NotEqual(oldID, newID)
+	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+}
+
+func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "imap://legacy@example.com:143")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "legacy-draft", "Legacy draft")
+	requirements.NoError(err)
+	oldID, err := st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, SourceMessageID: "Drafts|1",
+			ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+		},
+		BodyText: sql.NullString{String: "old draft", Valid: true},
+		RawMIME:  []byte("Subject: Old draft\r\n\r\nold draft\r\n"),
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.MarkMessageDeleted(source.ID, "Drafts|1"))
+	oldRaw, err := st.GetMessageRaw(oldID)
+	requirements.NoError(err)
+
+	receipt := store.IMAPDraftReceipt{
+		SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
+	}
+	_, err = st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData { return nil })
+	requirements.ErrorContains(err, "persist message requires a message")
+	key, err := st.GetMessageSourceID(oldID)
+	requirements.NoError(err)
+	assertions.Equal("Drafts|1", key)
+	assertions.Zero(membershipCount(t, st, source.ID))
+	assertions.True(messageTombstoned(t, st, oldID))
+	newID, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					ConversationID:  conversationID,
+					MessageType:     store.MessageTypeEmail,
+				},
+				BodyText: sql.NullString{String: "new draft", Valid: true},
+				RawMIME:  []byte("Subject: New draft\r\n\r\nnew draft\r\n"),
+			}
+		})
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
+	retainedRaw, err := st.GetMessageRaw(oldID)
+	requirements.NoError(err)
+	assertions.Equal(oldRaw, retainedRaw)
+	oldSourceMessageID, err := st.GetMessageSourceID(oldID)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+}
+
+func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newIMAPIdentityFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "<moved@example.com>")
+	oldRaw := []byte("Subject: Moved\r\n\r\nold content\r\n")
+	requirements.NoError(f.store.UpsertMessageRaw(oldID, oldRaw))
+	drafts := store.IMAPMailboxDelta{
+		Mailbox: "Drafts", State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{Mailbox: "Drafts", UIDValidity: 10, UID: 1, SourceMessageID: "Drafts|1"}},
+	}
+	archive := store.IMAPMailboxDelta{
+		Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 8},
+		Memberships: []store.IMAPMembershipObservation{{Mailbox: "Archive", UIDValidity: 30, UID: 7, CanonicalSourceMessageID: "Drafts|1"}},
+	}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	drafts.Reset = true
+	drafts.Memberships = nil
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	states, err := f.store.GetIMAPFolderStates(f.source.ID)
+	requirements.NoError(err)
+	receipt := store.IMAPDraftReceipt{SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1}
+	newRaw := []byte("Subject: Replacement\r\n\r\nnew content\r\n")
+	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{SourceID: f.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), ConversationID: f.convID, MessageType: store.MessageTypeEmail},
+			RawMIME: newRaw,
+		}
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
+	retainedRaw, err := f.store.GetMessageRaw(oldID)
+	requirements.NoError(err)
+	assertions.Equal(oldRaw, retainedRaw)
+	retainedStates, err := f.store.GetIMAPFolderStates(f.source.ID)
+	requirements.NoError(err)
+	assertions.ElementsMatch(states, retainedStates)
+	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
+	var archiveID int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
+	assertions.Equal(oldID, archiveID)
 }
