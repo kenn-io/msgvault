@@ -64,7 +64,8 @@ func Publish(directory, address, token, backendURL string) (func() error, error)
 }
 
 // List is observational: it never starts a daemon or prunes another process's
-// records. Dead-process records are omitted, including after an unclean exit.
+// records. Only records matching the live process's creation identity are
+// returned, so PID reuse after an unclean exit cannot revive stale records.
 func List(directory string) ([]Endpoint, error) {
 	endpoints := []Endpoint{}
 	if _, err := os.Stat(directory); errors.Is(err, os.ErrNotExist) {
@@ -81,6 +82,9 @@ func List(directory string) ([]Endpoint, error) {
 	}
 	for _, rec := range records {
 		if rec.Service != service || !daemon.ProcessAlive(rec.PID) {
+			continue
+		}
+		if daemon.CompareRuntimeProcessIdentity(rec) != daemon.ProcessIdentityMatch {
 			continue
 		}
 		endpoints = append(endpoints, Endpoint{PID: rec.PID, Transport: "http", URL: rec.Metadata["url"], BackendURL: rec.Metadata["backend_url"], TokenPath: rec.Metadata["token_path"]})

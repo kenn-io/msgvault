@@ -2254,9 +2254,10 @@ from that private file; the status output does not print it.
 
 The listener publishes its actual bound port after startup, including when
 started with port zero, and removes its record on orderly shutdown. Status
-omits records whose process has exited. Stdio sessions are not listening
-endpoints and do not appear. An empty JSON list means no HTTP listeners were
-found in this application's configured data directory.
+omits records whose process has exited or whose process-start identity cannot
+be verified, including when another process reuses the PID. Stdio sessions are
+not listening endpoints and do not appear. An empty JSON list means no HTTP
+listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
