@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-12"
 title: Meeting Transcripts
 description: Archive AI meeting notes and transcripts from Granola, Circleback, and Notion into your searchable local archive.
 ---
@@ -38,6 +38,84 @@ matches. Meetings mode does not offer selection or deletion.
 
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
+
+## Export context and read follow-ups
+
+In Everything, select meeting rows and choose **Export meeting context**. You
+can select explicit rows or **Select all matching items** for the current
+search and filters. The export includes exactly that selection. Mixed selections
+fail with **Select meetings only**; narrow selections larger than 100 meetings.
+Choose JSON or Markdown. **Include transcript** is off by default.
+
+The downloaded file contains the server's context packet, including meeting
+references, participants, summary, notes, recorded actions, and coverage states.
+The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
+4096 through 1048576 bytes. Packets report truncation and omitted meeting IDs;
+check those fields before treating an export as complete. A missing summary
+stays missing. msgvault does not generate a replacement from the transcript.
+
+**Meeting activity and follow-ups** appears in a meeting-filtered Everything
+view, participant and domain reading panes, Directory profiles, and
+Relationships. It follows the current scope. Filter action items by source
+status or exact assignee email, then use **Open archived meeting** to read the
+source evidence. Back returns to the same workspace and scope.
+
+Action status is the last archived source status, not a local task list.
+msgvault does not infer assignees, create follow-ups, or mark source tasks done.
+Supported empty action lists, unsupported sources, unavailable evidence, and
+partial evidence remain distinct. Granola has no structured action support;
+Circleback and generic imports preserve explicit actions; Notion exposes
+checkboxes from archived summary and notes blocks. A Notion checkbox does not
+supply an assignee merely because a name appears in its text.
+
+Use the daemon-backed CLI for the same evidence:
+
+```bash
+msgvault meetings context --id 42 --id 43 --format json --output meeting-context.json
+msgvault meetings actions --domain example.com --status pending --assignee alex@example.com
+msgvault meetings metrics --person-id 7 --after 2026-01-01 --before 2026-03-01 --json
+```
+
+The three MCP read tools are `get_meeting_context`, `list_meeting_action_items`,
+and `get_meeting_metrics`. They require no AI provider call or profile-write
+permission. CLI dates use `YYYY-MM-DD`; HTTP and MCP scope dates use full
+RFC3339 timestamps. See the [CLI flags](../cli-reference.md#meetings),
+[HTTP contract](../api-server.md#meeting-intelligence), and
+[MCP examples](chat.md#meeting-evidence).
+
+## Understand meeting time and coverage
+
+Meeting metrics show the number of meetings, known and unknown durations,
+total known time, average known duration, and monthly activity. Unknown
+durations are excluded from averages. When no duration is known, the average
+is unavailable (`null` in JSON), not zero.
+
+| Duration basis | Evidence |
+|---|---|
+| Provider | Explicit provider duration, Notion recording start/end, or generic meeting start/end |
+| Scheduled | Calendar start and end |
+| Transcript span | Earliest through latest usable transcript timing |
+| Unknown duration | No usable duration evidence; no duration basis is assigned |
+
+JSON names these bases `provider`, `scheduled`, and `transcript_span`.
+Scheduled time and transcript span are estimates of different things. The
+basis breakdown keeps those differences visible. Months without meetings are
+omitted; undated meetings appear in a separate count.
+
+Meeting reads include source-deleted records by default while their archive
+content remains present. Use `--deletion active` or `--deletion deleted` to
+narrow actions and metrics. Locally deleted records are excluded. This does not
+change the [garbage collection workflow](../cli-reference.md#gc).
+
+Explore scopes preserve the full search predicate and its cache/search
+identity. Their transfer ceiling is 10000 matching message IDs; narrow a scope
+that exceeds it. A changed or expired result requires a reload. Errors remain
+visible instead of silently dropping filters or sampling visible rows.
+
+Existing archives gain meeting projections from their stored raw evidence on
+upgrade, without a provider resync. Evidence absent from an older raw snapshot
+still appears as unavailable or partial. Upgrade the daemon as well as clients;
+meeting operations need daemon API schema 2.25.0 or newer.
 
 ## Source labels and account identity
 
@@ -85,6 +163,9 @@ curl http://localhost:8080/api/v1/import/meeting \
       "title": "Weekly planning",
       "started_at": "2026-07-29T09:00:00-04:00",
       "summary_markdown": "## Decisions\n\nShip the new importer.",
+      "action_items": [
+        {"title": "Send the recap", "assignee_email": "alex@example.com", "status": "pending"}
+      ],
       "transcript_segments": [
         {"speaker": "Alex", "text": "Let's ship it.", "offset_seconds": 4}
       ]
@@ -98,6 +179,13 @@ the first import returns `201` with status `created`; unchanged retries and
 replacements return `200` with status `updated` without creating duplicates.
 `source.account_email` identifies you for sender attribution and becomes a
 confirmed identity for the whole source.
+
+Use `"action_items": []` when the source supports actions and recorded none.
+Omit `action_items` when it does not provide structured actions. These states
+are different: omission is unsupported, while an explicit empty list is
+available evidence with zero actions. `null` is invalid. Each action needs a
+nonblank `title`; optional fields are `source_id`, `description`,
+`assignee_name`, `assignee_email`, `status`, and `due_date`.
 
 Each meeting needs at least one summary, a plain transcript, or segmented
 transcript. Plain and segmented transcripts are mutually exclusive. Timestamps

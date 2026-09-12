@@ -3,6 +3,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 import { createRawSnippet } from 'svelte';
 
+import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState, serializeExploreURLState } from '../../explore/state.svelte';
@@ -903,6 +904,8 @@ describe('AppShell', () => {
     let resolveRestoredPublication!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/people/directory') return Response.json({ people: [{
         id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
@@ -1339,6 +1342,8 @@ describe('AppShell', () => {
     let promoted = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
@@ -1360,9 +1365,9 @@ describe('AppShell', () => {
         promoted = true;
         return Response.json({ id: 42, revision: 1 }, { status });
       }
-      if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate' });
+      if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] });
       if (path === '/api/v1/people/42/profile') return Response.json({
-        person: { id: 42, revision: 1, display_name: 'Synthetic Candidate' }, names: [], contact_points: [],
+        person: { id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] }, names: [], contact_points: [],
         addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
@@ -1445,13 +1450,15 @@ describe('AppShell', () => {
     }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/people/directory') return Response.json({ people: [{
         id: 7, display_name: 'Prior Directory Person', revision: 3, contact_state: 'active', categories: [], organizations: []
       }] });
-      if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3, display_name: 'Prior Directory Person' });
+      if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] });
       if (path === '/api/v1/people/7/profile') return Response.json({
-        person: { id: 7, revision: 3, display_name: 'Prior Directory Person' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
+        person: { id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, state: 'active' });
@@ -1550,6 +1557,8 @@ describe('AppShell', () => {
     };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
       if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 1, source_counts: [], first_at: '2026-07-19T10:00:00Z',

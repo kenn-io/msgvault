@@ -1971,6 +1971,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureArchiveUIDContext(ctx); err != nil {
 		return err
 	}
+	if err := s.runOnceMigration(ctx, migrationMeetingProjectionV1, meetingProjectionVersion, false, s.backfillMeetingProjectionsContext); err != nil {
+		return fmt.Errorf("initialize meeting projections: %w", err)
+	}
 
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema. The probe is a query

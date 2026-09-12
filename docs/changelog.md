@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-12"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,8 +10,21 @@ All notable changes to msgvault, grouped by release.
 
 Work after **0.19.3** adds richer people profiles, document and image search,
 background operations, and more ways to import and maintain your history.
-These changes cover current `main` through **September 9, 2026** and are not
+These changes cover current `main` through **September 12, 2026** and are not
 included in 0.19.3. Follow the linked task guides for current usage details.
+
+### Meeting context and follow-ups
+
+- Export selected archived meetings as JSON or Markdown from the Web UI, CLI,
+  HTTP API, or MCP. Transcripts are opt-in; packets report truncation and missing
+  evidence.
+- Read source action status and explicit assignees, and inspect meeting counts,
+  duration bases, unknown coverage, and monthly activity in people and domain
+  views. Generic meeting imports now accept structured `action_items`.
+- Existing raw archives gain these projections on upgrade without a provider
+  resync. Meeting reads retain source-deleted evidence by default and exclude
+  locally deleted records. Upgrade the daemon for API schema 2.25.0 support.
+  See the [meeting guide](usage/meetings.md).
 
 ### Email identifiers
 

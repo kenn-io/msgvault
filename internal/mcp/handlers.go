@@ -139,6 +139,7 @@ type handlers struct {
 	peopleBackend      peoplebrowser.Backend
 	directoryBackend   peoplebrowser.DirectoryLister
 	savedViews         savedview.Service
+	meetings           MeetingBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

@@ -1,3 +1,4 @@
+import type { MeetingPanelScope } from '../../meetings/controller.svelte';
 import type { ReadingPaneSelection } from '../reader/ReadingPane.svelte';
 import { VisibleLexicalCountCache, type SearchCoverageValue } from '../../search/modes';
 
@@ -27,10 +28,14 @@ export class EverythingSessionState {
   readonly lexicalCountCache = new VisibleLexicalCountCache(128);
   /** Maps a (lexicalRevision, predicateFingerprint) pair to its last-seen canonical query hash. */
   readonly canonicalQueryHashes = new Map<string, string>();
-  /** Loaded detail for the group row currently open in the reading pane, if any. */
+  /** The mounted meeting overview retains its exact authority during a reload
+   * of the same predicate, including restorable archive-reader navigation. */
+  meetingOverview = $state<{ fingerprint: string; scope: MeetingPanelScope; refreshKey: number }>();
+  /** Loaded group detail, including its own predicate/cache/search authority.
+   * Kept together so a round-trip cannot substitute the outer list snapshot. */
   readingGroupDetail = $state<ReadingPaneSelection>();
   /** Generation counter guarding the group-detail fetch against stale/aborted responses. */
   readingDetailGeneration = 0;
-  /** `predicateFingerprint|group:dimension:key` that `readingGroupDetail` was loaded under. */
+  /** Predicate, outer authority and exact group identity used to load the detail. */
   readingDetailFingerprint = '';
 }

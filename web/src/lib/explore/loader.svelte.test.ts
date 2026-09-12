@@ -528,3 +528,20 @@ describe('ExploreLoader', () => {
     state.destroy();
   });
 });
+
+it('excludes an archive reader marker while restoring the actual active and scroll rows', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', selectedRow: 'archive-meeting:42', activeRow: 'message:2', scrollAnchor: { key: 'message:2', offset: 4 } }))}`);
+  const requests: string[] = [];
+  const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    const body = await request.clone().json(); requests.push(body.cursor ?? 'first');
+    if (!body.cursor) return Response.json(exploreResponse({ rows: [entry(1)], next_cursor: 'page-2', total_count: 3 }));
+    if (body.cursor === 'page-2') return Response.json(exploreResponse({ rows: [entry(2)], next_cursor: 'page-3', total_count: 3 }));
+    return Response.json(exploreResponse({ rows: [entry(3)], total_count: 3 }));
+  });
+  const state = new ExploreState(window); const { loader, cleanup } = setup(fetchFn, state);
+  await vi.waitFor(() => { expect(loader.loading).toBe(false); expect(loader.restoring).toBe(false); expect(loader.rows).toHaveLength(2); });
+  expect(requests).toEqual(['first', 'page-2']);
+  expect(state.current.selectedRow).toBe('archive-meeting:42');
+  cleanup(); state.destroy();
+});

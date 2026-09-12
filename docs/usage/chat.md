@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-09-12"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -21,6 +22,38 @@ need `--allow-profile-writes`. HTTP clients get read tools by default and need
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## Meeting evidence
+
+Use these read tools for [archived meeting context and follow-ups](meetings.md):
+
+| Tool | Use |
+|---|---|
+| `get_meeting_context` | Export selected meeting IDs as JSON or Markdown; transcript opt-in and byte budget |
+| `list_meeting_action_items` | Read source action status, explicit assignees, coverage, and source links |
+| `get_meeting_metrics` | Count scoped meetings and inspect known/unknown duration and monthly activity |
+
+For example, call `list_meeting_action_items` with:
+
+```json
+{
+  "person_id": 7,
+  "after": "2026-01-01T00:00:00Z",
+  "status": "pending",
+  "assignee_email": "alex@example.com"
+}
+```
+
+Call `get_meeting_context` with `{"message_ids":[42],"format":"json"}`;
+add `"include_transcript":true` only when needed. Call `get_meeting_metrics`
+with `{"domains":["example.com"]}`. MCP scope filters are top-level arguments
+(`message_ids`, `source_ids`, `person_id`, `participant_id` or `participant_ids`,
+`domains`, `after`, `before`, and `deletion`), rather than an HTTP `scope` object.
+These tools use the same
+[scope and packet limits](../api-server.md#meeting-intelligence) as HTTP and
+need daemon API schema 2.25.0 or newer. They make no AI call and require no
+profile-write permission. Source action status remains archived evidence;
+these tools do not complete tasks or infer new ones.
 
 ## Setup
 

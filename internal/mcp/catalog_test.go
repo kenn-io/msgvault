@@ -189,7 +189,7 @@ func TestMCPModernDiscovery(t *testing.T) {
 }
 
 func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
-	assert.Len(t, stableOperationCatalogs, 256)
+	assert.Len(t, stableOperationCatalogs, 512)
 	backend := &fakeBackend{}
 	localHybrid := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
 	remoteHybrid := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {

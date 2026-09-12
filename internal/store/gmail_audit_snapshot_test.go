@@ -185,9 +185,7 @@ func newGmailAuditSnapshotSQLiteStore(
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-		return conn.RegisterFunc(sqliteutil.UnicodeLowerFunction, strings.ToLower, true)
-	}}
+	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: sqliteutil.RegisterFunctions}
 	base := &gmailAuditSnapshotSQLiteConnector{
 		driver: sqliteDriver,
 		dsn:    filepath.Join(t.TempDir(), "gmail-audit-snapshot.db") + testSQLiteParams,

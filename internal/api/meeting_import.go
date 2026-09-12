@@ -23,6 +23,8 @@ type MeetingImportResponse struct {
 	SourceMessageID string               `json:"source_message_id"`
 }
 
+const meetingActionStatusField = "status"
+
 func (s *Server) registerMeetingImportRoute(api huma.API) {
 	op := rawAPIV1Operation(
 		"importMeeting",
@@ -56,6 +58,30 @@ func hardenMeetingImportSchemas(doc *huma.OpenAPI) {
 	meeting := doc.Components.Schemas.Map()["Meeting"]
 	if meeting == nil {
 		return
+	}
+	if actions := meeting.Properties["action_items"]; actions != nil {
+		actions.Nullable = false
+		maximum := 1000
+		actions.MaxItems = &maximum
+	}
+	action := doc.Components.Schemas.Map()["MeetingActionItem"]
+	if action != nil {
+		minimum := 1
+		for property, maximum := range map[string]int{
+			"title": 4096, "description": 65536, "source_id": 256,
+			"assignee_name": 256, meetingActionStatusField: 128, "due_date": 256,
+		} {
+			if field := action.Properties[property]; field != nil {
+				limit := maximum
+				field.MaxLength = &limit
+				if property == "title" {
+					field.MinLength = &minimum
+				}
+			}
+		}
+		if email := action.Properties["assignee_email"]; email != nil {
+			email.Format = "email"
+		}
 	}
 	one := 1
 	contentRequired := []*huma.Schema{

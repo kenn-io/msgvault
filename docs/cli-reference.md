@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-12"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -15,11 +15,69 @@ in your installed binary. This reference follows current `main`; see
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
+| Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [mcp](#mcp), [query](#query), [openapi](#openapi) |
+
+## meetings
+
+Read archived meeting evidence through the selected daemon. Requires API schema
+2.25.0 or newer. See the [meeting workflow](usage/meetings.md) for coverage and
+source limits.
+
+```bash
+msgvault meetings context --id 42 --id 43 --format markdown --output context.md
+msgvault meetings actions --status pending --assignee alex@example.com --json
+msgvault meetings metrics --domain example.com --after 2026-01-01 --json
+```
+
+### meetings context
+
+| Flag | Contract |
+|---|---|
+| `--id` | Required meeting message IDs, repeatable; at most 100 |
+| `--format` | `markdown` (default) or `json` |
+| `--include-transcript` | Include archived transcript evidence; off by default |
+| `--max-bytes` | UTF-8 content budget, default 131072; range 4096–1048576 |
+| `--output`, `-o` | Output file; omitted or `-` writes the exact packet content to stdout |
+
+Mixed or invalid selections fail. Truncated packets identify omitted content
+and meetings.
+
+### meetings actions and meetings metrics
+
+These commands share the following scope flags. Values within a filter group
+are alternatives; different groups intersect.
+
+| Flag | Contract |
+|---|---|
+| `--id` | Meeting message ID, repeatable |
+| `--source-id` | Source ID, repeatable |
+| `--domain` | Exact participant domain, repeatable |
+| `--participant-id` | Exact participant ID, repeatable |
+| `--person-id` | Durable person ID; mutually exclusive with `--participant-id` |
+| `--after`, `--before` | `YYYY-MM-DD` at UTC midnight; after inclusive, before exclusive |
+| `--deletion` | Source deletion state: `any` (default), `active`, or `deleted` |
+| `--json` | Structured response including coverage or duration bases |
+
+ID lists and domain lists accept at most 100 values. IDs must be positive
+JavaScript-safe integers. Locally deleted records are always excluded.
+
+`meetings actions` also accepts:
+
+| Flag | Contract |
+|---|---|
+| `--status` | `pending`, `completed`, `cancelled`, or `unknown`; default all |
+| `--assignee` | Exact assignee email |
+| `--query` | Literal title or description substring, at most 256 characters |
+| `--limit` | Action rows per page, default 50; range 1–200 |
+| `--cursor` | Opaque continuation cursor from the previous page |
+
+Actions reflect the current archived source snapshot. Keep filters unchanged
+when continuing a page; refresh from page one to see newer evidence.
 
 ## Global Flags
 

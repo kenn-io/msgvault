@@ -23,17 +23,18 @@ type Snapshot struct {
 }
 
 type canonicalMeeting struct {
-	ExternalID         string              `json:"external_id"`
-	Title              string              `json:"title,omitempty"`
-	StartedAt          string              `json:"started_at"`
-	EndedAt            string              `json:"ended_at,omitempty"`
-	SummaryMarkdown    string              `json:"summary_markdown,omitempty"`
-	SummaryText        string              `json:"summary_text,omitempty"`
-	Transcript         string              `json:"transcript,omitempty"`
-	TranscriptSegments []TranscriptSegment `json:"transcript_segments,omitempty"`
-	Organizer          *MeetingPerson      `json:"organizer,omitempty"`
-	Attendees          []MeetingPerson     `json:"attendees,omitempty"`
-	Metadata           map[string]any      `json:"metadata,omitempty"`
+	ActionItems        *[]MeetingActionItem `json:"action_items,omitempty"`
+	ExternalID         string               `json:"external_id"`
+	Title              string               `json:"title,omitempty"`
+	StartedAt          string               `json:"started_at"`
+	EndedAt            string               `json:"ended_at,omitempty"`
+	SummaryMarkdown    string               `json:"summary_markdown,omitempty"`
+	SummaryText        string               `json:"summary_text,omitempty"`
+	Transcript         string               `json:"transcript,omitempty"`
+	TranscriptSegments []TranscriptSegment  `json:"transcript_segments,omitempty"`
+	Organizer          *MeetingPerson       `json:"organizer,omitempty"`
+	Attendees          []MeetingPerson      `json:"attendees,omitempty"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
 }
 
 type messageMetadata struct {
@@ -116,6 +117,26 @@ func buildBody(title string, meeting NormalizedMeeting) string {
 		writeLine(summary)
 	}
 
+	if meeting.ActionItems != nil && len(*meeting.ActionItems) > 0 {
+		b.WriteString("\nAction items:\n")
+		for _, action := range *meeting.ActionItems {
+			writeLine("- " + action.Title)
+			writeLine(action.Description)
+			if action.AssigneeName != "" {
+				writeLine("Assignee: " + action.AssigneeName)
+			}
+			if action.AssigneeEmail != "" {
+				writeLine("Email: " + action.AssigneeEmail)
+			}
+			if action.Status != "" {
+				writeLine("Status: " + action.Status)
+			}
+			if action.DueDate != "" {
+				writeLine("Due: " + action.DueDate)
+			}
+		}
+	}
+
 	if meeting.Transcript != "" {
 		b.WriteString("\nTranscript:\n")
 		writeLine(meeting.Transcript)
@@ -166,6 +187,7 @@ func buildCanonicalMeeting(meeting NormalizedMeeting) canonicalMeeting {
 		endedAt = meeting.EndedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return canonicalMeeting{
+		ActionItems:        meeting.ActionItems,
 		ExternalID:         meeting.ExternalID,
 		Title:              meeting.Title,
 		StartedAt:          meeting.StartedAt.UTC().Format(time.RFC3339Nano),

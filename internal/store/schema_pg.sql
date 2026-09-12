@@ -3741,3 +3741,34 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
+
+-- Current normalized source evidence, rebuilt from authoritative meeting raw.
+CREATE TABLE IF NOT EXISTS meeting_details (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    duration_seconds DOUBLE PRECISION,
+    duration_basis TEXT NOT NULL DEFAULT '',
+    action_coverage TEXT NOT NULL,
+    transcript_state TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meeting_action_items (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    source_id TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    assignee_name TEXT NOT NULL DEFAULT '',
+    assignee_email TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    source_status TEXT NOT NULL DEFAULT '',
+    due_date TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL,
+    locator TEXT NOT NULL,
+    PRIMARY KEY (message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
+    ON meeting_action_items(status, message_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
+    ON meeting_action_items(assignee_email, message_id, ordinal);

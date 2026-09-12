@@ -1401,6 +1401,60 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListMeetingActionItemsResponse = ActionsPage
+
+type ListMeetingActionItemsErrorResponse = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON404 = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON409 = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON413 = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON415 = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON500 = ErrorResponse
+
+type ListMeetingActionItemsErrorResponseJSON503 = ErrorResponse
+
+type GetMeetingContextResponse = PacketResult
+
+type GetMeetingContextErrorResponse = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON404 = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON409 = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON413 = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON415 = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON500 = ErrorResponse
+
+type GetMeetingContextErrorResponseJSON503 = ErrorResponse
+
+type GetMeetingMetricsResponse = Metrics
+
+type GetMeetingMetricsErrorResponse = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON404 = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON409 = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON413 = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON415 = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON500 = ErrorResponse
+
+type GetMeetingMetricsErrorResponseJSON503 = ErrorResponse
+
 type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
@@ -4039,6 +4093,51 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type ListMeetingActionItemsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMeetingActionItemsResponse
+	JSON400      *ListMeetingActionItemsErrorResponse
+	JSON401      *ListMeetingActionItemsErrorResponseJSON
+	JSON404      *ListMeetingActionItemsErrorResponseJSON404
+	JSON409      *ListMeetingActionItemsErrorResponseJSON409
+	JSON413      *ListMeetingActionItemsErrorResponseJSON413
+	JSON415      *ListMeetingActionItemsErrorResponseJSON415
+	JSON500      *ListMeetingActionItemsErrorResponseJSON500
+	JSON503      *ListMeetingActionItemsErrorResponseJSON503
+}
+
+type GetMeetingContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMeetingContextResponse
+	JSON400      *GetMeetingContextErrorResponse
+	JSON401      *GetMeetingContextErrorResponseJSON
+	JSON404      *GetMeetingContextErrorResponseJSON404
+	JSON409      *GetMeetingContextErrorResponseJSON409
+	JSON413      *GetMeetingContextErrorResponseJSON413
+	JSON415      *GetMeetingContextErrorResponseJSON415
+	JSON500      *GetMeetingContextErrorResponseJSON500
+	JSON503      *GetMeetingContextErrorResponseJSON503
+}
+
+type GetMeetingMetricsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMeetingMetricsResponse
+	JSON400      *GetMeetingMetricsErrorResponse
+	JSON401      *GetMeetingMetricsErrorResponseJSON
+	JSON404      *GetMeetingMetricsErrorResponseJSON404
+	JSON409      *GetMeetingMetricsErrorResponseJSON409
+	JSON413      *GetMeetingMetricsErrorResponseJSON413
+	JSON415      *GetMeetingMetricsErrorResponseJSON415
+	JSON500      *GetMeetingMetricsErrorResponseJSON500
+	JSON503      *GetMeetingMetricsErrorResponseJSON503
 }
 
 type ListMessagesResp struct {

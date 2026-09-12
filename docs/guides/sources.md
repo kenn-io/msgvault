@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-12"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -50,8 +50,8 @@ missing downloads.
 
 | Your source | Start here | What it adds |
 |---|---|---|
-| Granola, Circleback, or Notion AI Meeting Notes | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, transcripts where available, and participants |
-| Another meeting capture tool | [Meeting import API](../api-server.md) | Provider-neutral ingestion keyed by source and external meeting ID |
+| Granola, Circleback, or Notion AI Meeting Notes | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, context exports, recorded actions, and meeting-time coverage |
+| Another meeting capture tool | [Meeting import workflow](../usage/meetings.md#import-from-any-meeting-source) | Provider-neutral ingestion keyed by source and external meeting ID |
 | Google Calendar | [Calendar sync](../usage/calendar.md) | Events, organizers, attendees, recurrence, and cancellation state |
 | CardDAV address book | [CardDAV contacts](../usage/people-carddav.md) | Imported contacts and explicit publication of curated profiles |
 
