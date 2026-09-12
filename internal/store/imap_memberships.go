@@ -247,6 +247,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 				); err != nil {
 					return fmt.Errorf("capture vanished UID %d in mailbox %q: %w", uid, normalized.mailbox, err)
 				}
+				if err := invalidateIMAPSourceKeyForMembership(
+					tx, sourceID, normalized.mailbox, int64(normalized.uidValidity), int64(uid),
+				); err != nil {
+					return fmt.Errorf("invalidate vanished UID %d in mailbox %q: %w", uid, normalized.mailbox, err)
+				}
 				if _, err := tx.Exec(`
 					DELETE FROM imap_message_memberships
 					WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?

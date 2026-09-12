@@ -261,3 +261,18 @@ func TestInspectDraftReportsFlagLossAndContentChange(t *testing.T) {
 	assertions.Equal(DraftRemoteChanged, changed.State)
 	assertions.Equal(digest, changed.RawSHA256)
 }
+
+func TestInspectDraftDoesNotRequireUIDPlus(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	addr, _ := testutil.StartIMAPMemServerForDrafts(t, testutil.IMAPDraftServerOptions{
+		MessagesPerMailbox: map[string]int{"Drafts": 0},
+		Caps:               emersionimap.CapSet{emersionimap.CapIMAP4rev1: {}},
+	})
+	result, err := newDraftTestClient(t, addr).InspectDraft(t.Context(), DraftTarget{
+		Mailbox: "Drafts", UIDValidity: 1, UID: 1,
+	})
+	requirements.NoError(err)
+	assertions.Equal(DraftRemoteAbsent, result.State)
+}

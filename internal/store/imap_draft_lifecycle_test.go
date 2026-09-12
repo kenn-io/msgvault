@@ -147,6 +147,20 @@ func TestIMAPDraftGCRetainsCurrentMessage(t *testing.T) {
 	assertions.Equal("Draft body", draft.Snippet)
 }
 
+func TestRemoveSourceCascadesOwnedDraft(t *testing.T) {
+	requirements := require.New(t)
+	st, source, draftID, _ := newIMAPDraftLifecycleFixture(t)
+	requirements.NoError(st.RemoveSource(source.ID))
+
+	var ownershipCount, messageCount int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		"SELECT COUNT(*) FROM imap_drafts WHERE draft_id = ?"), draftID).Scan(&ownershipCount))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		"SELECT COUNT(*) FROM messages WHERE id = ?"), draftID).Scan(&messageCount))
+	assert.Zero(t, ownershipCount)
+	assert.Zero(t, messageCount)
+}
+
 func TestDedupPurgeRemovesOwnedDraftBeforeMessageDelete(t *testing.T) {
 	for _, purgeAll := range []bool{false, true} {
 		name := "batch"
