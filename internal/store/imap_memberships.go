@@ -520,6 +520,11 @@ func deleteUnobservedIMAPMemberships(
 		return cmp.Compare(a.uid, b.uid)
 	})
 	for _, key := range keys {
+		if key.uidValidity == currentUIDValidity {
+			// Keep same-epoch keys so a later diff can restore a UID that a
+			// reset omitted transiently; a later epoch retires the orphan on draft persistence.
+			continue
+		}
 		observation, found := observed[imapMembershipUID{
 			uidValidity: currentUIDValidity,
 			uid:         key.uid,

@@ -579,10 +579,6 @@ func TestApplyIMAPMailboxDeltas_SameEpochResetRemovalReleasesSourceKeyForLaterEp
 		Reset:   true,
 	}}))
 
-	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
-
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
 	}
@@ -601,6 +597,9 @@ func TestApplyIMAPMailboxDeltas_SameEpochResetRemovalReleasesSourceKeyForLaterEp
 		})
 	require.NoError(err)
 	assert.NotEqual(oldID, newID)
+	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
 
 func TestApplyIMAPMailboxDeltas_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testing.T) {

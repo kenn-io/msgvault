@@ -57,6 +57,7 @@ func (s *Store) PersistIMAPDraftContext(
 		}
 		// A new epoch can reuse an archived UID. Preserve the old message under
 		// sync's invalidated key; sync still owns membership retirement and cursors.
+		// This also retires source-deleted orphan rows left by older versions.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
 			WHERE source_id = ? AND source_message_id = ? AND (
