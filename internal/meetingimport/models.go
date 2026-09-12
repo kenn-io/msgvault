@@ -47,17 +47,30 @@ type Source struct {
 }
 
 type Meeting struct {
-	ExternalID         string              `json:"external_id" maxLength:"256"`
-	Title              string              `json:"title,omitempty" maxLength:"4096"`
-	StartedAt          string              `json:"started_at" format:"date-time"`
-	EndedAt            string              `json:"ended_at,omitempty" format:"date-time"`
-	SummaryMarkdown    string              `json:"summary_markdown,omitempty"`
-	SummaryText        string              `json:"summary_text,omitempty"`
-	Transcript         string              `json:"transcript,omitempty"`
-	TranscriptSegments []TranscriptSegment `json:"transcript_segments,omitempty"`
-	Organizer          *MeetingPerson      `json:"organizer,omitempty"`
-	Attendees          []MeetingPerson     `json:"attendees,omitempty"`
-	Metadata           map[string]any      `json:"metadata,omitempty"`
+	ActionItems        *[]MeetingActionItem `json:"action_items,omitempty"`
+	ExternalID         string               `json:"external_id" maxLength:"256"`
+	Title              string               `json:"title,omitempty" maxLength:"4096"`
+	StartedAt          string               `json:"started_at" format:"date-time"`
+	EndedAt            string               `json:"ended_at,omitempty" format:"date-time"`
+	SummaryMarkdown    string               `json:"summary_markdown,omitempty"`
+	SummaryText        string               `json:"summary_text,omitempty"`
+	Transcript         string               `json:"transcript,omitempty"`
+	TranscriptSegments []TranscriptSegment  `json:"transcript_segments,omitempty"`
+	Organizer          *MeetingPerson       `json:"organizer,omitempty"`
+	Attendees          []MeetingPerson      `json:"attendees,omitempty"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
+}
+
+// MeetingActionItem is source-reported action evidence. Status and due dates
+// retain the source vocabulary; normalized query status is derived by Store.
+type MeetingActionItem struct {
+	SourceID      string `json:"source_id,omitempty"`
+	Title         string `json:"title"`
+	Description   string `json:"description,omitempty"`
+	AssigneeName  string `json:"assignee_name,omitempty"`
+	AssigneeEmail string `json:"assignee_email,omitempty"`
+	Status        string `json:"status,omitempty"`
+	DueDate       string `json:"due_date,omitempty"`
 }
 
 type MeetingPerson struct {
@@ -77,6 +90,7 @@ type NormalizedRequest struct {
 }
 
 type NormalizedMeeting struct {
+	ActionItems        *[]MeetingActionItem
 	ExternalID         string
 	Title              string
 	StartedAt          time.Time
@@ -174,7 +188,13 @@ func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 		return NormalizedMeeting{}, err
 	}
 
+	actions, err := normalizeActions(meeting.ActionItems)
+	if err != nil {
+		return NormalizedMeeting{}, err
+	}
+
 	return NormalizedMeeting{
+		ActionItems:        actions,
 		ExternalID:         meeting.ExternalID,
 		Title:              meeting.Title,
 		StartedAt:          startedAt,
@@ -187,6 +207,46 @@ func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 		Attendees:          attendees,
 		Metadata:           meeting.Metadata,
 	}, nil
+}
+
+func normalizeActions(items *[]MeetingActionItem) (*[]MeetingActionItem, error) {
+	if items == nil {
+		return nil, nil //nolint:nilnil // Omitted source actions stay distinct from an explicitly empty list.
+	}
+	if len(*items) > 1000 {
+		return nil, validationError("meeting.action_items must have at most 1000 items")
+	}
+	out := make([]MeetingActionItem, len(*items))
+	for i, item := range *items {
+		field := fmt.Sprintf("meeting.action_items[%d]", i)
+		item.Title = strings.TrimSpace(item.Title)
+		if err := validateBoundedRequired(field+".title", item.Title, maxTitleChars); err != nil {
+			return nil, err
+		}
+		for _, value := range []struct {
+			name, text string
+			limit      int
+		}{
+			{"description", item.Description, 65536},
+			{"source_id", item.SourceID, 256},
+			{"assignee_name", item.AssigneeName, 256},
+			{"due_date", item.DueDate, 256},
+			{"status", item.Status, 128},
+		} {
+			if err := validateBoundedOptional(field+"."+value.name, value.text, value.limit); err != nil {
+				return nil, err
+			}
+		}
+		if item.AssigneeEmail != "" {
+			email, err := normalizeEmail(field+".assignee_email", item.AssigneeEmail)
+			if err != nil {
+				return nil, err
+			}
+			item.AssigneeEmail = email
+		}
+		out[i] = item
+	}
+	return &out, nil
 }
 
 func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error) {

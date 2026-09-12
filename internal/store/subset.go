@@ -220,6 +220,15 @@ func CopySubsetWithOptions(
 		return nil, err
 	}
 
+	// The empty destination's schema initialization already recorded this
+	// migration. Rebuild derived meetings from copied raw, including old sources
+	// with no projection tables, through the normal resumable upgrade below.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMeetingProjectionV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()
@@ -261,21 +270,19 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("close copied subset database: %w", err)
 	}
-	if options.IncludeAttributes {
-		normalized, err := Open(dstDBPath)
-		if err != nil {
-			cleanup()
-			return nil, fmt.Errorf("open copied subset for attribute reconciliation: %w", err)
-		}
-		if err := normalized.InitSchema(); err != nil {
-			_ = normalized.Close()
-			cleanup()
-			return nil, fmt.Errorf("reconcile copied subset attributes: %w", err)
-		}
-		if err := normalized.Close(); err != nil {
-			cleanup()
-			return nil, fmt.Errorf("close reconciled subset database: %w", err)
-		}
+	normalized, err := Open(dstDBPath)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("open copied subset for derived reconciliation: %w", err)
+	}
+	if err := normalized.InitSchema(); err != nil {
+		_ = normalized.Close()
+		cleanup()
+		return nil, fmt.Errorf("reconcile copied subset derived data: %w", err)
+	}
+	if err := normalized.Close(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("close reconciled subset database: %w", err)
 	}
 
 	if info, err := os.Stat(dstDBPath); err == nil {

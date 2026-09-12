@@ -36,6 +36,7 @@ type catalogCapabilities struct {
 	directoryPeople bool
 	visualSearch    bool
 	savedViews      bool
+	meetings        bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -113,28 +114,30 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
 		savedViews:      opts.SavedViews != nil,
+		meetings:        opts.Meetings != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 256 possible capability keys, which also keeps
+// request. There are only 512 possible capability keys, which also keeps
 // the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 256)
-	for mask := range 256 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 512)
+	for mask := range 512 {
 		capabilities := catalogCapabilities{
-			directoryPeople: mask&0b10000000 != 0,
-			semanticSearch:  mask&0b01000000 != 0,
-			vectorInMessage: mask&0b00100000 != 0,
-			similarMessages: mask&0b00010000 != 0,
-			documentSearch:  mask&0b00001000 != 0,
-			people:          mask&0b00000100 != 0,
-			visualSearch:    mask&0b00000010 != 0,
-			savedViews:      mask&0b00000001 != 0,
+			meetings:        mask&0b100000000 != 0,
+			directoryPeople: mask&0b010000000 != 0,
+			semanticSearch:  mask&0b001000000 != 0,
+			vectorInMessage: mask&0b000100000 != 0,
+			similarMessages: mask&0b000010000 != 0,
+			documentSearch:  mask&0b000001000 != 0,
+			people:          mask&0b000000100 != 0,
+			visualSearch:    mask&0b000000010 != 0,
+			savedViews:      mask&0b000000001 != 0,
 		}
 		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
@@ -154,12 +157,15 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		getMeetingContextDefinition(nil),
+		getMeetingMetricsDefinition(nil),
 		getPersonNotesDefinition(nil),
 		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
+		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		listSavedViewsDefinition(nil),
 		runSavedViewDefinition(nil),
@@ -257,6 +263,8 @@ func peopleAvailable(c catalogCapabilities) bool { return c.people }
 func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPeople }
 
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
+
+func meetingsAvailable(c catalogCapabilities) bool { return c.meetings }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false

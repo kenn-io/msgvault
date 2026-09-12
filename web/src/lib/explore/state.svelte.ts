@@ -28,6 +28,7 @@ import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
+import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
 import { normalizeSettingsNavigationAuthority } from '../carddav/navigation';
 import {
   availableSearchModeStorage,
@@ -187,7 +188,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'pushState' | 'replaceState'>;
+  history: Pick<History, 'pushState' | 'replaceState'> & { readonly state?: unknown };
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -730,7 +731,7 @@ export class ExploreState {
       ) as Partial<ExploreURLState>;
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const committedURL = `${this.browser.location.pathname}${serializeExploreURLState(priorEntry, baseSearch)}${this.browser.location.hash}`;
-      this.browser.history.replaceState(null, '', committedURL);
+      this.browser.history.replaceState(this.archiveHistoryState(priorEntry.selectedRow), '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -747,7 +748,12 @@ export class ExploreState {
       this.browser.history.pushState(null, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState(null, '', url);
+    } else this.browser.history.replaceState(this.archiveHistoryState(this.current.selectedRow), '', url);
+  }
+
+  private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {
+    const marker = parseArchiveMeetingHistory(this.browser.history.state, selectedRow);
+    return marker ? { [ARCHIVE_MEETING_HISTORY_KEY]: marker } : null;
   }
 }
 

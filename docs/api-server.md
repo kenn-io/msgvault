@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-12"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,12 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.24.0**.
+it is separate from the binary release version. The current schema is **2.25.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.25.0 adds deterministic meeting context export, archived action-item
+listing, and duration metrics with exact direct or Explore scope.
 
 Schema 2.24.0 adds Google Contacts authorization and CardDAV provider selection.
 
@@ -1536,6 +1539,57 @@ with a run-level error.
 
 ---
 
+### Meeting intelligence {#meeting-intelligence}
+
+These authenticated read operations require daemon API schema 2.25.0 or newer.
+They read archived provider evidence without an AI call or upstream mutation.
+See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
+for the user workflow and coverage meanings.
+
+| Endpoint | Request and result |
+|---|---|
+| `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
+| `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
+| `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
+`include_transcript` (default false), and `max_bytes` (default 131072, range
+4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP
+envelope. Save `content` directly; `content_bytes`, `truncated`, and
+`omitted_message_ids` describe that exact download. Mixed selections fail with
+`selection_not_all_meetings`.
+
+A direct `scope` supports `message_ids`, `source_ids`, `participant_id` or
+`participant_ids`, `person_id`, `domains`, `after`, `before`, and `deletion`.
+Person and participant scopes are mutually exclusive. Different filter groups
+intersect; values within one group are alternatives. An explicit
+`message_ids: []` matches nothing. Omitted scope means all archived meetings.
+Dates use RFC3339 timestamps: `after` is inclusive and `before` exclusive.
+Deletion defaults to `any`; `active` and `deleted` refer to source deletion.
+Locally deleted records never participate.
+
+```json
+{
+  "scope": {"domains": ["example.com"], "after": "2026-01-01T00:00:00Z", "before": "2026-03-01T00:00:00Z"},
+  "status": "pending",
+  "assignee_email": "alex@example.com",
+  "limit": 50
+}
+```
+
+The actions request above also supports `query` (literal title/description
+substring, at most 256 characters) and opaque `cursor`. `limit` defaults to 50
+and accepts 1–200. Status accepts `pending`, `completed`, `cancelled`, or
+`unknown`; omission includes all. Pagination reads current archived snapshots,
+so it is not a retained snapshot across edits. Coverage describes the selected
+meetings even when action filters return no rows.
+
+An `explore` scope carries the complete `predicate`, `cache_revision`,
+`search_provenance`, and `candidate_snapshot_id` where applicable. It is mutually
+exclusive with direct `scope`. The server resolves the full matching population,
+with a 10000-ID transfer ceiling. A stale authority requires reloading; an
+oversized scope must be narrowed. Neither case widens the request.
+
 ### Import a meeting {#post-apiv1importmeeting}
 
 **Endpoint:** `POST /api/v1/import/meeting`
@@ -1579,6 +1633,11 @@ Timestamps must be RFC 3339 values with explicit offsets. A meeting must
 contain at least one non-empty `summary_markdown`, `summary_text`, `transcript`,
 or `transcript_segments` value; plain and segmented transcripts are mutually
 exclusive. Segment offsets must be finite, non-negative, and non-decreasing.
+`meeting.action_items` accepts up to 1000 structured actions. Each needs a
+nonblank title; optional fields preserve explicit assignee, source status, due
+date, description, and source ID. An empty array means supported with no actions;
+omission means unsupported; `null` is rejected. See the
+[complete import example](usage/meetings.md#import-from-any-meeting-source).
 Unknown fields are rejected except within `meeting.metadata`.
 
 ---

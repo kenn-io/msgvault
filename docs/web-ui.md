@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-12"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -144,6 +144,16 @@ background, and border colors. Images keep their original colors. Choose
 **Use original colors** above a message to see its authored colors on a white
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
+
+## Meeting context and follow-ups
+
+Filter Everything to meetings to see **Meeting activity and follow-ups**.
+Select meeting rows to export their context as JSON or Markdown, with transcripts
+included only when requested. Participant/domain reading panes, Directory, and
+Relationships show meeting metrics and recorded actions for their current scope.
+**Open archived meeting** opens the source evidence; Back restores the originating
+view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
+for selection limits, source coverage, unknown duration, and action filters.
 
 ## Cache states
 

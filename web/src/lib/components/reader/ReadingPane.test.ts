@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -59,6 +59,73 @@ describe('ReadingPane task gating', () => {
   it('hides Tasks when the entry has no anchor message', () => {
     renderPane(entryRow({ anchor_message_id: undefined }));
     expect(screen.queryByLabelText('Tasks for this message')).toBeNull();
+  });
+});
+
+describe('ReadingPane meeting evidence', () => {
+  it('uses only an exact meeting transcript anchor for context and archived actions', async () => {
+    const requests: Request[] = [];
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:reader-meeting-context');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/actions')) {
+        return Response.json({
+          schema_version: 1,
+          archive_uid: 'archive-test',
+          rows: [],
+          total_count: 0,
+          coverage: { meeting_count: 1, available: 1, partial: 0, unsupported: 0, unavailable: 0 },
+          scope: { kind: 'direct' },
+        });
+      }
+      return Response.json({
+        schema_version: 1,
+        format: 'json',
+        content: '{"meeting":42}',
+        content_bytes: 14,
+        truncated: false,
+        omitted_message_ids: [],
+      });
+    });
+    render(ReadingPane, {
+      client: createAPIClient(fetchFn),
+      selection: {
+        kind: 'entry',
+        row: entryRow({
+          message_type: 'meeting_transcript',
+          anchor_message_id: 42,
+          conversation_id: undefined,
+        }),
+      },
+      predicate: {},
+    });
+
+    expect(await screen.findByText('No recorded action items')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+    const bodies = await Promise.all(requests.map((request) => request.clone().json()));
+    expect(bodies).toContainEqual({ scope: { message_ids: [42] }, limit: 200 });
+    expect(bodies).toContainEqual({ message_ids: [42], format: 'json', include_transcript: false });
+  });
+
+  it.each(['meeting_notes', 'email'])('does not treat %s as a meeting transcript', (messageType) => {
+    const fetchFn = vi.fn<typeof fetch>();
+    render(ReadingPane, {
+      client: createAPIClient(fetchFn),
+      selection: {
+        kind: 'entry',
+        row: entryRow({ message_type: messageType, anchor_message_id: 42, conversation_id: undefined }),
+      },
+      predicate: {},
+    });
+
+    expect(screen.queryByRole('region', { name: 'Meeting context export' })).toBeNull();
+    expect(screen.queryByText('Archived action items')).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
 

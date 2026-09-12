@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
 import type { DirectoryURLState } from '../../directory/models';
+import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import DirectoryWorkspace from './DirectoryWorkspace.svelte';
 
@@ -153,9 +154,12 @@ describe('DirectoryWorkspace', () => {
     const commits: Array<Partial<DirectoryURLState>> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (pathOf(request) === '/api/v1/people') return Response.json({ id: 42, revision: 1 }, { status: 201 });
-      if (pathOf(request) === '/api/v1/people/directory') return directoryResponse();
-      if (pathOf(request).endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      const path = pathOf(request);
+      if (path === '/api/v1/people') return Response.json({ id: 42, revision: 1 }, { status: 201 });
+      if (path === '/api/v1/people/directory') return directoryResponse();
+      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
       return Response.json({ id: 42, revision: 1, participant_ids: [], vcard_uid: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
     });
     const client = createAPIClient(fetchFn);
@@ -167,6 +171,8 @@ describe('DirectoryWorkspace', () => {
 
     await waitFor(() => expect(commits).toContainEqual({ directoryPersonID: 42 }));
     await waitFor(() => expect(controller.selectedPersonID).toBe(42));
+    expect(await screen.findByText('4 meetings')).toBeDefined();
+    expect(await screen.findByText('0 matching action items')).toBeDefined();
   });
 
   it('keeps loaded rows visible when loading another page fails and retries that page', async () => {

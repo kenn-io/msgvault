@@ -16,6 +16,7 @@
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
+    MeetingRef,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
     ExploreSelection as GeneratedExploreSelection,
   } from '../../api/generated/models';
@@ -70,6 +71,9 @@
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
+  import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
+  import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
+  import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
@@ -98,6 +102,29 @@
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
   const ATTACHMENT_HISTORY_MARKER = 'msgvaultAttachmentViewer';
+  const archivedMeeting = new ArchiveMeetingNavigation(untrack(() => client));
+  let archiveReturnFocus: HTMLElement | undefined;
+  let archiveReturnSelection = $state<string | null>(null);
+  let archiveWasOpen = false;
+  const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
+  const archiveNavigationFingerprint = $derived(canonicalFingerprint(exploreState.current));
+
+  $effect(() => {
+    void archiveNavigationFingerprint;
+    const id = archiveMeetingID;
+    untrack(() => {
+      archivedMeeting.cancel();
+      if (id !== undefined) {
+        const history = parseArchiveMeetingHistory(window.history.state, exploreState.current.selectedRow);
+        archiveReturnSelection = history?.returnSelectedRow ?? null;
+        if (archivedMeeting.detail?.id !== id) void archivedMeeting.load(id);
+      } else {
+        archivedMeeting.error = '';
+        if (archiveWasOpen) void restoreArchiveFocus();
+      }
+      archiveWasOpen = id !== undefined;
+    });
+  });
   const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Everything order.';
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
@@ -480,7 +507,7 @@
     });
   });
   const selectedAttachmentID = $derived(parseAttachmentSelection(exploreState.current.selectedRow));
-  const readingTargetKey = $derived(selectedAttachmentID === undefined ? exploreState.current.selectedRow : null);
+  const readingTargetKey = $derived(archiveMeetingID !== undefined ? archiveReturnSelection : selectedAttachmentID === undefined ? exploreState.current.selectedRow : null);
   const apiSelection = $derived.by((): APIExploreSelection | undefined => {
     const snapshot = selection.snapshot();
     const authority = loader.result;
@@ -535,7 +562,7 @@
         { id: String(target.message_id) },
         client,
       );
-      if (!response.ok || !(data instanceof Blob))
+      if (!response.ok || data === undefined)
         throw new Error('The authorized raw message export is no longer available.');
       const objectURL = URL.createObjectURL(data);
       const anchor = document.createElement('a');
@@ -660,6 +687,36 @@
     await tick();
     focusGrid();
   }
+  async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {
+    const origin = canonicalFingerprint(exploreState.current);
+    const returnSelectedRow = archiveMeetingID !== undefined ? archiveReturnSelection : exploreState.current.selectedRow;
+    if (archiveMeetingID === undefined) archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const message = await archivedMeeting.load(meeting.message_id, meeting.conversation_id);
+    if (!message || origin !== canonicalFingerprint(exploreState.current)) return;
+    archiveReturnSelection = returnSelectedRow;
+    commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
+    window.history.replaceState({
+      [ARCHIVE_MEETING_HISTORY_KEY]: { id: message.id, returnSelectedRow }
+    }, '', window.location.href);
+  }
+
+  async function restoreArchiveFocus(): Promise<void> {
+    await tick();
+    // Kit releases its focus trap during teardown; focus the surviving source
+    // link after that cleanup (or the current workspace's own control).
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const target = archiveReturnFocus?.isConnected ? archiveReturnFocus : currentGrid() ?? document.querySelector<HTMLButtonElement>('button[aria-current="page"]');
+    target?.focus();
+  }
+
+  function closeArchivedMeeting(): void {
+    if (parseArchiveMeetingHistory(window.history.state, exploreState.current.selectedRow)) {
+      window.history.back();
+    } else {
+      replaceCommittedNavigation({ selectedRow: null, conversationAnchor: null });
+    }
+  }
+
   function openFileItem(entryKey: string): void {
     if (selectedAttachmentID !== undefined) {
       replaceCommittedRestorableNavigation({
@@ -1042,6 +1099,7 @@
   onDestroy(() => {
     debouncedSearchPatch.cancel();
     loader.destroy();
+    archivedMeeting.cancel();
     selectionPreflightController?.abort();
     editableScopeCleanup?.();
     editableScopeCleanup = undefined;
@@ -1184,11 +1242,13 @@
       onAnnounce={announceOperation}
       onOpenFileItem={openFileItem}
       onOpenFileConversation={openFileConversation}
+      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
     />
   {:else if exploreState.current.workspace === 'directory'}
     <DirectoryWorkspace
       {client}
       controller={directoryController}
+      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
       promotionParticipantID={directoryPromotionParticipantID}
       state={{
         directoryQuery: exploreState.current.directoryQuery,
@@ -1335,6 +1395,7 @@
       {sortNotice}
       bind:searchInput
       {selectionPreflight}
+      meetingSelection={apiSelection}
       exportSelection={() => void exportSelection()}
       {commitNavigation}
       {commitWorkspace}
@@ -1349,9 +1410,22 @@
       closeReadingPane={() => void closeReadingPane()}
       {openRelationship}
       {changeConversationAnchor}
+      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
     />
   {/if}
 </div>
+
+{#if archiveMeetingID !== undefined}
+  <ArchivedMeetingReader {client} message={archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined}
+    loading={archivedMeeting.loading} error={archivedMeeting.error} predicate={exploreState.predicate()}
+    anchorID={conversationAnchorId} onClose={closeArchivedMeeting}
+    onReload={() => void archivedMeeting.load(archiveMeetingID!)}
+    onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)} onAnchorChange={changeConversationAnchor} />
+{:else if archivedMeeting.loading}
+  <p class="archive-navigation-status" role="status">Loading archived meeting…</p>
+{:else if archivedMeeting.error}
+  <p class="archive-navigation-status" role="alert">{archivedMeeting.error}</p>
+{/if}
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Everything commands" onrun={runPalette} />
 
@@ -1384,6 +1458,8 @@
 {/if}
 
 <style>
+  .archive-navigation-status { padding: var(--space-3) var(--space-5); color: var(--text-secondary); }
+
   .app-shell {
     display: flex;
     min-width: 0;

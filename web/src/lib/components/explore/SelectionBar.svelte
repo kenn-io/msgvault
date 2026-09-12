@@ -1,9 +1,14 @@
 <script lang="ts">
   import { Button, Card, KbdBadge } from '@kenn-io/kit-ui';
 
-  import type { ExplorePreflightResponse as GeneratedExplorePreflightResponse } from '../../api/generated/models';
+  import type { APIClient } from '../../api/client';
+  import type {
+    ExplorePreflightResponse as GeneratedExplorePreflightResponse,
+    ExploreSelection as GeneratedExploreSelection,
+  } from '../../api/generated/models';
   import type { AllMatchingExploreSelection } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
+  import MeetingContextExport from '../meetings/MeetingContextExport.svelte';
 
   type Preflight = GeneratedExplorePreflightResponse;
 
@@ -12,6 +17,8 @@
     totalCount,
     allMatching = undefined,
     preflight = undefined,
+    client = undefined,
+    meetingSelection = undefined,
     onExport = undefined,
     onOpenInSource = undefined,
   }: {
@@ -19,6 +26,8 @@
     totalCount?: number;
     allMatching?: AllMatchingExploreSelection;
     preflight?: Preflight;
+    client?: APIClient;
+    meetingSelection?: GeneratedExploreSelection;
     onExport?: () => void;
     onOpenInSource?: () => void;
   } = $props();
@@ -26,6 +35,18 @@
   const exportReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'export')?.reason);
   const openReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'open_in_source')?.reason);
   const exportTarget = $derived(preflight?.action_targets?.find((item) => item.action === 'export'));
+  const contextSelectionCount = $derived(
+    meetingSelection?.mode === 'explicit'
+      ? (meetingSelection.row_keys?.length ?? 0)
+      : totalCount === undefined
+        ? undefined
+        : Math.max(0, totalCount - (meetingSelection?.exclusions?.length ?? 0)),
+  );
+  const contextDisabledReason = $derived(
+    contextSelectionCount !== undefined && contextSelectionCount > 100
+      ? 'Meeting context accepts at most 100 meetings.'
+      : '',
+  );
 
   const message = $derived.by(() => {
     if (selection.mode === 'all_matching') {
@@ -64,6 +85,13 @@
       <Button size="sm" tone="info" surface="soft" label="Open selection in source" onclick={onOpenInSource} />
     {:else if openReason}
       <span class="action-reason">Open in source: {openReason}</span>
+    {/if}
+    {#if client && meetingSelection}
+      <MeetingContextExport
+        {client}
+        request={{ selection: meetingSelection }}
+        disabledReason={contextDisabledReason}
+      />
     {/if}
     <Button
       size="sm"

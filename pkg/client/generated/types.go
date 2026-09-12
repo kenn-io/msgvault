@@ -57,6 +57,93 @@ func (a AccountStatus) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type Action struct {
+	AssigneeEmail *string `json:"assignee_email,omitempty"`
+	AssigneeName  *string `json:"assignee_name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	DueDate       *string `json:"due_date,omitempty"`
+	Locator       string  `json:"locator" validate:"required"`
+	Ordinal       int64   `json:"ordinal"`
+	Origin        string  `json:"origin" validate:"required"`
+	SourceID      *string `json:"source_id,omitempty"`
+	SourceStatus  *string `json:"source_status,omitempty"`
+	Status        string  `json:"status" validate:"required"`
+	Title         string  `json:"title" validate:"required"`
+}
+
+func (a Action) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type ActionCoverage struct {
+	Available    int64 `json:"available"`
+	MeetingCount int64 `json:"meeting_count"`
+	Partial      int64 `json:"partial"`
+	Unavailable  int64 `json:"unavailable"`
+	Unsupported  int64 `json:"unsupported"`
+}
+
+type ActionRow struct {
+	Action  Action     `json:"action"`
+	Meeting MeetingRef `json:"meeting"`
+}
+
+func (a ActionRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if v, ok := any(a.Meeting).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Meeting", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ActionsPage struct {
+	ArchiveUID    string          `json:"archive_uid" validate:"required"`
+	Coverage      ActionCoverage  `json:"coverage"`
+	NextCursor    *string         `json:"next_cursor,omitempty"`
+	Rows          []ActionRow     `json:"rows" validate:"required"`
+	SchemaVersion int64           `json:"schema_version"`
+	Scope         ScopeProvenance `json:"scope"`
+	TotalCount    int64           `json:"total_count"`
+}
+
+func (a ActionsPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.ArchiveUID, "required"); err != nil {
+		errors = errors.Append("ArchiveUID", err)
+	}
+	if v, ok := any(a.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	for i, item := range a.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(a.Scope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scope", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ActivityRef struct {
 	Channel          string    `json:"channel" validate:"required"`
 	ConversationID   *int64    `json:"conversation_id,omitempty"`
@@ -460,6 +547,16 @@ func (b BackupFreezeEndRequest) Validate() error {
 }
 
 type BackupFreezeEndResponse = map[string]any
+
+type BasisTotals struct {
+	Basis        string  `json:"basis" validate:"required"`
+	Count        int64   `json:"count"`
+	TotalSeconds float64 `json:"total_seconds"`
+}
+
+func (b BasisTotals) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
 
 type BodySearchContext struct {
 	ContextSnippets          []string `json:"context_snippets,omitempty"`
@@ -3014,6 +3111,27 @@ func (d DuplicateCostRisk) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type DurationTotals struct {
+	AverageKnownSeconds  *float64 `json:"average_known_seconds" validate:"omitempty"`
+	KnownDurationCount   int64    `json:"known_duration_count"`
+	MeetingCount         int64    `json:"meeting_count"`
+	TotalKnownSeconds    float64  `json:"total_known_seconds"`
+	UnknownDurationCount int64    `json:"unknown_duration_count"`
+}
+
+func (d DurationTotals) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(d.AverageKnownSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AverageKnownSeconds", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Employment struct {
 	AddressID      *int64       `json:"address_id,omitempty"`
 	Confidence     *float64     `json:"confidence,omitempty"`
@@ -4815,21 +4933,27 @@ type MatchSummary struct {
 }
 
 type Meeting struct {
-	Attendees          []MeetingPerson     `json:"attendees,omitempty"`
-	EndedAt            *string             `json:"ended_at,omitempty"`
-	ExternalID         string              `json:"external_id" validate:"required,max=256"`
-	Metadata           map[string]any      `json:"metadata,omitempty"`
-	Organizer          *MeetingPerson      `json:"organizer,omitempty"`
-	StartedAt          string              `json:"started_at" validate:"required"`
-	SummaryMarkdown    *string             `json:"summary_markdown,omitempty"`
-	SummaryText        *string             `json:"summary_text,omitempty"`
-	Title              *string             `json:"title,omitempty" validate:"omitempty,max=4096"`
-	Transcript         *string             `json:"transcript,omitempty"`
-	TranscriptSegments []TranscriptSegment `json:"transcript_segments,omitempty"`
+	ActionItems        *[]MeetingActionItem `json:"action_items,omitempty" validate:"omitempty,max=1000,dive"`
+	Attendees          []MeetingPerson      `json:"attendees,omitempty"`
+	EndedAt            *string              `json:"ended_at,omitempty"`
+	ExternalID         string               `json:"external_id" validate:"required,max=256"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
+	Organizer          *MeetingPerson       `json:"organizer,omitempty"`
+	StartedAt          string               `json:"started_at" validate:"required"`
+	SummaryMarkdown    *string              `json:"summary_markdown,omitempty"`
+	SummaryText        *string              `json:"summary_text,omitempty"`
+	Title              *string              `json:"title,omitempty" validate:"omitempty,max=4096"`
+	Transcript         *string              `json:"transcript,omitempty"`
+	TranscriptSegments []TranscriptSegment  `json:"transcript_segments,omitempty"`
 }
 
 func (m Meeting) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(m.ActionItems).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ActionItems", err)
+		}
+	}
 	for i, item := range m.Attendees {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4860,6 +4984,176 @@ func (m Meeting) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("TranscriptSegments[%d]", i), err)
 			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingActionItem struct {
+	AssigneeEmail *runtime.Email `json:"assignee_email,omitempty"`
+	AssigneeName  *string        `json:"assignee_name,omitempty" validate:"omitempty,max=256"`
+	Description   *string        `json:"description,omitempty" validate:"omitempty,max=65536"`
+	DueDate       *string        `json:"due_date,omitempty" validate:"omitempty,max=256"`
+	SourceID      *string        `json:"source_id,omitempty" validate:"omitempty,max=256"`
+	Status        *string        `json:"status,omitempty" validate:"omitempty,max=128"`
+	Title         string         `json:"title" validate:"required,max=4096,min=1"`
+}
+
+func (m MeetingActionItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.AssigneeEmail != nil {
+		if v, ok := any(m.AssigneeEmail).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("AssigneeEmail", err)
+			}
+		}
+	}
+	if m.AssigneeName != nil {
+		if err := typesValidator.Var(m.AssigneeName, "omitempty,max=256"); err != nil {
+			errors = errors.Append("AssigneeName", err)
+		}
+	}
+	if m.Description != nil {
+		if err := typesValidator.Var(m.Description, "omitempty,max=65536"); err != nil {
+			errors = errors.Append("Description", err)
+		}
+	}
+	if m.DueDate != nil {
+		if err := typesValidator.Var(m.DueDate, "omitempty,max=256"); err != nil {
+			errors = errors.Append("DueDate", err)
+		}
+	}
+	if m.SourceID != nil {
+		if err := typesValidator.Var(m.SourceID, "omitempty,max=256"); err != nil {
+			errors = errors.Append("SourceID", err)
+		}
+	}
+	if m.Status != nil {
+		if err := typesValidator.Var(m.Status, "omitempty,max=128"); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if err := typesValidator.Var(m.Title, "required,max=4096,min=1"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingActionsRequest struct {
+	AssigneeEmail *string                      `json:"assignee_email,omitempty"`
+	Cursor        *string                      `json:"cursor,omitempty"`
+	Explore       *MeetingExploreScope         `json:"explore,omitempty"`
+	Limit         *int64                       `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
+	Query         *string                      `json:"query,omitempty" validate:"omitempty,max=256"`
+	Scope         *MeetingScopeRequest         `json:"scope,omitempty"`
+	Status        *MeetingActionsRequestStatus `json:"status,omitempty"`
+}
+
+func (m MeetingActionsRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Explore != nil {
+		if v, ok := any(m.Explore).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Explore", err)
+			}
+		}
+	}
+	if m.Limit != nil {
+		if err := typesValidator.Var(m.Limit, "omitempty,gte=1,lte=200"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if m.Query != nil {
+		if err := typesValidator.Var(m.Query, "omitempty,max=256"); err != nil {
+			errors = errors.Append("Query", err)
+		}
+	}
+	if m.Scope != nil {
+		if v, ok := any(m.Scope).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Scope", err)
+			}
+		}
+	}
+	if m.Status != nil {
+		if v, ok := any(m.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingContextRequest struct {
+	Format            *MeetingContextRequestFormat `json:"format,omitempty"`
+	IncludeTranscript *bool                        `json:"include_transcript,omitempty"`
+	MaxBytes          *int64                       `json:"max_bytes,omitempty" validate:"omitempty,gte=4096,lte=1048576"`
+	MessageIds        *[]int64                     `json:"message_ids,omitempty" validate:"omitempty,min=1,max=100,dive,gte=1,lte=9007199254740991"`
+	Selection         *ExploreSelection            `json:"selection,omitempty"`
+}
+
+func (m MeetingContextRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Format != nil {
+		if v, ok := any(m.Format).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Format", err)
+			}
+		}
+	}
+	if m.MaxBytes != nil {
+		if err := typesValidator.Var(m.MaxBytes, "omitempty,gte=4096,lte=1048576"); err != nil {
+			errors = errors.Append("MaxBytes", err)
+		}
+	}
+	if v, ok := any(m.MessageIds).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MessageIds", err)
+		}
+	}
+	if m.Selection != nil {
+		if v, ok := any(m.Selection).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Selection", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingExploreScope struct {
+	CacheRevision       string             `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string            `json:"candidate_snapshot_id,omitempty"`
+	Predicate           ExploreHTTPRequest `json:"predicate"`
+	SearchProvenance    SearchProvenance   `json:"search_provenance"`
+}
+
+func (m MeetingExploreScope) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.CacheRevision, "required"); err != nil {
+		errors = errors.Append("CacheRevision", err)
+	}
+	if v, ok := any(m.Predicate).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Predicate", err)
+		}
+	}
+	if v, ok := any(m.SearchProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SearchProvenance", err)
 		}
 	}
 	if len(errors) == 0 {
@@ -4914,6 +5208,33 @@ func (m MeetingImportResponse) Validate() error {
 	return errors
 }
 
+type MeetingMetricsRequest struct {
+	Explore *MeetingExploreScope `json:"explore,omitempty"`
+	Scope   *MeetingScopeRequest `json:"scope,omitempty"`
+}
+
+func (m MeetingMetricsRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Explore != nil {
+		if v, ok := any(m.Explore).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Explore", err)
+			}
+		}
+	}
+	if m.Scope != nil {
+		if v, ok := any(m.Scope).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Scope", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MeetingPerson struct {
 	Email string  `json:"email" validate:"required"`
 	Name  *string `json:"name,omitempty"`
@@ -4921,6 +5242,74 @@ type MeetingPerson struct {
 
 func (m MeetingPerson) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingRef struct {
+	ArchivePath      string     `json:"archive_path" validate:"required"`
+	ConversationID   int64      `json:"conversation_id"`
+	MessageID        int64      `json:"message_id"`
+	OccurredAt       *time.Time `json:"occurred_at,omitempty" validate:"required"`
+	SourceID         int64      `json:"source_id"`
+	SourceIdentifier string     `json:"source_identifier" validate:"required"`
+	SourceMessageID  string     `json:"source_message_id" validate:"required"`
+	SourceType       string     `json:"source_type" validate:"required"`
+	Title            string     `json:"title" validate:"required"`
+}
+
+func (m MeetingRef) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingScopeRequest struct {
+	After          *time.Time                   `json:"after,omitempty"`
+	Before         *time.Time                   `json:"before,omitempty"`
+	Deletion       *MeetingScopeRequestDeletion `json:"deletion,omitempty"`
+	Domains        []string                     `json:"domains,omitempty"`
+	MessageIds     *[]int64                     `json:"message_ids,omitempty" validate:"omitempty,max=100,dive,gte=1,lte=9007199254740991"`
+	ParticipantID  *int64                       `json:"participant_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
+	ParticipantIds []int64                      `json:"participant_ids,omitempty"`
+	PersonID       *int64                       `json:"person_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
+	SourceIds      []int64                      `json:"source_ids,omitempty"`
+}
+
+func (m MeetingScopeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Deletion != nil {
+		if v, ok := any(m.Deletion).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Deletion", err)
+			}
+		}
+	}
+	if v, ok := any(m.MessageIds).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MessageIds", err)
+		}
+	}
+	if m.ParticipantID != nil {
+		if err := typesValidator.Var(m.ParticipantID, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append("ParticipantID", err)
+		}
+	}
+	for i, item := range m.ParticipantIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append(fmt.Sprintf("ParticipantIds[%d]", i), err)
+		}
+	}
+	if m.PersonID != nil {
+		if err := typesValidator.Var(m.PersonID, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append("PersonID", err)
+		}
+	}
+	for i, item := range m.SourceIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append(fmt.Sprintf("SourceIds[%d]", i), err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MergeOrganizationBody struct {
@@ -5041,6 +5430,84 @@ type MessageSummary struct {
 
 func (m MessageSummary) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type Metrics struct {
+	ArchiveUID      string          `json:"archive_uid" validate:"required"`
+	DurationByBasis []BasisTotals   `json:"duration_by_basis" validate:"required"`
+	FirstMeetingAt  *time.Time      `json:"first_meeting_at" validate:"omitempty"`
+	LastMeetingAt   *time.Time      `json:"last_meeting_at" validate:"omitempty"`
+	Months          []MonthTotals   `json:"months" validate:"required"`
+	SchemaVersion   int64           `json:"schema_version"`
+	Scope           ScopeProvenance `json:"scope"`
+	Totals          DurationTotals  `json:"totals"`
+	UndatedCount    int64           `json:"undated_count"`
+}
+
+func (m Metrics) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ArchiveUID, "required"); err != nil {
+		errors = errors.Append("ArchiveUID", err)
+	}
+	for i, item := range m.DurationByBasis {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("DurationByBasis[%d]", i), err)
+			}
+		}
+	}
+	if m.FirstMeetingAt != nil {
+		if err := typesValidator.Var(m.FirstMeetingAt, "required"); err != nil {
+			errors = errors.Append("FirstMeetingAt", err)
+		}
+	}
+	if m.LastMeetingAt != nil {
+		if err := typesValidator.Var(m.LastMeetingAt, "required"); err != nil {
+			errors = errors.Append("LastMeetingAt", err)
+		}
+	}
+	for i, item := range m.Months {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Months[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(m.Scope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scope", err)
+		}
+	}
+	if v, ok := any(m.Totals).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Totals", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MonthTotals struct {
+	Month  string         `json:"month" validate:"required"`
+	Totals DurationTotals `json:"totals"`
+}
+
+func (m MonthTotals) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Month, "required"); err != nil {
+		errors = errors.Append("Month", err)
+	}
+	if v, ok := any(m.Totals).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Totals", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MutationResult struct {
@@ -6243,6 +6710,19 @@ func (o OrganizationsResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type PacketResult struct {
+	Content           string  `json:"content" validate:"required"`
+	ContentBytes      int64   `json:"content_bytes"`
+	Format            string  `json:"format" validate:"required"`
+	OmittedMessageIds []int64 `json:"omitted_message_ids" validate:"required"`
+	SchemaVersion     int64   `json:"schema_version"`
+	Truncated         bool    `json:"truncated"`
+}
+
+func (p PacketResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type PartialDate struct {
@@ -9761,6 +10241,18 @@ func (s SchedulerStatusResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ScopeProvenance struct {
+	CacheRevision        *string `json:"cache_revision,omitempty"`
+	CandidateSnapshotID  *string `json:"candidate_snapshot_id,omitempty"`
+	Kind                 string  `json:"kind" validate:"required"`
+	LexicalIndexRevision *string `json:"lexical_index_revision,omitempty"`
+	VectorGeneration     *int64  `json:"vector_generation,omitempty"`
+}
+
+func (s ScopeProvenance) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type ScoreBreakdown struct {

@@ -485,9 +485,7 @@ func (r *directorySnapshotRows) Close() error {
 
 func newDirectorySnapshotGateStore(t *testing.T, path string, gate *directorySnapshotGate, readOnly bool) *Store {
 	t.Helper()
-	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-		return conn.RegisterFunc(sqliteutil.UnicodeLowerFunction, strings.ToLower, true)
-	}}
+	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: sqliteutil.RegisterFunctions}
 	connector := &directorySnapshotConnector{
 		driver: sqliteDriver, dsn: path + testSQLiteParams, gate: gate,
 	}

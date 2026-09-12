@@ -190,6 +190,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantPeople     bool
 		wantDirectory  bool
 		wantSavedViews bool
+		wantMeetings   bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -197,6 +198,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "newer schema", schemaVersion: "2.14.0", wantPeople: true, wantDirectory: true},
 		{name: "schema before the Saved View run endpoint", schemaVersion: "2.20.0", wantPeople: true, wantDirectory: true},
 		{name: "saved view run schema", schemaVersion: "2.21.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "meeting predecessor", schemaVersion: "2.24.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "meeting schema", schemaVersion: "2.25.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -234,6 +237,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 		})
 	}
 }

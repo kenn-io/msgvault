@@ -15,6 +15,9 @@
   import { appShortcuts, Button, DetailDrawer, EmptyState, ROOT_SCOPE } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
+  import type { MeetingRef } from '../../api/generated/models';
+  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { APIClient } from '../../api/client';
   import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
@@ -55,6 +58,7 @@
     onOpenDirectory?: (participantID: number) => void;
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
+    onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
      * EntryRow into — AppShell wires these to the same openFileItem/
@@ -86,6 +90,7 @@
     onOpenDirectory = undefined,
     onOpenDirectoryPerson = undefined,
     onAnnounce = undefined,
+    onOpenMeeting = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
   }: Props = $props();
@@ -199,6 +204,15 @@
     (controller.target !== target || controller.canonicalID === null)
   );
   const filesReady = $derived(target !== null && !clusterScopePending);
+  const meetingContext = $derived.by(() => {
+    if (!target || controller.target !== target || clusterScopePending) return undefined;
+    const domain = domainOf(target);
+    try {
+      return { scope: relationshipMeetingScope(domain ? { domains: [domain] } : { participant_id: controller.canonicalID! }, contextPredicate(predicate)) };
+    } catch (cause: unknown) {
+      return { error: cause instanceof Error ? cause.message : 'Meeting activity cannot use these filters.' };
+    }
+  });
 
   function focusPane(selector: string): boolean {
     const element = rootElement?.querySelector<HTMLElement>(selector);
@@ -396,6 +410,14 @@
                   onYearChange={(year) => { void controller.loadRelationshipYear(year); }}
                 />
               {/if}
+              {#if meetingContext?.scope}
+                <details class="meeting-overview" open>
+                  <summary>Meeting activity and follow-ups</summary>
+                  <MeetingPanel {client} scope={meetingContext.scope} refreshKey={String(controller.identityRevision ?? '')} {onOpenMeeting} />
+                </details>
+              {:else if meetingContext?.error}
+                <p role="status">{meetingContext.error}</p>
+              {/if}
               {#if filesOpen && filesReady}
                 <FilesWorkspace
                   {client}
@@ -439,6 +461,7 @@
               {client}
               {selection}
               predicate={contextPredicate(predicate)}
+              {onOpenMeeting}
               onClose={() => { void closeReadingPane(); }}
               {conversationAnchorId}
               conversationStart={conversationBounds?.start}
@@ -573,6 +596,9 @@
     flex: 1;
     flex-direction: column;
   }
+
+  .meeting-overview { max-height: 42vh; overflow: auto; flex: none; }
+  .meeting-overview summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
 
   .pane-reading {
     height: 100%;

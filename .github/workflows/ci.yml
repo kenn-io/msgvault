@@ -171,7 +171,7 @@ jobs:
           rm -f /etc/apt/sources.list.d/nodesource.list
           for attempt in 1 2 3; do
             if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
+              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip libsqlite3-dev; then
               exit 0
             fi
             echo "apt attempt $attempt failed; retrying" >&2
@@ -239,7 +239,7 @@ jobs:
           rm -f /etc/apt/sources.list.d/nodesource.list
           for attempt in 1 2 3; do
             if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
+              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip libsqlite3-dev; then
               exit 0
             fi
             echo "apt attempt $attempt failed; retrying" >&2

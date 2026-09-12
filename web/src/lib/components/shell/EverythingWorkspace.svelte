@@ -3,7 +3,11 @@
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
-  import type { ExplorePreflightResponse as GeneratedExplorePreflightResponse } from '../../api/generated/models';
+  import type {
+    MeetingRef,
+    ExplorePreflightResponse as GeneratedExplorePreflightResponse,
+    ExploreSelection as GeneratedExploreSelection,
+  } from '../../api/generated/models';
   import type {
     EntryRow,
     AllMatchingExploreSelection,
@@ -34,6 +38,8 @@
   import SearchModeControl from '../search/SearchModeControl.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
+  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import { exploreMeetingScope } from '../../meetings/scopes';
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
@@ -50,6 +56,7 @@
     sortNotice: string;
     searchInput?: HTMLInputElement;
     selectionPreflight: ExplorePreflight | undefined;
+    meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -64,6 +71,7 @@
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
     changeConversationAnchor: (anchorId: number) => void;
+    onOpenMeeting?: (meeting: MeetingRef) => void;
   }
 
   let {
@@ -78,6 +86,7 @@
     sortNotice,
     searchInput = $bindable(undefined),
     selectionPreflight,
+    meetingSelection,
     exportSelection,
     commitNavigation,
     commitWorkspace,
@@ -92,6 +101,7 @@
     closeReadingPane,
     openRelationship,
     changeConversationAnchor,
+    onOpenMeeting = undefined,
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -132,10 +142,12 @@
   let lexicalCountController: AbortController | undefined;
   let lexicalCountTimer: ReturnType<typeof setTimeout> | undefined;
   let lexicalCountRequestKey = '';
+  let readingDetailRetryRevision = $state(0);
   let readingDetailLoading = $state(false);
   let readingDetailError = $state('');
   let readingDetailUnavailable = $state<ExploreCacheUnavailable>();
   let readingDetailController: AbortController | undefined;
+  let readingDetailRequestIdentity = '';
 
   const allMatchingSelection = $derived.by((): AllMatchingExploreSelection | undefined => {
     if (!loader.result || loader.loading || loader.loadingMore) return undefined;
@@ -199,9 +211,25 @@
 
   const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
 
-  $effect(() => {
-    const target = parseGroupSelection(exploreState.current.selectedRow);
+  $effect.pre(() => {
+    const target = parseGroupSelection(readingTargetKey);
+    void readingDetailRetryRevision;
     const fingerprint = readingPredicateFingerprint;
+    const identity = `${fingerprint}|${readingTargetKey ?? ''}`;
+    if (identity !== readingDetailRequestIdentity) {
+      readingDetailRequestIdentity = identity;
+      // Cancel before waiting for the new outer result. A delayed old lookup
+      // must not publish group authority under the newly selected predicate.
+      session.readingDetailGeneration += 1;
+      readingDetailController?.abort();
+      readingDetailController = undefined;
+      const keepDetail = untrack(() => target && session.readingDetailFingerprint.startsWith(`${fingerprint}|`) &&
+        session.readingGroupDetail?.kind === 'group' && session.readingGroupDetail.dimension === target.dimension && session.readingGroupDetail.key === target.key);
+      if (!keepDetail) {
+        session.readingGroupDetail = undefined;
+        session.readingDetailFingerprint = '';
+      }
+    }
     // Tracked, not untracked like `predicate` below: a cache rebuild
     // invalidates a stale detail whether it happened before this mount
     // (`session` persisted the fingerprint across a prior workspace
@@ -213,14 +241,15 @@
     // "revision not yet known" (a fresh mount, before its own list request
     // has resolved even once) to whatever revision it turns out to be.
     const cacheRevision = loader.result?.cacheRevision;
+    const outerAuthority = canonicalFingerprint({ cacheRevision, searchProvenance: loader.result?.searchProvenance, candidateSnapshotId: loader.result?.candidateSnapshotId });
     const predicate = untrack(() => exploreState.predicate());
-    if (target && cacheRevision === undefined) {
+    if (target && (cacheRevision === undefined || loader.loading || loader.resultFingerprint !== fingerprint)) {
       readingDetailLoading = true;
       readingDetailError = '';
       readingDetailUnavailable = undefined;
       return;
     }
-    const loadedKey = target ? `${fingerprint}|${cacheRevision}|group:${target.dimension}:${target.key}` : '';
+    const loadedKey = target ? `${fingerprint}|${outerAuthority}|group:${target.dimension}:${target.key}` : '';
     // A workspace round-trip destroys and recreates this component, which
     // re-creates this effect and would otherwise unconditionally discard and
     // refetch the group detail below. If a previous mount already loaded
@@ -291,6 +320,7 @@
           count: lookup.row.count,
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
+          meetingScope: exploreMeetingScope(detailPredicate, lookup.authority).explore,
         };
         session.readingDetailFingerprint = loadedKey;
       })
@@ -302,6 +332,42 @@
         if (generation === session.readingDetailGeneration) readingDetailLoading = false;
       });
   });
+
+  let meetingReloadRequestedAt: number | undefined;
+  const meetingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
+  const meetingScope = $derived(session.meetingOverview?.fingerprint === meetingPredicateFingerprint
+    ? session.meetingOverview.scope : undefined);
+
+  $effect.pre(() => {
+    const fingerprint = meetingPredicateFingerprint;
+    const predicate = exploreState.predicate();
+    const result = loader.result;
+    const loading = loader.loading;
+    const generation = loader.resultGeneration;
+    const resultFingerprint = loader.resultFingerprint;
+    const isMeetingView = exploreState.current.workspace === 'everything' &&
+      predicate.filters?.some((filter) => filter.dimension === 'message_type' && filter.values.includes('meeting_transcript'));
+    untrack(() => {
+      if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
+      if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
+      const scope = exploreMeetingScope(predicate, result);
+      const explicitlyReloaded = meetingReloadRequestedAt !== undefined && generation !== meetingReloadRequestedAt;
+      if (explicitlyReloaded) meetingReloadRequestedAt = undefined;
+      if (!session.meetingOverview || explicitlyReloaded || canonicalFingerprint(scope) !== canonicalFingerprint(session.meetingOverview.scope)) {
+        session.meetingOverview = { fingerprint, scope, refreshKey: (session.meetingOverview?.refreshKey ?? 0) + (explicitlyReloaded ? 1 : 0) };
+      }
+    });
+  });
+
+  function reloadOverviewMeetings(): void {
+    meetingReloadRequestedAt = loader.resultGeneration;
+    loader.retry();
+  }
+
+  function reloadGroupMeetings(): void {
+    session.readingDetailFingerprint = '';
+    readingDetailRetryRevision += 1;
+  }
 
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
 
@@ -507,6 +573,7 @@
   }
 
   onDestroy(() => {
+    session.meetingOverview = undefined;
     coverageRequestGeneration += 1;
     coverageController?.abort();
     if (coveragePollTimer !== undefined) clearTimeout(coveragePollTimer);
@@ -623,6 +690,13 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
+  {#if meetingScope}
+    <div class="meeting-overview" data-scroll>
+      <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+        onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
+    </div>
+  {/if}
+
   <div class="results-split" class:results-split--right={previewRight} bind:clientWidth={resultsWidth}>
     <SplitPane
       ariaLabel="Resize reading pane"
@@ -687,6 +761,8 @@
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
               preflight={selectionPreflight}
+              {client}
+              {meetingSelection}
               onExport={exportSelection}
             />
             {#if exploreState.current.presentation === 'timeline'}
@@ -759,6 +835,8 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            {onOpenMeeting}
+            onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitWorkspace('settings')}
             onOpenRelationship={openRelationship}
             {conversationAnchorId}
@@ -793,6 +871,8 @@
     margin-inline: auto;
     padding: var(--space-6) var(--space-7) var(--space-4);
   }
+
+  .meeting-overview { max-height: 42vh; overflow: auto; flex: none; border: 1px solid var(--border-muted); }
 
   .workspace-header {
     display: flex;

@@ -36,10 +36,151 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
+func TestMeetingIntelligenceOpenAPIContract(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	assertions.Equal("2.25.0", APISchemaVersion)
+	doc := OpenAPIDocument()
+	for path, operationID := range map[string]string{
+		"/api/v1/meetings/context": "getMeetingContext",
+		"/api/v1/meetings/actions": "listMeetingActionItems",
+		"/api/v1/meetings/metrics": "getMeetingMetrics",
+	} {
+		operation := doc.Paths[path]
+		requirements.NotNil(operation, path)
+		requirements.NotNil(operation.Post, path)
+		assertions.Equal(operationID, operation.Post.OperationID)
+		assertions.Contains(operation.Post.Responses, "413")
+		assertions.Contains(operation.Post.Responses, "415")
+	}
+
+	schemas := doc.Components.Schemas.Map()
+	contextRequest := schemas["MeetingContextRequest"]
+	requirements.NotNil(contextRequest)
+	requirements.Len(contextRequest.OneOf, 2,
+		"context requires exactly one direct IDs or Explore selection")
+	assertions.False(contextRequest.Properties["message_ids"].Nullable,
+		"omitted and explicit [] are distinct; null is not a third meaning")
+	actionsRequest := schemas["MeetingActionsRequest"]
+	requirements.NotNil(actionsRequest)
+	requirements.NotNil(actionsRequest.Not, "direct and Explore scopes are mutually exclusive")
+	metricsRequest := schemas["MeetingMetricsRequest"]
+	requirements.NotNil(metricsRequest)
+	requirements.NotNil(metricsRequest.Not, "direct and Explore scopes are mutually exclusive")
+	scopeRequest := schemas["MeetingScopeRequest"]
+	requirements.NotNil(scopeRequest)
+	assertions.False(scopeRequest.Properties["message_ids"].Nullable)
+	requirements.Len(scopeRequest.AllOf, 3,
+		"singular references exclude each other and the exact plural participant IDs")
+
+	meetingImport := schemas["Meeting"]
+	requirements.NotNil(meetingImport)
+	requirements.NotNil(meetingImport.Properties["action_items"])
+	assertions.False(meetingImport.Properties["action_items"].Nullable,
+		"omitted means unavailable while [] means source-reported empty")
+	requirements.NotNil(meetingImport.Properties["action_items"].MaxItems)
+	assertions.Equal(1000, *meetingImport.Properties["action_items"].MaxItems)
+	actionImport := schemas["MeetingActionItem"]
+	requirements.NotNil(actionImport)
+	assertions.Empty(actionImport.Properties["status"].Enum,
+		"source status remains an unrestricted bounded string")
+	assertions.Empty(actionImport.Properties["due_date"].Format,
+		"source due dates remain bounded text")
+	requirements.NotNil(actionImport.Properties["status"].MaxLength)
+	assertions.Equal(128, *actionImport.Properties["status"].MaxLength)
+	requirements.NotNil(actionImport.Properties["due_date"].MaxLength)
+	assertions.Equal(256, *actionImport.Properties["due_date"].MaxLength)
+}
+
+func TestGeneratedMeetingRequestsPreserveExplicitEmptyMessageIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		absent    any
+		empty     any
+		populated any
+	}{
+		{
+			name:      "context",
+			absent:    &generated.MeetingContextRequest{},
+			empty:     &generated.MeetingContextRequest{MessageIds: &[]int64{}},
+			populated: &generated.MeetingContextRequest{MessageIds: &[]int64{7, 11}},
+		},
+		{
+			name:      "scope",
+			absent:    &generated.MeetingScopeRequest{},
+			empty:     &generated.MeetingScopeRequest{MessageIds: &[]int64{}},
+			populated: &generated.MeetingScopeRequest{MessageIds: &[]int64{7, 11}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			absent, err := json.Marshal(test.absent)
+			requirements.NoError(err)
+			assertions.NotContains(string(absent), `"message_ids"`)
+
+			empty, err := json.Marshal(test.empty)
+			requirements.NoError(err)
+			assertions.Contains(string(empty), `"message_ids":[]`)
+
+			populated, err := json.Marshal(test.populated)
+			requirements.NoError(err)
+			assertions.Contains(string(populated), `"message_ids":[7,11]`)
+		})
+	}
+}
+
+func TestGeneratedMeetingImportPreservesExplicitEmptyActionItems(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	absent, err := json.Marshal(&generated.Meeting{})
+	requirements.NoError(err)
+	assertions.NotContains(string(absent), `"action_items"`)
+
+	explicitEmpty, err := json.Marshal(&generated.Meeting{ActionItems: &[]generated.MeetingActionItem{}})
+	requirements.NoError(err)
+	assertions.Contains(string(explicitEmpty), `"action_items":[]`)
+}
+
+func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, raw := range []string{
+		`{"average_known_seconds":null,"known_duration_count":0,"meeting_count":0,"total_known_seconds":0,"unknown_duration_count":0}`,
+		`{"average_known_seconds":0,"known_duration_count":1,"meeting_count":1,"total_known_seconds":0,"unknown_duration_count":0}`,
+		`{"average_known_seconds":12.5,"known_duration_count":1,"meeting_count":1,"total_known_seconds":12.5,"unknown_duration_count":0}`,
+	} {
+		var totals generated.DurationTotals
+		requirements.NoError(json.Unmarshal([]byte(raw), &totals))
+		encoded, err := json.Marshal(totals)
+		requirements.NoError(err)
+		assertions.JSONEq(raw, string(encoded))
+	}
+
+	rawMetrics := `{
+		"archive_uid":"archive-test","duration_by_basis":[],
+		"first_meeting_at":null,"last_meeting_at":null,"months":[],
+		"schema_version":1,"scope":{"kind":"direct"},
+		"totals":{"average_known_seconds":null,"known_duration_count":0,"meeting_count":0,"total_known_seconds":0,"unknown_duration_count":0},
+		"undated_count":0
+	}`
+	var metrics generated.Metrics
+	requirements.NoError(json.Unmarshal([]byte(rawMetrics), &metrics))
+	encoded, err := json.Marshal(metrics)
+	requirements.NoError(err)
+	assertions.JSONEq(rawMetrics, string(encoded))
+}
+
+func TestGeneratedMeetingStatusKeepsRelationshipReviewPendingCompatibility(t *testing.T) {
+	status := generated.Pending
+	assert.Equal(t, generated.ListPersonRelationshipReviewsQueryStatus("pending"), status)
+}
+
 func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.24.0", APISchemaVersion)
+	assertions.Equal("2.25.0", APISchemaVersion)
 	doc := OpenAPIDocument()
 	run := doc.Paths["/api/v1/saved-views/{id}/run"]
 	requirements.NotNil(run, "Saved View run path")
@@ -57,50 +198,50 @@ func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 }
 
 func TestDeletionSubsetSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.24.0", APISchemaVersion)
+	assert.Equal(t, "2.25.0", APISchemaVersion)
 }
 
 func TestOperationsWorkspaceSchemaVersion(t *testing.T) {
 	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		assert.Equal(t, "2.24.0", doc.Info.Version)
+		assert.Equal(t, "2.25.0", doc.Info.Version)
 	}
 }
 
 func TestOpenAPISchemaVersionPersonBrief(t *testing.T) {
-	assert.Equal(t, "2.24.0", APISchemaVersion)
+	assert.Equal(t, "2.25.0", APISchemaVersion)
 }
 
 func TestOpenAPIImportJobContract(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	doc := OpenAPIDocument()
 
 	createPath := doc.Paths["/api/v1/imports"]
-	require.NotNil(createPath, "import collection path")
-	require.NotNil(createPath.Post, "create import operation")
-	assert.Equal("createImportJob", createPath.Post.OperationID)
-	require.Len(createPath.Post.Security, 1)
+	requirements.NotNil(createPath, "import collection path")
+	requirements.NotNil(createPath.Post, "create import operation")
+	assertions.Equal("createImportJob", createPath.Post.OperationID)
+	requirements.Len(createPath.Post.Security, 1)
 	_, secured := createPath.Post.Security[0][apiKeySecurityScheme]
-	assert.True(secured, "create import requires API-key security")
-	require.NotNil(createPath.Post.RequestBody)
+	assertions.True(secured, "create import requires API-key security")
+	requirements.NotNil(createPath.Post.RequestBody)
 	requestMedia := createPath.Post.RequestBody.Content[applicationJSONMediaType]
-	require.NotNil(requestMedia)
-	assert.Equal("#/components/schemas/ImportJobRequest", requestMedia.Schema.Ref)
+	requirements.NotNil(requestMedia)
+	assertions.Equal("#/components/schemas/ImportJobRequest", requestMedia.Schema.Ref)
 	accepted := createPath.Post.Responses["202"]
-	require.NotNil(accepted, "create import documents 202")
+	requirements.NotNil(accepted, "create import documents 202")
 	acceptedMedia := accepted.Content[applicationJSONMediaType]
-	require.NotNil(acceptedMedia)
-	assert.Equal("#/components/schemas/ImportJobResponse", acceptedMedia.Schema.Ref)
-	assert.Contains(createPath.Post.Responses, "503", "operation-gate contention is documented")
+	requirements.NotNil(acceptedMedia)
+	assertions.Equal("#/components/schemas/ImportJobResponse", acceptedMedia.Schema.Ref)
+	assertions.Contains(createPath.Post.Responses, "503", "operation-gate contention is documented")
 
 	statusPath := doc.Paths["/api/v1/imports/{job_id}"]
-	require.NotNil(statusPath, "import status path")
-	require.NotNil(statusPath.Get, "get import operation")
-	assert.Equal("getImportJob", statusPath.Get.OperationID)
-	require.Len(statusPath.Get.Parameters, 1)
-	assert.Equal("job_id", statusPath.Get.Parameters[0].Name)
-	assert.Equal("path", statusPath.Get.Parameters[0].In)
-	assert.True(statusPath.Get.Parameters[0].Required)
+	requirements.NotNil(statusPath, "import status path")
+	requirements.NotNil(statusPath.Get, "get import operation")
+	assertions.Equal("getImportJob", statusPath.Get.OperationID)
+	requirements.Len(statusPath.Get.Parameters, 1)
+	assertions.Equal("job_id", statusPath.Get.Parameters[0].Name)
+	assertions.Equal("path", statusPath.Get.Parameters[0].In)
+	assertions.True(statusPath.Get.Parameters[0].Required)
 }
 
 func TestOpenAPIClientImportJobStatusEnumNamesPreserveExistingConstants(t *testing.T) {
@@ -221,10 +362,10 @@ func TestPersonFactPinsOpenAPIDeclaresBadPersonIDResponse(t *testing.T) {
 }
 
 func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assert.Equal("2.24.0", APISchemaVersion)
+	assertions.Equal("2.25.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -237,55 +378,55 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 		"/api/v1/people/{id}/profile",
 		"/api/v1/people/{id}/contact-state",
 	} {
-		assert.Contains(doc.Paths, path)
+		assertions.Contains(doc.Paths, path)
 	}
-	assert.NotContains(doc.Paths, "/api/v1/persons")
-	assert.NotContains(doc.Paths, "/api/v1/persons/{id}")
-	assert.NotNil(doc.Paths["/api/v1/people/search"])
-	assert.Nil(doc.Paths["/api/v1/people/{id}/summary"])
+	assertions.NotContains(doc.Paths, "/api/v1/persons")
+	assertions.NotContains(doc.Paths, "/api/v1/persons/{id}")
+	assertions.NotNil(doc.Paths["/api/v1/people/search"])
+	assertions.Nil(doc.Paths["/api/v1/people/{id}/summary"])
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.24.0", APISchemaVersion)
+	assert.Equal(t, "2.25.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
-	assert.Equal(t, "2.24.0", APISchemaVersion)
+	assert.Equal(t, "2.25.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	for _, path := range []string{
 		"/api/v1/participants/{id}/files/search",
 		"/api/v1/people/{id}/files/search",
 	} {
 		operation := OpenAPIDocument().Paths[path].Post
-		require.NotNil(operation)
-		require.Len(operation.Parameters, 1)
+		requirements.NotNil(operation)
+		requirements.Len(operation.Parameters, 1)
 		parameter := operation.Parameters[0]
-		assert.Equal("id", parameter.Name)
-		assert.Equal("path", parameter.In)
-		assert.True(parameter.Required)
-		assert.Equal(huma.TypeInteger, parameter.Schema.Type)
-		assert.Equal(formatInt64, parameter.Schema.Format)
+		assertions.Equal("id", parameter.Name)
+		assertions.Equal("path", parameter.In)
+		assertions.True(parameter.Required)
+		assertions.Equal(huma.TypeInteger, parameter.Schema.Type)
+		assertions.Equal(formatInt64, parameter.Schema.Format)
 	}
 }
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
-	require := require.New(t)
-	assert.Equal(t, "2.24.0", APISchemaVersion,
+	requirements := require.New(t)
+	assert.Equal(t, "2.25.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
 		openAPIClientDocument(),
 	} {
 		operation := document.Paths[organizationsPath].Post
-		require.NotNil(operation)
+		requirements.NotNil(operation)
 		response := operation.Responses[httpStatusKey(http.StatusCreated)]
-		require.NotNil(response)
-		require.Contains(response.Headers, "Location")
-		require.Equal(huma.TypeString, response.Headers["Location"].Schema.Type)
+		requirements.NotNil(response)
+		requirements.Contains(response.Headers, "Location")
+		requirements.Equal(huma.TypeString, response.Headers["Location"].Schema.Type)
 	}
 }
 
@@ -322,7 +463,7 @@ func TestOpenAPISemanticPersonSearchReturnsOnlyDurableRootsAndScores(t *testing.
 }
 
 func TestOrganizationCreateSchemaOmitsPatchOnlyRetiredState(t *testing.T) {
-	require := require.New(t)
+	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
 		openAPIClientDocument(),
@@ -331,8 +472,8 @@ func TestOrganizationCreateSchemaOmitsPatchOnlyRetiredState(t *testing.T) {
 			t, document, document.Paths[organizationsPath].Post)
 		patchSchema := operationBodySchema(
 			t, document, document.Paths[organizationsPath+"/{id}"].Patch)
-		require.NotContains(createSchema.Properties, "retired")
-		require.Contains(patchSchema.Properties, "retired")
+		requirements.NotContains(createSchema.Properties, "retired")
+		requirements.Contains(patchSchema.Properties, "retired")
 	}
 }
 
@@ -340,18 +481,18 @@ func operationBodySchema(
 	t *testing.T, document *huma.OpenAPI, operation *huma.Operation,
 ) *huma.Schema {
 	t.Helper()
-	require := require.New(t)
-	require.NotNil(operation)
-	require.NotNil(operation.RequestBody)
+	requirements := require.New(t)
+	requirements.NotNil(operation)
+	requirements.NotNil(operation.RequestBody)
 	schema := operation.RequestBody.Content["application/json"].Schema
-	require.NotNil(schema)
+	requirements.NotNil(schema)
 	if schema.Ref == "" {
 		return schema
 	}
 	const prefix = "#/components/schemas/"
-	require.True(strings.HasPrefix(schema.Ref, prefix), schema.Ref)
+	requirements.True(strings.HasPrefix(schema.Ref, prefix), schema.Ref)
 	resolved := document.Components.Schemas.Map()[strings.TrimPrefix(schema.Ref, prefix)]
-	require.NotNil(resolved)
+	requirements.NotNil(resolved)
 	return resolved
 }
 
@@ -421,15 +562,15 @@ func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
 }
 
 func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
-	assert := assert.New(t)
-	require :=
+	assertions := assert.New(t)
+	requirements :=
 		require.New(t)
 
 	doc, err := OpenAPIJSONVersion("3.1")
-	require.NoError(
+	requirements.NoError(
 		err, "render OpenAPI JSON")
 
-	assert.True(bytes.HasSuffix(doc, []byte("\n")), "json output should end with newline")
+	assertions.True(bytes.HasSuffix(doc, []byte("\n")), "json output should end with newline")
 
 	var decoded struct {
 		OpenAPI string `json:"openapi"`
@@ -437,11 +578,11 @@ func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
 			Version string `json:"version"`
 		} `json:"info"`
 	}
-	require.NoError(
+	requirements.NoError(
 		json.Unmarshal(doc, &decoded), "decode OpenAPI JSON")
 
-	assert.Equal("3.1.0", decoded.OpenAPI)
-	assert.Equal(APISchemaVersion, decoded.Info.Version)
+	assertions.Equal("3.1.0", decoded.OpenAPI)
+	assertions.Equal(APISchemaVersion, decoded.Info.Version)
 }
 
 func TestOpenAPIYAMLDeterministic(t *testing.T) {
@@ -532,54 +673,54 @@ func TestOpenAPIIdentityImportUsesParsedEntryContract(t *testing.T) {
 }
 
 func TestOpenAPITotalStatsDocumentsSearchScope(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 
 	doc := OpenAPIDocument()
 	op := doc.Paths["/api/v1/stats/total"].Get
-	require.NotNil(op, "getTotalStats operation")
+	requirements.NotNil(op, "getTotalStats operation")
 
 	foundSearchScope := false
 	foundSourceIDs := false
 	for _, param := range op.Parameters {
 		switch param.Name {
 		case "search_scope":
-			assert.Equal("query", param.In, "search_scope location")
-			require.NotNil(param.Schema, "search_scope schema")
-			assert.Equal("boolean", param.Schema.Type, "search_scope type")
+			assertions.Equal("query", param.In, "search_scope location")
+			requirements.NotNil(param.Schema, "search_scope schema")
+			assertions.Equal("boolean", param.Schema.Type, "search_scope type")
 			foundSearchScope = true
 		case "source_ids":
-			assert.Equal("query", param.In, "source_ids location")
-			require.NotNil(param.Schema, "source_ids schema")
-			assert.Equal("array", param.Schema.Type, "source_ids type")
-			require.NotNil(param.Schema.Items, "source_ids item schema")
-			assert.Equal("integer", param.Schema.Items.Type, "source_ids item type")
+			assertions.Equal("query", param.In, "source_ids location")
+			requirements.NotNil(param.Schema, "source_ids schema")
+			assertions.Equal("array", param.Schema.Type, "source_ids type")
+			requirements.NotNil(param.Schema.Items, "source_ids item schema")
+			assertions.Equal("integer", param.Schema.Items.Type, "source_ids item type")
 			foundSourceIDs = true
 		}
 	}
-	assert.True(foundSearchScope, "search_scope query parameter documented")
-	assert.True(foundSourceIDs, "source_ids query parameter documented")
+	assertions.True(foundSearchScope, "search_scope query parameter documented")
+	assertions.True(foundSourceIDs, "source_ids query parameter documented")
 }
 
 func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 
 	doc := OpenAPIDocument()
 	op := doc.Paths["/api/v1/search/fast"].Get
-	require.NotNil(op, "fastSearch operation")
+	requirements.NotNil(op, "fastSearch operation")
 	for _, param := range op.Parameters {
 		if param.Name != "source_ids" {
 			continue
 		}
-		assert.Equal("query", param.In)
-		require.NotNil(param.Schema)
-		assert.Equal("array", param.Schema.Type)
-		require.NotNil(param.Schema.Items)
-		assert.Equal("integer", param.Schema.Items.Type)
+		assertions.Equal("query", param.In)
+		requirements.NotNil(param.Schema)
+		assertions.Equal("array", param.Schema.Type)
+		requirements.NotNil(param.Schema.Items)
+		assertions.Equal("integer", param.Schema.Items.Type)
 		return
 	}
-	assert.Fail("source_ids query parameter is not documented for fastSearch")
+	assertions.Fail("source_ids query parameter is not documented for fastSearch")
 }
 
 func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
@@ -596,31 +737,31 @@ func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
 }
 
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	assert.Equal("2.24.0", APISchemaVersion,
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	assertions.Equal("2.25.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
-	require.NotNil(definitions, "attribute definitions path")
-	assert.NotNil(definitions.Get, "attribute definitions list operation")
-	assert.NotNil(definitions.Post, "attribute definitions create operation")
+	requirements.NotNil(definitions, "attribute definitions path")
+	assertions.NotNil(definitions.Get, "attribute definitions list operation")
+	assertions.NotNil(definitions.Post, "attribute definitions create operation")
 	definition := doc.Paths["/api/v1/attribute-definitions/{id}"]
-	require.NotNil(definition, "attribute definition path")
-	assert.NotNil(definition.Patch, "attribute definition patch operation")
-	assert.NotNil(definition.Delete, "attribute definition delete operation")
+	requirements.NotNil(definition, "attribute definition path")
+	assertions.NotNil(definition.Patch, "attribute definition patch operation")
+	assertions.NotNil(definition.Delete, "attribute definition delete operation")
 	values := doc.Paths["/api/v1/people/{id}/attributes"]
-	require.NotNil(values, "person attributes path")
-	assert.NotNil(values.Get, "person attributes list operation")
+	requirements.NotNil(values, "person attributes path")
+	assertions.NotNil(values.Get, "person attributes list operation")
 	value := doc.Paths["/api/v1/people/{id}/attributes/{slug}"]
-	require.NotNil(value, "person attribute value path")
-	assert.NotNil(value.Put, "person attribute set operation")
-	assert.NotNil(value.Delete, "person attribute clear operation")
+	requirements.NotNil(value, "person attribute value path")
+	assertions.NotNil(value.Put, "person attribute set operation")
+	assertions.NotNil(value.Delete, "person attribute clear operation")
 
 	createSchema := operationBodySchema(t, doc, definitions.Post)
-	assert.Contains(createSchema.Properties, "slug")
-	assert.NotContains(createSchema.Required, "slug",
+	assertions.Contains(createSchema.Properties, "slug")
+	assertions.NotContains(createSchema.Required, "slug",
 		"the server generates a slug when the client omits it")
 }
 
@@ -661,39 +802,39 @@ func TestOpenAPIParticipantInboxAndTextScopeContracts(t *testing.T) {
 }
 
 func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 
 	path := doc.Paths["/api/v1/people/{id}/profile"]
-	require.NotNil(path)
-	require.NotNil(path.Patch)
-	require.NotNil(path.Patch.RequestBody)
+	requirements.NotNil(path)
+	requirements.NotNil(path.Patch)
+	requirements.NotNil(path.Patch.RequestBody)
 	media := path.Patch.RequestBody.Content["application/json"]
-	require.NotNil(media)
-	require.NotNil(media.Schema)
-	assert.Equal("#/components/schemas/PersonProfilePatchRequest", media.Schema.Ref)
+	requirements.NotNil(media)
+	requirements.NotNil(media.Schema)
+	assertions.Equal("#/components/schemas/PersonProfilePatchRequest", media.Schema.Ref)
 
 	schemas := doc.Components.Schemas.Map()
 	request := schemas["PersonProfilePatchRequest"]
-	require.NotNil(request)
+	requirements.NotNil(request)
 	for _, patchName := range []string{
 		"PersonNamePatchRequest", "PersonContactPointPatchRequest",
 		"PersonAddressPatchRequest", "PersonDatePatchRequest",
 		"PersonCategoryPatchRequest", "PersonMediaPatchRequest",
 	} {
-		assert.NotNil(schemas[patchName], patchName)
+		assertions.NotNil(schemas[patchName], patchName)
 	}
 	envelope := schemas["ValueEnvelopeInput"]
-	require.NotNil(envelope)
+	requirements.NotNil(envelope)
 	for _, serverOwned := range []string{"id", "created_at", "updated_at", "superseded_at"} {
-		assert.NotContains(envelope.Properties, serverOwned)
-		assert.NotContains(envelope.Required, serverOwned)
+		assertions.NotContains(envelope.Properties, serverOwned)
+		assertions.NotContains(envelope.Required, serverOwned)
 	}
-	assert.Contains(envelope.Required, "source")
-	require.NotNil(envelope.Properties["ordinal"])
-	require.NotNil(envelope.Properties["ordinal"].Minimum)
-	assert.Zero(*envelope.Properties["ordinal"].Minimum)
+	assertions.Contains(envelope.Required, "source")
+	requirements.NotNil(envelope.Properties["ordinal"])
+	requirements.NotNil(envelope.Properties["ordinal"].Minimum)
+	assertions.Zero(*envelope.Properties["ordinal"].Minimum)
 
 	for schemaName, optionalFields := range map[string][]string{
 		"PersonNameInputRequest":    {"original_value"},
@@ -702,9 +843,9 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 		"PersonMediaInputRequest":   {"original_value"},
 	} {
 		input := schemas[schemaName]
-		require.NotNil(input, schemaName)
+		requirements.NotNil(input, schemaName)
 		for _, field := range optionalFields {
-			assert.NotContains(input.Required, field, "%s.%s", schemaName, field)
+			assertions.NotContains(input.Required, field, "%s.%s", schemaName, field)
 		}
 	}
 }
@@ -712,7 +853,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.24.0", APISchemaVersion,
+	assertions.Equal("2.25.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -729,30 +870,30 @@ func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 }
 
 func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 
-	assert.Equal("2.24.0", APISchemaVersion,
+	assertions.Equal("2.25.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
-	require.NotNil(path)
-	require.NotNil(path.Get)
-	assert.Equal("getPersonProfileMediaContent", path.Get.OperationID)
-	require.Len(path.Get.Security, 1)
+	requirements.NotNil(path)
+	requirements.NotNil(path.Get)
+	assertions.Equal("getPersonProfileMediaContent", path.Get.OperationID)
+	requirements.Len(path.Get.Security, 1)
 	_, secured := path.Get.Security[0]["apiKey"]
-	assert.True(secured)
-	require.Len(path.Get.Parameters, 2)
-	assert.Equal("id", path.Get.Parameters[0].Name)
-	assert.Equal("media_id", path.Get.Parameters[1].Name)
+	assertions.True(secured)
+	requirements.Len(path.Get.Parameters, 2)
+	assertions.Equal("id", path.Get.Parameters[0].Name)
+	assertions.Equal("media_id", path.Get.Parameters[1].Name)
 	response := path.Get.Responses["200"]
-	require.NotNil(response)
+	requirements.NotNil(response)
 	binary := response.Content["*/*"]
-	require.NotNil(binary)
-	require.NotNil(binary.Schema)
-	assert.Equal("binary", binary.Schema.Format)
+	requirements.NotNil(binary)
+	requirements.NotNil(binary.Schema)
+	assertions.Equal("binary", binary.Schema.Format)
 	for _, status := range []string{"400", "401", "404", "500", "503"} {
-		assert.NotNil(path.Get.Responses[status], status)
+		assertions.NotNil(path.Get.Responses[status], status)
 	}
 }
 
@@ -760,7 +901,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.24.0", APISchemaVersion,
+	assertions.Equal("2.25.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -791,8 +932,8 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 }
 
 func TestOpenAPIMeetingImportContract(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 
 	// Pinned so that anyone bumping the schema version has to come here and
 	// confirm the meeting-import contract below still holds. Meeting import
@@ -813,61 +954,61 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// historical import jobs in 2.16.0, collection source scopes in 2.17.0,
 	// deletion subset counts in 2.18.0, Operations in 2.19.0, person briefs
 	// in 2.20.0, and Saved View execution in 2.21.0 did not touch it.
-	assert.Equal("2.24.0", APISchemaVersion, "meeting import is an additive schema release")
+	assertions.Equal("2.25.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
-	require.NotNil(path, "meeting import path")
+	requirements.NotNil(path, "meeting import path")
 	op := path.Post
-	require.NotNil(op, "meeting import operation")
-	assert.Equal("importMeeting", op.OperationID)
-	require.Len(op.Security, 1, "API-key security requirement")
+	requirements.NotNil(op, "meeting import operation")
+	assertions.Equal("importMeeting", op.OperationID)
+	requirements.Len(op.Security, 1, "API-key security requirement")
 	_, secured := op.Security[0]["apiKey"]
-	assert.True(secured, "apiKey security requirement")
+	assertions.True(secured, "apiKey security requirement")
 
-	require.NotNil(op.RequestBody, "request body")
-	assert.True(op.RequestBody.Required, "request body is required")
+	requirements.NotNil(op.RequestBody, "request body")
+	assertions.True(op.RequestBody.Required, "request body is required")
 	requestMedia := op.RequestBody.Content["application/json"]
-	require.NotNil(requestMedia, "JSON request media type")
-	require.NotNil(requestMedia.Schema, "request schema")
-	assert.Equal("#/components/schemas/MeetingImportRequest", requestMedia.Schema.Ref)
+	requirements.NotNil(requestMedia, "JSON request media type")
+	requirements.NotNil(requestMedia.Schema, "request schema")
+	assertions.Equal("#/components/schemas/MeetingImportRequest", requestMedia.Schema.Ref)
 
 	schemas := doc.Components.Schemas.Map()
 	requestSchema := schemas["MeetingImportRequest"]
-	require.NotNil(requestSchema, "request component")
+	requirements.NotNil(requestSchema, "request component")
 	requestAdditionalProperties, ok := requestSchema.AdditionalProperties.(bool)
-	require.True(ok, "request additionalProperties is boolean")
-	assert.False(requestAdditionalProperties, "request rejects unknown fields")
-	assert.ElementsMatch([]string{"source", "meeting"}, requestSchema.Required)
+	requirements.True(ok, "request additionalProperties is boolean")
+	assertions.False(requestAdditionalProperties, "request rejects unknown fields")
+	assertions.ElementsMatch([]string{"source", "meeting"}, requestSchema.Required)
 
 	for _, name := range []string{"Source", "Meeting", "MeetingPerson", "TranscriptSegment"} {
 		schema := schemas[name]
-		require.NotNil(schema, "%s component", name)
+		requirements.NotNil(schema, "%s component", name)
 		additionalProperties, ok := schema.AdditionalProperties.(bool)
-		require.True(ok, "%s additionalProperties is boolean", name)
-		assert.False(additionalProperties, "%s rejects unknown fields", name)
+		requirements.True(ok, "%s additionalProperties is boolean", name)
+		assertions.False(additionalProperties, "%s rejects unknown fields", name)
 	}
-	assert.ElementsMatch(
+	assertions.ElementsMatch(
 		[]string{"external_id", "started_at"},
 		schemas["Meeting"].Required,
 	)
 	source := schemas["Source"]
-	require.NotNil(source.Properties["identifier"].MaxLength)
-	assert.Equal(128, *source.Properties["identifier"].MaxLength)
-	require.NotNil(source.Properties["display_name"].MaxLength)
-	assert.Equal(256, *source.Properties["display_name"].MaxLength)
-	assert.Equal("email", source.Properties["account_email"].Format)
+	requirements.NotNil(source.Properties["identifier"].MaxLength)
+	assertions.Equal(128, *source.Properties["identifier"].MaxLength)
+	requirements.NotNil(source.Properties["display_name"].MaxLength)
+	assertions.Equal(256, *source.Properties["display_name"].MaxLength)
+	assertions.Equal("email", source.Properties["account_email"].Format)
 
 	meeting := schemas["Meeting"]
-	require.NotNil(meeting.Properties["external_id"].MaxLength)
-	assert.Equal(256, *meeting.Properties["external_id"].MaxLength)
-	require.NotNil(meeting.Properties["title"].MaxLength)
-	assert.Equal(4096, *meeting.Properties["title"].MaxLength)
-	assert.Equal("date-time", meeting.Properties["started_at"].Format)
-	assert.Equal("date-time", meeting.Properties["ended_at"].Format)
-	require.Len(meeting.AllOf, 2, "meeting cross-field constraints")
-	require.Len(meeting.AllOf[0].AnyOf, 4, "meeting requires a non-empty summary or transcript")
-	assert.ElementsMatch(
+	requirements.NotNil(meeting.Properties["external_id"].MaxLength)
+	assertions.Equal(256, *meeting.Properties["external_id"].MaxLength)
+	requirements.NotNil(meeting.Properties["title"].MaxLength)
+	assertions.Equal(4096, *meeting.Properties["title"].MaxLength)
+	assertions.Equal("date-time", meeting.Properties["started_at"].Format)
+	assertions.Equal("date-time", meeting.Properties["ended_at"].Format)
+	requirements.Len(meeting.AllOf, 2, "meeting cross-field constraints")
+	requirements.Len(meeting.AllOf[0].AnyOf, 4, "meeting requires a non-empty summary or transcript")
+	assertions.ElementsMatch(
 		[]string{"summary_markdown", "summary_text", "transcript", "transcript_segments"},
 		[]string{
 			meeting.AllOf[0].AnyOf[0].Required[0],
@@ -877,38 +1018,38 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 		},
 	)
 	for idx, property := range []string{"summary_markdown", "summary_text", "transcript"} {
-		require.NotNil(meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
-		assert.Equal(1, *meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
+		requirements.NotNil(meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
+		assertions.Equal(1, *meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
 	}
-	require.NotNil(meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
-	assert.Equal(1, *meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
-	require.NotNil(meeting.AllOf[1].Not, "plain and segmented transcripts are mutually exclusive")
-	assert.ElementsMatch(
+	requirements.NotNil(meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
+	assertions.Equal(1, *meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
+	requirements.NotNil(meeting.AllOf[1].Not, "plain and segmented transcripts are mutually exclusive")
+	assertions.ElementsMatch(
 		[]string{"transcript", "transcript_segments"},
 		meeting.AllOf[1].Not.Required,
 	)
 
-	assert.Equal("email", schemas["MeetingPerson"].Properties["email"].Format)
+	assertions.Equal("email", schemas["MeetingPerson"].Properties["email"].Format)
 	offset := schemas["TranscriptSegment"].Properties["offset_seconds"]
-	require.NotNil(offset.Minimum)
-	assert.Zero(*offset.Minimum)
+	requirements.NotNil(offset.Minimum)
+	assertions.Zero(*offset.Minimum)
 
 	metadata := schemas["Meeting"].Properties["metadata"]
-	require.NotNil(metadata, "metadata schema")
+	requirements.NotNil(metadata, "metadata schema")
 	_, extensible := metadata.AdditionalProperties.(*huma.Schema)
-	assert.True(extensible, "metadata accepts provider-specific values")
+	assertions.True(extensible, "metadata accepts provider-specific values")
 
 	responseSchema := schemas["MeetingImportResponse"]
-	require.NotNil(responseSchema, "meeting import response component")
-	assert.Equal([]any{"created", "updated"}, responseSchema.Properties["status"].Enum)
+	requirements.NotNil(responseSchema, "meeting import response component")
+	assertions.Equal([]any{"created", "updated"}, responseSchema.Properties["status"].Enum)
 
 	for _, status := range []string{"200", "201"} {
 		response := op.Responses[status]
-		require.NotNil(response, "response %s", status)
+		requirements.NotNil(response, "response %s", status)
 		media := response.Content["application/json"]
-		require.NotNil(media, "response %s JSON media type", status)
-		require.NotNil(media.Schema, "response %s schema", status)
-		assert.Equal("#/components/schemas/MeetingImportResponse", media.Schema.Ref)
+		requirements.NotNil(media, "response %s JSON media type", status)
+		requirements.NotNil(media.Schema, "response %s schema", status)
+		assertions.Equal("#/components/schemas/MeetingImportResponse", media.Schema.Ref)
 	}
 }
 
@@ -942,25 +1083,25 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 
 	for path, route := range routes {
 		t.Run(route.operationID, func(t *testing.T) {
-			assert := assert.New(t)
-			require :=
+			assertions := assert.New(t)
+			requirements :=
 				require.New(t)
 
 			op := doc.Paths[path].Get
-			require.NotNil(op, "operation")
+			requirements.NotNil(op, "operation")
 			defaultResp := op.Responses["default"]
-			require.NotNil(defaultResp, "default response")
+			requirements.NotNil(defaultResp, "default response")
 			jsonError := defaultResp.Content["application/json"]
-			require.NotNil(jsonError, "json error media type")
-			require.NotNil(jsonError.Schema, "json error schema")
-			assert.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "json error schema ref")
+			requirements.NotNil(jsonError, "json error media type")
+			requirements.NotNil(jsonError.Schema, "json error schema")
+			assertions.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "json error schema ref")
 			for _, status := range route.statuses {
 				resp := op.Responses[strconv.Itoa(status)]
-				require.NotNil(resp, "response %d", status)
+				requirements.NotNil(resp, "response %d", status)
 				jsonError := resp.Content["application/json"]
-				require.NotNil(jsonError, "response %d json error media type", status)
-				require.NotNil(jsonError.Schema, "response %d json error schema", status)
-				assert.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "response %d json error schema ref", status)
+				requirements.NotNil(jsonError, "response %d json error media type", status)
+				requirements.NotNil(jsonError.Schema, "response %d json error schema", status)
+				assertions.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "response %d json error schema ref", status)
 			}
 		})
 	}
@@ -1048,21 +1189,21 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 }
 
 func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 	operation := doc.Paths["/api/v1/people/directory"].Get
-	require.NotNil(operation)
+	requirements.NotNil(operation)
 	parameters := make(map[string]*huma.Param, len(operation.Parameters))
 	for _, parameter := range operation.Parameters {
 		parameters[parameter.Name] = parameter
 	}
-	require.Contains(parameters, "last_contact_after")
-	require.Contains(parameters, "last_contact_before")
-	require.Contains(parameters, "sort")
-	assert.Equal("date-time", parameters["last_contact_after"].Schema.Format)
-	assert.Equal("date-time", parameters["last_contact_before"].Schema.Format)
-	assert.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc"}, parameters["sort"].Schema.Enum)
+	requirements.Contains(parameters, "last_contact_after")
+	requirements.Contains(parameters, "last_contact_before")
+	requirements.Contains(parameters, "sort")
+	assertions.Equal("date-time", parameters["last_contact_after"].Schema.Format)
+	assertions.Equal("date-time", parameters["last_contact_before"].Schema.Format)
+	assertions.ElementsMatch([]any{"name", "last_contact_desc", "last_contact_asc"}, parameters["sort"].Schema.Enum)
 }
 
 func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
@@ -1083,14 +1224,14 @@ func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
 		t.Run(documentName, func(t *testing.T) {
 			for _, tt := range tests {
 				t.Run(tt.schema+"/"+tt.property, func(t *testing.T) {
-					require := require.New(t)
-					assert := assert.New(t)
+					requirements := require.New(t)
+					assertions := assert.New(t)
 					schema := document.Components.Schemas.Map()[tt.schema]
-					require.NotNil(schema)
+					requirements.NotNil(schema)
 					property := schema.Properties[tt.property]
-					require.NotNil(property)
-					assert.Contains(schema.Required, tt.property)
-					assert.False(property.Nullable)
+					requirements.NotNil(property)
+					assertions.Contains(schema.Required, tt.property)
+					assertions.False(property.Nullable)
 				})
 			}
 		})
@@ -1294,14 +1435,14 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 }
 
 func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	snapshot := openAPIClientDocument().Components.Schemas.Map()["PersonMergeSnapshotResponse"]
-	require.NotNil(snapshot)
+	requirements.NotNil(snapshot)
 	property := snapshot.Properties["snapshot"]
-	require.NotNil(property)
-	assert.Equal("json.RawMessage", property.Extensions["x-go-type"])
-	assert.Equal(map[string]any{"path": "encoding/json"},
+	requirements.NotNil(property)
+	assertions.Equal("json.RawMessage", property.Extensions["x-go-type"])
+	assertions.Equal(map[string]any{"path": "encoding/json"},
 		property.Extensions["x-go-type-import"])
 }
 
@@ -1330,10 +1471,10 @@ func TestOpenAPIArtifactUpToDate(t *testing.T) {
 func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testing.T) {
 	for _, version := range []string{"3.1", "3.0"} {
 		t.Run(version, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			raw, err := OpenAPIJSONVersion(version)
-			require.NoError(err)
+			requirements.NoError(err)
 			var document struct {
 				Components struct {
 					Schemas map[string]struct {
@@ -1345,19 +1486,19 @@ func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testi
 					} `json:"schemas"`
 				} `json:"components"`
 			}
-			require.NoError(json.Unmarshal(raw, &document))
+			requirements.NoError(json.Unmarshal(raw, &document))
 			for schemaName, properties := range map[string][]string{
 				"DirectoryPeopleResponse": {"people"},
 				"DirectoryPersonSummary":  {"categories", "organizations"},
 			} {
 				schema, ok := document.Components.Schemas[schemaName]
-				require.True(ok, schemaName)
+				requirements.True(ok, schemaName)
 				for _, propertyName := range properties {
 					property, ok := schema.Properties[propertyName]
-					require.True(ok, "%s.%s", schemaName, propertyName)
-					assert.Contains(schema.Required, propertyName)
-					assert.Equal("array", property.Type, "%s.%s", schemaName, propertyName)
-					assert.False(property.Nullable, "%s.%s", schemaName, propertyName)
+					requirements.True(ok, "%s.%s", schemaName, propertyName)
+					assertions.Contains(schema.Required, propertyName)
+					assertions.Equal("array", property.Type, "%s.%s", schemaName, propertyName)
+					assertions.False(property.Nullable, "%s.%s", schemaName, propertyName)
 				}
 			}
 		})
@@ -1365,8 +1506,8 @@ func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testi
 }
 
 func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	doc := OpenAPIDocument()
 	for _, tc := range []struct {
@@ -1379,14 +1520,14 @@ func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodGet, parameter: "person_id", statuses: []string{"400", "404", "500", "503"}},
 	} {
 		operation := pathOperation(doc.Paths[tc.path], tc.method)
-		require.NotNil(operation, tc.path)
-		require.NotEmpty(operation.Parameters, tc.path)
+		requirements.NotNil(operation, tc.path)
+		requirements.NotEmpty(operation.Parameters, tc.path)
 		parameter := operation.Parameters[0]
-		assert.Equal(tc.parameter, parameter.Name)
-		require.NotNil(parameter.Schema.Minimum, tc.path)
-		assert.InDelta(float64(1), *parameter.Schema.Minimum, 0, tc.path)
+		assertions.Equal(tc.parameter, parameter.Name)
+		requirements.NotNil(parameter.Schema.Minimum, tc.path)
+		assertions.InDelta(float64(1), *parameter.Schema.Minimum, 0, tc.path)
 		for _, status := range tc.statuses {
-			assert.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
+			assertions.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
 		}
 	}
 
@@ -1399,50 +1540,50 @@ func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 		{path: "/api/v1/carddav/sync", method: http.MethodPost, statuses: []string{"400", "409", "500", "502", "503"}},
 	} {
 		operation := pathOperation(doc.Paths[tc.path], tc.method)
-		require.NotNil(operation, tc.path)
+		requirements.NotNil(operation, tc.path)
 		for _, status := range tc.statuses {
-			assert.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
+			assertions.Contains(operation.Responses, status, "%s %s", tc.method, tc.path)
 		}
 	}
 }
 
 func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 	status := doc.Paths["/api/v1/carddav/status"]
-	require.NotNil(status)
-	require.NotNil(status.Get)
-	assert.Equal("getCardDAVStatus", status.Get.OperationID)
+	requirements.NotNil(status)
+	requirements.NotNil(status.Get)
+	assertions.Equal("getCardDAVStatus", status.Get.OperationID)
 	runs := doc.Paths["/api/v1/carddav/runs"]
-	require.NotNil(runs)
-	require.NotNil(runs.Get)
-	assert.Equal("listCardDAVRuns", runs.Get.OperationID)
-	require.Len(runs.Get.Parameters, 2)
-	assert.Equal("limit", runs.Get.Parameters[0].Name)
-	require.NotNil(runs.Get.Parameters[0].Schema.Minimum)
-	require.NotNil(runs.Get.Parameters[0].Schema.Maximum)
-	assert.InDelta(1, *runs.Get.Parameters[0].Schema.Minimum, 0)
-	assert.InDelta(100, *runs.Get.Parameters[0].Schema.Maximum, 0)
-	assert.Equal("before_id", runs.Get.Parameters[1].Name)
-	require.NotNil(runs.Get.Parameters[1].Schema.Minimum)
-	assert.InDelta(1, *runs.Get.Parameters[1].Schema.Minimum, 0)
+	requirements.NotNil(runs)
+	requirements.NotNil(runs.Get)
+	assertions.Equal("listCardDAVRuns", runs.Get.OperationID)
+	requirements.Len(runs.Get.Parameters, 2)
+	assertions.Equal("limit", runs.Get.Parameters[0].Name)
+	requirements.NotNil(runs.Get.Parameters[0].Schema.Minimum)
+	requirements.NotNil(runs.Get.Parameters[0].Schema.Maximum)
+	assertions.InDelta(1, *runs.Get.Parameters[0].Schema.Minimum, 0)
+	assertions.InDelta(100, *runs.Get.Parameters[0].Schema.Maximum, 0)
+	assertions.Equal("before_id", runs.Get.Parameters[1].Name)
+	requirements.NotNil(runs.Get.Parameters[1].Schema.Minimum)
+	assertions.InDelta(1, *runs.Get.Parameters[1].Schema.Minimum, 0)
 
 	run := doc.Components.Schemas.Map()["CardDAVRunResponse"]
-	require.NotNil(run)
-	assert.Equal([]any{"manual", "scheduled"}, run.Properties["trigger"].Enum)
-	assert.Equal([]any{"running", "succeeded", "failed", "cancelled", "partial"}, run.Properties["state"].Enum)
-	assert.Equal([]any{"cancelled", "retry_after", "authentication_failed", "google_authorization_required", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
+	requirements.NotNil(run)
+	assertions.Equal([]any{"manual", "scheduled"}, run.Properties["trigger"].Enum)
+	assertions.Equal([]any{"running", "succeeded", "failed", "cancelled", "partial"}, run.Properties["state"].Enum)
+	assertions.Equal([]any{"cancelled", "retry_after", "authentication_failed", "google_authorization_required", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
 	page := doc.Components.Schemas.Map()["CardDAVRunsResponse"]
-	require.NotNil(page)
-	assert.Contains(page.Required, "runs")
-	assert.False(page.Properties["runs"].Nullable)
+	requirements.NotNil(page)
+	assertions.Contains(page.Required, "runs")
+	assertions.False(page.Properties["runs"].Nullable)
 	statusSchema := doc.Components.Schemas.Map()["CardDAVStatusResponse"]
-	require.NotNil(statusSchema)
-	assert.NotContains(statusSchema.Required, "repair_reason")
-	assert.NotContains(statusSchema.Required, "next_scheduled_at")
-	assert.NotContains(statusSchema.Required, "active")
-	assert.Equal([]any{"account_missing", "credential_missing", "credential_mismatch", "credential_unavailable", "google_authorization_required", "runtime_unavailable"}, statusSchema.Properties["repair_reason"].Enum)
+	requirements.NotNil(statusSchema)
+	assertions.NotContains(statusSchema.Required, "repair_reason")
+	assertions.NotContains(statusSchema.Required, "next_scheduled_at")
+	assertions.NotContains(statusSchema.Required, "active")
+	assertions.Equal([]any{"account_missing", "credential_missing", "credential_mismatch", "credential_unavailable", "google_authorization_required", "runtime_unavailable"}, statusSchema.Properties["repair_reason"].Enum)
 }
 
 func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
@@ -1451,57 +1592,57 @@ func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
 		"client": openAPIClientDocument(),
 	} {
 		t.Run(documentName, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			list := document.Paths["/api/v1/operations/runs"]
-			require.NotNil(list)
-			require.NotNil(list.Get)
-			assert.Equal("listOperationRuns", list.Get.OperationID)
+			requirements.NotNil(list)
+			requirements.NotNil(list.Get)
+			assertions.Equal("listOperationRuns", list.Get.OperationID)
 			for _, status := range []string{"200", "400", "500", "503", "default"} {
-				assert.Contains(list.Get.Responses, status)
+				assertions.Contains(list.Get.Responses, status)
 			}
-			require.Len(list.Get.Parameters, 7)
+			requirements.Len(list.Get.Parameters, 7)
 			parameters := make(map[string]*huma.Param, len(list.Get.Parameters))
 			for _, parameter := range list.Get.Parameters {
 				parameters[parameter.Name] = parameter
 			}
-			assert.ElementsMatch(operationKindValues(), anyToStrings(t, parameters["kind"].Schema.Enum))
-			assert.ElementsMatch(operationLaneValues(), anyToStrings(t, parameters["lane"].Schema.Enum))
-			assert.ElementsMatch(operationStateValues(), anyToStrings(t, parameters["state"].Schema.Enum))
-			require.NotNil(parameters["limit"].Schema.Minimum)
-			require.NotNil(parameters["limit"].Schema.Maximum)
-			assert.InDelta(1, *parameters["limit"].Schema.Minimum, 0)
-			assert.InDelta(100, *parameters["limit"].Schema.Maximum, 0)
-			assert.Contains(parameters["limit"].Description, "default 25")
-			assert.Contains(parameters["cursor"].Description, "Opaque")
-			assert.Contains(parameters["cursor"].Description, "archive")
-			assert.Contains(parameters["cursor"].Description, "complete normalized filter set")
+			assertions.ElementsMatch(operationKindValues(), anyToStrings(t, parameters["kind"].Schema.Enum))
+			assertions.ElementsMatch(operationLaneValues(), anyToStrings(t, parameters["lane"].Schema.Enum))
+			assertions.ElementsMatch(operationStateValues(), anyToStrings(t, parameters["state"].Schema.Enum))
+			requirements.NotNil(parameters["limit"].Schema.Minimum)
+			requirements.NotNil(parameters["limit"].Schema.Maximum)
+			assertions.InDelta(1, *parameters["limit"].Schema.Minimum, 0)
+			assertions.InDelta(100, *parameters["limit"].Schema.Maximum, 0)
+			assertions.Contains(parameters["limit"].Description, "default 25")
+			assertions.Contains(parameters["cursor"].Description, "Opaque")
+			assertions.Contains(parameters["cursor"].Description, "archive")
+			assertions.Contains(parameters["cursor"].Description, "complete normalized filter set")
 			for _, name := range []string{"started_from", "started_before"} {
-				require.NotNil(parameters[name], name)
-				assert.Equal("date-time", parameters[name].Schema.Format, name)
-				assert.Contains(parameters[name].Description, "canonical UTC RFC3339", name)
+				requirements.NotNil(parameters[name], name)
+				assertions.Equal("date-time", parameters[name].Schema.Format, name)
+				assertions.Contains(parameters[name].Description, "canonical UTC RFC3339", name)
 			}
-			assert.Contains(strings.ToLower(parameters["started_from"].Description), "inclusive")
-			assert.Contains(strings.ToLower(parameters["started_before"].Description), "exclusive")
+			assertions.Contains(strings.ToLower(parameters["started_from"].Description), "inclusive")
+			assertions.Contains(strings.ToLower(parameters["started_before"].Description), "exclusive")
 
 			detail := document.Paths["/api/v1/operations/runs/{id}"]
-			require.NotNil(detail)
-			require.NotNil(detail.Get)
-			assert.Equal("getOperationRun", detail.Get.OperationID)
+			requirements.NotNil(detail)
+			requirements.NotNil(detail.Get)
+			assertions.Equal("getOperationRun", detail.Get.OperationID)
 			for _, status := range []string{"200", "400", "404", "500", "503", "default"} {
-				assert.Contains(detail.Get.Responses, status)
+				assertions.Contains(detail.Get.Responses, status)
 			}
-			require.Len(detail.Get.Parameters, 1)
-			assert.Equal("id", detail.Get.Parameters[0].Name)
-			assert.Contains(detail.Get.Parameters[0].Description, "Opaque")
-			assert.Contains(detail.Get.Parameters[0].Description, "archive-bound")
+			requirements.Len(detail.Get.Parameters, 1)
+			assertions.Equal("id", detail.Get.Parameters[0].Name)
+			assertions.Contains(detail.Get.Parameters[0].Description, "Opaque")
+			assertions.Contains(detail.Get.Parameters[0].Description, "archive-bound")
 
 			status := document.Paths["/api/v1/operations/status"]
-			require.NotNil(status)
-			require.NotNil(status.Get)
-			assert.Equal("getOperationStatus", status.Get.OperationID)
-			assert.Contains(status.Get.Responses, "200")
-			assert.Contains(status.Get.Responses, "default")
+			requirements.NotNil(status)
+			requirements.NotNil(status.Get)
+			assertions.Equal("getOperationStatus", status.Get.OperationID)
+			assertions.Contains(status.Get.Responses, "200")
+			assertions.Contains(status.Get.Responses, "default")
 		})
 	}
 }
@@ -1512,14 +1653,14 @@ func TestOpenAPIOperationErrorsAreClosedAndRouteScoped(t *testing.T) {
 		"client": openAPIClientDocument(),
 	} {
 		t.Run(documentName, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			schema := document.Components.Schemas.Map()["OperationErrorResponse"]
-			require.NotNil(schema)
-			assert.ElementsMatch([]string{"error", "message"}, operationSchemaPropertyNames(schema.Properties))
-			assert.Contains(schema.Required, "error")
-			assert.NotContains(schema.Required, "message")
-			assert.Equal(false, schema.AdditionalProperties)
+			requirements.NotNil(schema)
+			assertions.ElementsMatch([]string{"error", "message"}, operationSchemaPropertyNames(schema.Properties))
+			assertions.Contains(schema.Required, "error")
+			assertions.NotContains(schema.Required, "message")
+			assertions.Equal(false, schema.AdditionalProperties)
 
 			for _, path := range []string{
 				"/api/v1/operations/runs",
@@ -1527,23 +1668,23 @@ func TestOpenAPIOperationErrorsAreClosedAndRouteScoped(t *testing.T) {
 				"/api/v1/operations/status",
 			} {
 				operation := pathOperation(document.Paths[path], http.MethodGet)
-				require.NotNil(operation, path)
+				requirements.NotNil(operation, path)
 				for status, response := range operation.Responses {
 					if status == "200" {
 						continue
 					}
 					media := response.Content[applicationJSONMediaType]
-					require.NotNil(media, path+" "+status)
-					assert.Equal("#/components/schemas/OperationErrorResponse", media.Schema.Ref,
+					requirements.NotNil(media, path+" "+status)
+					assertions.Equal("#/components/schemas/OperationErrorResponse", media.Schema.Ref,
 						path+" "+status)
 				}
 			}
 
 			unrelated := pathOperation(document.Paths["/api/v1/messages/changes"], http.MethodGet)
-			require.NotNil(unrelated)
+			requirements.NotNil(unrelated)
 			media := unrelated.Responses["default"].Content[applicationJSONMediaType]
-			require.NotNil(media)
-			assert.Equal("#/components/schemas/ErrorResponse", media.Schema.Ref)
+			requirements.NotNil(media)
+			assertions.Equal("#/components/schemas/ErrorResponse", media.Schema.Ref)
 		})
 	}
 }
@@ -1601,30 +1742,30 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 		"client": openAPIClientDocument(),
 	} {
 		t.Run(documentName, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			schemas := document.Components.Schemas.Map()
 			for schemaName, properties := range enums {
 				schema := schemas[schemaName]
-				require.NotNil(schema, schemaName)
+				requirements.NotNil(schema, schemaName)
 				for propertyName, want := range properties {
 					property := schema.Properties[propertyName]
-					require.NotNil(property, schemaName+"."+propertyName)
+					requirements.NotNil(property, schemaName+"."+propertyName)
 					enumSchema := property
 					if len(enumSchema.Enum) == 0 && property.Items != nil {
 						enumSchema = property.Items
 					}
-					assert.ElementsMatch(want, anyToStrings(t, enumSchema.Enum), schemaName+"."+propertyName)
+					assertions.ElementsMatch(want, anyToStrings(t, enumSchema.Enum), schemaName+"."+propertyName)
 				}
 			}
 			for schemaName, properties := range collections {
 				schema := schemas[schemaName]
-				require.NotNil(schema, schemaName)
+				requirements.NotNil(schema, schemaName)
 				for _, propertyName := range properties {
 					property := schema.Properties[propertyName]
-					require.NotNil(property, schemaName+"."+propertyName)
-					assert.Contains(schema.Required, propertyName, schemaName+"."+propertyName)
-					assert.False(property.Nullable, schemaName+"."+propertyName)
+					requirements.NotNil(property, schemaName+"."+propertyName)
+					assertions.Contains(schema.Required, propertyName, schemaName+"."+propertyName)
+					assertions.False(property.Nullable, schemaName+"."+propertyName)
 				}
 			}
 		})
@@ -1659,8 +1800,8 @@ func operationPublicErrorCodeValues() []string {
 }
 
 func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	server := OpenAPIDocument().Components.Schemas.Map()
 	client := openAPIClientDocument().Components.Schemas.Map()
 	wantProperties := map[string][]string{
@@ -1677,13 +1818,13 @@ func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 		"OperationStatusResponse": {"lanes"},
 	}
 	for schemaName, want := range wantProperties {
-		require.NotNil(server[schemaName], schemaName)
-		require.NotNil(client[schemaName], schemaName)
-		assert.ElementsMatch(want, operationSchemaPropertyNames(server[schemaName].Properties), "server "+schemaName)
-		assert.ElementsMatch(want, operationSchemaPropertyNames(client[schemaName].Properties), "client "+schemaName)
-		assert.ElementsMatch(server[schemaName].Required, client[schemaName].Required, schemaName)
-		assert.Equal(false, server[schemaName].AdditionalProperties, "server "+schemaName)
-		assert.Equal(false, client[schemaName].AdditionalProperties, "client "+schemaName)
+		requirements.NotNil(server[schemaName], schemaName)
+		requirements.NotNil(client[schemaName], schemaName)
+		assertions.ElementsMatch(want, operationSchemaPropertyNames(server[schemaName].Properties), "server "+schemaName)
+		assertions.ElementsMatch(want, operationSchemaPropertyNames(client[schemaName].Properties), "client "+schemaName)
+		assertions.ElementsMatch(server[schemaName].Required, client[schemaName].Required, schemaName)
+		assertions.Equal(false, server[schemaName].AdditionalProperties, "server "+schemaName)
+		assertions.Equal(false, client[schemaName].AdditionalProperties, "client "+schemaName)
 	}
 }
 
@@ -1693,21 +1834,21 @@ func TestOpenAPIOperationActionsUseOnlyExistingProtectedMutations(t *testing.T) 
 		"client": openAPIClientDocument(),
 	} {
 		t.Run(documentName, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			for path, operationID := range map[string]string{
 				"/api/v1/carddav/sync":     "syncCardDAV",
 				"/api/v1/multimodal/build": "startVisualAttachmentBuild",
 				"/api/v1/multimodal/run":   "resumeVisualAttachmentBuild",
 			} {
 				operation := pathOperation(document.Paths[path], http.MethodPost)
-				require.NotNil(operation, path)
-				assert.Equal(operationID, operation.OperationID, path)
-				require.NotEmpty(operation.Security, path)
-				assert.Contains(operation.Security[0], "apiKey", path)
+				requirements.NotNil(operation, path)
+				assertions.Equal(operationID, operation.OperationID, path)
+				requirements.NotEmpty(operation.Security, path)
+				assertions.Contains(operation.Security[0], "apiKey", path)
 			}
-			assert.Nil(document.Paths["/api/v1/operations/runs/{id}/retry"])
-			assert.Nil(document.Paths["/api/v1/operations/document_embedding"])
+			assertions.Nil(document.Paths["/api/v1/operations/runs/{id}/retry"])
+			assertions.Nil(document.Paths["/api/v1/operations/document_embedding"])
 		})
 	}
 }
@@ -1732,8 +1873,8 @@ func operationSchemaPropertyNames(values map[string]*huma.Schema) []string {
 }
 
 func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	routes := []struct{ path, method string }{
 		{path: "/api/v1/carddav/account/test", method: http.MethodPost},
@@ -1751,14 +1892,14 @@ func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
 		for _, route := range routes {
 			operation := pathOperation(document.Paths[route.path], route.method)
-			require.NotNil(operation, "%s %s", route.method, route.path)
+			requirements.NotNil(operation, "%s %s", route.method, route.path)
 			response := operation.Responses[httpStatusKey(http.StatusServiceUnavailable)]
-			require.NotNil(response, "%s %s", route.method, route.path)
+			requirements.NotNil(response, "%s %s", route.method, route.path)
 			header := response.Headers["Retry-After"]
-			require.NotNil(header, "%s %s", route.method, route.path)
-			require.NotNil(header.Schema, "%s %s", route.method, route.path)
-			assert.Equal(huma.TypeInteger, header.Schema.Type, "%s %s", route.method, route.path)
-			assert.Equal(formatInt64, header.Schema.Format, "%s %s", route.method, route.path)
+			requirements.NotNil(header, "%s %s", route.method, route.path)
+			requirements.NotNil(header.Schema, "%s %s", route.method, route.path)
+			assertions.Equal(huma.TypeInteger, header.Schema.Type, "%s %s", route.method, route.path)
+			assertions.Equal(formatInt64, header.Schema.Format, "%s %s", route.method, route.path)
 		}
 	}
 
@@ -1768,10 +1909,10 @@ func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {
 	publishResponse := generated.PublishCardDAVPersonResp{
 		Headers503: &generated.PublishCardDAVPersonResp503Headers{RetryAfter: "23"},
 	}
-	require.NotNil(syncResponse.Headers503)
-	require.NotNil(publishResponse.Headers503)
-	assert.Equal("17", syncResponse.Headers503.RetryAfter)
-	assert.Equal("23", publishResponse.Headers503.RetryAfter)
+	requirements.NotNil(syncResponse.Headers503)
+	requirements.NotNil(publishResponse.Headers503)
+	assertions.Equal("17", syncResponse.Headers503.RetryAfter)
+	assertions.Equal("23", publishResponse.Headers503.RetryAfter)
 }
 
 func pathOperation(item *huma.PathItem, method string) *huma.Operation {
@@ -1804,26 +1945,26 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
-	require :=
+	requirements :=
 		require.New(t)
 
 	tmpRoot := t.TempDir()
 	tmpGenerated := filepath.Join(tmpRoot, "generated")
-	require.NoError(
+	requirements.NoError(
 		os.Mkdir(tmpGenerated, 0o700), "mkdir generated temp dir")
 
 	config, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, "config.yaml"))
-	require.NoError(
+	requirements.NoError(
 		err, "read generated config")
 
-	require.NoError(
+	requirements.NoError(
 		os.WriteFile(filepath.Join(tmpGenerated, "config.yaml"), config, 0o600), "write generated config")
 
 	spec, err := os.ReadFile(openAPIClientArtifactPath)
-	require.NoError(
+	requirements.NoError(
 		err, "read pkg/client/openapi.yaml; run `make api-generate` to regenerate")
 
-	require.NoError(
+	requirements.NoError(
 		os.WriteFile(filepath.Join(tmpRoot, "openapi.yaml"), spec, 0o600), "write generated spec")
 
 	// Build with the tools module so the generator uses its pinned
@@ -1835,7 +1976,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
-	require.NoError(err, "build client generator:\n%s", out)
+	requirements.NoError(err, "build client generator:\n%s", out)
 
 	cmd = exec.Command(
 		generator,
@@ -1845,28 +1986,28 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	)
 	cmd.Dir = tmpGenerated
 	out, err = cmd.CombinedOutput()
-	require.NoError(err, "generate client:\n%s", out)
+	requirements.NoError(err, "generate client:\n%s", out)
 	fixer, err := filepath.Abs("../codegenfix/cmd")
-	require.NoError(err, "resolve generated-client validator fixup")
+	requirements.NoError(err, "resolve generated-client validator fixup")
 	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"))
 	out, err = cmd.CombinedOutput()
-	require.NoError(err, "apply generated-client validator fixup:\n%s", out)
+	requirements.NoError(err, "apply generated-client validator fixup:\n%s", out)
 
 	gotFiles, err := generatedGoFiles(tmpGenerated)
-	require.NoError(
+	requirements.NoError(
 		err, "list generated temp files")
 
 	wantFiles, err := generatedGoFiles(openAPIClientGeneratedDir)
-	require.NoError(
+	requirements.NoError(
 		err, "list checked-in generated files")
 
-	require.Equal(wantFiles, gotFiles, "generated file list is stale; run `make api-generate`")
+	requirements.Equal(wantFiles, gotFiles, "generated file list is stale; run `make api-generate`")
 
 	for _, name := range wantFiles {
 		got, err := os.ReadFile(filepath.Join(tmpGenerated, name))
-		require.NoError(err, "read generated temp file %s", name)
+		requirements.NoError(err, "read generated temp file %s", name)
 		want, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
-		require.NoError(err, "read checked-in generated file %s", name)
+		requirements.NoError(err, "read checked-in generated file %s", name)
 		assert.Equal(t,
 			normalizeGeneratedArtifact(want),
 			normalizeGeneratedArtifact(got),

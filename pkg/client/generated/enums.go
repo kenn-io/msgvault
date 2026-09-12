@@ -901,6 +901,42 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type MeetingActionsRequestStatus string
+
+const (
+	MeetingActionsRequestStatusCancelled MeetingActionsRequestStatus = "cancelled"
+	MeetingActionsRequestStatusCompleted MeetingActionsRequestStatus = "completed"
+	MeetingActionsRequestStatusPending   MeetingActionsRequestStatus = "pending"
+	MeetingActionsRequestStatusUnknown   MeetingActionsRequestStatus = "unknown"
+)
+
+// Validate checks if the MeetingActionsRequestStatus value is valid
+func (m MeetingActionsRequestStatus) Validate() error {
+	switch m {
+	case MeetingActionsRequestStatusCancelled, MeetingActionsRequestStatusCompleted, MeetingActionsRequestStatusPending, MeetingActionsRequestStatusUnknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingActionsRequestStatus value, got: %v", m))
+	}
+}
+
+type MeetingContextRequestFormat string
+
+const (
+	JSON     MeetingContextRequestFormat = "json"
+	Markdown MeetingContextRequestFormat = "markdown"
+)
+
+// Validate checks if the MeetingContextRequestFormat value is valid
+func (m MeetingContextRequestFormat) Validate() error {
+	switch m {
+	case JSON, Markdown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingContextRequestFormat value, got: %v", m))
+	}
+}
+
 type MeetingImportResponseStatus string
 
 const (
@@ -915,6 +951,24 @@ func (m MeetingImportResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingImportResponseStatus value, got: %v", m))
+	}
+}
+
+type MeetingScopeRequestDeletion string
+
+const (
+	Active  MeetingScopeRequestDeletion = "active"
+	Any     MeetingScopeRequestDeletion = "any"
+	Deleted MeetingScopeRequestDeletion = "deleted"
+)
+
+// Validate checks if the MeetingScopeRequestDeletion value is valid
+func (m MeetingScopeRequestDeletion) Validate() error {
+	switch m {
+	case Active, Any, Deleted:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingScopeRequestDeletion value, got: %v", m))
 	}
 }
 
