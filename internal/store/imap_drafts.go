@@ -65,6 +65,10 @@ func (s *Store) PersistIMAPDraftContext(
 					SELECT 1 FROM imap_message_memberships
 					WHERE message_id = messages.id AND source_id = messages.source_id
 					  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
+				) OR EXISTS (
+					SELECT 1 FROM imap_folder_state
+					WHERE source_id = messages.source_id AND mailbox = ?
+					  AND uidvalidity <> ?
 				) OR (
 					messages.deleted_from_source_at IS NOT NULL
 					AND NOT EXISTS (
@@ -73,7 +77,8 @@ func (s *Store) PersistIMAPDraftContext(
 					)
 				)
 			)
-		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity); err != nil {
+		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity,
+			receipt.Mailbox, receipt.UIDValidity); err != nil {
 			return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
 		}
 		err = tx.QueryRowContext(ctx, `

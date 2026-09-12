@@ -172,3 +172,55 @@ func TestPersistIMAPDraftRekeysOrphanedSourceDeletedMessage(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
+
+func TestPersistIMAPDraftRekeysMovedMessageBeforeUIDValidityReuse(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, source, oldID, oldReceipt := newIMAPDraftLifecycleFixture(t)
+	requirements.NoError(st.UpsertIMAPFolderStates(source.ID, []store.IMAPFolderState{{
+		Mailbox: oldReceipt.Mailbox, UIDValidity: oldReceipt.UIDValidity, UIDNext: 2,
+	}}))
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), source.ID, oldReceipt.Mailbox, oldReceipt.UIDValidity, oldReceipt.UID)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`), source.ID, "Archive", 30, 7, oldID, `[]`)
+	requirements.NoError(err)
+	var conversationID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		"SELECT conversation_id FROM messages WHERE id = ?"), oldID).Scan(&conversationID))
+
+	newReceipt := store.IMAPDraftReceipt{
+		SourceID: source.ID, Mailbox: oldReceipt.Mailbox, UIDValidity: 20, UID: oldReceipt.UID,
+	}
+	newID, err := st.PersistIMAPDraftContext(context.Background(), newReceipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(newReceipt),
+					ConversationID:  conversationID,
+					MessageType:     "email",
+				},
+				BodyText: sql.NullString{String: "new draft", Valid: true},
+				RawMIME:  []byte("Subject: New draft\r\n\r\nnew draft\r\n"),
+			}
+		})
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
+	oldSourceMessageID, err := st.GetMessageSourceID(oldID)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+
+	var archiveMessageID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT message_id FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), source.ID, "Archive", 30, 7).Scan(&archiveMessageID))
+	assertions.Equal(oldID, archiveMessageID)
+}
