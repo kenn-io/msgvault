@@ -218,6 +218,12 @@ func TestDraftGetMissingOwnershipDoesNotOpenIMAP(t *testing.T) {
 	requirements := require.New(t)
 
 	f := newDraftReplyFixture(t)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`), f.source.ID, "Drafts", 101, 9, f.parentID, `["\\Draft"]`)
+	requirements.NoError(err)
 	opened := false
 	adapter := &storeAPIAdapter{
 		store:       f.store,
@@ -227,7 +233,7 @@ func TestDraftGetMissingOwnershipDoesNotOpenIMAP(t *testing.T) {
 			return nil, errors.New("ordinary messages must not reach IMAP")
 		},
 	}
-	err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-get", strconv.FormatInt(f.parentID, 10)},
 	}, nil)
 	requirements.Error(err)
