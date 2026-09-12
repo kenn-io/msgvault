@@ -47,7 +47,14 @@ func (c *Client) InspectDraft(ctx context.Context, target DraftTarget) (DraftIns
 			result = DraftInspectResult{State: DraftStateCancelled}
 			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
 		}
-		if !conn.Caps().Has(imap.CapUIDPlus) {
+		stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+		defer stopCancel()
+		caps := conn.Caps()
+		if err := ctx.Err(); err != nil {
+			result = DraftInspectResult{State: DraftStateCancelled}
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
+		}
+		if !caps.Has(imap.CapUIDPlus) {
 			return &DraftAppendError{State: DraftStateRejected, Code: "uidplus_required",
 				Err: errors.New("IMAP server does not advertise UIDPLUS")}
 		}
