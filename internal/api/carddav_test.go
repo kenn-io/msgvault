@@ -113,6 +113,22 @@ func TestNewCardDAVControllerLoadsCredentialFromConfiguredDataDir(t *testing.T) 
 	assert.NoFileExists(filepath.Join(home, "tokens", "carddav.json"))
 }
 
+func TestCardDAVUnsupportedProviderDoesNotReuseCredential(t *testing.T) {
+	assertions := assert.New(t)
+	required := require.New(t)
+	cfg, st, _ := savedCardDAVFixture(t)
+	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
+	required.NoError(err)
+	required.NotNil(controller.Current())
+
+	cfg.CardDAV.Provider = "googl"
+	controller, err = NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
+	required.NoError(err)
+	assertions.Nil(controller.Current())
+	_, err = controller.reusableCredential(t.Context(), cfg.CardDAV.BaseURL, cfg.CardDAV.Username)
+	required.ErrorIs(err, carddav.ErrCredentialNotBound)
+}
+
 type controlledCardDAVCandidate struct {
 	cardDAVListFixture
 
