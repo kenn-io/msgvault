@@ -13,9 +13,8 @@ import (
 )
 
 func newIMAPDraftLifecycleFixture(t *testing.T) (*store.Store, *store.Source, int64, store.IMAPDraftReceipt) {
-	requirements := require.New(t)
-
 	t.Helper()
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
 	requirements.NoError(err)
@@ -119,6 +118,36 @@ func TestGetIMAPDraftContextReadsSourceDeletedMessage(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("Draft", draft.Subject)
 	assertions.Equal("Draft body", draft.Snippet)
+}
+
+func TestGetIMAPDraftContextReadsDedupHiddenMessage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st, source, draftID, _ := newIMAPDraftLifecycleFixture(t)
+	conversationID, err := st.EnsureConversation(source.ID, "dedup-thread", "Dedup thread")
+	requirements.NoError(err)
+	survivorID, err := st.UpsertMessage(&store.Message{
+		SourceID:        source.ID,
+		SourceMessageID: "dedup-survivor",
+		ConversationID:  conversationID,
+		MessageType:     store.MessageTypeEmail,
+		RFC822MessageID: sql.NullString{String: "<dedup-survivor@example.com>", Valid: true},
+	})
+	requirements.NoError(err)
+	_, err = st.MergeDuplicates(survivorID, []int64{draftID}, "draft-dedup")
+	requirements.NoError(err)
+
+	draft, err := st.GetIMAPDraftContext(context.Background(), draftID)
+	requirements.NoError(err)
+	assertions.Equal(draftID, draft.CurrentMessageID)
+	assertions.Equal("Draft", draft.Subject)
+	assertions.Equal("Draft body", draft.Snippet)
+
+	var deletedAt sql.NullString
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		"SELECT deleted_at FROM messages WHERE id = ?"), draftID).Scan(&deletedAt))
+	assertions.True(deletedAt.Valid)
 }
 
 func TestIMAPDraftGCRetainsCurrentMessage(t *testing.T) {

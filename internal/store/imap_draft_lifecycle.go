@@ -71,7 +71,7 @@ func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID int64) (*IMAPDr
 		LEFT JOIN messages pm ON pm.id = m.reply_to_message_id
 		LEFT JOIN participants p ON p.id = m.sender_id
 		WHERE d.draft_id = ?
-		  AND `+LiveMessagesWhere("m", false),
+		`,
 	), draftID, draftID).Scan(
 		&draft.DraftID, &draft.SourceID, &draft.CurrentMessageID,
 		&draft.Mailbox, &uidValidity, &uid, &draft.Revision, &draft.Lifecycle,

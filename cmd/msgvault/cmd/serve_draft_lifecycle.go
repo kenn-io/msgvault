@@ -19,8 +19,8 @@ const draftLifecycleDiscarded = "discarded"
 
 // draftClient contains the read-only IMAP operations used by draft-get.
 type draftClient interface {
-	InspectDraft(context.Context, imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
-	CloseContext(context.Context) error
+	InspectDraft(ctx context.Context, target imaplib.DraftTarget) (imaplib.DraftInspectResult, error)
+	CloseContext(ctx context.Context) error
 }
 
 // draftLifecycleIntent holds the parsed arguments for draft-get.
@@ -113,7 +113,6 @@ func marshalDraftLifecycleOutput(output draftLifecycleOutput) []byte {
 
 func emitDraftLifecycleOutput(
 	emit func(api.CLIRunEvent) error,
-	stream string,
 	asJSON bool,
 	output draftLifecycleOutput,
 ) error {
@@ -135,10 +134,13 @@ func emitDraftLifecycleOutput(
 		data = fmt.Sprintf("draft %d: lifecycle=%s revision=%d\n",
 			output.DraftID, output.Lifecycle, output.Revision)
 	}
-	return emit(api.CLIRunEvent{Type: stream, Data: data})
+	return emit(api.CLIRunEvent{Type: cliStreamStdout, Data: data})
 }
 
 func draftInspectionClient(ctx context.Context, adapter *storeAPIAdapter, source *store.Source) (draftClient, error) {
+	if adapter.draftInspectionFactory != nil {
+		return adapter.draftInspectionFactory(ctx, source)
+	}
 	if adapter.draftClientFactory != nil {
 		return adapter.draftClientFactory(ctx, source)
 	}
@@ -215,7 +217,7 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		FromAddress:     draft.FromAddress,
 	}
 	if draft.Lifecycle == draftLifecycleDiscarded {
-		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+		return emitDraftLifecycleOutput(emit, intent.JSON, output)
 	}
 	bodyText, err := a.store.GetMessageBodyText(draft.CurrentMessageID)
 	if err != nil {
@@ -230,7 +232,7 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 	grantedMailbox, grantErr := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
 	if grantErr != nil || grantedMailbox != draft.Mailbox {
 		output.ProviderStatus = "not_checked"
-		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+		return emitDraftLifecycleOutput(emit, intent.JSON, output)
 	}
 	if err := validateDraftSource(source); err != nil {
 		return draftReplyError("invalid_source", fmt.Errorf("validate source %d: %w", source.ID, err))
@@ -243,8 +245,11 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 	digest := sha256.Sum256(raw)
 	client, err := draftInspectionClient(ctx, a, source)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		output.ProviderStatus = "unknown"
-		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+		return emitDraftLifecycleOutput(emit, intent.JSON, output)
 	}
 	defer func() { _ = client.CloseContext(ctx) }()
 	result, err := client.InspectDraft(ctx, imaplib.DraftTarget{
@@ -254,9 +259,12 @@ func (a *storeAPIAdapter) runCLIDraftGet(
 		RawSHA256:   digest,
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		output.ProviderStatus = "unknown"
 	} else {
 		output.ProviderStatus = result.State
 	}
-	return emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+	return emitDraftLifecycleOutput(emit, intent.JSON, output)
 }

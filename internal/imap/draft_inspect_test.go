@@ -24,9 +24,8 @@ import (
 const testDraftRaw = "From: alice@example.com\r\nTo: bob@example.com\r\nMessage-ID: <draft-test@example.com>\r\n\r\nTest draft body\r\n"
 
 func newDraftTestClient(t *testing.T, addr string) *Client {
-	requirements := require.New(t)
-
 	t.Helper()
+	requirements := require.New(t)
 	host, portText, err := net.SplitHostPort(addr)
 	requirements.NoError(err)
 	port, err := strconv.Atoi(portText)
@@ -165,9 +164,8 @@ func TestCloseContextCancellationInterruptsBlockingLogout(t *testing.T) {
 }
 
 func appendWithFlags(t *testing.T, addr, mailbox string, raw []byte, flags []emersionimap.Flag) uint32 {
-	requirements := require.New(t)
-
 	t.Helper()
+	requirements := require.New(t)
 	client, err := imapclient.DialInsecure(addr, nil)
 	requirements.NoError(err)
 	defer func() { _ = client.Close() }()

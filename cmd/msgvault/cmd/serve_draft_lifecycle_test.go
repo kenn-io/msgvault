@@ -20,13 +20,25 @@ import (
 
 type draftLifecycleFixture struct {
 	draftReplyFixture
+
 	draftID int64
 }
 
-func newDraftLifecycleFixture(t *testing.T) draftLifecycleFixture {
-	requirements := require.New(t)
+type draftLifecycleTestClient struct {
+	err error
+}
 
+func (c draftLifecycleTestClient) InspectDraft(context.Context, imaplib.DraftTarget) (imaplib.DraftInspectResult, error) {
+	return imaplib.DraftInspectResult{}, c.err
+}
+
+func (draftLifecycleTestClient) CloseContext(context.Context) error {
+	return nil
+}
+
+func newDraftLifecycleFixture(t *testing.T) draftLifecycleFixture {
 	t.Helper()
+	requirements := require.New(t)
 	f := newDraftReplyFixture(t)
 	events, err := f.run(t, f.grantedAdapter(), "--body", "Initial draft body", "--json")
 	requirements.NoError(err)
@@ -51,9 +63,8 @@ func (f draftLifecycleFixture) runGet(t *testing.T, args ...string) ([]api.CLIRu
 }
 
 func decodeDraftLifecycleEvent(t *testing.T, event api.CLIRunEvent) map[string]any {
-	requirements := require.New(t)
-
 	t.Helper()
+	requirements := require.New(t)
 	var result map[string]any
 	requirements.NoError(json.Unmarshal([]byte(event.Data), &result))
 	return result
@@ -75,7 +86,7 @@ func TestDraftGetReportsLocalAndRemoteState(t *testing.T) {
 	result := decodeDraftLifecycleEvent(t, events[0])
 	assertions.Equal("active", result["lifecycle"])
 	assertions.Equal("present", result["provider_status"])
-	assertions.Equal(float64(f.draftID), result["draft_id"])
+	assertions.InDelta(float64(f.draftID), result["draft_id"], 0)
 	assertions.Equal("Re: Question", result["subject"])
 	assertions.Equal(bodyText, result["body_text"])
 }
@@ -110,6 +121,45 @@ func TestDraftGetPreservesEnvelopeFromAfterParticipantMerge(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(events, 1)
 	assertions.Equal("alice@example.com", decodeDraftLifecycleEvent(t, events[0])["from_address"])
+}
+
+func TestDraftGetPropagatesContextErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		factoryErr bool
+	}{
+		{name: "client cancellation", err: context.Canceled, factoryErr: true},
+		{name: "client deadline", err: context.DeadlineExceeded, factoryErr: true},
+		{name: "inspection cancellation", err: context.Canceled},
+		{name: "inspection deadline", err: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newDraftLifecycleFixture(t)
+			adapter := f.grantedAdapter()
+			if tc.factoryErr {
+				adapter.draftInspectionFactory = func(context.Context, *store.Source) (draftClient, error) {
+					return nil, fmt.Errorf("build inspection client: %w", tc.err)
+				}
+			} else {
+				adapter.draftInspectionFactory = func(context.Context, *store.Source) (draftClient, error) {
+					return draftLifecycleTestClient{err: fmt.Errorf("inspect draft: %w", tc.err)}, nil
+				}
+			}
+			var events []api.CLIRunEvent
+			err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args: []string{"draft-get", strconv.FormatInt(f.draftID, 10), "--json"},
+			}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			requirements.Error(err)
+			requirements.ErrorIs(err, tc.err)
+			assertions.Empty(events)
+		})
+	}
 }
 
 func TestDraftGetReportsAbsentRemoteState(t *testing.T) {
@@ -285,8 +335,8 @@ func TestDraftGetFollowsCurrentMembership(t *testing.T) {
 	requirements.NoError(err)
 	result := decodeDraftLifecycleEvent(t, events[0])
 	assertions.Equal("Archive", result["mailbox"])
-	assertions.Equal(float64(77), result["uid"])
-	assertions.Equal(float64(202), result["uidvalidity"])
+	assertions.InDelta(float64(77), result["uid"], 0)
+	assertions.InDelta(float64(202), result["uidvalidity"], 0)
 }
 
 func TestDraftGetReturnsDiscardedLocalStateWithoutOpeningClient(t *testing.T) {
