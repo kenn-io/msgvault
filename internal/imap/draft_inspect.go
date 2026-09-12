@@ -51,7 +51,7 @@ func (c *Client) InspectDraft(ctx context.Context, target DraftTarget) (DraftIns
 			return &DraftAppendError{State: DraftStateRejected, Code: "uidplus_required",
 				Err: errors.New("IMAP server does not advertise UIDPLUS")}
 		}
-		if err := c.selectMailbox(target.Mailbox); err != nil {
+		if err := c.selectMailboxContext(ctx, conn, target.Mailbox); err != nil {
 			return err
 		}
 		if c.selectedUIDValidity != target.UIDValidity {
@@ -94,6 +94,39 @@ func (c *Client) InspectDraft(ctx context.Context, target DraftTarget) (DraftIns
 		return DraftInspectResult{}, err
 	}
 	return result, nil
+}
+
+func (c *Client) selectMailboxContext(ctx context.Context, conn *imapclient.Client, mailbox string) error {
+	if c.selectedMailbox == mailbox {
+		return nil
+	}
+	result := make(chan struct {
+		data *imap.SelectData
+		err  error
+	}, 1)
+	go func() {
+		data, err := conn.Select(mailbox, nil).Wait()
+		result <- struct {
+			data *imap.SelectData
+			err  error
+		}{data: data, err: err}
+	}()
+	select {
+	case selection := <-result:
+		if err := ctx.Err(); err != nil {
+			return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: err}
+		}
+		if selection.err != nil {
+			return fmt.Errorf("SELECT %q: %w", mailbox, selection.err)
+		}
+		c.selectedMailbox = mailbox
+		c.selectedUIDValidity = selection.data.UIDValidity
+		c.selectedNumMessages = selection.data.NumMessages
+		return nil
+	case <-ctx.Done():
+		_ = conn.Close()
+		return &DraftAppendError{State: DraftStateCancelled, Code: DraftStateCancelled, Err: ctx.Err()}
+	}
 }
 
 type draftFetchResult struct {
