@@ -759,7 +759,7 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			continue
 		}
 		c.uid = uint32(uid)
-		if protected || (!old && replaced) {
+		if protected || (!old && replaced && !deleted) {
 			continue
 		}
 		changed := !present || (previous != 0 && previous != delta.uidValidity)

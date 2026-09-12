@@ -558,6 +558,7 @@ func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(nested+"|1", nestedKey)
 }
+
 func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -596,6 +597,7 @@ func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
 	assertions.Len(states, 2)
 }
+
 func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -734,4 +736,26 @@ func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
 	var archiveID int64
 	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
 	assertions.Equal(oldID, archiveID)
+}
+
+func TestIMAPIdentity_DeletedKeyOwnerBesideOldCanonicalMembership(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newIMAPIdentityFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "<old@example.com>")
+	canonicalID := f.createMessage(t, "canonical", "<canonical@example.com>")
+	delta := store.IMAPMailboxDelta{Mailbox: "Drafts", Reset: true, State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Drafts|1", CanonicalSourceMessageID: "canonical"}}}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	requirements.True(messageTombstoned(t, f.store, oldID))
+	var got int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 10, 1).Scan(&got))
+	requirements.Equal(canonicalID, got)
+	newID := f.createMessage(t, "incoming", "<incoming@example.com>")
+	delta.State.UIDValidity = 20
+	delta.Memberships = []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Drafts|1", RFC822MessageID: "<incoming@example.com>"}}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
+	assertions.Equal(newID, got)
+	assertions.True(messageTombstoned(t, f.store, oldID))
 }
