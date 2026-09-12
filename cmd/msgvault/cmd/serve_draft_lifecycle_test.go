@@ -255,7 +255,7 @@ func TestDraftGetRejectsInvalidSourceBeforeOpeningClient(t *testing.T) {
 		name   string
 		config string
 	}{
-		{name: "malformed config", config: "{"},
+		{name: "invalid config", config: `[]`},
 		{name: "identifier mismatch", config: ""},
 	}
 	for _, tc := range cases {

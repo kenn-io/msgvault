@@ -492,6 +492,14 @@ func invalidateOrphanedIMAPSourceKeysForEpoch(
 	if savedUIDValidity == currentUIDValidity {
 		return nil
 	}
+	return invalidateOrphanedIMAPSourceKeysForMailbox(tx, sourceID, mailbox)
+}
+
+func invalidateOrphanedIMAPSourceKeysForMailbox(
+	tx *loggedTx,
+	sourceID int64,
+	mailbox string,
+) error {
 	prefix := mailbox + "|"
 	if _, err := tx.Exec(`
 		UPDATE messages
@@ -745,6 +753,9 @@ func retireAbsentIMAPMailboxes(
 			WHERE source_id = ? AND mailbox = ?
 		`, sourceID, mailbox); err != nil {
 			return fmt.Errorf("retire IMAP memberships for mailbox %q: %w", mailbox, err)
+		}
+		if err := invalidateOrphanedIMAPSourceKeysForMailbox(tx, sourceID, mailbox); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(`
 			DELETE FROM imap_folder_state
