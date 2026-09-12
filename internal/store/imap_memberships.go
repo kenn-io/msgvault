@@ -192,6 +192,13 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
+		for _, normalized := range normalizedDeltas {
+			if err := invalidateOrphanedIMAPSourceKeysForEpoch(
+				tx, sourceID, normalized.mailbox, normalized.uidValidity,
+			); err != nil {
+				return err
+			}
+		}
 		resolver := imapMembershipResolver{tx: tx, sourceID: sourceID}
 		if err := resolver.primeIdentities(normalizedDeltas); err != nil {
 			return err
@@ -461,6 +468,44 @@ func invalidateIMAPSourceKeyForMembership(
 		mailbox, uidValidity, uid)
 	if err != nil {
 		return fmt.Errorf("invalidate IMAP source key %s|%d:%d: %w", mailbox, uidValidity, uid, err)
+	}
+	return nil
+}
+
+func invalidateOrphanedIMAPSourceKeysForEpoch(
+	tx *loggedTx,
+	sourceID int64,
+	mailbox string,
+	currentUIDValidity uint32,
+) error {
+	var savedUIDValidity uint32
+	err := tx.QueryRow(`
+		SELECT uidvalidity FROM imap_folder_state
+		WHERE source_id = ? AND mailbox = ?
+	`, sourceID, mailbox).Scan(&savedUIDValidity)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read prior IMAP UIDVALIDITY for mailbox %q: %w", mailbox, err)
+	}
+	if savedUIDValidity == currentUIDValidity {
+		return nil
+	}
+	prefix := mailbox + "|"
+	if _, err := tx.Exec(`
+		UPDATE messages
+		SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
+		WHERE source_id = ?
+		  AND deleted_from_source_at IS NOT NULL
+		  AND source_message_id IS NOT NULL
+		  AND SUBSTR(source_message_id, 1, LENGTH(?)) = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM imap_message_memberships
+			WHERE source_id = messages.source_id AND message_id = messages.id
+		  )
+	`, sourceID, prefix, prefix); err != nil {
+		return fmt.Errorf("invalidate orphaned IMAP source keys for mailbox %q: %w", mailbox, err)
 	}
 	return nil
 }

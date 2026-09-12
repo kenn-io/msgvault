@@ -602,6 +602,62 @@ func TestApplyIMAPMailboxDeltas_SameEpochResetRemovalReleasesSourceKeyForLaterEp
 	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
 
+func TestApplyIMAPMailboxDeltas_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	receipt := store.IMAPDraftReceipt{
+		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 10, UID: 1,
+	}
+	draftID, err := f.store.PersistIMAPDraftContext(context.Background(), receipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        f.source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					ConversationID:  f.convID,
+					MessageType:     "email",
+				},
+				BodyText: sql.NullString{String: "old draft", Valid: true},
+				RawMIME:  []byte("Subject: Old draft\r\n\r\nold draft\r\n"),
+			}
+		})
+	require.NoError(err)
+	require.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
+		Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2,
+	}}))
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
+		Reset:   true,
+	}}))
+	newID := f.createMessage(t, "new-source", "<new-draft@example.com>")
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Drafts",
+		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "Drafts", UIDValidity: 20, UID: 1,
+			SourceMessageID: "Drafts|1", RFC822MessageID: "<new-draft@example.com>",
+		}},
+	}}))
+
+	var gotID int64
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT message_id FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), f.source.ID, "Drafts", 20, 1).Scan(&gotID))
+	assert.Equal(newID, gotID)
+	var sourceMessageID string
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		"SELECT source_message_id FROM messages WHERE id = ?"), draftID).Scan(&sourceMessageID))
+	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
+	var currentMessageID int64
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		"SELECT current_message_id FROM imap_drafts WHERE draft_id = ?"), draftID).Scan(&currentMessageID))
+	assert.Equal(draftID, currentMessageID)
+}
+
 func TestApplyIMAPMailboxDeltas_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
