@@ -176,6 +176,10 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "carddav_publications", KeyColumn: "person_id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
+	"person_carddav_inference_state": {
+		TableName: "person_carddav_inference_state", KeyColumn: "person_id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
 	"person_uid_aliases": {
 		TableName: "person_uid_aliases", KeyColumn: "retired_uid", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("surviving_person_id")},

@@ -175,6 +175,16 @@ func (s *Store) setPersonAttributeValueOnce(
 			return err
 		}
 		definition := *loaded
+		if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+			return err
+		}
+		var inferenceProjectionBefore map[int64]personInferenceExportProjection
+		if provenanceIsInferred(input.Source) {
+			inferenceProjectionBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
+			if err != nil {
+				return fmt.Errorf("load inference export projection before attribute write: %w", err)
+			}
+		}
 		write, err = s.setPersonAttributeValueTx(
 			ctx, tx, definition, input, activeFrom, transactionTime)
 		if err != nil {
@@ -191,6 +201,11 @@ func (s *Store) setPersonAttributeValueOnce(
 			ctx, tx, input.PersonID,
 		); err != nil {
 			return err
+		}
+		if provenanceIsInferred(input.Source) {
+			if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceProjectionBefore); err != nil {
+				return err
+			}
 		}
 		if input.DryRun {
 			write.Value.ID = 0

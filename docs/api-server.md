@@ -29,9 +29,18 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.24.0**.
+it is separate from the binary release version. The current schema is **2.25.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.25.0 adds the CardDAV publication review flow:
+`GET /api/v1/carddav/publications/{person_id}/preview` returns the exact
+vCard the next write would send plus an approval token, and
+`POST /api/v1/carddav/publications/{person_id}/approve` approves it. For a
+conflict preview, follow approval with explicit `keep_local` conflict resolution;
+other previews publish on approval.
+Publication responses gain `inference_review_required`; see the
+[CardDAV guide](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
 
 Schema 2.24.0 adds Google Contacts authorization and CardDAV provider selection.
 
@@ -74,7 +83,8 @@ active messages.
 
 Participant analytics live under `/api/v1/participants/*`; durable curated
 profiles live under `/api/v1/people/*`. CardDAV publication and conflict
-responses are bounded projections that omit raw vCards and resource hrefs.
+responses are bounded projections that omit raw vCards and resource hrefs;
+only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
 

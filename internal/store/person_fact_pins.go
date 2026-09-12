@@ -112,8 +112,13 @@ func (s *Store) setPersonFactPinOnce(
 		if replay {
 			return errors.New("person fact pin generation unexpectedly replayed for a new pin event")
 		}
+		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+		systemRetirements := make(map[personfacts.ProjectionRef]struct{})
 		changed, err := s.resolvePersonFactTargetTx(
-			ctx, tx, generation, descriptor, eligibility, policy, nil, actionTime)
+			ctx, tx, generation, descriptor, eligibility, policy, nil, actionTime, systemRetirements)
 		if err != nil {
 			return err
 		}
@@ -121,6 +126,9 @@ func (s *Store) setPersonFactPinOnce(
 			if err := s.bumpPersonVCardProjectionsTx(ctx, tx, personID); err != nil {
 				return err
 			}
+		}
+		if err := s.invalidateResolverInferenceExportTx(ctx, tx, personID, inferenceBefore[personID], systemRetirements); err != nil {
+			return err
 		}
 		result, err := s.loadPersonFactGenerationResultTx(ctx, tx, personID, generation.GenerationKey)
 		if err != nil {

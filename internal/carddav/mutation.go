@@ -32,6 +32,9 @@ func (s *Service) UnpublishPerson(ctx context.Context, personID int64) error {
 // prevent later people from being considered; an account-wide retry gate stops
 // the sweep immediately.
 func (s *Service) ReconcilePublications(ctx context.Context) error {
+	if err := s.recoverPendingConflictMutations(ctx); err != nil {
+		return err
+	}
 	return s.reconcilePublications(ctx, nil)
 }
 
@@ -46,21 +49,19 @@ func (s *Service) recoverPendingPublications(ctx context.Context) (map[int64]boo
 	}
 	recovered := make(map[int64]bool)
 	var failures []error
+	if err := s.recoverPendingConflictMutations(ctx); err != nil {
+		return recovered, err
+	}
 	for _, personID := range ids {
-		publication, err := s.store.GetCardDAVPublicationContext(ctx, personID)
-		if err != nil {
-			failures = append(failures, err)
-			continue
+		attempted, err := s.reconcilePersonPublication(ctx, personID, true)
+		if attempted {
+			recovered[personID] = true
 		}
-		if publication.PendingOperation == "" {
-			continue
-		}
-		recovered[personID] = true
-		err = s.mutate(ctx, Mutation{PersonID: personID, Desired: publication.Desired})
+
 		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
 			return recovered, err
 		}
-		if errors.Is(err, ErrCardDAVConflictPending) {
+		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {
 			continue
 		}
 		if err != nil {
@@ -80,16 +81,12 @@ func (s *Service) reconcilePublications(ctx context.Context, skip map[int64]bool
 		if skip[personID] {
 			continue
 		}
-		publication, err := s.store.GetCardDAVPublicationContext(ctx, personID)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		err = s.mutate(ctx, Mutation{PersonID: personID, Desired: publication.Desired})
+		_, err := s.reconcilePersonPublication(ctx, personID, false)
+
 		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
 			return err
 		}
-		if errors.Is(err, ErrCardDAVConflictPending) {
+		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {
 			continue
 		}
 		if err != nil {
@@ -99,7 +96,38 @@ func (s *Service) reconcilePublications(ctx context.Context, skip map[int64]bool
 	return errors.Join(failures...)
 }
 
+func (s *Service) reconcilePersonPublication(ctx context.Context, personID int64, pendingOnly bool) (bool, error) {
+	release, err := s.store.AcquireCardDAVPersonOperation(ctx, personID)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	publication, err := s.store.GetCardDAVPublicationContext(ctx, personID)
+	if errors.Is(err, store.ErrCardDAVPublicationNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if pendingOnly && publication.PendingOperation == "" {
+		return false, nil
+	}
+	return true, s.mutateUnlocked(ctx, Mutation{PersonID: personID, Desired: publication.Desired})
+}
+
 func (s *Service) mutate(ctx context.Context, mutation Mutation) error {
+	if s == nil || s.store == nil {
+		return errors.New("CardDAV service is not configured")
+	}
+	release, err := s.store.AcquireCardDAVPersonOperation(ctx, mutation.PersonID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.mutateUnlocked(ctx, mutation)
+}
+
+func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 	if s == nil || s.store == nil || s.client == nil || mutation.PersonID <= 0 {
 		return errors.New("CardDAV service is not configured")
 	}
@@ -119,6 +147,9 @@ func (s *Service) mutate(ctx context.Context, mutation Mutation) error {
 			return conflictErr
 		}
 		if existing.Desired != mutation.Desired {
+			if !mutation.Desired && existing.PendingOperation == store.CardDAVMutationCreate {
+				return s.cancelPendingCreateUnlocked(operationCtx, existing)
+			}
 			return store.ErrCardDAVPublicationPending
 		}
 		existing.RecoveryOnly = true
@@ -129,6 +160,10 @@ func (s *Service) mutate(ctx context.Context, mutation Mutation) error {
 	if !mutation.Desired && errors.Is(publicationErr, store.ErrCardDAVPublicationNotFound) {
 		_, err := s.store.GetPersonContext(operationCtx, mutation.PersonID)
 		return err
+	}
+
+	if mutation.Desired {
+		return s.publishCurrentUnlocked(operationCtx, mutation.PersonID, "")
 	}
 
 	account, err := s.store.GetCardDAVAccountContext(operationCtx)
@@ -177,17 +212,7 @@ func (s *Service) mutate(ctx context.Context, mutation Mutation) error {
 		PersonID: mutation.PersonID, Desired: mutation.Desired,
 		AddressBookID: book.ID, Href: href,
 	}
-	if mutation.Desired {
-		body, localHash, err := s.renderPublicationCard(operationCtx, *person, book, resource)
-		if err != nil {
-			return err
-		}
-		semanticHash, err := SemanticHash(body)
-		if err != nil {
-			return err
-		}
-		plan.OutgoingBody, plan.OutgoingSemanticHash, plan.LocalHash = body, semanticHash, localHash
-	}
+
 	prepared, err := s.store.PrepareCardDAVPublicationContext(operationCtx, plan)
 	if err != nil {
 		return err
@@ -215,21 +240,41 @@ func (s *Service) renderPublicationCard(
 	if err != nil {
 		return nil, "", err
 	}
-	var envelope vcard.ResourceEnvelope
-	version := publicationVersion(book.SupportedVCardVersions)
+	source := &store.CardDAVPublicationReviewSource{Person: snapshot.Profile.Person, Snapshot: snapshot, Book: book, Resource: resource}
 	if resource != nil {
-		record, err := s.store.GetVCardResourceEnvelopeContext(ctx, fmt.Sprintf("carddav:%d", book.ID), resource.Href)
+		source.Envelope, err = s.store.GetVCardResourceEnvelopeContext(ctx, fmt.Sprintf("carddav:%d", book.ID), resource.Href)
 		if err != nil {
 			return nil, "", err
 		}
-		envelope = record.ResourceEnvelope
+	}
+	return s.renderPublicationSource(source)
+}
+
+func (s *Service) renderPublicationSource(source *store.CardDAVPublicationReviewSource) ([]byte, string, error) {
+	envelope, err := s.preparePublicationEnvelope(source)
+	if err != nil {
+		return nil, "", err
+	}
+	return envelope.StoredBody, source.Snapshot.Fingerprint, nil
+}
+
+func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationReviewSource) (vcard.ResourceEnvelope, error) {
+	person, book, resource, snapshot := source.Person, source.Book, source.Resource, source.Snapshot
+	var err error
+	var envelope vcard.ResourceEnvelope
+	version := publicationVersion(book.SupportedVCardVersions)
+	if resource != nil {
+		if source.Envelope == nil {
+			return vcard.ResourceEnvelope{}, store.ErrVCardResourceNotFound
+		}
+		envelope = source.Envelope.ResourceEnvelope
 		if envelope.RenderMetadata.StoredVersion == vcard.Version30 || envelope.RenderMetadata.StoredVersion == vcard.Version40 {
 			version = envelope.RenderMetadata.StoredVersion
 		}
 	} else {
 		href, err := s.publicationHref(book.CanonicalURL, person.VCardUID)
 		if err != nil {
-			return nil, "", err
+			return vcard.ResourceEnvelope{}, err
 		}
 		fullName := person.VCardUID
 		if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
@@ -239,7 +284,7 @@ func (s *Service) renderPublicationCard(
 			"\r\nFN:" + vcard.EscapeText(fullName) + "\r\nEND:VCARD\r\n")
 		envelope, err = vcard.ParseResourceEnvelope(raw)
 		if err != nil {
-			return nil, "", err
+			return vcard.ResourceEnvelope{}, err
 		}
 		envelope.SourceRef = fmt.Sprintf("carddav:%d", book.ID)
 		envelope.SourceResourceUID = href
@@ -248,17 +293,22 @@ func (s *Service) renderPublicationCard(
 	}
 	prepared, err := vcardmap.ProjectPersonEnvelope(*snapshot, envelope)
 	if err != nil {
-		return nil, "", fmt.Errorf("project person for CardDAV publication: %w", err)
+		return vcard.ResourceEnvelope{}, fmt.Errorf("project person for CardDAV publication: %w", err)
 	}
-	body, err := prepared.RenderView(version)
-	if err != nil {
-		return nil, "", err
+
+	edits := []vcard.PropertyEdit{}
+	for _, occurrence := range prepared.PropertyTree {
+		if serverOwnedProperties[strings.ToUpper(occurrence.Property.Name)] {
+			edits = append(edits, vcard.PropertyEdit{Identity: occurrence.Identity, Delete: true})
+		}
 	}
-	body, err = stripServerOwnedProperties(body, version)
-	if err != nil {
-		return nil, "", err
+	if len(edits) > 0 {
+		prepared, err = prepared.MergeProperties(edits)
+		if err != nil {
+			return vcard.ResourceEnvelope{}, err
+		}
 	}
-	return body, snapshot.Fingerprint, nil
+	return prepared.PrepareWireRender(version)
 }
 
 func (s *Service) publicationHref(collectionURL, uid string) (string, error) {
@@ -326,7 +376,9 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 		resolutionConflictID := pending.ResolutionConflictID
 		var refreshed *store.CardDAVPublication
 		var err error
-		if resolutionConflictID != 0 && pending.PersonID == 0 {
+		if pending.ConflictOwned {
+			refreshed, err = s.store.RefreshCardDAVConflictLocalIntentContext(ctx, *pending)
+		} else if resolutionConflictID != 0 && pending.PersonID == 0 {
 			refreshed, err = s.store.RefreshCardDAVConflictMutationFenceContext(ctx, resolutionConflictID)
 		} else {
 			refreshed, err = s.store.RefreshCardDAVPublicationFenceContext(ctx, pending.PersonID)
@@ -367,6 +419,9 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 	_, err = s.doRequest(ctx, request)
 	if err != nil {
 		if status := retryStatus(err); status != nil {
+			if pending.ConflictOwned {
+				return errors.Join(err, s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending))
+			}
 			if pending.PersonID == 0 && pending.ResolutionConflictID != 0 {
 				if rollbackErr := s.store.RollbackCardDAVConflictMutationContext(ctx, pending); rollbackErr != nil {
 					return errors.Join(err, rollbackErr)
@@ -419,11 +474,23 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 		return err
 	}
 	if !tombstone {
-		err := s.store.CommitCardDAVPublicationContext(ctx, store.CardDAVCanonicalMutation{
+		err := s.commitCardDAVCanonicalMutation(ctx, store.CardDAVCanonicalMutation{
 			Publication: *pending, Remote: remote,
 		})
 		if errors.Is(err, store.ErrCardDAVPublicationMismatch) {
 			return s.captureCardDAVCreateConflict(ctx, pending, remote)
+		}
+		return err
+	}
+	validateRetry := s.store.ValidateCardDAVPendingCreateRetryContext
+	if pending.ConflictOwned {
+		validateRetry = s.store.ValidateCardDAVConflictCreateRetryContext
+	}
+	if err := validateRetry(ctx, *pending); err != nil {
+		if pending.ConflictOwned && (errors.Is(err, store.ErrCardDAVReviewStale) || errors.Is(err, store.ErrCardDAVNoWriteTarget)) {
+			// Canonical absence settles the ambiguous create. Release its stale
+			// or unavailable authorization so the conflict can be resolved again.
+			return errors.Join(err, s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending))
 		}
 		return err
 	}
@@ -438,7 +505,11 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 	if err != nil && !isStatus(err, http.StatusPreconditionFailed) {
 		if status := retryStatus(err); status != nil {
 			gate := time.Now().Add(status.RetryAfter).UTC()
-			_ = s.store.RollbackCardDAVPublicationThrottleContext(ctx, pending, gate)
+			if pending.ConflictOwned {
+				_ = s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending)
+			} else {
+				_ = s.store.RollbackCardDAVPublicationThrottleContext(ctx, pending, gate)
+			}
 		}
 		if isDefinitiveMutationRejection(err) {
 			if rollbackErr := s.rollbackDefinitiveMutation(ctx, pending); rollbackErr != nil {
@@ -453,6 +524,9 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 func (s *Service) rollbackDefinitiveMutation(
 	ctx context.Context, pending *store.CardDAVPublication,
 ) error {
+	if pending.ConflictOwned {
+		return s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending)
+	}
 	if pending.PersonID == 0 && pending.ResolutionConflictID != 0 {
 		return s.store.RollbackCardDAVConflictMutationContext(ctx, pending)
 	}
@@ -488,6 +562,9 @@ func (s *Service) commitCanonical(ctx context.Context, pending *store.CardDAVPub
 func (s *Service) captureCardDAVCreateConflict(
 	ctx context.Context, pending *store.CardDAVPublication, remote store.CardDAVRemoteResource,
 ) error {
+	if pending.ConflictOwned {
+		return s.captureCardDAVMutationConflict(ctx, pending, remote, false, true)
+	}
 	if pending.MappingRevision > 0 {
 		return s.recordPublicationConflict(ctx, pending, remote, false, true)
 	}
@@ -501,9 +578,13 @@ func (s *Service) captureCardDAVCreateConflict(
 func (s *Service) commitCardDAVCanonicalMutation(
 	ctx context.Context, input store.CardDAVCanonicalMutation,
 ) error {
+	if input.Publication.ConflictOwned {
+		return s.store.CommitCardDAVConflictLocalIntentContext(ctx, input)
+	}
 	if input.Publication.ResolutionConflictID != 0 && input.Publication.PersonID == 0 {
 		return s.store.CommitCardDAVConflictLocalTombstoneContext(ctx, input)
 	}
+
 	return s.store.CommitCardDAVPublicationContext(ctx, input)
 }
 
@@ -511,6 +592,12 @@ func (s *Service) captureCardDAVMutationConflict(
 	ctx context.Context, pending *store.CardDAVPublication,
 	remote store.CardDAVRemoteResource, tombstone, retainOversizeIntent bool,
 ) error {
+	if pending.ConflictOwned {
+		if err := s.store.ResetCardDAVConflictLocalIntentContext(ctx, *pending, remote, tombstone); err != nil {
+			return err
+		}
+		return &ConflictError{ID: pending.ResolutionConflictID}
+	}
 	if pending.ResolutionConflictID == 0 || pending.PersonID != 0 {
 		return s.recordPublicationConflict(ctx, pending, remote, tombstone, retainOversizeIntent)
 	}
@@ -581,4 +668,28 @@ func isAbsentStatus(err error) bool {
 
 func isAbsentStatusCode(code int) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
+}
+
+func (s *Service) recoverPendingConflictMutations(ctx context.Context) error {
+	var failures []error
+	conflicts, err := s.store.ListCardDAVConflictsContext(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, conflict := range conflicts {
+		if len(conflict.LocalMutationIntent) == 0 {
+			continue
+		}
+		err := s.ResolveConflict(ctx, conflict.ID, ResolutionKeepLocal)
+		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
+			return err
+		}
+		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("recover CardDAV conflict %d: %w", conflict.ID, err))
+		}
+	}
+	return errors.Join(failures...)
 }

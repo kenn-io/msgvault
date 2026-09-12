@@ -1690,6 +1690,8 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
 | `sync-carddav [--full]` | Synchronize the account; `--full` reconciles complete books |
 | `person publish <person-id>` / `person unpublish <person-id>` | Publish a saved profile or remove its remote card |
+| `person publish <person-id> --preview` | Print the exact vCard and approval token as JSON without publishing |
+| `person publish <person-id> --approve <token>` | Approve reviewed changes; conflict previews also need explicit `keep_local` resolution |
 | `carddav books` | List discovered books and their roles |
 | `carddav books set-role <book-id> [--write-target] [--subscribed] [--lookup-source]` | Replace all three roles; omitted flags become false |
 | `carddav conflicts list` | List unresolved conflicts |
@@ -1698,8 +1700,8 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 
 Directory and integrations can also use the
 [publication API](/docs/usage/people-carddav/#sync-and-publish-selected-people).
-CardDAV commands do not expose a general `--json` flag; role changes and
-conflict list/show commands already print JSON.
+CardDAV commands do not expose a general `--json` flag; role changes,
+publication previews, and conflict list/show commands already print JSON.
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,6 +75,13 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":7,"status":"resolved","resolution":"keep_remote"}`))
 		case "POST /api/v1/carddav/publications/11":
 			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
+		case "GET /api/v1/carddav/publications/11/preview":
+			_, _ = w.Write([]byte(`{"person_id":11,"address_book":{"id":9,"name":"Personal"},"kind":"current","vcard":"BEGIN:VCARD\r\nEND:VCARD\r\n","approval_token":"synthetic-token","review_required":true}`))
+		case "POST /api/v1/carddav/publications/11/approve":
+			var body map[string]string
+			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal("synthetic-token", body["approval_token"])
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
 		case "DELETE /api/v1/carddav/publications/11":
 			_, _ = w.Write([]byte(`{"person_id":11,"state":"unpublished","desired":false,"address_book":{"id":9,"name":"Personal"}}`))
 		default:
@@ -108,12 +116,19 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		{cmd: newCardDAVCmd(), args: []string{"conflicts", "show", "7"}},
 		{cmd: newCardDAVCmd(), args: []string{"conflicts", "resolve", "7", "keep_remote"}},
 		{cmd: newPersonCardDAVCommand("publish", true), args: []string{"11"}},
+		{cmd: newPersonCardDAVCommand("publish", true), args: []string{"11", "--preview"}},
+		{cmd: newPersonCardDAVCommand("publish", true), args: []string{"11", "--approve", "synthetic-token"}},
 		{cmd: newPersonCardDAVCommand("unpublish", false), args: []string{"11"}},
 	} {
-		invocation.cmd.SetOut(&bytes.Buffer{})
+		out := &bytes.Buffer{}
+		invocation.cmd.SetOut(out)
 		invocation.cmd.SetErr(&bytes.Buffer{})
 		invocation.cmd.SetArgs(invocation.args)
 		require.NoError(invocation.cmd.Execute())
+		if slices.Contains(invocation.args, "--preview") {
+			assert.Contains(out.String(), `"approval_token":"synthetic-token"`)
+			assert.Contains(out.String(), `"vcard":"BEGIN:VCARD`)
+		}
 	}
 
 	assert.Equal([]string{
@@ -124,6 +139,8 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		"GET /api/v1/carddav/conflicts/7",
 		"POST /api/v1/carddav/conflicts/7/resolve",
 		"POST /api/v1/carddav/publications/11",
+		"GET /api/v1/carddav/publications/11/preview",
+		"POST /api/v1/carddav/publications/11/approve",
 		"DELETE /api/v1/carddav/publications/11",
 	}, requests)
 	assert.NotContains(strings.Join(requests, "\n"), "synthetic-password")

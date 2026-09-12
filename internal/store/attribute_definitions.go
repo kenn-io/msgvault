@@ -784,6 +784,14 @@ func (s *Store) listAttributeDefinitionsContext(
 func (s *Store) UpdateAttributeDefinitionContext(
 	ctx context.Context, id, expectedRevision int64, update AttributeDefinitionUpdate,
 ) (*AttributeDefinition, error) {
+	return retryContendedWrite(ctx, s, "update attribute definition", func() (*AttributeDefinition, error) {
+		return s.updateAttributeDefinitionOnce(ctx, id, expectedRevision, update)
+	})
+}
+
+func (s *Store) updateAttributeDefinitionOnce(
+	ctx context.Context, id, expectedRevision int64, update AttributeDefinitionUpdate,
+) (*AttributeDefinition, error) {
 	assignments := make([]string, 0, 5)
 	args := make([]any, 0, 6)
 	if update.Label != nil {
@@ -826,6 +834,14 @@ func (s *Store) UpdateAttributeDefinitionContext(
 
 	var definition *AttributeDefinition
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var inferenceBefore map[int64]personInferenceExportProjection
+		if update.IsActive != nil {
+			var err error
+			inferenceBefore, err = s.captureDefinitionInferenceExportTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+		}
 		if update.IsSensitive != nil {
 			var (
 				ownership string
@@ -867,6 +883,9 @@ func (s *Store) UpdateAttributeDefinitionContext(
 		// from every snapshot that lists it.
 		if update.IsActive == nil {
 			return nil
+		}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
+			return err
 		}
 		return s.bumpAttributeDefinitionVCardProjectionsTx(ctx, tx, updated)
 	})
@@ -993,4 +1012,26 @@ func NewAttributeUniversalID() (string, error) {
 		return "", fmt.Errorf("generate attribute universal id: %w", err)
 	}
 	return uid, nil
+}
+
+// lockAttributeDefinitionCatalogTx orders catalog exposure before person locks.
+// An outer transaction that locks people before invoking the fact resolver must
+// join this protocol before its first person lock, as enrichment commits do.
+// Definition SELECT FOR UPDATE already takes the compatible ROW SHARE lock for
+// direct value/note writers and attribute pins. Resolver generations and merge
+// candidate decisions must take it explicitly before locking their person.
+// Exposure alone takes EXCLUSIVE, then locks all people in ID order before its
+// eventual global projection bump; ordinary person writes remain concurrent.
+func (s *Store) lockAttributeDefinitionCatalogTx(ctx context.Context, tx *loggedTx, exclusive bool) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	mode := "ROW SHARE"
+	if exclusive {
+		mode = "EXCLUSIVE"
+	}
+	if _, err := tx.ExecContext(ctx, "LOCK TABLE attribute_definitions IN "+mode+" MODE"); err != nil {
+		return fmt.Errorf("lock attribute definition catalog in %s mode: %w", mode, err)
+	}
+	return nil
 }

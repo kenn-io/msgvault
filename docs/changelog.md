@@ -27,7 +27,7 @@ rebuild the cache; see [recovery instructions](usage/importing.md#message-identi
   outside your archive home. PostgreSQL users need their own database backup;
   see [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.23.0**. Old analytical
+  compatibility boundary; the current schema is **2.24.0**. Old analytical
   `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
   profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
   removed, not aliased. Local and remote clients reject incompatible daemons;
@@ -35,6 +35,13 @@ rebuild the cache; see [recovery instructions](usage/importing.md#message-identi
   [daemon migration](guides/daemon-migration.md) and [API compatibility](api-server.md).
 - **CardDAV response shapes changed at schema 2.14.0.** Publication and conflict
   responses use bounded projections and omit raw vCards and resource hrefs.
+- **Inferred profile changes need review before CardDAV export (schema
+  2.24.0).** Facts msgvault inferred rather than you declared are no longer
+  sent to the address book automatically. Sync skips such people, publishing
+  them fails with HTTP 409 `carddav_inference_review_required`, and
+  `msgvault person publish <id> --preview` / `--approve <token>` or the
+  matching `/preview` and `/approve` routes review and approve the exact
+  card. See the [CardDAV guide](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
 - **Existing embeddings use generation-based coverage.** The first writable
   open preserves active vectors and backfills coverage, excluding messages
   awaiting re-embedding; it then drops `pending_embeddings`. An in-flight

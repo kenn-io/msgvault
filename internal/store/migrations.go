@@ -88,6 +88,7 @@ const (
 	// origin, and an attempt records why a brief call produced no version.
 	migrationPersonFactClaimOriginBrief     = "person_fact_claim_origin_brief_v1"
 	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
+	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 )
 
 func (s *Store) backfillSyncRunResumeMetadata(

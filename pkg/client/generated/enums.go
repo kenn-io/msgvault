@@ -270,6 +270,24 @@ func (c CardDAVContactSummaryResponseState) Validate() error {
 	}
 }
 
+type CardDAVPublicationPreviewResponseKind string
+
+const (
+	CardDAVPublicationPreviewResponseKindConflict CardDAVPublicationPreviewResponseKind = "conflict"
+	CardDAVPublicationPreviewResponseKindCurrent  CardDAVPublicationPreviewResponseKind = "current"
+	CardDAVPublicationPreviewResponseKindPending  CardDAVPublicationPreviewResponseKind = "pending"
+)
+
+// Validate checks if the CardDAVPublicationPreviewResponseKind value is valid
+func (c CardDAVPublicationPreviewResponseKind) Validate() error {
+	switch c {
+	case CardDAVPublicationPreviewResponseKindConflict, CardDAVPublicationPreviewResponseKindCurrent, CardDAVPublicationPreviewResponseKindPending:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVPublicationPreviewResponseKind value, got: %v", c))
+	}
+}
+
 type CardDAVPublicationResponsePendingOperation string
 
 const (

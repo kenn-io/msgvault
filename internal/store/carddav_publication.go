@@ -27,50 +27,58 @@ var (
 )
 
 type CardDAVPublicationPlan struct {
-	PersonID             int64
-	Desired              bool
-	AddressBookID        int64
-	Href                 string
-	OutgoingBody         []byte
-	OutgoingSemanticHash string
-	LocalHash            string
+	SourceFence              *CardDAVReviewArtifactFence
+	OutgoingEnvelopeMetadata []byte
+	PersonID                 int64
+	Desired                  bool
+	AddressBookID            int64
+	Href                     string
+	OutgoingBody             []byte
+	OutgoingSemanticHash     string
+	LocalHash                string
 }
 
 type CardDAVPublication struct {
-	PersonID                int64
-	Desired                 bool
-	AddressBookID           int64
-	Href                    string
-	PendingOperation        CardDAVMutationOperation
-	OutgoingBody            []byte
-	OutgoingSemanticHash    string
-	LocalHash               string
-	RemoteETag              string
-	ConnectionGeneration    int64
-	BookSyncRevision        int64
-	MappingRevision         int64
-	PreviousMappingRevision int64
-	CreateRecoveryUsed      bool
-	MutationRevision        int64
-	PendingStartedAt        *time.Time
-	RecoveryOnly            bool
-	Noop                    bool
-	ResolutionConflictID    int64
+	ConflictOwned             bool
+	OutgoingEnvelopeMetadata  []byte
+	ApprovedBodySHA256        *string
+	ApprovedInferenceRevision *int64
+	ApprovedMutationRevision  *int64
+	PersonID                  int64
+	Desired                   bool
+	AddressBookID             int64
+	Href                      string
+	PendingOperation          CardDAVMutationOperation
+	OutgoingBody              []byte
+	OutgoingSemanticHash      string
+	LocalHash                 string
+	RemoteETag                string
+	ConnectionGeneration      int64
+	BookSyncRevision          int64
+	MappingRevision           int64
+	PreviousMappingRevision   int64
+	CreateRecoveryUsed        bool
+	MutationRevision          int64
+	PendingStartedAt          *time.Time
+	RecoveryOnly              bool
+	Noop                      bool
+	ResolutionConflictID      int64
 }
 
 // CardDAVPublicationStateSource contains only the safe fields needed to derive
 // the public publication state. Mutation evidence remains in the publication
 // table and never gets copied into this read model.
 type CardDAVPublicationStateSource struct {
-	PersonID          int64
-	HasPublication    bool
-	Desired           bool
-	PendingOperation  CardDAVMutationOperation
-	AddressBookID     int64
-	AddressBookName   string
-	ConflictID        int64
-	ProspectiveBookID int64
-	ProspectiveName   string
+	InferenceReviewRequired bool
+	PersonID                int64
+	HasPublication          bool
+	Desired                 bool
+	PendingOperation        CardDAVMutationOperation
+	AddressBookID           int64
+	AddressBookName         string
+	ConflictID              int64
+	ProspectiveBookID       int64
+	ProspectiveName         string
 }
 
 type CardDAVCanonicalMutation struct {
@@ -88,8 +96,34 @@ func (s *Store) PrepareCardDAVPublicationContext(
 	if plan.Desired && (len(plan.OutgoingBody) == 0 || plan.OutgoingSemanticHash == "" || plan.LocalHash == "") {
 		return nil, ErrCardDAVInvalidPlan
 	}
+	return s.prepareCardDAVPublicationContext(ctx, plan, nil)
+}
+
+func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
 	var prepared *CardDAVPublication
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	var options *sql.TxOptions
+	if review != nil {
+		options = &sql.TxOptions{Isolation: sql.LevelRepeatableRead}
+	}
+	err := s.withTxOptionsContext(ctx, options, func(tx *loggedTx) error {
+		var err error
+		prepared, err = s.prepareCardDAVPublicationTx(ctx, tx, plan, review)
+		return err
+	})
+	if review != nil && (s.dialect.IsSerializationFailureError(err) || errors.Is(err, ErrVCardProjectionConflict) || errors.Is(err, ErrCardDAVStalePlan) || errors.Is(err, ErrCardDAVNoWriteTarget)) {
+		return nil, ErrCardDAVReviewStale
+	}
+	return prepared, err
+}
+
+func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
+	var prepared *CardDAVPublication
+	err := func() error {
+		if lock := s.dialect.RowWriterLockSQL("carddav_accounts", "connection_generation"); lock != "" {
+			if _, err := tx.ExecContext(ctx, lock, 1); err != nil {
+				return err
+			}
+		}
 		if gate, err := getCardDAVRetryAfterFrom(ctx, tx); err != nil {
 			return err
 		} else if gate != nil && gate.After(time.Now()) {
@@ -116,9 +150,25 @@ func (s *Store) PrepareCardDAVPublicationContext(
 			}
 			return fmt.Errorf("lock CardDAV publication book: %w", err)
 		}
+		if s.cardDAVReviewPersonLockHook != nil {
+			s.cardDAVReviewPersonLockHook()
+		}
+		if err := s.lockPersonVCardProjectionTx(ctx, tx, plan.PersonID, plan.LocalHash); err != nil {
+			return err
+		}
+		inference, err := s.getCardDAVInferenceExportStateTx(ctx, tx, plan.PersonID)
+		if err != nil {
+			return err
+		}
 		snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, plan.PersonID)
 		if err != nil {
 			return err
+		}
+		if len(plan.OutgoingEnvelopeMetadata) > 0 {
+			if _, err := validateCardDAVPublicationMetadata(plan.OutgoingBody, plan.OutgoingEnvelopeMetadata,
+				fmt.Sprintf("carddav:%d", plan.AddressBookID), plan.Href, snapshot.Profile.Person.VCardUID); err != nil {
+				return err
+			}
 		}
 		if plan.Desired && snapshot.Fingerprint != plan.LocalHash {
 			return ErrCardDAVStalePlan
@@ -128,6 +178,9 @@ func (s *Store) PrepareCardDAVPublicationContext(
 			return err
 		}
 		if err == nil && current.PendingOperation != "" {
+			if review != nil {
+				return ErrCardDAVReviewStale
+			}
 			if current.Desired != plan.Desired {
 				return ErrCardDAVPublicationPending
 			}
@@ -140,6 +193,38 @@ func (s *Store) PrepareCardDAVPublicationContext(
 		if err != nil && !errors.Is(err, ErrCardDAVResourceNotFound) {
 			return err
 		}
+		if plan.SourceFence != nil {
+			source, err := s.loadCardDAVPublicationReviewSourceTx(ctx, tx, plan.PersonID)
+			if err != nil {
+				return err
+			}
+			currentFence := CardDAVCurrentReviewFence(source, plan.OutgoingBody, plan.Href)
+			if source.Conflict != nil || CardDAVReviewToken(currentFence) != CardDAVReviewToken(*plan.SourceFence) {
+				return ErrCardDAVStalePlan
+			}
+		}
+		if review != nil {
+			source, err := s.loadCardDAVPublicationReviewSourceTx(ctx, tx, plan.PersonID)
+			if err != nil {
+				return err
+			}
+			if source.Conflict != nil {
+				return ErrCardDAVReviewStale
+			}
+			fence := CardDAVCurrentReviewFence(source, plan.OutgoingBody, plan.Href)
+			if CardDAVReviewToken(fence) != review.ApprovalToken || CardDAVReviewToken(review.Fence) != review.ApprovalToken ||
+				review.Fence.PersonFingerprint != plan.LocalHash {
+				return ErrCardDAVReviewStale
+			}
+			if review.Fence.Kind != CardDAVReviewCurrent {
+				return ErrCardDAVReviewStale
+			}
+			if err := s.approveCardDAVInferenceTx(ctx, tx, inference, generation, plan.AddressBookID); err != nil {
+				return err
+			}
+		} else if plan.Desired && inference.ReviewRequired(generation, plan.AddressBookID) {
+			return ErrCardDAVInferenceReviewRequired
+		}
 		if plan.Desired && resource == nil {
 			_, hrefErr := s.findCardDAVResourceTx(ctx, tx, plan.AddressBookID, plan.Href)
 			if hrefErr == nil {
@@ -150,6 +235,9 @@ func (s *Store) PrepareCardDAVPublicationContext(
 			}
 		}
 		if !plan.Desired && errors.Is(err, ErrCardDAVResourceNotFound) {
+			if err := s.clearPersonCardDAVInferenceApprovalTx(ctx, tx, plan.PersonID); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM carddav_publications WHERE person_id = ?`, plan.PersonID); err != nil {
 				return fmt.Errorf("clear absent CardDAV publication: %w", err)
 			}
@@ -171,6 +259,12 @@ func (s *Store) PrepareCardDAVPublicationContext(
 				return ErrCardDAVInvalidPlan
 			}
 			if plan.Desired && plan.OutgoingSemanticHash == resource.RemoteSemanticHash {
+				if len(plan.OutgoingEnvelopeMetadata) > 0 {
+					if err := s.putCardDAVPublicationEnvelopeTx(ctx, tx, plan.AddressBookID, plan.PersonID, resource.Href,
+						plan.OutgoingBody, plan.OutgoingEnvelopeMetadata, resource.RemoteBody); err != nil {
+						return err
+					}
+				}
 				if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
 					local_hash = ?, updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 					snapshot.Fingerprint, resource.ID); err != nil {
@@ -183,6 +277,8 @@ func (s *Store) PrepareCardDAVPublicationContext(
 					desired = TRUE, address_book_id = excluded.address_book_id,
 					href = excluded.href, pending_operation = NULL,
 					outgoing_body = NULL, outgoing_semantic_hash = NULL,
+					approved_body_sha256 = NULL, approved_inference_revision = NULL,
+					approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 					local_hash = NULL, remote_etag = NULL,
 					connection_generation = NULL, book_sync_revision = NULL,
 					mapping_revision = NULL, previous_mapping_revision = NULL,
@@ -249,6 +345,8 @@ func (s *Store) PrepareCardDAVPublicationContext(
 			desired = excluded.desired, address_book_id = excluded.address_book_id,
 			href = excluded.href, pending_operation = excluded.pending_operation,
 			outgoing_body = excluded.outgoing_body,
+			approved_body_sha256 = NULL, approved_inference_revision = NULL,
+			approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 			outgoing_semantic_hash = excluded.outgoing_semantic_hash,
 			local_hash = excluded.local_hash, remote_etag = excluded.remote_etag,
 			connection_generation = excluded.connection_generation,
@@ -264,9 +362,16 @@ func (s *Store) PrepareCardDAVPublicationContext(
 		if err != nil {
 			return fmt.Errorf("persist CardDAV publication intent: %w", err)
 		}
+		if plan.Desired {
+			if _, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET approved_body_sha256 = ?,
+    approved_inference_revision = ?, approved_mutation_revision = mutation_revision, outgoing_envelope_metadata = ? WHERE person_id = ?`,
+				CardDAVBodySHA256(plan.OutgoingBody), inference.InferenceRevision, nullableCardDAVMetadata(plan.OutgoingEnvelopeMetadata), plan.PersonID); err != nil {
+				return err
+			}
+		}
 		prepared, err = getCardDAVPublicationFrom(ctx, tx, plan.PersonID, "")
 		return err
-	})
+	}()
 	return prepared, err
 }
 
@@ -316,7 +421,7 @@ func (s *Store) GetCardDAVPublicationStateSourceContext(
 				return fmt.Errorf("get CardDAV publication conflict: %w", err)
 			}
 			source = current
-			return nil
+			return s.loadCardDAVPublicationReviewRequiredTx(ctx, tx, current)
 		}
 		err = tx.QueryRowContext(ctx, `SELECT id, display_name
 			FROM carddav_address_books
@@ -327,7 +432,7 @@ func (s *Store) GetCardDAVPublicationStateSourceContext(
 			return fmt.Errorf("get prospective CardDAV publication book: %w", err)
 		}
 		source = current
-		return nil
+		return s.loadCardDAVPublicationReviewRequiredTx(ctx, tx, current)
 	})
 	return source, err
 }
@@ -335,9 +440,13 @@ func (s *Store) GetCardDAVPublicationStateSourceContext(
 func (s *Store) RefreshCardDAVPublicationFenceContext(
 	ctx context.Context, personID int64,
 ) (*CardDAVPublication, error) {
+	identity, err := s.GetCardDAVPublicationContext(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
 	var publication *CardDAVPublication
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := getCardDAVPublicationFrom(ctx, tx, personID, s.dialect.SelectForUpdate())
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, personID, identity.AddressBookID)
 		if err != nil {
 			return err
 		}
@@ -395,7 +504,16 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 	}
 	var fenced *CardDAVPublication
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
+		if err := s.lockCardDAVPublicationTargetTx(ctx, tx, pending.AddressBookID); err != nil {
+			return err
+		}
+		if s.cardDAVCollisionIdentityLockHook != nil {
+			s.cardDAVCollisionIdentityLockHook()
+		}
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
 		}
@@ -415,16 +533,6 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 		}
 		if generation != current.ConnectionGeneration || bookRevision != current.BookSyncRevision {
 			return ErrCardDAVStalePlan
-		}
-		snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, current.PersonID)
-		if err != nil {
-			return err
-		}
-		if snapshot.Fingerprint != current.LocalHash {
-			return ErrCardDAVPublicationMismatch
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
 		}
 		resource, err := s.findCardDAVResourceTx(ctx, tx, current.AddressBookID, current.Href)
 		if errors.Is(err, ErrCardDAVResourceNotFound) {
@@ -478,7 +586,7 @@ func (s *Store) CommitCardDAVPublicationContext(
 ) error {
 	pending := input.Publication
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
+		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
 		}
@@ -501,12 +609,15 @@ func (s *Store) CommitCardDAVPublicationContext(
 		if err != nil {
 			return err
 		}
-		if snapshot.Fingerprint != current.LocalHash {
+		if snapshot.Fingerprint != current.LocalHash && current.PendingOperation != CardDAVMutationCreate {
 			return ErrCardDAVPublicationMismatch
 		}
 		if current.PendingOperation == CardDAVMutationDelete {
 			if !input.Tombstone {
 				return ErrCardDAVPublicationMismatch
+			}
+			if err := s.clearPersonCardDAVInferenceApprovalTx(ctx, tx, current.PersonID); err != nil {
+				return err
 			}
 			resource, err := findCardDAVResourceForPersonTx(ctx, tx, current.AddressBookID, current.PersonID, s.dialect.SelectForUpdate())
 			if errors.Is(err, ErrCardDAVResourceNotFound) && current.MappingRevision == 0 {
@@ -597,11 +708,19 @@ func (s *Store) CommitCardDAVPublicationContext(
 				return err
 			}
 		}
-		if err := s.putCardDAVEnvelopeTx(ctx, tx, current.AddressBookID, current.PersonID, input.Remote); err != nil {
+		if len(current.OutgoingEnvelopeMetadata) > 0 {
+			if err := s.putCardDAVPublicationEnvelopeTx(ctx, tx, current.AddressBookID, current.PersonID, input.Remote.Href,
+				current.OutgoingBody, current.OutgoingEnvelopeMetadata, input.Remote.RemoteBody); err != nil {
+				return err
+			}
+		} else if err := s.putCardDAVEnvelopeTx(ctx, tx, current.AddressBookID, current.PersonID, input.Remote); err != nil {
 			return err
 		}
+
 		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET desired = TRUE,
 			pending_operation = NULL, outgoing_body = NULL,
+			approved_body_sha256 = NULL, approved_inference_revision = NULL,
+			approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 			outgoing_semantic_hash = NULL, local_hash = NULL, remote_etag = NULL,
 			connection_generation = NULL, book_sync_revision = NULL,
 			mapping_revision = NULL, previous_mapping_revision = NULL,
@@ -623,6 +742,18 @@ func (s *Store) resolvePublicationConflictAuditTx(
 ) error {
 	if pending.ResolutionConflictID == 0 {
 		return nil
+	}
+	var writeTarget bool
+	if err := tx.QueryRowContext(ctx, `SELECT is_write_target FROM carddav_address_books WHERE id=?`, pending.AddressBookID).Scan(&writeTarget); err != nil {
+		return err
+	}
+	if !writeTarget {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM carddav_publications WHERE person_id=? AND address_book_id=? AND href=? AND mutation_revision=?`, pending.PersonID, pending.AddressBookID, pending.Href, pending.MutationRevision); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_carddav_inference_state SET approved_revision=0,approved_connection_generation=NULL,approved_address_book_id=NULL WHERE person_id=? AND approved_address_book_id=?`, pending.PersonID, pending.AddressBookID); err != nil {
+			return err
+		}
 	}
 	_, err := resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
 		pending.ResolutionConflictID, CardDAVResolutionKeepLocal)
@@ -650,7 +781,7 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		return ErrCardDAVInvalidPlan
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
+		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
 		}
@@ -689,6 +820,8 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET
 			desired = ?,
 			pending_operation = NULL, outgoing_body = NULL,
+			approved_body_sha256 = NULL, approved_inference_revision = NULL,
+			approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 			outgoing_semantic_hash = NULL, local_hash = NULL, remote_etag = NULL,
 			connection_generation = NULL, book_sync_revision = NULL,
 			mapping_revision = NULL, previous_mapping_revision = NULL,
@@ -784,23 +917,30 @@ func getCardDAVPublicationFrom(
 	var result CardDAVPublication
 	var bookID, generation, bookRevision, mappingRevision, previousMapping sql.NullInt64
 	var href, operation, outgoingHash, localHash, remoteETag sql.NullString
+	var approvedBody sql.NullString
+	var approvedInference, approvedMutation sql.NullInt64
 	var outgoing []byte
 	var pendingAt sql.NullTime
 	err := queryer.QueryRowContext(ctx, `SELECT person_id, desired, address_book_id, href,
 		pending_operation, outgoing_body, outgoing_semantic_hash, local_hash,
 		remote_etag, connection_generation, book_sync_revision, mapping_revision,
 		previous_mapping_revision, create_recovery_used, mutation_revision,
-		pending_started_at FROM carddav_publications WHERE person_id = ?`+suffix, personID).Scan(
+		pending_started_at, approved_body_sha256, approved_inference_revision, approved_mutation_revision, outgoing_envelope_metadata FROM carddav_publications WHERE person_id = ?`+suffix, personID).Scan(
 		&result.PersonID, &result.Desired, &bookID, &href, &operation, &outgoing,
 		&outgoingHash, &localHash, &remoteETag, &generation, &bookRevision,
 		&mappingRevision, &previousMapping, &result.CreateRecoveryUsed,
-		&result.MutationRevision, &pendingAt)
+		&result.MutationRevision, &pendingAt, &approvedBody, &approvedInference, &approvedMutation, &result.OutgoingEnvelopeMetadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCardDAVPublicationNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get CardDAV publication: %w", err)
 	}
+	if approvedBody.Valid {
+		result.ApprovedBodySHA256 = &approvedBody.String
+	}
+	result.ApprovedInferenceRevision = cardDAVInferenceNullInt64Ptr(approvedInference)
+	result.ApprovedMutationRevision = cardDAVInferenceNullInt64Ptr(approvedMutation)
 	result.AddressBookID, result.Href = bookID.Int64, href.String
 	result.PendingOperation = CardDAVMutationOperation(operation.String)
 	result.OutgoingBody = append([]byte(nil), outgoing...)

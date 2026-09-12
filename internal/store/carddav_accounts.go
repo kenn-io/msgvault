@@ -139,6 +139,13 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 				return nil, nil, fmt.Errorf("clean prior CardDAV connection book: %w", err)
 			}
 		}
+		bookIDs := make([]int64, 0, len(existing))
+		for _, oldBook := range existing {
+			bookIDs = append(bookIDs, oldBook.ID)
+		}
+		if err := s.clearCardDAVInferenceApprovalsForBooksTx(ctx, logged, bookIDs...); err != nil {
+			return nil, nil, err
+		}
 		if _, err := logged.ExecContext(ctx,
 			`DELETE FROM carddav_address_books WHERE account_id = 1`); err != nil {
 			return nil, nil, fmt.Errorf("delete prior CardDAV connection books: %w", err)
@@ -308,6 +315,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 		if err := s.dropCardDAVBookResourcesTx(ctx, logged, stale.ID); err != nil {
 			return nil, nil, fmt.Errorf("clean unseen CardDAV address book: %w", err)
 		}
+		if err := s.clearCardDAVInferenceApprovalsForBooksTx(ctx, logged, stale.ID); err != nil {
+			return nil, nil, err
+		}
 		if _, err := logged.ExecContext(ctx, `DELETE FROM carddav_address_books WHERE id = ?`, stale.ID); err != nil {
 			return nil, nil, fmt.Errorf("prune unseen CardDAV address book: %w", err)
 		}
@@ -344,7 +354,7 @@ func cardDAVConnectionChangeBlocker(
 ) error {
 	query := `SELECT
 		EXISTS (SELECT 1 FROM carddav_publications WHERE pending_operation IS NOT NULL)
-		OR EXISTS (SELECT 1 FROM carddav_conflicts WHERE pending_operation IS NOT NULL)`
+		OR EXISTS (SELECT 1 FROM carddav_conflicts WHERE pending_operation IS NOT NULL OR local_mutation_intent IS NOT NULL)`
 	want := ErrCardDAVCredentialChangePending
 	if identityChanged {
 		query = `SELECT
@@ -382,7 +392,7 @@ func cardDAVBookHasProtectedStateTx(
 			WHERE address_book_id IN (SELECT id FROM affected_books))
 		OR EXISTS (SELECT 1 FROM carddav_conflicts
 			WHERE address_book_id IN (SELECT id FROM affected_books)
-			  AND (pending_operation IS NOT NULL
+			  AND (pending_operation IS NOT NULL OR local_mutation_intent IS NOT NULL
 			       OR (? AND status = 'unresolved') OR ?))`,
 		bookID, scope.IncludeCurrentWriteTarget, scope.IncludeUnresolvedConflicts,
 		scope.IncludeAllConflicts,

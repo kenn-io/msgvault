@@ -113,6 +113,10 @@ func (s *Store) splitPersonMergeOnce(
 			return ErrPersonSplitRevision
 		}
 
+		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, request.SourcePersonID)
+		if err != nil {
+			return err
+		}
 		merge, snapshot, err := s.loadPersonSplitMergeTx(ctx, tx, request.MergeID)
 		if err != nil {
 			return err
@@ -340,6 +344,10 @@ func (s *Store) splitPersonMergeOnce(
 		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 			ctx, tx, request.SourcePersonID, newPersonID,
 		); err != nil {
+			return err
+		}
+		inferenceBefore[newPersonID] = personInferenceExportProjection{}
+		if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceBefore); err != nil {
 			return err
 		}
 		exactReversal := selection.exact && len(unrestored) == 0

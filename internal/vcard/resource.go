@@ -351,18 +351,32 @@ func (e ResourceEnvelope) PrepareCanonicalRender() (ResourceEnvelope, error) {
 // from the body becomes the property tree, keeping the stable ordinal of every
 // occurrence it still contains; mappings and residue follow those ordinals.
 func (e ResourceEnvelope) commitRenderedBody(body []byte) (ResourceEnvelope, error) {
+	return e.commitRenderedVersion(body, Version40)
+}
+
+// PrepareWireRender installs this envelope's own rendered bytes and keeps its
+// occurrence ownership. It is not a way to accept an arbitrary remote body.
+func (e ResourceEnvelope) PrepareWireRender(version Version) (ResourceEnvelope, error) {
+	body, err := e.RenderView(version)
+	if err != nil {
+		return ResourceEnvelope{}, err
+	}
+	return e.commitRenderedVersion(body, version)
+}
+
+func (e ResourceEnvelope) commitRenderedVersion(body []byte, version Version) (ResourceEnvelope, error) {
 	parsed, err := ParseResourceEnvelope(body)
 	if err != nil {
 		return ResourceEnvelope{}, fmt.Errorf("validate rendered vCard body: %w", err)
 	}
-	if parsed.RenderMetadata.StoredVersion != Version40 {
+	if parsed.RenderMetadata.StoredVersion != version {
 		return ResourceEnvelope{}, fmt.Errorf(
 			"rendered vCard VERSION %q is not the canonical %s",
-			parsed.RenderMetadata.StoredVersion, Version40,
+			parsed.RenderMetadata.StoredVersion, version,
 		)
 	}
 	committed := cloneResourceEnvelope(e)
-	unchanged := e.RenderMetadata.StoredVersion == Version40 && bytes.Equal(body, e.StoredBody)
+	unchanged := e.RenderMetadata.StoredVersion == version && bytes.Equal(body, e.StoredBody)
 	if unchanged && !e.RenderMetadata.RenderRequired {
 		return committed, nil
 	}
@@ -375,7 +389,7 @@ func (e ResourceEnvelope) commitRenderedBody(body []byte) (ResourceEnvelope, err
 	committed.Residue = mergeResidueOccurrences(nil, e.Residue, committed.PropertyTree)
 	committed.ContentHash = ContentHash(body)
 	committed.ETag = ETagForBody(body)
-	committed.RenderMetadata.StoredVersion = Version40
+	committed.RenderMetadata.StoredVersion = version
 	committed.RenderMetadata.RenderRequired = false
 	// Edits that render to the stored bytes (a re-projection of unchanged
 	// semantic data) settle the render-required state without producing a new

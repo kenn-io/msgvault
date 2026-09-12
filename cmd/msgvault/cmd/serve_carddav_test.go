@@ -70,7 +70,13 @@ func (f *scheduledCardDAVFixture) SetBookRoles(context.Context, int64, carddav.B
 func (f *scheduledCardDAVFixture) PublicationView(context.Context, int64) (*carddav.PublicationView, error) {
 	return &carddav.PublicationView{}, nil
 }
-func (f *scheduledCardDAVFixture) PublishPerson(context.Context, int64) error   { return nil }
+func (f *scheduledCardDAVFixture) PublishPerson(context.Context, int64) error { return nil }
+func (f *scheduledCardDAVFixture) PreviewPublication(context.Context, int64) (*carddav.PublicationPreview, error) {
+	return nil, nil //nolint:nilnil // scheduler fixture never previews
+}
+func (f *scheduledCardDAVFixture) PublishReviewedPerson(context.Context, int64, string) error {
+	return nil
+}
 func (f *scheduledCardDAVFixture) UnpublishPerson(context.Context, int64) error { return nil }
 func (f *scheduledCardDAVFixture) ListConflictViews(context.Context) ([]carddav.ConflictListItem, error) {
 	return nil, nil

@@ -66,6 +66,16 @@ func (s *Store) appendPersonNoteOnce(
 				definition.Slug, ErrAttributeDefinitionNotWritable,
 			)
 		}
+		if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+			return err
+		}
+		var inferenceProjectionBefore map[int64]personInferenceExportProjection
+		if provenanceIsInferred(input.Source) {
+			inferenceProjectionBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
+			if err != nil {
+				return fmt.Errorf("load inference export projection before note append: %w", err)
+			}
+		}
 
 		var personExists int
 		if err := tx.QueryRowContext(ctx,
@@ -136,6 +146,11 @@ func (s *Store) appendPersonNoteOnce(
 		}
 		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
 			return err
+		}
+		if provenanceIsInferred(input.Source) {
+			if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceProjectionBefore); err != nil {
+				return err
+			}
 		}
 		if input.DryRun {
 			write.Value.ID = 0

@@ -118,14 +118,14 @@
 
         {#if publication.state === 'unpublished' && publication.address_book}
           <Toggle
-            checked={false}
+            checked={controller.pendingAction === 'publish'}
             ariaLabel="Publish person to CardDAV"
             disabled={!controller.canPublish()}
             onchange={(checked) => void togglePublication(checked)}
           />
         {:else if publication.state === 'published'}
           <Toggle
-            checked
+            checked={controller.pendingAction !== 'unpublish'}
             ariaLabel="Remove person from CardDAV"
             disabled={!controller.canUnpublish()}
             onchange={(checked) => void togglePublication(checked)}

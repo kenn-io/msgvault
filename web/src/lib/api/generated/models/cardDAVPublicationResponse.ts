@@ -10,6 +10,7 @@ export interface CardDAVPublicationResponse {
   /** @minimum 1 */
   conflict_id?: number;
   desired: boolean;
+  inference_review_required?: boolean;
   pending_operation?: CardDAVPublicationResponsePendingOperation;
   /** @minimum 1 */
   person_id: number;

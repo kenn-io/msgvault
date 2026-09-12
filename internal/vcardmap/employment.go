@@ -12,11 +12,8 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
 )
-
-// unitSeparators are the characters a user may type to nest organizational
-// units inside one department field.
-const unitSeparators = "/>"
 
 // Employment is the subset of a derived employment projection that vCard ORG,
 // TITLE, and ROLE need.
@@ -46,19 +43,7 @@ func FromProjection(projection store.EmploymentProjection) Employment {
 // organization is not a representable ORG value. Component values are
 // unescaped.
 func OrgComponents(employment Employment) []string {
-	organization := strings.TrimSpace(employment.OrganizationName)
-	if organization == "" {
-		return nil
-	}
-	components := []string{organization}
-	for _, unit := range strings.FieldsFunc(employment.Department, func(r rune) bool {
-		return strings.ContainsRune(unitSeparators, r)
-	}) {
-		if unit = strings.TrimSpace(unit); unit != "" {
-			components = append(components, unit)
-		}
-	}
-	return components
+	return vcard.OrganizationComponents(employment.OrganizationName, employment.Department)
 }
 
 // Title returns the vCard TITLE value for the primary current employment, or

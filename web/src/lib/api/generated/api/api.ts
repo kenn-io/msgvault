@@ -9,6 +9,7 @@ import type {
   AppendPersonNoteParams,
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
+  ApproveCardDAVPublicationPathParameters,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -45,6 +46,8 @@ import type {
   CardDAVGoogleAuthorizeRequest,
   CardDAVGoogleAuthorizeResponse,
   CardDAVGoogleCallbackRequest,
+  CardDAVPublicationApprovalRequest,
+  CardDAVPublicationPreviewResponse,
   CardDAVPublicationResponse,
   CardDAVResolveRequest,
   CardDAVRunsResponse,
@@ -291,6 +294,7 @@ import type {
   PersonSplitResult,
   PersonSummary,
   PersonTracking,
+  PreviewCardDAVPublicationPathParameters,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
@@ -767,6 +771,41 @@ export const publishCardDAVPerson = (
     {
       url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}`,
       method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Approve a publication preview; conflicts require explicit resolution
+ */
+export const approveCardDAVPublication = (
+  { personId }: ApproveCardDAVPublicationPathParameters,
+  cardDAVPublicationApprovalRequest: CardDAVPublicationApprovalRequest,
+  options?: SecondParameter<typeof orvalFetch<CardDAVPublicationResponse>>,
+) => {
+  return orvalFetch<CardDAVPublicationResponse>(
+    {
+      url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}/approve`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVPublicationApprovalRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview the exact vCard and approval token for a person's publication
+ */
+export const previewCardDAVPublication = (
+  { personId }: PreviewCardDAVPublicationPathParameters,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVPublicationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVPublicationPreviewResponse>(
+    {
+      url: `/api/v1/carddav/publications/${encodeURIComponent(String(personId))}/preview`,
+      method: "GET",
     },
     options,
   );
