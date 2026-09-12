@@ -729,11 +729,9 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id
 		    AND m.mailbox = ? AND messages.source_message_id = m.mailbox || '|' || CAST(m.uid AS TEXT) AND m.uidvalidity <> ?),
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id
-		    AND m.mailbox = ? AND messages.source_message_id = m.mailbox || '|' || CAST(m.uid AS TEXT) AND m.uidvalidity = ?),
-		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id <> messages.id
-		    AND m.mailbox = ? AND messages.source_message_id = m.mailbox || '|' || CAST(m.uid AS TEXT) AND m.uidvalidity <> ?)
+		    AND m.mailbox = ? AND messages.source_message_id = m.mailbox || '|' || CAST(m.uid AS TEXT) AND m.uidvalidity = ?)
 		FROM messages WHERE source_id = ? AND source_message_id LIKE ? ESCAPE '\'
-	`, mailbox, delta.uidValidity, mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID, pattern)
+	`, mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID, pattern)
 	if err != nil {
 		return fmt.Errorf("read obsolete IMAP keys for %q: %w", mailbox, err)
 	}
@@ -745,8 +743,8 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		var deleted, memberships, old, protected, replaced bool
-		if err := rows.Scan(&c.id, &c.key, &deleted, &memberships, &old, &protected, &replaced); err != nil {
+		var deleted, memberships, old, protected bool
+		if err := rows.Scan(&c.id, &c.key, &deleted, &memberships, &old, &protected); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -760,7 +758,7 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		}
 		c.uid = uint32(uid)
 		_, observed := observations[c.uid]
-		if protected || (!old && replaced && !deleted && observed) {
+		if protected {
 			continue
 		}
 		changed := !present || (previous != 0 && previous != delta.uidValidity)

@@ -787,3 +787,26 @@ func TestIMAPIdentity_OmittedReplacedKeyAllowsAppend(t *testing.T) {
 	assertions.Equal(raw, retainedRaw)
 	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
 }
+
+func TestIMAPIdentity_LiveKeyOwnerBesideOldCanonicalMembership(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newIMAPIdentityFixture(t)
+	oldID := f.createMessage(t, "Drafts|1", "<old@example.com>")
+	f.createMessage(t, "canonical", "<canonical@example.com>")
+	drafts := store.IMAPMailboxDelta{Mailbox: "Drafts", State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, CanonicalSourceMessageID: "canonical"}}}
+	archive := store.IMAPMailboxDelta{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 8}, Memberships: []store.IMAPMembershipObservation{{UID: 7, CanonicalSourceMessageID: "Drafts|1"}}}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	requirements.False(messageTombstoned(t, f.store, oldID))
+	newID := f.createMessage(t, "incoming", "<incoming@example.com>")
+	drafts.Reset = true
+	drafts.State.UIDValidity = 20
+	drafts.Memberships = []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Drafts|1", RFC822MessageID: "<incoming@example.com>"}}
+	archive.Memberships = nil
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
+	var got int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
+	assertions.Equal(newID, got)
+	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
+}
