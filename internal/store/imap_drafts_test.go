@@ -127,3 +127,48 @@ func TestPersistIMAPDraft(t *testing.T) {
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, store.IMAPDraftSourceMessageID(receipt)).Scan(&messageCount))
 	assertions.Equal(1, messageCount)
 }
+
+func TestPersistIMAPDraftRekeysOrphanedSourceDeletedMessage(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "imap://legacy@example.com:143")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "legacy-draft", "Legacy draft")
+	requirements.NoError(err)
+	oldID, err := st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, SourceMessageID: "Drafts|1",
+			ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+		},
+		BodyText: sql.NullString{String: "old draft", Valid: true},
+		RawMIME:  []byte("Subject: Old draft\r\n\r\nold draft\r\n"),
+	})
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?
+	`), oldID)
+	requirements.NoError(err)
+
+	receipt := store.IMAPDraftReceipt{
+		SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
+	}
+	newID, err := st.PersistIMAPDraftContext(context.Background(), receipt, nil,
+		func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID:        source.ID,
+					SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					ConversationID:  conversationID,
+					MessageType:     store.MessageTypeEmail,
+				},
+				BodyText: sql.NullString{String: "new draft", Valid: true},
+				RawMIME:  []byte("Subject: New draft\r\n\r\nnew draft\r\n"),
+			}
+		})
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
+	oldSourceMessageID, err := st.GetMessageSourceID(oldID)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+}

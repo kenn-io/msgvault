@@ -59,10 +59,18 @@ func (s *Store) PersistIMAPDraftContext(
 		// sync's invalidated key; sync still owns membership retirement and cursors.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
-			WHERE source_id = ? AND source_message_id = ? AND EXISTS (
-				SELECT 1 FROM imap_message_memberships
-				WHERE message_id = messages.id AND source_id = messages.source_id
-				  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
+			WHERE source_id = ? AND source_message_id = ? AND (
+				EXISTS (
+					SELECT 1 FROM imap_message_memberships
+					WHERE message_id = messages.id AND source_id = messages.source_id
+					  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
+				) OR (
+					messages.deleted_from_source_at IS NOT NULL
+					AND NOT EXISTS (
+						SELECT 1 FROM imap_message_memberships
+						WHERE message_id = messages.id AND source_id = messages.source_id
+					)
+				)
 			)
 		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity); err != nil {
 			return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
