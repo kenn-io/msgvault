@@ -408,6 +408,63 @@ func TestApplyIMAPMailboxDeltas_ResetSameUIDIdentityMismatchDoesNotReuseCachedSo
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceID)
 }
 
+func TestApplyIMAPMailboxDeltas_ResetPreservesCanonicalAliasCache(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	oldID := f.createMessage(t, "INBOX|1", "<old@example.com>")
+	initial := []store.IMAPMailboxDelta{
+		{
+			Mailbox: "INBOX",
+			State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 10, UIDNext: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "INBOX", UIDValidity: 10, UID: 1,
+				SourceMessageID: "INBOX|1", RFC822MessageID: "<old@example.com>",
+			}},
+		},
+		{
+			Mailbox: "Archive",
+			State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Archive", UIDValidity: 30, UID: 1,
+				SourceMessageID: "Archive|1", CanonicalSourceMessageID: "INBOX|1",
+			}},
+		},
+	}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, initial))
+	newID := f.createMessage(t, "new-source", "<new@example.com>")
+
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+		{
+			Mailbox: "INBOX",
+			State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 20, UIDNext: 2},
+			Reset:   true,
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "INBOX", UIDValidity: 20, UID: 1,
+				SourceMessageID: "INBOX|1", RFC822MessageID: "<new@example.com>",
+			}},
+		},
+		{
+			Mailbox: "Archive",
+			State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 2},
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Archive", UIDValidity: 30, UID: 1,
+				SourceMessageID: "Archive|1", CanonicalSourceMessageID: "INBOX|1",
+			}},
+		},
+	}))
+
+	gotMessageID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 20, 1)
+	assertions.Equal(newID, gotMessageID)
+	var archiveMessageID int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT message_id FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
+	`), f.source.ID, "Archive", 30, 1).Scan(&archiveMessageID))
+	assertions.Equal(oldID, archiveMessageID)
+	assertions.Equal(2, membershipCount(t, f.store, f.source.ID))
+}
+
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

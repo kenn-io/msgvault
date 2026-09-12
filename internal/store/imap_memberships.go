@@ -778,10 +778,11 @@ func captureIMAPMembershipMessageIDs(
 }
 
 type imapMembershipResolver struct {
-	tx             *loggedTx
-	sourceID       int64
-	sourceMessages map[string]int64
-	rawMessages    map[int64]map[[32]byte]int64
+	tx                *loggedTx
+	sourceID          int64
+	sourceMessages    map[string]int64
+	canonicalMessages map[string]int64
+	rawMessages       map[int64]map[[32]byte]int64
 }
 
 // primeIdentities snapshots durable source keys and raw candidates before
@@ -794,15 +795,23 @@ func (r *imapMembershipResolver) primeIdentities(
 	for _, normalized := range deltas {
 		for _, observation := range normalized.delta.Memberships {
 			canonicalResolved := false
-			for _, sourceMessageID := range []string{
-				observation.CanonicalSourceMessageID,
-				observation.SourceMessageID,
+			for _, identity := range []struct {
+				sourceMessageID string
+				canonical       bool
+			}{
+				{sourceMessageID: observation.CanonicalSourceMessageID, canonical: true},
+				{sourceMessageID: observation.SourceMessageID},
 			} {
+				sourceMessageID := identity.sourceMessageID
 				if sourceMessageID == "" {
 					continue
 				}
-				if _, loaded := r.sourceMessages[sourceMessageID]; loaded {
-					if sourceMessageID == observation.CanonicalSourceMessageID {
+				cache := r.sourceMessages
+				if identity.canonical {
+					cache = r.canonicalMessages
+				}
+				if _, loaded := cache[sourceMessageID]; loaded {
+					if identity.canonical {
 						canonicalResolved = true
 					}
 					continue
@@ -819,11 +828,18 @@ func (r *imapMembershipResolver) primeIdentities(
 					return fmt.Errorf(
 						"snapshot IMAP source identity %q: %w", sourceMessageID, err)
 				}
-				if r.sourceMessages == nil {
-					r.sourceMessages = make(map[string]int64)
+				if identity.canonical {
+					if r.canonicalMessages == nil {
+						r.canonicalMessages = make(map[string]int64)
+					}
+					r.canonicalMessages[sourceMessageID] = messageID
+				} else {
+					if r.sourceMessages == nil {
+						r.sourceMessages = make(map[string]int64)
+					}
+					r.sourceMessages[sourceMessageID] = messageID
 				}
-				r.sourceMessages[sourceMessageID] = messageID
-				if sourceMessageID == observation.CanonicalSourceMessageID {
+				if identity.canonical {
 					canonicalResolved = true
 				}
 			}
@@ -843,7 +859,7 @@ func (r *imapMembershipResolver) primeIdentities(
 func (r *imapMembershipResolver) resolve(observation IMAPMembershipObservation) (int64, error) {
 	var messageID int64
 	if observation.CanonicalSourceMessageID != "" {
-		if messageID, ok := r.sourceMessages[observation.CanonicalSourceMessageID]; ok {
+		if messageID, ok := r.canonicalMessages[observation.CanonicalSourceMessageID]; ok {
 			return messageID, nil
 		}
 		err := r.tx.QueryRow(`
