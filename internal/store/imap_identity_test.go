@@ -142,13 +142,51 @@ func TestIMAPIdentity_ResetPreservesCanonicalIdentity(t *testing.T) {
 	assertions.Equal(2, membershipCount(t, f.store, f.source.ID))
 }
 
+func TestIMAPIdentity_ResetKeepsLiveIncumbentWithoutIndependentIdentity(t *testing.T) {
+	for _, messageID := range []string{"", "<shared@example.com>"} {
+		t.Run(messageID, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newIMAPIdentityFixture(t)
+			incumbentID := f.createMessage(t, "INBOX|1", messageID)
+			if messageID != "" {
+				f.createMessage(t, "Archive|2", messageID)
+			}
+			deltas := []store.IMAPMailboxDelta{{
+				Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 10, UIDNext: 2},
+				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "INBOX|1", RFC822MessageID: messageID}},
+			}, {
+				Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 30, UIDNext: 3},
+			}}
+			requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
+			deltas[0].Reset = true
+			deltas[0].State.UIDValidity = 20
+			deltas[1].State.HighestModSeq = 42
+
+			requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
+			gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 20, 1)
+			assertions.Equal(incumbentID, gotID)
+			assertions.False(messageTombstoned(t, f.store, incumbentID))
+			key, err := f.store.GetMessageSourceID(incumbentID)
+			requirements.NoError(err)
+			assertions.Equal("INBOX|1", key)
+			states, err := f.store.GetIMAPFolderStates(f.source.ID)
+			requirements.NoError(err)
+			assertions.ElementsMatch([]store.IMAPFolderState{
+				{Mailbox: "INBOX", UIDValidity: 20, UIDNext: 2},
+				{Mailbox: "Archive", UIDValidity: 30, UIDNext: 3, HighestModSeq: 42},
+			}, states)
+		})
+	}
+}
+
 func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
 	oldID := f.createMessage(t, "Drafts|1", "<draft-shared@example.com>")
 
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		{
 			Mailbox: "Drafts",
 			State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
@@ -165,7 +203,7 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 		},
 	}))
 
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		{
 			Mailbox: "Drafts",
 			State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 30, UIDNext: 2},
@@ -178,10 +216,10 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 	}))
 
 	var sourceMessageID string
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT source_message_id FROM messages WHERE id = ?
 	`), oldID).Scan(&sourceMessageID))
-	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), sourceMessageID)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), sourceMessageID)
 
 	newReceipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 30, UID: 1,
@@ -200,13 +238,13 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 				RawMIME:  []byte("From: alice@example.com\r\n\r\nreused\r\n"),
 			}
 		})
-	require.NoError(err)
-	assert.NotEqual(oldID, newID)
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
 }
 
 func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 10, UID: 1,
@@ -224,17 +262,17 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 				RawMIME:  []byte("Subject: Old draft\r\n\r\nold draft\r\n"),
 			}
 		})
-	require.NoError(err)
-	require.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
+	requirements.NoError(err)
+	requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
 		Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2,
 	}}))
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts",
 		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
 		Reset:   true,
 	}}))
 	newID := f.createMessage(t, "new-source", "<new-draft@example.com>")
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts",
 		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2},
 		Reset:   true,
@@ -245,20 +283,20 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 	}}))
 
 	var gotID int64
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Drafts", 20, 1).Scan(&gotID))
-	assert.Equal(newID, gotID)
+	assertions.Equal(newID, gotID)
 	var sourceMessageID string
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), draftID).Scan(&sourceMessageID))
-	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
 }
 
 func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 10, UID: 1,
@@ -276,25 +314,25 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 				RawMIME:  []byte("Subject: Old draft\r\n\r\nold draft\r\n"),
 			}
 		})
-	require.NoError(err)
-	require.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
+	requirements.NoError(err)
+	requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
 		Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2,
 	}}))
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts", Reset: true,
 		State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
 	}}))
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "INBOX",
 		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 30, UIDNext: 1},
 	}}))
 	var sourceMessageID string
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), draftID).Scan(&sourceMessageID))
-	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
 
 	newID := f.createMessage(t, "new-source", "<recreated-draft@example.com>")
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts", Reset: true,
 		State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2},
 		Memberships: []store.IMAPMembershipObservation{{
@@ -303,20 +341,20 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 		}},
 	}}))
 	var gotID int64
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Drafts", 20, 1).Scan(&gotID))
-	assert.Equal(newID, gotID)
+	assertions.Equal(newID, gotID)
 }
 
 func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
 	messageID := f.createMessage(t, "Old|1", "")
 
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		{
 			Mailbox: "Old",
 			State:   store.IMAPFolderState{Mailbox: "Old", UIDValidity: 10, UIDNext: 2},
@@ -333,7 +371,7 @@ func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testin
 		},
 	}))
 
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Archive",
 		State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 20, UIDNext: 8},
 		Memberships: []store.IMAPMembershipObservation{{
@@ -343,12 +381,12 @@ func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testin
 	}}))
 
 	var gotMessageID int64
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Archive", 20, 7).Scan(&gotMessageID))
-	assert.Equal(messageID, gotMessageID)
-	assert.Equal(1, membershipCount(t, f.store, f.source.ID))
+	assertions.Equal(messageID, gotMessageID)
+	assertions.Equal(1, membershipCount(t, f.store, f.source.ID))
 }
 
 func TestIMAPIdentity_SameEpochOmissionReappears(t *testing.T) {
@@ -537,7 +575,7 @@ func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
 	assertions := assert.New(t)
 
 	f := newIMAPIdentityFixture(t)
-	mailbox := "Drafts%_|box"
+	mailbox := `Drafts%_\[?*]|boxé`
 	nested := mailbox + "|nested"
 	oldID := f.createMessage(t, mailbox+"|1", "<old@example.com>")
 	nestedID := f.createMessage(t, nested+"|1", "<nested@example.com>")
@@ -599,19 +637,19 @@ func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 }
 
 func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
 	oldID := f.createMessage(t, "Drafts|1", "")
 
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts",
 		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
 		Memberships: []store.IMAPMembershipObservation{{
 			Mailbox: "Drafts", UIDValidity: 10, UID: 1, SourceMessageID: "Drafts|1",
 		}},
 	}}))
-	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Drafts",
 		State:   store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2},
 		Reset:   true,
@@ -633,11 +671,11 @@ func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *tes
 				RawMIME:  []byte("From: alice@example.com\r\n\r\nnew draft\r\n"),
 			}
 		})
-	require.NoError(err)
-	assert.NotEqual(oldID, newID)
+	requirements.NoError(err)
+	assertions.NotEqual(oldID, newID)
 	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
 
 func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {

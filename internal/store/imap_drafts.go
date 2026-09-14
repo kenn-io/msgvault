@@ -55,7 +55,10 @@ func (s *Store) PersistIMAPDraftContext(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check IMAP draft membership: %w", err)
 		}
-		// The acknowledged APPEND can reuse an obsolete key while the previous archive row survives.
+		// APPEND can reuse a key held by an old-generation membership at this
+		// UID, a moved row after the folder changes generation, or a tombstoned
+		// orphan with no memberships. Preserve that row under an invalidated key;
+		// sync still owns membership retirement and cursors.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
 			WHERE source_id = ? AND source_message_id = ? AND (EXISTS (
