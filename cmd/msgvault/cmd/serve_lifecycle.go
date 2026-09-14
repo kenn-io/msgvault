@@ -454,7 +454,15 @@ func stopDaemonRuntimeRecord(
 	case createTimeMatch:
 		return stopDaemonProcess(out, rec, apiKey, grace)
 	case createTimeMismatch:
-		return fmt.Errorf("%w: pid %d belongs to a different process", errDaemonIdentityUnconfirmed, rec.PID)
+		proof, err := probeDaemonRuntimeIdentity(context.Background(), rec)
+		if err != nil {
+			return fmt.Errorf("%w: prove pid %d endpoint: %w", errDaemonIdentityUnconfirmed, rec.PID, err)
+		}
+		if proof != daemonIdentityVerified {
+			return fmt.Errorf("%w: endpoint for pid %d did not prove the runtime secret",
+				errDaemonIdentityUnconfirmed, rec.PID)
+		}
+		return stopDaemonByAuthenticatedEndpoint(out, dataDir, rec, apiKey, grace)
 	case createTimeSkew, createTimeUnknown:
 		proof, err := probeDaemonRuntimeIdentity(context.Background(), rec)
 		if err != nil {

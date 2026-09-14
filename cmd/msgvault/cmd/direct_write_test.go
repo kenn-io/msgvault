@@ -494,3 +494,38 @@ func TestDaemonAutostartPreflight_AllowsLiveDaemonWithSkewedCreateTime(t *testin
 	_, statErr := os.Stat(path)
 	assert.NoError(statErr, "runtime record must survive discovery")
 }
+
+func TestDaemonAutostartPreflight_AllowsProvedDaemonWithMismatchedCreateTime(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	cfg := lifecycleTestConfig(dataDir)
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+	const runtimeSecret = "private-runtime-secret"
+	server := newDaemonIdentityProofServer(t, os.Getpid(), runtimeSecret)
+
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: server.Listener.Addr().String(),
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime:    "10000",
+			runtimeShutdownToken: runtimeSecret,
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	daemonOwner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon owner lock")
+	t.Cleanup(func() { require.NoError(daemonOwner.Close(), "release daemon owner lock") })
+	writeOwner, err := tryAcquireWriteOwnerLock(dataDir)
+	require.NoError(err, "acquire write owner lock")
+	t.Cleanup(func() { require.NoError(writeOwner.Close(), "release write owner lock") })
+
+	require.NoError(daemonAutostartPreflight(cfg),
+		"proved clock-stepped daemon must not be mistaken for a direct writer")
+	path, err := daemonRuntimeStore(dataDir).Path(os.Getpid())
+	require.NoError(err, "runtime record path")
+	assert.FileExists(path, "runtime record must survive preflight")
+}

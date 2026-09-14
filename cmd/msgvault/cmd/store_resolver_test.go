@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -587,6 +588,95 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	assert.Equal(localCfg.Server.APIKey, gotAPIKey)
 }
 
+func TestOpenHTTPStoreReadsFromProvedDaemonWithMismatchedCreateTime(t *testing.T) {
+	for _, apiKey := range []string{"", "local-daemon-secret"} {
+		name := "keyless"
+		if apiKey != "" {
+			name = "keyed"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			localCfg := lifecycleTestConfig(dataDir)
+			localCfg.Server.APIKey = apiKey
+			withStoreResolverConfig(t, localCfg)
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+				require.FailNow("proved clock-stepped daemon must not be restarted")
+				return nil, errors.New("unreachable")
+			})
+
+			const runtimeSecret = "private-runtime-secret"
+			var proofReceivedAPIKey atomic.Bool
+			mux := http.NewServeMux()
+			mux.HandleFunc(api.DaemonIdentityPath, func(w http.ResponseWriter, r *http.Request) {
+				proofReceivedAPIKey.Store(r.Header.Get("X-Api-Key") != "")
+				proof, err := daemonauth.Proof(runtimeSecret,
+					r.Header.Get(api.DaemonIdentityChallengeHeader), os.Getpid())
+				if err != nil {
+					http.Error(w, "invalid challenge", http.StatusBadRequest)
+					return
+				}
+				w.Header().Set(api.DaemonIdentityProofHeader, proof)
+				w.WriteHeader(http.StatusNoContent)
+			})
+			mux.Handle(daemon.DefaultPingPath, daemon.NewPingHandler(daemon.PingHandlerOptions{
+				Service: daemonService,
+				Version: Version,
+			}))
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != apiKey {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			})
+			mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != apiKey {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"total_messages":7}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(err, "split listener address")
+
+			_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+				PID:     os.Getpid(),
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(host, portText),
+				Service: daemonService,
+				Version: Version,
+				Metadata: map[string]string{
+					runtimeHost:             host,
+					runtimePort:             portText,
+					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+					runtimeAPISchemaVersion: api.APISchemaVersion,
+					runtimeAuthFingerprint:  daemonAPIKeyFingerprint(apiKey),
+					runtimeCreateTime:       "10000",
+					runtimeShutdownToken:    runtimeSecret,
+				},
+			})
+			require.NoError(err, "write runtime")
+
+			st, info, err := OpenHTTPStore(context.Background())
+			require.NoError(err, "OpenHTTPStore")
+			t.Cleanup(func() { _ = st.Close() })
+			stats, err := st.GetStats()
+			require.NoError(err, "GetStats")
+
+			assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+			assert.Equal(int64(7), stats.MessageCount)
+			assert.False(proofReceivedAPIKey.Load(), "identity proof does not disclose the configured API key")
+		})
+	}
+}
+
 func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -781,26 +871,45 @@ func TestProbeLocalDaemonAuthDoesNotWaitForStats(t *testing.T) {
 }
 
 func TestProbeLocalDaemonAuthDoesNotSendAPIKeyToUnprovenEndpoint(t *testing.T) {
-	var gotAPIKey atomic.Value
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		gotAPIKey.Store(r.Header.Get("X-Api-Key"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	for _, tt := range []struct {
+		name       string
+		createTime string
+	}{
+		{name: "unknown create time", createTime: "unreadable"},
+		{name: "mismatched create time", createTime: "1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotAPIKey atomic.Value
+			var proofRequests atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc(api.DaemonIdentityPath, func(w http.ResponseWriter, r *http.Request) {
+				proofRequests.Add(1)
+				gotAPIKey.Store(r.Header.Get("X-Api-Key"))
+				http.NotFound(w, r)
+			})
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+				gotAPIKey.Store(r.Header.Get("X-Api-Key"))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
 
-	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("configured-api-key"))
-	rt.Record.Metadata[runtimeCreateTime] = "unreadable"
-	rt.Record.Metadata[runtimeShutdownToken] = "private-runtime-secret"
-	c := lifecycleTestConfig(t.TempDir())
-	c.Server.APIKey = "configured-api-key"
+			rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("configured-api-key"))
+			rt.Record.Metadata[runtimeCreateTime] = tt.createTime
+			rt.Record.Metadata[runtimeShutdownToken] = "private-runtime-secret"
+			c := lifecycleTestConfig(t.TempDir())
+			c.Server.APIKey = "configured-api-key"
 
-	err := probeLocalDaemonAuth(context.Background(), rt, c)
+			err := probeLocalDaemonAuth(context.Background(), rt, c)
 
-	require.Error(t, err, "indeterminate process identity requires endpoint proof")
-	assert.Nil(t, gotAPIKey.Load(), "API key must not be transmitted before endpoint possession is proved")
+			require.Error(t, err, "unconfirmed process identity requires endpoint proof")
+			assert.Positive(t, proofRequests.Load(), "unconfirmed endpoint is challenged")
+			if got := gotAPIKey.Load(); got != nil {
+				assert.Empty(t, got, "API key must not be transmitted before endpoint possession is proved")
+			}
+		})
+	}
 }
 
 func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {

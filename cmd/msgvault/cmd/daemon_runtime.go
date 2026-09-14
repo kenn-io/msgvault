@@ -236,16 +236,14 @@ func findRespondingDaemonRuntime(
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	records, err := listLiveDaemonRuntimeRecordsContext(ctx, dataDir)
 	if err != nil {
 		return nil, false, err
 	}
 	for _, rec := range records {
 		switch runtimeRecordIdentity(rec) {
 		case createTimeMatch:
-		case createTimeMismatch:
-			continue
-		case createTimeSkew, createTimeUnknown:
+		case createTimeMismatch, createTimeSkew, createTimeUnknown:
 			proved, proofErr := proveDaemonRuntimeIdentity(ctx, rec)
 			if proofErr != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -277,6 +275,16 @@ func findRespondingDaemonRuntime(
 }
 
 func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error) {
+	return listLiveDaemonRuntimeRecordsContext(context.Background(), dataDir)
+}
+
+func listLiveDaemonRuntimeRecordsContext(ctx context.Context, dataDir string) ([]daemon.RuntimeRecord, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	store := daemonRuntimeStore(dataDir)
 	_, _ = store.CleanupDead()
 	records, err := store.List()
@@ -295,9 +303,21 @@ func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error
 		if !daemon.ProcessAlive(rec.PID) {
 			continue
 		}
-		if runtimeRecordIdentityMismatched(rec) &&
-			(!ownershipHeld || rec.Metadata[runtimeStartupPhase] == "") {
-			continue
+		if runtimeRecordIdentityMismatched(rec) {
+			if ownershipHeld && rec.Metadata[runtimeStartupPhase] != "" {
+				alive = append(alive, rec)
+				continue
+			}
+			proved, proofErr := proveDaemonRuntimeIdentity(ctx, rec)
+			if proofErr != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
+				continue
+			}
+			if !proved {
+				continue
+			}
 		}
 		alive = append(alive, rec)
 	}

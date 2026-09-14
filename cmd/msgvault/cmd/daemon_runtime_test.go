@@ -249,6 +249,60 @@ func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeUnknown(t *test
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
 }
 
+func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeMismatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+	const runtimeSecret = "private-runtime-secret"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case api.DaemonIdentityPath:
+			proof, err := daemonauth.Proof(runtimeSecret,
+				r.Header.Get(api.DaemonIdentityChallengeHeader), os.Getpid())
+			if err != nil {
+				http.Error(w, "invalid challenge", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set(api.DaemonIdentityProofHeader, proof)
+			w.WriteHeader(http.StatusNoContent)
+		case daemon.DefaultPingPath:
+			daemon.NewPingHandler(daemon.PingHandlerOptions{
+				Service: daemonService,
+				Version: "v-test",
+			}).ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: "v-test",
+		Metadata: map[string]string{
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       "10000",
+			runtimeShutdownToken:    runtimeSecret,
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	rt := findDaemonRuntime(dataDir)
+
+	require.NotNil(rt, "runtime secret proof recovers a clock-stepped identity")
+	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
+}
+
 func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T) {
 	t.Run("wrong service", func(t *testing.T) {
 		require := require.New(t)
@@ -443,6 +497,26 @@ func assertRuntimeRecordFileExists(t *testing.T, dataDir string) {
 	assert.NoError(t, statErr, "runtime record file must not be deleted")
 }
 
+func newDaemonIdentityProofServer(t *testing.T, pid int, runtimeSecret string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != api.DaemonIdentityPath {
+			http.NotFound(w, r)
+			return
+		}
+		proof, err := daemonauth.Proof(runtimeSecret,
+			r.Header.Get(api.DaemonIdentityChallengeHeader), pid)
+		if err != nil {
+			http.Error(w, "invalid challenge", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set(api.DaemonIdentityProofHeader, proof)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func TestListLiveDaemonRuntimeRecordsKeepsRecordWithSkewedCreateTime(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -470,6 +544,108 @@ func TestListLiveDaemonRuntimeRecordsKeepsRecordWithSkewedCreateTime(t *testing.
 	require.Len(records, 1, "skewed-but-live record stays discoverable")
 	assert.Equal(os.Getpid(), records[0].PID, "pid")
 	assertRuntimeRecordFileExists(t, dataDir)
+}
+
+func TestListLiveDaemonRuntimeRecordsKeepsServingMismatchWithRuntimeSecretProof(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+	const runtimeSecret = "private-runtime-secret"
+	server := newDaemonIdentityProofServer(t, os.Getpid(), runtimeSecret)
+
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: server.Listener.Addr().String(),
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime:    "10000",
+			runtimeShutdownToken: runtimeSecret,
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	require.Len(records, 1, "proved serving mismatch")
+	assert.Equal(os.Getpid(), records[0].PID, "pid")
+	assertRuntimeRecordFileExists(t, dataDir)
+}
+
+func TestListLiveDaemonRuntimeRecordsDoesNotTrustAnotherDaemonsLeaseForServingMismatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon ownership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+
+	staleProcess := helperProcessCommand(context.Background(), "block")
+	require.NoError(staleProcess.Start(), "start live reused-pid stand-in")
+	t.Cleanup(func() {
+		_ = staleProcess.Process.Kill()
+		_ = staleProcess.Wait()
+	})
+	stalePID := staleProcess.Process.Pid
+	stubProcessCreateTimeMillis(t, func(pid int) (int64, bool) {
+		switch pid {
+		case os.Getpid(), stalePID:
+			return 1_000, true
+		default:
+			return 0, false
+		}
+	})
+
+	proofRequests := make(chan struct{}, 1)
+	staleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == api.DaemonIdentityPath {
+			proofRequests <- struct{}{}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(staleServer.Close)
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime: "1000",
+		},
+	})
+	require.NoError(err, "write valid daemon record")
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     stalePID,
+		Network: daemon.NetworkTCP,
+		Address: staleServer.Listener.Addr().String(),
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime:    "10000",
+			runtimeShutdownToken: "wrong-runtime-secret",
+		},
+	})
+	require.NoError(err, "write stale daemon record")
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	require.Len(records, 1, "only proved or exact serving records")
+	assert.Equal(os.Getpid(), records[0].PID, "valid daemon pid")
+	select {
+	case <-proofRequests:
+	default:
+		assert.Fail("serving mismatch was not challenged",
+			"the directory-wide lease must not authenticate a serving record")
+	}
+	stalePath, err := daemonRuntimeStore(dataDir).Path(stalePID)
+	require.NoError(err, "stale runtime record path")
+	assert.FileExists(stalePath, "rejected runtime record remains inspectable")
 }
 
 func TestCompareProcessCreateTime(t *testing.T) {

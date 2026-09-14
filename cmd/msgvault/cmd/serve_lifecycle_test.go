@@ -450,36 +450,79 @@ func TestStopTargetRequiresProcessIdentityDespiteRespondingPing(t *testing.T) {
 		"unauthenticated ping must not authorize signaling a reused PID")
 }
 
-func TestStopDaemonRuntimeRecordRejectsConfirmedProcessIdentityMismatch(t *testing.T) {
-	require := require.New(t)
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	t.Cleanup(server.Close)
-	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(err, "split listener address")
-	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+func startBlockingDaemonStandIn(t *testing.T) *exec.Cmd {
+	t.Helper()
+	cmd := helperProcessCommand(context.Background(), "block")
+	require.NoError(t, cmd.Start(), "start blocking daemon stand-in")
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd
+}
 
-	rec := daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Metadata: map[string]string{
-			runtimeHost:          host,
-			runtimePort:          portText,
-			runtimeCreateTime:    "10000",
-			runtimeShutdownToken: "private-runtime-secret",
-		},
+func TestStopDaemonRuntimeRecordRejectsUnprovedCreateTimeMismatch(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		identityStatus int
+	}{
+		{name: "not found", identityStatus: http.StatusNotFound},
+		{name: "method not allowed", identityStatus: http.StatusMethodNotAllowed},
+		{name: "invalid proof", identityStatus: http.StatusNoContent},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			standIn := startBlockingDaemonStandIn(t)
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+			owner, err := tryAcquireDaemonOwnerLock(dataDir)
+			require.NoError(err, "acquire daemon ownership")
+			t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+
+			var proofRequests atomic.Int32
+			var shutdownRequests atomic.Int32
+			var privateHeaderSent atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != "" || r.Header.Get(api.DaemonShutdownTokenHeader) != "" {
+					privateHeaderSent.Store(true)
+				}
+				switch r.URL.Path {
+				case api.DaemonIdentityPath:
+					proofRequests.Add(1)
+					w.WriteHeader(tt.identityStatus)
+				case api.DaemonShutdownPath:
+					shutdownRequests.Add(1)
+					w.WriteHeader(http.StatusAccepted)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(err, "split listener address")
+			rec := daemon.RuntimeRecord{
+				PID:     standIn.Process.Pid,
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(host, portText),
+				Service: daemonService,
+				Metadata: map[string]string{
+					runtimeHost:          host,
+					runtimePort:          portText,
+					runtimeCreateTime:    "10000",
+					runtimeShutdownToken: "private-runtime-secret",
+				},
+			}
+
+			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond)
+
+			require.ErrorIs(err, errDaemonIdentityUnconfirmed, "unproved mismatch must be rejected")
+			assert.Positive(proofRequests.Load(), "mismatched endpoint is challenged")
+			assert.Zero(shutdownRequests.Load(), "unproved mismatch never reaches shutdown")
+			assert.False(privateHeaderSent.Load(), "proof failure discloses no API key or shutdown token")
+			assert.True(daemon.ProcessAlive(standIn.Process.Pid), "unproved mismatch is never signaled or killed")
+		})
 	}
-
-	err = stopDaemonRuntimeRecord(io.Discard, t.TempDir(), rec, "configured-api-key", time.Second)
-
-	require.ErrorIs(err, errDaemonIdentityUnconfirmed, "mismatched process must be rejected")
-	require.ErrorContains(err, "belongs to a different process")
-	assert.Zero(t, requests.Load(), "mismatched records must not reach HTTP shutdown or auth endpoints")
 }
 
 func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T) {
@@ -488,6 +531,10 @@ func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T)
 
 func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeSkewed(t *testing.T) {
 	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "6000", 5_000, true, true)
+}
+
+func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeMismatch(t *testing.T) {
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "10000", 1_000, true, true)
 }
 
 func TestStopLiveDaemonsUsesLegacyShutdownWhenCreateTimeUnknown(t *testing.T) {
@@ -593,6 +640,75 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 	assert.Contains(stdout.String(), "Stopped msgvault", "stop confirmation")
 	if !identityEndpointSupported {
 		assert.False(apiKeySent.Load(), "legacy shutdown must not transmit the API key")
+	}
+}
+
+func TestStopDaemonRuntimeRecordNeverSignalsProvedCreateTimeMismatchOnShutdownFailure(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		shutdownStatus int
+		wantError      string
+	}{
+		{name: "shutdown error", shutdownStatus: http.StatusInternalServerError, wantError: "request daemon shutdown"},
+		{name: "ownership timeout", shutdownStatus: http.StatusAccepted, wantError: "ownership lock still held"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			standIn := startBlockingDaemonStandIn(t)
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+			owner, err := tryAcquireDaemonOwnerLock(dataDir)
+			require.NoError(err, "acquire daemon ownership")
+			t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+			const runtimeSecret = "private-runtime-secret"
+
+			var proofRequests atomic.Int32
+			var shutdownRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case api.DaemonIdentityPath:
+					proofRequests.Add(1)
+					proof, proofErr := daemonauth.Proof(runtimeSecret,
+						r.Header.Get(api.DaemonIdentityChallengeHeader), standIn.Process.Pid)
+					if proofErr != nil {
+						http.Error(w, "invalid challenge", http.StatusBadRequest)
+						return
+					}
+					w.Header().Set(api.DaemonIdentityProofHeader, proof)
+					w.WriteHeader(http.StatusNoContent)
+				case api.DaemonShutdownPath:
+					shutdownRequests.Add(1)
+					assert.Equal(runtimeSecret, r.Header.Get(api.DaemonShutdownTokenHeader), "shutdown token")
+					w.WriteHeader(tt.shutdownStatus)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(err, "split listener address")
+			rec := daemon.RuntimeRecord{
+				PID:     standIn.Process.Pid,
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(host, portText),
+				Service: daemonService,
+				Metadata: map[string]string{
+					runtimeHost:          host,
+					runtimePort:          portText,
+					runtimeCreateTime:    "10000",
+					runtimeShutdownToken: runtimeSecret,
+				},
+			}
+
+			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond)
+
+			require.Error(err, "failed authenticated shutdown remains an error")
+			require.ErrorContains(err, tt.wantError)
+			assert.Positive(proofRequests.Load(), "mismatched endpoint is challenged")
+			assert.Equal(int32(1), shutdownRequests.Load(), "shutdown is attempted exactly once")
+			assert.True(daemon.ProcessAlive(standIn.Process.Pid), "proved mismatch is never signaled or killed")
+		})
 	}
 }
 
