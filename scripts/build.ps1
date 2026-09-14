@@ -264,8 +264,8 @@ function Initialize-Arm64DuckDB {
         [string]$CompilerDirectory
     )
 
-    # duckdb-go v2.10504.0 uses DuckDB 1.5.4. Keep these pins aligned with
-    # the Windows ARM64 release job in .github/workflows/release.yml.
+    # duckdb-go v2.10504.0 uses DuckDB 1.5.4. Keep the native library pins
+    # aligned with the Go binding version checked below.
     $duckdbVersion = '1.5.4'
     $duckdbCommit = '08e34c447bae34eaee3723cac61f2878b6bdf787'
     $duckdbGoVersion = (Invoke-Checked go list -m -f '{{.Version}}' github.com/duckdb/duckdb-go/v2 | Out-String).Trim()

@@ -12,7 +12,6 @@ on:
       - 'scripts/smoke-image.sh'
       - '.dockerignore'
       - '.github/workflows/docker.yml'
-      - '.github/workflows/docker-publish.yml'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
