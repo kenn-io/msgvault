@@ -25,6 +25,81 @@ func (failingMessageIDReader) Read([]byte) (int, error) {
 	return 0, errors.New("synthetic staged-ID read failure")
 }
 
+func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	firstDeliveredAt := time.Date(2026, 9, 14, 10, 30, 0, 0, time.UTC)
+	message := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("delivery-evidence").
+		Build()
+
+	messageID, err := f.Store.PersistMessage(&store.MessagePersistData{
+		Message: message,
+		Delivery: &store.MessageDeliveryEvidence{
+			DeliveredAt: sql.NullTime{Time: firstDeliveredAt, Valid: true},
+			IsDelivered: sql.NullBool{Bool: true, Valid: true},
+		},
+	})
+	require.NoError(err)
+	localReadAt := time.Date(2026, 9, 14, 11, 0, 0, 0, time.UTC)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET is_read = ?, read_at = ? WHERE id = ?`),
+		true, localReadAt, messageID)
+	require.NoError(err)
+
+	_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		Message:  message,
+		Delivery: &store.MessageDeliveryEvidence{},
+	})
+	require.NoError(err)
+
+	var gotDeliveredAt, gotReadAt sql.NullTime
+	var gotDelivered, gotRead bool
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT delivered_at, is_delivered, read_at, is_read
+		FROM messages WHERE id = ?`), messageID).Scan(
+		&gotDeliveredAt, &gotDelivered, &gotReadAt, &gotRead,
+	))
+	require.True(gotDeliveredAt.Valid, "delivered_at should remain present")
+	assert.Equal(firstDeliveredAt, gotDeliveredAt.Time.UTC(),
+		"enrichment must keep the first delivered_at instant")
+	assert.True(gotDelivered)
+	require.True(gotReadAt.Valid, "read_at should remain present")
+	assert.Equal(localReadAt, gotReadAt.Time.UTC(),
+		"enrichment must not change the local read_at instant")
+	assert.True(gotRead)
+}
+
+func TestPersistMessageDeliveryEvidenceUsesNewExplicitEvidence(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	message := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("delivery-evidence-update").
+		Build()
+	first := time.Date(2026, 9, 14, 10, 30, 0, 0, time.UTC)
+	second := first.Add(time.Minute)
+
+	var messageID int64
+	for _, deliveredAt := range []time.Time{first, second} {
+		id, err := f.Store.PersistMessage(&store.MessagePersistData{
+			Message: message,
+			Delivery: &store.MessageDeliveryEvidence{
+				DeliveredAt: sql.NullTime{Time: deliveredAt, Valid: true},
+			},
+		})
+		require.NoError(err)
+		messageID = id
+	}
+
+	var got sql.NullTime
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT delivered_at FROM messages WHERE id = ?`), messageID).Scan(&got))
+	require.True(got.Valid, "delivered_at should be present")
+	assert.Equal(t, second, got.Time.UTC(),
+		"delivered_at should use the newest explicit evidence")
+}
+
 // TestUpsertMessagePersistsListID catches a missing list_id column or an
 // upsert that omits the parsed email list identifier.
 func TestUpsertMessagePersistsListID(t *testing.T) {

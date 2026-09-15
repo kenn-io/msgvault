@@ -1040,6 +1040,57 @@ func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
 	assert.Empty(t, result)
 }
 
+func TestStore_SourceMessageMetadata(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	withMetadataID := f.CreateMessage("smm-with-metadata")
+	withoutMetadataID := f.CreateMessage("smm-without-metadata")
+	require.NoError(f.Store.SetMessageMetadata(withMetadataID, sql.NullString{
+		String: `{"status":"Read"}`,
+		Valid:  true,
+	}))
+
+	// Messages that belong to another source must not leak into the result.
+	otherSource, err := f.Store.GetOrCreateSource("imazing_csv", "+15550000009")
+	require.NoError(err)
+	otherConversation, err := f.Store.EnsureConversation(otherSource.ID, "smm-other-thread", "Other Thread")
+	require.NoError(err)
+	_, err = f.Store.UpsertMessage(&store.Message{
+		ConversationID:  otherConversation,
+		SourceID:        otherSource.ID,
+		SourceMessageID: "smm-other-source",
+		MessageType:     "email",
+		SizeEstimate:    1000,
+	})
+	require.NoError(err)
+
+	got, err := f.Store.SourceMessageMetadata(f.Source.ID)
+	require.NoError(err)
+	require.Len(got, 2)
+	assert.Equal(withMetadataID, got["smm-with-metadata"].ID)
+	require.True(got["smm-with-metadata"].Metadata.Valid)
+	assert.JSONEq(`{"status":"Read"}`, got["smm-with-metadata"].Metadata.String)
+	require.True(got["smm-with-metadata"].SourceConversationID.Valid)
+	assert.Equal("default-thread", got["smm-with-metadata"].SourceConversationID.String)
+	assert.Equal(withoutMetadataID, got["smm-without-metadata"].ID)
+	assert.False(got["smm-without-metadata"].Metadata.Valid)
+	assert.NotContains(got, "smm-other-source")
+
+	// Each source's result stays scoped to that source, and a source with
+	// no archived messages yields an empty result.
+	other, err := f.Store.SourceMessageMetadata(otherSource.ID)
+	require.NoError(err)
+	require.Len(other, 1)
+	assert.Contains(other, "smm-other-source")
+	emptySource, err := f.Store.GetOrCreateSource("imazing_csv", "+15550000008")
+	require.NoError(err)
+	empty, err := f.Store.SourceMessageMetadata(emptySource.ID)
+	require.NoError(err)
+	assert.Empty(empty)
+}
+
 func TestStore_ReplaceMessageLabels_Empty(t *testing.T) {
 	f := storetest.New(t)
 

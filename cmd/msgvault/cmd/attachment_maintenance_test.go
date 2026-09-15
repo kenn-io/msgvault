@@ -511,6 +511,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",
+		"import-imazing-csv",
 		"import-imessage",
 		importMboxCommand,
 		"import-messenger",

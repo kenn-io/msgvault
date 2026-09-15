@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -17,6 +17,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 |---|---|
 | [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db` or Apple `ChatStorage.sqlite` |
 | [iMessage](#import-imessage) | macOS `chat.db` |
+| [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
@@ -129,6 +130,64 @@ msgvault import-imessage --contacts ~/contacts.vcf
 ```
 
 `--contacts` accepts a vCard file such as macOS Contacts.app's **File > Export > Export vCard** output. Display names are matched by phone number or email address, and only currently-empty participant names are updated.
+
+## import-imazing-csv
+
+Use this when the original Apple Messages database is gone but an iMazing CSV
+export still exists.
+
+```bash
+msgvault import-imazing-csv ~/Downloads/messages-export \
+  --me +14155550100 --timezone America/Los_Angeles
+```
+
+You can pass either of these layouts:
+
+```text
+messages-export/                 messages-export/
+├── csv/                         ├── conversation-a.csv
+│   └── conversation-a.csv       └── conversation-b.csv
+└── attachments/
+    └── photo.jpg
+```
+
+For the second layout, put `attachments/` beside the directory you pass. CSV
+discovery is non-recursive and accepts comma, tab, or semicolon delimiters.
+Files must contain named `Chat Session`, `Message Date`, `Service`, and `Type`
+columns. The other standard iMazing columns are imported when present.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | (required) | Your phone number or email address; determines outgoing identity |
+| `--timezone` | local IANA zone (required on Windows) | Timezone used for dates without an explicit offset |
+| `--contacts` | — | vCard file used to fill empty participant names by phone or email |
+
+Pass `--timezone` when the export came from a different timezone or the local
+zone cannot be resolved. When the flag is omitted, msgvault resolves the local
+IANA zone on Unix hosts; Windows has no dependable local IANA zone, so the
+flag is required there. The chosen IANA name is stored with the source. A
+later import for the same `--me` value must use the same zone, which keeps
+offset-free dates stable across machines and daylight-saving transitions.
+
+Running the command again converges on the same messages and attachment
+occurrences. New rows are added without moving existing message IDs. Referenced
+files under `attachments/` are copied into msgvault's content-addressed store,
+with a 100 MiB limit per file. Missing files are reported and can be supplied
+on a later rerun. If a previously stored source file disappears, its archived
+bytes stay available. If its bytes change, the same attachment occurrence is
+updated to the new content.
+
+The raw `Replying to` value is always preserved. msgvault creates a reply link
+only when that value contains exact body, sender, and rendered-date evidence
+for one earlier message in the same conversation. Ambiguous replies stay
+unlinked.
+
+!!! note
+    iMazing CSV rows have no IDs shared with Apple's `chat.db`. A rerun of the
+    same CSV is deterministic, but importing overlapping history through both
+    `import-imazing-csv` and `import-imessage` can create duplicates.
 
 ## import-gvoice
 
@@ -283,11 +342,16 @@ Text mode is only available when text data has been imported. See the [TUI docum
 
 ## Deduplication
 
-All importers on this page are safe to run multiple times. Running the same import again does not create duplicates.
+All importers on this page are safe to run multiple times. Running the same
+source import again does not create duplicates within that source. Different
+formats without shared source IDs, such as an iMazing CSV and `chat.db`, can
+still overlap.
 
 ## Resumable Imports
 
-Imports use checkpoint-based resumption. If interrupted (Ctrl+C, power loss), run the same command again and it picks up where it left off.
+Large importers use checkpoints where their source format supports it. Other
+importers, including iMazing CSV, are deterministic: if interrupted, run the
+same command again and existing rows are updated in place.
 
 ## After Importing
 
