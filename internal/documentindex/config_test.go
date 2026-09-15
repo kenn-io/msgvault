@@ -278,6 +278,146 @@ func TestCSVConversionIsOptInAndBindsPDFRouteAndProfile(t *testing.T) {
 	assert.NotEqual(string(disabled), string(enabled))
 }
 
+const pptxMediaType = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+// Docbank's mistraltest has no PPTX-authorized manifest, so use the authenticated probe's row shape.
+func testPPTXCapabilityManifest(t *testing.T, policy mistral.Policy) mistral.CapabilityManifest {
+	t.Helper()
+	manifest := testCapabilityManifest(t, policy)
+	for i := range manifest.Results {
+		result := &manifest.Results[i]
+		if result.FormatID == "pptx" {
+			result.ReasonCode = ""
+			result.UnitBoundMethod = mistral.UnitBoundLocalExact
+			result.LocalUnits = result.UnitsProcessed
+		}
+	}
+	require.NoError(t, manifest.ValidateComplete())
+	return manifest
+}
+
+func TestResolveInputPolicyAuthorizesPPTXFromLocalExactManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	require.NoError(err)
+	manifest := testPPTXCapabilityManifest(t, policy)
+	resolved, err := ResolveInputPolicy(&config, manifest)
+	require.NoError(err)
+	assert.Equal([]string{"application/pdf", pptxMediaType}, resolved.AllowedMediaTypes)
+	route := resolved.Routes[pptxMediaType]
+	assert.Equal("pptx", route.Format.ID)
+	assert.Equal(pptxMediaType, route.Authorization.Format().MediaType)
+	assert.Nil(route.Conversion)
+	for _, result := range manifest.Results {
+		if result.FormatID == "pptx" {
+			assert.Equal(mistral.UnitBoundLocalExact, result.UnitBoundMethod)
+			assert.Equal(1, result.LocalUnits)
+			t.Logf("allowed=%v method=%s local_units=%d", resolved.AllowedMediaTypes, result.UnitBoundMethod, result.LocalUnits)
+		}
+	}
+}
+
+func TestDocumentsProfileBindsPPTXMediaTypeAndManifestEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	require.NoError(err)
+	pdfOnly := testCapabilityManifest(t, policy)
+	withPPTX := testPPTXCapabilityManifest(t, policy)
+	var payloads [2]map[string]any
+	var fingerprints [2]string
+	for i, manifest := range []mistral.CapabilityManifest{pdfOnly, withPPTX} {
+		resolved, err := ResolveInputPolicy(&config, manifest)
+		require.NoError(err)
+		policyJSON, err := config.ProfilePolicyJSON(manifest, resolved.AllowedMediaTypes)
+		require.NoError(err)
+		require.NoError(json.Unmarshal(policyJSON, &payloads[i]))
+		fingerprints[i], err = config.ProfileFingerprint(manifest, resolved.AllowedMediaTypes)
+		require.NoError(err)
+	}
+	assert.Equal([]any{"application/pdf", pptxMediaType}, payloads[1]["allowed_media_types"])
+	assert.Equal([]any{"application/pdf"}, payloads[0]["allowed_media_types"])
+	assert.NotEqual(payloads[0]["document_policy_fingerprint"], payloads[1]["document_policy_fingerprint"])
+	assert.NotEqual(fingerprints[0], fingerprints[1])
+	assert.Equal("466816abfedf47e64d25db7b38262b15d3a52077fd0856340fedd0227b600843", payloads[0]["document_policy_fingerprint"])
+	t.Logf("PDF-only document_policy_fingerprint=%s; PPTX admitted routes=1", payloads[0]["document_policy_fingerprint"])
+}
+
+func TestResolveInputPolicyKeepsUnprovedFormatsBlocked(t *testing.T) {
+	for _, csvEnabled := range []bool{false, true} {
+		name := "pptx_bound_unverified"
+		if csvEnabled {
+			name += "_csv_enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			config := DefaultDocumentsConfig()
+			config.RetentionPosture = RetentionZDR
+			config.TrainingPosture = TrainingOptedOut
+			config.Conversion.CSV.Enabled = csvEnabled
+			policy, err := config.MistralPolicy()
+			require.NoError(t, err)
+			resolved, err := ResolveInputPolicy(&config, testCapabilityManifest(t, policy))
+			require.NoError(t, err)
+			want := []string{"application/pdf"}
+			if csvEnabled {
+				want = append(want, "text/csv")
+			}
+			assert.Equal(t, want, resolved.AllowedMediaTypes)
+			t.Logf("allowed=%v", resolved.AllowedMediaTypes)
+		})
+	}
+	t.Run("unbounded_rows_stay_blocked", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		config := DefaultDocumentsConfig()
+		config.RetentionPosture = RetentionZDR
+		config.TrainingPosture = TrainingOptedOut
+		policy, err := config.MistralPolicy()
+		require.NoError(err)
+		resolved, err := ResolveInputPolicy(&config, testPPTXCapabilityManifest(t, policy))
+		require.NoError(err)
+		for _, id := range []string{"docx", "xlsx", "ppt", "odt", "epub", "txt"} {
+			format, found := mistral.CandidateFormatByID(id)
+			require.True(found)
+			assert.NotContains(resolved.Routes, format.MediaType)
+		}
+	})
+	t.Run("legacy_passing_unbounded_pptx", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		config := DefaultDocumentsConfig()
+		config.RetentionPosture = RetentionZDR
+		config.TrainingPosture = TrainingOptedOut
+		policy, err := config.MistralPolicy()
+		require.NoError(err)
+		manifest := testCapabilityManifest(t, policy)
+		for i := range manifest.Results {
+			row := &manifest.Results[i]
+			if row.FormatID == "pptx" {
+				row.UnitBoundMethod = mistral.UnitBoundNone
+				row.ReasonCode = ""
+				row.FixtureUnits, row.BoundRequestedUnits, row.BoundUnitsProcessed, row.LocalUnits = 0, 0, 0, 0
+			}
+		}
+		validationErr := manifest.ValidateComplete()
+		resolved, err := ResolveInputPolicy(&config, manifest)
+		t.Logf("legacy validation=%v allowed=%v err=%v", validationErr, resolved.AllowedMediaTypes, err)
+		require.Error(validationErr)
+		require.ErrorContains(err, "no format has authorized upload authority")
+		assert.Empty(resolved.AllowedMediaTypes)
+		config.Conversion.CSV.Enabled = true
+		_, err = ResolveInputPolicy(&config, manifest)
+		require.ErrorContains(err, "no format has authorized upload authority")
+	})
+}
+
 func TestDocumentsConfigResolvesAPIKeyOnlyOnDemand(t *testing.T) {
 	config := DefaultDocumentsConfig()
 	t.Setenv(config.APIKeyEnv, "synthetic-secret")

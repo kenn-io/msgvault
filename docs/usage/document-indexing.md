@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
@@ -17,6 +17,9 @@ What works today:
 - Filters for a person, source, message, attachment, message type, and date.
 - Optional local CSV-to-PDF conversion so CSV tables can enter the extraction
   pipeline.
+- PowerPoint `.pptx` presentations upload with their original bytes when the
+  capability manifest records a passing local slide count. Each slide becomes
+  a source unit.
 
 Limits:
 
@@ -68,6 +71,17 @@ to send queries to the embedding provider.
     so the resolver excludes it while conversion is disabled. Enabling CSV
     conversion adds a source route that sends generated PDF bytes after local
     conversion.
+
+    PPTX is authorized only when the manifest's PPTX row passed with
+    `unit_bound_method` set to `local_exact`. Docbank counts the deck's slides,
+    hidden slides included, before upload. Decks above `max_pages_per_document`
+    fail locally. A provider slide count that differs from the local count
+    records `provider_capability_changed` without publishing.
+
+    A manifest from an earlier Docbank version that marked PPTX as passing
+    without a slide bound no longer validates. Run a fresh probe before PDF,
+    CSV, or PPTX extraction. Adding PPTX changes the profile fingerprint and
+    requires `documents consent-mistral` again.
 
 Provider uploads are manual-only. `msgvault serve` performs weekly local
 reconciliation and derivative cleanup when document indexing is enabled, but it

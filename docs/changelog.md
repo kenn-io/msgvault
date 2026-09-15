@@ -112,6 +112,8 @@ See [people](usage/people.md), [profile automation](usage/people-automation.md),
 - Extract attachment text with the shared Docbank engine and search it by
   keyword, meaning, or both. CSV files can opt into local PDF conversion while
   retaining their original file identity and extraction history.
+  PowerPoint PPTX attachments can be indexed from their original bytes after a
+  fresh capability probe proves Docbank's local slide bound.
 - Search image and video content through a separately configured visual
   provider, after its capabilities have been checked.
 - Find mailing-list traffic with `list:` or `list-id:` and browse Lists
