@@ -965,3 +965,13 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 		"--json output must be valid JSON with zero results, got: %q", out)
 	assert.Empty(results)
 }
+
+func TestOutputSearchResultsJSONIncludesBrowserURL(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	done := captureStdout(t)
+	require.NoError(outputSearchResultsJSON([]query.MessageSummary{{ID: 42, WebURL: "https://archive.example/?explore=selection"}}))
+	var result []map[string]any
+	require.NoError(json.Unmarshal([]byte(done()), &result))
+	require.Len(result, 1)
+	assert.Equal("https://archive.example/?explore=selection", result[0]["web_url"])
+}

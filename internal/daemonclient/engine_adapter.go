@@ -757,7 +757,7 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "message filter"); err != nil {
 		return nil, err
 	}
-	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
+	return e.store.messageSummariesWithURLs(resp.JSON200.Messages), nil
 }
 
 // GetMessage returns a single message by ID.
@@ -770,7 +770,11 @@ func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail
 		return nil, err
 	}
 
-	return queryDetailFromAPIMessage(msg), nil
+	detail := queryDetailFromAPIMessage(msg)
+	if detail != nil {
+		detail.WebURL = e.store.messageWebURL(detail.ID)
+	}
+	return detail, nil
 }
 
 func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
@@ -865,6 +869,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 		}
 		summary := query.MessageSummary{
 			ID:                   md.ID,
+			WebURL:               md.WebURL,
 			SourceID:             md.SourceID,
 			SourceMessageID:      md.SourceMessageID,
 			ConversationID:       md.ConversationID,
@@ -954,7 +959,7 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	if err != nil {
 		return nil, err
 	}
-	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
+	return e.store.messageSummariesWithURLs(resp.JSON200.Messages), nil
 }
 
 // SearchDeep preserves the TUI's complete view filter across the daemon
@@ -1035,7 +1040,7 @@ func (e *Engine) SearchDeepWithStats(
 		return nil, err
 	}
 	return &query.SearchFastResult{
-		Messages:   messageSummariesFromGenerated(resp.JSON200.Messages),
+		Messages:   e.store.messageSummariesWithURLs(resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
 	}, nil
@@ -1074,7 +1079,11 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 	if resp.JSON200.Scope == nil || *resp.JSON200.Scope != "body" {
 		return nil, errors.New("daemon did not confirm body-only search scope; upgrade the daemon to API schema 1.3.0 or newer")
 	}
-	return bodySearchSummariesFromGenerated(resp.JSON200.Messages, resp.JSON200.BodyContexts)
+	messages, err := bodySearchSummariesFromGenerated(resp.JSON200.Messages, resp.JSON200.BodyContexts)
+	for i := range messages {
+		messages[i].WebURL = e.store.messageWebURL(messages[i].ID)
+	}
+	return messages, err
 }
 
 // SearchFast searches message metadata only (no body text).
@@ -1135,7 +1144,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 		return nil, err
 	}
 	return &query.SearchFastResult{
-		Messages:   messageSummariesFromGenerated(resp.JSON200.Messages),
+		Messages:   e.store.messageSummariesWithURLs(resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
 	}, nil
@@ -1308,7 +1317,7 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 	if resp.JSON200 == nil {
 		return nil, nil
 	}
-	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
+	return e.store.messageSummariesWithURLs(resp.JSON200.Messages), nil
 }
 
 // ListAccounts returns all archive source accounts.

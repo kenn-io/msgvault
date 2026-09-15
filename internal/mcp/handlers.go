@@ -1495,6 +1495,7 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
+	WebURL               string                 `json:"web_url,omitempty"`
 	ID                   int64                  `json:"id"`
 	SourceMessageID      string                 `json:"source_message_id"`
 	ConversationID       int64                  `json:"conversation_id"`
@@ -1589,6 +1590,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	}
 
 	return jsonResult(getMessageResponse{
+		WebURL:               msg.WebURL,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,

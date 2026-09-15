@@ -652,6 +652,7 @@ type CLIQueryMessageSummary struct {
 	SourceMessageID      string     `json:"source_message_id" validate:"required"`
 	Subject              string     `json:"subject" validate:"required"`
 	To                   []Address  `json:"to,omitempty"`
+	WebURL               *string    `json:"web_url,omitempty"`
 }
 
 func (c CLIQueryMessageSummary) Validate() error {

@@ -202,7 +202,7 @@ func newMCPServerWithPolicy(
 				Resources: &sdkmcp.ResourceCapabilities{},
 				Tools:     &sdkmcp.ToolCapabilities{},
 			},
-			Instructions: archiveSafetyInstructions,
+			Instructions: archiveSafetyInstructions + " Use returned web_url values when linking to archived messages.",
 			SchemaCache:  mcpSchemaCache,
 		},
 	)

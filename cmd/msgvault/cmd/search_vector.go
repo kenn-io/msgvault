@@ -126,6 +126,9 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 			"sent_at":    r.SentAt.Format(time.RFC3339),
 			"boosted":    r.SubjectBoosted,
 		}
+		if r.Message.WebURL != "" {
+			row["web_url"] = r.Message.WebURL
+		}
 		if r.RRFScore != nil && !math.IsNaN(*r.RRFScore) {
 			row["rrf_score"] = *r.RRFScore
 		}

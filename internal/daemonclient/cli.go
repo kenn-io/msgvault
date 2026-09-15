@@ -917,7 +917,11 @@ func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISe
 	if err != nil {
 		return nil, err
 	}
-	return cliSearchFromGenerated(resp.JSON200), nil
+	result := cliSearchFromGenerated(resp.JSON200)
+	for i := range result.Results {
+		result.Results[i].WebURL = c.messageWebURL(result.Results[i].ID)
+	}
+	return result, nil
 }
 
 func (c *Client) GetCLIHybridSearch(
@@ -966,7 +970,14 @@ func (c *Client) GetCLIHybridSearch(
 	if err != nil {
 		return nil, err
 	}
-	return cliHybridSearchFromGenerated(hybridResp)
+	result, err := cliHybridSearchFromGenerated(hybridResp)
+	if err != nil {
+		return nil, err
+	}
+	for i := range result.Results {
+		result.Results[i].Message.WebURL = c.messageWebURL(result.Results[i].Message.ID)
+	}
+	return result, nil
 }
 
 func (c *Client) FindSimilarMessages(
@@ -1002,7 +1013,7 @@ func (c *Client) FindSimilarMessages(
 			Fingerprint: resp.JSON200.Generation.Fingerprint,
 			State:       resp.JSON200.Generation.State,
 		},
-		Messages: messageSummariesFromGenerated(resp.JSON200.Messages),
+		Messages: c.messageSummariesWithURLs(resp.JSON200.Messages),
 	}, nil
 }
 
@@ -1298,7 +1309,11 @@ func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDe
 	if err != nil {
 		return nil, err
 	}
-	return cliMessageDetailFromGenerated(resp.JSON200), nil
+	message := cliMessageDetailFromGenerated(resp.JSON200)
+	if message != nil {
+		message.WebURL = c.messageWebURL(message.ID)
+	}
+	return message, nil
 }
 
 func (c *Client) GetCLIMessageRaw(ctx context.Context, id string) ([]byte, string, error) {
@@ -1439,4 +1454,22 @@ func cliAccountUpdateResultFromGenerated(result *generated.UpdateResult) *CLIAcc
 		Email:       result.Email,
 		DisplayName: result.DisplayName,
 	}
+}
+
+// messageWebURL uses the existing Explore state contract and the selected
+// daemon's browser origin. Message IDs are local to that daemon.
+func (c *Client) messageWebURL(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	state := fmt.Sprintf(`{"schemaVersion":2,"workspace":"everything","selectedRow":"message:%d"}`, id)
+	return c.baseURL + "/?explore=" + url.QueryEscape(state)
+}
+
+func (c *Client) messageSummariesWithURLs(messages []generated.MessageSummary) []query.MessageSummary {
+	result := messageSummariesFromGenerated(messages)
+	for i := range result {
+		result[i].WebURL = c.messageWebURL(result[i].ID)
+	}
+	return result
 }

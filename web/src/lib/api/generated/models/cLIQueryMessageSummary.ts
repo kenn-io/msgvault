@@ -26,5 +26,6 @@ export interface CLIQueryMessageSummary {
   source_message_id: string;
   subject: string;
   to?: Address[];
+  web_url?: string;
   [key: string]: unknown;
 }

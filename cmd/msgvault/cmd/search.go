@@ -290,6 +290,9 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"attachment_count":       msg.AttachmentCount,
 			"labels":                 msg.Labels,
 		}
+		if msg.WebURL != "" {
+			output[i]["web_url"] = msg.WebURL
+		}
 		if msg.DeletedAt != nil {
 			output[i]["deleted_from_source_at"] = msg.DeletedAt.UTC().Format(time.RFC3339)
 		}

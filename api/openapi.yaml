@@ -831,6 +831,8 @@ components:
           items:
             $ref: "#/components/schemas/Address"
           type: array
+        web_url:
+          type: string
       required:
         - id
         - source_message_id

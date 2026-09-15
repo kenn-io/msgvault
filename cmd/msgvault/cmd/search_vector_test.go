@@ -54,6 +54,7 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 	assert.Contains(out, `"returned_count": 1`, "returned_count")
 	assert.Contains(out, `"from_email": "alice@example.com"`, "from_email")
 	assert.Contains(out, `"boosted": true`, "boosted")
+	assert.Contains(out, srv.URL+"/?explore=%7B%22schemaVersion%22%3A2%2C%22workspace%22%3A%22everything%22%2C%22selectedRow%22%3A%22message%3A", "browser URL")
 	assert.Contains(out, `"rrf_score": 0.5`, "rrf_score")
 	assert.NotContains(out, "bm25_score", "bm25 is hidden without --explain")
 	assert.NotContains(out, "vector_score", "vector score is hidden without --explain")

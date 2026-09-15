@@ -23,6 +23,8 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
+	// WebURL is derived by the daemon client for browser navigation.
+	WebURL                       string     `json:"web_url,omitempty"`
 	ID                           int64      `json:"id"`
 	SourceID                     int64      `json:"source_id,omitempty"`
 	SourceMessageID              string     `json:"source_message_id"`
@@ -61,6 +63,8 @@ type DeletionTarget struct {
 
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
+	// WebURL is derived by the daemon client for browser navigation.
+	WebURL               string     `json:"web_url,omitempty"`
 	ID                   int64      `json:"id"`
 	SourceID             int64      `json:"source_id,omitempty"`
 	SourceMessageID      string     `json:"source_message_id"`

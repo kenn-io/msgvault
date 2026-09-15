@@ -4279,3 +4279,10 @@ func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
 	checks.Equal(http.StatusMethodNotAllowed, authorized.Code)
 	checks.Equal(http.MethodPost, authorized.Header().Get("Allow"))
 }
+
+func TestGetMessagePreservesBrowserURL(t *testing.T) {
+	const link = "https://archive.example/?explore=%7B%22workspace%22%3A%22everything%22%2C%22selectedRow%22%3A%22message%3A42%22%7D"
+	h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, WebURL: link}}})
+	result := runTool[map[string]any](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
+	assert.Equal(t, link, result["web_url"])
+}

@@ -28,7 +28,8 @@ Uses configured remote server or the local daemon by default.
 Use --local to use the local daemon even when a remote is configured.
 
 This command displays the full message including headers, body, labels,
-and attachment information. Use --json for programmatic output.
+and attachment information. Use --json for programmatic output, including
+a web_url that opens the message in the selected daemon browser UI.
 
 Examples:
   msgvault show-message 12345
@@ -212,6 +213,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		"body_html":              msg.BodyHTML,
 	}
 
+	if msg.WebURL != "" {
+		output["web_url"] = msg.WebURL
+	}
 	if msg.ReceivedAt != nil {
 		output["received_at"] = msg.ReceivedAt.Format(time.RFC3339)
 	}
