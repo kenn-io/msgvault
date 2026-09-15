@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-15"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,253 +8,249 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-Work after **0.19.3** adds richer people profiles, document and image search,
-background operations, and more ways to import and maintain your history.
-These changes cover current `main` through **September 9, 2026** and are not
-included in 0.19.3. Follow the linked task guides for current usage details.
-
-### Email identifiers
-
-Apple Mail imports now preserve RFC Message-ID and link unambiguous replies
-within the same source. `show-message --json` and analytics SQL expose
-`rfc822_message_id`. Re-import an existing archive to fill missing IDs, then
-rebuild the cache; see [recovery instructions](usage/importing.md#message-identifiers-and-replies).
+Since **0.19.3**, msgvault has added richer people profiles, document and image
+search, background operations, and more ways to import and maintain an archive.
+This section covers work on `main` through **September 15, 2026**. These changes
+are not included in 0.19.3; this is not a new release announcement.
 
 ### Upgrade and compatibility
 
 - **Back up before opening an existing archive with a newer binary.** SQLite
-  schema changes run on writable open. Keep the [backup repository](usage/backup.md)
-  outside your archive home. PostgreSQL users need their own database backup;
-  see [backend limits](architecture/postgresql.md).
+  schema changes run on writable open. Keep the
+  [backup repository](usage/backup.md) outside your archive home. PostgreSQL
+  users need their own database backup; see
+  [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.24.0**. Old analytical
-  `/api/v1/people/*` routes now live under `/api/v1/participants/*`. Durable
-  profiles moved from `/api/v1/persons/*` to `/api/v1/people/*`. Old paths were
-  removed, not aliased. Local and remote clients reject incompatible daemons;
-  authenticated `/api/v1/health` reports `api_schema_version`. See
-  [daemon migration](guides/daemon-migration.md) and [API compatibility](api-server.md).
-- **CardDAV response shapes changed at schema 2.14.0.** Publication and conflict
-  responses use bounded projections and omit raw vCards and resource hrefs.
-- **Inferred profile changes need review before CardDAV export (schema
-  2.24.0).** Facts msgvault inferred rather than you declared are no longer
-  sent to the address book automatically. Sync skips such people, publishing
-  them fails with HTTP 409 `carddav_inference_review_required`, and
-  `msgvault person publish <id> --preview` / `--approve <token>` or the
-  matching `/preview` and `/approve` routes review and approve the exact
-  card. See the [CardDAV guide](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
-- **Existing embeddings use generation-based coverage.** The first writable
-  open preserves active vectors and backfills coverage, excluding messages
-  awaiting re-embedding; it then drops `pending_embeddings`. An in-flight
-  rebuild is not backfilled. For a matching generation, scheduled embedding
-  or `embeddings resume --backstop` handles stragglers. A changed fingerprint
-  reports `index_stale` until `embeddings build --full-rebuild --yes` completes.
-  Older fingerprints can be stale even with unchanged configuration. See
+  compatibility boundary; the current schema is **2.25.0**. Analytical
+  `/api/v1/people/*` routes moved to `/api/v1/participants/*`. Durable profiles
+  moved from `/api/v1/persons/*` to `/api/v1/people/*`. The old paths were
+  removed. Clients reject incompatible daemons; authenticated `/api/v1/health`
+  reports `api_schema_version`. See
+  [daemon migration](guides/daemon-migration.md).
+- **Review CardDAV integrations.** Since schema 2.14.0, publication and conflict
+  responses use bounded summaries without raw vCards or resource hrefs. Since
+  2.25.0, inferred profile changes require approval of the exact card before
+  export. Sync skips people awaiting review; direct publication returns HTTP 409
+  `carddav_inference_review_required`. Use `person publish <id> --preview` and
+  `--approve <token>`, or the matching API routes. See
+  [CardDAV review](usage/people-carddav.md#review-inferred-changes-before-they-are-exported).
+- **Check embedding status before rebuilding.** Upgrading preserves active
+  vectors and converts their coverage records, except for work already awaiting
+  re-embedding or an in-flight rebuild. For a matching generation, scheduled
+  embedding or `embeddings resume --backstop` fills remaining gaps. A changed
+  fingerprint reports `index_stale` and requires
+  `embeddings build --full-rebuild --yes`; older fingerprints can be stale even
+  with unchanged configuration. See
   [vector upgrades](usage/vector-search.md#upgrading-an-existing-archive).
-- **Check people-provider consent after upgrading.** Status exposes checks and
-  consent from an earlier extraction program. Run `msgvault person provider
-  status --all` to review them. `msgvault person provider reverify NAME --yes`
-  performs a synthetic check before recording current exact consent.
-  Historical profiles remain readable for `status --all` and `revoke --all`.
-  See [profile automation](usage/people-automation.md).
-- **Review chat media settings.** Rooms with more than 20 participants now skip
-  media by default. Review [media policy](configuration.md#media-policy) for
-  per-account overrides, attachment size limits, and backfill behavior.
-- **Remote deletion stays opt-in.** The invoking CLI must enable
-  `[deletion] remote_enabled = true` or use `MSGVAULT_ENABLE_REMOTE_DELETE=1`.
-  Both mechanisms are permanent options. A daemon's own configuration or
-  environment does not grant another client's consent. Gmail and IMAP default
-  to moving messages to Trash; `--permanent` requests permanent deletion.
-  Archived content is retained until a separate local purge. See
+- **Check people-provider consent.** `person provider status --all` identifies
+  checks and consent from an earlier extraction program.
+  `person provider reverify NAME --yes` runs a synthetic check and records
+  consent for the current program. Historical profiles remain available to
+  `status --all` and `revoke --all`. See
+  [profile automation](usage/people-automation.md).
+- **Review chat media settings.** Rooms with more than 20 participants skip
+  media by default. Beeper, Slack, and Teams default to 250 MiB per attachment;
+  Discord remains 50 MiB. Explicit size settings stay unchanged. See
+  [media policy](configuration.md#media-policy) for overrides and backfill.
+- **Remote deletion remains opt-in and preserves your archive.** The invoking
+  CLI must enable `[deletion] remote_enabled = true` or set
+  `MSGVAULT_ENABLE_REMOTE_DELETE=1`. Both options remain supported. The daemon's
+  configuration does not grant another client's consent. Gmail and IMAP move
+  mail to Trash by default; `--permanent` requests permanent source deletion. A
+  separate local purge removes archived content. See
   [deleting email](usage/deletion.md).
 
-Keyword search and basic archive browsing do not require a model provider.
-Enable optional features after the archive is usable.
+Keyword search and basic browsing do not require a model provider. Optional
+features can be enabled after the archive is usable.
 
 ### People and relationships
 
-- Add `person directory` to browse promoted people by last contact, with inclusive date filters, selectable ordering, cursor pagination, and JSON page output. Preserve the existing `person list` behavior.
+- Maintain structured names, contact details, addresses, dates, categories,
+  private notes, organizations, employment, and relationships with start and end
+  dates. Merge or split duplicate profiles, inspect the history, and reverse
+  supported merges.
+- Browse saved people by last contact in Web Directory, `person directory`, and
+  MCP's `list_directory_people`. Filter by dates and contact details, choose an
+  order, and page through results. `person list` retains its existing use.
+- Find a person by remembered profile facts with semantic search. Find their
+  files across attachment metadata, document text, and the visual index.
+- Keep the evidence behind profile facts, pin corrections, and repair derived
+  values when their inputs change. Curated names now appear in analytics, search
+  results, and exported authors. `export-messages --person-id` selects messages
+  through the person's bound participants.
+- Maintain tracked profiles with consented provider sweeps. Profiles support
+  OpenAI Chat, OpenAI Responses, Anthropic Messages, and Gemini. Codex
+  app-server configuration exists, but no executable is approved by its release
+  gate. The CLI can add, update, check, select, and reverify profiles.
+- Configure separate Exa or SixtyFour enrichment with exact consent, request
+  limits, and suppression controls.
+- Generate a **“Last time we talked”** brief for an enrolled person and inspect
+  its cited sources and earlier versions. Briefs use supported chat and text
+  messages; email, meetings, documents, and your replies are excluded. CLI, TUI,
+  Web Directory, and API manage briefs; MCP reads saved versions.
+- Review Beeper identity candidates across sources. Strong provider or Beeper
+  identifiers can link automatically; same-service usernames require review, and
+  conflicting bindings remain separate.
+- Import CardDAV contacts and publish selected profiles with conflict review and
+  lossless vCard handling. Connect **Google Contacts** through OAuth from Web
+  Settings or the CLI. Contact sync now works with iCloud servers that reject
+  full URLs in requests for individual cards.
+- Record `how_we_met` and up to 280 characters in seeded text attributes.
+  Multiline Notes retain their separate behavior.
 
-- Maintain structured names, contact points, addresses, dates, categories,
-  private notes, organizations, employment, and typed temporal relationships.
-  Merge and split profiles with inspectable history and supported reversal.
-- Track contact activity over time and use semantic person search or a person's
-  file search across metadata, documents, and visual indexes.
-- Preserve profile evidence in a fact ledger, resolve values deterministically,
-  pin user decisions, and repair derived facts as inputs change.
-- Maintain tracked profiles through consented provider sweeps. Explicit profiles
-  support OpenAI Chat, OpenAI Responses, Anthropic Messages, and Gemini.
-  Codex app-server configuration is present, but no executable is currently
-  approved by its release gate. Add, update, check, select, and reverify
-  profiles through the CLI.
-- Configure separate Exa or SixtyFour enrichment policies with exact consent,
-  request limits, and suppression controls.
-- Generate a versioned **“Last time we talked”** brief for an enrolled person,
-  with citations to their recent supported chat and text messages. Email,
-  meetings, documents, and the user's replies are excluded. CLI, TUI, Web
-  Directory, and API manage briefs; MCP reads saved versions.
-- Add Beeper identity candidates: strong provider/Beeper identifiers can link
-  automatically, while same-service username matches require review and
-  conflicting bindings stay separate. See [Beeper](usage/beeper.md#review-identities-across-sources).
-- Import and publish CardDAV contacts with conflict resolution and lossless
-  vCard resource handling.
-- Apply curated display names to analytics, search, and exported authors.
-  `export-messages --person-id` selects messages through bound participants.
-- Add the `how_we_met` field and widen seeded text attributes to 280 characters;
-  the multiline Notes field retains its separate behavior.
-
-See [people and profiles](usage/people.md), [profile automation](usage/people-automation.md),
-[external enrichment](usage/people-enrichment.md), and [CardDAV](usage/people-carddav.md).
+See [people](usage/people.md), [profile automation](usage/people-automation.md),
+[enrichment](usage/people-enrichment.md), [briefs](usage/people-briefs.md),
+[Beeper identities](usage/beeper.md#review-identities-across-sources), and
+[CardDAV](usage/people-carddav.md).
 
 ### Search and attachments
 
-- Add contextual embedding windows for Beeper and meeting transcripts,
-  account/collection-scoped builds, and embedding task-prefix support.
-  Scope is part of the generation fingerprint; changing it requires a rebuild.
-  Out-of-scope messages can still match the keyword component of hybrid search.
-- Index document attachments through the shared Docbank engine, with extracted
-  text, chunks, and lexical, semantic, and hybrid retrieval. CSV extraction can
-  opt into local PDF conversion while retaining CSV identity and provenance.
-- Add separately configured, capability-checked visual attachment search.
-- Index RFC 2919 mailing-list identifiers for `list:` and `list-id:` search and
-  Lists grouping. `repair-list-ids` backfills old mail offline, with `--apply`
-  required to write. `conversation_id:` selects a local conversation.
-- Archive remote email images only after explicit opt-in, including a separate
-  backfill for existing mail. Archived images display locally without changing
-  stored MIME or HTML. Downloads can activate tracking.
+- Search Beeper chats and meeting transcripts with embeddings that include
+  nearby messages. Build embeddings for selected accounts or collections and
+  configure model-specific task prefixes. Changing scope requires a rebuild;
+  hybrid search can still find out-of-scope messages through keyword matching.
+- Extract attachment text with the shared Docbank engine and search it by
+  keyword, meaning, or both. CSV files can opt into local PDF conversion while
+  retaining their original file identity and extraction history.
+- Search image and video content through a separately configured visual
+  provider, after its capabilities have been checked.
+- Find mailing-list traffic with `list:` or `list-id:` and browse Lists
+  grouping. `repair-list-ids` previews an offline backfill; `--apply` writes it.
+  Use `conversation_id:` to select one local conversation.
+- Choose whether search includes, excludes, or shows only messages deleted from
+  their source. Their local content remains available until purged.
+- Preserve remote email images for offline reading after explicit opt-in, with a
+  separate backfill for existing mail. Stored MIME and HTML remain unchanged.
+  Fetching these images can activate tracking.
 
 See [searching](usage/searching.md), [vector search](usage/vector-search.md),
-[document indexing](usage/document-indexing.md), and [remote images](usage/remote-images.md).
+[document indexing](usage/document-indexing.md), and
+[remote images](usage/remote-images.md).
 
 ### Browser, terminal, and integrations
 
-- Saved Views for AI assistants: the MCP server exposes `list_saved_views`,
-  `get_saved_view`, and `run_saved_view` (read-only) plus `create_saved_view`,
-  `update_saved_view`, and `delete_saved_view` (write-class, hidden over
-  StreamableHTTP unless `--http-allow-writes` is set). A new
-  `POST /api/v1/saved-views/{id}/run` endpoint (API schema 2.21.0) executes a
-  view through the same Explore endpoint the Web UI uses, and the Saved View
-  schema now publishes the executable version-1 vocabulary as OpenAPI enums.
-  The daemon rejects definitions outside that vocabulary at save time, so
-  every stored view can be opened by the Web UI and run by any client.
+- Use Web Directory to edit profiles, relationships, and employment, review
+  identity matches and facts, merge or split profiles, publish CardDAV contacts,
+  and inspect curated networks and person attachment galleries.
+- Monitor sync, extraction, embeddings, enrichment, and CardDAV in Web
+  Operations. Filter run history, inspect failures, and run the actions the
+  daemon offers. CardDAV history survives daemon restarts.
+- Edit Web Settings in sections with visible numeric limits, switches for
+  settings that can be off, and schedule presets with time zones and validation.
+  Track unsaved changes, discard them, and see when a restart is needed.
+  Credentials can be replaced or removed without revealing the complete stored
+  value. Host-managed settings stay read-only in the browser.
+- Read messages beside the results or below them, resize the preview, and keep
+  the layout between visits. In dark mode, HTML email uses app colors; switch to
+  the sender's original colors for the open message when needed.
+- Browse People and attachments in the TUI, use semantic search and Emacs-style
+  navigation, and scope Email by named collections. Multi-source collections
+  offer Fast search only; empty collections match nothing. Email, Texts, and
+  Meetings keep independent source selectors.
+- Download, open, or export TUI attachments as a ZIP. Press `s` in email detail
+  to save the archived original as `.eml` in the client's current directory.
+  Existing files are preserved, and the original email must be archived.
+- Share Saved Views between the browser, API, and MCP assistants. Read tools can
+  list, inspect, and run views. Creation, editing, and deletion are write tools;
+  HTTP requires `--http-allow-writes`. Stored definitions are validated against
+  the version-1 vocabulary, and revision checks prevent stale edits.
+- Read person profiles, Notes, relationships, and files through MCP. General
+  profile reads exclude sensitive attributes and private Notes; Notes have a
+  separate explicit read tool. Profile writes require additional opt-in.
+- Discover running HTTP MCP endpoints with `mcp status --json`, including actual
+  ports, backend URLs, and private token-file paths. Status does not start a
+  daemon or print token contents. MCP also supports protocol `2026-07-28`,
+  publishes object-root output schemas, and accepts parameterless inbound
+  messages.
+- Use `setup providers` for consented provider defaults and `setup status` to
+  understand readiness. Sensitive profile inference requires a separate
+  `--allow-sensitive` opt-in.
+- Browse the new website's product overview, archive lifecycle guide, and
+  operating documentation under `/docs/`.
 
-- Add Web Directory profile editing, identity and relationship review queues,
-  merge/split workflows, CardDAV publication, and bounded curated networks.
-- Add Web Operations with source and worker run history, date and state filters,
-  optional-feature status, failures, and supported actions. CardDAV run history
-  survives daemon restarts.
-- Add Web Settings with write-only provider credential management and visible
-  restart-pending state, plus keyboard-only TUI Settings.
-- Reorganize Web Settings. The daemon now publishes sections inside each
-  category (API schema 2.23.0 adds `section` on settings and `sections` on
-  groups and keeps the folded group IDs in the enum for older daemons),
-  folds the Sync, Logging, Activity, and Backups categories into Sources,
-  Daemon, and Archive, and rewrites every label, description, and hint in
-  plain language with no repeated text. Restart posture is stated once per
-  category instead of on every row, host-managed values show a tag instead of
-  an input, and the footer counts unsaved changes with a Discard action.
-- Move Web Settings limits into the controls. Number inputs carry their
-  bounds instead of "At least 1" hints, settings where zero means off publish
-  an `off` state (API schema adds `validation.off` with a label and suggested
-  value) and render as a switch beside the value, and cron schedules publish
-  `validation.format: "cron"` and use a cron field with tinted fields, a
-  plain-English description, inline validation, and presets. API keys are
-  one line too: a read-only box showing `None` or a masked hint of the set
-  key (its first three and last three characters, which the daemon now
-  publishes as `secret.hint`), a pencil button that opens a dialog for the
-  new key, and a trash button. The schedule control is
-  one line: a Presets menu (with Off and Custom), the expression editor when
-  Custom is chosen, and a Time zone menu that shows "Server time" until a
-  zone is picked. The zone is stored as a `CRON_TZ=` prefix, and the field
-  legend shows while the editor is focused or hovered. On a Settings
-  save or a CardDAV account save the daemon trims the schedule and stores a
-  zone with no fields as off; a schedule in `config.toml` must be a full
-  expression or empty, and the scheduler now reports a bad one instead of
-  panicking. The daemon rejects a field made only of commas and raises a
-  rate below the on minimum instead of rejecting it. The CardDAV
-  account form, Sources, and CardDAV status describe schedules the same way.
-  API keys and other secrets share one line: where the current key comes
-  from, a box for a new key, Save where a key saves on its own, and a trash
-  button that removes a stored key.
-- Expand the TUI with People, attachment browsing/download/open/ZIP export,
-  semantic search, Emacs-style navigation, mailing lists, and Email collections.
-  Multi-source collections offer Fast search only. Empty collections match
-  nothing, and Email, Texts, and Meetings retain independent source selectors.
-- Save the current email as an `.eml` file with `s` in TUI message detail.
-  This writes the archived original, including MIME attachments, to the TUI's
-  current directory on the client machine. Existing files are preserved;
-  raw email must be present in the archive.
-- Add `setup providers` for consented provider defaults and `setup status` to
-  explain configuration readiness. Sensitive profile inference requires
-  `--allow-sensitive` as a separate opt-in.
-- Add the read-only `list_directory_people` MCP tool for durable Directory
-  people, with last-contact ordering, inclusive RFC3339 or date-only bounds,
-  and opaque cursor pagination. `search_people` remains the observed-contact
-  and profile search.
-- Add MCP person-profile, person-search, and person-file tools. Saved profile
-  reads exclude sensitive attributes and private Notes; Notes has a separate
-  explicit read tool. Profile writes require opt-in flags. Update MCP protocol
-  support and structured output schemas.
-- Launch the three-tier website with product pages, an archive lifecycle guide,
-  and operating documentation under `/docs/`.
-
-See [Web UI](web-ui.md), [TUI](usage/tui.md), [recommended configuration](usage/recommended-configuration.md),
-and [MCP](usage/chat.md).
+See [Web UI](web-ui.md), [TUI](usage/tui.md),
+[recommended configuration](usage/recommended-configuration.md), and
+[MCP](usage/chat.md).
 
 ### Sync, imports, and maintenance
 
-- `import-gvoice` stores the voicemail recording a Google Voice Takeout export ships beside each voicemail and attaches it to that voicemail message. A voicemail with no usable audio reference gets a keyed `failed` / `fetch_failure` attachment occurrence with zero stored bytes, so attachment queries include the message. A named recording that cannot be stored keeps its source filename in the same state.
-
-- Fix WhatsApp Apple imports silently skipping URL messages (type 7) with non-empty text.
-- Add `draft-reply`, an opt-in IMAP reply draft path: the daemon composes a plain-text reply with the parent's threading headers, appends it with UIDPLUS to the granted mailbox, and stores the message and its receipt locally in one transaction. msgvault never sends mail.
 - Sync Notion AI Meeting Notes with available transcripts, verified attendees,
-  changed-note refresh, and bounded late-transcript retries.
-- Import Slackdump directories/ZIPs and MailMate-style `.mailbox` trees of EML
-  files. Import Apple WhatsApp ChatStorage text and available participant names.
-- Import Maildir and Maildir++ archives directly, including nested folders,
-  attachments, and folder/flag labels. Reruns skip archived messages even after
-  filename changes. Use a stable mailbox snapshot; see
-  [Maildir import](usage/importing.md#import-maildir).
-- Submit bounded historical Gmail/IMAP imports as background jobs through the
+  changed-note refresh, and bounded retries for late transcripts.
+- Import Slackdump directories or ZIPs, EML files and `.mailbox` trees, and
+  Maildir or Maildir++ archives. Maildir imports retain folder and flag labels
+  and recognize previously archived messages after filename changes.
+- Import Google Groups Takeout MBOX or ZIP exports. Apple Mail imports preserve
+  RFC Message-ID and link unambiguous replies within a source. Re-import and
+  rebuild the cache to fill missing IDs in existing Apple Mail archives; see
+  [message identifier recovery](usage/importing.md#message-identifiers-and-replies).
+- Import Apple WhatsApp ChatStorage text, including URL messages, with available
+  participant and push names. Contact-number matching requires country codes;
+  missing group-participant tables no longer block otherwise usable exports.
+- Preserve Google Voice voicemail audio supplied in Takeout exports. Missing or
+  unreadable recordings remain visible as failed attachment records. Discord
+  voice messages retain their duration and waveform metadata.
+- Run bounded historical Gmail or IMAP imports as background jobs through the
   API, with durable status and checkpoint-based resumption.
-- Improve IMAP incremental sync with QRESYNC where available, changed-membership
-  writes, bounded connection retries, and `repair-labels` from stored membership.
-- Add read-only Gmail OAuth with `add-account --readonly`; existing write
-  grants require the documented revoke-and-reauthorize procedure. See
-  [OAuth setup](guides/oauth-setup.md#read-only-access).
-- Archive Teams self-chat. Preserve Beeper transcript metadata and repair older
-  text and attachment classifications from archived payloads.
-- Default chat media to rooms of at most 20 participants. Beeper, Slack, and
-  Teams default to 250 MiB per attachment; Discord remains 50 MiB. Explicit size
-  settings remain unchanged. Add scoped policies and explicit local media purge.
-- Add exact `--source-id` selection to supported source commands and version-2
-  deletion manifests that preserve source type and identifier.
-- Stage deletions by query or explicit IDs, with dry-run counts. Query staging
-  reports and skips ineligible records; the eligible messages must still belong
-  to one exact source. Cross-source TUI/MCP staging is rejected.
-- Preserve archived messages and attachments after permanent source deletion.
-  Add separate SQLite `gc` to purge source-deleted rows and unreferenced blobs.
-- Add identity, sender, Gmail snapshot, and derived-metadata repair commands.
-  Improve Gmail history-expiry reconciliation and retry failed fetches from the
-  previous completed incremental run. Verify cached Gmail account identities.
-- Bound Gmail requests and OAuth refresh waits so a stalled request does not
-  hold a sync indefinitely.
-- Improve malformed MIME recovery, WhatsApp contact-name handling, and importer
-  error reporting. Deduplication previews pending Message-ID derivations and
-  requires the reviewed plan to remain valid; attachment-completeness ranking
-  applies only under the documented content-equivalence conditions.
-- Bound large analytical listings, reduce cache rebuild frequency, maintain
-  SQLite planner statistics, and prune orphan embeddings.
+- Keep IMAP sync incremental with QRESYNC where available and avoid refetching
+  unchanged folders without it. Retry connection failures within bounds,
+  preserve valid mailbox state after incomplete responses, and treat messages
+  removed during a fetch as handled. `repair-labels` rebuilds labels from stored
+  folder membership without contacting the provider.
+- Create an IMAP reply draft with `draft-reply` after an operator grants access
+  to a specific source and Drafts folder. The server must support UIDPLUS.
+  Msgvault stores an archived copy; it never sends the email.
+- Refresh the archived body, recipients, and attachments when a trusted outgoing
+  IMAP copy is edited or moves from Drafts to Sent. Ordinary received-mail and
+  All Mail copies cannot replace that content. Historical rows that already lost
+  their old location are not repaired automatically. See [IMAP](usage/imap.md).
+- Authorize Gmail with read-only access using `add-account --readonly`. Existing
+  write grants require the documented revoke-and-reauthorize steps. Google
+  Calendar registration now also works directly with Workspace service accounts;
+  delegation and disabled-API errors stop without lengthy retries.
+- Archive Teams self-chat and avoid replaying the last message at each
+  incremental boundary. Preserve Beeper transcript metadata, resume backfilled
+  history, store plain text, distinguish link previews, and repair older
+  classifications from archived payloads. Calendar snippets retain valid UTF-8.
+- Select exact sources with `--source-id` where supported. Deletion manifests
+  preserve source type and identifier. Stage by query or explicit message IDs,
+  preview counts, and skip ineligible query matches. Eligible messages must
+  belong to one exact source; TUI and MCP reject cross-source staging.
+- Keep messages and attachments after permanent source deletion. Use the
+  separate SQLite `gc` command to purge source-deleted rows and unreferenced
+  blobs. Deduplication requires the reviewed plan to remain valid and prefers
+  attachment-complete survivors only under its documented equivalence rules.
+- Repair source identity, sender attribution, Gmail snapshots, and derived
+  metadata. Gmail sync reconciles expired history, retries failed fetches from
+  the previous completed run, verifies cached account identities, and bounds
+  request and OAuth refresh waits. Scheduler errors show copyable
+  reauthorization commands.
+- Recover more malformed MIME messages and report importer read errors. Bound
+  large analytical listings, rebuild caches less often, maintain SQLite planner
+  statistics, resolve cached recipient addresses, and prune orphan embeddings.
+  Tune DuckDB query memory, threads, and disk spill separately from cache-build
+  limits.
 
-See [sources](guides/sources.md), [deletion](usage/deletion.md),
-[deduplication](usage/deduplication.md), and [CLI repairs](cli-reference.md#repair-identity).
+See [sources](guides/sources.md), [imports](usage/importing.md),
+[text messages](usage/text-messages.md), [Calendar](usage/calendar.md),
+[OAuth](guides/oauth-setup.md), [deletion](usage/deletion.md),
+[deduplication](usage/deduplication.md), and
+[analytics configuration](configuration.md#analytics).
 
-### Building from source
+### Building and maintaining msgvault
 
-- Move to Go 1.27 and document Bun, Node.js, and native SQLite build prerequisites.
-- Remove Nix flake packaging. Generate the browser API client with Orval and pin
-  OpenAPI generator dependencies.
-- Scale local SQLite test scheduling to available CPU and memory while keeping
-  PostgreSQL configurations separately covered. See [Development](development.md).
+- Build with Go 1.27 and the documented Bun, Node.js, and native SQLite
+  prerequisites. Nix flake packaging has been removed.
+- Use Docker Bake to export Linux AMD64 and ARM64 images as OCI archives. Image
+  builds check database initialization, DuckDB queries, and the embedded Web UI.
+  Repository release-publishing workflows and tag/changelog scripts have been
+  removed; local builds and installers remain available.
+- Generate the browser API client with Orval and pinned OpenAPI tools. Local
+  SQLite test scheduling scales to available CPU and memory; PostgreSQL
+  configurations remain separately covered. Synthetic media examples and
+  relevance judgments prepare future retrieval evaluation; they do not add audio
+  transcription or a runnable evaluation workflow.
+
+See [Development](development.md) for build and check commands.
 
 ---
 

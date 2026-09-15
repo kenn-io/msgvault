@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -73,15 +73,20 @@ Reading the native store may require Full Disk Access for your terminal in
 
 ### Format limits
 
-| Format | Imported today | Not included |
-|---|---|---|
-| Android `msgstore.db` | Chats, messages, participants, reactions, attachment metadata, and available media from `--media-dir` | Database decryption |
-| Apple `ChatStorage.sqlite` | Text from direct and group chats, sender attribution, and available group participant names | Media downloads and reactions |
+| Format                     | Imported today                                                                                                            | Not included                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Android `msgstore.db`      | Chats, messages, participants, reactions, attachment metadata, and available media from `--media-dir`                     | Database decryption           |
+| Apple `ChatStorage.sqlite` | Text and URL messages from direct and group chats, sender attribution, and available contact, participant, and push names | Media downloads and reactions |
+
+For `--contacts` name matching, vCard phone numbers must include a country code;
+msgvault does not guess a country for local numbers. Apple imports can also use
+the sender names stored by WhatsApp when no stronger name is available. Exports
+without the optional group-participant table can still be imported.
 
 Supply your own phone number with `--phone` for either format. msgvault records
 it as the source's confirmed “me” identity unless you pass
-`--no-default-identity`. This confirmation also happens after a completed
-run that reports recoverable message errors.
+`--no-default-identity`. This confirmation also happens after a completed run
+that reports recoverable message errors.
 
 ## import-imessage
 
@@ -143,7 +148,16 @@ The directory must be the "Voice" folder from a [Google Takeout](https://takeout
 !!! note
     Only text messages appear in TUI text mode. Call logs and voicemails are stored but not currently browsable in the TUI.
 
-Voicemail recordings shipped beside their HTML files are stored in the content-addressed attachment archive and attached to their voicemail message. A voicemail with no usable reference keeps a failed/fetch_failure attachment occurrence with zero stored bytes, so attachment queries still include the message.
+Keep the voicemail recordings beside their HTML files when extracting the
+Takeout export. Msgvault archives each available recording as an attachment to
+its voicemail, so you can retrieve it through the usual
+[attachment export commands](exporting.md#export-all-attachments-from-a-message).
+
+When a voicemail has no usable audio reference or its recording cannot be
+stored, the voicemail still gets an attachment record marked `failed` with
+reason `fetch_failure` and zero stored bytes. A named recording keeps its source
+filename. Attachment queries can therefore distinguish missing audio from a
+voicemail with an archived recording.
 
 ### Flags
 

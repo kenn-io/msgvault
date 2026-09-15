@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-09-15"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -101,6 +102,27 @@ being exposed in transit.
 It is separate from `[remote].api_key`, which authenticates `msgvault mcp` to a
 selected remote msgvault daemon. Stdio transport does not use bearer
 authentication.
+
+### Find an existing HTTP listener
+
+To connect another client to an MCP process that is already running, inspect its
+local discovery record:
+
+```bash
+msgvault mcp status
+msgvault mcp status --json
+```
+
+JSON output lists each listener's `url`, `pid`, and `transport`, with
+`backend_url` and `token_path` when present. The URL contains the actual bound
+port, including when the listener was started with `--http 0`. `token_path`
+points to a private local file containing the configured bearer token; status
+never prints the token itself.
+
+Run status on the machine and with the same msgvault home as the MCP process. It
+reads existing listener records without starting a daemon or checking the
+backend's health. Stdio sessions are not listed, and stopped processes are
+omitted. An empty list means no running HTTP listener was found in that home.
 
 ## Available Tools
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -181,26 +181,82 @@ recover memberships that the archive has never observed.
 
 ## Reply drafts
 
-An operator can grant draft creation for one IMAP source in the daemon host's
-TOML file:
+Create a reply in your IMAP Drafts folder, then review and send it from your
+usual mail application. Msgvault never sends email. Draft creation is disabled
+until an operator grants it for one exact IMAP source on the daemon host.
 
-```toml
-[[imap.drafts]]
-source_id = 42
-enabled = true
-mailbox = "Drafts"
-```
+1. Run `msgvault list-accounts` to find the source ID. Confirm the Drafts
+   folder's exact name with `msgvault list-folders <account>`.
 
-Restart the daemon after changing the grant. The grant applies to the source,
-not to the caller: any client that can reach the daemon can create drafts on a
-granted source. The `draft-reply` command accepts
-one archived message ID, one confirmed `--from` identity, and `--body`. The
-daemon composes a plain-text reply with the parent message's threading headers,
-then sends one IMAP `APPEND` to the literal mailbox with `\Draft`. The source
-must advertise UIDPLUS. An empty body is valid when supplied as `--body=`.
+1. Add the grant to the daemon host's `config.toml`, using that source ID and
+   folder name:
 
-The daemon stores the accepted message and its mailbox, UIDVALIDITY, and UID in
-one local transaction. It leaves `imap_folder_state` unchanged. A later sync
-owns cursor advancement and reconciles the membership after a UIDVALIDITY
-change, including a reused UID that identifies different mail. An uncertain
-APPEND requires mailbox inspection before another request.
+   ```toml
+   [[imap.drafts]]
+   source_id = 42
+   enabled = true
+   mailbox = "Drafts"
+   ```
+
+1. Restart the daemon. The grant applies to the source, not an individual
+   caller: any client that can reach the daemon can create drafts on that
+   source. Client configuration, request fields, and environment variables
+   cannot grant access or choose a different folder.
+
+1. Check the source's confirmed sender identities:
+
+   ```bash
+   msgvault identity list --source-id 42
+   ```
+
+   If your address is missing, confirm it with
+   `msgvault identity add --source-id 42 you@example.com`.
+
+1. Find the parent email's local message ID with search, then create the draft:
+
+   ```bash
+   msgvault draft-reply 123 --from you@example.com \
+     --body 'Thanks for the update. I will review it tomorrow.' --json
+   ```
+
+The parent must belong to the granted IMAP source and have its original email
+stored in the archive. Msgvault composes a plain-text reply using the parent's
+threading headers. `--from` must be a confirmed identity for that source, and
+`--body` is required; `--body=` creates an empty draft. The IMAP server must
+support UIDPLUS, which returns a receipt that identifies the stored draft.
+
+A successful result reports `status: "created"`, the archived `message_id`, and
+the remote mailbox receipt. The draft is marked `\Draft` and stored locally with
+its original email content. Later syncs advance the mailbox cursor and reconcile
+any mailbox identifier changes.
+
+### If draft creation does not finish
+
+The command does not retry the remote write automatically. Use the reported
+outcome to decide what to do next:
+
+| Result                                      | Next step                                                                                                                                            |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sync_active`                               | Wait for this source's sync to finish, then retry.                                                                                                   |
+| `uidplus_required`                          | Use a server that advertises UIDPLUS; no draft was appended.                                                                                         |
+| `append_rejected`                           | Check that the configured folder exists and permits writes.                                                                                          |
+| `remote_unknown` or `accepted_unidentified` | Inspect the Drafts folder before retrying; the draft may already exist.                                                                              |
+| `remote_accepted_local_failed`              | The server accepted the draft, but the local save failed. Use the reported `operation_ref` and mailbox receipt to inspect it before another request. |
+
+## Keep edited outgoing mail current
+
+After you edit or send a draft in your mail application, IMAP sync can update
+its archived body, recipients, attachments, and search text while retaining the
+local message ID. A newer Sent copy takes precedence over a stale Drafts copy.
+
+This replacement is limited to trusted outgoing folders. Msgvault trusts
+unambiguous server-advertised `\Sent` and `\Drafts` roles. If your server does
+not advertise Sent correctly, configure the exact account and folder under
+[`sync.trusted_imap_sent_mailboxes`](../configuration.md#sync). Only name
+folders used for sent mail; never include folders that receive incoming mail
+through filters or filing rules. Ordinary received-mail and All Mail copies
+preserve the archived content instead of replacing it.
+
+These rules apply during later syncs. They do not automatically repair older
+archive rows that already lost the location information needed to identify the
+outgoing copy.

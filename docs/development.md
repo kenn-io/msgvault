@@ -61,6 +61,40 @@ compiles the pinned DuckDB native library, and caches both under
 `MSGVAULT_BUILD_CACHE` to use another cache location, or pass `-RebuildDuckDB`
 to rebuild the cached library.
 
+### Container builds
+
+The repository's `Dockerfile` builds the embedded Web UI and the msgvault
+binary. To build a local image and run its runtime checks:
+
+```bash
+docker buildx build --load --tag msgvault:dev .
+scripts/smoke-container.sh msgvault:dev
+```
+
+For portable image archives, Docker Bake provides an `oci` target:
+
+```bash
+docker buildx bake oci
+```
+
+It exports `dist/amd64.oci.tar` and `dist/arm64.oci.tar` for Linux AMD64 and
+ARM64. The builder needs support for both target architectures, either through
+native workers or emulation. Override `OCI_OUTPUT_DIR` to change the output
+directory. `VERSION`, `COMMIT`, and `BUILD_DATE` set the binary metadata;
+`OCI_VERSION` and `REVISION` set the image's version and source-revision labels.
+Defaults identify a development build.
+
+Image builds run checks against a temporary empty archive: database
+initialization, a DuckDB query, and the embedded Web UI and its JavaScript
+asset. `scripts/smoke-container.sh` repeats these checks in the loaded image
+with networking disabled. These commands build and check local artifacts; they
+do not publish them.
+
+Repository-owned release-publishing workflows and the old release/tagging
+scripts have been removed. Pushing a tag no longer invokes those publishers. The
+Docker inputs, local build commands, installers, and ordinary CI remain
+available.
+
 ## Test
 
 ```bash

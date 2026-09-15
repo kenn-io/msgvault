@@ -1043,7 +1043,7 @@ func serveVisualOperationRequest(
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	request.Header.Set("X-Request-Id", "private-http-operation-request-owner")
+	request.Header.Set("X-Request-ID", "private-http-operation-request-owner")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response

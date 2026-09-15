@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-09-15"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -14,8 +15,9 @@ anything on your Google Calendar.
 
 ## Prerequisites
 
-- An OAuth client already configured for Gmail (see [OAuth Setup](/docs/guides/oauth-setup/)).
-  Calendar reuses the same `client_secret.json`.
+- A Google OAuth client (see [OAuth Setup](/docs/guides/oauth-setup/)), or a
+  [Workspace service account](#google-workspace-service-accounts). Browser
+  authorization can reuse the `client_secret.json` already configured for Gmail.
 - The **Google Calendar API** enabled on that OAuth project. In the
   [Google Cloud Console](https://console.cloud.google.com/), go to
   **APIs & Services > Library**, search for "Google Calendar API", and click
@@ -182,16 +184,28 @@ steps at any time.
 Workspace admins using domain-wide delegation do not need per-user browser
 tokens for Calendar. Enable the Google Calendar API, authorize the service
 account client ID for `https://www.googleapis.com/auth/calendar.readonly`, and
-configure `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key`
-as described in [OAuth Setup](/docs/guides/oauth-setup/#google-workspace-service-accounts).
+configure `[oauth].service_account_key` or
+`[oauth.apps.<name>].service_account_key` as described in
+[OAuth Setup](/docs/guides/oauth-setup/#google-workspace-service-accounts).
 
-Then sync the account directly or add a scheduled `[[gcal]]` entry:
+Register the calendars, then sync their events:
 
 ```bash
-msgvault sync-calendar user@domain.com --oauth-app acme
+msgvault add-calendar user@example.com --oauth-app example
+msgvault sync-calendar user@example.com --oauth-app example
 ```
 
-The first sync registers matching calendars and stores their sync cursors.
+Replace `example` with the configured OAuth app name. Omit `--oauth-app` when
+using the default `[oauth]` configuration. `add-calendar` uses delegated access
+directly: it does not request `client_secrets`, open a browser, or create a
+per-user refresh token. The usual `--all-calendars`, `--min-access-role`, and
+`--calendars` registration filters still apply.
+
+You can also start with `sync-calendar`, which registers matching calendars on
+its first run, or configure a scheduled `[[gcal]]` entry. If Google rejects the
+delegated permission or reports that the Calendar API is disabled, msgvault
+reports the error immediately. Correct the service account's Calendar permission
+or enable the API before trying again.
 
 ## Privacy
 
