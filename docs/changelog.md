@@ -13,6 +13,10 @@ search, background operations, and more ways to import and maintain an archive.
 This section covers work on `main` through **September 15, 2026**. These changes
 are not included in 0.19.3; this is not a new release announcement.
 
+macOS analytics cache builds use the existing CSV export without the unusable
+SQLite extension download and warning.
+
+
 ### Upgrade and compatibility
 
 - **Back up before opening an existing archive with a newer binary.** SQLite

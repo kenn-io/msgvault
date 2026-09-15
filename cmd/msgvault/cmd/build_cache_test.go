@@ -2908,6 +2908,169 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
+	newRequire := require.New
+	newAssert := assert.New
+	openSnapshot := func(t *testing.T, goos, forceCSV string) (*cacheSourceSnapshot, string) {
+		t.Helper()
+		require := newRequire(t)
+		oldGOOS := cacheSnapshotGOOS
+		cacheSnapshotGOOS = goos
+		t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+		t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", forceCSV)
+
+		tmpDir := setupTestSQLite(t)
+		dbPath := filepath.Join(tmpDir, "test.db")
+		duckDB, err := sql.Open("duckdb", "")
+		require.NoError(err, "open duckdb")
+		require.NoError(duckDB.Close(), "close duckdb before snapshot open")
+
+		var snapshot *cacheSourceSnapshot
+		var snapshotErr error
+		stderr := captureStderrDuring(t, func() {
+			snapshot, snapshotErr = openCacheSourceSnapshot(duckDB, dbPath)
+		})
+		require.NoError(snapshotErr, "open cache source snapshot")
+		require.NotNil(snapshot)
+		t.Cleanup(func() { _ = snapshot.Close() })
+		return snapshot, stderr
+	}
+
+	readMessageCount := func(t *testing.T, snapshot *cacheSourceSnapshot) int64 {
+		t.Helper()
+		require := newRequire(t)
+		var count int64
+		require.NoError(snapshot.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+		return count
+	}
+
+	t.Run("darwin", func(t *testing.T) {
+		require := newRequire(t)
+		assert := newAssert(t)
+		snapshot, stderr := openSnapshot(t, "darwin", "")
+		assert.Empty(stderr)
+		assert.Equal(int64(5), readMessageCount(t, snapshot))
+
+		tmpDir := snapshot.tmpDir
+		require.NotEmpty(tmpDir)
+		require.NoError(snapshot.Close())
+		_, err := os.Stat(tmpDir)
+		assert.True(os.IsNotExist(err), "CSV snapshot directory should be removed after Close")
+	})
+
+	t.Run("linux", func(t *testing.T) {
+		require := newRequire(t)
+		assert := newAssert(t)
+		snapshot, stderr := openSnapshot(t, "linux", "")
+		assert.Contains(stderr, "sqlite_scanner unavailable, using CSV fallback")
+		assert.Equal(int64(5), readMessageCount(t, snapshot))
+		require.NoError(snapshot.Close())
+	})
+
+	t.Run("force_nonempty", func(t *testing.T) {
+		require := newRequire(t)
+		assert := newAssert(t)
+		snapshot, stderr := openSnapshot(t, "linux", "0")
+		assert.Empty(stderr)
+		assert.Equal(int64(5), readMessageCount(t, snapshot))
+		require.NoError(snapshot.Close())
+	})
+
+	t.Run("darwin parity with forced CSV", func(t *testing.T) {
+		assert := newAssert(t)
+		oldGOOS := cacheSnapshotGOOS
+		cacheSnapshotGOOS = "darwin"
+		t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+
+		type cachedMessage struct {
+			id              int64
+			sourceID        int64
+			sourceMessageID string
+			subject         string
+			snippet         string
+			sentAt          string
+			sizeEstimate    int64
+			hasAttachments  bool
+			attachmentCount int64
+		}
+
+		readCache := func(t *testing.T, analyticsDir string) ([]cachedMessage, map[string]int64) {
+			t.Helper()
+			require := newRequire(t)
+			duckDB, err := sql.Open("duckdb", "")
+			require.NoError(err, "open duckdb for cache parity")
+			defer func() { require.NoError(duckDB.Close()) }()
+
+			messagePattern := filepath.ToSlash(filepath.Join(
+				analyticsDir, tableMessages, "**", "*.parquet"))
+			rows, err := duckDB.Query(`
+				SELECT id, source_id, source_message_id, subject, snippet,
+					CAST(sent_at AS VARCHAR), size_estimate, has_attachments,
+					attachment_count
+				FROM read_parquet(?, hive_partitioning=true)
+				ORDER BY id`, messagePattern)
+			require.NoError(err, "query cached messages")
+			var messages []cachedMessage
+			for rows.Next() {
+				var message cachedMessage
+				require.NoError(rows.Scan(
+					&message.id, &message.sourceID, &message.sourceMessageID,
+					&message.subject, &message.snippet, &message.sentAt,
+					&message.sizeEstimate, &message.hasAttachments,
+					&message.attachmentCount,
+				))
+				messages = append(messages, message)
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+
+			counts := make(map[string]int64, len(query.RequiredParquetDirs))
+			for _, dataset := range query.RequiredParquetDirs {
+				var count int64
+				err := filepath.Walk(filepath.Join(analyticsDir, dataset),
+					func(path string, info os.FileInfo, walkErr error) error {
+						if walkErr != nil {
+							return walkErr
+						}
+						if info.IsDir() || !strings.EqualFold(filepath.Ext(info.Name()), ".parquet") {
+							return nil
+						}
+						var fileCount int64
+						if err := duckDB.QueryRow(
+							"SELECT COUNT(*) FROM read_parquet(?)",
+							filepath.ToSlash(path),
+						).Scan(&fileCount); err != nil {
+							return err
+						}
+						count += fileCount
+						return nil
+					})
+				require.NoError(err, "count %s rows", dataset)
+				counts[dataset] = count
+			}
+			return messages, counts
+		}
+
+		build := func(t *testing.T, forceCSV string) ([]cachedMessage, map[string]int64) {
+			t.Helper()
+			require := newRequire(t)
+			assert := newAssert(t)
+			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", forceCSV)
+			tmpDir := setupTestSQLite(t)
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			result, err := buildCache(filepath.Join(tmpDir, "test.db"), analyticsDir, true)
+			require.NoError(err, "build cache for parity")
+			assert.Equal(int64(5), result.ExportedCount)
+			return readCache(t, analyticsDir)
+		}
+
+		darwinMessages, darwinCounts := build(t, "")
+		forcedMessages, forcedCounts := build(t, "1")
+		assert.Equal(forcedMessages, darwinMessages)
+		assert.Equal(forcedCounts, darwinCounts)
+	})
+}
+
 // TestBuildCacheDerivesAttributionFromEnvelopeAliasSnapshot pins the
 // envelope clause of the exported is_from_me derivation: msg1's 'from'
 // envelope snapshot carries alice-envelope@example.com — an address no

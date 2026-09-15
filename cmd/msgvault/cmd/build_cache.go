@@ -169,6 +169,10 @@ var buildCacheBeforeStateWriteHook func()
 // export failures before the messages COPY begins.
 var buildCacheBeforeMessagesExportHook func() error
 
+// cacheSnapshotGOOS selects the platform branch in openCacheSourceSnapshot.
+// Tests override it to exercise platform-specific snapshot behavior.
+var cacheSnapshotGOOS = runtime.GOOS
+
 // buildCacheWriteStateFile persists the cache sync state; a test seam for
 // simulating state persistence failures.
 var buildCacheWriteStateFile = os.WriteFile
@@ -1838,9 +1842,10 @@ type cacheSnapshotTable struct {
 
 func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
 	// MSGVAULT_FORCE_CSV_SNAPSHOT lets tests exercise the CSV fallback that
-	// Windows always takes, so drift between the COPY queries and the CSV
-	// views fails on every platform instead of only on Windows CI.
-	if runtime.GOOS != "windows" && os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
+	// Windows and macOS always use, so drift between the COPY queries and the
+	// CSV views fails on every platform instead of only on Windows CI.
+	if cacheSnapshotGOOS != "windows" && cacheSnapshotGOOS != "darwin" &&
+		os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
 		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
 		// (for example in an air-gapped installation). Parallel scanner workers
 		// open independent SQLite connections, so disable only that parallelism
