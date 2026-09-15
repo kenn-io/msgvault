@@ -774,10 +774,10 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			continue
 		}
 		changed := !present || (previous != 0 && previous != delta.uidValidity)
-		// Retire holders with an old membership at this UID; holders tracked
-		// elsewhere or tombstoned when their mailbox changes generation or is
-		// retired; and legacy tombstoned orphans whose UID is observed again.
-		if old || (changed && (memberships || c.deleted)) || (previous == 0 && c.deleted && !memberships && observed) {
+		// Consider old memberships at this UID; every holder when its mailbox
+		// changes generation or is retired, including live untracked imports;
+		// and legacy tombstoned orphans whose UID is observed again.
+		if old || changed || (previous == 0 && c.deleted && !memberships && observed) {
 			candidates = append(candidates, c)
 		}
 	}

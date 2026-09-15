@@ -180,6 +180,48 @@ func TestIMAPIdentity_ResetKeepsLiveIncumbentWithoutIndependentIdentity(t *testi
 	}
 }
 
+func TestIMAPIdentity_ResetResolvesUntrackedLiveHolder(t *testing.T) {
+	for _, mode := range []string{"different", "same", "missing", "ambiguous"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newIMAPIdentityFixture(t)
+			oldID := f.createMessage(t, "INBOX|1", "<old@example.com>")
+			newID := f.createMessage(t, "incoming", "<incoming@example.com>")
+			requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
+				Mailbox: "INBOX", UIDValidity: 10, UIDNext: 2,
+			}}))
+			observation := store.IMAPMembershipObservation{UID: 1, SourceMessageID: "INBOX|1", RFC822MessageID: "<incoming@example.com>"}
+			switch mode {
+			case "same":
+				observation.RFC822MessageID = "<old@example.com>"
+			case "missing":
+				observation.RFC822MessageID = ""
+			case "ambiguous":
+				f.createMessage(t, "duplicate", "<incoming@example.com>")
+			}
+
+			requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+				Mailbox: "INBOX", Reset: true,
+				State:       store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 20, UIDNext: 2},
+				Memberships: []store.IMAPMembershipObservation{observation},
+			}}))
+			wantID, wantKey := oldID, "INBOX|1"
+			if mode == "different" {
+				wantID = newID
+				wantKey = fmt.Sprintf("msgvault-invalidated:%d", oldID)
+			}
+			gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 20, 1)
+			assertions.Equal(wantID, gotID)
+			assertions.False(messageTombstoned(t, f.store, wantID))
+			assertions.Equal(mode == "different", messageTombstoned(t, f.store, oldID))
+			key, err := f.store.GetMessageSourceID(oldID)
+			requirements.NoError(err)
+			assertions.Equal(wantKey, key)
+		})
+	}
+}
+
 func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
