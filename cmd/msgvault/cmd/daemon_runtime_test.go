@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -599,10 +600,10 @@ func TestListLiveDaemonRuntimeRecordsDoesNotTrustAnotherDaemonsLeaseForServingMi
 		}
 	})
 
-	proofRequests := make(chan struct{}, 1)
+	var proofRequests atomic.Int32
 	staleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == api.DaemonIdentityPath {
-			proofRequests <- struct{}{}
+			proofRequests.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -637,12 +638,8 @@ func TestListLiveDaemonRuntimeRecordsDoesNotTrustAnotherDaemonsLeaseForServingMi
 	require.NoError(err, "list live records")
 	require.Len(records, 1, "only proved or exact serving records")
 	assert.Equal(os.Getpid(), records[0].PID, "valid daemon pid")
-	select {
-	case <-proofRequests:
-	default:
-		assert.Fail("serving mismatch was not challenged",
-			"the directory-wide lease must not authenticate a serving record")
-	}
+	assert.Positive(proofRequests.Load(),
+		"the directory-wide lease must not authenticate a serving record without a challenge")
 	stalePath, err := daemonRuntimeStore(dataDir).Path(stalePID)
 	require.NoError(err, "stale runtime record path")
 	assert.FileExists(stalePath, "rejected runtime record remains inspectable")

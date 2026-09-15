@@ -414,7 +414,9 @@ See [sources](guides/sources.md), [deletion](usage/deletion.md),
 - Daemon runtime-record cleanup now requires a probe-confirmed identity
   mismatch before deletion, tolerates small creation-time clock skew, and lets
   a live daemon republish a missing record. This prevents false local-writer
-  conflicts during later operations such as backup.
+  conflicts during later operations such as backup. After larger guest clock
+  steps, runtime-secret proofs keep daemon discovery, authenticated reads, and
+  shutdown working without authorizing OS signals to a mismatched PID.
 - Full message detail, including MCP `get_message`, restores chat senders from
   `messages.sender_id` when a direct message has no explicit `from` recipient
   row. Explicit email sender rows remain authoritative.
