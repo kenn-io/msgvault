@@ -737,6 +737,40 @@ func TestSyncFallsBackWhenAdvertisedMultigetIsUnsupported(t *testing.T) {
 	}
 }
 
+func TestSyncMultigetSendsAbsolutePathsNotAbsoluteURIs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := readRequestBody(t, r)
+		if strings.Contains(body, "sync-collection") {
+			writeDAVXML(t, w, syncResponse(
+				changedResponse("/books/personal/alice.vcf", `&quot;one&quot;`)+
+					changedResponse("/books/personal/bob.vcf", `&quot;two&quot;`), "next",
+			))
+			return
+		}
+		// Apple's CardDAV answers an addressbook-multiget whose DAV:href values
+		// carry a scheme and host with HTTP 400.
+		var cards strings.Builder
+		for _, href := range requestedHrefs(body) {
+			assert.NotContains(href, "://")
+			if !strings.HasPrefix(href, "/") {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			cards.WriteString(cardResponse(href, `&quot;card&quot;`, strings.TrimSuffix(path.Base(href), ".vcf")))
+		}
+		writeDAVXML(t, w, syncResponse(cards.String(), ""))
+	}))
+	t.Cleanup(server.Close)
+	service, _, _ := newPullService(t, server, true)
+
+	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	assert.Equal(2, result.Created)
+}
+
 func TestSyncContinuesTruncated507PageAcrossEquivalentCollectionURLs(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

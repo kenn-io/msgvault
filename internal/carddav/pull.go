@@ -543,7 +543,11 @@ func (s *Service) parseSyncPage(
 func (s *Service) fetchMultiget(
 	ctx context.Context, collection *url.URL, hrefs []string, budget *operationBudget,
 ) ([]store.CardDAVRemoteResource, []string, error) {
-	body, err := AddressbookMultigetBody([]PropertyName{GetETagProperty, AddressDataProperty}, hrefs)
+	requestHrefs, err := multigetHrefs(collection, hrefs)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err := AddressbookMultigetBody([]PropertyName{GetETagProperty, AddressDataProperty}, requestHrefs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -617,6 +621,28 @@ func (s *Service) fetchMultiget(
 		return nil, nil, ErrIncompleteMultiget
 	}
 	return resources, missing, nil
+}
+
+// multigetHrefs renders member identities as absolute-path references. RFC 4918
+// accepts either an absolute URI or an absolute path, but Apple's CardDAV rejects
+// an absolute URI in addressbook-multiget with HTTP 400.
+func multigetHrefs(collection *url.URL, hrefs []string) ([]string, error) {
+	rendered := make([]string, 0, len(hrefs))
+	for _, href := range hrefs {
+		resolved, err := collection.Parse(href)
+		if err != nil {
+			return nil, ErrUnsafeHref
+		}
+		target := resolved.EscapedPath()
+		if target == "" {
+			target = "/"
+		}
+		if resolved.RawQuery != "" {
+			target += "?" + resolved.RawQuery
+		}
+		rendered = append(rendered, target)
+	}
+	return rendered, nil
 }
 
 func (s *Service) fetchSnapshot(
