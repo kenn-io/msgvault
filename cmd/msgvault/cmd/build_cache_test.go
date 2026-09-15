@@ -3010,6 +3010,7 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 				FROM read_parquet(?, hive_partitioning=true)
 				ORDER BY id`, messagePattern)
 			require.NoError(err, "query cached messages")
+			defer func() { require.NoError(rows.Close()) }()
 			var messages []cachedMessage
 			for rows.Next() {
 				var message cachedMessage
@@ -3022,7 +3023,6 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 				messages = append(messages, message)
 			}
 			require.NoError(rows.Err())
-			require.NoError(rows.Close())
 
 			counts := make(map[string]int64, len(query.RequiredParquetDirs))
 			for _, dataset := range query.RequiredParquetDirs {
