@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: Recommended Configuration
 description: Set up optional search and people features from your available provider keys, then check what still needs attention.
 ---
 
-Use `msgvault setup providers` to configure optional search and people
-features from the provider keys you already have. It proposes defaults,
-explains what each provider will receive, and asks for consent before saving.
-Keyword search and normal archive browsing do not need provider keys.
+Use `msgvault setup providers` to configure optional search and people features
+from the provider keys you already have. It proposes defaults, explains what
+each provider will receive, and asks for consent before saving. Keyword search
+and normal archive browsing do not need provider keys.
 
 A **lane** in setup's output is one optional feature: message embeddings,
 semantic people search, visual attachments, document extraction, document
@@ -24,25 +24,48 @@ msgvault setup providers --allow-sensitive # opt into sensitive evidence for the
 msgvault setup status                # what is on, what is off, and why
 ```
 
-Setup prints follow-up commands for features that still need a capability
-probe, consent, or index build. `setup status` checks those prerequisites and
-shows the next step. A key by itself never starts hosted processing.
+Setup prints follow-up commands for features that still need a capability probe,
+consent, or index build. `setup status` checks those prerequisites and shows the
+next step. Its provider confirmations do not replace those separate consents. A
+key by itself never starts hosted processing.
+
+## What starts without provider setup
+
+A fresh archive supports keyword search, browsing, saved people, and local
+contact history without a provider. The daemon refreshes contact activity
+hourly. Chat imports collect media by default, subject to the room and file size
+limits below. Sources still need their own authorization and sync setup.
+
+Message embeddings, semantic people search, visual search, document extraction,
+document vectors, people sweeps, and external enrichment are off. Setup enables
+the eligible features described below; it does not configure external
+enrichment, authorize a source, choose people to track, or enroll anyone in
+conversation briefs.
 
 ## Defaults selected from your keys
 
-| Key present | Lanes | Model | Notes |
-|---|---|---|---|
-| `VOYAGE_API_KEY` | text search, semantic people search, visual attachments (after the probe) | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024) | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents. |
-| `MISTRAL_API_KEY` | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`. |
-| `OPENAI_API_KEY` | people sweep with `--allow-sensitive`; text search only when no Voyage key | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536) | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints. |
-| none | local Ollama at `[chat].server` when reachable | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text stays on your machine. Setup skips a lane the server cannot serve and says why. |
+| Key present                             | Lanes                                                                           | Model                                                                               | Notes                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOYAGE_API_KEY`                        | text search, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
+| `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
+| `OPENAI_API_KEY`                        | people sweep with `--allow-sensitive`; text search only when no Voyage key      | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
+| no key for the feature being configured | loopback Ollama at `[chat].server` when reachable                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The required model must already be installed. |
+
+These are setup choices, not runtime failover. Adding a Voyage key does not
+replace an existing OpenAI text index, and an unavailable inference provider
+does not cause a sweep to switch providers. Setup does not use a signed-in Codex
+account: the
+[Codex app-server transport](../configuration.md#codex-app-server-profiles)
+remains release-gated. Configure another supported inference profile explicitly
+when the selected API or local model is not the one you want.
 
 ## The file setup writes
 
 With a Voyage key, a Mistral key, and an OpenAI key present and
-`--allow-sensitive` supplied, setup writes
-the sections below into an otherwise empty `config.toml`. Comments and
-sections you already have are preserved.
+`--allow-sensitive` supplied, successful setup produces the configuration below.
+The example assumes SQLite, no probe manifests yet, and a people-provider check
+that negotiates native JSON output. The saved output mode and token-limit field
+come from that check. Comments and sections you already have are preserved.
 
 ```toml
 [vector]
@@ -57,7 +80,7 @@ model = "voyage-context-4"
 dimension = 1024
 
 [vector.embed.schedule]
-run_after_sync = true            # embed after every successful scheduled sync
+run_after_sync = true            # embed after supported scheduled source syncs
 cron = "*/15 * * * *"            # and catch up chat sources that do not trigger a post-sync pass
 
 [vector.people]
@@ -103,37 +126,42 @@ request_timeout = "1m0s"
 
 ### `[vector]` and `[vector.embeddings]`
 
-The text lane. `api_format = "voyage-contextual"` pins `voyage-context-4`
-and sends each Beeper conversation window and each meeting as one contextual
+The text lane. `api_format = "voyage-contextual"` pins `voyage-context-4` and
+sends each Beeper conversation window and each meeting as one contextual
 request, so a message is embedded with its neighbors. Other chat sources and
-email remain individual documents. The OpenAI-compatible
-format (`api_format = "openai"`) embeds each message on its own. Hosted
-configurations send message text to that provider; a loopback Ollama
-endpoint processes it locally. Setup states the destination before asking.
+email remain individual documents. The OpenAI-compatible format
+(`api_format = "openai"`) embeds each message on its own. Hosted configurations
+send message text to that provider; a loopback Ollama endpoint processes it
+locally. Setup states the destination before asking.
 
-`run_after_sync` covers Gmail, IMAP, Teams, and Discord syncs. The cron
-covers Slack, Beeper, calendar, and meeting sources, which do not trigger a
-post-sync embed. See [Vector Search](/docs/usage/vector-search/).
+The recommended text scope includes all message types and accounts. Narrow
+[`[vector.embed.scope]`](../configuration.md#vectorembedscope) before starting
+the daemon if only part of the archive should reach the embedding provider. Text
+embeddings have no separate stored consent: after setup enables the schedule,
+the daemon can send eligible text when it loads the new settings.
+
+`run_after_sync` covers Gmail, IMAP, Teams, and Discord syncs. The cron covers
+Slack, Beeper, calendar, and meeting sources, which do not trigger a post-sync
+embed. See [Vector Search](/docs/usage/vector-search/).
 
 ### `[vector.people]`
 
 Semantic people search embeds one curated document per durable person
-(searchable, non-sensitive attributes only) into the same generation, so a
-query like "a finance contact in Berlin" returns the person. The postures are
-your assertion about the embedding provider; setup records
-`provider-declared` unless you pass `--retention-posture` and
-`--training-posture`. Consent is a separate step:
-`msgvault person provider consent --semantic-embeddings --yes`.
-See [semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember)
+(searchable, non-sensitive attributes only) into the same generation, so a query
+like "a finance contact in Berlin" returns the person. The postures are your
+assertion about the embedding provider; setup records `provider-declared` unless
+you pass `--retention-posture` and `--training-posture`. Consent is a separate
+step: `msgvault person provider consent --semantic-embeddings --yes`. See
+[semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember)
 for the build and search workflow.
 
 ### `[vector.multimodal]`
 
 The visual lane needs a capability manifest from an authenticated probe of
-Voyage with private synthetic fixtures, and the probe needs four seed files
-you supply (a WebP and an MP4, each with a contrasting variant). Enabling the
-lane without the manifest makes the daemon refuse every vector lane, so setup
-writes only the schedule until the manifest exists:
+Voyage with private synthetic fixtures, and the probe needs four seed files you
+supply (a WebP and an MP4, each with a contrasting variant). Enabling the lane
+without the manifest makes the daemon refuse every vector lane, so setup writes
+only the schedule until the manifest exists:
 
 ```bash
 msgvault multimodal probe --seeds <private-seed-dir> --out ~/.msgvault/voyage-capabilities.json --yes
@@ -145,12 +173,11 @@ msgvault multimodal build --yes # consent to exactly that capability profile
 ### `[attachments.documents]`
 
 Mistral is the document extraction provider. It receives original attachment
-bytes for directly authorized formats, or locally converted PDF bytes when
-CSV conversion is enabled. Setup records `standard` retention and
-`default-opt-out` training unless you
-pass `--document-retention zdr` or `--document-training opted-out`; use the
-values your account actually has. Uploads stay manual: build the fixture
-matrix, probe, consent, then build. See
+bytes for directly authorized formats, or locally converted PDF bytes when CSV
+conversion is enabled. Setup records `standard` retention and `default-opt-out`
+training unless you pass `--document-retention zdr` or
+`--document-training opted-out`; use the values your account actually has.
+Uploads stay manual: build the fixture matrix, probe, consent, then build. See
 [Document Attachment Indexing](/docs/usage/document-indexing/).
 
 ```bash
@@ -163,47 +190,84 @@ msgvault daemon restart
 msgvault documents vectors build
 ```
 
-Document-vector consent covers document text. Query consent separately
-permits sending semantic and hybrid document search query text to the
-embedding provider. `setup status` reports `document_embedding` and
-`query_embedding` consent separately and lists each missing consent command.
+Document-vector consent covers document text. Query consent separately permits
+sending semantic and hybrid document search query text to the embedding
+provider. `setup status` reports `document_embedding` and `query_embedding`
+consent separately and lists each missing consent command.
 
 ### `[people.sweep]`
 
-The sweep keeps curated attributes current from the archive for people you
-track (`msgvault person track <person-id>`). Deterministic contact state
-(last contacted, cadence, inferred channel) refreshes hourly for everyone
-through `[activity]` and needs no model. Setup onboards the `openai` profile
-through `person provider add` (a synthetic check request is sent), records
-consent, and selects it; the daily schedule is the `[people.sweep]` default.
-`allow_sensitive = true` is required for real sweeps because every archive
-evidence packet is marked sensitive. Setup sets it only when you pass
-`--allow-sensitive`; without that flag it leaves the sweep unconfigured.
-With no OpenAI key, setup offers a loopback Ollama profile on `[chat].model`.
-See [People Automation](/docs/usage/people-automation/) to track people,
-review inferred facts, and change or recover a provider.
+The sweep maintains profile facts from archive evidence for people you track
+(`msgvault person track <person-id>`). Deterministic contact state (last
+contacted, cadence, inferred channel) refreshes hourly for everyone through
+`[activity]` and needs no model. Setup onboards the `openai` profile through
+`person provider add` (a synthetic check request is sent), records consent, and
+selects it. The default sweep schedule is daily at `02:15` in the daemon's time
+zone. Setup preserves any saved sweep schedule. `allow_sensitive = true` is
+required for real sweeps because every archive evidence packet is marked
+sensitive. Setup sets it only when you pass `--allow-sensitive`; without that
+flag it leaves the sweep unconfigured. The same flag permits inference of
+sensitive attributes; there is no separate setup flag for allowing private
+source text while excluding sensitive targets. With no OpenAI key, setup offers
+a loopback Ollama profile on `[chat].model`.
+
+Before tracking people, review the selected sources and date range. Setup
+includes conversation and meeting text from January 1 of the previous year, plus
+document text when the document feature is configured. It keeps the default
+request and token budgets and does not add provider prices or monetary caps. See
+[sweep budgets](../configuration.md#peoplesweepbudgets) and
+[Profile Automation](people-automation.md) to review inferred facts, adjust the
+policy, or change a provider.
+
+Briefs require another choice for each person:
+
+```bash
+msgvault person brief enroll <person-id> --track
+msgvault person brief generate <person-id>
+```
+
+Enrollment and tracking serve different purposes. Tracking alone does not enable
+a brief; enrollment requires tracking or the explicit `--track` flag. The daily
+sweep refreshes eligible briefs, normally once their current version is seven
+days old. Manual generation bypasses that interval. Briefs use supported chat
+and text-message evidence, not email, meetings, or documents. See
+[Conversation Briefs](people-briefs.md) for evidence limits and recovery.
 
 ### `[activity]`
 
-On by default (`17 * * * *`, UTC). It projects archived messages into dated
-per-person contact state. Nothing to configure; see
-[Configuration](/docs/configuration/#activity).
+On by default (`17 * * * *`). It projects archived messages into dated
+per-person contact state; day boundaries use UTC by default. Nothing to
+configure; see [Configuration](/docs/configuration/#activity).
 
 ### Media policy
 
 Chat sources cap collection by conversation size: media from rooms above 20
-participants is skipped with a typed `participant_threshold` marker, direct
-and small-group media is kept. Set `media_max_participants = 0` on a source
-to lift the cap. See the `[beeper]`, `[slack]`, `[discord]`, and `[teams]` sections of [Configuration](/docs/configuration/#beeper).
+participants is skipped with a typed `participant_threshold` marker, direct and
+small-group media is kept. Set `media_max_participants = 0` on a source to lift
+the cap. The per-file default is 250 MiB for Beeper, Slack, and Teams, and 50
+MiB for Discord. These limits also apply to existing configurations that omit
+the keys; setup does not need to write them. Explicit values and per-account
+overrides keep their configured policy. See
+[Media policy](../configuration.md#media-policy).
 
 ## What the MCP server answers with these defaults
 
-The people tools (`search_people`, `get_person_notes`,
-`get_person_relationship`, `search_person_files`) read local derived state
-and are on regardless of provider keys. The text lane adds
-`semantic_search_messages` and `find_similar_messages`; the visual lane adds
-`search_visual_attachments`; the document lane adds
-`search_document_attachments`. `msgvault setup status` prints the live list.
+The daemon-backed MCP server reads saved people and local derived state without
+provider calls:
+
+| Reader question                       | Tool and source                                                                                                                                                                                                  |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who is this, and how do I reach them? | `get_person_profile`: curated non-sensitive attributes, current employment, relationships, contact points, preferred channel, and inferred channel. Private Notes and sensitive attributes are excluded.         |
+| When did we last talk?                | `get_person_profile`: dated contact state from the activity projection.                                                                                                                                          |
+| What did we talk about?               | `get_person_profile`: the current brief under `last_talked.brief`, or `null` when no brief is available. Enrollment and successful generation are required first. Reading the profile does not generate a brief. |
+| Who was active recently?              | `list_directory_people`: saved people ordered by latest contact by default, with date filters and pagination. Observed contacts without a saved person remain in `search_people`.                                |
+
+Optional retrieval tools include `semantic_search_messages`,
+`find_similar_messages`, `search_visual_attachments`, and
+`search_document_attachments`. Their queries need the corresponding configured
+feature, consent, and usable index. Setup's final MCP summary is a partial list
+derived from configuration flags; it is not the server's live tool catalog or an
+index-readiness check. See [MCP Server](chat.md) for the full tool contract.
 
 ## Existing settings and pending setup
 
@@ -213,48 +277,48 @@ through the same gates the `person provider` commands enforce, and prints the
 exact commands that finish the lanes it cannot complete on its own (the two
 provider probes need private synthetic seed files). Re-running setup after
 adding a key upgrades only the lanes that are still unset; a configured lane
-keeps its model, because switching the embedding policy invalidates the
-index and is your call.
+keeps its model, because switching the embedding policy invalidates the index
+and is your call.
 
 If visual search is already enabled but `capabilities_file` is unset, setup
-validates `<home>/voyage-capabilities.json` and offers to save that path.
-It does not replace an explicit custom path. Status stays pending until the
-path is saved and the remaining consent and readiness checks pass.
+validates `<home>/voyage-capabilities.json` and offers to save that path. It
+does not replace an explicit custom path. Status stays pending until the path is
+saved and the remaining consent and readiness checks pass.
 
 When enabling a disabled lane, setup preserves saved retention and training
 postures. Defaults fill only unset values. Pass `--retention-posture` or
-`--training-posture` to replace the corresponding people-search posture,
-or `--document-retention` or `--document-training` for document extraction.
-Already enabled lanes with known postures remain unchanged. `unknown` is
-unset, not an assertion: setup fills it with the disclosed default, or the
-corresponding explicit flag. This also completes an already-enabled document
-lane whose postures are still unknown, under the Mistral confirmation.
+`--training-posture` to replace the corresponding people-search posture, or
+`--document-retention` or `--document-training` for document extraction. Already
+enabled lanes with known postures remain unchanged. `unknown` is unset, not an
+assertion: setup fills it with the disclosed default, or the corresponding
+explicit flag. This also completes an already-enabled document lane whose
+postures are still unknown, under the Mistral confirmation.
 
-Setup also preserves each explicit `cron` and `run_after_sync` setting for
-text and visual embeddings, including `cron = ""` and `run_after_sync = false`.
-Only absent keys receive schedule defaults. Missing embedding credentials
-leave text search and its dependent people-search and document-vector lanes
-pending in the status report.
+Setup also preserves each explicit `cron` and `run_after_sync` setting for text
+and visual embeddings, including `cron = ""` and `run_after_sync = false`. Only
+absent keys receive schedule defaults. Missing embedding credentials leave text
+search and its dependent people-search and document-vector lanes pending in the
+status report.
 
 Configured vector lanes also stay pending when the binary lacks the backend
 required by the archive database. Status includes the rebuild command.
 
 Consent-gated lanes also remain pending until their required consents are
-active, including when the consent records cannot be read. Visual consent
-must match both the current configuration and the capability-manifest policy;
-after either changes, run `msgvault multimodal build --yes` again. Local Ollama
-setup clears any old `api_key_env` setting because its selected loopback
-endpoint does not require authentication.
+active, including when the consent records cannot be read. Visual consent must
+match both the current configuration and the capability-manifest policy; after
+either changes, run `msgvault multimodal build --yes` again. Local Ollama setup
+clears any old `api_key_env` setting because its selected loopback endpoint does
+not require authentication.
 
-For existing text endpoints, setup recognizes the exact OpenAI and Voyage
-API hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
-configure their people-search and document-vector lanes explicitly, then
-review the separate consent commands for the new data they will receive.
+For existing text endpoints, setup recognizes the exact OpenAI and Voyage API
+hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
+configure their people-search and document-vector lanes explicitly, then review
+the separate consent commands for the new data they will receive.
 
 The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
 The flag permits sending sensitive archive excerpts to the inference provider
-and inferring sensitive personal attributes. The plan describes this policy
-in both human and JSON output.
+and inferring sensitive personal attributes. The plan describes this policy in
+both human and JSON output.
 
 ## Reading the status report
 
@@ -272,21 +336,20 @@ Visual attachment search                  pending  -         -                 -
 Document attachments (...)                pending  mistral   mistral-ocr-4-0   missing  -
 ```
 
-`pending` means the lane is configured or the key is present but an
-operator step remains; the `next` line under the table names it. `unknown`
-consent means the archive could not be read (for example, the database does
-not exist yet). Hosted visual, document, and people-sweep lanes also show
-`pending` when required credentials are missing. Text and visual search accept
-stored provider credentials bound to the configured provider and endpoint, as
-well as environment keys. Unreadable credential stores and endpoint mismatches
-leave these lanes pending, matching daemon startup.
-People-sweep status also validates the active profile's stored credential.
-A missing, unreadable, or incompatible key leaves the lane pending with
-recovery guidance. These checks do not create credential directories or change
-permissions; restore the credential or add and select a replacement profile.
-Document consent is checked against the full extraction policy, including
-limits, normalization, scope, and probe evidence. Keep the manifest used for
-consent at `<home>/mistral-capabilities.json` so setup can verify that exact
-policy. If it is missing or does not match, status reports consent as missing
-and the lane as pending; a consent record for an older policy is not enough.
-Use `--json` for scripting.
+`pending` means the lane is configured or the key is present but an operator
+step remains; the `next` line under the table names it. `unknown` consent means
+the archive could not be read (for example, the database does not exist yet).
+Hosted visual, document, and people-sweep lanes also show `pending` when
+required credentials are missing. Text and visual search accept stored provider
+credentials bound to the configured provider and endpoint, as well as
+environment keys. Unreadable credential stores and endpoint mismatches leave
+these lanes pending, matching daemon startup. People-sweep status also validates
+the active profile's stored credential. A missing, unreadable, or incompatible
+key leaves the lane pending with recovery guidance. These checks do not create
+credential directories or change permissions; restore the credential or add and
+select a replacement profile. Document consent is checked against the full
+extraction policy, including limits, normalization, scope, and probe evidence.
+Keep the manifest used for consent at `<home>/mistral-capabilities.json` so
+setup can verify that exact policy. If it is missing or does not match, status
+reports consent as missing and the lane as pending; a consent record for an
+older policy is not enough. Use `--json` for scripting.

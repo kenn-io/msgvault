@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1907,7 +1907,7 @@ consented provider and its budget. History accepts limits from 1 to 200;
 rejection hides the current version but preserves it in history. Unenrolling
 stops future generation without deleting saved versions.
 
-See [person briefs](/docs/usage/people/#catch-up-before-your-next-conversation)
+See [person briefs](usage/people-briefs.md)
 for provider setup, supported sources, and a first-run example.
 
 ---
@@ -2378,57 +2378,74 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 
 ### setup providers
 
-Turn on the retrieval and people lanes the available API keys support, with
-recommended defaults. Reads `VOYAGE_API_KEY`, `MISTRAL_API_KEY`, and
-`OPENAI_API_KEY` (and probes a local Ollama server at `[chat].server` when no
-hosted key is present), prints a plan, asks once per hosted provider, writes
-the recommended sections to `config.toml`, onboards the people-sweep
-provider through the same check and consent gates as `person provider`, and
-prints the lane report with the next commands. Lanes that are already
-configured are left alone. See
-[Recommended Configuration](/docs/usage/recommended-configuration/).
+Configure optional search and people features from the available API keys. The
+command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
+configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
+it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
+available loopback Ollama model at `[chat].server`. For inference, it chooses
+OpenAI, then the configured local Ollama chat model. These are setup choices;
+the running daemon does not fall back to another provider after a failure.
 
-The people sweep stays pending unless `--allow-sensitive` is supplied.
-This permits sending sensitive archive excerpts to its inference provider
-and inferring sensitive personal attributes. `--yes` alone does not grant
-this permission. Vector lanes also stay pending when the binary lacks the
-backend required by the configured database; setup prints rebuild guidance.
+Setup prints a plan, asks once per hosted provider, writes `config.toml`, and
+prints the remaining commands. It onboards a new people-sweep provider through
+the same check and consent gates as `person provider`. Other feature-specific
+consents remain separate. Visual search needs a valid probe manifest before
+setup enables it; document extraction remains manual. See
+[Recommended Configuration](usage/recommended-configuration.md).
+
+The people sweep stays pending unless `--allow-sensitive` is supplied. This
+permits sending sensitive archive excerpts to its inference provider and
+inferring sensitive personal attributes. `--yes` alone does not grant this
+permission. Vector lanes also stay pending when the binary lacks the backend
+required by the configured database; setup prints rebuild guidance.
 
 Saved retention and training postures on disabled lanes are preserved unless
-their corresponding posture flags are explicitly supplied. Custom hosted
-text endpoints require explicit configuration of dependent lanes. Document
-semantic search requires both `documents vectors consent --yes` and
+their corresponding posture flags are explicitly supplied. Custom hosted text
+endpoints require explicit configuration of dependent lanes. Document semantic
+search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
+
+An existing text model or endpoint is preserved even if the feature is disabled.
+Setup does not replace it when a different key appears. Explicit text and visual
+schedule keys, including an empty cron and `run_after_sync = false`, are also
+preserved. Setup does not configure source syncs, track people, enroll briefs,
+or set provider prices and monetary caps.
 
 ```bash
 msgvault setup providers --dry-run
 msgvault setup providers
+msgvault setup providers --allow-sensitive
 msgvault setup providers --yes --document-retention zdr --document-training opted-out
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--yes` | `false` | Accept every provider disclosure without prompting (required when stdin is not a terminal) |
-| `--allow-sensitive` | `false` | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes |
-| `--dry-run` | `false` | Print the plan, the disclosures, and the current lane report without writing |
-| `--document-retention` | `standard` | Mistral retention posture to record: `standard` or `zdr` |
-| `--document-training` | `default-opt-out` | Mistral training posture to record: `default-opt-out` or `opted-out` |
-| `--retention-posture` | `provider-declared` | Retention assertion recorded for embedding and inference providers |
-| `--training-posture` | `provider-declared` | Training assertion recorded for embedding and inference providers |
-| `--json` | `false` | Output the plan, applied flag, follow-ups, and report as JSON |
+| Flag                   | Default             | Description                                                                                                                                                                                                       |
+| ---------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`                | `false`             | Accept every provider disclosure without prompting. Required to apply a plan with hosted-provider prompts when stdin is not a terminal or `--json` is used. It does not grant the separate sensitive-data opt-in. |
+| `--allow-sensitive`    | `false`             | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes                                                                                                                 |
+| `--dry-run`            | `false`             | Print the plan, the disclosures, and the current lane report without writing                                                                                                                                      |
+| `--document-retention` | `standard`          | Mistral retention posture to record: `standard` or `zdr`                                                                                                                                                          |
+| `--document-training`  | `default-opt-out`   | Mistral training posture to record: `default-opt-out` or `opted-out`                                                                                                                                              |
+| `--retention-posture`  | `provider-declared` | Retention assertion recorded for embedding and inference providers                                                                                                                                                |
+| `--training-posture`   | `provider-declared` | Training assertion recorded for embedding and inference providers                                                                                                                                                 |
+| `--json`               | `false`             | Output the plan, applied flag, follow-ups, and report as JSON                                                                                                                                                     |
 
-The command edits the config file on this machine and refuses to run against
-a configured remote daemon; run it on the daemon host or pass `--local`.
+The command edits the config file on this machine and refuses to run against a
+configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
 
-Report every lane (text search, semantic people search, visual attachments,
-documents, document vectors, people sweep, activity projection, media
-policy): state, provider, model, recorded consent, schedule, the reason a
-lane is off, and the command that turns it on. Reads `config.toml`, the
-environment, and the local archive's consent records; never contacts a
-provider.
+Report the setup state of each feature (text search, semantic people search,
+visual attachments, documents, document vectors, people sweep, activity
+projection, media policy): state, provider, model, recorded consent, schedule,
+the reason a lane is off, and the command that turns it on. Reads `config.toml`,
+the environment, and the local archive's consent records; never contacts a
+provider. Stored provider credentials are checked too. An `on` state means the
+setup checks passed; it does not prove that an index has been built or that a
+provider will answer. The MCP summary is a partial list derived from enabled
+configuration flags, not the live server's `tools/list` response. Use the
+feature's status command or [Web Operations](web-ui.md#operations) to inspect
+index progress and coverage.
 
 ```bash
 msgvault setup status

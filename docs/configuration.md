@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-15"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -36,8 +36,13 @@ Staging, listing, inspecting, and dry-running deletion batches remain ungated.
 ## Choose optional processing
 
 Use [recommended configuration](usage/recommended-configuration.md) for a guided
-setup, then return here for exact keys and defaults. Each processing feature
-has a separate scope and consent contract.
+setup, then return here for exact keys and defaults. Each processing feature has
+a separate scope and consent contract.
+
+The defaults in this reference apply when a key is absent. They differ from the
+values `setup providers` writes after confirmation: embeddings and people sweeps
+start disabled, while setup can enable them and add schedules. Existing explicit
+values remain in effect. Provider keys alone do not enable processing.
 
 - [Profile automation](usage/people-automation.md): tracked people, sweep
   providers, budgets, and fact resolution.
@@ -134,6 +139,50 @@ into msgvault, so a compromised catalog cannot redirect your key. A successful c
 Live credential checks are optional developer or operator verification and are
 never CI requirements.
 
+### `[people.sweep]`
+
+Enable model-assisted profile maintenance only after configuring, checking, and
+consenting to a provider. A person must also be tracked before the sweep
+maintains their facts. [Conversation briefs](usage/people-briefs.md) use this
+same provider and schedule, with separate enrollment and interval controls.
+
+| Key                      | Default      | Description                                                                                                                                                                                        |
+| ------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                | `false`      | Run the scheduled people sweep with the selected provider.                                                                                                                                         |
+| `provider`               | `default`    | Name of a table under `[people.sweep.providers]`. The initial profile has an OpenAI endpoint but no model; it is not a usable, consented provider. Setup creates and selects `openai` or `ollama`. |
+| `schedule`               | `15 2 * * *` | Daily at 02:15 in the daemon's time zone. An omitted or empty value receives this default; use `enabled = false` to disable the sweep.                                                             |
+| `work_batch_size`        | `25`         | Tracked people considered in one worker batch.                                                                                                                                                     |
+| `historical_message_cap` | `2000`       | Maximum archived messages considered when finding context for each profile field.                                                                                                                  |
+| `context_per_target`     | `8`          | Maximum context items selected for each profile field.                                                                                                                                             |
+| `evidence_max_bytes`     | `131072`     | Byte limit for an evidence packet.                                                                                                                                                                 |
+| `evidence_max_items`     | `200`        | Item limit for an evidence packet.                                                                                                                                                                 |
+| `backstop_interval`      | `24h`        | Interval before checking tracked people for changes missed by incremental work.                                                                                                                    |
+
+`setup providers --allow-sensitive` uses `gpt-5.6-luna` with `medium` reasoning
+when an OpenAI key is present, or the configured local Ollama chat model
+otherwise. It preserves an existing active profile and never switches after a
+request failure. Without `--allow-sensitive`, setup leaves inference pending:
+the same profile flag controls both sensitive archive evidence and sensitive
+attribute targets.
+
+### `[people.sweep.budgets]`
+
+Request and token limits apply to sweeps and briefs. Setup keeps these defaults;
+it does not obtain provider prices or set a monetary limit.
+
+| Scope      | Request key and default       | Input-token key and default            | Output-token key and default           |
+| ---------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
+| One person | `max_requests_per_person = 4` | `max_input_tokens_per_person = 200000` | `max_output_tokens_per_person = 16000` |
+| One run    | `max_requests_per_run = 100`  | `max_input_tokens_per_run = 1000000`   | `max_output_tokens_per_run = 160000`   |
+| One day    | `max_requests_per_day = 500`  | `max_input_tokens_per_day = 5000000`   | `max_output_tokens_per_day = 800000`   |
+
+`max_estimated_cost_microusd_per_run` and `max_estimated_cost_microusd_per_day`
+both default to `0`, which disables those cost limits. To use either, supply
+positive `input_cost_microusd_per_million_tokens` and
+`output_cost_microusd_per_million_tokens`; both price assumptions also default
+to `0`. Values are integer millionths of a US dollar. These are local estimates
+from the prices you provide, not a provider billing limit.
+
 ### `[people.sweep.brief]`
 
 Control how often enrolled people receive a "Last time we talked" brief and
@@ -143,7 +192,7 @@ share its budgets. The profile must permit sensitive content and include
 
 Only supported chat and text-message sources supply brief evidence; email,
 meeting transcripts, documents, and your own replies are excluded. See the
-[brief guide](/docs/usage/people/#catch-up-before-your-next-conversation) for
+[brief guide](usage/people-briefs.md) for
 supported sources and enrollment instructions.
 
 Generation is enabled here by default, but each person must be enrolled
@@ -303,6 +352,14 @@ and local derivative cleanup remain automatic and make no provider requests.
 all supported standalone attachment sources. The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
 Hosted document embeddings are not enabled by this configuration.
+
+Enable document vectors separately with
+`[attachments.documents.index.embeddings] enabled = true`, an enabled text
+embedding provider, and distinct consents for document text and query text.
+They use `[vector.embed.schedule]` for automatic embedding of already extracted
+document chunks. That schedule never extracts new attachments. Setup enables
+this subtable when both document extraction and a supported text provider are
+selected, but leaves the two consent steps to you.
 
 See [Document Attachment Indexing](/docs/usage/document-indexing/) for the complete
 probe, consent, build, and recovery flow.
@@ -1021,14 +1078,20 @@ simply have no vector matches and rank on BM25 alone in hybrid mode.
 
 #### `[vector.embed.schedule]`
 
-Optional background scheduling for the embed worker inside `msgvault serve`. Empty config disables scheduled embedding; you can still run `msgvault embeddings build` by hand.
+Optional background scheduling for the embed worker inside `msgvault serve`.
+Empty config disables scheduled embedding; you can still run
+`msgvault embeddings build` by hand.
 
-| Key | Default | Description |
-|---|---|---|
-| `cron` | — | 5-field cron expression. Empty string disables the standalone cron. |
-| `run_after_sync` | `false` | When `true`, an embed pass runs after every successful scheduled sync. |
+| Key              | Default | Description                                                                                                                                  |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cron`           | —       | 5-field cron expression. Empty string disables the standalone cron.                                                                          |
+| `run_after_sync` | `false` | Run an embed pass after successful scheduled Gmail, IMAP, Teams, and Discord syncs. Other sources use the standalone cron or a manual build. |
 
-`msgvault setup providers` sets `run_after_sync = true` and `cron = "*/15 * * * *"` when it enables a text lane. See [Recommended Configuration](/docs/usage/recommended-configuration/).
+`msgvault setup providers` supplies `run_after_sync = true` and
+`cron = "*/15 * * * *"` when it enables a text lane. It preserves either key
+when explicitly set, including `false` and `""`. Already enabled text lanes keep
+their schedules. See
+[Recommended Configuration](usage/recommended-configuration.md).
 
 #### `[vector.people]`
 

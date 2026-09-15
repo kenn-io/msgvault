@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -201,6 +201,20 @@ progress, failures, and usage without printing message packets. A failed
 provider call does not authorize a switch to another provider.
 
 ## Understand and correct automatic facts
+
+The sweep chooses fields from the archive's current attribute definitions,
+including eligible custom fields, plus employment. It does not use a fixed
+allowlist of seeded fields. An attribute must be active, API-editable, and
+non-derived, with a supported value type and a description of 1–280 characters.
+Attributes that link to another record are excluded. Inspect the current set
+with `msgvault person facts catalog --include-sensitive`.
+
+`allow_sensitive = true` permits both private archive evidence and sensitive
+targets, including religion, politics, and Notes. There is no separate switch
+for those two permissions. A claim that passes the evidence and resolution
+rules can update the profile automatically; enabling a sweep does not put every
+proposed change through manual approval. Pins and competing evidence still
+control which values can change.
 
 The fact ledger separates three things:
 
