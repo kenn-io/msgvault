@@ -1,12 +1,14 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-15"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
 
 Find someone across email, chats, and meetings, then keep their contact details
 and the things you want to remember in one profile. Start in the Web UI's
-**Directory** or the [TUI People browser](/docs/usage/tui/#people).
+**Relationships** workspace to explore contacts already in your archive, then
+save selected people in **Directory**. You can also use the
+[TUI People browser](/docs/usage/tui/#people).
 
 | I want to… | Start here |
 |---|---|
@@ -39,9 +41,13 @@ create profiles when imported.
 
 ## Promote a durable person
 
-Open an observed contact in Directory and promote it, or use its participant
-ID with the CLI. Replace `42` with that participant ID and `7` with the person
-ID returned by promotion:
+Directory starts empty until you save profiles or import contacts. In
+**Relationships**, select a person, choose **Open in Directory**, then
+**Promote to person**. This creates a saved profile from the contact already
+observed in your archive.
+
+With the CLI, use the contact's participant ID. Replace `42` with that ID and
+`7` with the person ID returned by promotion:
 
 ```bash
 msgvault person promote 42

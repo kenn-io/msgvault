@@ -152,15 +152,15 @@ memberships already stored in msgvault. It does not contact the provider.
 
 1. Preview the repair for one source:
 
-   ```bash
-   msgvault repair-labels you@example.com
-   ```
+    ```bash
+    msgvault repair-labels you@example.com
+    ```
 
 2. Review the `scanned` and `changed` counts, then apply it:
 
-   ```bash
-   msgvault repair-labels you@example.com --apply
-   ```
+    ```bash
+    msgvault repair-labels you@example.com --apply
+    ```
 
 Omit the identifier to check or repair every IMAP source. Applying a repair
 also refreshes the analytical cache.
@@ -186,38 +186,38 @@ usual mail application. Msgvault never sends email. Draft creation is disabled
 until an operator grants it for one exact IMAP source on the daemon host.
 
 1. Run `msgvault list-accounts` to find the source ID. Confirm the Drafts
-   folder's exact name with `msgvault list-folders <account>`.
+    folder's exact name with `msgvault list-folders <account>`.
 
 1. Add the grant to the daemon host's `config.toml`, using that source ID and
-   folder name:
+    folder name:
 
-   ```toml
-   [[imap.drafts]]
-   source_id = 42
-   enabled = true
-   mailbox = "Drafts"
-   ```
+    ```toml
+    [[imap.drafts]]
+    source_id = 42
+    enabled = true
+    mailbox = "Drafts"
+    ```
 
 1. Restart the daemon. The grant applies to the source, not an individual
-   caller: any client that can reach the daemon can create drafts on that
-   source. Client configuration, request fields, and environment variables
-   cannot grant access or choose a different folder.
+    caller: any client that can reach the daemon can create drafts on that
+    source. Client configuration, request fields, and environment variables
+    cannot grant access or choose a different folder.
 
 1. Check the source's confirmed sender identities:
 
-   ```bash
-   msgvault identity list --source-id 42
-   ```
+    ```bash
+    msgvault identity list --source-id 42
+    ```
 
-   If your address is missing, confirm it with
-   `msgvault identity add --source-id 42 you@example.com`.
+    If your address is missing, confirm it with
+    `msgvault identity add --source-id 42 you@example.com`.
 
 1. Find the parent email's local message ID with search, then create the draft:
 
-   ```bash
-   msgvault draft-reply 123 --from you@example.com \
-     --body 'Thanks for the update. I will review it tomorrow.' --json
-   ```
+    ```bash
+    msgvault draft-reply 123 --from you@example.com \
+      --body 'Thanks for the update. I will review it tomorrow.' --json
+    ```
 
 The parent must belong to the granted IMAP source and have its original email
 stored in the archive. Msgvault composes a plain-text reply using the parent's

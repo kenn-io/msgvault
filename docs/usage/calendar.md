@@ -150,31 +150,31 @@ account, copy that token to the browser machine first so re-consent preserves
 Drive or other previously granted Google scopes.
 
 1. **If a token already exists on the server**, copy it to the browser machine:
-   ```bash
-   mkdir -p ~/.msgvault/tokens
-   scp user@server:~/.msgvault/tokens/you@gmail.com.json ~/.msgvault/tokens/
-   ```
+    ```bash
+    mkdir -p ~/.msgvault/tokens
+    scp user@server:~/.msgvault/tokens/you@gmail.com.json ~/.msgvault/tokens/
+    ```
 
 2. **On a machine with a browser**, using the **same `client_secret.json`** as
-   the server:
-   ```bash
-   msgvault add-calendar you@gmail.com
-   ```
-   Keep all existing permissions plus Calendar checked on the consent screen.
+    the server:
+    ```bash
+    msgvault add-calendar you@gmail.com
+    ```
+    Keep all existing permissions plus Calendar checked on the consent screen.
 
 3. **Copy the token back to the server**, replacing the existing one. It now
-   carries Calendar plus the existing Google permissions, so current sync jobs
-   keep working:
-   ```bash
-   ssh user@server mkdir -p ~/.msgvault/tokens
-   scp ~/.msgvault/tokens/you@gmail.com.json user@server:~/.msgvault/tokens/
-   ```
+    carries Calendar plus the existing Google permissions, so current sync jobs
+    keep working:
+    ```bash
+    ssh user@server mkdir -p ~/.msgvault/tokens
+    scp ~/.msgvault/tokens/you@gmail.com.json user@server:~/.msgvault/tokens/
+    ```
 
 4. **On the server**, register the calendars (no browser needed) and sync:
-   ```bash
-   msgvault add-calendar you@gmail.com
-   msgvault sync-calendar you@gmail.com
-   ```
+    ```bash
+    msgvault add-calendar you@gmail.com
+    msgvault sync-calendar you@gmail.com
+    ```
 
 Run `msgvault add-calendar you@gmail.com --headless` on the server to print these
 steps at any time.
