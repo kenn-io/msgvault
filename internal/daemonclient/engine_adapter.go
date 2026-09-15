@@ -631,13 +631,14 @@ func textConversationRowsFromGenerated(rows []generated.TextConversationRow) []q
 	return out
 }
 
-func queryMessageSummariesFromCLIGenerated(msgs []generated.CLIQueryMessageSummary) []query.MessageSummary {
+func (c *Client) queryMessageSummariesFromCLIGenerated(msgs []generated.CLIQueryMessageSummary) []query.MessageSummary {
 	if msgs == nil {
 		return nil
 	}
 	out := make([]query.MessageSummary, len(msgs))
 	for i, msg := range msgs {
 		out[i] = queryMessageSummaryFromGenerated(msg)
+		out[i].WebURL = c.messageWebURL(msg.ID)
 	}
 	return out
 }
@@ -1393,7 +1394,7 @@ func (e *Engine) ListConversationMessages(ctx context.Context, convID int64, fil
 	if err != nil {
 		return nil, err
 	}
-	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
+	return e.store.queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
 }
 
 func (e *Engine) TextSearch(ctx context.Context, queryStr string, sourceID *int64, limit, offset int) ([]query.MessageSummary, error) {
@@ -1413,7 +1414,7 @@ func (e *Engine) TextSearch(ctx context.Context, queryStr string, sourceID *int6
 	if sourceID != nil && (resp.JSON200.AppliedSourceID == nil || *resp.JSON200.AppliedSourceID != *sourceID) {
 		return nil, errors.New("daemon did not confirm text-search source ID; upgrade the daemon and retry")
 	}
-	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
+	return e.store.queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
 }
 
 func (e *Engine) GetTextStats(ctx context.Context, opts query.TextStatsOptions) (*query.TotalStats, error) {
