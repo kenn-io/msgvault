@@ -152,13 +152,18 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 // agentDelegatedSchemaStub sets up a stub HTTP server that serves the health
 // endpoint for openAgentDelegatedStore, enables the schema check, and restores
 // state on cleanup.
-func agentDelegatedSchemaStub(t *testing.T, health func(w http.ResponseWriter)) *atomic.Int32 {
+func agentDelegatedSchemaStub(t *testing.T, sessionResponse string, health func(w http.ResponseWriter)) *atomic.Int32 {
 	t.Helper()
 	var healthRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			healthRequests.Add(1)
 			health(w)
+			return
+		}
+		if r.URL.Path == "/api/session" && sessionResponse != "" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(sessionResponse))
 			return
 		}
 		http.NotFound(w, r)
@@ -195,7 +200,7 @@ func agentDelegatedSchemaStub(t *testing.T, health func(w http.ResponseWriter)) 
 // matching schema version.
 func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 	require := require.New(t)
-	healthRequests := agentDelegatedSchemaStub(t, func(w http.ResponseWriter) {
+	healthRequests := agentDelegatedSchemaStub(t, `{"auth_mode":"delegated"}`, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok", "api_schema_version": api.APISchemaVersion,
@@ -213,7 +218,7 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 // openAgentDelegatedStore rejects a daemon with an incompatible API schema.
 func TestOpenAgentDelegatedStoreRejectsMismatchedSchema(t *testing.T) {
 	require := require.New(t)
-	_ = agentDelegatedSchemaStub(t, func(w http.ResponseWriter) {
+	_ = agentDelegatedSchemaStub(t, "", func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok", "api_schema_version": "1.0.0",
@@ -227,7 +232,7 @@ func TestOpenAgentDelegatedStoreRejectsMismatchedSchema(t *testing.T) {
 func TestOpenAgentDelegatedStoreReportsAuthenticationFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	agentDelegatedSchemaStub(t, func(w http.ResponseWriter) {
+	agentDelegatedSchemaStub(t, "", func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"unauthorized","message":"Invalid or missing API key"}`))
@@ -239,4 +244,31 @@ func TestOpenAgentDelegatedStoreReportsAuthenticationFailure(t *testing.T) {
 	var apiErr *daemonclient.APIError
 	require.ErrorAs(err, &apiErr)
 	assert.Equal(http.StatusUnauthorized, apiErr.Status)
+}
+
+func TestOpenAgentDelegatedStoreRequiresDelegatedAuthentication(t *testing.T) {
+	for _, tc := range []struct{ name, session string }{
+		{"pre-delegation keyless daemon", `{"auth_mode":"loopback"}`},
+		{"owner API key", `{"auth_mode":"api_key"}`},
+		{"owner session", `{"auth_mode":"session"}`},
+		{"unauthenticated", `{"auth_mode":"required"}`},
+		{"missing auth mode", `{}`},
+		{"missing session endpoint", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentDelegatedSchemaStub(t, tc.session, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "ok", "api_schema_version": api.APISchemaVersion,
+				})
+			})
+
+			client, _, err := OpenHTTPStore(t.Context())
+			if client != nil {
+				t.Cleanup(func() { _ = client.Close() })
+			}
+			require.ErrorContains(t, err, "verify agent authentication")
+			assert.Nil(t, client, "no client may be returned without delegated authentication")
+		})
+	}
 }

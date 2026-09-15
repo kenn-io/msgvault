@@ -169,6 +169,20 @@ func openAgentDelegatedStore(ctx context.Context) (*daemonclient.Client, HTTPSto
 		}
 		return nil, HTTPStoreInfo{}, err
 	}
+	// Older keyless daemons accept the health probe but ignore agent tokens.
+	// Require the daemon to confirm that it authenticated this token as delegated.
+	session, err := daemonclient.APIResponse(st,
+		func(api *apiclient.Client) (*generated.GetSessionResp, error) {
+			return api.GetSessionWithResponse(ctx)
+		})
+	if err != nil {
+		_ = st.Close()
+		return nil, HTTPStoreInfo{}, fmt.Errorf("verify agent authentication: %w", err)
+	}
+	if session.JSON200 == nil || session.JSON200.AuthMode != generated.Delegated {
+		_ = st.Close()
+		return nil, HTTPStoreInfo{}, errors.New("verify agent authentication: daemon did not authenticate the token as delegated; check agent access and upgrade the daemon if needed")
+	}
 	return st, HTTPStoreInfo{
 		Kind: HTTPStoreAgentDelegated,
 		URL:  agentURL,

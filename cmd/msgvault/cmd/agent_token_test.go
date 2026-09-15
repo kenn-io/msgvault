@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,8 +16,10 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // runAgentTokenCommand runs a single agent-token subcommand with the supplied
@@ -204,26 +207,34 @@ func TestAgentTokenRevokeCallsDelete(t *testing.T) {
 }
 
 // TestOpenAgentDelegatedStore verifies that the --agent-url / --agent-token-file
-// flags steer OpenHTTPStore to the delegated client and that the client sends
-// the X-Msgvault-Agent-Token header.
+// flags authenticate with a grant issued by the real daemon.
 func TestOpenAgentDelegatedStore(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	const wantToken = "mva1_dGVzdHNlY3JldGZvcnVuaXR0ZXN0aW5ncHVycG9zZXM"
-
-	var gotHeader string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get(apiprotocol.AgentTokenHeader)
-		w.Header().Set("Content-Type", "application/json")
-		// Return a health-like response so the client does not error.
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	}))
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "user@example.com")
+	require.NoError(err)
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{
+			HomeDir: t.TempDir(),
+			Server:  config.ServerConfig{APIKey: "owner-test-key", AgentAccess: true},
+		},
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	}).Router())
 	t.Cleanup(server.Close)
+	owner, err := daemonclient.New(daemonclient.Config{
+		URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true,
+	})
+	require.NoError(err)
+	t.Cleanup(func() { _ = owner.Close() })
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID})
+	require.NoError(err)
 
 	// Write the token to a temp file.
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
-	require.NoError(os.WriteFile(tokenFile, []byte(wantToken+"\n"), 0o600))
+	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
 
 	// Set package-level flags.
 	oldURL, oldFile, oldInsecure := agentURL, agentTokenFile, agentAllowInsecure
@@ -239,14 +250,13 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	client, info, err := OpenHTTPStore(t.Context())
 	require.NoError(err)
 	require.NotNil(client)
+	t.Cleanup(func() { _ = client.Close() })
 	assert.Equal(HTTPStoreAgentDelegated, info.Kind)
 	assert.Equal(server.URL, info.URL)
 
-	// Make a real request to verify the header is sent.
+	// The daemon requires authentication for this route.
 	_, err = client.GetHealth(t.Context())
-	// A parse error is acceptable (stub returns minimal body); the header check is what matters.
-	_ = err
-	assert.Equal(wantToken, gotHeader)
+	require.NoError(err)
 }
 
 // TestOpenAgentDelegatedStoreRejectsLocalFlag verifies that combining --local
