@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -58,6 +59,10 @@ type draftReplyOutput struct {
 // daemon logs. Causes must never include flag values or message content.
 func draftReplyError(code string, cause error) error {
 	return &api.CLIRunCodedError{Code: code, Err: cause}
+}
+
+func draftReplyNotPermitted(cause error) error {
+	return draftReplyError("not_permitted", cause)
 }
 
 func invalidDraftReplyArgs(format string, args ...any) (draftReplyIntent, error) {
@@ -177,7 +182,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return err
 	}
-	target, err := a.resolveDraftReplyTarget(ctx, intent)
+	target, err := a.resolveDraftReplyTarget(ctx, intent, req.Grant)
 	if err != nil {
 		return err
 	}
@@ -258,17 +263,41 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 	}
 }
 
+// authorizeDelegatedDraftSource checks whether the grant (if any) permits
+// draft creation on the given source. Returns nil when grant is nil (owner
+// path). The check runs before authorizeIMAPDraft so an out-of-scope source
+// never discloses whether drafting is enabled.
+func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
+	if grant == nil {
+		return nil
+	}
+	ref := agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}
+	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
+		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
+	}
+	return nil
+}
+
 // resolveDraftReplyTarget loads the parent, checks the operator grant, and
 // confirms the sender identity. It runs before the sync lock is taken so a
 // denied request never blocks a sync.
-func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent draftReplyIntent) (draftReplyTarget, error) {
+func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent draftReplyIntent, grant *agentgrant.Grant) (draftReplyTarget, error) {
 	parent, err := a.store.GetMessageContext(ctx, intent.MessageID)
 	if err != nil {
+		if grant != nil {
+			return draftReplyTarget{}, draftReplyNotPermitted(fmt.Errorf("load message %d: %w", intent.MessageID, err))
+		}
 		return draftReplyTarget{}, draftReplyError("invalid_parent", fmt.Errorf("load message %d: %w", intent.MessageID, err))
 	}
 	source, err := a.store.GetSourceByIDContext(ctx, parent.SourceID)
 	if err != nil {
+		if grant != nil {
+			return draftReplyTarget{}, draftReplyNotPermitted(fmt.Errorf("load source %d: %w", parent.SourceID, err))
+		}
 		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("load source %d: %w", parent.SourceID, err))
+	}
+	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+		return draftReplyTarget{}, err
 	}
 	mailbox, err := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
 	if err != nil {

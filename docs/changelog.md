@@ -199,6 +199,13 @@ See [Web UI](web-ui.md), [TUI](usage/tui.md),
 - Create an IMAP reply draft with `draft-reply` after an operator grants access
   to a specific source and Drafts folder. The server must support UIDPLUS.
   Msgvault stores an archived copy; it never sends the email.
+- Add restricted agent grants. Owner-only `agent-token issue/list/revoke`
+  commands manage in-memory tokens with `draft.create` permission for named
+  sources. Agents use `--agent-url` and `--agent-token-file` to run only
+  `draft-reply`; grants expire when revoked or when the daemon restarts.
+  Enable `[server] agent_access = true` with a non-empty `api_key`; see
+  [agent-token](cli-reference.md#agent-token) and
+  [configuration](configuration.md#server).
 - Refresh the archived body, recipients, and attachments when a trusted outgoing
   IMAP copy is edited or moves from Drafts to Sent. Ordinary received-mail and
   All Mail copies cannot replace that content. Historical rows that already lost

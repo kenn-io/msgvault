@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -173,6 +174,56 @@ func (f draftReplyFixture) run(t *testing.T, adapter *storeAPIAdapter, flags ...
 	return events, err
 }
 
+// runAs drives draft-reply with a delegated grant attached to the request, the
+// way handleCLIRun does for an agent-token caller.
+func (f draftReplyFixture) runAs(t *testing.T, adapter *storeAPIAdapter, grant *agentgrant.Grant, flags ...string) ([]api.CLIRunEvent, error) {
+	t.Helper()
+	args := append([]string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--from", testutil.IMAPTestUsername}, flags...)
+	var events []api.CLIRunEvent
+	err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	return events, err
+}
+
+// TestDelegatedDraftReplyCreatesDraft drives the allow branch of
+// authorizeDelegatedDraftSource through to the user-facing outcome. Without it
+// an inverted predicate would leave every deny test green while no delegated
+// caller could ever create a draft.
+func TestDelegatedDraftReplyCreatesDraft(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+
+	grant := &agentgrant.Grant{
+		ID:          "g-in-grant",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources: []agentgrant.SourceRef{{
+			ID:         fixture.source.ID,
+			Type:       fixture.source.SourceType,
+			Identifier: fixture.source.Identifier,
+		}},
+	}
+
+	events, err := fixture.runAs(t, adapter, grant, "--body", "reply body", "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result map[string]any
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal("created", result["status"])
+	assertions.Equal("Drafts", result["mailbox"])
+	assertions.Contains(result["operation_ref"], fmt.Sprintf("%d:Drafts|", fixture.source.ID))
+
+	// The draft is durable locally, not merely reported.
+	var localID int64
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
+	`), fixture.source.ID, "Drafts|1").Scan(&localID))
+	assertions.NotZero(localID)
+}
+
 func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -274,6 +325,26 @@ func TestRunCLIReplyDraftDeniesBeforeConnecting(t *testing.T) {
 			requirements.ErrorContains(coded.Err, tc.cause)
 		})
 	}
+
+	t.Run("cwd", func(t *testing.T) {
+		adapter := &storeAPIAdapter{store: fixture.store, draftClientFactory: refuseConnect}
+		var events []api.CLIRunEvent
+		err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+			Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--body", "reply body"},
+			Cwd:  "/tmp",
+		}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		requirements.Error(err)
+		assertions.Empty(events)
+		assertions.Equal("invalid_args", err.Error())
+		coded, ok := errors.AsType[*api.CLIRunCodedError](err)
+		requirements.True(ok)
+		requirements.ErrorContains(coded.Err, "working directory")
+	})
 
 	t.Run("unconfirmed identity", func(t *testing.T) {
 		adapter := &storeAPIAdapter{
@@ -461,4 +532,87 @@ func TestDraftReplyCLIFailureOutput(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestDelegatedDraftRefusesOutOfGrantSource tests proof matrix row 1.
+// When the caller presents a grant that does not include the message's source,
+// resolveDraftReplyTarget must return not_permitted — never draft_disabled or
+// invalid_source — to prevent source disclosure.
+func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+
+	// A grant that references a different source entirely.
+	outOfScopeGrant := &agentgrant.Grant{
+		ID:          "g-out-of-scope",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources: []agentgrant.SourceRef{
+			{ID: fixture.source.ID + 999, Type: "imap", Identifier: "other@example.com"},
+		},
+	}
+
+	intent := draftReplyIntent{
+		MessageID: fixture.parentID,
+		From:      testutil.IMAPTestUsername,
+		Body:      "reply body",
+	}
+	_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, outOfScopeGrant)
+	requirements.Error(err)
+	assertions.Equal("not_permitted", err.Error())
+	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
+	requirements.True(ok)
+	assertions.Error(coded.Err)
+}
+
+// TestDraftRequiresBothChecks tests proof matrix row 20.
+// It verifies that authorizeDelegatedDraftSource runs BEFORE authorizeIMAPDraft
+// so an out-of-grant source cannot infer whether drafting is configured.
+func TestDraftRequiresBothChecks(t *testing.T) {
+	fixture := newDraftReplyFixture(t)
+
+	inGrantRef := agentgrant.SourceRef{
+		ID:         fixture.source.ID,
+		Type:       fixture.source.SourceType,
+		Identifier: fixture.source.Identifier,
+	}
+	inGrant := &agentgrant.Grant{
+		ID:          "g-in-grant",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources:     []agentgrant.SourceRef{inGrantRef},
+	}
+	outOfGrant := &agentgrant.Grant{
+		ID:          "g-other",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources:     []agentgrant.SourceRef{{ID: 9999, Type: "imap", Identifier: "stranger@example.com"}},
+	}
+
+	intent := draftReplyIntent{
+		MessageID: fixture.parentID,
+		From:      testutil.IMAPTestUsername,
+		Body:      "reply body",
+	}
+
+	t.Run("grant in-scope but no draft policy returns draft_disabled", func(t *testing.T) {
+		// Grant allows the source but [[imap.drafts]] policy is absent.
+		// The error must be draft_disabled (from authorizeIMAPDraft), not not_permitted.
+		adapter := &storeAPIAdapter{
+			store:       fixture.store,
+			draftPolicy: nil,
+		}
+		_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, inGrant)
+		require.Error(t, err)
+		assert.Equal(t, "draft_disabled", err.Error())
+	})
+
+	t.Run("grant out-of-scope but draft policy exists returns not_permitted", func(t *testing.T) {
+		// The [[imap.drafts]] policy permits the source, but the grant doesn't.
+		// authorizeDelegatedDraftSource runs first, so the code is not_permitted,
+		// not draft_disabled — the caller cannot infer whether drafting is configured.
+		adapter := fixture.grantedAdapter()
+		_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, outOfGrant)
+		require.Error(t, err)
+		assert.Equal(t, "not_permitted", err.Error())
+	})
 }

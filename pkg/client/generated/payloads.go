@@ -6,6 +6,8 @@ type LoginSessionBody = SessionLoginRequest
 
 type AddAccountBody = AddAccountRequest
 
+type IssueAgentTokenBody = AgentTokenIssueRequest
+
 type CreateAttributeDefinitionBody = CreateAttributeDefinitionRequest
 
 type PatchAttributeDefinitionBody = PatchAttributeDefinitionRequest

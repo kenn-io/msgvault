@@ -198,10 +198,12 @@ until an operator grants it for one exact IMAP source on the daemon host.
     mailbox = "Drafts"
     ```
 
-1. Restart the daemon. The grant applies to the source, not an individual
-    caller: any client that can reach the daemon can create drafts on that
-    source. Client configuration, request fields, and environment variables
-    cannot grant access or choose a different folder.
+1. Restart the daemon. The host policy applies per source. Owner callers
+    using an API key, browser session, or keyless loopback can create drafts
+    on a granted source. Delegated callers also need that source in their
+    [agent token grant](../cli-reference.md#agent-token). Client configuration,
+    request fields, and environment variables cannot grant access or choose a
+    different folder.
 
 1. Check the source's confirmed sender identities:
 

@@ -312,6 +312,34 @@ func TestNewRejectsHTTPWithoutAllowInsecure(t *testing.T) {
 	require.Error(t, err, "New should reject http without AllowInsecure")
 }
 
+func TestNewRejectsHTTPAgentTokenWithoutAllowInsecure(t *testing.T) {
+	_, err := New(Config{URL: "http://nas:8080", AgentToken: "mva1_token"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS required for agent token", "error must name agent token as the reason")
+}
+
+func TestNewAgentTokenClientRejectsRedirects(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/health", http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	c, err := New(Config{URL: redirector.URL, AgentToken: "mva1_token", AllowInsecure: true})
+	require.NoError(t, err)
+
+	resp, err := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err, "agent token client must not follow redirects")
+	assert.Contains(t, err.Error(), "does not follow redirects")
+}
+
 func TestNewAllowsHTTPWithAllowInsecure(t *testing.T) {
 	c, err := New(Config{URL: "http://nas:8080", APIKey: "key", AllowInsecure: true})
 	require.NoError(t, err, "New")
@@ -790,4 +818,46 @@ func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	case <-time.After(time.Second):
 		require.FailNow("streaming busy retry did not return after context cancellation")
 	}
+}
+
+// TestRequestEditorDelegatedMode tests proof matrix row 19.
+// In delegated mode the client attaches exactly X-Msgvault-Agent-Token and
+// never X-Api-Key or the daemon runtime token. APIKey and AgentToken are
+// mutually exclusive at construction time.
+func TestRequestEditorDelegatedMode(t *testing.T) {
+	t.Run("agent token without api key is accepted", func(t *testing.T) {
+		c, err := New(Config{URL: "http://daemon:8080", AgentToken: "mva1_token", AllowInsecure: true})
+		require.NoError(t, err)
+		require.NotNil(t, c)
+	})
+
+	t.Run("both agent token and api key is rejected", func(t *testing.T) {
+		_, err := New(Config{URL: "http://daemon:8080", AgentToken: "mva1_token", APIKey: "key", AllowInsecure: true})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mutually exclusive")
+	})
+
+	t.Run("delegated mode sets agent header not api key", func(t *testing.T) {
+		var gotAgentToken, gotAPIKey string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAgentToken = r.Header.Get(apiprotocol.AgentTokenHeader)
+			gotAPIKey = r.Header.Get("X-Api-Key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		const token = "mva1_delegatedtesttoken"
+		c, err := New(Config{URL: srv.URL, AgentToken: token, AllowInsecure: true})
+		require.NoError(t, err)
+
+		// Make a request via the generated client to trigger requestEditor.
+		resp, _ := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+
+		assert.Equal(t, token, gotAgentToken, "agent token header must be set in delegated mode")
+		assert.Empty(t, gotAPIKey, "X-Api-Key must not be set in delegated mode")
+	})
 }

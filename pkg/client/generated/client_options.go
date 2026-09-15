@@ -94,6 +94,94 @@ func (o *AddAccountRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// IssueAgentTokenRequestOptions is the options needed to make a request to IssueAgentToken.
+type IssueAgentTokenRequestOptions struct {
+	Body *IssueAgentTokenBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *IssueAgentTokenRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *IssueAgentTokenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *IssueAgentTokenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *IssueAgentTokenRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *IssueAgentTokenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RevokeAgentTokenRequestOptions is the options needed to make a request to RevokeAgentToken.
+type RevokeAgentTokenRequestOptions struct {
+	PathParams *RevokeAgentTokenPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *RevokeAgentTokenRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RevokeAgentTokenRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *RevokeAgentTokenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RevokeAgentTokenRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RevokeAgentTokenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetAggregatesRequestOptions is the options needed to make a request to GetAggregates.
 type GetAggregatesRequestOptions struct {
 	Query *GetAggregatesQuery
