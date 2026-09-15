@@ -122,6 +122,7 @@ first sync, and running on your own server.
 | Catch up after 0.19 | [Changelog and upgrade notes](docs/changelog.md#0200) |
 | Search messages and attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
+| Import local text-message history | [Text message imports](docs/usage/text-messages.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |
 | Run msgvault on a server | [Remote deployment](docs/guides/remote-deployment.md) |
 | Back up or free mailbox space | [Backup](docs/usage/backup.md) and [deleting email](docs/usage/deletion.md) |

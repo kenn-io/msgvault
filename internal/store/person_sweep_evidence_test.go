@@ -2,18 +2,23 @@ package store_test
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -419,6 +424,58 @@ func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
 			assert.Equal(t, personfacts.DirectSelf, item.Directness)
 		})
 	}
+}
+
+func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	// Import a real iMazing CSV export whose outgoing row was sent by the
+	// archive owner, then track the owner as a person.
+	exportRoot := t.TempDir()
+	csvDir := filepath.Join(exportRoot, "csv")
+	requirements.NoError(os.Mkdir(csvDir, 0o700))
+	csvFile, err := os.Create(filepath.Join(csvDir, "messages.csv"))
+	requirements.NoError(err)
+	writer := csv.NewWriter(csvFile)
+	requirements.NoError(writer.Write([]string{
+		"Chat Session", "Message Date", "Delivered Date", "Read Date", "Service", "Type",
+		"Sender ID", "Sender Name", "Status", "Replying to", "Subject", "Text", "Attachment", "Attachment type",
+	}))
+	requirements.NoError(writer.Write([]string{
+		"Alice", "2024-06-01 12:00:00", "", "", "iMessage", "Outgoing", "", "", "", "", "", "I prefer chat", "", "",
+	}))
+	writer.Flush()
+	requirements.NoError(writer.Error())
+	requirements.NoError(csvFile.Close())
+	_, err = imazingcsv.NewImporter(st, imazingcsv.Options{Owner: "+15550000001", Timezone: "UTC"}).
+		ImportPath(t.Context(), exportRoot)
+	requirements.NoError(err)
+	source, err := st.GetSourceByTypeAndIdentifier(imazingcsv.SourceType, "+15550000001")
+	requirements.NoError(err)
+	var ownerParticipantID, messageID int64
+	requirements.NoError(st.DB().QueryRow(`
+		SELECT id FROM participants WHERE phone_number = '+15550000001'`).Scan(&ownerParticipantID))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM messages WHERE source_id = ?`), source.ID).Scan(&messageID))
+	person, _, err := st.CreatePersonFromParticipant(ownerParticipantID)
+	requirements.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
+	requirements.NoError(err)
+
+	items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, []int64{messageID}, 0)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	requirements.NotNil(items[0].SubjectPersonID)
+	checks.Equal(person.ID, *items[0].SubjectPersonID)
+	checks.Equal(personfacts.DirectSelf, items[0].Directness)
+
+	candidates, err := st.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{
+		PersonID: person.ID, AuthoredByPerson: true, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Equal([]int64{messageID}, candidates,
+		"outgoing imazing_csv messages must count as person authorship")
 }
 
 func TestPersonSweepEvidenceStatusChangesCoalesceToTerminalEffect(t *testing.T) {

@@ -38,7 +38,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
-| WhatsApp, iMessage, Google Voice, Messenger | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
+| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
 Chat media has size and room-participant limits. A message can be archived

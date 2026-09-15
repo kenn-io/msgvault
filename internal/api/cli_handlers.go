@@ -1676,6 +1676,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-eml",
 		"import-emlx",
 		"import-gvoice",
+		"import-imazing-csv",
 		"import-imessage",
 		"import-mbox",
 		"import-messenger",

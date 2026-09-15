@@ -1120,8 +1120,8 @@ func personSweepAuthorship(
 // authorship predicate, so the two can never disagree.
 func personSweepAuthenticatedSenderSourceTypes() []string {
 	return []string{"apple_messages", "beeper", "discord", "facebook_messenger",
-		"google_messages", "imessage", "slack", "slackdump", "synctech-sms",
-		"synctech_sms", "teams", "whatsapp"}
+		"google_messages", "imazing_csv", "imessage", "slack", "slackdump",
+		"synctech-sms", "synctech_sms", "teams", "whatsapp"}
 }
 
 // personSweepSourceAuthenticatesSender is the Go twin of the SQL authorship

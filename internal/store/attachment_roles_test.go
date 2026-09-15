@@ -1,11 +1,13 @@
 package store_test
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -176,6 +178,135 @@ func TestAttachmentSourcePartKeyResyncUpdatesOneOccurrence(t *testing.T) {
 	assert.Equal("after.png", filename)
 	assert.Equal(secondHash, contentHash)
 	assert.Equal(int64(200), size)
+}
+
+func TestUpsertAttachmentRecordPreservingStoredKeepsBlobForMissingResync(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("preserve-stored-attachment")
+	hash := strings.Repeat("fa", 32)
+	write := store.AttachmentWrite{
+		Filename: "before.jpg", MIMEType: "image/jpeg", StoragePath: hash[:2] + "/" + hash,
+		ContentHash: hash, Size: 91, Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "imazing:photo",
+		State: attachmentpolicy.StateStored,
+	}
+	require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
+	fileID := singleAttachmentID(t, f, messageID)
+
+	write.Filename = "after.jpg"
+	write.StoragePath = ""
+	write.ContentHash = ""
+	write.Size = 0
+	write.State = attachmentpolicy.StateFailed
+	write.SkipReason = attachmentpolicy.SkipFetchFailure
+	require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
+
+	var id, size int64
+	var filename, storagePath, contentHash, state, skipReason string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT id, filename, storage_path, content_hash, size,
+		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+		FROM attachments WHERE message_id = ? AND source_part_key = ?`),
+		messageID, write.SourcePartKey).Scan(
+		&id, &filename, &storagePath, &contentHash, &size, &state, &skipReason,
+	))
+	assert.Equal(fileID, id)
+	assert.Equal("after.jpg", filename)
+	assert.Equal(hash[:2]+"/"+hash, storagePath)
+	assert.Equal(hash, contentHash)
+	assert.Equal(int64(91), size)
+	assert.Equal(string(attachmentpolicy.StateStored), state)
+	assert.Empty(skipReason)
+}
+
+// Regression: a missing attachment inserts a row with a NULL content_hash,
+// so a rerun while the bytes are still absent must not fail scanning that
+// NULL into a string when the stored occurrence is loaded.
+func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("preserve-missing-attachment-rerun")
+	write := store.AttachmentWrite{
+		Filename: "missing.pdf", MIMEType: "application/pdf",
+		Role:          store.AttachmentRoleStandalone,
+		RoleSource:    store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: "imazing_csv:attachment:missing",
+		State:         attachmentpolicy.StateFailed,
+		SkipReason:    attachmentpolicy.SkipFetchFailure,
+	}
+	require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
+
+	var contentHash sql.NullString
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT content_hash FROM attachments
+		WHERE message_id = ? AND source_part_key = ?`),
+		messageID, write.SourcePartKey).Scan(&contentHash))
+	require.True(contentHash.Valid == false || contentHash.String == "",
+		"precondition: missing attachment stores no content hash")
+
+	require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
+
+	var count int
+	var storagePath, state, skipReason string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT COUNT(*), MIN(storage_path), MIN(attachment_state),
+		       MIN(attachment_skip_reason)
+		FROM attachments WHERE message_id = ? AND source_part_key = ?`),
+		messageID, write.SourcePartKey).Scan(&count, &storagePath, &state, &skipReason))
+	assert.Equal(1, count, "rerun must not duplicate the missing occurrence")
+	assert.Empty(storagePath)
+	assert.Equal(string(attachmentpolicy.StateFailed), state)
+	assert.Equal(string(attachmentpolicy.SkipFetchFailure), skipReason)
+}
+
+func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("reconcile-keyed-attachments")
+	for _, key := range []string{
+		"imazing_csv:attachment:old",
+		"imazing_csv:attachment:current",
+		"imazingXcsv:attachment:foreign",
+		"mime:2",
+	} {
+		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+			Filename: key + ".bin", Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: key,
+		}))
+	}
+
+	require.NoError(f.Store.DeleteKeyedAttachmentsExceptContext(
+		t.Context(), messageID, "imazing_csv:attachment:", "imazing_csv:attachment:current",
+	))
+
+	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+		SELECT source_part_key FROM attachments WHERE message_id = ? ORDER BY source_part_key`), messageID)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var keys []string
+	for rows.Next() {
+		var key string
+		require.NoError(rows.Scan(&key))
+		keys = append(keys, key)
+	}
+	require.NoError(rows.Err())
+	// SQLite orders text byte-wise while PostgreSQL uses its database
+	// collation, so only the surviving set matters here, not row order.
+	assert.ElementsMatch([]string{
+		"imazingXcsv:attachment:foreign", "imazing_csv:attachment:current", "mime:2",
+	}, keys)
+
+	require.NoError(f.Store.DeleteKeyedAttachmentsExceptContext(
+		t.Context(), messageID, "imazing_csv:attachment:", "",
+	))
+	var count int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&count))
+	assert.Equal(2, count, "an empty keep key removes importer-owned rows but preserves foreign rows")
 }
 
 func TestUpsertAttachmentRecordRejectsInvalidRoleEvidence(t *testing.T) {

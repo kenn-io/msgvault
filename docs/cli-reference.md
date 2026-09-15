@@ -11,7 +11,7 @@ in your installed binary. This reference follows current `main`; see
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
@@ -1055,6 +1055,37 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
+
+---
+
+## import-imazing-csv
+
+Import iMessage and SMS history from an iMazing Messages CSV export. Pass the
+export root containing `csv/` and optional `attachments/`, or pass its `csv/`
+directory directly.
+
+```bash
+msgvault import-imazing-csv ~/Downloads/messages-export \
+  --me +14155550100 --timezone America/Los_Angeles
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | (required) | Your phone number or email address |
+| `--timezone` | local IANA zone (required on Windows) | Timezone used for dates that do not include an offset |
+| `--contacts` | — | vCard file used to fill empty participant names |
+
+The importer accepts comma, tab, and semicolon CSV files with named iMazing
+headers. It is deterministic across reruns. Available referenced files are
+stored up to 100 MiB each; missing files remain visible as missing attachment
+occurrences, and a later rerun can fill them. Reply links are added only when
+the exported reply text identifies exactly one earlier message.
+
+CSV exports do not share stable message IDs with `chat.db`. Importing the same
+history through both commands can create cross-source duplicates.
+
+See [Text Messages](/docs/usage/text-messages/#import-imazing-csv) for the full
+format and rerun behavior.
 
 ---
 
