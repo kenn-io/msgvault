@@ -293,8 +293,8 @@ func TestOutputMessageJSONIncludesAbsentRFCMessageID(t *testing.T) {
 
 func TestOutputMessageJSONIncludesBrowserURL(t *testing.T) {
 	done := captureStdout(t)
-	require.NoError(t, outputMessageJSON(&query.MessageDetail{ID: 42, WebURL: "https://archive.example/?explore=selection"}))
+	require.NoError(t, outputMessageJSON(&query.MessageDetail{ID: 42, WebURL: "https://archive.example/messages/42"}))
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(done()), &result))
-	assert.Equal(t, "https://archive.example/?explore=selection", result["web_url"])
+	assert.Equal(t, "https://archive.example/messages/42", result["web_url"])
 }

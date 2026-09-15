@@ -580,7 +580,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal("msg-42", msg.SourceMessageID, "SourceMessageID")
-	assert.Equal(store.baseURL+"/?explore=%7B%22schemaVersion%22%3A2%2C%22workspace%22%3A%22everything%22%2C%22selectedRow%22%3A%22message%3A42%22%7D", msg.WebURL)
+	assert.Equal(store.baseURL+"/messages/42", msg.WebURL)
 	assert.Equal("sms", msg.MessageType, "MessageType")
 	require.NotNil(msg.DeletedAt, "DeletedAt")
 	assert.Equal(deletedAt, msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")

@@ -1456,14 +1456,13 @@ func cliAccountUpdateResultFromGenerated(result *generated.UpdateResult) *CLIAcc
 	}
 }
 
-// messageWebURL uses the existing Explore state contract and the selected
-// daemon's browser origin. Message IDs are local to that daemon.
+// messageWebURL opens the selected daemon's direct message route.
+// Message IDs are local to that daemon.
 func (c *Client) messageWebURL(id int64) string {
 	if id <= 0 {
 		return ""
 	}
-	state := fmt.Sprintf(`{"schemaVersion":2,"workspace":"everything","selectedRow":"message:%d"}`, id)
-	return c.baseURL + "/?explore=" + url.QueryEscape(state)
+	return fmt.Sprintf("%s/messages/%d", c.baseURL, id)
 }
 
 func (c *Client) messageSummariesWithURLs(messages []generated.MessageSummary) []query.MessageSummary {

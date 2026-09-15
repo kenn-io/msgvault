@@ -315,7 +315,8 @@ import (
 // whose inferred facts changed since the last approval fails with 409
 // carddav_inference_review_required. Additive (minor bump): existing CardDAV
 // routes are unchanged.
-const APISchemaVersion = "2.25.0"
+// 2.26.0 adds optional web_url metadata to message result schemas.
+const APISchemaVersion = "2.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
