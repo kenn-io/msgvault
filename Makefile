@@ -43,6 +43,7 @@ SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
 SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.7.0
+HUMA_CHECK_VERSION := efb469cee12d24fd52640ea05b03ced275bf4370
 GO_INSTALL_BIN := $(shell go env GOBIN)
 ifeq ($(strip $(GO_INSTALL_BIN)),)
 GO_INSTALL_BIN := $(shell go env GOPATH)/bin
@@ -357,6 +358,12 @@ lint:
 	fi
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run --fix ./...
+
+# Check the shared Huma API contract.
+huma-check:
+	go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./...
+
+.PHONY: huma-check
 
 # Run linter (CI, no auto-fix)
 lint-ci: lint-tools testify-helper-check

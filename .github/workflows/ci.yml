@@ -88,6 +88,9 @@ jobs:
       - name: Check PostgreSQL build coverage
         run: make pg-shipped-only-check
 
+      - name: Check Huma API contracts
+        run: make huma-check
+
       - name: Install lint tools
         run: |
           make lint-tools

@@ -10,3 +10,11 @@ language = "system"
 entry = "make fmt lint"
 pass_filenames = false
 always_run = true
+
+[[repos.hooks]]
+id = "huma-check"
+name = "huma-check"
+language = "system"
+entry = "make huma-check"
+pass_filenames = false
+always_run = true
