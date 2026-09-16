@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -108,26 +112,6 @@ type agentTokenListFixture struct {
 	Tokens []agentTokenFixtureView `json:"tokens"`
 }
 
-type delegatedPermissionStore struct {
-	api.MessageStore
-
-	source      *store.Source
-	runnerCalls int
-}
-
-func (s *delegatedPermissionStore) GetSourceByIDContext(_ context.Context, _ int64) (*store.Source, error) {
-	return s.source, nil
-}
-
-func (s *delegatedPermissionStore) RunCLICommand(
-	_ context.Context,
-	_ api.CLIRunRequest,
-	_ func(api.CLIRunEvent) error,
-) error {
-	s.runnerCalls++
-	return nil
-}
-
 func TestAgentTokenIssuePermissionsFlagListsVocabulary(t *testing.T) {
 	flag := agentTokenIssueCmd.Flags().Lookup("permissions")
 	require.NotNil(t, flag)
@@ -140,24 +124,29 @@ func TestAgentTokenIssuePermissionsFlagListsVocabulary(t *testing.T) {
 func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	backend := &delegatedPermissionStore{
-		source: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	providerCalls := 0
+	clientFactory := adapter.draftClientFactory
+	adapter.draftClientFactory = func(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return clientFactory(ctx, source)
 	}
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{
 			HomeDir: t.TempDir(),
 			Server:  config.ServerConfig{APIKey: "owner-test-key", AgentAccess: true},
 		},
-		Store:  backend,
+		Store:  adapter,
 		Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
 
-	issue := func(permissions []string) string {
+	issue := func(permissions []string, sourceID int64) string {
 		body, err := json.Marshal(map[string]any{
 			"label":       "test-agent",
 			"permissions": permissions,
-			"source_ids":  []int64{1},
+			"source_ids":  []int64{sourceID},
 		})
 		require.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
@@ -173,7 +162,11 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 		return issued.Secret
 	}
 
-	run := func(secret string, args []string) (int, api.ErrorResponse) {
+	run := func(secret string) (int, []api.CLIRunEvent, api.ErrorResponse) {
+		args := []string{
+			"draft-reply", strconv.FormatInt(fixture.parentID, 10),
+			"--from", testutil.IMAPTestUsername, "--body", "reply body", "--json",
+		}
 		body, err := json.Marshal(map[string]any{"args": args})
 		require.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
@@ -183,24 +176,56 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
+		var events []api.CLIRunEvent
 		var response api.ErrorResponse
-		if resp.StatusCode != http.StatusOK {
-			require.NoError(json.NewDecoder(resp.Body).Decode(&response))
+		if resp.StatusCode == http.StatusOK {
+			scanner := bufio.NewScanner(resp.Body)
+			for scanner.Scan() {
+				var event api.CLIRunEvent
+				require.NoError(json.Unmarshal(scanner.Bytes(), &event))
+				events = append(events, event)
+			}
+			require.NoError(scanner.Err())
+			return resp.StatusCode, events, response
 		}
-		return resp.StatusCode, response
+		require.NoError(json.NewDecoder(resp.Body).Decode(&response))
+		return resp.StatusCode, events, response
 	}
 
-	readOnly := issue([]string{string(agentgrant.PermissionDraftRead)})
-	code, response := run(readOnly, []string{"draft-reply", "42"})
+	readOnly := issue([]string{string(agentgrant.PermissionDraftRead)}, fixture.source.ID)
+	code, events, response := run(readOnly)
 	assert.Equal(http.StatusBadRequest, code)
 	assert.Equal("command_not_allowed", response.Error)
-	assert.Zero(backend.runnerCalls)
+	assert.Empty(events)
+	assert.Zero(providerCalls, "a read-only grant must be rejected before provider work")
 
-	full := issue(agentgrant.KnownPermissionNames())
-	code, response = run(full, []string{"draft-reply", "42"})
+	full := issue(agentgrant.KnownPermissionNames(), fixture.source.ID)
+	code, events, response = run(full)
 	assert.Equal(http.StatusOK, code)
 	assert.Empty(response.Error)
-	assert.Equal(1, backend.runnerCalls)
+	require.Len(events, 2)
+	assert.Equal(cliStreamStdout, events[0].Type)
+	var result draftReplyOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal(draftReplyStatusCreated, result.Status)
+	assert.Equal(fixture.source.ID, result.SourceID)
+	assert.Equal("Drafts", result.Mailbox)
+	assert.Contains(result.OperationRef, fmt.Sprintf("%d:Drafts|", fixture.source.ID))
+	assert.Equal("complete", events[1].Type)
+	t.Logf("full grant stream: %s", strings.TrimSpace(events[0].Data))
+	assert.Equal(1, providerCalls)
+
+	secondSource, err := fixture.store.GetOrCreateSource("imap", "other@example.com")
+	require.NoError(err)
+	otherSource := issue(agentgrant.KnownPermissionNames(), secondSource.ID)
+	code, events, response = run(otherSource)
+	assert.Equal(http.StatusOK, code)
+	assert.Empty(response.Error)
+	require.Len(events, 1)
+	assert.Equal("error", events[0].Type)
+	assert.Equal("not_permitted", events[0].Error)
+	t.Logf("other-source stream: %+v", events)
+	assert.Equal(1, providerCalls, "an out-of-grant source must be rejected before provider work")
 }
 
 // TestAgentTokenIssueOutputsSecret verifies that the issue subcommand (row 6):
