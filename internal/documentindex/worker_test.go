@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -482,40 +483,49 @@ func TestMistralWorkerReleasesClaimAfterPublicationFailure(t *testing.T) {
 }
 
 func TestMistralWorkerSuspendsLeaseRenewalDuringPublication(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	content := mistraltest.MinimalPDF("worker test")
-	hash := sha256.Sum256(content)
-	releasePublish := make(chan struct{})
-	catalog := &workerCatalog{
-		publishStarted: make(chan struct{}),
-		releasePublish: releasePublish,
-	}
-	worker := newTestMistralWorker(
-		t, catalog, &workerOpener{content: content},
-		&workerProcessor{result: successfulWorkerResult("searchable evidence")},
-	)
-	worker.config.LeaseDuration = 15 * time.Millisecond
+	policy := testMistralPolicy(t)
+	manifest := testCapabilityManifest(t, policy)
+	// synctest starts its clock in 2000, so validation must see a non-future observation.
+	manifest.ObservedOn = "2000-01-01"
+	inputPolicy := testPDFInputPolicy(t, policy, manifest)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		content := mistraltest.MinimalPDF("worker test")
+		hash := sha256.Sum256(content)
+		releasePublish := make(chan struct{})
+		catalog := &workerCatalog{
+			publishStarted: make(chan struct{}),
+			releasePublish: releasePublish,
+		}
+		worker := newTestMistralWorkerWithConfig(
+			t, catalog, &workerOpener{content: content},
+			&workerProcessor{result: successfulWorkerResult("searchable evidence")},
+			policy, manifest, inputPolicy,
+		)
+		worker.config.LeaseDuration = 15 * time.Millisecond
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
-			AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
-			Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
-		})
-		done <- err
-	}()
-	select {
-	case <-catalog.publishStarted:
-	case <-time.After(time.Second):
+		done := make(chan error, 1)
+		go func() {
+			_, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+				AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(hash[:]), MIMEType: "application/pdf",
+				Size: int64(len(content)), MessageType: "email", SourceSequence: 1,
+			})
+			done <- err
+		}()
+		select {
+		case <-catalog.publishStarted:
+		case <-time.After(time.Second):
+			close(releasePublish)
+			require.Fail("publication did not start")
+		}
+		synctest.Sleep(40 * time.Millisecond)
 		close(releasePublish)
-		require.Fail("publication did not start")
-	}
-	time.Sleep(40 * time.Millisecond)
-	close(releasePublish)
-	require.NoError(<-done)
-	assert.False(catalog.renewedPublishing.Load())
-	assert.Positive(catalog.renewals.Load(), "the claim is renewed immediately before publication")
+		synctest.Wait()
+		require.NoError(<-done)
+		assert.False(catalog.renewedPublishing.Load())
+		assert.Positive(catalog.renewals.Load(), "the claim is renewed immediately before publication")
+	})
 }
 
 func TestMistralWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
@@ -614,23 +624,40 @@ func newTestMistralWorker(
 	processor MistralProcessor,
 ) *MistralWorker {
 	t.Helper()
+	policy := testMistralPolicy(t)
+	manifest := testCapabilityManifest(t, policy)
+	return newTestMistralWorkerWithConfig(
+		t, catalog, opener, processor, policy,
+		manifest, testPDFInputPolicy(t, policy, manifest),
+	)
+}
+
+func newTestMistralWorkerWithConfig(
+	t *testing.T,
+	catalog DocumentExtractionCatalog,
+	opener DocumentAttachmentOpener,
+	processor MistralProcessor,
+	policy mistral.Policy,
+	manifest mistral.CapabilityManifest,
+	inputPolicy ResolvedInputPolicy,
+) *MistralWorker {
+	t.Helper()
 	spoolDirectory := filepath.Join(t.TempDir(), "spool")
 	require.NoError(t, fileutil.SecureMkdirAll(spoolDirectory, 0o700))
-	policy := testMistralPolicy(t)
 	worker, err := NewMistralWorker(catalog, opener, processor, MistralWorkerConfig{
 		ProfileID: "profile-test", LeaseOwner: "worker-test", LeaseDuration: 30 * time.Minute,
 		RetryDelay: 5 * time.Minute, SpoolDirectory: spoolDirectory,
 		MaxSpoolBytes: 2 << 20, MinFreeBytes: 1,
-		Policy: policy, CapabilityPolicy: testCapabilityManifest(t, policy),
-		InputPolicy: testPDFInputPolicy(t, policy),
+		Policy: policy, CapabilityPolicy: manifest, InputPolicy: inputPolicy,
 	})
 	require.NoError(t, err)
 	return worker
 }
 
-func testPDFInputPolicy(t *testing.T, policy mistral.Policy) ResolvedInputPolicy {
+func testPDFInputPolicy(
+	t *testing.T, policy mistral.Policy, manifest mistral.CapabilityManifest,
+) ResolvedInputPolicy {
 	t.Helper()
-	manifest := testCapabilityManifest(t, policy)
 	pdfFormat, found := mistral.CandidateFormatByID("pdf")
 	require.True(t, found)
 	authorization, err := policy.Authorize(manifest, pdfFormat.ID)

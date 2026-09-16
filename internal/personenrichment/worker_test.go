@@ -1848,18 +1848,17 @@ func TestWorkerRejectsStaleCommitAfterLeaseReclaim(t *testing.T) {
 	requirements := require.New(t)
 	f := newWorkerFixture(t, "stale-commit", nil)
 	f.enqueue(t)
+	claimTime := time.Now().UTC()
 	started := make(chan struct{})
 	release := make(chan struct{})
+	requestReady := make(chan personenrichment.Request, 1)
+	attemptReady := make(chan personenrichment.Attempt, 1)
 	provider := &functionProvider{
 		start: func(_ context.Context, request personenrichment.Request) (personenrichment.Attempt, error) {
 			close(started)
+			requestReady <- request
 			<-release
-			result := workerResult(t, request, f.target, "stale-request", "", false, "", personenrichment.Cost{})
-			return personenrichment.Attempt{
-				State: personenrichment.AttemptComplete, RequestID: result.RequestID,
-				AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
-				ProgramFingerprint: workerProgramFingerprint(t, false, ""), Result: &result,
-			}, nil
+			return <-attemptReady, nil
 		},
 		poll: func(context.Context, personenrichment.Attempt) (personenrichment.Result, error) {
 			return personenrichment.Result{}, errors.New("unexpected poll")
@@ -1868,6 +1867,7 @@ func TestWorkerRejectsStaleCommitAfterLeaseReclaim(t *testing.T) {
 	options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
 	options.LeaseDuration = 60 * time.Millisecond
 	options.RenewEvery = 10 * time.Millisecond
+	options.Clock = func() time.Time { return claimTime }
 	worker, err := personenrichment.NewWorker(
 		noOpRenewStore{WorkStore: f.store}, f.store,
 		f.gate(t, func(string) (string, bool) { return "test-key", true }),
@@ -1881,10 +1881,16 @@ func TestWorkerRejectsStaleCommitAfterLeaseReclaim(t *testing.T) {
 		done <- runErr
 	}()
 	<-started
-	time.Sleep(80 * time.Millisecond)
+	request := <-requestReady
+	result := workerResult(t, request, f.target, "stale-request", "", false, "", personenrichment.Cost{})
+	attemptReady <- personenrichment.Attempt{
+		State: personenrichment.AttemptComplete, RequestID: result.RequestID,
+		AdapterVersion: result.AdapterVersion, SchemaVersion: result.SchemaVersion,
+		ProgramFingerprint: workerProgramFingerprint(t, false, ""), Result: &result,
+	}
 	reclaimed, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
 		RunID: f.run.ID, Owner: "replacement-worker", ProviderName: f.config.Name,
-		Now: time.Now().UTC(), LeaseDuration: time.Minute,
+		Now: claimTime.Add(80 * time.Millisecond), LeaseDuration: time.Minute,
 	})
 	requirements.NoError(err)
 	requirements.NotNil(reclaimed)
