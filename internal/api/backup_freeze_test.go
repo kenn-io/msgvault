@@ -8,8 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -184,40 +184,39 @@ func TestBackupFreezeEndRejectsBogusTokenThenSucceedsOnce(t *testing.T) {
 }
 
 func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 
-	oldTimeout := backupFreezeWatchdogTimeout
-	backupFreezeWatchdogTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { backupFreezeWatchdogTimeout = oldTimeout })
+		oldTimeout := backupFreezeWatchdogTimeout
+		backupFreezeWatchdogTimeout = 50 * time.Millisecond
+		defer func() { backupFreezeWatchdogTimeout = oldTimeout }()
 
-	buf := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger:        logger,
-		OperationGate: NewSerialOperationGate(),
+		buf := &syncBuffer{}
+		logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Logger:        logger,
+			OperationGate: NewSerialOperationGate(),
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown") }()
+
+		token := beginBackupFreeze(t, srv)
+
+		synctest.Sleep(backupFreezeWatchdogTimeout)
+		assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv),
+			"gate should auto-release after watchdog fires")
+		logLine := findJSONLogLine(t, buf.String(), "backup freeze watchdog fired; releasing operation gate")
+		assert.Equal("ERROR", logLine["level"], "watchdog log level")
+		assert.Equal(token, logLine["token"], "watchdog log token")
+
+		endResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
+		assert.Equal(http.StatusBadRequest, endResp.Code, "end after watchdog fire should fail: %s", endResp.Body.String())
+		var errResp ErrorResponse
+		require.NoError(json.Unmarshal(endResp.Body.Bytes(), &errResp), "decode error envelope")
+		assert.Equal("backup_freeze_not_active", errResp.Error, "error code")
 	})
-
-	token := beginBackupFreeze(t, srv)
-
-	require.Eventually(func() bool {
-		return gatedProbeStatus(srv) == http.StatusBadRequest
-	}, 2*time.Second, 10*time.Millisecond, "gate should auto-release after watchdog fires")
-
-	require.Eventually(func() bool {
-		return strings.Contains(buf.String(), "backup freeze watchdog fired")
-	}, 2*time.Second, 10*time.Millisecond, "watchdog should log at error level")
-	logLine := findJSONLogLine(t, buf.String(), "backup freeze watchdog fired; releasing operation gate")
-	assert.Equal("ERROR", logLine["level"], "watchdog log level")
-	assert.Equal(token, logLine["token"], "watchdog log token")
-
-	endResp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
-	assert.Equal(http.StatusBadRequest, endResp.Code, "end after watchdog fire should fail: %s", endResp.Body.String())
-	var errResp ErrorResponse
-	require.NoError(json.Unmarshal(endResp.Body.Bytes(), &errResp), "decode error envelope")
-	assert.Equal("backup_freeze_not_active", errResp.Error, "error code")
 }
 
 func TestBackupFreezeBeginSameHostOnly(t *testing.T) {

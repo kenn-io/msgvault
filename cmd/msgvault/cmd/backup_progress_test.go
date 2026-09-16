@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -129,34 +130,44 @@ func TestBackupProgressRenderer_ElapsedSuffix(t *testing.T) {
 // events arriving, the open TTY line must keep redrawing with fresh elapsed
 // time instead of sitting frozen, and finish() must stop the ticker.
 func TestBackupProgressRenderer_IdleTickerKeepsElapsedCounting(t *testing.T) {
-	require := require.New(t)
-	withZeroBackupProgressTick(t)
-	oldTick := backupProgressElapsedTick
-	backupProgressElapsedTick = 5 * time.Millisecond
-	t.Cleanup(func() { backupProgressElapsedTick = oldTick })
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		oldInterval := backupProgressTickInterval
+		backupProgressTickInterval = 0
+		defer func() { backupProgressTickInterval = oldInterval }()
+		oldTick := backupProgressElapsedTick
+		backupProgressElapsedTick = 5 * time.Millisecond
+		defer func() { backupProgressElapsedTick = oldTick }()
 
-	var buf bytes.Buffer
-	r := newTestBackupProgressRenderer(t, &buf, progressModeTTY)
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageIntegrityCheck, Done: 0, Total: 1})
-	r.mu.Lock()
-	r.stageStart = time.Now().Add(-10 * time.Second)
-	buf.Reset()
-	r.mu.Unlock()
-
-	require.Eventually(func() bool {
+		var buf bytes.Buffer
+		r := newBackupProgressRenderer(&buf, progressModeTTY)
+		defer func() {
+			r.finish()
+			synctest.Wait()
+		}()
+		r.handle(backup.ProgressEvent{Stage: backup.ProgressStageIntegrityCheck, Done: 0, Total: 1})
 		r.mu.Lock()
-		defer r.mu.Unlock()
-		return strings.Contains(buf.String(), "10s")
-	}, time.Second, 5*time.Millisecond, "the idle ticker must redraw with elapsed time")
+		r.stageStart = time.Now().Add(-10 * time.Second)
+		buf.Reset()
+		r.mu.Unlock()
 
-	r.finish()
-	r.mu.Lock()
-	buf.Reset()
-	r.mu.Unlock()
-	time.Sleep(30 * time.Millisecond)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	require.Empty(buf.String(), "finish must stop the idle ticker")
+		synctest.Sleep(backupProgressElapsedTick)
+		r.mu.Lock()
+		out := buf.String()
+		r.mu.Unlock()
+		require.Contains(out, "10s", "the idle ticker must redraw with elapsed time")
+
+		r.finish()
+		synctest.Wait()
+		r.mu.Lock()
+		buf.Reset()
+		r.mu.Unlock()
+		synctest.Sleep(30 * time.Millisecond)
+		r.mu.Lock()
+		out = buf.String()
+		r.mu.Unlock()
+		require.Empty(out, "finish must stop the idle ticker")
+	})
 }
 
 func TestBackupProgressRenderer_FinishClosesOpenLine(t *testing.T) {
@@ -330,29 +341,35 @@ func TestBackupProgressRenderer_NamesDatabaseChecks(t *testing.T) {
 // event suppressed by the render throttle still updates the counts the idle
 // ticker repaints.
 func TestBackupProgressRenderer_IdleTickerRepaintsThrottledEvent(t *testing.T) {
-	require := require.New(t)
-	oldInterval := backupProgressTickInterval
-	backupProgressTickInterval = 100 * time.Millisecond
-	t.Cleanup(func() { backupProgressTickInterval = oldInterval })
-	oldTick := backupProgressElapsedTick
-	backupProgressElapsedTick = 5 * time.Millisecond
-	t.Cleanup(func() { backupProgressElapsedTick = oldTick })
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		oldInterval := backupProgressTickInterval
+		backupProgressTickInterval = 100 * time.Millisecond
+		defer func() { backupProgressTickInterval = oldInterval }()
+		oldTick := backupProgressElapsedTick
+		backupProgressElapsedTick = 5 * time.Millisecond
+		defer func() { backupProgressElapsedTick = oldTick }()
 
-	var buf bytes.Buffer
-	r := newTestBackupProgressRenderer(t, &buf, progressModeTTY)
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 0, Total: 2})
-	r.mu.Lock()
-	r.lastRender = time.Now() // pin the throttle window open around the next event
-	r.mu.Unlock()
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 1, Total: 2})
-	r.mu.Lock()
-	require.NotContains(buf.String(), "1/2", "second event should have been throttled")
-	r.mu.Unlock()
-
-	require.Eventually(func() bool {
+		var buf bytes.Buffer
+		r := newBackupProgressRenderer(&buf, progressModeTTY)
+		defer func() {
+			r.finish()
+			synctest.Wait()
+		}()
+		r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 0, Total: 2})
 		r.mu.Lock()
-		defer r.mu.Unlock()
-		return strings.Contains(buf.String(), "1/2")
-	}, 2*time.Second, 5*time.Millisecond,
-		"idle ticker must repaint the throttled event's counts")
+		r.lastRender = time.Now() // pin the throttle window open around the next event
+		r.mu.Unlock()
+		r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 1, Total: 2})
+		r.mu.Lock()
+		out := buf.String()
+		r.mu.Unlock()
+		require.NotContains(out, "1/2", "second event should have been throttled")
+
+		synctest.Sleep(backupProgressTickInterval + backupProgressElapsedTick)
+		r.mu.Lock()
+		out = buf.String()
+		r.mu.Unlock()
+		require.Contains(out, "1/2", "idle ticker must repaint the throttled event's counts")
+	})
 }

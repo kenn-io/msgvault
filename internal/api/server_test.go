@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -136,45 +137,52 @@ func (b *syncBuffer) String() string {
 // overruns the in-progress threshold emits a repeating WARN carrying the
 // request id, and that the watcher goroutine does not fire for fast requests.
 func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	buf := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		buf := &syncBuffer{}
+		logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	release := make(chan struct{})
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger: logger,
-		SQLQueryRunner: func(_ context.Context, _ string) (*query.QueryResult, error) {
-			<-release // hold the request open past the in-progress threshold
-			return &query.QueryResult{}, nil
-		},
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Logger: logger,
+			SQLQueryRunner: func(_ context.Context, _ string) (*query.QueryResult, error) {
+				<-release // hold the request open past the in-progress threshold
+				return &query.QueryResult{}, nil
+			},
+		})
+		defer func() {
+			releaseRequest()
+			synctest.Wait()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+		}()
+		srv.inProgressThreshold = 20 * time.Millisecond
+		srv.inProgressInterval = 20 * time.Millisecond
+
+		req := httptest.NewRequest(http.MethodPost, queryEndpointPath,
+			bytes.NewReader([]byte(`{"sql":"SELECT 1"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(resp, req)
+			close(done)
+		}()
+
+		synctest.Sleep(srv.inProgressThreshold)
+		inProgress := findJSONLogLine(t, buf.String(), "http request in progress")
+		assert.Equal("WARN", inProgress["level"])
+		assert.NotEmpty(inProgress["request_id"], "in-progress line must carry request_id")
+		assert.Equal(queryEndpointPath, inProgress["path"])
+
+		releaseRequest()
+		synctest.Wait()
+		<-done
 	})
-	srv.inProgressThreshold = 20 * time.Millisecond
-	srv.inProgressInterval = 20 * time.Millisecond
-
-	req := httptest.NewRequest(http.MethodPost, queryEndpointPath,
-		bytes.NewReader([]byte(`{"sql":"SELECT 1"}`)))
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
-
-	require.Eventually(func() bool {
-		return strings.Contains(buf.String(), "http request in progress")
-	}, 2*time.Second, 10*time.Millisecond, "no in-progress WARN emitted")
-
-	close(release)
-	<-done
-
-	inProgress := findJSONLogLine(t, buf.String(), "http request in progress")
-	assert.Equal("WARN", inProgress["level"])
-	assert.NotEmpty(inProgress["request_id"], "in-progress line must carry request_id")
-	assert.Equal(queryEndpointPath, inProgress["path"])
 }
 
 func TestPprofEndpointLoopbackOnly(t *testing.T) {
@@ -868,39 +876,41 @@ func TestDaemonPingEndpoint(t *testing.T) {
 }
 
 func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
-	assert := assert.
-		New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 
-	called := make(chan struct{}, 1)
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Scheduler:     newMockScheduler(),
-		Logger:        testLogger(),
-		ShutdownToken: "runtime-token",
-		ShutdownFunc: func() {
-			called <- struct{}{}
-		},
-	})
+		called := make(chan struct{}, 1)
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Scheduler:     newMockScheduler(),
+			Logger:        testLogger(),
+			ShutdownToken: "runtime-token",
+			ShutdownFunc: func() {
+				called <- struct{}{}
+			},
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown") }()
 
-	missing := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
-	missingResp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(missingResp, missing)
-	assert.Equal(http.StatusUnauthorized, missingResp.Code, "missing token status")
-	assert.Empty(called, "shutdown must not run without token")
+		missing := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
+		missingResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(missingResp, missing)
+		assert.Equal(http.StatusUnauthorized, missingResp.Code, "missing token status")
+		synctest.Wait()
+		assert.Empty(called, "shutdown must not run without token")
 
-	req := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
-	req.Header.Set(DaemonShutdownTokenHeader, "runtime-token")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	assert.Equal(http.StatusAccepted, w.Code, "valid token status")
-	require.Eventually(t, func() bool {
+		req := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
+		req.Header.Set(DaemonShutdownTokenHeader, "runtime-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(http.StatusAccepted, w.Code, "valid token status")
+		synctest.Wait()
 		select {
 		case <-called:
-			return true
 		default:
-			return false
+			require.FailNow("shutdown callback")
 		}
-	}, time.Second, 10*time.Millisecond, "shutdown callback")
+	})
 }
 
 func TestDaemonIdentityEndpointProvesRuntimeSecretWithoutReceivingIt(t *testing.T) {
@@ -1711,55 +1721,48 @@ func TestCLIRepairMessageWholeArchiveAuditHasNoOrdinaryRequestDeadline(t *testin
 }
 
 func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
-	require := require.New(t)
-	// The timeout must be far beyond the test's cancel latency: this test
-	// proves caller CANCELLATION reaches a marked request, and a 5ms budget
-	// let slow CI runners hit the deadline before cancel() ran.
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Second,
-	})
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		// The timeout must be far beyond the test's cancel latency: this test
+		// proves caller CANCELLATION reaches a marked request, and a 5ms budget
+		// let slow CI runners hit the deadline before cancel() ran.
+		srv := NewServerWithOptions(ServerOptions{
+			Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Logger:         testLogger(),
+			RequestTimeout: 5 * time.Second,
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown") }()
 
-	started := make(chan struct{})
-	handlerResult := make(chan error, 1)
-	handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		handlerResult <- r.Context().Err()
-	}))
+		started := make(chan struct{})
+		handlerResult := make(chan error, 1)
+		handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-r.Context().Done()
+			handlerResult <- r.Context().Err()
+		}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil).WithContext(ctx)
-	req.RemoteAddr = "127.0.0.1:4242"
-	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
-	requestDone := make(chan struct{})
-	go func() {
-		handler.ServeHTTP(httptest.NewRecorder(), req)
-		close(requestDone)
-	}()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil).WithContext(ctx)
+		req.RemoteAddr = "127.0.0.1:4242"
+		req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+		requestDone := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			close(requestDone)
+		}()
 
-	require.Eventually(func() bool {
+		synctest.Wait()
 		select {
 		case <-started:
-			return true
 		default:
-			return false
+			require.FailNow("handler starts")
 		}
-	}, time.Second, time.Millisecond, "handler starts")
-	cancel()
-
-	select {
-	case err := <-handlerResult:
-		require.ErrorIs(err, context.Canceled)
-	case <-time.After(time.Second):
-		require.FailNow("handler did not observe caller cancellation")
-	}
-	select {
-	case <-requestDone:
-	case <-time.After(time.Second):
-		require.FailNow("marked request did not return after caller cancellation")
-	}
+		cancel()
+		synctest.Wait()
+		require.ErrorIs(<-handlerResult, context.Canceled)
+		<-requestDone
+	})
 }
 
 func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {

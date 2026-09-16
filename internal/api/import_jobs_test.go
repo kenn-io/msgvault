@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -216,67 +217,79 @@ func getImportJob(t *testing.T, srv *Server, jobID string) (int, importJobTestRe
 }
 
 func TestImportJobUsesDurableSyncOperationForProgressAndSummary(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newImportJobTestStore()
-	t.Cleanup(st.finish)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := newImportJobTestStore()
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
+		defer func() {
+			st.finish()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+		}()
 
-	created := submitImportJob(t, srv, `{"account":"archive@example.com","after":"2024-01-01","limit":25}`)
-	assert.Equal("pending", created.Status)
-	assert.False(created.CreatedAt.IsZero())
-	assert.Nil(created.StartedAt)
-	req := <-st.started
-	assert.Equal(created.JobID, req.OperationID)
-	assert.Equal("2024-01-01", req.After)
-	assert.Equal(25, req.Limit)
+		created := submitImportJob(t, srv, `{"account":"archive@example.com","after":"2024-01-01","limit":25}`)
+		assert.Equal("pending", created.Status)
+		assert.False(created.CreatedAt.IsZero())
+		assert.Nil(created.StartedAt)
+		req := <-st.started
+		assert.Equal(created.JobID, req.OperationID)
+		assert.Equal("2024-01-01", req.After)
+		assert.Equal(25, req.Limit)
 
-	st.mu.Lock()
-	op := st.operations[created.JobID]
-	op.Runs[0].MessagesProcessed = 12
-	op.Runs[0].MessagesAdded = 7
-	op.Runs[0].MessagesUpdated = 2
-	op.Runs = append(op.Runs, &store.SyncRun{
-		ID: 101, SourceID: 42, StartedAt: time.Now().UTC(), Status: store.SyncStatusRunning,
-		MessagesProcessed: 5, MessagesAdded: 2, MessagesUpdated: 1, ErrorsCount: 1,
-	})
-	st.mu.Unlock()
+		st.mu.Lock()
+		op := st.operations[created.JobID]
+		op.Runs[0].MessagesProcessed = 12
+		op.Runs[0].MessagesAdded = 7
+		op.Runs[0].MessagesUpdated = 2
+		op.Runs = append(op.Runs, &store.SyncRun{
+			ID: 101, SourceID: 42, StartedAt: time.Now().UTC(), Status: store.SyncStatusRunning,
+			MessagesProcessed: 5, MessagesAdded: 2, MessagesUpdated: 1, ErrorsCount: 1,
+		})
+		st.mu.Unlock()
 
-	code, running, body := getImportJob(t, srv, created.JobID)
-	require.Equal(http.StatusOK, code, body)
-	assert.Equal("running", running.Status)
-	assert.Equal(int64(17), running.Processed)
-	assert.Equal(int64(9), running.Added)
-	assert.Equal(int64(5), running.Skipped)
+		code, running, body := getImportJob(t, srv, created.JobID)
+		require.Equal(http.StatusOK, code, body)
+		assert.Equal("running", running.Status)
+		assert.Equal(int64(17), running.Processed)
+		assert.Equal(int64(9), running.Added)
+		assert.Equal(int64(5), running.Skipped)
 
-	st.finish()
-	require.Eventually(func() bool {
+		st.finish()
+		synctest.Wait()
 		_, result, _ := getImportJob(t, srv, created.JobID)
-		return result.Status == "done" && result.Summary != nil
-	}, time.Second, 10*time.Millisecond)
+		assert.Equal("done", result.Status)
+		assert.NotNil(result.Summary)
+	})
 }
 
 func TestImportJobHoldsIdleWorkLeaseUntilWorkerFinishes(t *testing.T) {
-	st := newImportJobTestStore()
-	t.Cleanup(st.finish)
-	tracker := NewIdleTracker(time.Hour, func() {})
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{}, Store: st, IdleTracker: tracker, Logger: testLogger(),
-	})
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := newImportJobTestStore()
+		tracker := NewIdleTracker(time.Hour, func() {})
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{}, Store: st, IdleTracker: tracker, Logger: testLogger(),
+		})
+		defer func() {
+			st.finish()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+		}()
 
-	submitImportJob(t, srv, `{"account":"archive@example.com"}`)
-	<-st.started
-	tracker.mu.Lock()
-	activeWork := tracker.activeWork
-	tracker.mu.Unlock()
-	assert.Equal(t, 1, activeWork)
-
-	st.finish()
-	require.Eventually(t, func() bool {
+		submitImportJob(t, srv, `{"account":"archive@example.com"}`)
+		<-st.started
 		tracker.mu.Lock()
-		defer tracker.mu.Unlock()
-		return tracker.activeWork == 0
-	}, time.Second, 10*time.Millisecond)
+		activeWork := tracker.activeWork
+		tracker.mu.Unlock()
+		assert.Equal(1, activeWork)
+
+		st.finish()
+		synctest.Wait()
+		tracker.mu.Lock()
+		activeWork = tracker.activeWork
+		tracker.mu.Unlock()
+		assert.Equal(0, activeWork)
+	})
 }
 
 func TestImportJobRejectsAccountWithActiveSync(t *testing.T) {
@@ -348,19 +361,25 @@ func TestImportJobCreationHasNoOrdinaryRequestDeadline(t *testing.T) {
 }
 
 func TestImportJobFailureIsSanitized(t *testing.T) {
-	st := newImportJobTestStore()
-	st.runErr = errors.New("oauth secret-value rejected")
-	t.Cleanup(st.finish)
-	srv := NewServer(&config.Config{}, st, nil, testLogger())
-	created := submitImportJob(t, srv, `{"account":"archive@example.com"}`)
-	st.finish()
-	require.Eventually(t, func() bool {
-		_, result, _ := getImportJob(t, srv, created.JobID)
-		return result.Status == "failed"
-	}, time.Second, 10*time.Millisecond)
-	_, failed, _ := getImportJob(t, srv, created.JobID)
-	assert.Equal(t, "import failed", failed.Error)
-	assert.NotContains(t, failed.Error, "secret-value")
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := newImportJobTestStore()
+		st.runErr = errors.New("oauth secret-value rejected")
+		srv := NewServer(&config.Config{}, st, nil, testLogger())
+		defer func() {
+			st.finish()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+		}()
+
+		created := submitImportJob(t, srv, `{"account":"archive@example.com"}`)
+		st.finish()
+		synctest.Wait()
+		_, failed, _ := getImportJob(t, srv, created.JobID)
+		assert.Equal("failed", failed.Status)
+		assert.Equal("import failed", failed.Error)
+		assert.NotContains(failed.Error, "secret-value")
+	})
 }
 
 func TestImportJobReturnsBusyInsteadOfBuildingASecondQueue(t *testing.T) {

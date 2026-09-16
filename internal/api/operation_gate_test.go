@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1013,128 +1014,150 @@ func TestSerialOperationGateHolderTracksLabel(t *testing.T) {
 }
 
 func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	gate := NewSerialOperationGate()
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
-	require.True(ok, "occupy gate")
-	assert.False(gate.HasRequestWaiters(), "no waiters yet")
+		gate := NewSerialOperationGate()
+		release, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
+		require.True(ok, "occupy gate")
+		defer release()
+		assert.False(gate.HasRequestWaiters(), "no waiters yet")
 
-	acquired := make(chan bool, 1)
-	go func() {
-		waiterRelease, waiterOK := gate.BeginRequestWorkContext(context.Background(), "msgvault sync")
-		if waiterOK {
-			waiterRelease()
-		}
-		acquired <- waiterOK
-	}()
+		acquired := make(chan bool, 1)
+		go func() {
+			waiterRelease, waiterOK := gate.BeginRequestWorkContext(context.Background(), "msgvault sync")
+			if waiterOK {
+				waiterRelease()
+			}
+			acquired <- waiterOK
+		}()
 
-	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
-		"queued request counts as waiter")
+		synctest.Wait()
+		assert.True(gate.HasRequestWaiters(), "queued request counts as waiter")
 
-	release()
-	select {
-	case waiterOK := <-acquired:
-		assert.True(waiterOK, "waiter acquires after release")
-	case <-time.After(time.Second):
-		require.FailNow("waiter did not acquire gate")
-	}
-	assert.False(gate.HasRequestWaiters(), "waiter count returns to zero")
+		release()
+		synctest.Wait()
+		assert.True(<-acquired, "waiter acquires after release")
+		assert.False(gate.HasRequestWaiters(), "waiter count returns to zero")
+	})
 }
 
 func TestSerialOperationGatePrioritizesQueuedRequestOverBackgroundWork(t *testing.T) {
-	require := require.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
 
-	gate := NewSerialOperationGate()
-	releaseActive, ok := gate.BeginLabeledWorkContext(context.Background(), "first scheduled sync")
-	require.True(ok, "occupy gate")
-	t.Cleanup(releaseActive)
+		gate := NewSerialOperationGate()
+		releaseActive, ok := gate.BeginLabeledWorkContext(context.Background(), "first scheduled sync")
+		require.True(ok, "occupy gate")
+		defer releaseActive()
 
-	type acquisition struct {
-		release func()
-		ok      bool
-	}
-	requestAcquired := make(chan acquisition, 1)
-	go func() {
-		release, acquired := gate.BeginRequestWorkContext(context.Background(), "meeting import")
-		requestAcquired <- acquisition{release: release, ok: acquired}
-	}()
-	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
-		"request must register before the next background admission")
-
-	backgroundAcquired := make(chan acquisition, 1)
-	go func() {
-		release, acquired := gate.BeginLabeledWorkContext(context.Background(), "manual sync")
-		backgroundAcquired <- acquisition{release: release, ok: acquired}
-	}()
-
-	select {
-	case result := <-backgroundAcquired:
-		if result.ok {
-			result.release()
+		type acquisition struct {
+			release func()
+			ok      bool
 		}
-		require.FailNow("background work returned while the gate was held", "ok=%v", result.ok)
-	case <-time.After(25 * time.Millisecond):
-	}
+		requestAcquired := make(chan acquisition, 1)
+		backgroundAcquired := make(chan acquisition, 1)
+		var request acquisition
+		var background acquisition
+		defer func() {
+			releaseActive()
+			synctest.Wait()
+			if request.release == nil {
+				select {
+				case request = <-requestAcquired:
+				default:
+				}
+			}
+			if request.release != nil {
+				request.release()
+			}
+			synctest.Wait()
+			if background.release == nil {
+				select {
+				case background = <-backgroundAcquired:
+				default:
+				}
+			}
+			if background.release != nil {
+				background.release()
+			}
+			synctest.Wait()
+		}()
+		go func() {
+			release, acquired := gate.BeginRequestWorkContext(context.Background(), "meeting import")
+			requestAcquired <- acquisition{release: release, ok: acquired}
+		}()
+		synctest.Wait()
+		require.True(gate.HasRequestWaiters(),
+			"request must register before the next background admission")
 
-	releaseActive()
-	var request acquisition
-	select {
-	case request = <-requestAcquired:
+		go func() {
+			release, acquired := gate.BeginLabeledWorkContext(context.Background(), "manual sync")
+			backgroundAcquired <- acquisition{release: release, ok: acquired}
+		}()
+		synctest.Wait()
+		select {
+		case result := <-backgroundAcquired:
+			if result.ok {
+				result.release()
+			}
+			require.FailNow("background work returned while the gate was held", "ok=%v", result.ok)
+		default:
+		}
+
+		releaseActive()
+		synctest.Wait()
+		request = <-requestAcquired
 		require.True(request.ok, "queued request must acquire after active work releases")
-	case <-time.After(time.Second):
-		require.FailNow("queued request did not acquire after active work released")
-	}
-	select {
-	case result := <-backgroundAcquired:
-		if result.ok {
-			result.release()
+		synctest.Wait()
+		select {
+		case result := <-backgroundAcquired:
+			if result.ok {
+				result.release()
+			}
+			require.FailNow("background work acquired before the request released", "ok=%v", result.ok)
+		default:
 		}
-		require.FailNow("background work acquired before the request released", "ok=%v", result.ok)
-	case <-time.After(25 * time.Millisecond):
-	}
 
-	request.release()
-	select {
-	case background := <-backgroundAcquired:
+		request.release()
+		synctest.Wait()
+		background = <-backgroundAcquired
 		require.True(background.ok, "background work waits and then acquires")
 		background.release()
-	case <-time.After(time.Second):
-		require.FailNow("background work did not acquire after the request released")
-	}
-	require.False(gate.HasRequestWaiters(), "request waiter drains")
+		require.False(gate.HasRequestWaiters(), "request waiter drains")
+	})
 }
 
 func TestBeginLabeledOperationGateWorkCountsAsRequestWaiter(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	gate := NewSerialOperationGate()
-	srv := &Server{operationGate: gate}
+		gate := NewSerialOperationGate()
+		srv := &Server{operationGate: gate}
 
-	holderRelease, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
-	require.True(ok, "occupy gate")
+		holderRelease, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
+		require.True(ok, "occupy gate")
+		defer holderRelease()
 
-	acquired := make(chan bool, 1)
-	go func() {
-		release, workOK := srv.beginLabeledOperationGateWork(context.Background(), "a search index build")
-		if workOK {
-			release()
-		}
-		acquired <- workOK
-	}()
+		acquired := make(chan bool, 1)
+		go func() {
+			release, workOK := srv.beginLabeledOperationGateWork(context.Background(), "a search index build")
+			if workOK {
+				release()
+			}
+			acquired <- workOK
+		}()
 
-	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
-		"in-handler gate work must count as a request waiter so scheduled jobs yield")
+		synctest.Wait()
+		assert.True(gate.HasRequestWaiters(),
+			"in-handler gate work must count as a request waiter so scheduled jobs yield")
 
-	holderRelease()
-	select {
-	case workOK := <-acquired:
-		assert.True(workOK, "handler work acquires after release")
-	case <-time.After(time.Second):
-		require.FailNow("handler work did not acquire gate")
-	}
+		holderRelease()
+		synctest.Wait()
+		assert.True(<-acquired, "handler work acquires after release")
+	})
 }
 
 func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {

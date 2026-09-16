@@ -20,6 +20,7 @@ func TestNewBackupFreezerUsesCommandContextAndCLIMode(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var marker atomic.Value
+	requestStarted := make(chan struct{})
 	requestCanceled := make(chan struct{})
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -29,6 +30,7 @@ func TestNewBackupFreezerUsesCommandContextAndCLIMode(t *testing.T) {
 	mux.HandleFunc("/api/v1/backup/freeze/begin", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/backup/freeze/begin", r.URL.Path)
 		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
+		close(requestStarted)
 		<-r.Context().Done()
 		close(requestCanceled)
 	})
@@ -42,6 +44,7 @@ func TestNewBackupFreezerUsesCommandContextAndCLIMode(t *testing.T) {
 	require.NoError(err, "write daemon runtime")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	freezer, closeFreezer, err := newBackupFreezer(ctx)
 	require.NoError(err, "newBackupFreezer")
 	t.Cleanup(closeFreezer)
@@ -50,19 +53,18 @@ func TestNewBackupFreezerUsesCommandContextAndCLIMode(t *testing.T) {
 	go func() {
 		done <- freezer.Begin(ctx)
 	}()
-	require.Eventually(func() bool {
-		return marker.Load() != nil
-	}, 2*time.Second, 10*time.Millisecond, "freeze request starts")
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow("freeze request starts")
+	}
 	cancel()
 
-	require.Eventually(func() bool {
-		select {
-		case <-requestCanceled:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
+	select {
+	case <-requestCanceled:
+	case <-time.After(2 * time.Second):
+		require.FailNow("freeze request canceled")
+	}
 	assert.Equal(apiprotocol.ClientClassCLI, marker.Load())
 	require.Error(<-done, "freeze request canceled")
 }
