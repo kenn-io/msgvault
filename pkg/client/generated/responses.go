@@ -2895,6 +2895,18 @@ type HealthResponseJSON = HealthResponse
 
 type HealthErrorResponse = ErrorResponse
 
+type DaemonIdentityResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
+type DaemonShutdownResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
 type DaemonPingResp struct {
 	HTTPResponse *http.Response
 	Body         []byte

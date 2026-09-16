@@ -956,22 +956,19 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	probeCtx, cancel := context.WithTimeout(ctx, localDaemonAuthProbeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url+"/api/v1/health", nil)
+	client, err := localDaemonAPIClient(url, c.Server.APIKey)
 	if err != nil {
 		return fmt.Errorf("create local daemon auth probe: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set(localDaemonAuthProbeHeader, localDaemonAuthProbeValue)
-	if c.Server.APIKey != "" {
-		req.Header.Set("X-Api-Key", c.Server.APIKey)
-	}
-
-	resp, err := localDaemonHTTPClient.Do(req)
-	if err != nil {
+	resp, err := client.GetHealthWithResponse(probeCtx, func(_ context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set(localDaemonAuthProbeHeader, localDaemonAuthProbeValue)
+		return nil
+	})
+	// Readiness only needs the status, including an empty successful probe body.
+	if resp == nil {
 		return fmt.Errorf("probe local daemon authentication at %s: %w", url, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -987,7 +984,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 		return fmt.Errorf(
 			"local msgvault daemon at %s failed the authenticated readiness probe: %s",
 			url,
-			resp.Status,
+			resp.HTTPResponse.Status,
 		)
 	}
 }

@@ -180,30 +180,33 @@ func fetchDaemonHealthWithAPIKey(ctx context.Context, baseURL string, apiKey str
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	if health := fetchDaemonHealthEndpoint(ctx, baseURL+"/api/v1/health", apiKey); health != nil {
+	if health := fetchDaemonHealthEndpoint(ctx, baseURL, apiKey, false); health != nil {
 		return health
 	}
-	return fetchDaemonHealthEndpoint(ctx, baseURL+"/health", "")
+	return fetchDaemonHealthEndpoint(ctx, baseURL, "", true)
 }
 
-func fetchDaemonHealthEndpoint(ctx context.Context, url string, apiKey string) *api.HealthResponse {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func fetchDaemonHealthEndpoint(ctx context.Context, baseURL, apiKey string, public bool) *api.HealthResponse {
+	client, err := localDaemonAPIClient(baseURL, apiKey)
 	if err != nil {
 		return nil
 	}
-	if apiKey != "" {
-		req.Header.Set("X-Api-Key", apiKey)
-	}
-	resp, err := localDaemonHTTPClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil
+	var body []byte
+	if public {
+		resp, err := client.HealthWithResponse(ctx)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return nil
+		}
+		body = resp.Body
+	} else {
+		resp, err := client.GetHealthWithResponse(ctx)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return nil
+		}
+		body = resp.Body
 	}
 	var health api.HealthResponse
-	if err := json.UnmarshalRead(resp.Body, &health); err != nil {
+	if err := json.Unmarshal(body, &health); err != nil {
 		return nil
 	}
 	return &health
@@ -730,17 +733,17 @@ func requestDaemonShutdown(rec daemon.RuntimeRecord) (bool, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+api.DaemonShutdownPath, nil)
+	client, err := localDaemonAPIClient(url, "")
 	if err != nil {
-		return false, fmt.Errorf("create shutdown request: %w", err)
+		return false, fmt.Errorf("create shutdown client: %w", err)
 	}
-	req.Header.Set(api.DaemonShutdownTokenHeader, rec.Metadata[runtimeShutdownToken])
-
-	resp, err := localDaemonHTTPClient.Do(req)
-	if err != nil {
+	resp, err := client.DaemonShutdownWithResponse(ctx, func(_ context.Context, req *http.Request) error {
+		req.Header.Set(api.DaemonShutdownTokenHeader, rec.Metadata[runtimeShutdownToken])
+		return nil
+	})
+	if resp == nil {
 		return false, fmt.Errorf("send shutdown request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusAccepted, http.StatusOK, http.StatusNoContent:
@@ -748,7 +751,7 @@ func requestDaemonShutdown(rec daemon.RuntimeRecord) (bool, error) {
 	case http.StatusNotFound, http.StatusUnauthorized, http.StatusForbidden, http.StatusMethodNotAllowed:
 		return false, nil
 	default:
-		return false, fmt.Errorf("shutdown endpoint returned %s", resp.Status)
+		return false, fmt.Errorf("shutdown endpoint returned %s", resp.HTTPResponse.Status)
 	}
 }
 

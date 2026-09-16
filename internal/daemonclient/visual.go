@@ -13,6 +13,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const visualSearchLimitField = "limit"
@@ -106,119 +108,119 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 			return nil, err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/search/attachments/visual", &body)
+	request := &generated.SearchVisualAttachmentsRequestOptions{}
+	var editors []apiclient.RequestEditorFn
+	if len(options.Image) > 0 {
+		editors = append(editors, func(_ context.Context, req *http.Request) error {
+			req.Body = io.NopCloser(bytes.NewReader(body.Bytes()))
+			req.ContentLength = int64(body.Len())
+			req.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(body.Bytes())), nil
+			}
+			req.Header.Set("Content-Type", contentType)
+			return nil
+		})
+	} else {
+		request.Body = new(generated.SearchVisualAttachmentsBody)
+		if err := json.Unmarshal(body.Bytes(), request.Body); err != nil {
+			return nil, err
+		}
+	}
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchVisualAttachmentsResp, error) {
+		return client.SearchVisualAttachmentsWithResponse(ctx, request, editors...)
+	})
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", contentType)
-	if c.apiKey != "" {
-		req.Header.Set("X-Api-Key", c.apiKey)
-	}
-	resp, err := doRequestWithRootContext(c.requestContext(), c.httpClient, req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("visual attachment search HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(message))
 	}
 	var result visual.SearchResponse
-	if err := json.UnmarshalRead(io.LimitReader(resp.Body, 8<<20), &result); err != nil {
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode visual attachment search: %w", err)
 	}
 	return &result, nil
 }
 
 func (c *Client) VisualStatus(ctx context.Context) (*visual.Status, error) {
-	return c.visualStatusRequest(ctx, http.MethodGet, "/api/v1/multimodal/status")
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetVisualAttachmentStatusResp, error) {
+		return client.GetVisualAttachmentStatusWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	var status visual.Status
+	if err := json.Unmarshal(response.Body, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
 }
 
 // VisualStatusWithCoverage additionally requests the per-format coverage
 // scan, which re-reads every candidate blob; the daemon serializes it.
 func (c *Client) VisualStatusWithCoverage(ctx context.Context) (*visual.Status, error) {
-	return c.visualStatusRequest(ctx, http.MethodGet, "/api/v1/multimodal/status?coverage=1")
-}
-
-func (c *Client) RunVisualBuildPass(ctx context.Context) (*visual.Status, error) {
-	return c.visualStatusRequest(ctx, http.MethodPost, "/api/v1/multimodal/run")
-}
-
-func (c *Client) ConsentVisualBuildPass(ctx context.Context) (*visual.Status, error) {
-	return c.visualStatusJSONRequest(ctx, "/api/v1/multimodal/build", map[string]any{"consent": true})
-}
-
-func (c *Client) RetryVisualOwner(ctx context.Context, messageID int64, blobHash string) (*visual.Status, error) {
-	return c.visualStatusJSONRequest(ctx, "/api/v1/multimodal/retry", map[string]any{
-		"message_id": messageID, "blob_hash": blobHash,
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetVisualAttachmentStatusResp, error) {
+		return client.GetVisualAttachmentStatusWithResponse(ctx, func(_ context.Context, req *http.Request) error {
+			query := req.URL.Query()
+			query.Set("coverage", "1")
+			req.URL.RawQuery = query.Encode()
+			return nil
+		})
 	})
-}
-
-func (c *Client) RetireVisualGeneration(ctx context.Context, generationID int64) error {
-	var body bytes.Buffer
-	if err := json.MarshalWrite(&body, map[string]any{"generation_id": generationID}, json.Deterministic(true)); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/multimodal/retire", &body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("X-Api-Key", c.apiKey)
-	}
-	resp, err := doRequestWithRootContext(c.requestContext(), c.httpClient, req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNoContent {
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return fmt.Errorf("retire multimodal generation HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(message))
-	}
-	return nil
-}
-
-func (c *Client) visualStatusJSONRequest(ctx context.Context, path string, payload any) (*visual.Status, error) {
-	var body bytes.Buffer
-	if err := json.MarshalWrite(&body, payload, json.Deterministic(true)); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &body)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("X-Api-Key", c.apiKey)
-	}
-	return c.decodeVisualStatusResponse(req)
-}
-
-func (c *Client) visualStatusRequest(ctx context.Context, method, path string) (*visual.Status, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.apiKey != "" {
-		req.Header.Set("X-Api-Key", c.apiKey)
-	}
-	return c.decodeVisualStatusResponse(req)
-}
-
-func (c *Client) decodeVisualStatusResponse(req *http.Request) (*visual.Status, error) {
-	resp, err := doRequestWithRootContext(c.requestContext(), c.httpClient, req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("multimodal status HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(message))
 	}
 	var status visual.Status
-	if err := json.UnmarshalRead(io.LimitReader(resp.Body, 8<<20), &status); err != nil {
+	if err := json.Unmarshal(response.Body, &status); err != nil {
 		return nil, err
 	}
 	return &status, nil
+}
+
+func (c *Client) RunVisualBuildPass(ctx context.Context) (*visual.Status, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.ResumeVisualAttachmentBuildResp, error) {
+		return client.ResumeVisualAttachmentBuildWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	var status visual.Status
+	if err := json.Unmarshal(response.Body, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (c *Client) ConsentVisualBuildPass(ctx context.Context) (*visual.Status, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.StartVisualAttachmentBuildResp, error) {
+		return client.StartVisualAttachmentBuildWithResponse(ctx, &generated.StartVisualAttachmentBuildRequestOptions{Body: &generated.StartVisualAttachmentBuildBody{Consent: true}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	var status visual.Status
+	if err := json.Unmarshal(response.Body, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (c *Client) RetryVisualOwner(ctx context.Context, messageID int64, blobHash string) (*visual.Status, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.RetryVisualAttachmentOwnerResp, error) {
+		return client.RetryVisualAttachmentOwnerWithResponse(ctx, &generated.RetryVisualAttachmentOwnerRequestOptions{Body: &generated.RetryVisualAttachmentOwnerBody{MessageID: messageID, BlobHash: blobHash}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	var status visual.Status
+	if err := json.Unmarshal(response.Body, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (c *Client) RetireVisualGeneration(ctx context.Context, generationID int64) error {
+	_, err := APIResponseWithStatuses(c, []int{http.StatusNoContent}, func(client *apiclient.Client) (*generated.RetireVisualAttachmentGenerationResp, error) {
+		return client.RetireVisualAttachmentGenerationWithResponse(ctx, &generated.RetireVisualAttachmentGenerationRequestOptions{
+			Body: &generated.RetireVisualAttachmentGenerationBody{GenerationID: generationID},
+		})
+	})
+	return err
 }

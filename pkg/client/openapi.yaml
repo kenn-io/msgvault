@@ -12168,6 +12168,28 @@ info:
   version: 2.26.0
 openapi: 3.0.3
 paths:
+  /api/daemon/identity:
+    get:
+      operationId: daemonIdentity
+      responses:
+        "204":
+          description: No Content
+        default:
+          description: Error
+      summary: Prove local daemon identity
+      tags:
+        - Daemon
+  /api/daemon/shutdown:
+    post:
+      operationId: daemonShutdown
+      responses:
+        "202":
+          description: Accepted
+        default:
+          description: Error
+      summary: Stop the local daemon
+      tags:
+        - Daemon
   /api/ping:
     get:
       operationId: daemonPing

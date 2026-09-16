@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/update"
+	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -460,16 +461,17 @@ func probeDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (
 	}
 	proofCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(proofCtx, http.MethodGet, url+api.DaemonIdentityPath, nil)
+	client, err := localDaemonAPIClient(url, "")
 	if err != nil {
-		return daemonIdentityUnverified, fmt.Errorf("create daemon identity request: %w", err)
+		return daemonIdentityUnverified, fmt.Errorf("create daemon identity client: %w", err)
 	}
-	req.Header.Set(api.DaemonIdentityChallengeHeader, challenge)
-	resp, err := localDaemonHTTPClient.Do(req)
-	if err != nil {
+	resp, err := client.DaemonIdentityWithResponse(proofCtx, func(_ context.Context, req *http.Request) error {
+		req.Header.Set(api.DaemonIdentityChallengeHeader, challenge)
+		return nil
+	})
+	if resp == nil {
 		return daemonIdentityUnverified, fmt.Errorf("send daemon identity request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return daemonIdentityUnsupported, nil
 	}
@@ -480,7 +482,7 @@ func probeDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (
 		rec.Metadata[runtimeShutdownToken],
 		challenge,
 		rec.PID,
-		resp.Header.Get(api.DaemonIdentityProofHeader),
+		resp.HTTPResponse.Header.Get(api.DaemonIdentityProofHeader),
 	) {
 		return daemonIdentityUnverified, nil
 	}
@@ -640,4 +642,14 @@ func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, current
 		}
 	}
 	return rt.API <= daemonAPIVersion
+}
+
+func localDaemonAPIClient(baseURL, apiKey string) (*apiclient.Client, error) {
+	client, err := daemonclient.New(daemonclient.Config{
+		URL: baseURL, APIKey: apiKey, AllowInsecure: true, HTTPClient: localDaemonHTTPClient,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return client.GeneratedClient()
 }

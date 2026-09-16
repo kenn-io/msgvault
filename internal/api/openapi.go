@@ -320,7 +320,7 @@ const APISchemaVersion = "2.26.0"
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
-	doc := baseOpenAPIDocument()
+	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -328,7 +328,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 }
 
 func openAPIClientDocument() *huma.OpenAPI {
-	doc := baseOpenAPIDocument()
+	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -357,10 +357,17 @@ func hardenOperationSchemas(doc *huma.OpenAPI) {
 	}
 }
 
-func baseOpenAPIDocument() *huma.OpenAPI {
+func baseOpenAPIDocument(includeHidden bool) *huma.OpenAPI {
 	mux := http.NewServeMux()
 	s := &Server{cfg: config.NewDefaultConfig()}
 	api := s.setupHumaAPI(mux)
+	if includeHidden {
+		group := huma.NewGroup(api)
+		group.UseSimpleModifier(func(operation *huma.Operation) {
+			operation.Hidden = false
+		})
+		api = group
+	}
 	apiV1 := s.setupAPIV1Group(api)
 	s.registerHumaRoutes(api, apiV1)
 	doc := api.OpenAPI()

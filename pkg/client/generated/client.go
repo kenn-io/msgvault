@@ -31,6 +31,14 @@ func NewDefaultClient(baseURL string, opts ...runtime.APIClientOption) (*Client,
 
 // ClientInterface is the interface for the API client.
 type ClientInterface interface {
+	// DaemonIdentity Prove local daemon identity
+	DaemonIdentity(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DaemonIdentityWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonIdentityResp, error)
+
+	// DaemonShutdown Stop the local daemon
+	DaemonShutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DaemonShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonShutdownResp, error)
+
 	// DaemonPing Daemon discovery ping
 	DaemonPing(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonPingResponse, error)
 	DaemonPingWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonPingResp, error)
@@ -1014,6 +1022,78 @@ type ClientInterface interface {
 	// HeadHealth Health check
 	HeadHealth(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	HeadHealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HeadHealthResp, error)
+}
+
+// DaemonIdentity Prove local daemon identity
+func (c *Client) DaemonIdentity(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/identity",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		if resp.StatusCode != 204 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/identity")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DaemonShutdown Stop the local daemon
+func (c *Client) DaemonShutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/shutdown",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(struct{})
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "struct{}",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/shutdown")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
 }
 
 // DaemonPing Daemon discovery ping
