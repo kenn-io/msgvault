@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -1044,7 +1045,7 @@ func runDocumentStatus(
 		ActiveRebuild: rebuildStatus, Status: status,
 	}
 	if jsonOutput {
-		return json.MarshalWrite(command.OutOrStdout(), output, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), output, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Profile: %s\nProvider: %s %s (%s, %s)\nFormats: %d authenticated\nRetention: %s\nTraining: %s\nPrivate spool: %s quota, %s free-space reserve\nEnabled: %t\nExact consent: %t\nEligible: %d occurrence(s), %d unique document(s), %s\nExcluded roles: %d unknown, %d ineligible\nCoverage: %d ready, %d staging, %d retrying, %d terminal, %d missing\nExtraction accounting: %d attempt(s), %d successful, %d failed, %s verified upload bytes\nProvider accounting: %d request(s), %d internal retry(s), %d ms total latency (%.1f ms average), %d processed unit(s), %s reported bytes, %d successful response(s) without provider bytes\nNormalized plaintext stored: %t\nBackups may contain normalized plaintext: %t\nHosted document text embeddings: %t\n",
@@ -1172,7 +1173,7 @@ func runSearchDocuments(
 		return err
 	}
 	if jsonOutput {
-		return json.MarshalWrite(command.OutOrStdout(), response, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))
 	}
 	writer := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "RANK\tATTACHMENT\tMESSAGE\tFILE\tMATCH\tEXCERPT")

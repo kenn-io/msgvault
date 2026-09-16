@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -51,7 +52,7 @@ var personNotesGetCmd = &cobra.Command{
 			return errors.New("notes attribute definition is unavailable")
 		}
 		if personNotesJSON {
-			return json.MarshalWrite(cmd.OutOrStdout(), value, json.Deterministic(true))
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), value, json.Deterministic(true))
 		}
 		if value == nil {
 			return nil
@@ -197,7 +198,7 @@ func writePersonNotesResult(cmd *cobra.Command, write *store.PersonAttributeWrit
 		return errors.New("person notes response was empty")
 	}
 	if personNotesJSON {
-		return json.MarshalWrite(cmd.OutOrStdout(), write, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), write, json.Deterministic(true))
 	}
 	if write.Value == nil || write.Value.Value.Text == nil {
 		return errors.New("person notes response contained no text value")

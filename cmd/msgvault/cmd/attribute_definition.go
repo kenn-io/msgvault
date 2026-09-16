@@ -75,7 +75,7 @@ var attributeDefinitionListCmd = &cobra.Command{
 			return errors.New("attribute definitions response was empty")
 		}
 		if attributeDefinitionJSON {
-			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.Definitions, json.Deterministic(true))
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200.Definitions, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w,
@@ -368,7 +368,7 @@ func writeCLIAttributeDefinition(
 		return errors.New("attribute definition response was empty")
 	}
 	if attributeDefinitionJSON {
-		return json.MarshalWrite(cmd.OutOrStdout(), definition, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), definition, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Definition: %d\nSlug: %s\nLabel: %s\nObject: %s\nValue type: %s\n"+

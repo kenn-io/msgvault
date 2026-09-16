@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -199,7 +200,7 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 				}
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), output, json.Deterministic(true))
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), output, json.Deterministic(true))
 			}
 			return writePersonFilesOutput(command, output)
 		},

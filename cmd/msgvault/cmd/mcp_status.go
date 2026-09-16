@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
@@ -28,7 +29,7 @@ func newMCPStatusCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), endpoints, json.Deterministic(true))
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), endpoints, json.Deterministic(true))
 			}
 			if len(endpoints) == 0 {
 				_, err := fmt.Fprintln(command.OutOrStdout(), "No HTTP MCP listeners are running.")

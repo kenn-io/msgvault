@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -430,7 +431,7 @@ func writeCLIEmployment(cmd *cobra.Command, employment *generated.Employment) er
 		return errors.New("employment response was empty")
 	}
 	if employmentJSON {
-		return json.MarshalWrite(cmd.OutOrStdout(), employment, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), employment, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Employment: %d\nPerson: %d\nOrganization: %d\nTitle: %s\nRole: %s\nDepartment: %s\nStart date: %s\nEnd date: %s\nCurrent: %t\nPrimary: %t\nSource: %s\nRevision: %d\n", employment.ID, employment.PersonID, employment.OrganizationID, cliString(employment.Title), cliString(employment.Role), cliString(employment.Department), formatCLIPartialDate(employment.StartDate), formatCLIPartialDate(employment.EndDate), employment.IsCurrent, employment.IsPrimary, employment.Source, employment.Revision)
 	return nil
@@ -443,7 +444,7 @@ func writeCLIEmploymentList(
 		return errors.New("employment list response was empty")
 	}
 	if jsonOutput {
-		return json.MarshalWrite(cmd.OutOrStdout(), response, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response, json.Deterministic(true))
 	}
 
 	// A person-scoped listing distinguishes rows by employer; an

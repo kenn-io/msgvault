@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -374,7 +375,7 @@ func runPersonProviderAdd(
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(command.OutOrStdout(), personProviderAddOutput{
+		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), personProviderAddOutput{
 			Name: name, Fingerprint: profile.Fingerprint, Checked: true,
 		}, json.Deterministic(true))
 	}

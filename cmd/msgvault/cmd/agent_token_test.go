@@ -146,6 +146,10 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 	assert.Contains(output, "tok_abc123")
 	assert.Contains(output, "Test Agent")
 	assert.Contains(output, wantSecret, "one-time secret must appear in issue output")
+	output, err = runAgentTokenCommand(t, agentTokenIssueCmd,
+		"--label", "Test Agent", "--permissions", "draft.create", "--source-ids", "1", "--json")
+	require.NoError(err)
+	assert.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
 }
 
 // TestAgentTokenListFormatsTable verifies that the list subcommand (row 18):

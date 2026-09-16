@@ -707,7 +707,7 @@ func opaqueCandidateHandle(scenarioID, sourceID string) string {
 
 func writeJSON(path string, value any) error {
 	if path == "" || path == "-" {
-		encoder := jsontext.NewEncoder(os.Stdout)
+		encoder := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
 
 		return json.MarshalEncode(encoder, value, json.Deterministic(true))
 	}
@@ -727,7 +727,7 @@ func writeJSON(path string, value any) error {
 			_ = os.Remove(tempPath)
 		}
 	}()
-	encoder := jsontext.NewEncoder(file, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "), jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+	encoder := jsontext.NewEncoder(file, jsontext.WithIndent("  "))
 
 	if err := json.MarshalEncode(encoder, value, json.Deterministic(true)); err != nil {
 		return err

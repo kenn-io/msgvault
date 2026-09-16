@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -157,7 +158,7 @@ func newPersonEnrichmentStatusCommand(deps personEnrichmentCommandDeps) *cobra.C
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), output, json.Deterministic(true))
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), output, json.Deterministic(true))
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "Profiles: %d\nSuppressions shown: %d\n",
 				len(output.Profiles), len(output.Suppressions))
@@ -190,7 +191,7 @@ func newPersonEnrichmentProfilesCommand(deps personEnrichmentCommandDeps) *cobra
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), profiles, json.Deterministic(true))
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), profiles, json.Deterministic(true))
 			}
 			for _, profile := range profiles {
 				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n",
@@ -224,7 +225,7 @@ func newPersonEnrichmentConsentCommand(deps personEnrichmentCommandDeps) *cobra.
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), struct {
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), struct {
 					Consent *store.PersonEnrichmentConsent `json:"consent"`
 					Created bool                           `json:"created"`
 				}{consent, created}, json.Deterministic(true))
@@ -271,7 +272,7 @@ func newPersonEnrichmentRevokeCommand(deps personEnrichmentCommandDeps) *cobra.C
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), map[string]int64{"revoked": revoked}, json.Deterministic(true))
+				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), map[string]int64{"revoked": revoked}, json.Deterministic(true))
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "Revoked: %d\n", revoked)
 			if err != nil {
@@ -381,7 +382,7 @@ func runPersonEnrichmentManual(
 		return err
 	}
 	if jsonOutput {
-		return json.MarshalWrite(command.OutOrStdout(), stored, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), stored, json.Deterministic(true))
 	}
 	_, err = fmt.Fprintf(command.OutOrStdout(), "Run %d: %s\n", stored.ID, stored.State)
 	if err != nil {

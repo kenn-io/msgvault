@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -74,7 +75,7 @@ var personSearchCmd = &cobra.Command{
 			}
 		}
 		if personSearchJSON {
-			return json.MarshalWrite(cmd.OutOrStdout(), output, json.Deterministic(true))
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), output, json.Deterministic(true))
 		}
 
 		writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)

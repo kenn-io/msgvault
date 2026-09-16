@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -142,7 +143,7 @@ func newCardDAVCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
 	}
 	setRole.Flags().BoolVar(&writeTarget, "write-target", false, "make this the subscribed publication target")
 	setRole.Flags().BoolVar(&subscribed, "subscribed", false, "import unbound cards and synchronize changes")
@@ -193,7 +194,7 @@ func runCardDAVConflicts(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
+	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
 }
 func runCardDAVConflictShow(cmd *cobra.Command, args []string) error {
 	id, err := cardDAVCLIPositiveID(cmd, args[0])
@@ -211,7 +212,7 @@ func runCardDAVConflictShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
+	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
 }
 func runCardDAVResolve(cmd *cobra.Command, args []string) error {
 	id, err := cardDAVCLIPositiveID(cmd, args[0])
@@ -274,7 +275,7 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
 		case approvalToken != "":
 			body := generated.ApproveCardDAVPublicationBody{ApprovalToken: approvalToken}
 			_, err = daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ApproveCardDAVPublicationResp, error) {

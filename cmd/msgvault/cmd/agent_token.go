@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -58,7 +59,7 @@ var agentTokenIssueCmd = &cobra.Command{
 			return err
 		}
 		if agentTokenJSON {
-			return json.MarshalWrite(cmd.OutOrStdout(), result, json.Deterministic(true)) // issue output intentionally contains the one-time secret
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true)) // issue output intentionally contains the one-time secret
 		}
 		printAgentTokenIssueResult(cmd, result)
 		return nil
@@ -79,7 +80,7 @@ var agentTokenListCmd = &cobra.Command{
 			return err
 		}
 		if agentTokenJSON {
-			return json.MarshalWrite(cmd.OutOrStdout(), map[string]any{"tokens": tokens}, json.Deterministic(true))
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), map[string]any{"tokens": tokens}, json.Deterministic(true))
 		}
 		printAgentTokenList(cmd, tokens)
 		return nil
