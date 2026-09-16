@@ -58,7 +58,7 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 		owner, err := fileOwnerID(path)
 		require.NoError(t, err)
 
-		err = validateSecureRegularFile(path, owner+1)
+		_, err = readSecureRegularFile(path, owner+1, maxDescriptorBytes)
 
 		assert.ErrorIs(t, err, ErrInsecureDescriptor)
 	})

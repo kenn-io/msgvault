@@ -20,7 +20,7 @@ func prepareConfigSavePath(path string) (string, func() error, error) {
 	info, statErr := os.Lstat(absolute)
 	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		_ = authority.Release()
-		return "", nil, errors.Join(ErrUnsafeConfigTarget, errors.New("Windows config path is a reparse point"))
+		return "", nil, errors.Join(ErrUnsafeConfigTarget, errors.New("windows config path is a reparse point"))
 	}
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		_ = authority.Release()

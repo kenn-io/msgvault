@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unsafe"
@@ -47,13 +48,13 @@ func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 	relative := strings.TrimPrefix(parent, root)
 	authority := &windowsPathAuthority{}
 	prefix := root
-	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(relative, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}
 		if part == ".." {
 			_ = authority.Release()
-			return nil, errors.Join(ErrUnsafeConfigTarget, errors.New("Windows config path escapes its volume root"))
+			return nil, errors.Join(ErrUnsafeConfigTarget, errors.New("windows config path escapes its volume root"))
 		}
 		prefix = filepath.Join(prefix, part)
 		handle, openErr := openWindowsAuthorityDirectory(prefix)
@@ -80,7 +81,7 @@ func pinWindowsNearestExistingConfigAncestor(path string) (*windowsPathAuthority
 		if statErr == nil {
 			if !info.IsDir() {
 				return nil, "", "", errors.Join(ErrUnsafeConfigTarget,
-					fmt.Errorf("Windows config ancestor %s is not a directory", ancestor))
+					fmt.Errorf("windows config ancestor %s is not a directory", ancestor))
 			}
 			break
 		}
@@ -144,6 +145,7 @@ func openWindowsAuthorityDirectory(path string) (windows.Handle, error) {
 	if err := windows.GetFileInformationByHandleEx(
 		handle,
 		windows.FileAttributeTagInfo,
+		// #nosec G103 -- Windows receives the live FILE_ATTRIBUTE_TAG_INFO value with its exact size during this call.
 		(*byte)(unsafe.Pointer(&attributes)),
 		uint32(unsafe.Sizeof(attributes)),
 	); err != nil {
@@ -154,13 +156,13 @@ func openWindowsAuthorityDirectory(path string) (windows.Handle, error) {
 		attributes.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		_ = windows.CloseHandle(handle)
 		return 0, errors.Join(ErrUnsafeConfigTarget,
-			fmt.Errorf("Windows config directory %s is not an ordinary directory", path))
+			fmt.Errorf("windows config directory %s is not an ordinary directory", path))
 	}
 	return handle, nil
 }
 
 func openWindowsDirectoryHandle(encoded *uint16, share uint32) (windows.Handle, error) {
-	return windows.CreateFile(
+	handle, err := windows.CreateFile(
 		encoded,
 		windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
 		share,
@@ -169,6 +171,10 @@ func openWindowsDirectoryHandle(encoded *uint16, share uint32) (windows.Handle, 
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS,
 		0,
 	)
+	if err != nil {
+		return handle, fmt.Errorf("open config directory handle: %w", err)
+	}
+	return handle, nil
 }
 
 func (authority *windowsPathAuthority) Release() error {
@@ -182,8 +188,8 @@ func (authority *windowsPathAuthority) Release() error {
 	}
 	authority.closed = true
 	var errs []error
-	for index := len(authority.handles) - 1; index >= 0; index-- {
-		if err := windows.CloseHandle(authority.handles[index]); err != nil {
+	for _, handle := range slices.Backward(authority.handles) {
+		if err := windows.CloseHandle(handle); err != nil {
 			errs = append(errs, fmt.Errorf("release Windows config directory authority: %w", err))
 		}
 	}

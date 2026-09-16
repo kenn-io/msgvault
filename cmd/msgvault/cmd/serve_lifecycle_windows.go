@@ -39,6 +39,7 @@ func configureServeBackgroundCommand(cmd *exec.Cmd) (backgroundServeCommandConfi
 	if _, err := windows.SetInformationJobObject(
 		job,
 		windows.JobObjectExtendedLimitInformation,
+		// #nosec G103 -- SetInformationJobObject receives the address and exact size of the live JOBOBJECT_EXTENDED_LIMIT_INFORMATION value.
 		uintptr(unsafe.Pointer(&info)),
 		uint32(unsafe.Sizeof(info)),
 	); err != nil {
@@ -80,6 +81,7 @@ func (t *windowsBackgroundProcessTree) Attach(process *os.Process) error {
 	if assignErr != nil {
 		return fmt.Errorf("assign process to Job Object: %w", assignErr)
 	}
+	// #nosec G115 -- this PID came from Windows process creation and is a native DWORD.
 	if err := resumeSuspendedProcess(uint32(process.Pid)); err != nil {
 		return fmt.Errorf("resume background process: %w", err)
 	}

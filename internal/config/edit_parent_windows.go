@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/fileutil"
 )
@@ -29,7 +30,7 @@ func ensureConfigParentDirectories(path string, expectedAncestorIdentity ...stri
 		if statErr == nil {
 			if !info.IsDir() {
 				return errors.Join(ErrUnsafeConfigTarget,
-					fmt.Errorf("Windows config parent %s is not a directory", ancestor))
+					fmt.Errorf("windows config parent %s is not a directory", ancestor))
 			}
 			break
 		}
@@ -67,8 +68,8 @@ func ensureConfigParentDirectories(path string, expectedAncestorIdentity ...stri
 		}
 	}
 	current := ancestor
-	for index := len(missing) - 1; index >= 0; index-- {
-		current = filepath.Join(current, missing[index])
+	for _, component := range slices.Backward(missing) {
+		current = filepath.Join(current, component)
 		if err := fileutil.SecureMkdirAll(current, 0o700); err != nil {
 			return fmt.Errorf("create Windows config directory %s: %w", current, err)
 		}

@@ -55,7 +55,7 @@ func (nativeCredentialPermissions) verifyFile(file *os.File) error {
 func openCardDAVSecurityHandle(path string, directory bool, access uint32) (windows.Handle, error) {
 	path16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("encode CardDAV token path: %w", err)
 	}
 	flags := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT)
 	if directory {
@@ -120,14 +120,7 @@ func verifyCardDAVHandleOwnerOnly(handle windows.Handle, user *windows.SID) erro
 	if err != nil || dacl == nil {
 		return fmt.Errorf("read CardDAV DACL entries: %w", err)
 	}
-	type aclHeader struct {
-		Revision byte
-		Sbz1     byte
-		Size     uint16
-		AceCount uint16
-		Sbz2     uint16
-	}
-	if (*aclHeader)(unsafe.Pointer(dacl)).AceCount != 1 {
+	if dacl.AceCount != 1 {
 		return errors.New("CardDAV DACL must contain exactly one access entry")
 	}
 	var ace *windows.ACCESS_ALLOWED_ACE
@@ -141,6 +134,7 @@ func verifyCardDAVHandleOwnerOnly(handle windows.Handle, user *windows.SID) erro
 	if ace.Header.AceFlags&windows.INHERITED_ACE != 0 {
 		return errors.New("CardDAV DACL contains inherited access")
 	}
+	// #nosec G103 -- GetAce supplies an access-allowed ACE whose SidStart is the first word of its contiguous SID.
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	if !aceSID.Equals(user) {
 		return errors.New("CardDAV DACL grants a principal other than the current user")

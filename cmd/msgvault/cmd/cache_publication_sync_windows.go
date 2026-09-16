@@ -2,12 +2,16 @@
 
 package cmd
 
-import "golang.org/x/sys/windows"
+import (
+	"fmt"
+
+	"golang.org/x/sys/windows"
+)
 
 func syncFile(path string) error {
 	path16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode cache file path: %w", err)
 	}
 	// #nosec G703 -- callers pass fixed files inside private transaction/cache roots.
 	handle, err := windows.CreateFile(
@@ -20,10 +24,13 @@ func syncFile(path string) error {
 		0,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("open cache file for sync: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(handle) }()
-	return windows.FlushFileBuffers(handle)
+	if err := windows.FlushFileBuffers(handle); err != nil {
+		return fmt.Errorf("flush cache file: %w", err)
+	}
+	return nil
 }
 
 // Windows has no supported equivalent of fsync(2) for directory handles:

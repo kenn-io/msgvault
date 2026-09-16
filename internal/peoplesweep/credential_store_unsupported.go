@@ -4,6 +4,11 @@ package peoplesweep
 
 import "errors"
 
+// FileCredentialStore retains the configured root on unsupported platforms.
+type FileCredentialStore struct {
+	tokensDir string
+}
+
 var errCredentialStoreUnsupported = errors.New(
 	"people provider credential store is unsupported on this platform because secure no-follow atomic filesystem operations are unavailable",
 )

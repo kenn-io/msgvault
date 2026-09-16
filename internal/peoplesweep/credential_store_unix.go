@@ -14,6 +14,25 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// FileCredentialStore stores provider credentials beneath a private namespace.
+type FileCredentialStore struct {
+	tokensDir string
+	hooks     *credentialStoreHooks
+}
+
+type credentialStoreHooks struct {
+	afterNamespaceParentSync func()
+	afterLockAcquired        func()
+	beforeOperation          func(string)
+	afterCandidateOpen       func(string)
+	beforeCandidatePublish   func(string)
+	failedCandidateTruncate  func() error
+	failedCandidateSync      func() error
+	failedCleanupPin         func() error
+	afterCredentialOpen      func(string)
+	beforeCredentialRetire   func()
+}
+
 // The pinned namespace lock serializes reuse of this single candidate slot.
 const unixCredentialStagingName = ".credential-candidate" //nolint:gosec // A fixed private staging filename is not a credential.
 

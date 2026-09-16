@@ -32,6 +32,7 @@ func (tree *codexAppServerProcessTree) attach(command *exec.Cmd) error {
 	if err := assignWindowsCodexVersionJob(tree.handle, command.Process); err != nil {
 		return fmt.Errorf("assign Codex app-server process tree: %w", err)
 	}
+	// #nosec G115 -- this PID came from Windows process creation and is a native DWORD.
 	if err := resumeWindowsCodexVersionProcess(uint32(command.Process.Pid)); err != nil {
 		return fmt.Errorf("resume Codex app-server process: %w", err)
 	}
@@ -92,6 +93,7 @@ func runCodexVersionCommand(command *exec.Cmd) (retErr error) {
 		_ = command.Wait()
 		return err
 	}
+	// #nosec G115 -- this PID came from Windows process creation and is a native DWORD.
 	if err := resumeWindowsCodexVersionProcess(uint32(command.Process.Pid)); err != nil {
 		_ = windows.TerminateJobObject(job.handle, 1)
 		_ = command.Wait()
@@ -118,6 +120,7 @@ func newWindowsCodexVersionJob() (*windowsCodexVersionJob, error) {
 	if _, err := windows.SetInformationJobObject(
 		handle,
 		windows.JobObjectExtendedLimitInformation,
+		// #nosec G103 -- SetInformationJobObject receives the address and exact size of the live JOBOBJECT_EXTENDED_LIMIT_INFORMATION value.
 		uintptr(unsafe.Pointer(&info)),
 		uint32(unsafe.Sizeof(info)),
 	); err != nil {

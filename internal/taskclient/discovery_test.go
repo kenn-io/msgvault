@@ -47,6 +47,42 @@ func TestDiscoverReportsMissingDescriptorBeforePlatformSecurityLimit(t *testing.
 	assert.NotErrorIs(t, err, ErrPlatformSecurityLimit)
 }
 
+func TestDiscoverNativeWindowsSecurity(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows descriptor security is covered by the Windows test lane")
+	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "descriptor.json")
+	writeDescriptorAt(t, path, descriptor{
+		ProtocolVersion: ProtocolVersion,
+		InstanceID:      "instance-windows",
+		Endpoint:        "http://127.0.0.1:32145",
+	}, 0o600)
+
+	_, err := Discover(context.Background(), DiscoveryOptions{
+		DescriptorPath: path,
+		APIKey:         "test-key",
+	})
+	requirements.ErrorIs(err, ErrDescriptorFileSecurityLimit)
+
+	_, err = Discover(context.Background(), DiscoveryOptions{
+		DescriptorPath: filepath.Join(t.TempDir(), "missing-descriptor.json"),
+	})
+	requirements.ErrorIs(err, ErrNotFound)
+
+	info, err := os.Stat(path)
+	requirements.NoError(err)
+	requirements.NotZero(info.Mode().Perm() & 0o077)
+	err = validateSecureFileInfo(info, currentUserID())
+	requirements.ErrorIs(err, ErrInsecureDescriptor)
+	assertions.Contains(err.Error(), "file permissions must deny group and other access")
+
+	err = validateSecureFileOwner(info, currentUserID())
+	requirements.ErrorIs(err, ErrInsecureDescriptor)
+	assertions.Contains(err.Error(), "file owner does not match daemon user")
+}
+
 func TestDiscoverUnixSocket(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

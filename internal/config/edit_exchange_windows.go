@@ -17,13 +17,16 @@ var replaceFileProc = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReplaceF
 func moveFileWriteThrough(fromPath, toPath string) error {
 	from, err := windows.UTF16PtrFromString(fromPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode config source path: %w", err)
 	}
 	to, err := windows.UTF16PtrFromString(toPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode config target path: %w", err)
 	}
-	return windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH)
+	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH); err != nil {
+		return fmt.Errorf("move config file with write-through: %w", err)
+	}
+	return nil
 }
 
 // beginConfigReplacement uses ReplaceFileW so the destination switches from
@@ -170,8 +173,11 @@ func replaceFile(targetPath, replacementPath, backupPath string) error {
 		return fmt.Errorf("encode displaced config path: %w", err)
 	}
 	result, _, callErr := replaceFileProc.Call(
+		// #nosec G103 -- ReplaceFileW receives the live UTF-16 target pointer during the call.
 		uintptr(unsafe.Pointer(target)),
+		// #nosec G103 -- ReplaceFileW receives the live UTF-16 replacement pointer during the call.
 		uintptr(unsafe.Pointer(replacement)),
+		// #nosec G103 -- ReplaceFileW receives the live UTF-16 backup pointer during the call.
 		uintptr(unsafe.Pointer(backup)),
 		0,
 		0,

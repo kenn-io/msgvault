@@ -44,7 +44,7 @@ func retainWindowsConfigArtifact(path, expectedIdentity string) (*os.File, error
 	if !ok || identity != expectedIdentity {
 		_ = file.Close()
 		return nil, errors.Join(ErrConfigConflict,
-			errors.New("Windows config retirement identity changed before retention"))
+			errors.New("windows config retirement identity changed before retention"))
 	}
 	return file, nil
 }
@@ -80,7 +80,7 @@ func retireWindowsConfigArtifactWithHook(
 		moveErr := moveFileWriteThrough(path, quarantinePath)
 		if errors.Is(moveErr, windows.ERROR_FILE_NOT_FOUND) || errors.Is(moveErr, windows.ERROR_PATH_NOT_FOUND) {
 			return errors.Join(ErrConfigChanged, ErrConfigConflict,
-				errors.New("Windows config retirement entry disappeared before quarantine"))
+				errors.New("windows config retirement entry disappeared before quarantine"))
 		}
 		if errors.Is(moveErr, windows.ERROR_ALREADY_EXISTS) || errors.Is(moveErr, windows.ERROR_FILE_EXISTS) {
 			continue
@@ -142,7 +142,7 @@ func retireWindowsConfigArtifactWithHook(
 func openWindowsIdentityEntry(path string) (*os.File, error) {
 	encoded, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode Windows config retirement entry: %w", err)
 	}
 	handle, err := windows.CreateFile(
 		encoded,

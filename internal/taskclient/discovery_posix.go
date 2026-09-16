@@ -36,6 +36,14 @@ func fileInfoOwnerID(info os.FileInfo) (uint32, error) {
 	return stat.Uid, nil
 }
 
+func validateSecureFileOwner(info os.FileInfo, expectedOwner uint32) error {
+	owner, err := fileInfoOwnerID(info)
+	if err != nil || owner != expectedOwner {
+		return fmt.Errorf("%w: file owner does not match daemon user", ErrInsecureDescriptor)
+	}
+	return nil
+}
+
 func openSecureRegularFile(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {

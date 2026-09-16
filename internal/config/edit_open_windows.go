@@ -45,6 +45,7 @@ func openedFileIdentity(file *os.File, _ fs.FileInfo) (string, bool) {
 	if err := windows.GetFileInformationByHandleEx(
 		windows.Handle(file.Fd()),
 		windows.FileIdInfo,
+		// #nosec G103 -- Windows receives the live FILE_ID_INFO buffer with its exact size during this call.
 		(*byte)(unsafe.Pointer(&stable)),
 		uint32(unsafe.Sizeof(stable)),
 	); err == nil {

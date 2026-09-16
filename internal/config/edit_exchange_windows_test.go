@@ -136,7 +136,7 @@ func TestWindowsRetainedAuthorityBlocksIntermediateRenameAndAllowsReplace(t *tes
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	require.Error(t, err, "retained parent handle must deny delete-capable opens")
 	assert.Equal(t, windows.InvalidHandle, deleter)
-	assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
+	require.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
 
 	err = os.Rename(intermediate, filepath.Join(root, "redirected"))
 	require.Error(t, err, "retained intermediate handle must deny rename")
@@ -189,7 +189,7 @@ func TestWindowsAuthorityRejectsPreexistingDirectoryWriter(t *testing.T) {
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	require.NoError(t, err)
-	defer windows.CloseHandle(writer)
+	t.Cleanup(func() { require.NoError(t, windows.CloseHandle(writer)) })
 
 	_, err = pinWindowsConfigParent(filepath.Join(parent, "config.toml"))
 	require.Error(t, err)

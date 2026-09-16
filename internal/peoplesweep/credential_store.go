@@ -89,25 +89,6 @@ type CredentialResolver interface {
 	Resolve(profileName string, profile ProviderProfile) (Credential, error)
 }
 
-// FileCredentialStore stores provider credentials beneath a private namespace.
-type FileCredentialStore struct {
-	tokensDir string
-	hooks     *credentialStoreHooks
-}
-
-type credentialStoreHooks struct {
-	afterNamespaceParentSync func()
-	afterLockAcquired        func()
-	beforeOperation          func(string)
-	afterCandidateOpen       func(string)
-	beforeCandidatePublish   func(string)
-	failedCandidateTruncate  func() error
-	failedCandidateSync      func() error
-	failedCleanupPin         func() error
-	afterCredentialOpen      func(string)
-	beforeCredentialRetire   func()
-}
-
 type credentialStoreRoot interface {
 	save(profileName string, data []byte) error
 	load(profileName string) ([]byte, error)

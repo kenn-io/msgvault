@@ -61,13 +61,13 @@ func publishNewConfig(candidatePath string, retained *os.File, before ConfigFile
 	if err != nil {
 		_ = parent.Close()
 		_ = authority.Release()
-		return configPublication{}, err
+		return configPublication{}, fmt.Errorf("encode config candidate path: %w", err)
 	}
 	to, err := windows.UTF16PtrFromString(targetPath)
 	if err != nil {
 		_ = parent.Close()
 		_ = authority.Release()
-		return configPublication{}, err
+		return configPublication{}, fmt.Errorf("encode config target path: %w", err)
 	}
 	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH); err != nil {
 		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) || errors.Is(err, windows.ERROR_FILE_EXISTS) {

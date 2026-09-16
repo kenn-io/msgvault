@@ -42,13 +42,13 @@ func createConfigCandidate(dir string) (configCandidate, error) {
 		var random [16]byte
 		if _, err := rand.Read(random[:]); err != nil {
 			_ = authority.Release()
-			return configCandidate{}, err
+			return configCandidate{}, fmt.Errorf("generate config candidate name: %w", err)
 		}
 		path := filepath.Join(dir, ".config-edit-"+hex.EncodeToString(random[:])+".toml.tmp")
 		path16, err := windows.UTF16PtrFromString(path)
 		if err != nil {
 			_ = authority.Release()
-			return configCandidate{}, err
+			return configCandidate{}, fmt.Errorf("encode config candidate path: %w", err)
 		}
 		handle, err := windows.CreateFile(
 			path16,
@@ -60,11 +60,11 @@ func createConfigCandidate(dir string) (configCandidate, error) {
 			0,
 		)
 		if err != nil {
-			if err == windows.ERROR_FILE_EXISTS || err == windows.ERROR_ALREADY_EXISTS {
+			if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 				continue
 			}
 			_ = authority.Release()
-			return configCandidate{}, err
+			return configCandidate{}, fmt.Errorf("create config candidate: %w", err)
 		}
 		file := os.NewFile(uintptr(handle), path)
 		info, statErr := file.Stat()
