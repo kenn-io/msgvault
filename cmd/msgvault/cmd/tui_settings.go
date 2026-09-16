@@ -65,7 +65,7 @@ type tuiSettingsHTTPValue struct {
 	Integer *int      `json:"integer,omitzero"`
 	Number  *float64  `json:"number,omitzero"`
 	Boolean *bool     `json:"boolean,omitzero"`
-	Strings *[]string `json:"strings,omitempty"`
+	Strings *[]string `json:"strings,omitzero"`
 }
 
 type tuiSettingsHTTPSecret struct {

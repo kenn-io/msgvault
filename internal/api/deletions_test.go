@@ -609,7 +609,7 @@ func TestStageDeletionRejectsUnknownFields(t *testing.T) {
 	} {
 		w := postDeletions(t, srv, body)
 		assert.Equal(t, http.StatusBadRequest, w.Code, "body %s -> status", body)
-		assert.Contains(t, w.Body.String(), "unknown field", "body %s -> error detail", body)
+		assert.Contains(t, w.Body.String(), "unknown object member name", "body %s -> error detail", body)
 	}
 	assert.Empty(t, st.saved, "nothing staged from rejected requests")
 }

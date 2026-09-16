@@ -99,7 +99,7 @@ func TestOrganizationHTTPRejectsInvalidRequests(t *testing.T) {
 	retiredOnCreate := organizationRequest(t, srv, http.MethodPost, organizationsPath,
 		[]byte(`{"name":"Retired At Birth","retired":true}`), "")
 	require.Equal(http.StatusBadRequest, retiredOnCreate.Code)
-	assert.Contains(retiredOnCreate.Body.String(), `unknown field \"retired\"`)
+	assert.Contains(retiredOnCreate.Body.String(), `unknown object member name \"retired\"`)
 
 	badID := organizationRequest(t, srv, http.MethodGet, organizationsPath+"/0", nil, "")
 	require.Equal(http.StatusBadRequest, badID.Code)

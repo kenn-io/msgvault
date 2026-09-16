@@ -73,7 +73,7 @@ type SettingValue struct {
 	Integer *int      `json:"integer,omitzero" nullable:"false"`
 	Number  *float64  `json:"number,omitzero" nullable:"false"`
 	Boolean *bool     `json:"boolean,omitzero" nullable:"false"`
-	Strings *[]string `json:"strings,omitempty"`
+	Strings *[]string `json:"strings,omitzero" nullable:"false"`
 }
 
 // SettingValidation lets generic Settings clients render the same basic
