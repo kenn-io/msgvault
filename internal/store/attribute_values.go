@@ -41,7 +41,7 @@ type AttributeValue struct {
 	Boolean    *bool              `json:"boolean,omitzero" nullable:"false"`
 	Date       *string            `json:"date,omitzero" nullable:"false"`
 	Timestamp  *time.Time         `json:"timestamp,omitempty"`
-	JSON       jsontext.Value     `json:"json,omitempty"`
+	JSON       jsontext.Value     `json:"json,omitzero"`
 	RecordType *string            `json:"record_type,omitzero" nullable:"false"`
 	RecordID   *int64             `json:"record_id,omitzero" nullable:"false"`
 }

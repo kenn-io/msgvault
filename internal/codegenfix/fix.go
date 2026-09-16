@@ -7,8 +7,8 @@ import (
 	"regexp"
 )
 
-// Present empty strings must survive JSON v2 encoding of generated responses.
-var optionalStringJSONTag = regexp.MustCompile("(\\*string\\s+`json:\"[^\"]+),omitempty(\")")
+// Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
+var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
 var requiredPointerValidators = [][3]string{
 	{"FileMetadataResponse", "Filename", "f"},
@@ -134,6 +134,6 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	}
 	result = bytes.Replace(result, attributeJSON,
 		[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
-	result = optionalStringJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
+	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
 	return result, nil
 }

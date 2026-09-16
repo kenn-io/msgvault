@@ -194,7 +194,7 @@ type exaSearchRequest struct {
 	Category     string         `json:"category"`
 	Type         string         `json:"type"`
 	NumResults   int            `json:"numResults"`
-	OutputSchema jsontext.Value `json:"outputSchema,omitempty"`
+	OutputSchema jsontext.Value `json:"outputSchema,omitzero"`
 }
 
 type exaSearchResponse struct {

@@ -32,7 +32,7 @@ type responseTextFormat struct {
 	Type   string         `json:"type"`
 	Name   string         `json:"name,omitempty"`
 	Strict bool           `json:"strict,omitzero"`
-	Schema jsontext.Value `json:"schema,omitempty"`
+	Schema jsontext.Value `json:"schema,omitzero"`
 }
 
 type responseReasoning struct {

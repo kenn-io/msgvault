@@ -33,7 +33,7 @@ type meetingMetadata struct {
 }
 
 type rawBlockTree struct {
-	Root  jsontext.Value   `json:"root,omitempty"`
+	Root  jsontext.Value   `json:"root,omitzero"`
 	Pages []jsontext.Value `json:"pages,omitempty"`
 }
 

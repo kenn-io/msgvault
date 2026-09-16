@@ -239,6 +239,16 @@ func TestDocumentsProfilePolicyJSONRemainsByteStable(t *testing.T) {
 	require.NoError(err)
 	digest := sha256.Sum256([]byte(expected))
 	assert.Equal(hex.EncodeToString(digest[:]), fingerprint)
+
+	config.Scope.MessageTypes = nil
+	policyJSON, err = config.ProfilePolicyJSON(manifest, []string{"application/pdf", "text/csv"})
+	require.NoError(err)
+	expected = strings.Replace(expected, `"message_types":["chat","email"]`, `"message_types":null`, 1)
+	assert.JSONEq(expected, string(policyJSON))
+	fingerprint, err = config.ProfileFingerprint(manifest, []string{"application/pdf", "text/csv"})
+	require.NoError(err)
+	digest = sha256.Sum256([]byte(expected))
+	assert.Equal(hex.EncodeToString(digest[:]), fingerprint)
 }
 
 func TestCSVConversionIsOptInAndBindsPDFRouteAndProfile(t *testing.T) {

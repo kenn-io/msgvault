@@ -3,6 +3,7 @@ package carddav
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"slices"
@@ -34,7 +35,7 @@ func SemanticHash(body []byte) (string, error) {
 		properties = append(properties, vcard.NormalizeSemanticProperty(envelope.RenderMetadata.StoredVersion, property))
 	}
 	slices.SortFunc(properties, vcard.CompareSemanticProperties)
-	encoded, err := json.Marshal(properties, json.Deterministic(true))
+	encoded, err := json.Marshal(properties, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode semantic vCard: %w", err)
 	}

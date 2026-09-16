@@ -549,7 +549,7 @@ type AttributeValue struct {
 	Boolean    *bool          `json:"boolean,omitempty"`
 	Date       *string        `json:"date,omitzero"`
 	Integer    *int64         `json:"integer,omitempty"`
-	JSON       jsontext.Value `json:"json,omitempty"`
+	JSON       jsontext.Value `json:"json,omitzero"`
 	Real       *float64       `json:"real,omitempty"`
 	RecordID   *int64         `json:"record_id,omitempty"`
 	RecordType *string        `json:"record_type,omitzero"`
@@ -4913,7 +4913,7 @@ type Manifest struct {
 	Filters     Filters          `json:"filters"`
 	GmailIds    []string         `json:"gmail_ids" validate:"required"`
 	ID          string           `json:"id" validate:"required"`
-	RawFilter   *jsontext.Value  `json:"raw_filter,omitempty"`
+	RawFilter   *jsontext.Value  `json:"raw_filter,omitzero"`
 	Source      *SourceReference `json:"source,omitempty"`
 	Status      string           `json:"status" validate:"required"`
 	Summary     *Summary         `json:"summary,omitempty"`

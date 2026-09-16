@@ -123,7 +123,7 @@ type Manifest struct {
 	// cannot represent every request field (search query, sender_name,
 	// recipient_name, source_id), so API and all-match TUI staging preserve the
 	// complete input here. It remains absent for explicit TUI/CLI selections.
-	RawFilter jsontext.Value `json:"raw_filter,omitempty"`
+	RawFilter jsontext.Value `json:"raw_filter,omitzero"`
 }
 
 // NewManifestForSource creates a source-bound version-2 manifest.

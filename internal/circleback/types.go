@@ -173,8 +173,8 @@ type Meeting struct {
 	EndTime   string `json:"endTime,omitempty"`
 
 	// Duration tolerates seconds-as-number and strings.
-	Duration        jsontext.Value `json:"duration,omitempty"`
-	DurationSeconds jsontext.Value `json:"durationSeconds,omitempty"`
+	Duration        jsontext.Value `json:"duration,omitzero"`
+	DurationSeconds jsontext.Value `json:"durationSeconds,omitzero"`
 
 	Attendees []Attendee `json:"attendees,omitempty"`
 	Organizer *Attendee  `json:"organizer,omitzero"`
@@ -399,7 +399,7 @@ type TranscriptEntry struct {
 	Text        string `json:"text,omitempty"`
 	Content     string `json:"content,omitempty"`
 	// Words is a historical alias only when its value is a JSON string.
-	Words jsontext.Value `json:"words,omitempty"`
+	Words jsontext.Value `json:"words,omitzero"`
 
 	// Timestamp and offset variants accept either JSON strings or numbers.
 	Timestamp      FlexString `json:"timestamp,omitempty"`
@@ -418,7 +418,7 @@ func (e *TranscriptEntry) UnmarshalJSON(b []byte) error {
 		SpeakerName    string         `json:"speakerName,omitempty"`
 		Text           string         `json:"text,omitempty"`
 		Content        string         `json:"content,omitempty"`
-		Words          jsontext.Value `json:"words,omitempty"`
+		Words          jsontext.Value `json:"words,omitzero"`
 		Timestamp      FlexString     `json:"timestamp,omitempty"`
 		Start          FlexString     `json:"start,omitempty"`
 		StartTimestamp FlexString     `json:"startTimestamp,omitempty"`

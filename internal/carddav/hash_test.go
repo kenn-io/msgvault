@@ -1,6 +1,8 @@
 package carddav
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,4 +67,15 @@ func TestSemanticHashCanonicalizesKnownTextAndURIValues(t *testing.T) {
 
 	assert.Equal(leftHash, rightHash)
 	assert.NotEqual(leftHash, changedHash)
+}
+
+func TestSemanticHashPreservesStoredEscaping(t *testing.T) {
+	require := require.New(t)
+	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example <&>\u2028\u2029\r\nEND:VCARD\r\n")
+	// These are the canonical bytes emitted before the JSON v2 migration.
+	legacy := `[{"name":"FN","value_type":"text","raw_value":"Example \u003c\u0026\u003e\u2028\u2029"},{"name":"VERSION","value_type":"text","raw_value":"4.0"}]`
+	digest := sha256.Sum256([]byte(legacy))
+	got, err := SemanticHash(body)
+	require.NoError(err)
+	assert.Equal(t, hex.EncodeToString(digest[:]), got)
 }

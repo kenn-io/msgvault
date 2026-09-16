@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"slices"
@@ -358,7 +359,7 @@ func (s *Store) loadVCardRelationshipTypesTx(
 // personVCardSnapshotFingerprint hashes the projection-relevant view of the
 // snapshot, so the fingerprint changes exactly when projected content does.
 func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, error) {
-	encoded, err := json.Marshal(personVCardFingerprintView(snapshot), json.Deterministic(true))
+	encoded, err := json.Marshal(personVCardFingerprintView(snapshot), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person vCard snapshot: %w", err)
 	}

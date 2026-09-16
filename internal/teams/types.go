@@ -58,7 +58,7 @@ type ChatMessage struct {
 	// EventDetail is the polymorphic eventDetail payload (default-returned by
 	// Graph on systemEventMessage items). Kept as RawMessage so the typed lens
 	// below can parse the call-recording fields without modelling every subtype.
-	EventDetail jsontext.Value `json:"eventDetail,omitempty"`
+	EventDetail jsontext.Value `json:"eventDetail,omitzero"`
 	// Raw holds the exact original JSON for this message, captured during decode
 	// (see UnmarshalJSON). It is archived verbatim so no Graph field is lost to
 	// our partial struct modelling.

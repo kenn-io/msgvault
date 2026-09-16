@@ -863,7 +863,7 @@ func circlebackSnapshotHash(
 	payload, err := json.Marshal(struct {
 		Version         int             `json:"version"`
 		Meeting         jsontext.Value  `json:"meeting"`
-		Transcript      jsontext.Value  `json:"transcript,omitempty"`
+		Transcript      jsontext.Value  `json:"transcript,omitzero"`
 		TranscriptState transcriptState `json:"transcript_state"`
 		AccountID       string          `json:"account_identifier,omitempty"`
 		IsFromMe        bool            `json:"is_from_me"`

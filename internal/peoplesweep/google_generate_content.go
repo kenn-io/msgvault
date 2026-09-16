@@ -32,7 +32,7 @@ type googlePart struct {
 type googleGenerationConfig struct {
 	MaxOutputTokens  int            `json:"maxOutputTokens"`
 	ResponseMIMEType string         `json:"responseMimeType,omitempty"`
-	ResponseSchema   jsontext.Value `json:"responseSchema,omitempty"`
+	ResponseSchema   jsontext.Value `json:"responseSchema,omitzero"`
 }
 
 // GoogleGenerateContentDriver implements one exact saved Gemini
