@@ -127,14 +127,14 @@ func feedCompleteThrough(t *testing.T, st *store.Store) time.Time {
 // is deliberately refusing to publish.
 func waitForDatabaseClockPast(t *testing.T, st *store.Store, when time.Time) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(databaseClockAdvanceBudget)
 	for !databaseClock(t, st).After(when) {
 		if time.Now().After(deadline) {
 			require.Failf(t, "database clock stalled",
 				"the database clock never moved past %s", when)
 			return
 		}
-		time.Sleep(200 * time.Microsecond)
+		time.Sleep(databaseProgressPoll)
 	}
 }
 
@@ -143,7 +143,7 @@ func waitForDatabaseClockPast(t *testing.T, st *store.Store, when time.Time) {
 // commits — so a row is publishable only once the bound has left it.
 func waitForFeedPast(t *testing.T, st *store.Store, when time.Time) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(feedCommitBoundAdvanceBudget)
 	for !feedCompleteThrough(t, st).After(when) {
 		if time.Now().After(deadline) {
 			require.Failf(t, "the change feed stopped advancing",
@@ -151,7 +151,7 @@ func waitForFeedPast(t *testing.T, st *store.Store, when time.Time) {
 					"transaction open", when)
 			return
 		}
-		time.Sleep(200 * time.Microsecond)
+		time.Sleep(databaseProgressPoll)
 	}
 }
 

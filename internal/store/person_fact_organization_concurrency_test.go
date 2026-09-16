@@ -245,7 +245,7 @@ func TestPersonFactEmploymentNonIDCandidateSnapshotPrecedesOrganizationMutation(
 				default:
 					return personFactOrganizationPostgreSQLWaitingLockCount(t, st) >= 1
 				}
-			}, 5*time.Second, 10*time.Millisecond,
+			}, postgresLockQueueBudget, postgresLockQueuePoll,
 				"organization mutation neither completed nor waited for the fact snapshot")
 			assertions.Nil(early,
 				"organization mutation committed before the fact candidate snapshot")
@@ -325,7 +325,7 @@ func TestPersonFactEmploymentOrganizationTableLockWaitsForMergeMutation(t *testi
 	}()
 	requirements.Eventually(func() bool {
 		return personFactOrganizationPostgreSQLWaitingLockCount(t, st) >= 1
-	}, 5*time.Second, 10*time.Millisecond,
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
 		"fact generation did not queue behind the merge table lock")
 	gate.release()
 
@@ -379,7 +379,7 @@ func applyPersonFactCrossedOrganizationGenerations(
 	}()
 	requirements.Eventually(func() bool {
 		return personFactOrganizationPostgreSQLWaitingLockCount(t, st) >= 1
-	}, 5*time.Second, 10*time.Millisecond,
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
 		"second generation did not wait behind the first organization row")
 	gate.release()
 
@@ -644,6 +644,12 @@ func newPersonFactOrganizationCrossedLockStore(
 	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
+
+// The PostgreSQL lock queue owns these real-time observation budgets.
+const (
+	postgresLockQueueBudget = 5 * time.Second
+	postgresLockQueuePoll   = 10 * time.Millisecond
+)
 
 func personFactOrganizationPostgreSQLWaitingLockCount(t *testing.T, st *Store) int {
 	t.Helper()

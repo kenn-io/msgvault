@@ -127,7 +127,8 @@ func (c *changeFeedConsumer) cursorID() int64 {
 }
 
 // pollInBackground polls until stop closes, recording the first failure for the
-// test's own goroutine to assert on. gap is how long it waits between polls.
+// test's own goroutine to assert on. gap controls the real-time interleaving
+// rate between polls.
 func (c *changeFeedConsumer) pollInBackground(st *store.Store, stop <-chan struct{}, gap func(int) time.Duration) {
 	for i := 0; ; i++ {
 		select {
@@ -179,7 +180,24 @@ func (c *changeFeedConsumer) drain(t *testing.T, st *store.Store) store.ChangedM
 // feed is healthy: the failure these tests exist to catch is PERMANENT — a row
 // the cursor has stepped over never arrives, at any deadline — so the only
 // thing a short budget can add is a false alarm on a loaded machine.
-const changeFeedCatchUpBudget = time.Minute
+const (
+	changeFeedCatchUpBudget = time.Minute
+
+	// This is a real-time poll between observations of the database-owned feed.
+	changeFeedCatchUpPoll = 2 * time.Millisecond
+
+	// These budgets and the poll observe the database clock and commit bound.
+	databaseClockAdvanceBudget   = 10 * time.Second
+	feedCommitBoundAdvanceBudget = 30 * time.Second
+	databaseProgressPoll         = 200 * time.Microsecond
+
+	// These budgets observe PostgreSQL lock catalogs.
+	postgresLockWaiterBudget = 3 * time.Second
+	postgresLockWaiterPoll   = 10 * time.Millisecond
+
+	// This real-time window keeps a database-stamped write uncommitted.
+	pendingStampWindow = 3 * time.Millisecond
+)
 
 // drainUntil polls until done reports true or the budget runs out. The feed is
 // allowed to take a moment — CompleteThrough advances only once the write that
@@ -195,7 +213,7 @@ func (c *changeFeedConsumer) drainUntil(t *testing.T, st *store.Store, done func
 		if time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(changeFeedCatchUpPoll)
 	}
 }
 
@@ -305,7 +323,8 @@ func setSubject(t *testing.T, st *store.Store, id int64, subject string) {
 	require.NoError(t, writeSubject(st, id, subject))
 }
 
-// staggered spreads repeated background work over a range of microseconds
+// staggered generates pseudo-jitter for writer interleavings; it is not a wait.
+// It spreads repeated background work over a range of microseconds
 // without a random source: the point is only that the writers and the poller do
 // not fall into lockstep, and a fixed stride is reproducible where a seeded RNG
 // is merely repeatable.
@@ -866,7 +885,7 @@ func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testin
 		require.NoError(err, "begin batched write")
 		_, err = tx.Exec(st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), value, id)
 		require.NoError(err, "batched write")
-		time.Sleep(3 * time.Millisecond) // stamped, not yet published
+		time.Sleep(pendingStampWindow) // stamped, not yet published
 		require.NoError(tx.Commit(), "commit batched write")
 		record(id, value)
 		time.Sleep(staggered(round, 0, 900))

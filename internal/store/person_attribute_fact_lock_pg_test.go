@@ -128,7 +128,7 @@ func TestPostgreSQLSystemPersonAttributeWriteWaitsForFactResolution(t *testing.T
 	requirements.Eventually(func() bool {
 		generationPID = personAttributePostgreSQLWaitingWriterPID(t, st, blockerPID)
 		return generationPID > 0
-	}, 5*time.Second, 10*time.Millisecond,
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
 		"fact resolution did not wait for the blocked target lock")
 
 	type attributeOutcome struct {
@@ -155,7 +155,7 @@ func TestPostgreSQLSystemPersonAttributeWriteWaitsForFactResolution(t *testing.T
 		default:
 			return personAttributePostgreSQLBlockedWriterPID(t, st, generationPID) > 0
 		}
-	}, 5*time.Second, 10*time.Millisecond,
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
 		"system attribute write neither completed nor waited for fact resolution")
 	if earlyAttribute != nil {
 		requirements.NoError(earlyAttribute.err)
@@ -210,7 +210,7 @@ func waitForManualPersonAttributeTargetLock(
 		if errors.Is(lockErr, context.DeadlineExceeded) {
 			requirements.Eventually(func() bool {
 				return personAttributePostgreSQLWaitingWriterPID(t, st, blockerPID) > 0
-			}, time.Second, 10*time.Millisecond,
+			}, time.Second, postgresLockQueuePoll,
 				"manual write held the generation lock but did not wait for the target lock")
 			return
 		}
@@ -327,7 +327,7 @@ func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) {
  WHERE activity.datname=current_database() AND ?=ANY(pg_blocking_pids(activity.pid)))`, writerPID).Scan(&blocked)
 					require.NoError(err)
 					return blocked
-				}, 5*time.Second, 10*time.Millisecond, "catalog exposure neither waited nor completed")
+				}, postgresLockQueueBudget, postgresLockQueuePoll, "catalog exposure neither waited nor completed")
 				assert.Nil(early, "global catalog exposure must wait for unrelated definition writers before locking people")
 				gate.release()
 				select {

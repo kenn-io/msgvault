@@ -1386,7 +1386,7 @@ func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.
 				  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
 			)`).Scan(&waiting)
 		return queryErr == nil && waiting
-	}, 3*time.Second, 10*time.Millisecond,
+	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
 		"enabling capture must wait on the in-flight source transaction's shared clock lock")
 	select {
 	case enableErr := <-enabled:
@@ -1456,7 +1456,7 @@ func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T)
 		queryErr := f.store.DB().QueryRow(`
 			SELECT $1 = ANY(pg_blocking_pids($2))`, firstPID, secondPID).Scan(&blocked)
 		return queryErr == nil && blocked
-	}, 3*time.Second, 10*time.Millisecond,
+	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
 		"the second journal writer must wait for the singleton clock row")
 
 	require.NoError(first.Commit())
@@ -1527,7 +1527,7 @@ func TestEmbeddingChangeJournal_PostgresMutationLocksClockBeforeSourceRow(t *tes
 		queryErr := f.store.DB().QueryRow(`
 			SELECT $1 = ANY(pg_blocking_pids($2))`, activationPID, mutationPID).Scan(&blocked)
 		return queryErr == nil && blocked
-	}, 3*time.Second, 10*time.Millisecond,
+	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
 		"the source mutation must wait for the activation clock lock")
 	var lockedMessageID int64
 	require.NoError(activation.QueryRow(`SELECT id FROM messages WHERE id = $1 FOR UPDATE NOWAIT`,
@@ -1591,7 +1591,7 @@ func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot
 		queryErr := f.store.DB().QueryRow(`
 			SELECT $1 = ANY(pg_blocking_pids($2))`, activationPID, mutationPID).Scan(&blocked)
 		return queryErr == nil && blocked
-	}, 3*time.Second, 10*time.Millisecond,
+	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
 		"message insertion must wait for the activation clock lock")
 
 	require.NoError(activation.Rollback())
