@@ -187,8 +187,14 @@ func TestStartJobIsAsync(t *testing.T) {
 
 		started := make(chan struct{})
 		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
 		var ran atomic.Int32
 		s := New(func(context.Context, string) error { return nil })
+		defer func() {
+			releaseJob()
+			<-s.Stop().Done()
+		}()
 		require.NoError(s.AddJob(Job{
 			Name:     "granola:default",
 			Schedule: "0 0 1 1 *",
@@ -228,7 +234,7 @@ func TestStartJobIsAsync(t *testing.T) {
 		// no error, and it must not spawn a second concurrent run.
 		require.NoError(s.StartJob("granola:default"), "second StartJob while running")
 
-		close(release)
+		releaseJob()
 		synctest.Wait()
 		assert.False(s.JobStatus()[0].Running, "job finishes after release")
 		assert.Equal(int32(1), ran.Load(), "job body must run exactly once")
@@ -325,6 +331,7 @@ func TestTriggerSync(t *testing.T) {
 		assert := assert.New(t)
 		started := make(chan struct{})
 		release := make(chan struct{})
+		var releaseOnce sync.Once
 		var called atomic.Int32
 		s := New(func(ctx context.Context, email string) error {
 			called.Add(1)
@@ -332,16 +339,24 @@ func TestTriggerSync(t *testing.T) {
 			<-release
 			return nil
 		})
+		defer func() {
+			releaseOnce.Do(func() { close(release) })
+			<-s.Stop().Done()
+		}()
 		require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync()")
 		synctest.Wait()
-		<-started
+		select {
+		case <-started:
+		default:
+			require.FailNow("sync did not start")
+		}
 
 		err := s.TriggerSync("test@gmail.com")
 		require.Error(err, "TriggerSync() while running")
 
-		close(release)
+		releaseOnce.Do(func() { close(release) })
 		synctest.Wait()
 		assert.Equal(int32(1), called.Load(), "syncFunc called times")
 	})
@@ -2257,6 +2272,7 @@ func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 		started := make(chan struct{})
 		causeCh := make(chan error, 1)
 		s := New(func(context.Context, string) error { return nil }).WithWorkTracker(tracker)
+		defer func() { <-s.Stop().Done() }()
 		require.NoError(s.AddJob(Job{
 			Name:     "attachment-maintenance",
 			Schedule: "17 3 * * *",
