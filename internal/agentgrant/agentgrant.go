@@ -16,15 +16,30 @@ type Permission string
 
 const (
 	PermissionDraftCreate Permission = "draft.create"
+	PermissionDraftRead   Permission = "draft.read"
+	PermissionDraftEdit   Permission = "draft.edit"
+	PermissionDraftDelete Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
 	string(PermissionDraftCreate): PermissionDraftCreate,
+	string(PermissionDraftRead):   PermissionDraftRead,
+	string(PermissionDraftEdit):   PermissionDraftEdit,
+	string(PermissionDraftDelete): PermissionDraftDelete,
 }
 
 func KnownPermission(s string) (Permission, bool) {
 	p, ok := knownPermissions[s]
 	return p, ok
+}
+
+func KnownPermissionNames() []string {
+	names := make([]string, 0, len(knownPermissions))
+	for name := range knownPermissions {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // SourceRef carries the repo's durable source identity: (id, type, identifier).
@@ -44,9 +59,13 @@ type Grant struct {
 	CreatedAt   time.Time
 }
 
+func (g Grant) HasPermission(p Permission) bool {
+	return slices.Contains(g.Permissions, p)
+}
+
 // Allows returns true only when p is in the grant AND some SourceRef matches Type and Identifier.
 func (g Grant) Allows(p Permission, src SourceRef) bool {
-	if !slices.Contains(g.Permissions, p) {
+	if !g.HasPermission(p) {
 		return false
 	}
 	for _, s := range g.Sources {

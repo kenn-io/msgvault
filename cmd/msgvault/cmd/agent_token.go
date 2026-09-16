@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -175,7 +176,7 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated list of permissions to grant (e.g. draft.create)")
+		"Comma-separated list of permissions to grant (accepted: "+strings.Join(agentgrant.KnownPermissionNames(), ", ")+")")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
 	agentTokenIssueCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")

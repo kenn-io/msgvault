@@ -235,6 +235,46 @@ func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
 	assert.NotEmpty(response.Secret)
 }
 
+func TestAgentTokenDraftPermissionVocabulary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, _ := newAgentTokenTestServer(t)
+
+	issue := func(permission string) (int, agentTokenIssueResponse, ErrorResponse) {
+		body, err := json.Marshal(agentTokenIssueRequest{
+			Label:       "permission-" + permission,
+			Permissions: []string{permission},
+			SourceIDs:   []int64{1},
+		})
+		require.NoError(err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		var issued agentTokenIssueResponse
+		var response ErrorResponse
+		if w.Code == http.StatusCreated {
+			require.NoError(json.NewDecoder(w.Body).Decode(&issued))
+		} else {
+			require.NoError(json.NewDecoder(w.Body).Decode(&response))
+		}
+		return w.Code, issued, response
+	}
+
+	for _, name := range agentgrant.KnownPermissionNames() {
+		code, issued, response := issue(name)
+		assert.Equal(http.StatusCreated, code, name)
+		assert.Equal([]string{name}, issued.Permissions, name)
+		assert.Empty(response.Error, name)
+	}
+	for _, name := range []string{"", "*", "draft.future"} {
+		code, _, response := issue(name)
+		assert.Equal(http.StatusBadRequest, code, name)
+		assert.Equal("invalid_permission", response.Error, name)
+	}
+}
+
 // TestAgentTokenListRequiresOwnerKey verifies proof matrix row 15.
 func TestAgentTokenListRequiresOwnerKey(t *testing.T) {
 	srv, _ := newAgentTokenTestServer(t)

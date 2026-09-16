@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,9 +17,11 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -103,6 +106,106 @@ type agentTokenIssueFixture struct {
 
 type agentTokenListFixture struct {
 	Tokens []agentTokenFixtureView `json:"tokens"`
+}
+
+type delegatedPermissionStore struct {
+	api.MessageStore
+
+	source      *store.Source
+	runnerCalls int
+}
+
+func (s *delegatedPermissionStore) GetSourceByIDContext(_ context.Context, _ int64) (*store.Source, error) {
+	return s.source, nil
+}
+
+func (s *delegatedPermissionStore) RunCLICommand(
+	_ context.Context,
+	_ api.CLIRunRequest,
+	_ func(api.CLIRunEvent) error,
+) error {
+	s.runnerCalls++
+	return nil
+}
+
+func TestAgentTokenIssuePermissionsFlagListsVocabulary(t *testing.T) {
+	flag := agentTokenIssueCmd.Flags().Lookup("permissions")
+	require.NotNil(t, flag)
+	for _, name := range agentgrant.KnownPermissionNames() {
+		assert.Contains(t, flag.Usage, name)
+	}
+}
+
+func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &delegatedPermissionStore{
+		source: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	}
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{
+			HomeDir: t.TempDir(),
+			Server:  config.ServerConfig{APIKey: "owner-test-key", AgentAccess: true},
+		},
+		Store:  backend,
+		Logger: slog.New(slog.DiscardHandler),
+	}).Router())
+	t.Cleanup(server.Close)
+
+	issue := func(permissions []string) string {
+		body, err := json.Marshal(map[string]any{
+			"label":       "test-agent",
+			"permissions": permissions,
+			"source_ids":  []int64{1},
+		})
+		require.NoError(err)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		require.NoError(err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", "owner-test-key")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(err)
+		defer func() { _ = resp.Body.Close() }()
+		require.Equal(http.StatusCreated, resp.StatusCode)
+		var issued agentTokenIssueFixture
+		require.NoError(json.NewDecoder(resp.Body).Decode(&issued))
+		return issued.Secret
+	}
+
+	run := func(secret string, args []string) (int, api.ErrorResponse) {
+		body, err := json.Marshal(map[string]any{"args": args})
+		require.NoError(err)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		require.NoError(err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Msgvault-Agent-Token", secret)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(err)
+		defer func() { _ = resp.Body.Close() }()
+		var response api.ErrorResponse
+		if resp.StatusCode != http.StatusOK {
+			require.NoError(json.NewDecoder(resp.Body).Decode(&response))
+		}
+		return resp.StatusCode, response
+	}
+
+	readOnly := issue([]string{string(agentgrant.PermissionDraftRead)})
+	code, response := run(readOnly, []string{"draft-reply", "42"})
+	assert.Equal(http.StatusBadRequest, code)
+	assert.Equal("command_not_allowed", response.Error)
+	assert.Zero(backend.runnerCalls)
+
+	full := issue(agentgrant.KnownPermissionNames())
+	code, response = run(full, []string{"draft-reply", "42"})
+	assert.Equal(http.StatusOK, code)
+	assert.Empty(response.Error)
+	assert.Equal(1, backend.runnerCalls)
+	for _, command := range []string{"draft-get", "draft-edit", "draft-delete"} {
+		code, response = run(full, []string{command, "42"})
+		assert.Equal(http.StatusBadRequest, code)
+		assert.Equal("command_not_allowed", response.Error)
+		assert.Equal(1, backend.runnerCalls)
+	}
 }
 
 // TestAgentTokenIssueOutputsSecret verifies that the issue subcommand (row 6):

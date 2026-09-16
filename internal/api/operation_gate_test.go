@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/query"
@@ -132,6 +133,49 @@ func TestOperationGateMiddlewareGatesMutatingMethods(t *testing.T) {
 			assert.Equal(t, 1, done, "done calls")
 		})
 	}
+}
+
+func TestOperationGateMiddlewareSkipsUnauthorizedDelegatedCLIRun(t *testing.T) {
+	assert := assert.New(t)
+	sourceGrant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftRead}}
+	fullGrant := &agentgrant.Grant{Permissions: []agentgrant.Permission{
+		agentgrant.PermissionDraftCreate,
+		agentgrant.PermissionDraftRead,
+		agentgrant.PermissionDraftEdit,
+		agentgrant.PermissionDraftDelete,
+	}}
+
+	request := func(grant *agentgrant.Grant, args []string) (int, int, int) {
+		gate := &recordingOperationGate{allow: true}
+		handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		body := `{"args":["` + strings.Join(args, `","`) + `"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), requestSecurityContextKey{}, requestSecurity{
+			auth: requestAuthentication{Mode: AuthModeDelegated, Grant: grant},
+		}))
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		begin, done := gate.counts()
+		return resp.Code, begin, done
+	}
+
+	for _, command := range []string{CLIRunDraftReplyCommand, "draft-get", "draft-edit", "draft-delete"} {
+		grant := sourceGrant
+		if command != CLIRunDraftReplyCommand {
+			grant = fullGrant
+		}
+		code, begin, done := request(grant, []string{command, "42"})
+		assert.Equal(http.StatusNoContent, code)
+		assert.Zero(begin, command)
+		assert.Zero(done, command)
+	}
+
+	code, begin, done := request(fullGrant, []string{CLIRunDraftReplyCommand, "42"})
+	assert.Equal(http.StatusNoContent, code)
+	assert.Equal(1, begin)
+	assert.Equal(1, done)
 }
 
 func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
