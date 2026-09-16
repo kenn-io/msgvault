@@ -1,7 +1,8 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"time"
 
@@ -83,9 +84,9 @@ func (s *Server) registerSessionRoutes(api huma.API) {
 
 func (s *Server) handleSessionLogin(w http.ResponseWriter, r *http.Request) {
 	var input SessionLoginRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid session login request")
 		return
 	}

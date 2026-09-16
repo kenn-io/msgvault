@@ -24,7 +24,7 @@ type StatsView struct {
 
 	// BuildingGeneration describes an in-progress rebuild, if any.
 	// Omitted entirely when no build is running.
-	BuildingGeneration *BuildingSummary `json:"building_generation,omitempty"`
+	BuildingGeneration *BuildingSummary `json:"building_generation,omitzero" nullable:"false"`
 
 	// MissingEmbeddingsTotal is the live-message count still needing embedding
 	// for the generation the worker will actually target next. When a rebuild

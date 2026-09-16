@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"time"
@@ -74,8 +74,8 @@ type PersonVCardAcceptedReview struct {
 	ReviewID          int64         `json:"review_id"`
 	RelationshipID    int64         `json:"relationship_id"`
 	VCardIdentity     VCardIdentity `json:"vcard_identity"`
-	SourceRef         *string       `json:"source_ref,omitempty"`
-	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
+	SourceRef         *string       `json:"source_ref,omitzero" nullable:"false"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitzero" nullable:"false"`
 }
 
 // VCardProjectionConflictError reports that semantic input changed after a
@@ -358,7 +358,7 @@ func (s *Store) loadVCardRelationshipTypesTx(
 // personVCardSnapshotFingerprint hashes the projection-relevant view of the
 // snapshot, so the fingerprint changes exactly when projected content does.
 func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, error) {
-	encoded, err := json.Marshal(personVCardFingerprintView(snapshot))
+	encoded, err := json.Marshal(personVCardFingerprintView(snapshot), json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person vCard snapshot: %w", err)
 	}

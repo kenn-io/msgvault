@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -484,7 +484,7 @@ func normalizePersonFactOrganizationReference(
 func personFactOrganizationCandidateSetKey(
 	keys []personFactOrganizationLookupKey,
 ) (string, error) {
-	encoded, err := json.Marshal(keys)
+	encoded, err := json.Marshal(keys, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person fact organization candidate set key: %w", err)
 	}
@@ -618,7 +618,7 @@ func personFactOrganizationFingerprint(
 	candidateIDs := append([]int64(nil), match.CandidateIDs...)
 	slices.Sort(candidateIDs)
 	encoded, err := json.Marshal(struct {
-		ID           *int64                            `json:"id,omitempty"`
+		ID           *int64                            `json:"id,omitzero" nullable:"false"`
 		Name         string                            `json:"name"`
 		Domain       string                            `json:"domain,omitempty"`
 		LookupKeys   []personFactOrganizationLookupKey `json:"lookup_keys"`
@@ -628,7 +628,7 @@ func personFactOrganizationFingerprint(
 		ID: ref.ID, Name: NormalizeOrganizationName(ref.Name), Domain: ref.Domain,
 		LookupKeys: append([]personFactOrganizationLookupKey(nil), keys...),
 		Status:     match.Status, CandidateIDs: candidateIDs,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person fact organization match: %w", err)
 	}

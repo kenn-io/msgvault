@@ -3,7 +3,7 @@ package imessage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -593,7 +593,7 @@ func (c *Client) writeMessageRaw(
 	if msg.ChatIdentifier != nil {
 		raw["chat_identifier"] = *msg.ChatIdentifier
 	}
-	rawJSON, err := json.Marshal(raw)
+	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal raw JSON: %w", err)
 	}

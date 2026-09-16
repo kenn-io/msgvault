@@ -2,7 +2,9 @@ package circleback
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,9 +54,12 @@ func (f *FlexString) UnmarshalJSON(b []byte) error {
 		*f = FlexString(s)
 		return nil
 	}
-	var n json.Number
+	var n jsontext.Value
 	if err := json.Unmarshal(b, &n); err != nil {
 		return err
+	}
+	if n.Kind() != '0' {
+		return errors.New("expected a JSON string or number")
 	}
 	*f = FlexString(n.String())
 	return nil
@@ -74,7 +79,7 @@ type Assignee struct {
 	DisplayName string `json:"displayName,omitempty"`
 	Email       string `json:"email,omitempty"`
 	value       string
-	raw         json.RawMessage
+	raw         jsontext.Value
 }
 
 // UnmarshalJSON implements tolerant action-item assignee decoding.
@@ -111,10 +116,10 @@ func (a *Assignee) MarshalJSON() ([]byte, error) {
 		return a.raw, nil
 	}
 	if a.value != "" {
-		return json.Marshal(a.value)
+		return json.Marshal(a.value, json.Deterministic(true))
 	}
 	type assigneeObject Assignee
-	return json.Marshal(assigneeObject(*a))
+	return json.Marshal(assigneeObject(*a), json.Deterministic(true))
 }
 
 // Display returns the first nonblank assignee name or email.
@@ -168,11 +173,11 @@ type Meeting struct {
 	EndTime   string `json:"endTime,omitempty"`
 
 	// Duration tolerates seconds-as-number and strings.
-	Duration        json.Number `json:"duration,omitempty"`
-	DurationSeconds json.Number `json:"durationSeconds,omitempty"`
+	Duration        jsontext.Value `json:"duration,omitempty"`
+	DurationSeconds jsontext.Value `json:"durationSeconds,omitempty"`
 
 	Attendees []Attendee `json:"attendees,omitempty"`
-	Organizer *Attendee  `json:"organizer,omitempty"`
+	Organizer *Attendee  `json:"organizer,omitzero"`
 
 	Notes string `json:"notes,omitempty"`
 	// Summary is an alternate key for Notes.
@@ -187,7 +192,7 @@ type Meeting struct {
 	RecordingURL string `json:"recordingUrl,omitempty"`
 
 	// Raw preserves this meeting's verbatim tool-result JSON.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // InsightList is a meeting's insight collection. Circleback returns it as a
@@ -221,7 +226,7 @@ func (l *InsightList) UnmarshalJSON(b []byte) error {
 		*l = InsightList(array)
 		return nil
 	}
-	var object map[string]json.RawMessage
+	var object map[string]jsontext.Value
 	if err := json.Unmarshal(b, &object); err != nil {
 		return err
 	}
@@ -241,7 +246,7 @@ func (l *InsightList) UnmarshalJSON(b []byte) error {
 
 // insightFromEntry builds one Insight from a keyed-object entry, falling back
 // to the label when the value carries no title of its own.
-func insightFromEntry(label string, value json.RawMessage) Insight {
+func insightFromEntry(label string, value jsontext.Value) Insight {
 	value = bytes.TrimSpace(value)
 	insight := Insight{Name: label}
 	switch {
@@ -370,11 +375,17 @@ func (m *Meeting) CreatedTime() time.Time {
 
 // DurationSecs returns the meeting duration in seconds, 0 when unknown.
 func (m *Meeting) DurationSecs() int64 {
-	for _, n := range []json.Number{m.DurationSeconds, m.Duration} {
-		if v, err := n.Int64(); err == nil && v > 0 {
+	for _, n := range []jsontext.Value{m.DurationSeconds, m.Duration} {
+		text := n.String()
+		if n.Kind() == '"' {
+			if err := json.Unmarshal(n, &text); err != nil {
+				continue
+			}
+		}
+		if v, err := strconv.ParseInt(text, 10, 64); err == nil && v > 0 {
 			return v
 		}
-		if v, err := n.Float64(); err == nil && v > 0 {
+		if v, err := strconv.ParseFloat(text, 64); err == nil && v > 0 {
 			return int64(v)
 		}
 	}
@@ -388,7 +399,7 @@ type TranscriptEntry struct {
 	Text        string `json:"text,omitempty"`
 	Content     string `json:"content,omitempty"`
 	// Words is a historical alias only when its value is a JSON string.
-	Words json.RawMessage `json:"words,omitempty"`
+	Words jsontext.Value `json:"words,omitempty"`
 
 	// Timestamp and offset variants accept either JSON strings or numbers.
 	Timestamp      FlexString `json:"timestamp,omitempty"`
@@ -403,21 +414,21 @@ type TranscriptEntry struct {
 // explicit blank utterance from a nonblank entry using an unsupported key.
 func (e *TranscriptEntry) UnmarshalJSON(b []byte) error {
 	type transcriptEntryWire struct {
-		Speaker        string          `json:"speaker,omitempty"`
-		SpeakerName    string          `json:"speakerName,omitempty"`
-		Text           string          `json:"text,omitempty"`
-		Content        string          `json:"content,omitempty"`
-		Words          json.RawMessage `json:"words,omitempty"`
-		Timestamp      FlexString      `json:"timestamp,omitempty"`
-		Start          FlexString      `json:"start,omitempty"`
-		StartTimestamp FlexString      `json:"startTimestamp,omitempty"`
-		Time           FlexString      `json:"time,omitempty"`
+		Speaker        string         `json:"speaker,omitempty"`
+		SpeakerName    string         `json:"speakerName,omitempty"`
+		Text           string         `json:"text,omitempty"`
+		Content        string         `json:"content,omitempty"`
+		Words          jsontext.Value `json:"words,omitempty"`
+		Timestamp      FlexString     `json:"timestamp,omitempty"`
+		Start          FlexString     `json:"start,omitempty"`
+		StartTimestamp FlexString     `json:"startTimestamp,omitempty"`
+		Time           FlexString     `json:"time,omitempty"`
 	}
 	var wire transcriptEntryWire
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(b, &fields); err != nil {
 		return err
 	}
@@ -463,7 +474,7 @@ func (e *TranscriptEntry) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func rawJSONNonBlank(raw json.RawMessage) bool {
+func rawJSONNonBlank(raw jsontext.Value) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) ||
 		bytes.Equal(trimmed, []byte(`""`)) || bytes.Equal(trimmed, []byte("[]")) ||
@@ -544,7 +555,7 @@ type Transcript struct {
 	Text string `json:"text,omitempty"`
 
 	// Raw preserves this transcript's verbatim tool-result JSON.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 
 	transcriptFieldPresent bool
 	textFieldPresent       bool
@@ -563,7 +574,7 @@ func (t *Transcript) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &wire); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(b, &fields); err != nil {
 		return err
 	}

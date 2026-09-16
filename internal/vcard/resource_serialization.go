@@ -3,7 +3,8 @@ package vcard
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func MarshalResourceMetadata(envelope ResourceEnvelope) ([]byte, error) {
 		NativeMappings:        envelope.NativeMappings,
 		Residue:               envelope.Residue,
 		Render:                envelope.RenderMetadata,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal vCard resource metadata: %w", err)
 	}
@@ -79,13 +80,13 @@ func UnmarshalResourceMetadata(data []byte) (ResourceEnvelope, error) {
 // decodeStrictJSON decodes exactly one JSON value into target and rejects
 // unknown fields and trailing content.
 func decodeStrictJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		return err
 	}
 	var extra any
-	err := decoder.Decode(&extra)
+	err := json.UnmarshalDecode(decoder, &extra)
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
@@ -117,7 +118,7 @@ func (p Property) MarshalJSON() ([]byte, error) {
 		wire.RawValue = ""
 		wire.RawValueBase64 = base64.StdEncoding.EncodeToString([]byte(p.RawValue))
 	}
-	return json.Marshal(wire)
+	return json.Marshal(wire, json.Deterministic(true))
 }
 
 // UnmarshalJSON implements json.Unmarshaler; see propertyJSON.

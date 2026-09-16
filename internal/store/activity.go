@@ -822,7 +822,7 @@ type ContactState struct {
 	LastContactAt       *time.Time      `json:"last_contact_at,omitempty"`
 	LastContactRef      string          `json:"last_contact_ref,omitempty"`
 	LastContactChannel  ActivityChannel `json:"last_contact_channel,omitempty"`
-	LastContactSourceID *int64          `json:"last_contact_source_id,omitempty"`
+	LastContactSourceID *int64          `json:"last_contact_source_id,omitzero" nullable:"false"`
 	LastContactOwner    string          `json:"last_contact_owner,omitempty"`
 	LastInboundAt       *time.Time      `json:"last_inbound_at,omitempty"`
 	LastInboundRef      string          `json:"last_inbound_ref,omitempty"`

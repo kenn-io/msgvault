@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -47,16 +48,16 @@ type OrganizationStore interface {
 type OrganizationBody struct {
 	Name          string  `json:"name"`
 	Kind          string  `json:"kind,omitempty" enum:"company,nonprofit,school,government,household,other"`
-	PrimaryDomain *string `json:"primary_domain,omitempty" nullable:"true"`
-	Description   *string `json:"description,omitempty" nullable:"true"`
-	Retired       *bool   `json:"retired,omitempty" nullable:"true"`
+	PrimaryDomain *string `json:"primary_domain,omitzero" nullable:"true"`
+	Description   *string `json:"description,omitzero" nullable:"true"`
+	Retired       *bool   `json:"retired,omitzero" nullable:"true"`
 }
 
 type OrganizationCreateBody struct {
 	Name          string  `json:"name"`
 	Kind          string  `json:"kind,omitempty" enum:"company,nonprofit,school,government,household,other"`
-	PrimaryDomain *string `json:"primary_domain,omitempty" nullable:"true"`
-	Description   *string `json:"description,omitempty" nullable:"true"`
+	PrimaryDomain *string `json:"primary_domain,omitzero" nullable:"true"`
+	Description   *string `json:"description,omitzero" nullable:"true"`
 }
 
 type OrganizationsResponse struct {
@@ -77,19 +78,19 @@ type MergeOrganizationBody struct {
 // profile PUT could never round-trip a row carrying that metadata and would
 // supersede and reinsert it without the metadata on every unrelated update.
 type OrganizationEnvelopeBody struct {
-	Ordinal           *int       `json:"ordinal,omitempty" minimum:"0"`
-	Pref              *int       `json:"pref,omitempty" nullable:"true"`
-	TypeLabel         *string    `json:"type_label,omitempty" nullable:"true"`
+	Ordinal           *int       `json:"ordinal,omitzero" nullable:"false" minimum:"0"`
+	Pref              *int       `json:"pref,omitzero" nullable:"true"`
+	TypeLabel         *string    `json:"type_label,omitzero" nullable:"true"`
 	TypeTokens        []string   `json:"type_tokens,omitempty"`
-	VCardProperty     *string    `json:"vcard_property,omitempty" nullable:"true"`
-	VCardGroup        *string    `json:"vcard_group,omitempty" nullable:"true"`
-	VCardPropID       *string    `json:"vcard_prop_id,omitempty" nullable:"true"`
+	VCardProperty     *string    `json:"vcard_property,omitzero" nullable:"true"`
+	VCardGroup        *string    `json:"vcard_group,omitzero" nullable:"true"`
+	VCardPropID       *string    `json:"vcard_prop_id,omitzero" nullable:"true"`
 	VCardPID          []string   `json:"vcard_pid,omitempty"`
-	VCardAltID        *string    `json:"vcard_altid,omitempty" nullable:"true"`
+	VCardAltID        *string    `json:"vcard_altid,omitzero" nullable:"true"`
 	Source            string     `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef         *string    `json:"source_ref,omitempty" nullable:"true"`
-	SourceResourceUID *string    `json:"source_resource_uid,omitempty" nullable:"true"`
-	Confidence        *float64   `json:"confidence,omitempty" nullable:"true"`
+	SourceRef         *string    `json:"source_ref,omitzero" nullable:"true"`
+	SourceResourceUID *string    `json:"source_resource_uid,omitzero" nullable:"true"`
+	Confidence        *float64   `json:"confidence,omitzero" nullable:"true"`
 	ActiveFrom        *time.Time `json:"active_from,omitempty" nullable:"true"`
 }
 
@@ -125,20 +126,20 @@ type OrganizationAddressBody struct {
 	OrganizationEnvelopeBody
 
 	AddressKind        string  `json:"address_kind"`
-	PostOfficeBox      *string `json:"post_office_box,omitempty" nullable:"true"`
-	ExtendedAddress    *string `json:"extended_address,omitempty" nullable:"true"`
-	StreetAddress      *string `json:"street_address,omitempty" nullable:"true"`
-	Locality           *string `json:"locality,omitempty" nullable:"true"`
-	Region             *string `json:"region,omitempty" nullable:"true"`
-	PostalCode         *string `json:"postal_code,omitempty" nullable:"true"`
-	CountryName        *string `json:"country_name,omitempty" nullable:"true"`
-	ExtendedComponents *string `json:"extended_components,omitempty" nullable:"true"`
-	FreeText           *string `json:"free_text,omitempty" nullable:"true"`
-	Label              *string `json:"label,omitempty" nullable:"true"`
-	GeoURI             *string `json:"geo_uri,omitempty" nullable:"true"`
-	Timezone           *string `json:"timezone,omitempty" nullable:"true"`
-	CountryCode        *string `json:"country_code,omitempty" nullable:"true"`
-	PlaceURI           *string `json:"place_uri,omitempty" nullable:"true"`
+	PostOfficeBox      *string `json:"post_office_box,omitzero" nullable:"true"`
+	ExtendedAddress    *string `json:"extended_address,omitzero" nullable:"true"`
+	StreetAddress      *string `json:"street_address,omitzero" nullable:"true"`
+	Locality           *string `json:"locality,omitzero" nullable:"true"`
+	Region             *string `json:"region,omitzero" nullable:"true"`
+	PostalCode         *string `json:"postal_code,omitzero" nullable:"true"`
+	CountryName        *string `json:"country_name,omitzero" nullable:"true"`
+	ExtendedComponents *string `json:"extended_components,omitzero" nullable:"true"`
+	FreeText           *string `json:"free_text,omitzero" nullable:"true"`
+	Label              *string `json:"label,omitzero" nullable:"true"`
+	GeoURI             *string `json:"geo_uri,omitzero" nullable:"true"`
+	Timezone           *string `json:"timezone,omitzero" nullable:"true"`
+	CountryCode        *string `json:"country_code,omitzero" nullable:"true"`
+	PlaceURI           *string `json:"place_uri,omitzero" nullable:"true"`
 	OriginalValue      string  `json:"original_value,omitempty"`
 }
 
@@ -146,11 +147,11 @@ type OrganizationContactPointBody struct {
 	OrganizationEnvelopeBody
 
 	ContactKind   string  `json:"contact_kind" enum:"email,phone,username,impp,url,social,calendar,contact_uri,org_directory,language"`
-	ServiceSlug   *string `json:"service_slug,omitempty" nullable:"true"`
-	ScopeKind     *string `json:"scope_kind,omitempty" nullable:"true"`
-	ScopeValue    *string `json:"scope_value,omitempty" nullable:"true"`
+	ServiceSlug   *string `json:"service_slug,omitzero" nullable:"true"`
+	ScopeKind     *string `json:"scope_kind,omitzero" nullable:"true"`
+	ScopeValue    *string `json:"scope_value,omitzero" nullable:"true"`
 	OriginalValue string  `json:"original_value"`
-	URI           *string `json:"uri,omitempty" nullable:"true"`
+	URI           *string `json:"uri,omitzero" nullable:"true"`
 }
 
 // OrganizationMediaBody carries either inline data or a content_hash
@@ -160,10 +161,10 @@ type OrganizationMediaBody struct {
 	OrganizationEnvelopeBody
 
 	MediaKind     string  `json:"media_kind" enum:"photo,logo,sound,key"`
-	MediaType     *string `json:"media_type,omitempty" nullable:"true"`
-	URI           *string `json:"uri,omitempty" nullable:"true"`
+	MediaType     *string `json:"media_type,omitzero" nullable:"true"`
+	URI           *string `json:"uri,omitzero" nullable:"true"`
 	Data          []byte  `json:"data,omitempty"`
-	ContentHash   *string `json:"content_hash,omitempty" nullable:"true"`
+	ContentHash   *string `json:"content_hash,omitzero" nullable:"true"`
 	OriginalValue string  `json:"original_value,omitempty"`
 }
 
@@ -188,16 +189,16 @@ type OrganizationAttributesResponse struct {
 
 type SetOrganizationAttributeBody struct {
 	DefinitionSlug  string               `json:"definition_slug"`
-	Ordinal         *int64               `json:"ordinal,omitempty" nullable:"true"`
+	Ordinal         *int64               `json:"ordinal,omitzero" nullable:"true"`
 	Value           store.AttributeValue `json:"value"`
 	ActiveFrom      *time.Time           `json:"active_from,omitempty" nullable:"true"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty" nullable:"true"`
 	Source          string               `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef       *string              `json:"source_ref,omitempty" nullable:"true"`
-	Confidence      *float64             `json:"confidence,omitempty" nullable:"true"`
-	Actor           *string              `json:"actor,omitempty" nullable:"true"`
-	ExpectedValueID *int64               `json:"expected_value_id,omitempty" nullable:"true"`
-	DryRun          bool                 `json:"dry_run,omitempty"`
+	SourceRef       *string              `json:"source_ref,omitzero" nullable:"true"`
+	Confidence      *float64             `json:"confidence,omitzero" nullable:"true"`
+	Actor           *string              `json:"actor,omitzero" nullable:"true"`
+	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"true"`
+	DryRun          bool                 `json:"dry_run,omitzero"`
 }
 
 func (s *Server) registerOrganizationRoutes(api huma.API) {
@@ -727,19 +728,19 @@ func decodeOrganizationProfileRequest(w http.ResponseWriter, r *http.Request, ta
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid organization profile request")
 		return false
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"Invalid organization profile request: "+err.Error())
 		return false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"Organization profile request must contain one JSON object")
 		return false
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid organization profile request")
 		return false

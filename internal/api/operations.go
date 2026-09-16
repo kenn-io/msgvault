@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -59,17 +60,17 @@ type OperationRunSummary struct {
 	Kind       operations.Kind          `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
 	Lane       operations.Lane          `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
 	State      operations.State         `json:"state" enum:"cancelled,failed,partial,queued,running,succeeded"`
-	Trigger    *operations.Trigger      `json:"trigger,omitempty" enum:"manual,scheduled"`
+	Trigger    *operations.Trigger      `json:"trigger,omitzero" nullable:"false" enum:"manual,scheduled"`
 	StartedAt  time.Time                `json:"started_at"`
 	FinishedAt *time.Time               `json:"finished_at,omitempty"`
 	Counters   []OperationPublicCounter `json:"counters"`
-	Error      *OperationPublicError    `json:"error,omitempty"`
+	Error      *OperationPublicError    `json:"error,omitzero" nullable:"false"`
 }
 
 type OperationRunDetail struct {
 	OperationRunSummary
 
-	RelatedStatus    *operations.RelatedStatusID `json:"related_status,omitempty" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
+	RelatedStatus    *operations.RelatedStatusID `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
 	SupportedActions []operations.ActionID       `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume" nullable:"false"`
 }
 
@@ -92,10 +93,10 @@ type OperationLaneStatus struct {
 	Configured          bool                           `json:"configured"`
 	HistoryAvailability operations.HistoryAvailability `json:"history_availability" enum:"available,unavailable"`
 	UnavailableCode     string                         `json:"unavailable_code,omitempty"`
-	Active              *OperationRunSummary           `json:"active,omitempty"`
-	Latest              *OperationRunSummary           `json:"latest,omitempty"`
-	LatestSuccessful    *OperationRunSummary           `json:"latest_successful,omitempty"`
-	RelatedStatus       *operations.RelatedStatusID    `json:"related_status,omitempty" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
+	Active              *OperationRunSummary           `json:"active,omitzero" nullable:"false"`
+	Latest              *OperationRunSummary           `json:"latest,omitzero" nullable:"false"`
+	LatestSuccessful    *OperationRunSummary           `json:"latest_successful,omitzero" nullable:"false"`
+	RelatedStatus       *operations.RelatedStatusID    `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
 	SupportedActions    []operations.ActionID          `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume"`
 }
 
@@ -106,16 +107,16 @@ type OperationStatusResponse struct {
 type operationRunReferencePayload struct {
 	Kind     operations.Kind         `json:"kind"`
 	IDType   operations.StableIDType `json:"id_type"`
-	IntID    *int64                  `json:"int_id,omitempty"`
-	StringID *string                 `json:"string_id,omitempty"`
+	IntID    *int64                  `json:"int_id,omitzero" nullable:"false"`
+	StringID *string                 `json:"string_id,omitzero" nullable:"false"`
 }
 
 type operationCursorPayload struct {
 	Timestamp          string                  `json:"t"`
 	Kind               operations.Kind         `json:"k"`
 	IDType             operations.StableIDType `json:"it"`
-	IntID              *int64                  `json:"i,omitempty"`
-	StringID           *string                 `json:"s,omitempty"`
+	IntID              *int64                  `json:"i,omitzero" nullable:"false"`
+	StringID           *string                 `json:"s,omitzero" nullable:"false"`
 	FilterHash         string                  `json:"f"`
 	MembershipRevision int64                   `json:"r"`
 	AvailableKinds     []operations.Kind       `json:"ak"`
@@ -1110,22 +1111,21 @@ func decodeStrictOperationObject(
 	if !utf8.Valid(encoded) {
 		return nil, errors.New("operation token payload must be valid UTF-8")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	token, err := decoder.Token()
+	decoder := jsontext.NewDecoder(bytes.NewReader(encoded))
+	token, err := decoder.ReadToken()
 	if err != nil {
 		return nil, err
 	}
-	delimiter, ok := token.(json.Delim)
-	if !ok || delimiter != '{' {
+	if token.Kind() != '{' {
 		return nil, errors.New("operation token payload must be an object")
 	}
 	seen := make(map[string]struct{})
-	for decoder.More() {
-		nameToken, tokenErr := decoder.Token()
+	for decoder.PeekKind() != '}' && decoder.PeekKind() != ']' && decoder.PeekKind() != 0 {
+		nameToken, tokenErr := decoder.ReadToken()
 		if tokenErr != nil {
 			return nil, tokenErr
 		}
-		name, ok := nameToken.(string)
+		name, ok := nameToken.String(), nameToken.Kind() == '"'
 		if !ok {
 			return nil, errors.New("operation token object key is invalid")
 		}
@@ -1136,21 +1136,21 @@ func decodeStrictOperationObject(
 			return nil, fmt.Errorf("operation token field %q is not allowed", name)
 		}
 		seen[name] = struct{}{}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
+		var value jsontext.Value
+		if err := json.UnmarshalDecode(decoder, &value); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := decoder.Token(); err != nil {
+	if _, err := decoder.ReadToken(); err != nil {
 		return nil, err
 	}
 	if err := requireOperationJSONEOF(decoder); err != nil {
 		return nil, err
 	}
 
-	typed := json.NewDecoder(bytes.NewReader(encoded))
-	typed.DisallowUnknownFields()
-	if err := typed.Decode(target); err != nil {
+	typed := jsontext.NewDecoder(bytes.NewReader(encoded), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(typed, target); err != nil {
 		return nil, err
 	}
 	if err := requireOperationJSONEOF(typed); err != nil {
@@ -1182,9 +1182,9 @@ func operationFieldPresent(fields map[string]struct{}, name string) bool {
 	return present
 }
 
-func requireOperationJSONEOF(decoder *json.Decoder) error {
+func requireOperationJSONEOF(decoder *jsontext.Decoder) error {
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errors.New("operation token payload has trailing JSON")
 		}

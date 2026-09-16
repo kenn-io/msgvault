@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"hash"
@@ -241,10 +241,10 @@ func textSnapshotFilterIdentity(scope TextSnapshotScope) ([]byte, error) {
 		filter.Before = &value
 	}
 	// The identity is private cache metadata, not an external JSON contract.
-	identity, err := json.Marshal(struct { //nolint:musttag
+	identity, err := json.Marshal(struct {
 		ConversationID *int64
 		Filter         TextFilter
-	}{ConversationID: scope.ConversationID, Filter: filter})
+	}{ConversationID: scope.ConversationID, Filter: filter}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode text snapshot scope: %w", err)
 	}

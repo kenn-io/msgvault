@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -123,7 +123,7 @@ func (s *Server) handleVisualRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVisualBuild(w http.ResponseWriter, r *http.Request) {
 	var request visualBuildRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Consent {
+	if err := json.UnmarshalRead(r.Body, &request); err != nil || !request.Consent {
 		writeError(w, http.StatusBadRequest, "visual_consent_required", "Explicit hosted-processing consent is required")
 		return
 	}
@@ -136,7 +136,7 @@ func (s *Server) handleVisualBuild(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
 	var request visualRetryRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.MessageID <= 0 || strings.TrimSpace(request.BlobHash) == "" {
+	if err := json.UnmarshalRead(r.Body, &request); err != nil || request.MessageID <= 0 || strings.TrimSpace(request.BlobHash) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_visual_owner", "message_id and blob_hash are required")
 		return
 	}
@@ -207,7 +207,7 @@ func (s *Server) runVisualOperation(
 func (s *Server) handleVisualRetire(w http.ResponseWriter, r *http.Request) {
 	var request visualRetireRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.GenerationID <= 0 {
+	if err := json.UnmarshalRead(r.Body, &request); err != nil || request.GenerationID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_visual_generation", "generation_id must be positive")
 		return
 	}

@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -170,14 +170,14 @@ func inferenceExportProjectionChanged(
 		projection = inferredExportContributors(projection)
 		values := make([]string, 0, len(projection.Attributes)+len(projection.Employments))
 		for _, attribute := range projection.Attributes {
-			encoded, err := json.Marshal(attribute)
+			encoded, err := json.Marshal(attribute, json.Deterministic(true))
 			if err != nil {
 				return nil, err
 			}
 			values = append(values, "attribute:"+string(encoded))
 		}
 		for _, employment := range projection.Employments {
-			encoded, err := json.Marshal(employment)
+			encoded, err := json.Marshal(employment, json.Deterministic(true))
 			if err != nil {
 				return nil, err
 			}
@@ -550,10 +550,10 @@ func CardDAVBodySHA256(body []byte) string {
 // CardDAVReviewToken uses a versioned struct encoding, including explicit null
 // optional fences. It is separate from the persisted native vCard fingerprint.
 func CardDAVReviewToken(fence CardDAVReviewArtifactFence) string {
-	body, _ := json.Marshal(struct { //nolint:errchkjson // fixed struct of scalars and pointers cannot fail to encode
+	body, _ := json.Marshal(struct { // fixed struct of scalars and pointers cannot fail to encode
 		Version int                        `json:"version"`
 		Fence   CardDAVReviewArtifactFence `json:"fence"`
-	}{Version: 1, Fence: fence})
+	}{Version: 1, Fence: fence}, json.Deterministic(true))
 	return CardDAVBodySHA256(body)
 }
 

@@ -3,7 +3,8 @@ package identityops
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ type ImportRequest struct {
 
 	Entries []ImportEntry `json:"entries" nullable:"false"`
 	Signal  string        `json:"signal,omitempty"`
-	Apply   bool          `json:"apply,omitempty"`
+	Apply   bool          `json:"apply,omitzero"`
 }
 
 func (r *ImportRequest) UnmarshalJSON(data []byte) error {
@@ -212,7 +213,7 @@ func parseJSONImport(data []byte) ([]ImportEntry, error) {
 		if errors.Is(entryErr, errTrailingImportJSON) {
 			return nil, entryErr
 		}
-		if strings.Contains(entryErr.Error(), "unknown field") {
+		if errors.Is(entryErr, json.ErrUnknownName) {
 			return nil, fmt.Errorf("decode identity import JSON: %w", entryErr)
 		}
 		return nil, fmt.Errorf("identity import JSON must be an array of strings or identity entries: %w", entryErr)
@@ -230,13 +231,13 @@ func parseJSONImport(data []byte) ([]ImportEntry, error) {
 }
 
 func decodeStrictImportJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		return err
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errTrailingImportJSON
 		}

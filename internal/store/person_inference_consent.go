@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -19,7 +20,7 @@ type PersonInferenceConsent struct {
 	ProfileFingerprint string     `json:"profile_fingerprint"`
 	GrantedBy          string     `json:"granted_by"`
 	GrantedAt          time.Time  `json:"granted_at"`
-	RevokedBy          *string    `json:"revoked_by,omitempty"`
+	RevokedBy          *string    `json:"revoked_by,omitzero" nullable:"false"`
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 }
 
@@ -29,8 +30,8 @@ type PersonInferenceConsentStatus struct {
 	Fingerprint   string                  `json:"fingerprint"`
 	ProfileExists bool                    `json:"profile_exists"`
 	Active        bool                    `json:"active"`
-	Consent       *PersonInferenceConsent `json:"consent,omitempty"`
-	LastRevoked   *PersonInferenceConsent `json:"last_revoked,omitempty"`
+	Consent       *PersonInferenceConsent `json:"consent,omitzero" nullable:"false"`
+	LastRevoked   *PersonInferenceConsent `json:"last_revoked,omitzero" nullable:"false"`
 }
 
 const personInferenceConsentColumns = `
@@ -147,7 +148,7 @@ func newPersonInferenceProfileProjection(
 		case "anonymous":
 			target.SetBool(source.String() == string(peoplesweep.AuthNone))
 		case "json":
-			encoded, err := json.Marshal(source.Interface())
+			encoded, err := json.Marshal(source.Interface(), json.Deterministic(true))
 			if err != nil {
 				return personInferenceProfileProjection{}, fmt.Errorf(
 					"encode people inference %s: %w", name, err)
@@ -247,7 +248,7 @@ func (p *personInferenceProfileProjection) profile() (peoplesweep.ProviderProfil
 			"stored people inference profile policy has no protocol")
 	}
 	profile.Fingerprint = p.Fingerprint
-	profile.PolicyJSON = json.RawMessage(p.PolicyJSON)
+	profile.PolicyJSON = jsontext.Value(p.PolicyJSON)
 	expected, err := newPersonInferenceProfileProjection(profile)
 	if err != nil {
 		return peoplesweep.ProviderProfile{}, err

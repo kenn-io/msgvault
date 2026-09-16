@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -101,7 +101,7 @@ var personListCmd = &cobra.Command{
 			return err
 		}
 		if personJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.People)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.People, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tDISPLAY NAME\tVCARD UID\tPARTICIPANTS\tREVISION")
@@ -269,7 +269,7 @@ func newPersonMergeCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+				return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 			}
 			writePersonMergeResult(cmd, resp.JSON200)
 			return nil
@@ -335,7 +335,7 @@ func newPersonSplitCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+				return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 			}
 			writePersonSplitResult(cmd, resp.JSON200)
 			return nil
@@ -378,7 +378,7 @@ func newPersonMergeHistoryCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.Merges)
+				return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.Merges, json.Deterministic(true))
 			}
 			return writePersonMergeHistory(cmd, resp.JSON200.Merges)
 		},
@@ -415,7 +415,7 @@ func newPersonMergeShowCommand() *cobra.Command {
 					return loadErr
 				}
 				if jsonOutput {
-					return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+					return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 					"Merge snapshot: %d\nVersion: %d\nSHA-256: %s\nSnapshot: %s\n",
@@ -433,7 +433,7 @@ func newPersonMergeShowCommand() *cobra.Command {
 				return loadErr
 			}
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+				return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 			}
 			writePersonMergeDetail(cmd, resp.JSON200)
 			return nil
@@ -490,7 +490,7 @@ func newPersonMergeCandidateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+				return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 			}
 			personETag := ""
 			if resp.Headers200 != nil {
@@ -645,7 +645,7 @@ func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {
 		return errors.New("person response was empty")
 	}
 	if personJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(person)
+		return json.MarshalWrite(cmd.OutOrStdout(), person, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Person: %d\nDisplay name: %s\nvCard UID: %s\nParticipants: %v\nRevision: %d\n",

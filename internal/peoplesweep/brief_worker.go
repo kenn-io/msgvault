@@ -2,7 +2,8 @@ package peoplesweep
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -127,7 +128,7 @@ type BriefResult struct {
 	ProgramVersion     string
 	ProgramFingerprint string
 	Boundary           BriefBoundary
-	Structured         json.RawMessage
+	Structured         jsontext.Value
 	Rendered           RenderedBrief
 	// Evidence is the archive evidence the structure cites, in citation order.
 	// The store aligns each input and writes the surviving rows as the brief's
@@ -265,7 +266,7 @@ func renderBriefResult(
 func newBriefResult(
 	parsed ParsedBrief, rendered RenderedBrief, window BriefWindow, generatedAt time.Time,
 ) (BriefResult, error) {
-	structured, err := json.Marshal(parsed.Output)
+	structured, err := json.Marshal(parsed.Output, json.Deterministic(true))
 	if err != nil {
 		return BriefResult{}, fmt.Errorf("encode person brief structure: %w", err)
 	}
@@ -296,7 +297,7 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 		len(result.Rendered.Sentences) == 0 {
 		return errors.New("person brief result has no rendered paragraph")
 	}
-	if !json.Valid(result.Structured) {
+	if !result.Structured.IsValid() {
 		return errors.New("person brief result structure is not JSON")
 	}
 	if result.DroppedItemCount < 0 || result.GeneratedAt.IsZero() {

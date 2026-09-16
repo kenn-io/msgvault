@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -28,7 +28,7 @@ var (
 type mboxCheckpoint struct {
 	File   string `json:"file"`
 	Offset int64  `json:"offset"`
-	Seq    int64  `json:"seq,omitempty"`
+	Seq    int64  `json:"seq,omitzero"`
 }
 
 var importMboxCmd = &cobra.Command{

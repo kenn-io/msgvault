@@ -2,7 +2,7 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,7 +21,7 @@ import (
 const runSavedViewMaxLimit = exploreFilesMaxLimit
 
 type RunSavedViewRequest struct {
-	Limit  int    `json:"limit,omitempty" minimum:"0" maximum:"100"`
+	Limit  int    `json:"limit,omitzero" minimum:"0" maximum:"100"`
 	Cursor string `json:"cursor,omitempty"`
 }
 
@@ -35,12 +35,12 @@ type RunSavedViewResponse struct {
 	Rows                   []query.EntryRow        `json:"rows,omitempty"`
 	Groups                 []query.ExploreGroupRow `json:"groups,omitempty"`
 	Files                  []query.ExploreFileFact `json:"files,omitempty"`
-	TotalCount             *int64                  `json:"total_count,omitempty"`
+	TotalCount             *int64                  `json:"total_count,omitzero" nullable:"false"`
 	NextCursor             string                  `json:"next_cursor,omitempty"`
 	CacheRevision          string                  `json:"cache_revision"`
 	SearchProvenance       query.SearchProvenance  `json:"search_provenance"`
 	CandidateSnapshotID    string                  `json:"candidate_snapshot_id,omitempty"`
-	CandidatePoolSaturated bool                    `json:"candidate_pool_saturated,omitempty"`
+	CandidatePoolSaturated bool                    `json:"candidate_pool_saturated,omitzero"`
 	SearchDeletionScope    string                  `json:"search_deletion_scope,omitempty"`
 }
 
@@ -222,7 +222,7 @@ func (s *Server) runSavedViewFiles(
 func (s *Server) dispatchSavedViewExplore(
 	w http.ResponseWriter, r *http.Request, handler http.HandlerFunc, body any, result any,
 ) bool {
-	encoded, err := json.Marshal(body)
+	encoded, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "saved_view_run_failed", "Saved View request could not be encoded")
 		return false

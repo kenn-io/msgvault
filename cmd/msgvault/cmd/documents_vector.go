@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -282,7 +282,7 @@ func runDocumentVectorCommand(command *cobra.Command, deps documentsCommandDeps,
 		return errors.New("document vector backend is unavailable in this binary")
 	}
 	result, err := deps.runDocumentVector(command.Context(), st, generationID, limit)
-	if encodeErr := json.NewEncoder(command.OutOrStdout()).Encode(result); encodeErr != nil {
+	if encodeErr := json.MarshalWrite(command.OutOrStdout(), result, json.Deterministic(true)); encodeErr != nil {
 		return errors.Join(err, encodeErr)
 	}
 	return err
@@ -303,7 +303,7 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return json.NewEncoder(command.OutOrStdout()).Encode(result)
+					return json.MarshalWrite(command.OutOrStdout(), result, json.Deterministic(true))
 				})
 			})
 		}}
@@ -390,7 +390,7 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 			}
 			if cfg == nil || !cfg.Vector.Enabled || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 				if jsonOutput {
-					return json.NewEncoder(command.OutOrStdout()).Encode(map[string]bool{"enabled": false})
+					return json.MarshalWrite(command.OutOrStdout(), map[string]bool{"enabled": false}, json.Deterministic(true))
 				}
 				_, _ = fmt.Fprintln(command.OutOrStdout(), "document_vectors=disabled")
 				return nil
@@ -399,7 +399,7 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				spec, err := desiredDocumentVectorSpec(command.Context(), st)
 				if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
 					if jsonOutput {
-						return json.NewEncoder(command.OutOrStdout()).Encode(map[string]bool{"enabled": true, "configured": false})
+						return json.MarshalWrite(command.OutOrStdout(), map[string]bool{"enabled": true, "configured": false}, json.Deterministic(true))
 					}
 					_, _ = fmt.Fprintln(command.OutOrStdout(), "document_vectors=enabled configured=false")
 					return nil
@@ -420,11 +420,11 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 					return err
 				}
 				if jsonOutput {
-					return json.NewEncoder(command.OutOrStdout()).Encode(struct {
+					return json.MarshalWrite(command.OutOrStdout(), struct {
 						Enabled    bool                                 `json:"enabled"`
 						Configured bool                                 `json:"configured"`
 						Status     store.DocumentVectorOperationsStatus `json:"status"`
-					}{Enabled: true, Configured: true, Status: status})
+					}{Enabled: true, Configured: true, Status: status}, json.Deterministic(true))
 				}
 				_, _ = fmt.Fprintf(command.OutOrStdout(), "configured_fingerprint=%s document_consented=%t query_consented=%t provider_calls=%d provider_documents=%d provider_chunks=%d provider_input_chars=%d\n", status.ConfiguredSpec.Fingerprint, status.DocumentConsent != nil, status.QueryConsent != nil, status.Usage.ProviderCalls, status.Usage.ProviderDocuments, status.Usage.ProviderChunks, status.Usage.ProviderInputChars)
 				if status.Active != nil {

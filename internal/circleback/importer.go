@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -107,7 +109,7 @@ func (s syncState) marshal() string {
 	sort.Slice(s.PendingTranscripts, func(i, j int) bool {
 		return s.PendingTranscripts[i].MeetingID < s.PendingTranscripts[j].MeetingID
 	})
-	b, err := json.Marshal(s)
+	b, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "{}"
 	}
@@ -786,7 +788,7 @@ func (imp *Importer) recoverArchivedTranscript(msgID int64) (Transcript, bool, e
 	if err != nil {
 		return Transcript{}, false, fmt.Errorf("read composed raw: %w", err)
 	}
-	var composed map[string]json.RawMessage
+	var composed map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &composed); err != nil {
 		return Transcript{}, false, fmt.Errorf("decode composed raw: %w", err)
 	}
@@ -819,7 +821,7 @@ type meetingMetadata struct {
 	CreatedAt          string              `json:"created_at,omitempty"`
 	Start              string              `json:"scheduled_start,omitempty"`
 	End                string              `json:"scheduled_end,omitempty"`
-	DurationSeconds    int64               `json:"duration_seconds,omitempty"`
+	DurationSeconds    int64               `json:"duration_seconds,omitzero"`
 	OrganizerEmail     string              `json:"organizer_email,omitempty"`
 	MeetingURL         string              `json:"meeting_url,omitempty"`
 	RecordingURL       string              `json:"recording_url,omitempty"`
@@ -828,7 +830,7 @@ type meetingMetadata struct {
 	ActionItems        []metaActionItem    `json:"action_items,omitempty"`
 	Insights           []map[string]string `json:"insights,omitempty"`
 	TranscriptState    transcriptState     `json:"transcript_state"`
-	TranscriptSegments int                 `json:"transcript_segments,omitempty"`
+	TranscriptSegments int                 `json:"transcript_segments,omitzero"`
 	AccountID          string              `json:"account_identifier,omitempty"`
 	SnapshotHash       string              `json:"snapshot_hash,omitempty"`
 }
@@ -851,7 +853,7 @@ func circlebackSnapshotHash(
 	if err != nil {
 		return "", fmt.Errorf("canonicalize meeting: %w", err)
 	}
-	var transcriptJSON json.RawMessage
+	var transcriptJSON jsontext.Value
 	if tr != nil {
 		transcriptJSON, err = canonicalProviderJSON(tr.Raw, tr)
 		if err != nil {
@@ -860,8 +862,8 @@ func circlebackSnapshotHash(
 	}
 	payload, err := json.Marshal(struct {
 		Version         int             `json:"version"`
-		Meeting         json.RawMessage `json:"meeting"`
-		Transcript      json.RawMessage `json:"transcript,omitempty"`
+		Meeting         jsontext.Value  `json:"meeting"`
+		Transcript      jsontext.Value  `json:"transcript,omitempty"`
 		TranscriptState transcriptState `json:"transcript_state"`
 		AccountID       string          `json:"account_identifier,omitempty"`
 		IsFromMe        bool            `json:"is_from_me"`
@@ -872,7 +874,7 @@ func circlebackSnapshotHash(
 		TranscriptState: state,
 		AccountID:       identifier,
 		IsFromMe:        fromMe,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}
@@ -880,24 +882,24 @@ func circlebackSnapshotHash(
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func canonicalProviderJSON(raw json.RawMessage, fallback any) (json.RawMessage, error) {
+func canonicalProviderJSON(raw jsontext.Value, fallback any) (jsontext.Value, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return json.Marshal(fallback)
+		return json.Marshal(fallback, json.Deterministic(true))
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw), jsonexact.PreserveNumbers)
+
 	var decoded any
-	if err := decoder.Decode(&decoded); err != nil {
+	if err := json.UnmarshalDecode(decoder, &decoded); err != nil {
 		return nil, err
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return nil, errors.New("provider JSON contains multiple values")
 		}
 		return nil, err
 	}
-	return json.Marshal(decoded)
+	return json.Marshal(decoded, json.Deterministic(true))
 }
 
 // ingestMeeting persists one meeting through the canonical write path.
@@ -1002,7 +1004,7 @@ func (imp *Importer) ingestMeeting(
 
 	metaJSON, err := json.Marshal(imp.buildMetadata(
 		m, tr, identifier, organizerEmail, desiredTranscriptState, snapshotHash,
-	))
+	), json.Deterministic(true))
 	if err != nil {
 		return false, false, fmt.Errorf("marshal metadata: %w", err)
 	}
@@ -1106,9 +1108,9 @@ func (imp *Importer) buildMetadata(
 
 // composeRaw archives both tool payloads verbatim in one JSON object.
 func composeRaw(m *Meeting, tr *Transcript) ([]byte, error) {
-	payload := map[string]json.RawMessage{"meeting": m.Raw}
+	payload := map[string]jsontext.Value{"meeting": m.Raw}
 	if len(m.Raw) == 0 {
-		b, err := json.Marshal(m)
+		b, err := json.Marshal(m, json.Deterministic(true))
 		if err != nil {
 			return nil, err
 		}
@@ -1117,7 +1119,7 @@ func composeRaw(m *Meeting, tr *Transcript) ([]byte, error) {
 	if tr != nil && len(tr.Raw) > 0 {
 		payload["transcript"] = tr.Raw
 	}
-	return json.Marshal(payload)
+	return json.Marshal(payload, json.Deterministic(true))
 }
 
 func firstNonEmpty(values ...string) string {

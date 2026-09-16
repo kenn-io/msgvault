@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"time"
@@ -106,8 +107,8 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req agentTokenIssueRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}

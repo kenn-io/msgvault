@@ -26,7 +26,7 @@ type Store interface {
 // that already expose one; it never makes a non-unique token exact.
 type Selector struct {
 	Account     string `json:"account,omitempty"`
-	SourceID    int64  `json:"source_id,omitempty"`
+	SourceID    int64  `json:"source_id,omitzero"`
 	SourceIDSet bool   `json:"-"`
 	SourceType  string `json:"-"`
 }

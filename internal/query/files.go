@@ -2,7 +2,7 @@ package query
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -107,7 +107,7 @@ type FileRow struct {
 	ParticipantIDs     []int64               `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string              `json:"participant_labels,omitempty"`
 	ParticipantDomains []string              `json:"participant_domains,omitempty"`
-	PersonProvenance   *PersonFileProvenance `json:"person_provenance,omitempty"`
+	PersonProvenance   *PersonFileProvenance `json:"person_provenance,omitzero" nullable:"false"`
 }
 
 type FileSearchResponse struct {

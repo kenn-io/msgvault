@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -144,9 +145,9 @@ func (s *Server) handleIdentityLinkMutation(
 // fields so a typo in participant_a/participant_b is not silently ignored,
 // and trailing data so only one JSON value can drive the mutation.
 func decodeIdentityLinkRequest(w http.ResponseWriter, r *http.Request, req *IdentityLinkRequest) bool {
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(req); err != nil {
+	dec := jsontext.NewDecoder(r.Body, json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(dec, req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request",
 			fmt.Sprintf("invalid JSON request body: %v", err))
 		return false

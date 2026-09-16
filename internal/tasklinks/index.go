@@ -2,7 +2,7 @@ package tasklinks
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -181,7 +181,7 @@ func (i *Index) save(data indexFile) error {
 		return err
 	}
 	data.FormatVersion = indexFormatV1
-	encoded, err := json.Marshal(data)
+	encoded, err := json.Marshal(data, json.Deterministic(true))
 	if err != nil {
 		return err
 	}

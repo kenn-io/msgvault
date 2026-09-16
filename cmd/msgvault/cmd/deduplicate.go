@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -653,7 +653,7 @@ func deduplicatePlanFingerprint(
 		}
 		return payload.Groups[i].SurvivorID < payload.Groups[j].SurvivorID
 	})
-	data, err := json.Marshal(payload)
+	data, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal dedup plan fingerprint: %w", err)
 	}

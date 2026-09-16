@@ -3,7 +3,8 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -166,7 +167,7 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 			Name string `json:"name"`
 		} `json:"models"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, ollamaProbeMaxBody)).Decode(&payload); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(response.Body, ollamaProbeMaxBody), &payload); err != nil {
 		return ollamaProbeResult{Reachable: true}
 	}
 	result := ollamaProbeResult{Reachable: true}
@@ -1080,12 +1081,12 @@ func writeSetupProvidersResult(
 	report := buildLaneReport(loaded, env)
 	followUps := setupFollowUps(ctx, deps, loaded, plan, applied)
 	if options.jsonOutput {
-		encoder := json.NewEncoder(command.OutOrStdout())
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(setupProvidersOutput{
+		encoder := jsontext.NewEncoder(command.OutOrStdout(), jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+		return json.MarshalEncode(encoder, setupProvidersOutput{
 			Plan: plan.Lanes, Applied: applied, DryRun: options.dryRun,
 			Declined: declined, FollowUps: followUps, Report: report,
-		})
+		}, json.Deterministic(true))
 	}
 	out := command.OutOrStdout()
 	if applied {

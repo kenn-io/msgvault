@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -571,7 +571,7 @@ func publishDerivedCache(
 	state query.CacheSyncState,
 	locking cachePublishLocking,
 ) error {
-	data, err := json.Marshal(state)
+	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode derived cache marker: %w", err)
 	}

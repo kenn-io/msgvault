@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -301,12 +302,12 @@ func (s *Store) GetPersonMergeSnapshotContext(
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := json.Marshal(snapshot)
+	canonical, err := json.Marshal(snapshot, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode person merge snapshot response: %w", err)
 	}
 	return &PersonMergeSnapshotResponse{
-		Version: version, SHA256: hash, JSON: json.RawMessage(canonical),
+		Version: version, SHA256: hash, JSON: jsontext.Value(canonical),
 	}, nil
 }
 

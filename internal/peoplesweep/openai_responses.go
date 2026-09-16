@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,9 +14,9 @@ import (
 type responsesRequest struct {
 	Model           string             `json:"model"`
 	Input           []responseItem     `json:"input"`
-	Text            *responseText      `json:"text,omitempty"`
+	Text            *responseText      `json:"text,omitzero"`
 	MaxOutputTokens int                `json:"max_output_tokens"`
-	Reasoning       *responseReasoning `json:"reasoning,omitempty"`
+	Reasoning       *responseReasoning `json:"reasoning,omitzero"`
 }
 
 type responseItem struct {
@@ -28,10 +29,10 @@ type responseText struct {
 }
 
 type responseTextFormat struct {
-	Type   string          `json:"type"`
-	Name   string          `json:"name,omitempty"`
-	Strict bool            `json:"strict,omitempty"`
-	Schema json.RawMessage `json:"schema,omitempty"`
+	Type   string         `json:"type"`
+	Name   string         `json:"name,omitempty"`
+	Strict bool           `json:"strict,omitzero"`
+	Schema jsontext.Value `json:"schema,omitempty"`
 }
 
 type responseReasoning struct {
@@ -85,7 +86,7 @@ func (d *OpenAIResponsesDriver) Prepare(
 	if profile.ReasoningEffort != "" {
 		body.Reasoning = &responseReasoning{Effort: profile.ReasoningEffort}
 	}
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		return PreparedStructuredRequest{}, errors.New("encode inference provider request")
 	}
@@ -179,7 +180,7 @@ func (d *OpenAIResponsesDriver) GeneratePrepared(
 	if err := decodeSingleJSONUseNumber([]byte(candidate), &decoded); err != nil {
 		return result, errors.Join(ErrInvalidStructuredOutput, errors.New("provider returned invalid structured JSON"))
 	}
-	result.CandidateJSON = append(json.RawMessage(nil), candidate...)
+	result.CandidateJSON = append(jsontext.Value(nil), candidate...)
 	return result, nil
 }
 

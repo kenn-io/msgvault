@@ -1,7 +1,8 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -28,7 +29,7 @@ type PersonEnrichmentProviderSetting struct {
 	PollEndpoint          string              `json:"poll_endpoint,omitempty"`
 	Mode                  string              `json:"mode,omitempty"`
 	Tier                  string              `json:"tier,omitempty"`
-	NumResults            int                 `json:"num_results,omitempty"`
+	NumResults            int                 `json:"num_results,omitzero"`
 	AllowedIdentifiers    []string            `json:"allowed_identifiers"`
 	TargetKeys            []string            `json:"target_keys"`
 	AllowSensitiveTargets bool                `json:"allow_sensitive_targets"`
@@ -41,7 +42,7 @@ type PersonEnrichmentProviderSetting struct {
 	MaxRetries            int                 `json:"max_retries"`
 	MaxRequestsPerRun     int64               `json:"max_requests_per_run"`
 	MaxRequestsPerDay     int64               `json:"max_requests_per_day"`
-	Credential            *SecretSettingState `json:"credential,omitempty"`
+	Credential            *SecretSettingState `json:"credential,omitzero" nullable:"false"`
 	CredentialID          string              `json:"credential_id"`
 }
 
@@ -52,7 +53,7 @@ type PersonEnrichmentProviderUpdate struct {
 	PollEndpoint          string   `json:"poll_endpoint,omitempty"`
 	Mode                  string   `json:"mode,omitempty"`
 	Tier                  string   `json:"tier,omitempty"`
-	NumResults            *int     `json:"num_results,omitempty"`
+	NumResults            *int     `json:"num_results,omitzero" nullable:"false"`
 	AllowedIdentifiers    []string `json:"allowed_identifiers"`
 	TargetKeys            []string `json:"target_keys"`
 	AllowSensitiveTargets bool     `json:"allow_sensitive_targets"`
@@ -305,13 +306,13 @@ func safePublicProviderEndpoint(endpoint string) string {
 }
 
 func decodeStrictSettingsJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings request")
 		return false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings request")
 		return false
 	}

@@ -12,12 +12,12 @@ import (
 type ParticipantContactObservation struct {
 	Envelope             ValueEnvelope      `json:"envelope"`
 	ParticipantID        int64              `json:"participant_id"`
-	SourceID             *int64             `json:"source_id,omitempty"`
+	SourceID             *int64             `json:"source_id,omitzero" nullable:"false"`
 	AddressKind          ContactAddressKind `json:"address_kind"`
-	ServiceSlug          *string            `json:"service_slug,omitempty"`
-	ScopeKind            *string            `json:"scope_kind,omitempty"`
-	ScopeValue           *string            `json:"scope_value,omitempty"`
-	ProviderUserID       *string            `json:"provider_user_id,omitempty"`
+	ServiceSlug          *string            `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind            *string            `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue           *string            `json:"scope_value,omitzero" nullable:"false"`
+	ProviderUserID       *string            `json:"provider_user_id,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
 	NormalizedValue      string             `json:"normalized_value"`
 	Normalization        string             `json:"normalization"`
@@ -44,7 +44,7 @@ type RecordContactObservationResult struct {
 	CandidateIDs []int64                        `json:"candidate_ids,omitempty"`
 	// CandidateID is the first conflict candidate, retained for callers that
 	// predate complete conflict-graph reporting.
-	CandidateID *int64 `json:"candidate_id,omitempty"`
+	CandidateID *int64 `json:"candidate_id,omitzero" nullable:"false"`
 }
 
 var ErrObservationValueMissing = errors.New("participant contact observation requires a non-empty value")

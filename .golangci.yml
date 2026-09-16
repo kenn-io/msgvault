@@ -193,6 +193,8 @@ linters:
         - io
         - os
         - encoding/json
+        - encoding/json/v2
+        - encoding/json/jsontext
         - encoding/csv
         - net/http
         - path/filepath

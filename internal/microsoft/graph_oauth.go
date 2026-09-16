@@ -2,7 +2,8 @@ package microsoft
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"os"
@@ -235,7 +236,7 @@ func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []str
 	}
 
 	tf := tokenFile{Token: *token, Scopes: scopes, TenantID: tenantID}
-	data, err := json.MarshalIndent(tf, "", "  ")
+	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return err
 	}

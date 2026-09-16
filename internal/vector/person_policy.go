@@ -3,7 +3,8 @@ package vector
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -68,7 +69,7 @@ type SemanticPersonEmbeddingProfile struct {
 	RendererPolicy        string             `json:"renderer_policy"`
 	DisclosedFieldClasses []string           `json:"disclosed_field_classes"`
 	CorpusScope           string             `json:"corpus_scope"`
-	PolicyJSON            json.RawMessage    `json:"-"`
+	PolicyJSON            jsontext.Value     `json:"-"`
 }
 
 type semanticPersonEmbeddingPolicy struct {
@@ -178,7 +179,7 @@ func newSemanticPersonEmbeddingProfile(
 	if err := validateSemanticPersonEmbeddingPolicy(policy); err != nil {
 		return SemanticPersonEmbeddingProfile{}, err
 	}
-	policyJSON, err := json.Marshal(policy)
+	policyJSON, err := json.Marshal(policy, json.Deterministic(true))
 	if err != nil {
 		return SemanticPersonEmbeddingProfile{}, fmt.Errorf(
 			"encode semantic person embedding policy: %w", err,

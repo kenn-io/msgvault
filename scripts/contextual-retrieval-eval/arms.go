@@ -8,7 +8,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -597,8 +598,8 @@ func embeddingRequestDocumentCount(request *http.Request) int64 {
 		return 0
 	}
 	var envelope struct {
-		Input  json.RawMessage `json:"input"`
-		Inputs json.RawMessage `json:"inputs"`
+		Input  jsontext.Value `json:"input"`
+		Inputs jsontext.Value `json:"inputs"`
 	}
 	if json.Unmarshal(payload, &envelope) != nil {
 		return 0
@@ -610,7 +611,7 @@ func embeddingRequestDocumentCount(request *http.Request) int64 {
 	if len(raw) == 0 {
 		return 0
 	}
-	var items []json.RawMessage
+	var items []jsontext.Value
 	if json.Unmarshal(raw, &items) == nil {
 		return int64(len(items))
 	}
@@ -1426,7 +1427,7 @@ func evaluateArmIndex(ctx context.Context, index *armIndex, report ArmReport, in
 		output.Rankings[item.Scenario.ID] = ann
 		output.Results[item.Scenario.ID] = rankingResult{ANN: ann, Exact: l2, L2: cosine, Hybrid: hybrid,
 			Metrics: metrics, HybridNDCG: ndcgAt10(gradesForRanking(hybrid, item.Judgment), gradeValues(item.Judgment.Grades)),
-			ANNTime: annTime, FullTime: item.QueryTime + annTime}
+			ANNTime: int64(annTime), FullTime: item.QueryTime + int64(annTime)}
 	}
 	norms, err := index.NormSummary(ctx)
 	if err != nil {

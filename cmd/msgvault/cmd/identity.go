@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -156,9 +157,9 @@ func writeIdentityJSON(w io.Writer, rows []identityRow) error {
 			ConfirmedAt: r.ConfirmedAt,
 		})
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	enc := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, out, json.Deterministic(true))
 }
 
 var identityShowCmd = &cobra.Command{
@@ -378,9 +379,9 @@ func runIdentityImport(cmd *cobra.Command, args []string) error {
 
 func renderIdentityImport(w io.Writer, result identityops.ImportResult, jsonOutput bool) error {
 	if jsonOutput {
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		encoder := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+		return json.MarshalEncode(encoder, result, json.Deterministic(true))
 	}
 	if _, err := fmt.Fprintf(
 		w,
@@ -473,9 +474,9 @@ func renderIdentityDiscoverProgress(w io.Writer, progress identityops.DiscoverPr
 
 func renderIdentityDiscover(w io.Writer, result identityops.DiscoverResult, jsonOutput bool) error {
 	if jsonOutput {
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
+		encoder := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+		return json.MarshalEncode(encoder, result, json.Deterministic(true))
 	}
 
 	if _, err := fmt.Fprintf(

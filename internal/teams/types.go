@@ -2,7 +2,8 @@ package teams
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -57,11 +58,11 @@ type ChatMessage struct {
 	// EventDetail is the polymorphic eventDetail payload (default-returned by
 	// Graph on systemEventMessage items). Kept as RawMessage so the typed lens
 	// below can parse the call-recording fields without modelling every subtype.
-	EventDetail json.RawMessage `json:"eventDetail,omitempty"`
+	EventDetail jsontext.Value `json:"eventDetail,omitempty"`
 	// Raw holds the exact original JSON for this message, captured during decode
 	// (see UnmarshalJSON). It is archived verbatim so no Graph field is lost to
 	// our partial struct modelling.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // UnmarshalJSON decodes a ChatMessage while retaining the exact original bytes
@@ -73,7 +74,7 @@ func (m *ChatMessage) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*m = ChatMessage(a)
-	m.Raw = append(json.RawMessage(nil), b...)
+	m.Raw = append(jsontext.Value(nil), b...)
 	return nil
 }
 

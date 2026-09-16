@@ -67,7 +67,7 @@ type VCardResourceEnvelopeInput struct {
 // consults this namespace.
 type PersonUIDAlias struct {
 	RetiredUID        string    `json:"retired_uid"`
-	SurvivingPersonID *int64    `json:"surviving_person_id,omitempty"`
+	SurvivingPersonID *int64    `json:"surviving_person_id,omitzero" nullable:"false"`
 	Reason            string    `json:"reason"`
 	CreatedAt         time.Time `json:"created_at"`
 }

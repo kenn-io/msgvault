@@ -49,30 +49,30 @@ type PersonAttributesResponse struct {
 type PersonAttributeConflictResponse struct {
 	Error          string                      `json:"error"`
 	Message        string                      `json:"message,omitempty"`
-	CurrentValueID *int64                      `json:"current_value_id,omitempty"`
-	CurrentValue   *store.PersonAttributeValue `json:"current_value,omitempty"`
+	CurrentValueID *int64                      `json:"current_value_id,omitzero" nullable:"false"`
+	CurrentValue   *store.PersonAttributeValue `json:"current_value,omitzero" nullable:"false"`
 }
 
 // SetPersonAttributeRequest carries a typed value and its provenance.
 type SetPersonAttributeRequest struct {
 	Value           store.AttributeValue `json:"value"`
-	Ordinal         *int64               `json:"ordinal,omitempty"`
+	Ordinal         *int64               `json:"ordinal,omitzero" nullable:"false"`
 	Source          string               `json:"source,omitempty" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef       *string              `json:"source_ref,omitempty"`
-	Confidence      *float64             `json:"confidence,omitempty"`
-	Actor           *string              `json:"actor,omitempty"`
+	SourceRef       *string              `json:"source_ref,omitzero" nullable:"false"`
+	Confidence      *float64             `json:"confidence,omitzero" nullable:"false"`
+	Actor           *string              `json:"actor,omitzero" nullable:"false"`
 	ActiveFrom      *time.Time           `json:"active_from,omitempty"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty"`
-	ExpectedValueID *int64               `json:"expected_value_id,omitempty"`
+	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false"`
 }
 
 // AppendPersonNoteRequest carries one note fragment and its provenance.
 type AppendPersonNoteRequest struct {
 	Text       string   `json:"text"`
 	Source     string   `json:"source,omitempty" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef  *string  `json:"source_ref,omitempty"`
-	Confidence *float64 `json:"confidence,omitempty"`
-	Actor      *string  `json:"actor,omitempty"`
+	SourceRef  *string  `json:"source_ref,omitzero" nullable:"false"`
+	Confidence *float64 `json:"confidence,omitzero" nullable:"false"`
+	Actor      *string  `json:"actor,omitzero" nullable:"false"`
 }
 
 func (s *Server) registerPersonAttributeRoutes(api huma.API) {

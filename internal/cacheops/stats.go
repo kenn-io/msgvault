@@ -21,16 +21,16 @@ const (
 
 type CacheStats struct {
 	Status              string     `json:"status"`
-	TotalMessages       int64      `json:"total_messages,omitempty"`
-	Sources             int64      `json:"sources,omitempty"`
-	UniqueSenders       int64      `json:"unique_senders,omitempty"`
-	UniqueDomains       int64      `json:"unique_domains,omitempty"`
-	MinYear             *int64     `json:"min_year,omitempty"`
-	MaxYear             *int64     `json:"max_year,omitempty"`
-	TotalSizeBytes      int64      `json:"total_size_bytes,omitempty"`
-	AttachmentSizeBytes int64      `json:"attachment_size_bytes,omitempty"`
+	TotalMessages       int64      `json:"total_messages,omitzero"`
+	Sources             int64      `json:"sources,omitzero"`
+	UniqueSenders       int64      `json:"unique_senders,omitzero"`
+	UniqueDomains       int64      `json:"unique_domains,omitzero"`
+	MinYear             *int64     `json:"min_year,omitzero" nullable:"false"`
+	MaxYear             *int64     `json:"max_year,omitzero" nullable:"false"`
+	TotalSizeBytes      int64      `json:"total_size_bytes,omitzero"`
+	AttachmentSizeBytes int64      `json:"attachment_size_bytes,omitzero"`
 	LastSyncAt          *time.Time `json:"last_sync_at,omitempty"`
-	LastMessageID       *int64     `json:"last_message_id,omitempty"`
+	LastMessageID       *int64     `json:"last_message_id,omitzero" nullable:"false"`
 	Warnings            []string   `json:"warnings,omitempty"`
 }
 

@@ -2,7 +2,7 @@ package web
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"io/fs"
 	"net/http"
 	"path"

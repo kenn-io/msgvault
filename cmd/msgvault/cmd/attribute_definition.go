@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ var attributeDefinitionListCmd = &cobra.Command{
 			return errors.New("attribute definitions response was empty")
 		}
 		if attributeDefinitionJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.Definitions)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.Definitions, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w,
@@ -139,7 +140,7 @@ var attributeDefinitionCreateCmd = &cobra.Command{
 			if err := validateCLIAttributeDefinition(cmd, raw); err != nil {
 				return err
 			}
-			encoded, marshalErr := json.MarshalIndent(body, "", "  ")
+			encoded, marshalErr := json.Marshal(body, jsontext.WithIndent("  "), json.Deterministic(true))
 			if marshalErr != nil {
 				return marshalErr
 			}
@@ -305,7 +306,7 @@ func decodeCLIAttributeDefinitionDocument(
 	if err != nil {
 		return nil, nil, err
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
 		return nil, nil, usageErr(cmd, errors.New(
 			"attribute definition document must be a JSON object"))
@@ -317,10 +318,10 @@ func decodeCLIAttributeDefinitionDocument(
 					"must be backed by a portable database index"))
 		}
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
+	decoder := jsontext.NewDecoder(strings.NewReader(string(data)), json.RejectUnknownMembers(true))
+
 	var body generated.CreateAttributeDefinitionBody
-	if err := decoder.Decode(&body); err != nil {
+	if err := json.UnmarshalDecode(decoder, &body); err != nil {
 		return nil, nil, usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
 	}
 	if err := body.Validate(); err != nil {
@@ -367,7 +368,7 @@ func writeCLIAttributeDefinition(
 		return errors.New("attribute definition response was empty")
 	}
 	if attributeDefinitionJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(definition)
+		return json.MarshalWrite(cmd.OutOrStdout(), definition, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Definition: %d\nSlug: %s\nLabel: %s\nObject: %s\nValue type: %s\n"+

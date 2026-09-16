@@ -18,12 +18,12 @@ type PersonProfile struct {
 }
 
 type PersonProfilePatch struct {
-	Names         *PersonNamePatch         `json:"names,omitempty"`
-	ContactPoints *PersonContactPointPatch `json:"contact_points,omitempty"`
-	Addresses     *PersonAddressPatch      `json:"addresses,omitempty"`
-	Dates         *PersonDatePatch         `json:"dates,omitempty"`
-	Categories    *PersonCategoryPatch     `json:"categories,omitempty"`
-	Media         *PersonMediaPatch        `json:"media,omitempty"`
+	Names         *PersonNamePatch         `json:"names,omitzero" nullable:"false"`
+	ContactPoints *PersonContactPointPatch `json:"contact_points,omitzero" nullable:"false"`
+	Addresses     *PersonAddressPatch      `json:"addresses,omitzero" nullable:"false"`
+	Dates         *PersonDatePatch         `json:"dates,omitzero" nullable:"false"`
+	Categories    *PersonCategoryPatch     `json:"categories,omitzero" nullable:"false"`
+	Media         *PersonMediaPatch        `json:"media,omitzero" nullable:"false"`
 }
 
 type PersonNamePatch struct {

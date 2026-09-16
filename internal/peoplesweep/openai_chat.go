@@ -3,12 +3,15 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
 const (
@@ -69,7 +72,7 @@ func (d *OpenAIChatDriver) Prepare(
 	default:
 		return PreparedStructuredRequest{}, errors.New("OpenAI Chat profile has unsupported reasoning mode")
 	}
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		return PreparedStructuredRequest{}, errors.New("encode inference provider request")
 	}
@@ -157,30 +160,30 @@ func (d *OpenAIChatDriver) GeneratePrepared(
 	if err := decodeSingleJSONUseNumber(content, &decoded); err != nil {
 		return result, errors.Join(ErrInvalidStructuredOutput, errors.New("provider returned invalid structured JSON"))
 	}
-	result.CandidateJSON = append(json.RawMessage(nil), content...)
+	result.CandidateJSON = append(jsontext.Value(nil), content...)
 	return result, nil
 }
 
 func decodeSingleJSON(data []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return err
 	}
 	return requireJSONEOF(decoder)
 }
 
 func decodeSingleJSONUseNumber(data []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return err
 	}
 	return requireJSONEOF(decoder)
 }
 
-func requireJSONEOF(decoder *json.Decoder) error {
+func requireJSONEOF(decoder *jsontext.Decoder) error {
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errors.New("multiple JSON values")
 		}

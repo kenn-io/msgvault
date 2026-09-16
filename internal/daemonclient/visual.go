@@ -3,7 +3,7 @@ package daemonclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -102,7 +102,7 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 		if options.Before != nil {
 			payload["before"] = options.Before.UTC().Format(time.RFC3339Nano)
 		}
-		if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		if err := json.MarshalWrite(&body, payload, json.Deterministic(true)); err != nil {
 			return nil, err
 		}
 	}
@@ -124,7 +124,7 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 		return nil, fmt.Errorf("visual attachment search HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(message))
 	}
 	var result visual.SearchResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(resp.Body, 8<<20), &result); err != nil {
 		return nil, fmt.Errorf("decode visual attachment search: %w", err)
 	}
 	return &result, nil
@@ -156,7 +156,7 @@ func (c *Client) RetryVisualOwner(ctx context.Context, messageID int64, blobHash
 
 func (c *Client) RetireVisualGeneration(ctx context.Context, generationID int64) error {
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(map[string]any{"generation_id": generationID}); err != nil {
+	if err := json.MarshalWrite(&body, map[string]any{"generation_id": generationID}, json.Deterministic(true)); err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/multimodal/retire", &body)
@@ -181,7 +181,7 @@ func (c *Client) RetireVisualGeneration(ctx context.Context, generationID int64)
 
 func (c *Client) visualStatusJSONRequest(ctx context.Context, path string, payload any) (*visual.Status, error) {
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+	if err := json.MarshalWrite(&body, payload, json.Deterministic(true)); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &body)
@@ -217,7 +217,7 @@ func (c *Client) decodeVisualStatusResponse(req *http.Request) (*visual.Status, 
 		return nil, fmt.Errorf("multimodal status HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(message))
 	}
 	var status visual.Status
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&status); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(resp.Body, 8<<20), &status); err != nil {
 		return nil, err
 	}
 	return &status, nil

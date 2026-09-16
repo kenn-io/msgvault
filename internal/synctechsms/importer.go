@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -267,7 +267,7 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 			return 0, fmt.Errorf("upsert body: %w", err)
 		}
 	}
-	rawJSON, err := json.Marshal(raw)
+	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("marshal raw record: %w", err)
 	}

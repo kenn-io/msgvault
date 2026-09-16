@@ -10,7 +10,7 @@ package calsync
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -363,7 +363,7 @@ func encodeCalendarFullCheckpoint(pageToken string) string {
 	b, err := json.Marshal(calendarFullCheckpoint{
 		Kind:      calendarFullCheckpointKind,
 		PageToken: pageToken,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return ""
 	}

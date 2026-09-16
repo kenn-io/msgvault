@@ -3,7 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1021,7 +1021,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// message was constructed without going through a decode.
 	raw := []byte(m.Raw)
 	if len(raw) == 0 {
-		marshaled, merr := json.Marshal(m)
+		marshaled, merr := json.Marshal(m, json.Deterministic(true))
 		if merr != nil {
 			return fmt.Errorf("marshal beeper message raw archive: %w", merr)
 		}

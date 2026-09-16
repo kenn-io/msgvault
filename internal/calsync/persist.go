@@ -2,7 +2,7 @@ package calsync
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -18,12 +18,12 @@ type sourceConfig struct {
 	CalendarID      string `json:"calendar_id"`
 	CalendarSummary string `json:"calendar_summary,omitempty"`
 	AccessRole      string `json:"access_role,omitempty"`
-	Primary         bool   `json:"primary,omitempty"`
+	Primary         bool   `json:"primary,omitzero"`
 	TimeZone        string `json:"time_zone,omitempty"`
 }
 
 func buildSourceConfigJSON(c sourceConfig) string {
-	b, err := json.Marshal(c)
+	b, err := json.Marshal(c, json.Deterministic(true))
 	if err != nil {
 		return "{}"
 	}
@@ -43,7 +43,7 @@ type eventMetadata struct {
 	RecurringEventID  string   `json:"recurring_event_id,omitempty"`
 	OriginalStartTime string   `json:"original_start_time,omitempty"`
 	ICalUID           string   `json:"ical_uid,omitempty"`
-	Sequence          int      `json:"sequence,omitempty"`
+	Sequence          int      `json:"sequence,omitzero"`
 	HTMLLink          string   `json:"html_link,omitempty"`
 	HangoutLink       string   `json:"hangout_link,omitempty"`
 	Transparency      string   `json:"transparency,omitempty"`
@@ -131,7 +131,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
 
-	metaJSON, err := json.Marshal(buildMetadata(ev, cal, s.opts.AccountEmail))
+	metaJSON, err := json.Marshal(buildMetadata(ev, cal, s.opts.AccountEmail), json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("marshal metadata: %w", err)
 	}
@@ -145,7 +145,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 
 	raw := []byte(ev.Raw)
 	if len(raw) == 0 {
-		if raw, err = json.Marshal(ev); err != nil {
+		if raw, err = json.Marshal(ev, json.Deterministic(true)); err != nil {
 			return 0, fmt.Errorf("marshal raw event: %w", err)
 		}
 	}
@@ -228,7 +228,7 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 		}
 	}
 	m["status"] = gcal.StatusCancelled
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("marshal merged metadata: %w", err)
 	}

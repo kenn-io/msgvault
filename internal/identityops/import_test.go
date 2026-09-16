@@ -311,8 +311,8 @@ func TestParseIdentityImportRejectsMalformedOrUnsafeInput(t *testing.T) {
 		{name: "empty", input: " # only a comment\n", format: "text", want: "no identities"},
 		{name: "invalid text address", input: "not an address\n", format: "text", want: "concrete mailbox address"},
 		{name: "wildcard", input: "*@example.test\n", format: "text", want: "concrete mailbox address"},
-		{name: "unknown envelope field", input: `{"identities":[],"extra":true}`, format: "json", want: "unknown field"},
-		{name: "unknown entry field", input: `[{"identifier":"alias@example.test","extra":true}]`, format: "json", want: "unknown field"},
+		{name: "unknown envelope field", input: `{"identities":[],"extra":true}`, format: "json", want: "unknown object member name"},
+		{name: "unknown entry field", input: `[{"identifier":"alias@example.test","extra":true}]`, format: "json", want: "unknown object member name"},
 		{name: "trailing document", input: `["alias@example.test"] {}`, format: "json", want: "single JSON document"},
 		{name: "mixed array", input: `["alias@example.test",{"identifier":"other@example.test"}]`, format: "json", want: "array of strings or identity entries"},
 	}

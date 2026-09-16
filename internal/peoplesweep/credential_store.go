@@ -2,7 +2,8 @@ package peoplesweep
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -133,7 +134,7 @@ func (s *FileCredentialStore) Save(profileName string, credential Credential) er
 	if err := validateStoredCredential(credential); err != nil {
 		return err
 	}
-	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()})
+	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()}, json.Deterministic(true))
 	if err != nil {
 		return errors.New("serialize people provider credential")
 	}
@@ -154,7 +155,7 @@ func (s *FileCredentialStore) SaveNew(
 	if err := validateStoredCredential(credential); err != nil {
 		return nil, false, err
 	}
-	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()})
+	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()}, json.Deterministic(true))
 	if err != nil {
 		return nil, false, errors.New("serialize people provider credential")
 	}
@@ -202,9 +203,9 @@ func (s *FileCredentialStore) Load(profileName string) (Credential, error) {
 			return err
 		}
 		var stored credentialFile
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&stored); err != nil {
+		decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+		if err := json.UnmarshalDecode(decoder, &stored); err != nil {
 			return fmt.Errorf("parse people provider credential for profile %q: malformed JSON", profileName)
 		}
 		if err := requireCredentialJSONEnd(decoder); err != nil {
@@ -282,9 +283,9 @@ func validateStoredCredential(credential Credential) error {
 	}
 }
 
-func requireCredentialJSONEnd(decoder *json.Decoder) error {
+func requireCredentialJSONEnd(decoder *jsontext.Decoder) error {
 	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errors.New("credential file contains multiple JSON values")
 		}

@@ -1,7 +1,8 @@
 package beeper
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -32,7 +33,7 @@ type User struct {
 	// Raw holds the exact original JSON for this user object, captured during
 	// decode (see UnmarshalJSON). The documented providerID field is read from
 	// it (providerNativeUserID) without modelling every network's extra field.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // UnmarshalJSON decodes a User while retaining the exact original bytes in
@@ -44,7 +45,7 @@ func (u *User) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*u = User(a)
-	u.Raw = append(json.RawMessage(nil), b...)
+	u.Raw = append(jsontext.Value(nil), b...)
 	return nil
 }
 
@@ -150,7 +151,7 @@ type Message struct {
 	// Raw holds the exact original JSON for this message, captured during decode
 	// (see UnmarshalJSON). It is archived verbatim so no API field is lost to
 	// our partial struct modelling.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // UnmarshalJSON decodes a Message while retaining the exact original bytes in
@@ -162,7 +163,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*m = Message(a)
-	m.Raw = append(json.RawMessage(nil), b...)
+	m.Raw = append(jsontext.Value(nil), b...)
 	return nil
 }
 

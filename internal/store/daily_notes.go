@@ -35,7 +35,7 @@ type DailyNoteEntry struct {
 	Body      string    `json:"body"`
 	Author    string    `json:"author"`
 	Source    string    `json:"source"`
-	SourceRef *string   `json:"source_ref,omitempty"`
+	SourceRef *string   `json:"source_ref,omitzero" nullable:"false"`
 	PersonIDs []int64   `json:"person_ids"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

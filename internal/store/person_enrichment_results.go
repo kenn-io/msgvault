@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -569,7 +570,7 @@ func claimsWithIdentityScore(
 		result[i] = claims[i]
 		result[i].Target.Choices = slices.Clone(claims[i].Target.Choices)
 		result[i].Target.Fields = slices.Clone(claims[i].Target.Fields)
-		result[i].SubmittedValue = append(json.RawMessage(nil), claims[i].SubmittedValue...)
+		result[i].SubmittedValue = append(jsontext.Value(nil), claims[i].SubmittedValue...)
 		result[i].Evidence = slices.Clone(claims[i].Evidence)
 		result[i].ValidFrom = copyEnrichmentTimePointer(claims[i].ValidFrom)
 		result[i].ValidUntil = copyEnrichmentTimePointer(claims[i].ValidUntil)
@@ -902,7 +903,7 @@ type storedPersonEnrichmentPolicy struct {
 	AllowSensitiveTargets           bool                               `json:"allow_sensitive_targets"`
 	RetentionPosture                string                             `json:"retention_posture"`
 	TrainingPosture                 string                             `json:"training_posture"`
-	RefreshInterval                 time.Duration                      `json:"refresh_interval"`
+	RefreshInterval                 int64                              `json:"refresh_interval"`
 	MaxRequestsPerRun               int64                              `json:"max_requests_per_run"`
 	MaxRequestsPerDay               int64                              `json:"max_requests_per_day"`
 	MaxCostUSDMicrosPerPersonPerDay int64                              `json:"max_cost_usd_micros_per_person_per_day"`
@@ -939,7 +940,7 @@ func (s *Store) loadPersonEnrichmentProfile(
 		AllowedIdentifiers: slices.Clone(policy.AllowedIdentifiers), TargetKeys: targetKeys,
 		AllowSensitiveTargets: policy.AllowSensitiveTargets,
 		RetentionPosture:      policy.RetentionPosture, TrainingPosture: policy.TrainingPosture,
-		RefreshInterval: policy.RefreshInterval, RequestTimeout: time.Second,
+		RefreshInterval: time.Duration(policy.RefreshInterval), RequestTimeout: time.Second,
 		PollInterval: time.Second, MaxJobAge: time.Second,
 		MaxRequestsPerRun: policy.MaxRequestsPerRun, MaxRequestsPerDay: policy.MaxRequestsPerDay,
 		MaxCostUSDMicrosPerPersonPerDay: policy.MaxCostUSDMicrosPerPersonPerDay,

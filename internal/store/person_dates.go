@@ -31,19 +31,19 @@ type PersonDate struct {
 	Envelope      ValueEnvelope  `json:"envelope"`
 	PersonID      int64          `json:"person_id"`
 	DateKind      PersonDateKind `json:"date_kind"`
-	Label         *string        `json:"label,omitempty"`
+	Label         *string        `json:"label,omitzero" nullable:"false"`
 	Date          PartialDate    `json:"date"`
-	DateText      *string        `json:"date_text,omitempty"`
-	CalendarScale *string        `json:"calendar_scale,omitempty"`
+	DateText      *string        `json:"date_text,omitzero" nullable:"false"`
+	CalendarScale *string        `json:"calendar_scale,omitzero" nullable:"false"`
 	OriginalValue string         `json:"original_value"`
 }
 
 type PersonDateInput struct {
 	DateKind      PersonDateKind     `json:"date_kind"`
-	Label         *string            `json:"label,omitempty"`
+	Label         *string            `json:"label,omitzero" nullable:"false"`
 	Date          PartialDate        `json:"date"`
-	DateText      *string            `json:"date_text,omitempty"`
-	CalendarScale *string            `json:"calendar_scale,omitempty"`
+	DateText      *string            `json:"date_text,omitzero" nullable:"false"`
+	CalendarScale *string            `json:"calendar_scale,omitzero" nullable:"false"`
 	OriginalValue string             `json:"original_value"`
 	Envelope      ValueEnvelopeInput `json:"envelope"`
 }

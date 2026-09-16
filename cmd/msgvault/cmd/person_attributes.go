@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -64,7 +65,7 @@ var personAttributesListCmd = &cobra.Command{
 			return errors.New("person attributes response was empty")
 		}
 		if personAttributesJSONOutput {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "SLUG\tORDINAL\tVALUE\tSOURCE\tACTIVE FROM\tACTIVE UNTIL\tMODE")
@@ -130,9 +131,8 @@ var personAttributesSetCmd = &cobra.Command{
 			if readErr != nil {
 				return readErr
 			}
-			decoder := json.NewDecoder(strings.NewReader(string(document)))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&body.Value); err != nil {
+			decoder := jsontext.NewDecoder(strings.NewReader(string(document)), json.RejectUnknownMembers(true))
+			if err := json.UnmarshalDecode(decoder, &body.Value); err != nil {
 				return usageErr(cmd, fmt.Errorf("invalid --value-json document: %w", err))
 			}
 		} else {
@@ -366,7 +366,7 @@ func writeCLIPersonAttributeWrite(
 		return errors.New("person attribute response was empty")
 	}
 	if personAttributesJSONOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(write)
+		return json.MarshalWrite(cmd.OutOrStdout(), write, json.Deterministic(true))
 	}
 	prefix := ""
 	if write.DryRun {

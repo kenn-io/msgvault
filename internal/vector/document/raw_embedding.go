@@ -3,7 +3,7 @@ package document
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -70,7 +70,7 @@ func NewRecipe(config RecipeConfig) (Recipe, error) {
 		MaxInputRunes: config.MaxInputRunes, MaxFilenameRunes: recipeMaxFilenameRunes,
 		MaxTitleRunes: recipeMaxTitleRunes, MaxHeadingRunes: recipeMaxHeadingRunes,
 	}
-	encoded, err := json.Marshal(values)
+	encoded, err := json.Marshal(values, json.Deterministic(true))
 	if err != nil {
 		return Recipe{}, fmt.Errorf("encode embedding recipe: %w", err)
 	}
@@ -84,7 +84,7 @@ func (r Recipe) CanonicalJSON() ([]byte, error) {
 	if r.digest == "" {
 		return nil, errors.New("embedding recipe is invalid; use NewRecipe")
 	}
-	return json.Marshal(r.values)
+	return json.Marshal(r.values, json.Deterministic(true))
 }
 
 func (r Recipe) Fingerprint() string { return r.digest }

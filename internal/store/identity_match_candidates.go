@@ -87,17 +87,17 @@ type IdentityMatchCandidate struct {
 	RightKind          IdentityMatchEndpointKind `json:"right_kind"`
 	RightID            int64                     `json:"right_id"`
 	Basis              IdentityMatchBasis        `json:"basis"`
-	ServiceSlug        *string                   `json:"service_slug,omitempty"`
-	ScopeKind          *string                   `json:"scope_kind,omitempty"`
-	ScopeValue         *string                   `json:"scope_value,omitempty"`
-	NormalizedValue    *string                   `json:"normalized_value,omitempty"`
+	ServiceSlug        *string                   `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind          *string                   `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue         *string                   `json:"scope_value,omitzero" nullable:"false"`
+	NormalizedValue    *string                   `json:"normalized_value,omitzero" nullable:"false"`
 	State              IdentityMatchState        `json:"state"`
-	Confidence         *float64                  `json:"confidence,omitempty"`
+	Confidence         *float64                  `json:"confidence,omitzero" nullable:"false"`
 	Source             Provenance                `json:"source"`
-	SourceRef          *string                   `json:"source_ref,omitempty"`
-	DecidedBy          *string                   `json:"decided_by,omitempty"`
+	SourceRef          *string                   `json:"source_ref,omitzero" nullable:"false"`
+	DecidedBy          *string                   `json:"decided_by,omitzero" nullable:"false"`
 	DecidedAt          *time.Time                `json:"decided_at,omitempty"`
-	Notes              *string                   `json:"notes,omitempty"`
+	Notes              *string                   `json:"notes,omitzero" nullable:"false"`
 	Evidence           []IdentityMatchEvidence   `json:"evidence"`
 	CreatedAt          time.Time                 `json:"created_at"`
 	UpdatedAt          time.Time                 `json:"updated_at"`
@@ -109,8 +109,8 @@ type IdentityMatchEvidence struct {
 	ID           int64      `json:"id"`
 	CandidateID  int64      `json:"candidate_id"`
 	EvidenceKind string     `json:"evidence_kind"`
-	EvidenceRef  *string    `json:"evidence_ref,omitempty"`
-	Detail       *string    `json:"detail,omitempty"`
+	EvidenceRef  *string    `json:"evidence_ref,omitzero" nullable:"false"`
+	Detail       *string    `json:"detail,omitzero" nullable:"false"`
 	Source       Provenance `json:"source"`
 	CreatedAt    time.Time  `json:"created_at"`
 }

@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"math"
@@ -173,7 +174,7 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 		if rawJSONString(errorObject["status"]) != "INVALID_ARGUMENT" {
 			return "", otherClassProviderDiagnostics()
 		}
-		var details []json.RawMessage
+		var details []jsontext.Value
 		if err := json.Unmarshal(errorObject["details"], &details); err != nil || len(details) > 32 {
 			return "", recognizedProviderDiagnostics(ProviderDiagnosticCodeUnclassified, ProviderDiagnosticFieldAbsent)
 		}
@@ -224,12 +225,12 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 	return "", unreadableProviderDiagnostics()
 }
 
-func capabilityMatchesProviderError(profile ProviderProfile, errorObject map[string]json.RawMessage, parameterKey string) bool {
+func capabilityMatchesProviderError(profile ProviderProfile, errorObject map[string]jsontext.Value, parameterKey string) bool {
 	parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, parameterKey)
 	return parameterValid && capabilityCodeMatchesProfile(profile, rawJSONString(errorObject["code"]), parameter, parameterPresent)
 }
 
-func diagnosticsForProviderError(profile ProviderProfile, errorObject map[string]json.RawMessage, parameterKey string) ProviderDiagnostics {
+func diagnosticsForProviderError(profile ProviderProfile, errorObject map[string]jsontext.Value, parameterKey string) ProviderDiagnostics {
 	parameter, parameterPresent, parameterValid := rawOptionalJSONString(errorObject, parameterKey)
 	if !parameterValid {
 		return recognizedProviderDiagnostics(capabilityCodeClass(profile.Protocol, rawJSONString(errorObject["code"])), ProviderDiagnosticFieldMalformed)
@@ -421,37 +422,37 @@ func capabilityRepresentationParameterClass(profile ProviderProfile, parameter s
 	return ""
 }
 
-func decodeUniqueErrorObject(raw []byte) (map[string]json.RawMessage, bool) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
+func decodeUniqueErrorObject(raw []byte) (map[string]jsontext.Value, bool) {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
+	start, err := decoder.ReadToken()
+	if err != nil || start.Kind() != '{' {
 		return nil, false
 	}
-	result := make(map[string]json.RawMessage)
-	for decoder.More() {
-		token, tokenErr := decoder.Token()
-		key, valid := token.(string)
+	result := make(map[string]jsontext.Value)
+	for decoder.PeekKind() != '}' && decoder.PeekKind() != ']' && decoder.PeekKind() != 0 {
+		token, tokenErr := decoder.ReadToken()
+		key, valid := token.String(), token.Kind() == '"'
 		if tokenErr != nil || !valid {
 			return nil, false
 		}
 		if _, duplicate := result[key]; duplicate {
 			return nil, false
 		}
-		var value json.RawMessage
-		if decoder.Decode(&value) != nil {
+		var value jsontext.Value
+		if json.UnmarshalDecode(decoder, &value) != nil {
 			return nil, false
 		}
 		result[key] = value
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
+	end, err := decoder.ReadToken()
+	if err != nil || end.Kind() != '}' {
 		return nil, false
 	}
 	var trailing any
-	return result, errors.Is(decoder.Decode(&trailing), io.EOF)
+	return result, errors.Is(json.UnmarshalDecode(decoder, &trailing), io.EOF)
 }
 
-func rawJSONString(raw json.RawMessage) string {
+func rawJSONString(raw jsontext.Value) string {
 	var value string
 	if json.Unmarshal(raw, &value) != nil {
 		return ""
@@ -459,7 +460,7 @@ func rawJSONString(raw json.RawMessage) string {
 	return value
 }
 
-func rawOptionalJSONString(object map[string]json.RawMessage, key string) (string, bool, bool) {
+func rawOptionalJSONString(object map[string]jsontext.Value, key string) (string, bool, bool) {
 	raw, present := object[key]
 	if !present {
 		return "", false, true

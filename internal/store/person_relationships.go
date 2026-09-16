@@ -53,11 +53,11 @@ type PersonRelationship struct {
 	StartDate          *PartialDate       `json:"start_date,omitempty"`
 	EndDate            *PartialDate       `json:"end_date,omitempty"`
 	Status             RelationshipStatus `json:"status"`
-	Notes              *string            `json:"notes,omitempty"`
+	Notes              *string            `json:"notes,omitzero" nullable:"false"`
 	Source             Provenance         `json:"source"`
-	SourceRef          *string            `json:"source_ref,omitempty"`
-	SourceResourceUID  *string            `json:"source_resource_uid,omitempty"`
-	Confidence         *float64           `json:"confidence,omitempty"`
+	SourceRef          *string            `json:"source_ref,omitzero" nullable:"false"`
+	SourceResourceUID  *string            `json:"source_resource_uid,omitzero" nullable:"false"`
+	Confidence         *float64           `json:"confidence,omitzero" nullable:"false"`
 	VCardIdentity      VCardIdentity      `json:"vcard_identity"`
 	CreatedBy          string             `json:"created_by"`
 	UpdatedBy          string             `json:"updated_by"`
@@ -615,7 +615,7 @@ type PersonRelationshipView struct {
 	Direction              RelationshipDirection `json:"direction"`
 	CounterpartPersonID    int64                 `json:"counterpart_person_id"`
 	CounterpartLabel       string                `json:"counterpart_label"`
-	CounterpartDisplayName *string               `json:"counterpart_display_name,omitempty"`
+	CounterpartDisplayName *string               `json:"counterpart_display_name,omitzero" nullable:"false"`
 	CounterpartVCardUID    string                `json:"counterpart_vcard_uid"`
 }
 

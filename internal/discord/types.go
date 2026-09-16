@@ -2,7 +2,8 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"time"
 )
 
@@ -152,18 +153,18 @@ type Message struct {
 	Pinned            bool              `json:"pinned"`
 	WebhookID         string            `json:"webhook_id"`
 	Type              int               `json:"type"`
-	Activity          json.RawMessage   `json:"activity"`
-	Application       json.RawMessage   `json:"application"`
+	Activity          jsontext.Value    `json:"activity"`
+	Application       jsontext.Value    `json:"application"`
 	ApplicationID     string            `json:"application_id"`
 	MessageReference  *MessageReference `json:"message_reference"`
 	Flags             int               `json:"flags"`
 	ReferencedMessage *Message          `json:"referenced_message"`
-	Interaction       json.RawMessage   `json:"interaction"`
+	Interaction       jsontext.Value    `json:"interaction"`
 	Thread            *Channel          `json:"thread"`
-	Components        json.RawMessage   `json:"components"`
+	Components        jsontext.Value    `json:"components"`
 	StickerItems      []StickerItem     `json:"sticker_items"`
 	Poll              *Poll             `json:"poll"`
-	Raw               json.RawMessage   `json:"-"`
+	Raw               jsontext.Value    `json:"-"`
 }
 
 // UnmarshalJSON retains the complete API object while decoding the fields the
@@ -176,7 +177,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*m = Message(decoded)
-	m.Raw = append(json.RawMessage(nil), data...)
+	m.Raw = append(jsontext.Value(nil), data...)
 	return nil
 }
 

@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -141,7 +142,7 @@ type codexTurnStartParams struct {
 	ApprovalPolicy string                     `json:"approvalPolicy"`
 	Sandbox        string                     `json:"sandbox"`
 	SandboxPolicy  codexReadOnlySandboxPolicy `json:"sandboxPolicy"`
-	OutputSchema   json.RawMessage            `json:"outputSchema"`
+	OutputSchema   jsontext.Value             `json:"outputSchema"`
 }
 
 type codexTextInput struct {
@@ -207,7 +208,7 @@ func (t *CodexAppServerDriver) Prepare(
 	components := make([][]byte, 0, codexPreparedComponentCount)
 	components = append(components, []byte(request.InputText))
 	for _, frame := range frames {
-		encoded, err := json.Marshal(frame)
+		encoded, err := json.Marshal(frame, json.Deterministic(true))
 		if err != nil {
 			return PreparedStructuredRequest{}, errors.New("encode codex app-server request")
 		}
@@ -395,7 +396,7 @@ func (t *CodexAppServerDriver) GeneratePrepared(
 	if err := validateCodexFinal(request, final); err != nil {
 		return response, err
 	}
-	response.CandidateJSON = append(json.RawMessage(nil), final...)
+	response.CandidateJSON = append(jsontext.Value(nil), final...)
 	return response, nil
 }
 
@@ -406,9 +407,9 @@ func rewritePreparedTurnThreadID(frame []byte, actual string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: Codex returned an invalid thread ID", ErrInvalidStructuredOutput)
 	}
 	var request struct {
-		Method string          `json:"method"`
-		ID     int64           `json:"id"`
-		Params json.RawMessage `json:"params"`
+		Method string         `json:"method"`
+		ID     int64          `json:"id"`
+		Params jsontext.Value `json:"params"`
 	}
 	if err := decodeSingleJSON(frame, &request); err != nil || request.Method != "turn/start" || request.ID != 4 {
 		return nil, errors.New("prepared codex turn frame is invalid")
@@ -507,8 +508,8 @@ func readCodexFinal(
 	client *CodexRPCClient,
 	threadID string,
 	turnID string,
-) (json.RawMessage, TokenUsage, bool, error) {
-	var final json.RawMessage
+) (jsontext.Value, TokenUsage, bool, error) {
+	var final jsontext.Value
 	usage := TokenUsage{}
 	usageKnown := false
 	for {
@@ -535,7 +536,7 @@ func readCodexFinal(
 				if len(final) != 0 || len(event.Item.Text) == 0 || len(event.Item.Text) > defaultCodexMaxFrameBytes {
 					return nil, usage, usageKnown, fmt.Errorf("%w: invalid Codex final assistant output", ErrInvalidStructuredOutput)
 				}
-				final = json.RawMessage(append([]byte(nil), event.Item.Text...))
+				final = jsontext.Value(append([]byte(nil), event.Item.Text...))
 			}
 		case "thread/tokenUsage/updated":
 			var event struct {
@@ -580,7 +581,7 @@ func readCodexFinal(
 	}
 }
 
-func validateCodexFinal(request StructuredRequest, final json.RawMessage) error {
+func validateCodexFinal(request StructuredRequest, final jsontext.Value) error {
 	resolvedSchema, err := validateStructuredRequest(request, request.ProgramID == "provider-check")
 	if err != nil {
 		return err

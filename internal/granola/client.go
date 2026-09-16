@@ -2,7 +2,8 @@ package granola
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -152,6 +153,6 @@ func (c *Client) GetNote(ctx context.Context, noteID string) (*Note, error) {
 	if err := json.Unmarshal(body, &n); err != nil {
 		return nil, fmt.Errorf("granola get note %s: decode: %w", noteID, err)
 	}
-	n.Raw = json.RawMessage(body)
+	n.Raw = jsontext.Value(body)
 	return &n, nil
 }

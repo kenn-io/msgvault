@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -129,7 +129,7 @@ type AttributeChoice struct {
 type AttributeOptions struct {
 	Choices   []AttributeChoice `json:"choices,omitempty"`
 	Unit      string            `json:"unit,omitempty"`
-	MaxLength int               `json:"max_length,omitempty"`
+	MaxLength int               `json:"max_length,omitzero"`
 }
 
 // ChoiceValues returns option values in declaration order.
@@ -151,10 +151,10 @@ type AttributeDefinition struct {
 	ObjectType    AttributeObjectType  `json:"object_type"`
 	Slug          string               `json:"slug"`
 	Label         string               `json:"label"`
-	Description   *string              `json:"description,omitempty"`
+	Description   *string              `json:"description,omitzero" nullable:"false"`
 	ValueType     AttributeValueType   `json:"value_type"`
 	FieldType     AttributeFieldType   `json:"field_type"`
-	RecordTarget  *string              `json:"record_target,omitempty"`
+	RecordTarget  *string              `json:"record_target,omitzero" nullable:"false"`
 	Cardinality   AttributeCardinality `json:"cardinality"`
 	DisplayOrder  int64                `json:"display_order"`
 	IsRequired    bool                 `json:"is_required"`
@@ -167,9 +167,9 @@ type AttributeDefinition struct {
 	IsAudited     bool                 `json:"is_audited"`
 	IsDeletable   bool                 `json:"is_deletable"`
 	HistoryExempt bool                 `json:"history_exempt"`
-	DerivedSource *string              `json:"derived_source,omitempty"`
-	Options       *AttributeOptions    `json:"options,omitempty"`
-	VCardProperty *string              `json:"vcard_property,omitempty"`
+	DerivedSource *string              `json:"derived_source,omitzero" nullable:"false"`
+	Options       *AttributeOptions    `json:"options,omitzero" nullable:"false"`
+	VCardProperty *string              `json:"vcard_property,omitzero" nullable:"false"`
 	IsActive      bool                 `json:"is_active"`
 	Revision      int64                `json:"revision"`
 	CreatedAt     time.Time            `json:"created_at"`
@@ -546,7 +546,7 @@ func marshalAttributeOptions(options *AttributeOptions) (sql.NullString, error) 
 	if options == nil {
 		return sql.NullString{}, nil
 	}
-	encoded, err := json.Marshal(options)
+	encoded, err := json.Marshal(options, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf(
 			"%w: encode options: %w", ErrAttributeDefinitionInvalid, err)

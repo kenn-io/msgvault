@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -203,7 +203,7 @@ func fetchDaemonHealthEndpoint(ctx context.Context, url string, apiKey string) *
 		return nil
 	}
 	var health api.HealthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &health); err != nil {
 		return nil
 	}
 	return &health

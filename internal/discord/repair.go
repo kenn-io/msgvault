@@ -3,7 +3,8 @@ package discord
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"reflect"
 	"time"
@@ -101,7 +102,7 @@ func (imp *Importer) repairMessage(
 }
 
 func (imp *Importer) repairMessageMetadata(
-	messageID int64, wanted json.RawMessage, sum *rederive.Summary,
+	messageID int64, wanted jsontext.Value, sum *rederive.Summary,
 ) error {
 	current, err := imp.store.GetMessageMetadata(messageID)
 	if err != nil {

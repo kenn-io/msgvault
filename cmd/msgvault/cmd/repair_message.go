@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -262,11 +263,11 @@ func runRepairMessageAudit(
 	}
 	defer cleanup()
 	service := syncer.New(nil, st, &syncer.Options{})
-	encoder := json.NewEncoder(cmd.OutOrStdout())
-	encoder.SetEscapeHTML(false)
+	encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.EscapeForHTML(false))
+
 	return service.AuditGmailMessages(cmd.Context(), sourceID, func(result syncer.RepairAuditResult) error {
 		if jsonOut {
-			return encoder.Encode(result)
+			return json.MarshalEncode(encoder, result, json.Deterministic(true))
 		}
 		return writeRepairAuditHuman(cmd.OutOrStdout(), result)
 	})

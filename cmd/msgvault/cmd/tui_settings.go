@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -60,10 +61,10 @@ type tuiSettingsHTTPField struct {
 }
 
 type tuiSettingsHTTPValue struct {
-	String  *string   `json:"string,omitempty"`
-	Integer *int      `json:"integer,omitempty"`
-	Number  *float64  `json:"number,omitempty"`
-	Boolean *bool     `json:"boolean,omitempty"`
+	String  *string   `json:"string,omitzero"`
+	Integer *int      `json:"integer,omitzero"`
+	Number  *float64  `json:"number,omitzero"`
+	Boolean *bool     `json:"boolean,omitzero"`
 	Strings *[]string `json:"strings,omitempty"`
 }
 
@@ -101,11 +102,11 @@ func (b *tuiDaemonSettingsBackend) LoadSettings(ctx context.Context) (tui.Settin
 		return tui.SettingsSnapshot{}, daemonclient.HandleErrorResponse(resp)
 	}
 	var document tuiSettingsHTTPResponse
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&document); err != nil {
+	decoder := jsontext.NewDecoder(resp.Body)
+	if err := json.UnmarshalDecode(decoder, &document); err != nil {
 		return tui.SettingsSnapshot{}, fmt.Errorf("decode settings: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return tui.SettingsSnapshot{}, errors.New("decode settings: trailing data")
 	}
 	credentialETag := resp.Header.Get(credentialETagHeader)
@@ -215,8 +216,8 @@ type tuiSettingsPatchBody struct {
 
 type tuiSettingsPatchUpdate struct {
 	Key    string                      `json:"key"`
-	Value  *tuiSettingsHTTPValue       `json:"value,omitempty"`
-	Secret *tuiSettingsPatchSecretBody `json:"secret,omitempty"`
+	Value  *tuiSettingsHTTPValue       `json:"value,omitzero"`
+	Secret *tuiSettingsPatchSecretBody `json:"secret,omitzero"`
 }
 
 type tuiSettingsPatchSecretBody struct {

@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -292,7 +292,7 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 		PeopleSucceeded: result.PeopleSucceeded, ProjectedWrites: result.ProjectedWrites,
 		Usage: personSweepUsage(result.Usage)}
 	if jsonOutput {
-		return json.NewEncoder(w).Encode(output)
+		return json.MarshalWrite(w, output, json.Deterministic(true))
 	}
 	_, err := fmt.Fprintf(w, "Run %s: attempted=%d succeeded=%d projected_writes=%d\n",
 		output.RunID, output.PeopleAttempted, output.PeopleSucceeded, output.ProjectedWrites)
@@ -304,7 +304,7 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 
 func writePersonSweepStatus(w io.Writer, output personSweepStatusOutput, jsonOutput bool) error {
 	if jsonOutput {
-		return json.NewEncoder(w).Encode(output)
+		return json.MarshalWrite(w, output, json.Deterministic(true))
 	}
 	oldestDirty := "-"
 	if output.OldestDirtyAt != nil {
@@ -358,7 +358,7 @@ func personSweepUsage(usage peoplesweep.Usage) personSweepUsageOutput {
 
 func writePersonSweepHistory(w io.Writer, output personSweepHistoryOutput, jsonOutput bool) error {
 	if jsonOutput {
-		return json.NewEncoder(w).Encode(output)
+		return json.MarshalWrite(w, output, json.Deterministic(true))
 	}
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(table, "TYPE\tSTATUS\tMODE\tPERSON\tFAILURE\tATTEMPTS\tWRITES")

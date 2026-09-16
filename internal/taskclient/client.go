@@ -5,7 +5,8 @@ package taskclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -345,7 +346,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, req
 	}
 	var body io.Reader
 	if requestBody != nil {
-		encoded, err := json.Marshal(requestBody)
+		encoded, err := json.Marshal(requestBody, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode task integration request: %w", err)
 		}
@@ -386,12 +387,12 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, req
 	if err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(result); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, result); err != nil {
 		return nil, fmt.Errorf("%w: decode response", ErrInvalidResponse)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%w: trailing response data", ErrInvalidResponse)
 	}
 	return resp.Header.Clone(), nil

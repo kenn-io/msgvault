@@ -1,7 +1,8 @@
 package identityops
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -86,7 +87,7 @@ func (r *RemoveRequest) UnmarshalJSON(data []byte) error {
 }
 
 func jsonFieldPresent(data []byte, field string) (bool, error) {
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return false, err
 	}
@@ -98,7 +99,7 @@ type RemoveResult struct {
 	Account    string `json:"account"`
 	Identifier string `json:"identifier"`
 	Removed    int64  `json:"removed"`
-	NoIdentity bool   `json:"no_identity,omitempty"`
+	NoIdentity bool   `json:"no_identity,omitzero"`
 	// CacheState reports whether the synchronous identity-dataset cache
 	// refresh that follows the mutation succeeded ("ready") or failed
 	// ("stale"). Set by the API layer after Remove returns; empty when the

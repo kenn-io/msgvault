@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -619,7 +619,7 @@ func (c *Client) BatchDeleteMessages(ctx context.Context, messageIDs []string) e
 		IDs []string `json:"ids"`
 	}{IDs: messageIDs}
 
-	bodyBytes, err := json.Marshal(body)
+	bodyBytes, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)
 	}

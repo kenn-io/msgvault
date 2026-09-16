@@ -1,7 +1,8 @@
 package beeper
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strconv"
 	"strings"
 )
@@ -96,11 +97,11 @@ func encodeIdentityPart(value string) string {
 // providerNativeUserID reads the documented providerID field from a raw user
 // payload. Unknown fields are intentionally ignored: a guessed provider key
 // can turn an unrelated value into an automatic identity link.
-func providerNativeUserID(raw json.RawMessage) (string, bool) {
+func providerNativeUserID(raw jsontext.Value) (string, bool) {
 	if len(raw) == 0 {
 		return "", false
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return "", false
 	}

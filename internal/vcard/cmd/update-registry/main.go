@@ -4,7 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"encoding/xml"
 	"errors"
 	"flag"
@@ -106,7 +106,7 @@ func run(
 	metadataBytes, err := json.Marshal(registryMetadata{
 		Source:  opts.baseURL + "/vcard-elements.xhtml",
 		Updated: updated,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode metadata: %w", err)
 	}

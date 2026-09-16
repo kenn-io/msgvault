@@ -1,7 +1,8 @@
 package personenrichment
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,7 +15,7 @@ const exaSchemaTypeKey = "type"
 
 // BuildExaOutputSchema converts the exact requested PR 1 target descriptors
 // into the closed JSON schema sent to Exa synthesized-output modes.
-func BuildExaOutputSchema(targets []personfacts.TargetDescriptor) (json.RawMessage, error) {
+func BuildExaOutputSchema(targets []personfacts.TargetDescriptor) (jsontext.Value, error) {
 	if len(targets) == 0 {
 		return nil, errors.New("exa output schema requires at least one target")
 	}
@@ -39,7 +40,7 @@ func BuildExaOutputSchema(targets []personfacts.TargetDescriptor) (json.RawMessa
 		"properties":           properties,
 		"required":             required,
 		"additionalProperties": false,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode Exa output schema: %w", err)
 	}

@@ -6,7 +6,8 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ const (
 type DirectoryPeopleQuery struct {
 	Query             string     `json:"query,omitempty"`
 	Cursor            string     `json:"cursor,omitempty"`
-	Limit             int        `json:"limit,omitempty"`
+	Limit             int        `json:"limit,omitzero"`
 	ContactState      string     `json:"contact_state,omitempty"`
 	Category          string     `json:"category,omitempty"`
 	Organization      string     `json:"organization,omitempty"`
@@ -50,7 +51,7 @@ type DirectoryPeopleQuery struct {
 // has a last-contact timestamp and "inactive" otherwise.
 type DirectoryPersonSummary struct {
 	ID             int64      `json:"id"`
-	DisplayName    *string    `json:"display_name,omitempty"`
+	DisplayName    *string    `json:"display_name,omitzero" nullable:"false"`
 	Revision       int64      `json:"revision"`
 	PrimaryChannel string     `json:"primary_channel,omitempty"`
 	ContactState   string     `json:"contact_state"`
@@ -173,7 +174,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		PrimaryChannel:   normalized.primaryChannel,
 		LastContactAfter: normalized.lastContactAfter, LastContactBefore: normalized.lastContactBefore,
 		Sort: normalized.sort,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return normalized, fmt.Errorf("encode directory filters: %w", err)
 	}
@@ -640,7 +641,7 @@ func hydrateDirectoryValuesTx(ctx context.Context, tx *loggedTx, query string, a
 }
 
 func encodeDirectoryPeopleCursor(cursor directoryPeopleCursor) (string, error) {
-	encoded, err := json.Marshal(cursor)
+	encoded, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode directory cursor: %w", err)
 	}
@@ -656,9 +657,9 @@ func decodeDirectoryPeopleCursor(value string) (directoryPeopleCursor, error) {
 		return directoryPeopleCursor{}, ErrInvalidDirectoryCursor
 	}
 	var cursor directoryPeopleCursor
-	decoder := json.NewDecoder(strings.NewReader(string(decoded)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cursor); err != nil ||
+	decoder := jsontext.NewDecoder(strings.NewReader(string(decoded)), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &cursor); err != nil ||
 		cursor.Version != directoryCursorVersion ||
 		!validLowerSHA256(cursor.Fingerprint) ||
 		!validLowerSHA256(cursor.AnchorHash) ||
@@ -666,7 +667,7 @@ func decodeDirectoryPeopleCursor(value string) (directoryPeopleCursor, error) {
 		cursor.PersonID <= 0 {
 		return directoryPeopleCursor{}, ErrInvalidDirectoryCursor
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return directoryPeopleCursor{}, ErrInvalidDirectoryCursor
 	}
 	return cursor, nil

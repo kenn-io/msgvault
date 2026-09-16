@@ -4,7 +4,7 @@ package documentindex
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -501,7 +501,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 			PolicyFingerprint: csvPolicy.Fingerprint(), ConverterVersion: csvpdf.ConverterVersion,
 		}
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode document extraction profile: %w", err)
 	}

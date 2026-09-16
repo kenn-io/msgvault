@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -134,9 +135,9 @@ func writeDeletionsJSON(w io.Writer, groups ...[]*deletion.Manifest) error {
 			})
 		}
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	enc := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, out, json.Deterministic(true))
 }
 
 var showDeletionCmd = &cobra.Command{
@@ -628,7 +629,7 @@ func fingerprintDeleteStagedPlan(manifests []*deletion.Manifest) string {
 	if len(manifests) == 0 {
 		return ""
 	}
-	data, err := json.Marshal(manifests)
+	data, err := json.Marshal(manifests, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Sprintf("marshal deletion plan fingerprint: %v", err))
 	}

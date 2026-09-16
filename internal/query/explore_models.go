@@ -135,8 +135,8 @@ type SortSpec struct {
 }
 
 type PageSpec struct {
-	Limit  int `json:"limit,omitempty"`
-	Offset int `json:"offset,omitempty"`
+	Limit  int `json:"limit,omitzero"`
+	Offset int `json:"offset,omitzero"`
 }
 
 type EntryKind string
@@ -150,14 +150,14 @@ const (
 )
 
 type MatchSummary struct {
-	LexicalMatchCount *int64   `json:"lexical_match_count,omitempty"`
+	LexicalMatchCount *int64   `json:"lexical_match_count,omitzero" nullable:"false"`
 	StrongestExcerpt  string   `json:"strongest_excerpt,omitempty"`
-	SemanticScore     *float64 `json:"semantic_score,omitempty"`
+	SemanticScore     *float64 `json:"semantic_score,omitzero" nullable:"false"`
 }
 
 type SearchProvenance struct {
 	LexicalIndexRevision string `json:"lexical_index_revision,omitempty"`
-	VectorGeneration     *int64 `json:"vector_generation,omitempty"`
+	VectorGeneration     *int64 `json:"vector_generation,omitzero" nullable:"false"`
 }
 
 // EntryRow is one logical archive row. Chat/text rows aggregate messages only
@@ -165,8 +165,8 @@ type SearchProvenance struct {
 type EntryRow struct {
 	Key                        string       `json:"key"`
 	Kind                       EntryKind    `json:"kind"`
-	AnchorMessageID            *int64       `json:"anchor_message_id,omitempty"`
-	ConversationID             *int64       `json:"conversation_id,omitempty"`
+	AnchorMessageID            *int64       `json:"anchor_message_id,omitzero" nullable:"false"`
+	ConversationID             *int64       `json:"conversation_id,omitzero" nullable:"false"`
 	OccurredAt                 time.Time    `json:"occurred_at"`
 	Match                      MatchSummary `json:"match"`
 	SourceID                   int64        `json:"source_id"`
@@ -194,7 +194,7 @@ type EntryRow struct {
 	// message-relative sender cluster (see buildExploreSQL). It is nil when no
 	// owner can be identified or every participant on the entry is the owner:
 	// never guessed from participant_ids[0] alone.
-	CounterpartParticipantID *int64 `json:"counterpart_participant_id,omitempty"`
+	CounterpartParticipantID *int64 `json:"counterpart_participant_id,omitzero" nullable:"false"`
 }
 
 type ExploreResponse struct {
@@ -210,7 +210,7 @@ type ExploreResponse struct {
 // conversation rows.
 type ExploreCoverageRequest struct {
 	Context   Context `json:"context"`
-	BatchSize int     `json:"batch_size,omitempty"`
+	BatchSize int     `json:"batch_size,omitzero"`
 }
 
 // ExploreCoverageResult reports one full coverage scan: the set-wise

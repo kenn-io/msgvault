@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"maps"
@@ -683,9 +684,9 @@ func liveMCPTools(cfg *config.Config) []string {
 
 func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 	if jsonOutput {
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
+		encoder := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+		return json.MarshalEncode(encoder, report, json.Deterministic(true))
 	}
 	table := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(table, "LANE\tSTATE\tPROVIDER\tMODEL\tCONSENT\tSCHEDULE")

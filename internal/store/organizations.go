@@ -226,10 +226,10 @@ type Organization struct {
 	ID            int64            `json:"id"`
 	Name          string           `json:"name"`
 	Kind          OrganizationKind `json:"kind"`
-	PrimaryDomain *string          `json:"primary_domain,omitempty"`
-	Description   *string          `json:"description,omitempty"`
+	PrimaryDomain *string          `json:"primary_domain,omitzero" nullable:"false"`
+	Description   *string          `json:"description,omitzero" nullable:"false"`
 	Revision      int64            `json:"revision"`
-	MergedIntoID  *int64           `json:"merged_into_id,omitempty"`
+	MergedIntoID  *int64           `json:"merged_into_id,omitzero" nullable:"false"`
 	RetiredAt     *time.Time       `json:"retired_at,omitempty"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`

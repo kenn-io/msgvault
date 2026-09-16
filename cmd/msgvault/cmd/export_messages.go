@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sort"
@@ -40,7 +41,7 @@ type exportMessagesWindow struct {
 }
 
 type exportMessagesFilters struct {
-	PersonID     *int64                         `json:"person_id,omitempty"`
+	PersonID     *int64                         `json:"person_id,omitzero"`
 	MessageTypes []string                       `json:"message_types"`
 	Sources      []exportMessagesSourceSelector `json:"sources"`
 }
@@ -102,23 +103,23 @@ type exportMessagesCounts struct {
 }
 
 type exportMessagesJSONLSink struct {
-	encoder *json.Encoder
+	encoder *jsontext.Encoder
 }
 
 func (s exportMessagesJSONLSink) Source(source store.MessageExportSource) error {
-	return s.encoder.Encode(exportMessagesSourceRecord{
+	return json.MarshalEncode(s.encoder, exportMessagesSourceRecord{
 		RecordType:           "source",
 		SourceType:           source.SourceType,
 		Identifier:           source.Identifier,
 		DisplayName:          source.DisplayName,
 		LastSuccessfulSyncAt: source.LastSuccessfulSyncAt,
-	})
+	}, json.Deterministic(true))
 }
 
 func (s exportMessagesJSONLSink) Conversation(
 	conversation store.MessageExportConversation,
 ) error {
-	return s.encoder.Encode(exportMessagesConversationRecord{
+	return json.MarshalEncode(s.encoder, exportMessagesConversationRecord{
 		RecordType:       "conversation",
 		SourceType:       conversation.SourceType,
 		SourceIdentifier: conversation.SourceIdentifier,
@@ -126,7 +127,7 @@ func (s exportMessagesJSONLSink) Conversation(
 		Title:            conversation.Title,
 		ConversationType: conversation.ConversationType,
 		ParentID:         conversation.ParentID,
-	})
+	}, json.Deterministic(true))
 }
 
 func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) error {
@@ -137,7 +138,7 @@ func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) err
 			Address:     message.Author.Address,
 		}
 	}
-	return s.encoder.Encode(exportMessagesMessageRecord{
+	return json.MarshalEncode(s.encoder, exportMessagesMessageRecord{
 		RecordType:        "message",
 		SourceType:        message.SourceType,
 		SourceIdentifier:  message.SourceIdentifier,
@@ -149,7 +150,7 @@ func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) err
 		Author:            author,
 		OccurredAt:        message.OccurredAt,
 		DeletedFromSource: message.DeletedFromSource,
-	})
+	}, json.Deterministic(true))
 }
 
 func defaultExportMessagesDeps() exportMessagesDeps {
@@ -236,9 +237,9 @@ func runExportMessages(
 		scope = &resolved.Scope
 		personID = &resolved.PersonID
 	}
-	encoder := json.NewEncoder(cmd.OutOrStdout())
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(exportMessagesManifest{
+	encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.EscapeForHTML(false))
+
+	if err := json.MarshalEncode(encoder, exportMessagesManifest{
 		RecordType:      "manifest",
 		Schema:          messageExportSchema,
 		MsgvaultVersion: Version,
@@ -248,7 +249,7 @@ func runExportMessages(
 			MessageTypes: messageTypes,
 			Sources:      selectors,
 		},
-	}); err != nil {
+	}, json.Deterministic(true)); err != nil {
 		return fmt.Errorf("encode message export manifest: %w", err)
 	}
 
@@ -262,14 +263,14 @@ func runExportMessages(
 	if err != nil {
 		return fmt.Errorf("export messages: %w", err)
 	}
-	if err := encoder.Encode(exportMessagesComplete{
+	if err := json.MarshalEncode(encoder, exportMessagesComplete{
 		RecordType: "complete",
 		Counts: exportMessagesCounts{
 			Sources:       counts.Sources,
 			Conversations: counts.Conversations,
 			Messages:      counts.Messages,
 		},
-	}); err != nil {
+	}, json.Deterministic(true)); err != nil {
 		return fmt.Errorf("encode message export completion: %w", err)
 	}
 	return nil

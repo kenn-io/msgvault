@@ -2,7 +2,7 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -64,16 +64,16 @@ type allMatchesManifestFilter struct {
 	Label                 string     `json:"label,omitempty"`
 	ListID                string     `json:"list_id,omitempty"`
 	MessageType           string     `json:"message_type,omitempty"`
-	ConversationID        *int64     `json:"conversation_id,omitempty"`
+	ConversationID        *int64     `json:"conversation_id,omitzero"`
 	EmptyValueTargets     []string   `json:"empty_value_targets,omitempty"`
 	TimePeriod            string     `json:"time_period,omitempty"`
 	TimeGranularity       string     `json:"time_granularity,omitempty"`
-	SourceID              *int64     `json:"source_id,omitempty"`
+	SourceID              *int64     `json:"source_id,omitzero"`
 	SourceIDs             []int64    `json:"source_ids,omitempty"`
 	After                 *time.Time `json:"after,omitempty"`
 	Before                *time.Time `json:"before,omitempty"`
-	WithAttachmentsOnly   bool       `json:"attachments_only,omitempty"`
-	HideDeletedFromSource bool       `json:"hide_deleted_from_source,omitempty"`
+	WithAttachmentsOnly   bool       `json:"attachments_only,omitzero"`
+	HideDeletedFromSource bool       `json:"hide_deleted_from_source,omitzero"`
 }
 
 // ActionController handles business logic for actions like deletion and export,
@@ -198,7 +198,7 @@ func (c *ActionController) StageForDeletionContext(
 			SearchQuery: dctx.SearchQuery,
 			SearchMode:  searchMode,
 			MatchFilter: manifestMatchFilter(dctx.MatchFilter),
-		})
+		}, json.Deterministic(true))
 		if marshalErr != nil {
 			return nil, fmt.Errorf("record deletion match provenance: %w", marshalErr)
 		}

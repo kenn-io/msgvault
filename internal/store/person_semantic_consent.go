@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,7 +32,7 @@ func (s *Store) EnsurePersonSemanticEmbeddingProfile(
 	if err != nil {
 		return false, err
 	}
-	disclosed, err := json.Marshal(canonical.DisclosedFieldClasses)
+	disclosed, err := json.Marshal(canonical.DisclosedFieldClasses, json.Deterministic(true))
 	if err != nil {
 		return false, fmt.Errorf("encode semantic person disclosed fields: %w", err)
 	}
@@ -303,7 +304,7 @@ func scanPersonSemanticEmbeddingProfile(row scanner) (
 	if err := json.Unmarshal([]byte(disclosed), &profile.DisclosedFieldClasses); err != nil {
 		return vector.SemanticPersonEmbeddingProfile{}, fmt.Errorf("decode disclosed fields: %w", err)
 	}
-	profile.PolicyJSON = json.RawMessage(policy)
+	profile.PolicyJSON = jsontext.Value(policy)
 	canonical, err := profile.Canonical()
 	if err != nil {
 		return vector.SemanticPersonEmbeddingProfile{}, fmt.Errorf(

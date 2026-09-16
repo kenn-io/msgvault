@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -387,7 +387,7 @@ func publishCacheWithBeforeMarker(
 	}
 	state.PublishedAt = time.Now().UTC()
 	state.DatasetFingerprint = fingerprint
-	stateData, err = json.Marshal(state)
+	stateData, err = json.Marshal(state, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode committed cache sync state: %w", err)
 	}

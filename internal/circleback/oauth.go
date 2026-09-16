@@ -9,7 +9,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -498,7 +499,7 @@ func (m *Manager) saveToken(identifier string, tf *tokenFile) error {
 	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(tf, "", "  ") //nolint:gosec // the token file IS the credential store; written 0600
+	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true)) // the token file IS the credential store; written 0600
 	if err != nil {
 		return err
 	}

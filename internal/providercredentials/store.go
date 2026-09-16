@@ -7,7 +7,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -146,7 +147,7 @@ func readWithPermissions(tokenDir string, permissions permissionBackend) (Snapsh
 	file, err := openStoreFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		empty := emptyStore()
-		encoded, marshalErr := json.Marshal(empty)
+		encoded, marshalErr := json.Marshal(empty, json.Deterministic(true))
 		if marshalErr != nil {
 			return unavailableSnapshot(marshalErr)
 		}
@@ -169,13 +170,13 @@ func readWithPermissions(tokenDir string, permissions permissionBackend) (Snapsh
 	if int64(len(raw)) > maximumCredentialStoreBytes {
 		return unavailableSnapshot(errors.New("credential store exceeds size limit"))
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
+	decoder := jsontext.NewDecoder(strings.NewReader(string(raw)), json.RejectUnknownMembers(true))
+
 	var saved storeFile
-	if err := decoder.Decode(&saved); err != nil {
+	if err := json.UnmarshalDecode(decoder, &saved); err != nil {
 		return unavailableSnapshot(fmt.Errorf("decode credential store: %w", err))
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return unavailableSnapshot(errors.New("credential store contains trailing data"))
 	}
 	if err := validateStore(saved); err != nil {
@@ -385,7 +386,7 @@ func mutate(tokenDir, ifMatch string, mutation func(map[string]record)) (Snapsho
 
 func persist(tokenDir string, permissions permissionBackend, credentials map[string]record) (Snapshot, error) {
 	saved := storeFile{Version: credentialStoreVersion, Credentials: credentials}
-	encoded, err := json.Marshal(saved)
+	encoded, err := json.Marshal(saved, json.Deterministic(true))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("encode credential store: %w", err)
 	}

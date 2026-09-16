@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -52,7 +53,7 @@ type IdentityMatchCandidatesResponse struct {
 
 // DecideIdentityMatchRequest is the optional body of an accept or reject.
 type DecideIdentityMatchRequest struct {
-	Notes *string `json:"notes,omitempty"`
+	Notes *string `json:"notes,omitzero" nullable:"false"`
 }
 
 // IdentityMatchAcceptResponse reports the decided candidate, identity revision,
@@ -295,9 +296,9 @@ func decodeIdentityMatchRequest(
 	if len(bytes.TrimSpace(body)) == 0 {
 		return true
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(request); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request",
 			"Invalid JSON request body: "+err.Error())
 		return false

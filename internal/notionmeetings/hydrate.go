@@ -2,7 +2,7 @@ package notionmeetings
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -28,7 +28,7 @@ type hydrationSource interface {
 type blockTree struct {
 	Root   *Block
 	Blocks []Block
-	Pages  []json.RawMessage
+	Pages  []jsontext.Value
 }
 
 type HydratedMeeting struct {
@@ -55,7 +55,7 @@ type resolvedUser struct {
 	Name          string   `json:"name,omitempty"`
 	Email         string   `json:"email,omitempty"`
 	EmailAliases  []string `json:"email_aliases,omitempty"`
-	EmailVerified bool     `json:"email_verified,omitempty"`
+	EmailVerified bool     `json:"email_verified,omitzero"`
 }
 
 type Hydrator struct {
@@ -202,7 +202,7 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 		if err := h.reserveBytes(page.Raw); err != nil {
 			return err
 		}
-		tree.Pages = append(tree.Pages, append(json.RawMessage(nil), page.Raw...))
+		tree.Pages = append(tree.Pages, append(jsontext.Value(nil), page.Raw...))
 		for _, child := range page.Results {
 			h.blocks++
 			if h.blocks > maxHydrationBlocks {

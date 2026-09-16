@@ -3,7 +3,7 @@ package document
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -52,7 +52,7 @@ func EncodePageCursor(distance float64, token string, rank int) (string, error) 
 	}
 	payload, err := json.Marshal(pageCursor{
 		Version: pageCursorVersion, Distance: distance, Token: token, Rank: rank,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document vector cursor: %w", err)
 	}

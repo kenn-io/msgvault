@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -77,7 +77,7 @@ type MboxImportSummary struct {
 type mboxCheckpoint struct {
 	File   string `json:"file"`
 	Offset int64  `json:"offset"`
-	Seq    int64  `json:"seq,omitempty"`
+	Seq    int64  `json:"seq,omitzero"`
 }
 
 const defaultMaxMboxMessageBytes int64 = 128 << 20 // 128 MiB
@@ -560,7 +560,7 @@ func ImportMbox(
 }
 
 func saveMboxCheckpoint(st *store.Store, syncID int64, file string, offset int64, seq int64, cp *store.Checkpoint) error {
-	b, err := json.Marshal(mboxCheckpoint{File: file, Offset: offset, Seq: seq})
+	b, err := json.Marshal(mboxCheckpoint{File: file, Offset: offset, Seq: seq}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}

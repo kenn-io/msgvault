@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"mime"
@@ -16,13 +16,13 @@ import (
 
 type visualTextSearchRequest struct {
 	Text           string                  `json:"text"`
-	Limit          int                     `json:"limit,omitempty"`
-	SenderPersonID int64                   `json:"sender_person_id,omitempty"`
-	PersonID       int64                   `json:"person_id,omitempty"`
-	ParticipantID  int64                   `json:"participant_id,omitempty"`
+	Limit          int                     `json:"limit,omitzero"`
+	SenderPersonID int64                   `json:"sender_person_id,omitzero"`
+	PersonID       int64                   `json:"person_id,omitzero"`
+	ParticipantID  int64                   `json:"participant_id,omitzero"`
 	Directions     []personscope.Direction `json:"directions,omitempty"`
-	SourceID       int64                   `json:"source_id,omitempty"`
-	MessageID      int64                   `json:"message_id,omitempty"`
+	SourceID       int64                   `json:"source_id,omitzero"`
+	MessageID      int64                   `json:"message_id,omitzero"`
 	Filename       string                  `json:"filename,omitempty"`
 	MIMEPrefix     string                  `json:"mime_prefix,omitempty"`
 	Cursor         string                  `json:"cursor,omitempty"`
@@ -99,7 +99,7 @@ func (s *Server) handleVisualSearch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		var request visualTextSearchRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.UnmarshalRead(r.Body, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_visual_query", "Invalid visual search request")
 			return
 		}

@@ -17,9 +17,9 @@ import (
 // search candidates.
 type RelationshipsHTTPRequest struct {
 	Filters []ExploreFilter `json:"filters,omitempty"`
-	ShowAll bool            `json:"show_all,omitempty"`
+	ShowAll bool            `json:"show_all,omitzero"`
 	Cursor  string          `json:"cursor,omitempty"`
-	Limit   int             `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit   int             `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 // RelationshipsHTTPResponse echoes both revisions a page was computed
@@ -224,7 +224,7 @@ type RelationshipTimelineHTTPRequest struct {
 	Timezone string          `json:"timezone,omitempty"`
 	Filters  []ExploreFilter `json:"filters,omitempty"`
 	Cursor   string          `json:"cursor,omitempty"`
-	Limit    int             `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit    int             `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 // RelationshipTimelineHTTPResponse echoes the canonical cluster ID the

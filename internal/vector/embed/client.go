@@ -6,7 +6,7 @@ package embed
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -104,7 +104,7 @@ func (c *Client) embed(ctx context.Context, inputs []string) ([][]float32, error
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	body, err := json.Marshal(embeddingRequest{Input: inputs, Model: c.cfg.Model})
+	body, err := json.Marshal(embeddingRequest{Input: inputs, Model: c.cfg.Model}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -258,7 +258,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	}
 
 	var r embeddingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &r); err != nil {
 		// Body read/decode failures usually mean the connection
 		// dropped mid-stream (unexpected EOF, deadline hit while
 		// reading). Treat as transient so a healthy retry can

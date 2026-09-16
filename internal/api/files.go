@@ -5,7 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ type FileSearchHTTPRequest struct {
 	MIMEFamilies      []query.FileMIMEFamily `json:"mime_families,omitempty"`
 	Sort              FileSearchSort         `json:"sort"`
 	Cursor            string                 `json:"cursor,omitempty"`
-	Limit             int                    `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit             int                    `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 // PersonFileSearchHTTPRequest keeps the normal Files filters while making
@@ -61,7 +62,7 @@ type PersonFileSearchHTTPRequest struct {
 	Directions        []query.PersonFileDirection `json:"directions,omitempty" enum:"from_person,to_person,group"`
 	Sort              FileSearchSort              `json:"sort"`
 	Cursor            string                      `json:"cursor,omitempty"`
-	Limit             int                         `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit             int                         `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 type FileSearchRow struct {
@@ -84,12 +85,12 @@ type FileSearchRow struct {
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
 	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
 	ContentAvailable   bool                 `json:"content_available"`
-	SearchExplain      *FileSearchExplain   `json:"search_explain,omitempty"`
+	SearchExplain      *FileSearchExplain   `json:"search_explain,omitzero" nullable:"false"`
 }
 
 type FileSearchExplain struct {
-	FilenameRank *int    `json:"filename_rank,omitempty"`
-	VisualRank   *int    `json:"visual_rank,omitempty"`
+	FilenameRank *int    `json:"filename_rank,omitzero" nullable:"false"`
+	VisualRank   *int    `json:"visual_rank,omitzero" nullable:"false"`
 	RRF          float64 `json:"rrf"`
 }
 
@@ -124,7 +125,7 @@ type FileGroupsHTTPRequest struct {
 	Grouping      []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1"`
 	Sort          []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
 	Cursor        string                  `json:"cursor,omitempty"`
-	Limit         int                     `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit         int                     `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 type FileGroupsHTTPResponse struct {
@@ -829,13 +830,13 @@ func fileSearchExplainFor(explain map[int64]FileSearchExplain, id int64) *FileSe
 // visual query image needs; both files-search request shapes carry one.
 func decodeFileSearchJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
 	const envelopeBytes = (visual.MaxQueryImageBytes*4)/3 + (2 << 20)
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, envelopeBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, envelopeBytes), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, dst); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body: "+err.Error())
 		return false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Request body must contain one JSON object")
 		return false
 	}
@@ -853,8 +854,8 @@ func canonicalScopedFileSearchHash(
 	}
 	return hashCanonicalValue(struct {
 		Request FileSearchHTTPRequest  `json:"request"`
-		Scope   *ExploreFilter         `json:"identity_scope,omitempty"`
-		Person  *query.PersonFileScope `json:"person_scope,omitempty"`
+		Scope   *ExploreFilter         `json:"identity_scope,omitzero" nullable:"false"`
+		Person  *query.PersonFileScope `json:"person_scope,omitzero" nullable:"false"`
 	}{Request: request, Scope: scope, Person: person}, false)
 }
 

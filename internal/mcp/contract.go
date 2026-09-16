@@ -1,7 +1,8 @@
 package mcp
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 )
@@ -22,7 +23,7 @@ type embeddedResource struct {
 
 type toolResult struct {
 	text              string
-	structuredContent json.RawMessage
+	structuredContent jsontext.Value
 	embeddedResource  *embeddedResource
 	isError           bool
 }
@@ -48,7 +49,7 @@ func newInternalError(operation string, err error) error {
 }
 
 func jsonResult(v any) (*toolResult, error) {
-	data, err := json.Marshal(v)
+	data, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return nil, &internalError{
 			operation: "marshal tool result",
@@ -56,7 +57,7 @@ func jsonResult(v any) (*toolResult, error) {
 		}
 	}
 
-	raw := json.RawMessage(data)
+	raw := jsontext.Value(data)
 	return &toolResult{
 		text:              string(raw),
 		structuredContent: raw,

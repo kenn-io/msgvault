@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -46,7 +47,7 @@ func (s *Store) insertPersonFactGenerationTx(
 	if key != prepared.GenerationKey() || input.ProgramFingerprint != prepared.ProgramFingerprint() {
 		return personfacts.Generation{}, false, errors.New("prepared person fact generation failed integrity verification")
 	}
-	cursorsJSON, err := json.Marshal(input.SourceCursors)
+	cursorsJSON, err := json.Marshal(input.SourceCursors, json.Deterministic(true))
 	if err != nil {
 		return personfacts.Generation{}, false, fmt.Errorf("encode person fact source cursors: %w", err)
 	}
@@ -131,7 +132,7 @@ func (s *Store) insertPersonFactClaimWithKeyTx(
 ) (personfacts.Claim, error) {
 	prepared.ValidFrom = personFactPortableTimePointer(prepared.ValidFrom)
 	prepared.ValidUntil = personFactPortableTimePointer(prepared.ValidUntil)
-	confidenceJSON, err := json.Marshal(prepared.Confidence)
+	confidenceJSON, err := json.Marshal(prepared.Confidence, json.Deterministic(true))
 	if err != nil {
 		return personfacts.Claim{}, fmt.Errorf("encode person fact claim confidence: %w", err)
 	}
@@ -388,7 +389,7 @@ func (s *Store) insertPersonFactDecisionTx(
 		}
 		competingClaimID = id
 	}
-	scoreJSON, err := json.Marshal(decision.Score)
+	scoreJSON, err := json.Marshal(decision.Score, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode person fact decision score: %w", err)
 	}
@@ -878,10 +879,10 @@ func scanPersonFactClaim(row scanner) (personfacts.Claim, error) {
 	if err != nil {
 		return personfacts.Claim{}, err
 	}
-	claim.SubmittedValue = append(json.RawMessage(nil), submitted...)
+	claim.SubmittedValue = append(jsontext.Value(nil), submitted...)
 	if normalizedJSON.Valid && valueFingerprint.Valid {
 		claim.Normalized = &personfacts.NormalizedValue{
-			JSON: append(json.RawMessage(nil), normalizedJSON.String...), Fingerprint: valueFingerprint.String,
+			JSON: append(jsontext.Value(nil), normalizedJSON.String...), Fingerprint: valueFingerprint.String,
 		}
 	}
 	if validFrom.Valid {
@@ -1265,7 +1266,7 @@ func personFactDecisionMatches(left, right personfacts.Decision) bool {
 }
 
 func personFactRawJSONEqual(left, right []byte) bool {
-	if json.Valid(left) && json.Valid(right) {
+	if jsontext.Value(left).IsValid() && jsontext.Value(right).IsValid() {
 		return equalJSON(left, right)
 	}
 	return bytes.Equal(left, right)

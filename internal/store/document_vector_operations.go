@@ -50,13 +50,13 @@ type DocumentVectorOperationsStatus struct {
 	ConfiguredSpec                      DocumentVectorGenerationSpec    `json:"configured_spec"`
 	ConfiguredDocumentEgressFingerprint string                          `json:"configured_document_egress_fingerprint"`
 	ConfiguredQueryEgressFingerprint    string                          `json:"configured_query_egress_fingerprint"`
-	DocumentConsent                     *DocumentVectorConsent          `json:"document_consent,omitempty"`
-	QueryConsent                        *DocumentVectorConsent          `json:"query_consent,omitempty"`
+	DocumentConsent                     *DocumentVectorConsent          `json:"document_consent,omitzero" nullable:"false"`
+	QueryConsent                        *DocumentVectorConsent          `json:"query_consent,omitzero" nullable:"false"`
 	Usage                               DocumentVectorProviderUsage     `json:"usage"`
-	Active                              *DocumentVectorGeneration       `json:"active,omitempty"`
-	Building                            *DocumentVectorGeneration       `json:"building,omitempty"`
-	Selected                            *DocumentVectorGenerationStatus `json:"selected,omitempty"`
-	Coverage                            *DocumentVectorCoverage         `json:"coverage,omitempty"`
+	Active                              *DocumentVectorGeneration       `json:"active,omitzero" nullable:"false"`
+	Building                            *DocumentVectorGeneration       `json:"building,omitzero" nullable:"false"`
+	Selected                            *DocumentVectorGenerationStatus `json:"selected,omitzero" nullable:"false"`
+	Coverage                            *DocumentVectorCoverage         `json:"coverage,omitzero" nullable:"false"`
 }
 
 // GetDocumentVectorTargetProfileID returns the configured extraction target

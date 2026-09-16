@@ -2,7 +2,8 @@ package store
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -65,7 +66,7 @@ func ValidateSavedViewStateJSON(raw []byte) error {
 	if err := jsonexact.Validate(trimmed, SavedViewStateEnvelope{}); err != nil {
 		return fmt.Errorf("%w: %w", ErrSavedViewInvalidState, err)
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(trimmed, &fields); err != nil || fields == nil {
 		return fmt.Errorf("%w: canonical state must be a JSON object", ErrSavedViewInvalidState)
 	}
@@ -82,7 +83,7 @@ func ValidateSavedViewStateJSON(raw []byte) error {
 	// reported by the typed decoder that runs next; this pass only looks for
 	// nulls that decoder would erase.
 	var filters []struct {
-		Values []json.RawMessage `json:"values"`
+		Values []jsontext.Value `json:"values"`
 	}
 	_ = json.Unmarshal(rawFilters, &filters)
 	for i, filter := range filters {

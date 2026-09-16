@@ -42,8 +42,8 @@ type rankingResult struct {
 	Hybrid     []string       `json:"hybrid"`
 	Metrics    RankingMetrics `json:"metrics"`
 	HybridNDCG float64        `json:"hybrid_ndcg"`
-	ANNTime    time.Duration  `json:"ann_time"`
-	FullTime   time.Duration  `json:"full_time"`
+	ANNTime    int64          `json:"ann_time"`
+	FullTime   int64          `json:"full_time"`
 }
 
 type evaluationRun struct {
@@ -173,7 +173,7 @@ func executeEvaluation(ctx context.Context, cfg runConfig) (evaluationRun, error
 				queryTime = contextQueryTimes[scenario.ID]
 			}
 			input.Scenarios = append(input.Scenarios, armScenarioInput{Scenario: scenario,
-				Judgment: corpus.Judgments[scenario.ID], Query: query, QueryTime: queryTime})
+				Judgment: corpus.Judgments[scenario.ID], Query: query, QueryTime: int64(queryTime)})
 		}
 		beforeHTTP := observer.Snapshot()
 		client := documentEmbedder(contextClient)
@@ -489,7 +489,7 @@ func percentile95(values []float64) float64 {
 	return percentile(copyValues, 0.95)
 }
 
-func durationMillis(value time.Duration) float64 { return float64(value.Microseconds()) / 1000 }
+func durationMillis(value int64) float64 { return float64(time.Duration(value).Microseconds()) / 1000 }
 
 func mean(values []float64) float64 {
 	if len(values) == 0 {

@@ -6,7 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -100,18 +101,18 @@ type ExploreHTTPRequest struct {
 	Presentation        string                  `json:"presentation,omitempty" enum:"table,timeline,files"`
 	Sort                []ExploreSort           `json:"sort,omitempty"`
 	Cursor              string                  `json:"cursor,omitempty"`
-	Limit               int                     `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit               int                     `json:"limit,omitzero" minimum:"0" maximum:"500"`
 	CandidateSnapshotID string                  `json:"candidate_snapshot_id,omitempty"`
 }
 
 type ExploreHTTPResponse struct {
 	Rows                   []query.EntryRow       `json:"rows"`
-	TotalCount             *int64                 `json:"total_count,omitempty"`
+	TotalCount             *int64                 `json:"total_count,omitzero" nullable:"false"`
 	CacheRevision          string                 `json:"cache_revision"`
 	SearchProvenance       query.SearchProvenance `json:"search_provenance"`
 	CandidateSnapshotID    string                 `json:"candidate_snapshot_id,omitempty"`
 	NextCursor             string                 `json:"next_cursor,omitempty"`
-	CandidatePoolSaturated bool                   `json:"candidate_pool_saturated,omitempty"`
+	CandidatePoolSaturated bool                   `json:"candidate_pool_saturated,omitzero"`
 	// SearchDeletionScope is "active" when a semantic or hybrid search
 	// narrowed an unrestricted deletion context to active messages only —
 	// vector candidates never include source-deleted messages, and the
@@ -132,7 +133,7 @@ type ExploreGroupsHTTPRequest struct {
 	Presentation string                  `json:"presentation,omitempty" enum:"table"`
 	Sort         []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
 	Cursor       string                  `json:"cursor,omitempty"`
-	Limit        int                     `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit        int                     `json:"limit,omitzero" minimum:"0" maximum:"500"`
 	// GroupKey restricts the response to the single group whose key equals it
 	// exactly, regardless of the group's rank under the predicate. total_count
 	// then reports the matched-row count (0 or 1).
@@ -209,10 +210,10 @@ type exploreCursor struct {
 	Request          string `json:"request"`
 	Revision         string `json:"revision"`
 	SearchRevision   string `json:"search_revision,omitempty"`
-	VisualGeneration int64  `json:"visual_generation,omitempty"`
+	VisualGeneration int64  `json:"visual_generation,omitzero"`
 	VisualRevision   string `json:"visual_revision,omitempty"`
 	Snapshot         string `json:"snapshot,omitempty"`
-	IdentityRevision int64  `json:"identity_revision,omitempty"`
+	IdentityRevision int64  `json:"identity_revision,omitzero"`
 
 	// DecayDate pins the UTC decay date (time.DateOnly) a relationship
 	// listing was first ranked with, so subsequent pages reuse it instead of
@@ -227,7 +228,7 @@ type exploreCursor struct {
 	// including the request hash — maps uniformly to 409 cursor_invalidated
 	// rather than a 400/409 split, per that endpoint's contract.
 	Timezone    string `json:"timezone,omitempty"`
-	CanonicalID int64  `json:"canonical_id,omitempty"`
+	CanonicalID int64  `json:"canonical_id,omitzero"`
 }
 
 type explorePrepared struct {
@@ -1216,7 +1217,7 @@ func canonicalizeExploreFilters(filters []ExploreFilter) {
 
 func canonicalExploreHash(request ExploreHTTPRequest) string {
 	request.Cursor = ""
-	data, err := json.Marshal(request)
+	data, err := json.Marshal(request, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Sprintf("marshal canonical explore request: %v", err))
 	}
@@ -1234,7 +1235,7 @@ func hashCanonicalValue(value any, clearCursor bool) string {
 			value = request
 		}
 	}
-	data, err := json.Marshal(value)
+	data, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Sprintf("marshal canonical explore value: %v", err))
 	}
@@ -1881,7 +1882,7 @@ func newExploreCursorKey() [32]byte {
 }
 
 func (s *Server) encodeExploreCursor(cursor exploreCursor) string {
-	data, err := json.Marshal(cursor)
+	data, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Sprintf("marshal explore cursor: %v", err))
 	}
@@ -1916,13 +1917,13 @@ func (s *Server) decodeExploreCursor(encoded string) (exploreCursor, error) {
 }
 
 func decodeExploreJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, dst); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body: "+err.Error())
 		return false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Request body must contain one JSON object")
 		return false
 	}

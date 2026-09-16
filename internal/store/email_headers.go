@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -38,22 +39,22 @@ func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, message
 		}
 		fillID := storedID.String == "" && rfcID != ""
 		if inReplyTo != "" {
-			fields := make(map[string]json.RawMessage)
+			fields := make(map[string]jsontext.Value)
 			if metadata.Valid && metadata.String != "" {
 				if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
 					return fmt.Errorf("decode email metadata: %w", err)
 				}
 				if fields == nil {
-					fields = make(map[string]json.RawMessage)
+					fields = make(map[string]jsontext.Value)
 				}
 			}
 			if _, exists := fields[emailReplyMetadataKey]; !exists {
-				value, err := json.Marshal(inReplyTo)
+				value, err := json.Marshal(inReplyTo, json.Deterministic(true))
 				if err != nil {
 					return err
 				}
 				fields[emailReplyMetadataKey] = value
-				encoded, err := json.Marshal(fields)
+				encoded, err := json.Marshal(fields, json.Deterministic(true))
 				if err != nil {
 					return err
 				}
@@ -151,7 +152,7 @@ func (s *Store) resolveEmailReply(ctx context.Context, sourceID, childID int64) 
 		if reply.Valid || !metadata.Valid {
 			return nil
 		}
-		var fields map[string]json.RawMessage
+		var fields map[string]jsontext.Value
 		if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
 			return fmt.Errorf("decode email reply metadata: %w", err)
 		}

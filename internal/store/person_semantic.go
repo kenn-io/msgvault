@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/vector"
 	"golang.org/x/text/unicode/norm"
 )
@@ -477,20 +479,20 @@ func renderPersonSemanticAttribute(value AttributeValue) (string, error) {
 	}
 }
 
-func canonicalPersonSemanticJSON(raw json.RawMessage) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
+func canonicalPersonSemanticJSON(raw jsontext.Value) (string, error) {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw), jsonexact.PreserveNumbers)
+
 	var value any
-	if err := decoder.Decode(&value); err != nil {
+	if err := json.UnmarshalDecode(decoder, &value); err != nil {
 		return "", err
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := json.UnmarshalDecode(decoder, new(any)); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return "", errors.New("multiple JSON values")
 		}
 		return "", err
 	}
-	canonical, err := json.Marshal(value)
+	canonical, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}

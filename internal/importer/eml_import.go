@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -366,7 +366,7 @@ func saveEMLCheckpoint(
 	cursor, err := json.Marshal(emlCheckpoint{
 		RootDir: root, MailboxIndex: mailboxIndex,
 		MailboxPath: mailboxPath, LastFile: lastFile,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return err
 	}

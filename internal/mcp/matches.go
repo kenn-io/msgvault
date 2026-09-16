@@ -13,10 +13,10 @@ import (
 // preprocessing prevents an exact raw-body mapping. score is set for vector
 // chunk matches only.
 type messageMatch struct {
-	CharOffset *int     `json:"char_offset,omitempty"`
+	CharOffset *int     `json:"char_offset,omitzero"`
 	Snippet    string   `json:"snippet"`
-	Line       *int     `json:"line,omitempty"`
-	Score      *float64 `json:"score,omitempty"`
+	Line       *int     `json:"line,omitzero"`
+	Score      *float64 `json:"score,omitzero"`
 }
 
 func messageMatchesFromChunks(matches []chunkmatch.Match) []messageMatch {

@@ -18,7 +18,7 @@ type PersonEnrichmentConsent struct {
 	ProfileFingerprint string     `json:"profile_fingerprint"`
 	GrantedBy          string     `json:"granted_by"`
 	GrantedAt          time.Time  `json:"granted_at"`
-	RevokedBy          *string    `json:"revoked_by,omitempty"`
+	RevokedBy          *string    `json:"revoked_by,omitzero" nullable:"false"`
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 }
 
@@ -28,8 +28,8 @@ type PersonEnrichmentConsentStatus struct {
 	Fingerprint   string                   `json:"fingerprint"`
 	ProfileExists bool                     `json:"profile_exists"`
 	Active        bool                     `json:"active"`
-	Consent       *PersonEnrichmentConsent `json:"consent,omitempty"`
-	LastRevoked   *PersonEnrichmentConsent `json:"last_revoked,omitempty"`
+	Consent       *PersonEnrichmentConsent `json:"consent,omitzero" nullable:"false"`
+	LastRevoked   *PersonEnrichmentConsent `json:"last_revoked,omitzero" nullable:"false"`
 }
 
 const personEnrichmentConsentColumns = `

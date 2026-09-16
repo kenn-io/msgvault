@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -243,7 +244,7 @@ func TestCLIIdentityImportSendsParsedEntriesAndConvertsResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertions.Equal(http.MethodPost, r.Method)
 		assertions.Equal("/api/v1/cli/identities/import", r.URL.Path)
-		var raw map[string]json.RawMessage
+		var raw map[string]jsontext.Value
 		if !assertions.NoError(json.NewDecoder(r.Body).Decode(&raw), "decode import request") {
 			http.Error(w, "bad import request", http.StatusBadRequest)
 			return
@@ -476,7 +477,7 @@ func TestRunSQLQueryPreservesIntegerPrecision(t *testing.T) {
 	assert.Equal(1, got.RowCount, "row count")
 	require.Len(got.Rows, 1, "rows")
 	assert.Equal(
-		[]any{"UNREAD", json.Number("1662130"), json.Number("9007199254740993")},
+		[]any{"UNREAD", jsontext.Value("1662130"), jsontext.Value("9007199254740993")},
 		got.Rows[0],
 		"row cells keep exact integer values",
 	)

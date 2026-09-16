@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -540,11 +541,11 @@ type CardDAVPublicationResponse struct {
 	State            carddav.PublicationState            `json:"state" enum:"unpublished,published,pending,conflict"`
 	Desired          bool                                `json:"desired"`
 	PendingOperation store.CardDAVMutationOperation      `json:"pending_operation,omitempty" enum:"create,update,delete"`
-	AddressBook      *CardDAVAddressBookIdentityResponse `json:"address_book,omitempty"`
-	ConflictID       *int64                              `json:"conflict_id,omitempty" minimum:"1"`
+	AddressBook      *CardDAVAddressBookIdentityResponse `json:"address_book,omitzero" nullable:"false"`
+	ConflictID       *int64                              `json:"conflict_id,omitzero" nullable:"false" minimum:"1"`
 	// InferenceReviewRequired reports that inferred profile facts changed since
 	// the last approved export, so publishing needs a reviewed approval token.
-	InferenceReviewRequired bool `json:"inference_review_required,omitempty"`
+	InferenceReviewRequired bool `json:"inference_review_required,omitzero"`
 }
 type CardDAVAddressBookIdentityResponse struct {
 	ID   int64  `json:"id" minimum:"1"`
@@ -557,7 +558,7 @@ type CardDAVPublicationPreviewResponse struct {
 	VCard          string                             `json:"vcard"`
 	ApprovalToken  string                             `json:"approval_token"`
 	ReviewRequired bool                               `json:"review_required"`
-	ConflictID     *int64                             `json:"conflict_id,omitempty" minimum:"1"`
+	ConflictID     *int64                             `json:"conflict_id,omitzero" nullable:"false" minimum:"1"`
 }
 type CardDAVPublicationApprovalRequest struct {
 	ApprovalToken string `json:"approval_token" minLength:"1"`
@@ -567,7 +568,7 @@ type CardDAVContactSummaryResponse struct {
 	DisplayName string                    `json:"display_name,omitempty"`
 	Emails      []string                  `json:"emails"`
 	Phones      []string                  `json:"phones"`
-	Truncated   bool                      `json:"truncated,omitempty"`
+	Truncated   bool                      `json:"truncated,omitzero"`
 }
 type CardDAVConflictResponse struct {
 	ID                 int64                              `json:"id" minimum:"1"`
@@ -603,7 +604,7 @@ type CardDAVResolveRequest struct {
 	Choice carddav.ResolutionChoice `json:"choice" enum:"keep_local,keep_remote"`
 }
 type CardDAVSyncRequest struct {
-	Full bool `json:"full,omitempty"`
+	Full bool `json:"full,omitzero"`
 }
 
 type CardDAVRunResponse struct {
@@ -635,15 +636,15 @@ type CardDAVStatusResponse struct {
 	Schedule             string                `json:"schedule"`
 	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
 	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,runtime_unavailable"`
-	Account              *CardDAVStatusAccount `json:"account,omitempty"`
-	Active               *CardDAVRunResponse   `json:"active,omitempty"`
-	Latest               *CardDAVRunResponse   `json:"latest,omitempty"`
-	LatestSuccessful     *CardDAVRunResponse   `json:"latest_successful,omitempty"`
+	Account              *CardDAVStatusAccount `json:"account,omitzero" nullable:"false"`
+	Active               *CardDAVRunResponse   `json:"active,omitzero" nullable:"false"`
+	Latest               *CardDAVRunResponse   `json:"latest,omitzero" nullable:"false"`
+	LatestSuccessful     *CardDAVRunResponse   `json:"latest_successful,omitzero" nullable:"false"`
 }
 
 type CardDAVRunsResponse struct {
 	Runs         []CardDAVRunResponse `json:"runs"`
-	NextBeforeID *int64               `json:"next_before_id,omitempty"`
+	NextBeforeID *int64               `json:"next_before_id,omitzero" nullable:"false"`
 }
 
 func cardDAVRunResponse(run *store.CardDAVSyncRun) *CardDAVRunResponse {
@@ -950,13 +951,13 @@ func addCardDAVRetryAfterHeader(responses map[string]*huma.Response) {
 }
 
 func decodeCardDAV(w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(dec, dst); err != nil {
 		writeError(w, 400, "bad_request", "Invalid JSON request")
 		return false
 	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(dec, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, 400, "bad_request", "Invalid JSON request")
 		return false
 	}

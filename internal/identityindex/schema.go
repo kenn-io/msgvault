@@ -45,8 +45,8 @@ type CacheStatsSummary struct {
 	Sources             int64  `json:"sources"`
 	UniqueSenders       int64  `json:"unique_senders"`
 	UniqueDomains       int64  `json:"unique_domains"`
-	MinYear             *int64 `json:"min_year,omitempty"`
-	MaxYear             *int64 `json:"max_year,omitempty"`
+	MinYear             *int64 `json:"min_year,omitzero"`
+	MaxYear             *int64 `json:"max_year,omitzero"`
 	TotalSizeBytes      int64  `json:"total_size_bytes"`
 	AttachmentSizeBytes int64  `json:"attachment_size_bytes"`
 }

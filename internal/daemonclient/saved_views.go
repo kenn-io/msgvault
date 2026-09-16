@@ -2,7 +2,7 @@ package daemonclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -186,7 +186,7 @@ func runPageFromGenerated(result generated.RunSavedViewResponse) (*savedview.Run
 }
 
 func savedViewFromGenerated(view generated.SavedView) (*store.SavedView, error) {
-	state, err := json.Marshal(view.CanonicalState)
+	state, err := json.Marshal(view.CanonicalState, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode Saved View %d canonical state: %w", view.ID, err)
 	}
@@ -217,7 +217,7 @@ func savedViewStateFromJSON(data []byte) (generated.SavedViewStateEnvelope, erro
 }
 
 func savedViewStateFromEnvelope(state store.SavedViewStateEnvelope) (generated.SavedViewStateEnvelope, error) {
-	data, err := json.Marshal(state)
+	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
 		return generated.SavedViewStateEnvelope{}, fmt.Errorf("encode Saved View canonical state: %w", err)
 	}

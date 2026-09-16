@@ -1,7 +1,6 @@
 package api
 
 import (
-	jsonv1 "encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
@@ -32,12 +31,10 @@ const (
 
 var configureHumaOnce sync.Once
 
-// marshalAPIJSON preserves the API's established JSON v1 behavior except for
-// nil slices, which JSON v2 writes as empty arrays to match the OpenAPI schema.
+// marshalAPIJSON writes nil slices as empty arrays to match the OpenAPI schema.
 func marshalAPIJSON(w io.Writer, value any) error {
 	err := jsonv2.MarshalWrite(
 		w, value,
-		jsonv1.DefaultOptionsV1(),
 		jsonv2.FormatNilSliceAsNull(false),
 	)
 	if err != nil {
@@ -134,7 +131,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	jsonFormat := huma.Format{
 		Marshal: marshalAPIJSON,
 		Unmarshal: func(data []byte, value any) error {
-			return jsonv2.Unmarshal(data, value, jsonv1.DefaultOptionsV1())
+			return jsonv2.Unmarshal(data, value)
 		},
 	}
 	config.Formats = map[string]huma.Format{

@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -444,7 +445,7 @@ func cliDedupStoreUnavailableError() *apiHTTPError {
 type cliStatsResponse struct {
 	Stats            StatsResponse `json:"stats"`
 	ScopeLabel       string        `json:"scope_label,omitempty"`
-	ScopeSourceCount int           `json:"scope_source_count,omitempty"`
+	ScopeSourceCount int           `json:"scope_source_count,omitzero"`
 }
 
 type cliInitDBResponse struct {
@@ -502,9 +503,9 @@ type CLIRepairEncodingEvent struct {
 
 type CLIRepairMessageRequest struct {
 	Reference string `json:"reference,omitempty"`
-	SourceID  int64  `json:"source_id,omitempty"`
-	Audit     bool   `json:"audit,omitempty"`
-	JSON      bool   `json:"json,omitempty"`
+	SourceID  int64  `json:"source_id,omitzero"`
+	Audit     bool   `json:"audit,omitzero"`
+	JSON      bool   `json:"json,omitzero"`
 }
 
 type CLIRepairMessageEvent struct {
@@ -525,8 +526,8 @@ type CLIRunRequest struct {
 type CLIAddCalendarPlanRequest struct {
 	Email            string `json:"email"`
 	OAuthApp         string `json:"oauth_app,omitempty"`
-	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitempty"`
-	Headless         bool   `json:"headless,omitempty"`
+	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitzero"`
+	Headless         bool   `json:"headless,omitzero"`
 }
 
 type CLIAddCalendarPlanResponse struct {
@@ -541,14 +542,14 @@ type CLIAddCalendarPlanResponse struct {
 	// binding; false marks an older daemon whose stored named app is
 	// unknown, so the frontend must not authorize with the default app.
 	OAuthApp         string `json:"oauth_app,omitempty"`
-	OAuthAppResolved bool   `json:"oauth_app_resolved,omitempty"`
-	NeedsClientCheck bool   `json:"needs_client_check,omitempty"`
+	OAuthAppResolved bool   `json:"oauth_app_resolved,omitzero"`
+	NeedsClientCheck bool   `json:"needs_client_check,omitzero"`
 }
 
 type CLIEmbeddingsPlanRequest struct {
 	Operation    string `json:"operation"`
 	GenerationID int64  `json:"generation_id"`
-	Force        bool   `json:"force,omitempty"`
+	Force        bool   `json:"force,omitzero"`
 }
 
 type CLIEmbeddingsPlanResponse struct {
@@ -558,13 +559,13 @@ type CLIEmbeddingsPlanResponse struct {
 
 type CLIDeleteStagedPlanRequest struct {
 	BatchID             string `json:"batch_id,omitempty"`
-	Permanent           bool   `json:"permanent,omitempty"`
-	Yes                 bool   `json:"yes,omitempty"`
-	DryRun              bool   `json:"dry_run,omitempty"`
-	List                bool   `json:"list,omitempty"`
+	Permanent           bool   `json:"permanent,omitzero"`
+	Yes                 bool   `json:"yes,omitzero"`
+	DryRun              bool   `json:"dry_run,omitzero"`
+	List                bool   `json:"list,omitzero"`
 	Account             string `json:"account,omitempty"`
-	SourceID            *int64 `json:"source_id,omitempty"`
-	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitempty"`
+	SourceID            *int64 `json:"source_id,omitzero" nullable:"false"`
+	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitzero"`
 }
 
 type CLIDeleteStagedPlanResponse struct {
@@ -574,8 +575,8 @@ type CLIDeleteStagedPlanResponse struct {
 	ConfirmationMode          string   `json:"confirmation_mode,omitempty"`
 	PlannedBatchIDs           []string `json:"planned_batch_ids,omitempty"`
 	PlanFingerprint           string   `json:"plan_fingerprint,omitempty"`
-	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
-	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitzero" nullable:"false"`
+	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitzero"`
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
@@ -598,8 +599,8 @@ type CLIDeduplicatePlanRequest struct {
 	Account                    string `json:"account,omitempty"`
 	Collection                 string `json:"collection,omitempty"`
 	Prefer                     string `json:"prefer,omitempty"`
-	ContentHash                bool   `json:"content_hash,omitempty"`
-	DeleteDupsFromSourceServer bool   `json:"delete_dups_from_source_server,omitempty"`
+	ContentHash                bool   `json:"content_hash,omitzero"`
+	DeleteDupsFromSourceServer bool   `json:"delete_dups_from_source_server,omitzero"`
 }
 
 type CLIDeduplicatePlanResponse struct {
@@ -609,12 +610,12 @@ type CLIDeduplicatePlanResponse struct {
 }
 
 type CLIDeduplicatePlanItem struct {
-	SourceID             int64  `json:"source_id,omitempty"`
+	SourceID             int64  `json:"source_id,omitzero"`
 	ScopeLabel           string `json:"scope_label,omitempty"`
-	ScopeIsCollection    bool   `json:"scope_is_collection,omitempty"`
+	ScopeIsCollection    bool   `json:"scope_is_collection,omitzero"`
 	Stdout               string `json:"stdout,omitempty"`
-	DuplicateMessages    int    `json:"duplicate_messages,omitempty"`
-	PendingBackfillCount int64  `json:"pending_backfill_count,omitempty"`
+	DuplicateMessages    int    `json:"duplicate_messages,omitzero"`
+	PendingBackfillCount int64  `json:"pending_backfill_count,omitzero"`
 	PlanFingerprint      string `json:"plan_fingerprint,omitempty"`
 	NeedsConfirmation    bool   `json:"needs_confirmation"`
 }
@@ -627,12 +628,12 @@ type CLIRunEvent struct {
 
 type cliDeleteDedupedScopeRequest struct {
 	BatchIDs  []string `json:"batch_ids,omitempty"`
-	AllHidden bool     `json:"all_hidden,omitempty"`
+	AllHidden bool     `json:"all_hidden,omitzero"`
 }
 
 type cliDeleteDedupedPlanRequest struct {
 	BatchIDs  []string `json:"batch_ids,omitempty"`
-	AllHidden bool     `json:"all_hidden,omitempty"`
+	AllHidden bool     `json:"all_hidden,omitzero"`
 }
 
 func (r cliDeleteDedupedPlanRequest) scope() cliDeleteDedupedScopeRequest {
@@ -641,8 +642,8 @@ func (r cliDeleteDedupedPlanRequest) scope() cliDeleteDedupedScopeRequest {
 
 type cliDeleteDedupedExecuteRequest struct {
 	BatchIDs           []string                        `json:"batch_ids,omitempty"`
-	AllHidden          bool                            `json:"all_hidden,omitempty"`
-	NoBackup           bool                            `json:"no_backup,omitempty"`
+	AllHidden          bool                            `json:"all_hidden,omitzero"`
+	NoBackup           bool                            `json:"no_backup,omitzero"`
 	ExpectedTotal      *int64                          `json:"expected_total" nullable:"false"`
 	ExpectedBatchCount *int64                          `json:"expected_batch_count" nullable:"false"`
 	ExpectedBatches    []cliDeleteDedupedBatchResponse `json:"expected_batches"`
@@ -675,13 +676,13 @@ type cliDeleteDedupedExecuteResponse struct {
 type cliSearchResponse struct {
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
-	ScopeSourceCount int                    `json:"scope_source_count,omitempty"`
+	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
 	// IndexBuilt/IndexedMessages are only set by daemons that built the FTS
 	// index synchronously inside the request (pre-0.18); current daemons
 	// build in the background and report IndexState instead. Kept in the
 	// schema so new CLIs understand old daemons.
-	IndexBuilt      bool  `json:"index_built,omitempty"`
-	IndexedMessages int64 `json:"indexed_messages,omitempty"`
+	IndexBuilt      bool  `json:"index_built,omitzero"`
+	IndexedMessages int64 `json:"indexed_messages,omitzero"`
 	// IndexState is "checking" while the FTS completeness probe runs and
 	// "building" while a backfill is repopulating the index (results may be
 	// incomplete); empty once the index is known complete.
@@ -717,9 +718,9 @@ type cliIdentityRemoveResponse = identityops.RemoveResult
 
 type cliRebuildFTSEvent struct {
 	Type    string `json:"type"`
-	Done    int64  `json:"done,omitempty"`
-	Total   int64  `json:"total,omitempty"`
-	Indexed int64  `json:"indexed,omitempty"`
+	Done    int64  `json:"done,omitzero"`
+	Total   int64  `json:"total,omitzero"`
+	Indexed int64  `json:"indexed,omitzero"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -810,7 +811,7 @@ type cliIdentityRowResponse struct {
 	Identifier  string     `json:"identifier,omitempty"`
 	Signals     []string   `json:"signals"`
 	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
-	None        bool       `json:"none,omitempty"`
+	None        bool       `json:"none,omitzero"`
 }
 
 type cliAccountResponse struct {
@@ -1244,8 +1245,8 @@ func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req CLIRepairMessageRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1291,8 +1292,8 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CLIRunRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1458,8 +1459,8 @@ func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req CLIAddCalendarPlanRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1481,8 +1482,8 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req CLIEmbeddingsPlanRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1504,8 +1505,8 @@ func (s *Server) handleCLIDeleteStagedPlan(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req CLIDeleteStagedPlanRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1527,8 +1528,8 @@ func (s *Server) handleCLICreateDeletionManifest(w http.ResponseWriter, r *http.
 		return
 	}
 	var manifest deletion.Manifest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&manifest); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &manifest); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -1949,10 +1950,10 @@ func isLowerSHA256(value string) bool {
 func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := json.NewEncoder(w)
+	enc := jsontext.NewEncoder(w)
 	flusher, _ := w.(http.Flusher)
 	return func(event T) error {
-		if err := enc.Encode(event); err != nil {
+		if err := json.MarshalEncode(enc, event, json.Deterministic(true)); err != nil {
 			return err
 		}
 		if flusher != nil {
@@ -2897,9 +2898,9 @@ func (s *Server) importCLIIdentities(
 }
 
 func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Request) {
-	decoder := json.NewDecoder(r.Body)
-	var rawBody json.RawMessage
-	if err := decoder.Decode(&rawBody); err != nil {
+	decoder := jsontext.NewDecoder(r.Body)
+	var rawBody jsontext.Value
+	if err := json.UnmarshalDecode(decoder, &rawBody); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -2911,7 +2912,7 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(rawBody, &fields); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return

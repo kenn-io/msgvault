@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -124,9 +125,9 @@ func runExportDiscord(
 		End:                   end,
 		Containers:            containers,
 	}
-	encoder := json.NewEncoder(cmd.OutOrStdout())
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(envelope); err != nil {
+	encoder := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.EscapeForHTML(false))
+
+	if err := json.MarshalEncode(encoder, envelope, json.Deterministic(true)); err != nil {
 		return fmt.Errorf("encode Discord export: %w", err)
 	}
 	return nil

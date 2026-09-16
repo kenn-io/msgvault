@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 )
+
+// Present empty strings must survive JSON v2 encoding of generated responses.
+var optionalStringJSONTag = regexp.MustCompile("(\\*string\\s+`json:\"[^\"]+),omitempty(\")")
 
 var requiredPointerValidators = [][3]string{
 	{"FileMetadataResponse", "Filename", "f"},
@@ -129,6 +133,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = bytes.Replace(result, attributeJSON,
-		[]byte("json.RawMessage `json:\"json,omitempty\"`"), 1)
+		[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
+	result = optionalStringJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
 	return result, nil
 }

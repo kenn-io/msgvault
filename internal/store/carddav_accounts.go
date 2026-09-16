@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -227,7 +227,7 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 	seenBookIDs := make(map[int64]bool, len(input.Books))
 	for index, discovered := range input.Books {
 		matched := matches[index]
-		versions, err := json.Marshal(discovered.SupportedVCardVersions)
+		versions, err := json.Marshal(discovered.SupportedVCardVersions, json.Deterministic(true))
 		if err != nil {
 			return nil, nil, fmt.Errorf("encode CardDAV supported vCard versions: %w", err)
 		}

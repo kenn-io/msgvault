@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -493,7 +493,7 @@ func (s *Store) PublishDocumentExtraction(
 			return fmt.Errorf("clear staged document units: %w", err)
 		}
 		for _, unit := range publication.Units {
-			headingMarks, err := json.Marshal(unit.HeadingMarks)
+			headingMarks, err := json.Marshal(unit.HeadingMarks, json.Deterministic(true))
 			if err != nil {
 				return fmt.Errorf("encode document unit heading marks: %w", err)
 			}
@@ -511,7 +511,7 @@ func (s *Store) PublishDocumentExtraction(
 			}
 		}
 		for _, chunk := range publication.Chunks {
-			headingPath, err := json.Marshal(chunk.HeadingPath)
+			headingPath, err := json.Marshal(chunk.HeadingPath, json.Deterministic(true))
 			if err != nil {
 				return fmt.Errorf("encode document chunk heading path: %w", err)
 			}
@@ -747,7 +747,7 @@ func persistDocumentExtractionConversion(
 	if err := validateDocumentExtractionConversion(sourceHash, sourceMIME, sourceBytes, conversion); err != nil {
 		return err
 	}
-	spans, err := json.Marshal(conversion.Spans)
+	spans, err := json.Marshal(conversion.Spans, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode document extraction conversion spans: %w", err)
 	}

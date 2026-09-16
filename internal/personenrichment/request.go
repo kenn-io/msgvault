@@ -3,7 +3,7 @@ package personenrichment
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -272,7 +272,7 @@ func PayloadHash(
 	}{
 		ProfileFingerprint: profileFingerprint,
 		Identity:           canonicalIdentity, Targets: canonicalTargets,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode enrichment payload hash input: %w", err)
 	}
@@ -335,7 +335,7 @@ func RequestHash(personID int64, payloadHash string, trigger Trigger) (string, e
 		PayloadHash string      `json:"payload_hash"`
 		Trigger     TriggerKind `json:"trigger_kind"`
 		Generation  string      `json:"trigger_generation"`
-	}{PersonID: personID, PayloadHash: payloadHash, Trigger: trigger.Kind, Generation: trigger.Generation})
+	}{PersonID: personID, PayloadHash: payloadHash, Trigger: trigger.Kind, Generation: trigger.Generation}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode enrichment request hash input: %w", err)
 	}

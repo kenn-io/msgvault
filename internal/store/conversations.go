@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -421,7 +422,7 @@ func (s *Store) SetConversationMemberCount(conversationID int64, count int) erro
 	if err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(count)
+	encoded, err := json.Marshal(count, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode conversation member count: %w", err)
 	}
@@ -443,18 +444,18 @@ func (s *Store) MarkConversationMemberCountUnknown(conversationID int64) error {
 	if err != nil {
 		return err
 	}
-	metadata["member_count_unknown"] = json.RawMessage("true")
+	metadata["member_count_unknown"] = jsontext.Value("true")
 	return s.writeConversationMetadataObject(conversationID, metadata)
 }
 
 // conversationMetadataObject reads the metadata column as a mutable JSON
 // object, so a provider can revise one key without disturbing the others.
-func (s *Store) conversationMetadataObject(conversationID int64) (map[string]json.RawMessage, error) {
+func (s *Store) conversationMetadataObject(conversationID int64) (map[string]jsontext.Value, error) {
 	stored, err := s.GetConversationMetadata(conversationID)
 	if err != nil {
 		return nil, err
 	}
-	metadata := make(map[string]json.RawMessage)
+	metadata := make(map[string]jsontext.Value)
 	if !stored.Valid || strings.TrimSpace(stored.String) == "" {
 		return metadata, nil
 	}
@@ -465,9 +466,9 @@ func (s *Store) conversationMetadataObject(conversationID int64) (map[string]jso
 }
 
 func (s *Store) writeConversationMetadataObject(
-	conversationID int64, metadata map[string]json.RawMessage,
+	conversationID int64, metadata map[string]jsontext.Value,
 ) error {
-	encoded, err := json.Marshal(metadata)
+	encoded, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode conversation metadata (id=%d): %w", conversationID, err)
 	}

@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"strconv"
@@ -87,9 +88,9 @@ type PersonBrief struct {
 	RenderedText     string                             `json:"rendered_text"`
 	RendererPolicy   string                             `json:"renderer_policy"`
 	Sentences        []PersonBriefSentence              `json:"sentences"`
-	Structured       json.RawMessage                    `json:"structured"`
+	Structured       jsontext.Value                     `json:"structured"`
 	Evidence         []store.PersonBriefEvidencePointer `json:"evidence"`
-	Boundary         json.RawMessage                    `json:"boundary"`
+	Boundary         jsontext.Value                     `json:"boundary"`
 	DroppedItemCount int                                `json:"dropped_item_count"`
 	ProgramID        string                             `json:"program_id"`
 	ProgramVersion   string                             `json:"program_version"`
@@ -379,7 +380,7 @@ func (s *Server) personBriefDTO(
 // and confidence values are left as stored. A structure that does not decode
 // is passed through untouched, as it was before, and the sentence map already
 // reports the mismatch.
-func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) json.RawMessage {
+func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext.Value {
 	if len(brief.Structured) == 0 {
 		return personBriefJSON(brief.Structured)
 	}
@@ -404,7 +405,7 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) json.Raw
 	for index := range output.Uncertainties {
 		output.Uncertainties[index].Text = textutil.SanitizeTerminal(output.Uncertainties[index].Text)
 	}
-	encoded, err := json.Marshal(output)
+	encoded, err := json.Marshal(output, json.Deterministic(true))
 	if err != nil {
 		s.logger.Error("person brief structure could not be re-encoded",
 			"person_id", brief.PersonID, "version", brief.Version)
@@ -413,9 +414,9 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) json.Raw
 	return encoded
 }
 
-func personBriefJSON(raw json.RawMessage) json.RawMessage {
+func personBriefJSON(raw jsontext.Value) jsontext.Value {
 	if len(raw) == 0 {
-		return json.RawMessage("null")
+		return jsontext.Value("null")
 	}
 	return raw
 }

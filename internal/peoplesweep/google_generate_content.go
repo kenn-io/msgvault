@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -29,9 +30,9 @@ type googlePart struct {
 }
 
 type googleGenerationConfig struct {
-	MaxOutputTokens  int             `json:"maxOutputTokens"`
-	ResponseMIMEType string          `json:"responseMimeType,omitempty"`
-	ResponseSchema   json.RawMessage `json:"responseSchema,omitempty"`
+	MaxOutputTokens  int            `json:"maxOutputTokens"`
+	ResponseMIMEType string         `json:"responseMimeType,omitempty"`
+	ResponseSchema   jsontext.Value `json:"responseSchema,omitempty"`
 }
 
 // GoogleGenerateContentDriver implements one exact saved Gemini
@@ -76,7 +77,7 @@ func (d *GoogleGenerateContentDriver) Prepare(
 	default:
 		return PreparedStructuredRequest{}, errors.New("google generateContent profile has unsupported output mode")
 	}
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		return PreparedStructuredRequest{}, errors.New("encode inference provider request")
 	}
@@ -84,7 +85,7 @@ func (d *GoogleGenerateContentDriver) Prepare(
 }
 
 type googleGenerateContentEnvelope struct {
-	Candidates     []json.RawMessage `json:"candidates"`
+	Candidates     []jsontext.Value `json:"candidates"`
 	PromptFeedback *struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
@@ -94,18 +95,18 @@ type googleGenerateContentEnvelope struct {
 }
 
 type googleUsageMetadata struct {
-	PromptTokenCount     json.RawMessage `json:"promptTokenCount"`
-	CandidatesTokenCount json.RawMessage `json:"candidatesTokenCount"`
+	PromptTokenCount     jsontext.Value `json:"promptTokenCount"`
+	CandidatesTokenCount jsontext.Value `json:"candidatesTokenCount"`
 }
 
 type googleCandidate struct {
-	Content      json.RawMessage `json:"content"`
-	FinishReason string          `json:"finishReason"`
+	Content      jsontext.Value `json:"content"`
+	FinishReason string         `json:"finishReason"`
 }
 
 type googleCandidateContent struct {
-	Role  string            `json:"role"`
-	Parts []json.RawMessage `json:"parts"`
+	Role  string           `json:"role"`
+	Parts []jsontext.Value `json:"parts"`
 }
 
 func (d *GoogleGenerateContentDriver) GeneratePrepared(
@@ -229,7 +230,7 @@ func applyGoogleUsage(result *DriverResponse, usage *googleUsageMetadata) error 
 	return nil
 }
 
-func extractGoogleCandidate(raw json.RawMessage) (json.RawMessage, error) {
+func extractGoogleCandidate(raw jsontext.Value) (jsontext.Value, error) {
 	var candidate googleCandidate
 	if err := decodeSingleJSON(raw, &candidate); err != nil {
 		return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("decode provider candidate"))
@@ -254,28 +255,28 @@ func extractGoogleCandidate(raw json.RawMessage) (json.RawMessage, error) {
 	if err := decodeSingleJSONUseNumber(candidateJSON, &decoded); err != nil {
 		return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("provider returned invalid structured JSON"))
 	}
-	return append(json.RawMessage(nil), candidateJSON...), nil
+	return append(jsontext.Value(nil), candidateJSON...), nil
 }
 
-func decodeGoogleTextPart(raw json.RawMessage) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') || !decoder.More() {
+func decodeGoogleTextPart(raw jsontext.Value) (string, error) {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.ReadToken()
+	if err != nil || token.Kind() != '{' || decoder.PeekKind() != '"' {
 		return "", errors.New("invalid text part")
 	}
-	name, err := decoder.Token()
-	if err != nil || name != "text" {
+	name, err := decoder.ReadToken()
+	if err != nil || name.String() != "text" {
 		return "", errors.New("invalid text part")
 	}
 	var text string
-	if err := decoder.Decode(&text); err != nil || decoder.More() {
+	if err := json.UnmarshalDecode(decoder, &text); err != nil || (decoder.PeekKind() != '}' && decoder.PeekKind() != ']' && decoder.PeekKind() != 0) {
 		return "", errors.New("invalid text part")
 	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') {
+	closing, err := decoder.ReadToken()
+	if err != nil || closing.Kind() != '}' {
 		return "", errors.New("invalid text part")
 	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
 		return "", errors.New("invalid text part")
 	}
 	return text, nil

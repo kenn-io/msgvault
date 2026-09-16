@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -368,7 +369,7 @@ func probeCircleback(cmd *cobra.Command, src *config.CirclebackSource) error {
 
 type circlebackProbeSession interface {
 	ToolInventory(ctx context.Context) ([]circleback.ToolInfo, error)
-	CallToolJSON(ctx context.Context, name string, args map[string]any) (json.RawMessage, error)
+	CallToolJSON(ctx context.Context, name string, args map[string]any) (jsontext.Value, error)
 }
 
 // runCirclebackProbe prints the provider contract before making one read-only
@@ -381,7 +382,7 @@ func runCirclebackProbe(ctx context.Context, out io.Writer, session circlebackPr
 	}
 	_, _ = fmt.Fprintln(out, "Tools:")
 	for _, tool := range tools {
-		schema, err := json.MarshalIndent(tool.InputSchema, "", "  ")
+		schema, err := json.Marshal(tool.InputSchema, jsontext.WithIndent("  "), json.Deterministic(true))
 		if err != nil {
 			return fmt.Errorf("format input schema for Circleback tool %s: %w", tool.Name, err)
 		}

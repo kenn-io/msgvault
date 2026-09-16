@@ -1,7 +1,8 @@
 package personfacts
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -26,7 +27,7 @@ func EvidenceKey(input EvidenceInput) (string, error) {
 	if err := validateEvidenceInput(input); err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(evidenceKeyView(input))
+	encoded, err := json.Marshal(evidenceKeyView(input), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode evidence key: %w", err)
 	}

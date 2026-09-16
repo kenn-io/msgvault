@@ -2,7 +2,7 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,7 +19,7 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 		store.DirectoryPeopleSortLastContactDesc,
 		store.DirectoryPeopleSortLastContactAsc,
 	)
-	sort.Default = json.RawMessage(`"last_contact_desc"`)
+	sort.Default = jsontext.Value(`"last_contact_desc"`)
 	definition := readDefinition(
 		ToolListDirectoryPeople,
 		"List durable people from the Directory, ordered by name or last contact. Search observed contacts separately with search_people.",

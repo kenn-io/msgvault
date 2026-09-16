@@ -28,7 +28,7 @@ func newMCPStatusCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return json.MarshalWrite(command.OutOrStdout(), endpoints)
+				return json.MarshalWrite(command.OutOrStdout(), endpoints, json.Deterministic(true))
 			}
 			if len(endpoints) == 0 {
 				_, err := fmt.Fprintln(command.OutOrStdout(), "No HTTP MCP listeners are running.")

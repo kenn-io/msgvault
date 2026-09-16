@@ -5,7 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -161,7 +161,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		for i, term := range req.Filter.SubjectSubstrings {
 			patterns[i] = "%" + escapeLikeSubject(term) + "%"
 		}
-		buf, err := json.Marshal(patterns)
+		buf, err := json.Marshal(patterns, json.Deterministic(true))
 		if err != nil {
 			return nil, false, fmt.Errorf("encode subject patterns: %w", err)
 		}
@@ -173,7 +173,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		for i, term := range req.Filter.ListIDSubstrings {
 			patterns[i] = "%" + escapeLikeSubject(term) + "%"
 		}
-		buf, err := json.Marshal(patterns)
+		buf, err := json.Marshal(patterns, json.Deterministic(true))
 		if err != nil {
 			return nil, false, fmt.Errorf("encode list id patterns: %w", err)
 		}
@@ -185,7 +185,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	}
 	var exactListIDGroups sql.NullString
 	if len(req.Filter.ListIDExactGroups) > 0 {
-		buf, err := json.Marshal(req.Filter.ListIDExactGroups)
+		buf, err := json.Marshal(req.Filter.ListIDExactGroups, json.Deterministic(true))
 		if err != nil {
 			return nil, false, fmt.Errorf("encode exact list id groups: %w", err)
 		}
@@ -592,7 +592,7 @@ func idsToJSON(ids []int64) (sql.NullString, error) {
 	if len(ids) == 0 {
 		return sql.NullString{}, nil
 	}
-	buf, err := json.Marshal(ids)
+	buf, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("marshal ids: %w", err)
 	}
@@ -604,7 +604,7 @@ func stringsToJSON(values []string) (sql.NullString, error) {
 	if len(values) == 0 {
 		return sql.NullString{}, nil
 	}
-	buf, err := json.Marshal(values)
+	buf, err := json.Marshal(values, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("marshal strings: %w", err)
 	}

@@ -13,7 +13,7 @@ const exploreFilesMaxLimit = 100
 type ExploreFilesHTTPRequest struct {
 	Predicate ExploreHTTPRequest `json:"predicate"`
 	Cursor    string             `json:"cursor,omitempty"`
-	Limit     int                `json:"limit,omitempty" minimum:"0" maximum:"100"`
+	Limit     int                `json:"limit,omitzero" minimum:"0" maximum:"100"`
 }
 
 type ExploreFilesHTTPResponse struct {

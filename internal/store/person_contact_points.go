@@ -13,23 +13,23 @@ type PersonContactPoint struct {
 	Envelope             ValueEnvelope      `json:"envelope"`
 	PersonID             int64              `json:"person_id"`
 	AddressKind          ContactAddressKind `json:"address_kind"`
-	ServiceSlug          *string            `json:"service_slug,omitempty"`
-	ScopeKind            *string            `json:"scope_kind,omitempty"`
-	ScopeValue           *string            `json:"scope_value,omitempty"`
+	ServiceSlug          *string            `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind            *string            `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue           *string            `json:"scope_value,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
 	NormalizedValue      string             `json:"normalized_value"`
 	Normalization        string             `json:"normalization"`
 	NormalizationVersion int                `json:"normalization_version"`
-	URI                  *string            `json:"uri,omitempty"`
+	URI                  *string            `json:"uri,omitzero" nullable:"false"`
 }
 
 type PersonContactPointInput struct {
 	AddressKind   ContactAddressKind `json:"address_kind"`
-	ServiceSlug   *string            `json:"service_slug,omitempty"`
-	ScopeKind     *string            `json:"scope_kind,omitempty"`
-	ScopeValue    *string            `json:"scope_value,omitempty"`
+	ServiceSlug   *string            `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind     *string            `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue    *string            `json:"scope_value,omitzero" nullable:"false"`
 	OriginalValue string             `json:"original_value"`
-	URI           *string            `json:"uri,omitempty"`
+	URI           *string            `json:"uri,omitzero" nullable:"false"`
 	Envelope      ValueEnvelopeInput `json:"envelope"`
 }
 

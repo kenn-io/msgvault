@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +37,7 @@ type ParsedBrief struct {
 // structured item that cites unknown evidence or fails an attribution rule is
 // dropped and counted, because the rest of the brief is still usable.
 func ParseBrief(
-	output json.RawMessage,
+	output jsontext.Value,
 	window BriefWindow,
 	profile ProviderProfile,
 ) (ParsedBrief, error) {
@@ -48,12 +49,12 @@ func ParseBrief(
 		return ParsedBrief{}, err
 	}
 	var candidate BriefOutput
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&candidate); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(output), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &candidate); err != nil {
 		return ParsedBrief{}, errors.New("decode person brief output")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return ParsedBrief{}, errors.New("person brief output contains trailing JSON")
 	}
 
@@ -310,7 +311,7 @@ func briefPacketFromWindow(window BriefWindow) (EvidencePacket, error) {
 	return packet, nil
 }
 
-func validateBriefOutput(output json.RawMessage) error {
+func validateBriefOutput(output jsontext.Value) error {
 	var schema jsonschema.Schema
 	if err := decodeSingleJSON(briefSchema, &schema); err != nil {
 		return errors.New("frozen person brief schema is invalid")

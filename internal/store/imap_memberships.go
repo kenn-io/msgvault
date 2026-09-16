@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -304,7 +304,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("capture replaced IMAP membership: %w", err)
 				}
 
-				flagsJSON, err := json.Marshal(flags)
+				flagsJSON, err := json.Marshal(flags, json.Deterministic(true))
 				if err != nil {
 					return fmt.Errorf("marshal IMAP flags: %w", err)
 				}

@@ -59,10 +59,10 @@ type PersonFactEvidence struct {
 	Authority       personfacts.EvidenceAuthority   `json:"authority"`
 	SourceRef       string                          `json:"source_ref" nullable:"true"`
 	SourceURL       string                          `json:"source_url" nullable:"true"`
-	SubjectPersonID *int64                          `json:"subject_person_id,omitempty" nullable:"true"`
+	SubjectPersonID *int64                          `json:"subject_person_id,omitzero" nullable:"true"`
 	SubjectRef      string                          `json:"subject_ref" nullable:"true"`
-	SpanStart       *int64                          `json:"span_start,omitempty" nullable:"true"`
-	SpanEnd         *int64                          `json:"span_end,omitempty" nullable:"true"`
+	SpanStart       *int64                          `json:"span_start,omitzero" nullable:"true"`
+	SpanEnd         *int64                          `json:"span_end,omitzero" nullable:"true"`
 	Excerpt         string                          `json:"excerpt" nullable:"true"`
 	ContentSHA256   string                          `json:"content_sha256" nullable:"true"`
 	SourceVersion   string                          `json:"source_version" nullable:"true"`
@@ -70,7 +70,7 @@ type PersonFactEvidence struct {
 	RecordedTime    time.Time                       `json:"recorded_time"`
 	IdentityScore   int                             `json:"identity_score"`
 	Supported       bool                            `json:"supported"`
-	LatestStatus    *PersonFactEvidenceStatusEvent  `json:"latest_status,omitempty"`
+	LatestStatus    *PersonFactEvidenceStatusEvent  `json:"latest_status,omitzero" nullable:"false"`
 	CreatedAt       time.Time                       `json:"created_at"`
 }
 
@@ -84,8 +84,8 @@ type PersonFactClaim struct {
 	Target             personfacts.TargetRef        `json:"target"`
 	Relation           personfacts.ClaimRelation    `json:"relation"`
 	SubmittedValue     string                       `json:"submitted_value"`
-	NormalizedValue    *string                      `json:"normalized_value,omitempty" nullable:"true"`
-	ValueFingerprint   *string                      `json:"value_fingerprint,omitempty" nullable:"true"`
+	NormalizedValue    *string                      `json:"normalized_value,omitzero" nullable:"true"`
+	ValueFingerprint   *string                      `json:"value_fingerprint,omitzero" nullable:"true"`
 	EvidenceIDs        []int64                      `json:"evidence_ids"`
 	ValidFrom          *time.Time                   `json:"valid_from,omitempty" nullable:"true"`
 	ValidUntil         *time.Time                   `json:"valid_until,omitempty" nullable:"true"`
@@ -103,7 +103,7 @@ type PersonFactDecision struct {
 	Reason            personfacts.DecisionReason `json:"reason"`
 	Score             PersonFactScoreBreakdown   `json:"score"`
 	CompetingClaimKey string                     `json:"competing_claim_key,omitempty"`
-	Projection        *personfacts.ProjectionRef `json:"projection,omitempty"`
+	Projection        *personfacts.ProjectionRef `json:"projection,omitzero" nullable:"false"`
 	CreatedAt         time.Time                  `json:"created_at"`
 }
 

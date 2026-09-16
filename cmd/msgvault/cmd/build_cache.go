@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -1608,7 +1608,7 @@ func buildCacheLocked(
 		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,
 	}
-	stateData, err := json.Marshal(state)
+	stateData, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}

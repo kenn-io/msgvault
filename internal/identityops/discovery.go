@@ -70,10 +70,10 @@ type RejectedCandidate struct {
 type DiscoverRequest struct {
 	SourceSelector
 
-	Apply    bool     `json:"apply,omitempty"`
-	Provider bool     `json:"provider,omitempty"`
+	Apply    bool     `json:"apply,omitzero"`
+	Provider bool     `json:"provider,omitzero"`
 	Confirm  []string `json:"confirm,omitempty"`
-	PageSize int      `json:"page_size,omitempty"`
+	PageSize int      `json:"page_size,omitzero"`
 }
 
 // ExternalEvidence is provider- or import-supplied identity evidence. State is
@@ -122,9 +122,9 @@ func (e *DiscoverError) Error() string {
 
 type DiscoverEvent struct {
 	Type     string            `json:"type" enum:"progress,result,error"`
-	Progress *DiscoverProgress `json:"progress,omitempty"`
-	Result   *DiscoverResult   `json:"result,omitempty"`
-	Error    *DiscoverError    `json:"error,omitempty"`
+	Progress *DiscoverProgress `json:"progress,omitzero"`
+	Result   *DiscoverResult   `json:"result,omitzero"`
+	Error    *DiscoverError    `json:"error,omitzero"`
 }
 
 type candidateAccumulator struct {

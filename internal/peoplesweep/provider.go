@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -29,7 +29,7 @@ type StructuredRequest struct {
 	ContainsSensitive bool               `json:"contains_sensitive"`
 	InputText         string             `json:"input_text"`
 	SchemaName        string             `json:"schema_name"`
-	JSONSchema        json.RawMessage    `json:"json_schema"`
+	JSONSchema        jsontext.Value     `json:"json_schema"`
 	MaxOutputTokens   int                `json:"max_output_tokens"`
 	repair            bool
 }
@@ -45,7 +45,7 @@ type TokenUsage struct {
 // metadata. UsageKnown distinguishes an omitted usage object from reported
 // zero usage.
 type DriverResponse struct {
-	CandidateJSON     json.RawMessage
+	CandidateJSON     jsontext.Value
 	ProviderRequestID string
 	ProviderVersion   string
 	ModelVersion      string
@@ -55,19 +55,19 @@ type DriverResponse struct {
 
 // StructuredResponse contains only locally validated JSON and safe provider metadata.
 type StructuredResponse struct {
-	Output            json.RawMessage `json:"output"`
-	ProviderRequestID string          `json:"provider_request_id,omitempty"`
-	ProviderVersion   string          `json:"provider_version"`
-	ModelVersion      string          `json:"model_version"`
-	Usage             TokenUsage      `json:"usage"`
-	UsageKnown        bool            `json:"usage_known"`
+	Output            jsontext.Value `json:"output"`
+	ProviderRequestID string         `json:"provider_request_id,omitempty"`
+	ProviderVersion   string         `json:"provider_version"`
+	ModelVersion      string         `json:"model_version"`
+	Usage             TokenUsage     `json:"usage"`
+	UsageKnown        bool           `json:"usage_known"`
 	execution         *runnerExecutionSession
 }
 
 // ValidationFailure retains only the bounded candidate and bounded local
 // diagnostics needed to prepare one repair. Error never exposes those bytes.
 type ValidationFailure struct { //nolint:errname // Public error type retained for compatibility with existing consumers.
-	Candidate json.RawMessage
+	Candidate jsontext.Value
 	Errors    []string
 	repair    bool
 	summary   string
@@ -233,7 +233,7 @@ func (p PreparedStructuredRequest) validateWireHash() error {
 
 func cloneStructuredRequest(request StructuredRequest) StructuredRequest {
 	request.Sources = append([]SourceDescriptor(nil), request.Sources...)
-	request.JSONSchema = append(json.RawMessage(nil), request.JSONSchema...)
+	request.JSONSchema = append(jsontext.Value(nil), request.JSONSchema...)
 	return request
 }
 

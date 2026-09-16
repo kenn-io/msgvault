@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,9 +25,9 @@ type PersonAttributeValue struct {
 	CreatedAt      time.Time      `json:"created_at"`
 	SupersededAt   *time.Time     `json:"superseded_at,omitempty"`
 	Source         Provenance     `json:"source"`
-	SourceRef      *string        `json:"source_ref,omitempty"`
-	Confidence     *float64       `json:"confidence,omitempty"`
-	Actor          *string        `json:"actor,omitempty"`
+	SourceRef      *string        `json:"source_ref,omitzero" nullable:"false"`
+	Confidence     *float64       `json:"confidence,omitzero" nullable:"false"`
+	Actor          *string        `json:"actor,omitzero" nullable:"false"`
 }
 
 // PersonAttributeValueInput sets one typed person attribute value.
@@ -59,8 +59,8 @@ type PersonAttributeSupersedeInput struct {
 
 // PersonAttributeWrite describes a set or supersede result.
 type PersonAttributeWrite struct {
-	Value      *PersonAttributeValue `json:"value,omitempty"`
-	Superseded *PersonAttributeValue `json:"superseded,omitempty"`
+	Value      *PersonAttributeValue `json:"value,omitzero" nullable:"false"`
+	Superseded *PersonAttributeValue `json:"superseded,omitzero" nullable:"false"`
 	DryRun     bool                  `json:"dry_run"`
 }
 
@@ -622,7 +622,7 @@ func scanPersonAttributeValue(row scanner) (*PersonAttributeValue, error) {
 		value.Value.Timestamp = &utc
 	}
 	if len(rawJSON) > 0 {
-		value.Value.JSON = json.RawMessage(append([]byte(nil), rawJSON...))
+		value.Value.JSON = jsontext.Value(append([]byte(nil), rawJSON...))
 	}
 	if recordType.Valid {
 		value.Value.RecordType = &recordType.String

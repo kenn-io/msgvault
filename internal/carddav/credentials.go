@@ -2,7 +2,8 @@ package carddav
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,11 +23,11 @@ var ErrCredentialNotBound = errors.New("CardDAV credential is not bound to a con
 // until config, token, and database all describe the same connection.
 type Credential struct {
 	Password             string `json:"password,omitempty"`
-	Google               bool   `json:"google,omitempty"`
+	Google               bool   `json:"google,omitzero"`
 	OAuthApp             string `json:"oauth_app,omitempty"`
 	BaseURL              string `json:"base_url,omitempty"`
 	Username             string `json:"username,omitempty"`
-	ConnectionGeneration int64  `json:"connection_generation,omitempty"`
+	ConnectionGeneration int64  `json:"connection_generation,omitzero"`
 }
 
 // CredentialFileSnapshot retains the exact published credential bytes long
@@ -105,7 +106,7 @@ func RemoveCredential(tokenDir string) error {
 func saveCredentialWithPermissions(tokenDir string, credential Credential, permissions credentialPermissionBackend) error {
 	var encoded bytes.Buffer
 	// #nosec G117 -- The credential is intentionally marshaled only into the private token-file buffer.
-	if err := json.NewEncoder(&encoded).Encode(credential); err != nil {
+	if err := json.MarshalWrite(&encoded, credential, json.Deterministic(true)); err != nil {
 		return fmt.Errorf("encode CardDAV token file: %w", err)
 	}
 	return saveCredentialBytesWithPermissions(tokenDir, encoded.Bytes(), permissions)
@@ -202,10 +203,10 @@ func loadCredentialWithPermissions(tokenDir string, permissions credentialPermis
 	if err := permissions.verifyFile(file); err != nil {
 		return Credential{}, fmt.Errorf("verify CardDAV token file permissions: %w", err)
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, maximumCredentialFileBytes))
-	decoder.DisallowUnknownFields()
+	decoder := jsontext.NewDecoder(io.LimitReader(file, maximumCredentialFileBytes), json.RejectUnknownMembers(true))
+
 	var saved Credential
-	if err := decoder.Decode(&saved); err != nil {
+	if err := json.UnmarshalDecode(decoder, &saved); err != nil {
 		return Credential{}, fmt.Errorf("decode CardDAV token file: %w", err)
 	}
 	if saved.Google && saved.Password != "" {

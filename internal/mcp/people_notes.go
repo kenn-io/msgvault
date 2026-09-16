@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -29,12 +29,12 @@ type searchPeopleResponse struct {
 type searchPeopleRow struct {
 	query.PersonSummary
 
-	PersonID int64 `json:"person_id,omitempty"`
+	PersonID int64 `json:"person_id,omitzero"`
 }
 
 type searchPeopleCursor struct {
 	Phase               string `json:"phase"`
-	ProfileOffset       int    `json:"profile_offset,omitempty"`
+	ProfileOffset       int    `json:"profile_offset,omitzero"`
 	ObservedCursor      string `json:"observed_cursor,omitempty"`
 	Query               string `json:"query"`
 	Limit               int    `json:"limit"`
@@ -339,7 +339,7 @@ func decodeSearchPeopleCursor(
 }
 
 func encodeSearchPeopleCursor(cursor searchPeopleCursor) (string, error) {
-	data, err := json.Marshal(cursor)
+	data, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}

@@ -50,11 +50,11 @@ type CreateRelationshipTypeRequest struct {
 	Slug             string  `json:"slug"`
 	ForwardLabel     string  `json:"forward_label"`
 	ReverseLabel     string  `json:"reverse_label"`
-	IsSymmetric      bool    `json:"is_symmetric,omitempty"`
-	VCardRelatedType *string `json:"vcard_related_type,omitempty" nullable:"true"`
-	Color            *string `json:"color,omitempty" nullable:"true"`
-	Icon             *string `json:"icon,omitempty" nullable:"true"`
-	Description      *string `json:"description,omitempty" nullable:"true"`
+	IsSymmetric      bool    `json:"is_symmetric,omitzero"`
+	VCardRelatedType *string `json:"vcard_related_type,omitzero" nullable:"true"`
+	Color            *string `json:"color,omitzero" nullable:"true"`
+	Icon             *string `json:"icon,omitzero" nullable:"true"`
+	Description      *string `json:"description,omitzero" nullable:"true"`
 }
 
 type PatchRelationshipTypeRequest struct {
@@ -70,14 +70,14 @@ type CreatePersonRelationshipRequest struct {
 	SourcePersonID       int64   `json:"source_person_id"`
 	TargetPersonID       int64   `json:"target_person_id"`
 	RelationshipTypeSlug string  `json:"relationship_type_slug"`
-	StartDate            *string `json:"start_date,omitempty"`
-	EndDate              *string `json:"end_date,omitempty"`
-	Notes                *string `json:"notes,omitempty" nullable:"true"`
+	StartDate            *string `json:"start_date,omitzero" nullable:"false"`
+	EndDate              *string `json:"end_date,omitzero" nullable:"false"`
+	Notes                *string `json:"notes,omitzero" nullable:"true"`
 }
 
 type PatchPersonRelationshipRequest struct {
-	EndDate *string `json:"end_date,omitempty"`
-	Notes   *string `json:"notes,omitempty" nullable:"true"`
+	EndDate *string `json:"end_date,omitzero" nullable:"false"`
+	Notes   *string `json:"notes,omitzero" nullable:"true"`
 }
 
 func (s *Server) registerPersonRelationshipRoutes(api huma.API) {

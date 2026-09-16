@@ -2,7 +2,8 @@ package personfacts
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"sort"
 	"strings"
@@ -54,7 +55,7 @@ func BuildCatalog(definitions []Definition, opts CatalogOptions) (Catalog, error
 func DescriptorRevision(target TargetDescriptor) (string, error) {
 	target = canonicalTarget(target)
 	target.Revision = ""
-	encoded, err := json.Marshal(target)
+	encoded, err := json.Marshal(target, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode descriptor revision: %w", err)
 	}
@@ -64,7 +65,7 @@ func DescriptorRevision(target TargetDescriptor) (string, error) {
 // CatalogFingerprint hashes the sorted target descriptors, including their
 // descriptor revisions.
 func CatalogFingerprint(targets []TargetDescriptor) (string, error) {
-	encoded, err := json.Marshal(canonicalTargets(targets))
+	encoded, err := json.Marshal(canonicalTargets(targets), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode catalog fingerprint: %w", err)
 	}

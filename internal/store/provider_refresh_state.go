@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -96,7 +96,7 @@ func (s *Store) RecordProviderIdentityRefreshOutcomeContext(
 				FailedAt:      now,
 			}
 		}
-		encoded, err := json.Marshal(marker)
+		encoded, err := json.Marshal(marker, json.Deterministic(true))
 		if err != nil {
 			return fmt.Errorf("encode provider identity refresh state: %w", err)
 		}

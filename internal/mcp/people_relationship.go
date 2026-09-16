@@ -25,7 +25,7 @@ type getPersonRelationshipResponse struct {
 	EffectiveDate    string                                   `json:"effective_date"`
 	CacheRevision    string                                   `json:"cache_revision"`
 	IdentityRevision int64                                    `json:"identity_revision"`
-	Year             *int                                     `json:"year,omitempty"`
+	Year             *int                                     `json:"year,omitzero"`
 	Timezone         string                                   `json:"timezone,omitempty"`
 	Days             []query.RelationshipCalendarDay          `json:"days,omitempty"`
 }

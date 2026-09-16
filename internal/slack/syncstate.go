@@ -1,7 +1,7 @@
 package slack
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -18,7 +18,7 @@ type PendingThread struct {
 	// run budget at recording time and converted to actuals as the drain
 	// fetches replies. Pacing and progress only — never a completeness
 	// signal (counts can be stale).
-	Forecast int `json:"forecast,omitempty"`
+	Forecast int `json:"forecast,omitzero"`
 	// Floor is the entry's coverage claim: replies are owed strictly after
 	// it ("" = from the root, the walks' full-drain claim; tail entries
 	// carry their seed). The entry has covered (Floor, DrainedTo] and will
@@ -45,7 +45,7 @@ type ConvState struct {
 	Cursor         string `json:"cursor,omitempty"`
 	BackfillCursor string `json:"backfill_cursor,omitempty"`
 	BackfillLatest string `json:"backfill_latest,omitempty"`
-	Done           bool   `json:"done,omitempty"`
+	Done           bool   `json:"done,omitzero"`
 	// ThreadsPending marks conversation-level thread debt: any initial
 	// walk under --no-threads (unconditionally — a message can become a
 	// thread root after the walk), or a non-channel conversation
@@ -56,7 +56,7 @@ type ConvState struct {
 	// the walk was started under — page cursors are only valid against the
 	// bound they were minted with), so limited runs drain the walk across
 	// runs instead of restarting it.
-	ThreadsPending bool   `json:"threads_pending,omitempty"`
+	ThreadsPending bool   `json:"threads_pending,omitzero"`
 	CatchUpCursor  string `json:"catch_up_cursor,omitempty"`
 	CatchUpLatest  string `json:"catch_up_latest,omitempty"`
 	// TruncatedSweepThrough is the exclusive day boundary through which a
@@ -86,7 +86,7 @@ type ConvState struct {
 	AuditedThrough string `json:"audited_through,omitempty"`
 	// AuditPending distinguishes a periodic canonical audit from other
 	// ThreadsPending causes so completion can advance AuditedThrough.
-	AuditPending bool `json:"audit_pending,omitempty"`
+	AuditPending bool `json:"audit_pending,omitzero"`
 }
 
 // SyncState holds per-conversation cursors plus the reply-sweep watermark
@@ -108,14 +108,14 @@ type SyncState struct {
 	// SweepOffset records the user tz_offset (seconds) in effect when the
 	// watermark was written. Audit trail only: sweep-day arithmetic always
 	// uses the IANA zone current at query time (probed live).
-	SweepOffset int `json:"sweep_offset,omitempty"`
+	SweepOffset int `json:"sweep_offset,omitzero"`
 	// RepairPending marks an in-flight --full repair session. While set,
 	// every run — full, plain, or limited — continues the repair through
 	// the ordinary resumable walks; it clears when every eligible
 	// conversation is Done with all thread debt paid. The --full reset it
 	// rides on needs no lineage marker: resume selection is newest-blob-
 	// wins (see loadResumeState), so the reset state simply supersedes.
-	RepairPending bool `json:"repair_pending,omitempty"`
+	RepairPending bool `json:"repair_pending,omitzero"`
 }
 
 func NewSyncState() *SyncState {
@@ -155,7 +155,7 @@ func LoadSyncState(blob string) (*SyncState, error) {
 }
 
 func (s *SyncState) Marshal() (string, error) {
-	b, err := json.Marshal(s)
+	b, err := json.Marshal(s, json.Deterministic(true))
 	return string(b), err
 }
 

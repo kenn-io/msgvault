@@ -2,7 +2,7 @@ package beeper
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -93,12 +93,12 @@ const maxSourceTranscriptMetadataBytes = 32 * 1024
 type sourceTranscriptMetadata struct {
 	Provider  string `json:"provider"`
 	Text      string `json:"text"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Truncated bool   `json:"truncated,omitzero"`
 }
 
 type attachmentMetadata struct {
 	SharedURL        string                    `json:"shared_url,omitempty"`
-	SourceTranscript *sourceTranscriptMetadata `json:"source_transcript,omitempty"`
+	SourceTranscript *sourceTranscriptMetadata `json:"source_transcript,omitzero"`
 }
 
 func truncateUTF8(s string, maxBytes int) (string, bool) {
@@ -131,7 +131,7 @@ func attachmentMetadataJSON(m *Message, att *Attachment) string {
 	}
 	// Marshal rather than concatenate: provider values are untrusted input and
 	// must not be able to break out of a JSON value.
-	b, err := json.Marshal(metadata)
+	b, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
 		return ""
 	}

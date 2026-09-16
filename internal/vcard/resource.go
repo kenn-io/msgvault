@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -22,9 +22,9 @@ type PropertyIdentity struct {
 	Ordinal      int      `json:"ordinal"`
 	Group        string   `json:"group,omitempty"`
 	OriginalName string   `json:"original_name,omitempty"`
-	PropID       *string  `json:"prop_id,omitempty"`
+	PropID       *string  `json:"prop_id,omitzero"`
 	PID          []string `json:"pid,omitempty"`
-	AltID        *string  `json:"altid,omitempty"`
+	AltID        *string  `json:"altid,omitzero"`
 }
 
 // IsZero reports whether the identity has not been assigned.
@@ -37,7 +37,7 @@ func (i PropertyIdentity) IsZero() bool {
 // here deliberately: unlike a property name, it includes every wire identity
 // component and the immutable occurrence ordinal.
 func (i PropertyIdentity) Key() string {
-	data, err := json.Marshal(i)
+	data, err := json.Marshal(i, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Sprintf("marshal property identity: %v", err))
 	}
@@ -90,7 +90,7 @@ type PropertyEdit struct {
 	Identity        PropertyIdentity `json:"identity"`
 	Property        Property         `json:"property"`
 	OwnedParameters []string         `json:"owned_parameters,omitempty"`
-	Delete          bool             `json:"delete,omitempty"`
+	Delete          bool             `json:"delete,omitzero"`
 }
 
 // NativeMapping records which typed/native record owns one property. The
@@ -100,7 +100,7 @@ type NativeMapping struct {
 	Identity  PropertyIdentity `json:"identity"`
 	SourceRef string           `json:"source_ref,omitempty"`
 	Table     string           `json:"table,omitempty"`
-	RowID     int64            `json:"row_id,omitempty"`
+	RowID     int64            `json:"row_id,omitzero"`
 	Field     string           `json:"field,omitempty"`
 	Kind      HandlingStrategy `json:"kind,omitempty"`
 }
@@ -110,7 +110,7 @@ type NativeMapping struct {
 type RenderMetadata struct {
 	CanonicalVersion Version `json:"canonical_version"`
 	StoredVersion    Version `json:"stored_version"`
-	RenderRequired   bool    `json:"render_required,omitempty"`
+	RenderRequired   bool    `json:"render_required,omitzero"`
 	Revision         int64   `json:"revision"`
 }
 

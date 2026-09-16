@@ -52,10 +52,10 @@ type NetworkEdge struct {
 	Kind                 string  `json:"kind" enum:"relationship,employment"`
 	SourceNodeID         string  `json:"source_node_id"`
 	TargetNodeID         string  `json:"target_node_id"`
-	RelationshipTypeSlug *string `json:"relationship_type_slug,omitempty"`
+	RelationshipTypeSlug *string `json:"relationship_type_slug,omitzero" nullable:"false"`
 	Label                string  `json:"label"`
-	StartDate            *string `json:"start_date,omitempty"`
-	EndDate              *string `json:"end_date,omitempty"`
+	StartDate            *string `json:"start_date,omitzero" nullable:"false"`
+	EndDate              *string `json:"end_date,omitzero" nullable:"false"`
 }
 
 // GetPersonNetworkContext returns a deterministic, breadth-first projection

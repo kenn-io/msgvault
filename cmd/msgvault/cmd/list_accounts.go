@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strconv"
@@ -128,9 +129,9 @@ func outputAccountsJSON(stats []accountStats) error {
 		output[i] = entry
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(output)
+	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, output, json.Deterministic(true))
 }
 
 // formatCount formats a number with thousand separators.

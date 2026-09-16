@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -81,7 +81,7 @@ type EmlxImportSummary struct {
 
 type emlxCheckpoint struct {
 	Phase        string `json:"phase,omitempty"`
-	ReplyAfterID int64  `json:"reply_after_id,omitempty"`
+	ReplyAfterID int64  `json:"reply_after_id,omitzero"`
 	RootDir      string `json:"root_dir"`
 	MailboxIndex int    `json:"mailbox_index"`
 	MailboxPath  string `json:"mailbox_path,omitempty"`
@@ -678,7 +678,7 @@ func saveEmlxCheckpointPhase(st *store.Store, syncID int64,
 		MailboxIndex: mboxIdx,
 		MailboxPath:  mboxPath,
 		LastFile:     lastFile,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}

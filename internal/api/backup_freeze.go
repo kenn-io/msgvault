@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"sync"
@@ -147,8 +148,8 @@ func (s *Server) handleBackupFreezeEnd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req backupFreezeEndRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}

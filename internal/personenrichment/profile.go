@@ -3,7 +3,8 @@ package personenrichment
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -38,7 +39,17 @@ type ProviderProfile struct {
 	MaxCostUSDMicrosPerPersonPerDay int64                          `json:"max_cost_usd_micros_per_person_per_day"`
 	MaxCostUSDMicrosPerRun          int64                          `json:"max_cost_usd_micros_per_run"`
 	MaxCostUSDMicrosPerDay          int64                          `json:"max_cost_usd_micros_per_day"`
-	PolicyJSON                      json.RawMessage                `json:"policy"`
+	PolicyJSON                      jsontext.Value                 `json:"policy"`
+}
+
+// MarshalJSONTo keeps refresh_interval in nanoseconds in profile output.
+func (p ProviderProfile) MarshalJSONTo(encoder *jsontext.Encoder) error {
+	type profileJSON ProviderProfile
+	return json.MarshalEncode(encoder, struct {
+		profileJSON
+
+		RefreshInterval int64 `json:"refresh_interval"`
+	}{profileJSON(p), int64(p.RefreshInterval)})
 }
 
 type providerPolicy struct {
@@ -56,7 +67,7 @@ type providerPolicy struct {
 	AllowSensitiveTargets           bool                           `json:"allow_sensitive_targets"`
 	RetentionPosture                string                         `json:"retention_posture"`
 	TrainingPosture                 string                         `json:"training_posture"`
-	RefreshInterval                 time.Duration                  `json:"refresh_interval"`
+	RefreshInterval                 int64                          `json:"refresh_interval"`
 	MaxRequestsPerRun               int64                          `json:"max_requests_per_run"`
 	MaxRequestsPerDay               int64                          `json:"max_requests_per_day"`
 	MaxCostUSDMicrosPerPersonPerDay int64                          `json:"max_cost_usd_micros_per_person_per_day"`
@@ -93,7 +104,7 @@ func (c ProviderConfig) ProviderNamespace() (string, error) {
 	}
 	encoded, err := json.Marshal(providerNamespaceInput{
 		Kind: c.Kind, Endpoint: endpoint, PollEndpoint: pollEndpoint,
-	})
+	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode provider namespace: %w", err)
 	}
@@ -109,7 +120,7 @@ func (p ProviderProfile) Validate() error {
 	if strings.TrimSpace(p.Name) == "" {
 		return errors.New("provider profile name is required")
 	}
-	if !json.Valid(p.PolicyJSON) {
+	if !p.PolicyJSON.IsValid() {
 		return errors.New("provider profile policy is not valid JSON")
 	}
 	digest := sha256.Sum256(p.PolicyJSON)
@@ -140,7 +151,7 @@ func (p ProviderProfile) Validate() error {
 		AllowSensitiveTargets:           policy.AllowSensitiveTargets,
 		RetentionPosture:                policy.RetentionPosture,
 		TrainingPosture:                 policy.TrainingPosture,
-		RefreshInterval:                 policy.RefreshInterval,
+		RefreshInterval:                 time.Duration(policy.RefreshInterval),
 		RequestTimeout:                  time.Second,
 		PollInterval:                    time.Second,
 		MaxJobAge:                       time.Second,
@@ -204,7 +215,7 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 	slices.Sort(identifiers)
 	namespaceInput, err := json.Marshal(providerNamespaceInput{
 		Kind: c.Kind, Endpoint: endpoint, PollEndpoint: pollEndpoint,
-	})
+	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return ProviderProfile{}, fmt.Errorf("encode provider namespace: %w", err)
 	}
@@ -218,13 +229,13 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 		Tier: c.Tier, NumResults: c.NumResults, AllowedIdentifiers: identifiers,
 		Targets: targets, AllowSensitiveTargets: c.AllowSensitiveTargets,
 		RetentionPosture: c.RetentionPosture, TrainingPosture: c.TrainingPosture,
-		RefreshInterval: c.RefreshInterval, MaxRequestsPerRun: c.MaxRequestsPerRun,
+		RefreshInterval: int64(c.RefreshInterval), MaxRequestsPerRun: c.MaxRequestsPerRun,
 		MaxRequestsPerDay:               c.MaxRequestsPerDay,
 		MaxCostUSDMicrosPerPersonPerDay: c.MaxCostUSDMicrosPerPersonPerDay,
 		MaxCostUSDMicrosPerRun:          c.MaxCostUSDMicrosPerRun,
 		MaxCostUSDMicrosPerDay:          c.MaxCostUSDMicrosPerDay,
 	}
-	policyJSON, err := json.Marshal(policy)
+	policyJSON, err := json.Marshal(policy, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return ProviderProfile{}, fmt.Errorf("encode provider policy: %w", err)
 	}
@@ -242,7 +253,7 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 		MaxCostUSDMicrosPerPersonPerDay: c.MaxCostUSDMicrosPerPersonPerDay,
 		MaxCostUSDMicrosPerRun:          c.MaxCostUSDMicrosPerRun,
 		MaxCostUSDMicrosPerDay:          c.MaxCostUSDMicrosPerDay,
-		PolicyJSON:                      append(json.RawMessage(nil), policyJSON...),
+		PolicyJSON:                      append(jsontext.Value(nil), policyJSON...),
 	}, nil
 }
 

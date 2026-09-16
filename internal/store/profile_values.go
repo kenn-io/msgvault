@@ -17,10 +17,10 @@ var (
 // VCardIdentity identifies one property inside one vCard resource.
 type VCardIdentity struct {
 	Property string   `json:"property,omitempty"`
-	Group    *string  `json:"group,omitempty"`
-	PropID   *string  `json:"prop_id,omitempty"`
+	Group    *string  `json:"group,omitzero" nullable:"false"`
+	PropID   *string  `json:"prop_id,omitzero" nullable:"false"`
 	PID      []string `json:"pid,omitempty"`
-	AltID    *string  `json:"altid,omitempty"`
+	AltID    *string  `json:"altid,omitzero" nullable:"false"`
 }
 
 // IsZero reports whether no vCard property identity was captured.
@@ -32,15 +32,15 @@ func (v VCardIdentity) IsZero() bool {
 // ValueEnvelope carries ordering, provenance, vCard identity, and history.
 type ValueEnvelope struct {
 	ID                int64         `json:"id"`
-	Pref              *int          `json:"pref,omitempty"`
+	Pref              *int          `json:"pref,omitzero" nullable:"false"`
 	Ordinal           int           `json:"ordinal"`
-	TypeLabel         *string       `json:"type_label,omitempty"`
+	TypeLabel         *string       `json:"type_label,omitzero" nullable:"false"`
 	TypeTokens        []string      `json:"type_tokens,omitempty"`
 	VCard             VCardIdentity `json:"vcard"`
 	Source            Provenance    `json:"source"`
-	SourceRef         *string       `json:"source_ref,omitempty"`
-	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
-	Confidence        *float64      `json:"confidence,omitempty"`
+	SourceRef         *string       `json:"source_ref,omitzero" nullable:"false"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitzero" nullable:"false"`
+	Confidence        *float64      `json:"confidence,omitzero" nullable:"false"`
 	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
 	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
@@ -52,15 +52,15 @@ type ValueEnvelope struct {
 // pointer because zero is a valid explicit position; nil requests automatic
 // append ordering.
 type ValueEnvelopeInput struct {
-	Pref              *int          `json:"pref,omitempty"`
-	Ordinal           *int          `json:"ordinal,omitempty" minimum:"0"`
-	TypeLabel         *string       `json:"type_label,omitempty"`
+	Pref              *int          `json:"pref,omitzero" nullable:"false"`
+	Ordinal           *int          `json:"ordinal,omitzero" nullable:"false" minimum:"0"`
+	TypeLabel         *string       `json:"type_label,omitzero" nullable:"false"`
 	TypeTokens        []string      `json:"type_tokens,omitempty"`
 	VCard             VCardIdentity `json:"vcard,omitzero"`
 	Source            Provenance    `json:"source"`
-	SourceRef         *string       `json:"source_ref,omitempty"`
-	SourceResourceUID *string       `json:"source_resource_uid,omitempty"`
-	Confidence        *float64      `json:"confidence,omitempty"`
+	SourceRef         *string       `json:"source_ref,omitzero" nullable:"false"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitzero" nullable:"false"`
+	Confidence        *float64      `json:"confidence,omitzero" nullable:"false"`
 	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
 	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
 }

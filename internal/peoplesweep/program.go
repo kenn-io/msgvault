@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -34,13 +35,13 @@ type ExtractionOutput struct {
 }
 
 type ExtractedClaim struct {
-	TargetKey             string          `json:"target_key"`
-	Relation              string          `json:"relation"`
-	Value                 json.RawMessage `json:"value"`
-	EvidenceIDs           []string        `json:"evidence_ids"`
-	ValidFrom             *string         `json:"valid_from"`
-	ValidUntil            *string         `json:"valid_until"`
-	ConfidenceBasisPoints int             `json:"confidence_basis_points"`
+	TargetKey             string         `json:"target_key"`
+	Relation              string         `json:"relation"`
+	Value                 jsontext.Value `json:"value"`
+	EvidenceIDs           []string       `json:"evidence_ids"`
+	ValidFrom             *string        `json:"valid_from"`
+	ValidUntil            *string        `json:"valid_until"`
+	ConfidenceBasisPoints int            `json:"confidence_basis_points"`
 }
 
 // evidenceIDsSchema is the frozen citation array shared by the extraction
@@ -51,22 +52,22 @@ const evidenceIDsSchema = `{"type":"array","minItems":1,"maxItems":200,"uniqueIt
 // verbatim for possible_attributes, so the two programs cannot drift.
 const extractionClaimSchema = `{"type":"object","properties":{"target_key":{"type":"string","minLength":1,"maxLength":256},"relation":{"type":"string","enum":["support","contradict","supersede"]},"value":{},"evidence_ids":` + evidenceIDsSchema + `,"valid_from":{"type":["string","null"],"format":"date-time"},"valid_until":{"type":["string","null"],"format":"date-time"},"confidence_basis_points":{"type":"integer","minimum":0,"maximum":1000}},"required":["target_key","relation","value","evidence_ids","valid_from","valid_until","confidence_basis_points"],"additionalProperties":false}`
 
-var extractionSchema = json.RawMessage(`{"type":"object","properties":{"claims":{"type":"array","maxItems":256,"items":` + extractionClaimSchema + `}},"required":["claims"],"additionalProperties":false}`)
+var extractionSchema = jsontext.Value(`{"type":"object","properties":{"claims":{"type":"array","maxItems":256,"items":` + extractionClaimSchema + `}},"required":["claims"],"additionalProperties":false}`)
 
-func ExtractionJSONSchema() json.RawMessage {
-	return append(json.RawMessage(nil), extractionSchema...)
+func ExtractionJSONSchema() jsontext.Value {
+	return append(jsontext.Value(nil), extractionSchema...)
 }
 
 func ProgramFingerprint() string {
 	canonical, err := json.Marshal(struct {
-		ProgramID      string          `json:"program_id"`
-		ProgramVersion string          `json:"program_version"`
-		Instructions   string          `json:"instructions"`
-		Schema         json.RawMessage `json:"schema"`
+		ProgramID      string         `json:"program_id"`
+		ProgramVersion string         `json:"program_version"`
+		Instructions   string         `json:"instructions"`
+		Schema         jsontext.Value `json:"schema"`
 	}{
 		ProgramID: ExtractionProgramID, ProgramVersion: ExtractionProgramVersion,
 		Instructions: extractionProgramText, Schema: extractionSchema,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		panic("marshal frozen person extraction program: " + err.Error())
 	}
@@ -101,7 +102,7 @@ func PersonFactEvidenceInput(item EvidenceItem) (personfacts.EvidenceInput, erro
 }
 
 func ParseExtraction(
-	output json.RawMessage,
+	output jsontext.Value,
 	batch PacketBatch,
 	profile ProviderProfile,
 ) ([]personfacts.ProposedClaim, error) {
@@ -113,12 +114,12 @@ func ParseExtraction(
 		return nil, err
 	}
 	var extracted ExtractionOutput
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&extracted); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(output), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &extracted); err != nil {
 		return nil, errors.New("decode person fact extraction output")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("person fact extraction output contains trailing JSON")
 	}
 
@@ -191,7 +192,7 @@ func proposedClaims(
 		}
 		claims = append(claims, personfacts.ProposedClaim{
 			Target: target, Relation: relation,
-			SubmittedValue: append(json.RawMessage(nil), extractedClaim.Value...),
+			SubmittedValue: append(jsontext.Value(nil), extractedClaim.Value...),
 			Evidence:       inputs, ValidFrom: validFrom, ValidUntil: validUntil,
 			Origin:     origin,
 			Confidence: personfacts.ConfidenceInputs{ReportedScore: extractedClaim.ConfidenceBasisPoints},
@@ -220,7 +221,7 @@ func extractionPacketFromBatch(batch PacketBatch) (EvidencePacket, error) {
 	return packet, nil
 }
 
-func validateExtractionOutput(output json.RawMessage) error {
+func validateExtractionOutput(output jsontext.Value) error {
 	var schema jsonschema.Schema
 	if err := decodeSingleJSON(extractionSchema, &schema); err != nil {
 		return errors.New("frozen person fact extraction schema is invalid")

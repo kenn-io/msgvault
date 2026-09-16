@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,7 +129,7 @@ func CanonicalCodexProviderVersion(attestation CodexAttestation) (string, error)
 		Version: attestation.Version, ExecutableSHA256: digest,
 		ExecutionBoundary: attestation.ExecutionBoundary,
 		LaunchArtifact:    string(attestation.LaunchArtifact),
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("encode codex provider version")
 	}

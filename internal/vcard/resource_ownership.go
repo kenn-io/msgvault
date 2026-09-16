@@ -1,7 +1,7 @@
 package vcard
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 )
 
@@ -17,7 +17,7 @@ func RebindResourceOwnership(prepared, canonical ResourceEnvelope, requireAll bo
 	preparedCount := make(map[string]int)
 	canonicalBySemantic := make(map[string][]PropertyOccurrence)
 	key := func(version Version, occurrence PropertyOccurrence) string {
-		encoded, _ := json.Marshal(NormalizeSemanticProperty(version, occurrence.Property)) //nolint:errchkjson // SemanticProperty holds only strings and string slices
+		encoded, _ := json.Marshal(NormalizeSemanticProperty(version, occurrence.Property), json.Deterministic(true)) // SemanticProperty holds only strings and string slices
 		return string(encoded)
 	}
 	for _, occurrence := range prepared.PropertyTree {

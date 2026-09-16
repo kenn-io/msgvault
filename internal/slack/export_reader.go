@@ -2,7 +2,7 @@ package slack
 
 import (
 	"archive/zip"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"

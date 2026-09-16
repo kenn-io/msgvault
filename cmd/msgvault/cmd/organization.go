@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -55,7 +55,7 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 		return errors.New("organization list response was empty")
 	}
 	if organizationJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+		return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tNAME\tKIND\tDOMAIN\tSTATUS\tREVISION")
@@ -314,7 +314,7 @@ var organizationAttributeListCmd = &cobra.Command{Use: "list <id>", Short: "List
 		return errors.New("organization attributes response was empty")
 	}
 	if organizationJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200)
+		return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200, json.Deterministic(true))
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "SLUG\tORDINAL\tVALUE\tSOURCE\tACTIVE FROM\tACTIVE UNTIL")
@@ -372,7 +372,7 @@ var organizationAttributeSetCmd = &cobra.Command{Use: "set <id>", Short: "Set a 
 		write = resp.JSON201
 	}
 	if organizationJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(write)
+		return json.MarshalWrite(cmd.OutOrStdout(), write, json.Deterministic(true))
 	}
 	return writeCLIOrganizationAttribute(cmd, write)
 }}
@@ -438,7 +438,7 @@ func writeCLIOrganization(cmd *cobra.Command, org *generated.Organization) error
 		return errors.New("organization response was empty")
 	}
 	if organizationJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(org)
+		return json.MarshalWrite(cmd.OutOrStdout(), org, json.Deterministic(true))
 	}
 	status := "active"
 	if org.RetiredAt != nil {
@@ -452,7 +452,7 @@ func writeCLIOrganizationProfile(cmd *cobra.Command, profile *generated.Organiza
 		return errors.New("organization response was empty")
 	}
 	if organizationJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(profile)
+		return json.MarshalWrite(cmd.OutOrStdout(), profile, json.Deterministic(true))
 	}
 	if err := writeCLIOrganization(cmd, &profile.Organization); err != nil {
 		return err

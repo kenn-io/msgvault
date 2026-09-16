@@ -6,7 +6,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -261,7 +261,7 @@ func materializedCorpusHash(corpus Corpus, sources []SourceDocument, policyFinge
 }
 
 func mustMarshalHashInput(value any) []byte {
-	payload, err := json.Marshal(value)
+	payload, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		panic(fmt.Errorf("marshal contextual evaluation hash input: %w", err))
 	}

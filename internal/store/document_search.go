@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -47,27 +48,27 @@ type DocumentSearchRequest struct {
 	SourceIDs      []int64                 `json:"source_ids,omitempty"`
 	MessageIDs     []int64                 `json:"message_ids,omitempty"`
 	MessageTypes   []string                `json:"message_types,omitempty"`
-	AttachmentID   int64                   `json:"attachment_id,omitempty"`
-	MessageID      int64                   `json:"message_id,omitempty"`
+	AttachmentID   int64                   `json:"attachment_id,omitzero"`
+	MessageID      int64                   `json:"message_id,omitzero"`
 	PageSize       int                     `json:"page_size"`
 	Cursor         string                  `json:"cursor,omitempty"`
 	SearchMode     string                  `json:"search_mode,omitempty"`
-	CandidateLimit int                     `json:"candidate_limit,omitempty"`
+	CandidateLimit int                     `json:"candidate_limit,omitzero"`
 	After          *time.Time              `json:"after,omitempty"`
 	Before         *time.Time              `json:"before,omitempty"`
-	PersonID       int64                   `json:"person_id,omitempty"`
-	ParticipantID  int64                   `json:"participant_id,omitempty"`
+	PersonID       int64                   `json:"person_id,omitzero"`
+	ParticipantID  int64                   `json:"participant_id,omitzero"`
 	Directions     []personscope.Direction `json:"directions,omitempty"`
-	Person         *personscope.Scope      `json:"person,omitempty"`
+	Person         *personscope.Scope      `json:"person,omitzero" nullable:"false"`
 }
 
 type DocumentSearchResponse struct {
 	Results                     []DocumentSearchResult `json:"results"`
 	NextCursor                  string                 `json:"next_cursor,omitempty"`
 	Revision                    int64                  `json:"revision"`
-	Truncated                   bool                   `json:"truncated,omitempty"`
+	Truncated                   bool                   `json:"truncated,omitzero"`
 	EffectiveMode               string                 `json:"effective_mode,omitempty"`
-	VectorGenerationID          int64                  `json:"vector_generation_id,omitempty"`
+	VectorGenerationID          int64                  `json:"vector_generation_id,omitzero"`
 	VectorGenerationFingerprint string                 `json:"vector_generation_fingerprint,omitempty"`
 }
 
@@ -100,17 +101,17 @@ type DocumentSearchResult struct {
 	MatchedSignals              []string                `json:"matched_signals"`
 	Truncated                   bool                    `json:"truncated"`
 	Rank                        int                     `json:"rank"`
-	PersonProvenance            *personscope.Provenance `json:"person_provenance,omitempty"`
-	LexicalRank                 int                     `json:"lexical_rank,omitempty"`
-	SemanticRank                int                     `json:"semantic_rank,omitempty"`
-	SemanticScore               float64                 `json:"semantic_score,omitempty"`
-	FusionScore                 float64                 `json:"fusion_score,omitempty"`
+	PersonProvenance            *personscope.Provenance `json:"person_provenance,omitzero" nullable:"false"`
+	LexicalRank                 int                     `json:"lexical_rank,omitzero"`
+	SemanticRank                int                     `json:"semantic_rank,omitzero"`
+	SemanticScore               float64                 `json:"semantic_score,omitzero"`
+	FusionScore                 float64                 `json:"fusion_score,omitzero"`
 	VectorToken                 string                  `json:"vector_token,omitempty"`
-	VectorGenerationID          int64                   `json:"vector_generation_id,omitempty"`
+	VectorGenerationID          int64                   `json:"vector_generation_id,omitzero"`
 	VectorGenerationFingerprint string                  `json:"vector_generation_fingerprint,omitempty"`
 	VectorEmbeddingProfile      string                  `json:"vector_embedding_profile,omitempty"`
 	VectorModel                 string                  `json:"vector_model,omitempty"`
-	VectorDimension             int                     `json:"vector_dimension,omitempty"`
+	VectorDimension             int                     `json:"vector_dimension,omitzero"`
 }
 
 // DocumentVectorSearchHit is an opaque backend hit presented for authoritative
@@ -923,7 +924,7 @@ func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {
 		AttachmentID: request.AttachmentID, MessageID: request.MessageID, PageSize: request.PageSize,
 		After: request.After, Before: request.Before, Person: request.Person,
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document search request: %w", err)
 	}
@@ -932,7 +933,7 @@ func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {
 }
 
 func encodeDocumentSearchCursor(cursor documentSearchCursor) (string, error) {
-	encoded, err := json.Marshal(cursor)
+	encoded, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document search cursor: %w", err)
 	}
@@ -945,15 +946,15 @@ func decodeDocumentSearchCursor(value string) (documentSearchCursor, error) {
 		return documentSearchCursor{}, ErrDocumentSearchInvalidCursor
 	}
 	var cursor documentSearchCursor
-	decoder := json.NewDecoder(strings.NewReader(string(decoded)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cursor); err != nil || cursor.Version != documentSearchCursorVersion ||
+	decoder := jsontext.NewDecoder(strings.NewReader(string(decoded)), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &cursor); err != nil || cursor.Version != documentSearchCursorVersion ||
 		!validLowerSHA256(cursor.RequestHash) || cursor.Revision < 0 ||
 		cursor.Offset <= 0 || cursor.Offset > maxDocumentSearchOffset ||
 		cursor.CandidateLimit < 1 || cursor.CandidateLimit > MaxLexicalDocumentSearchCandidateLimit {
 		return documentSearchCursor{}, ErrDocumentSearchInvalidCursor
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return documentSearchCursor{}, ErrDocumentSearchInvalidCursor
 	}
 	return cursor, nil

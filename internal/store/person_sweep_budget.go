@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"hash"
@@ -136,7 +136,7 @@ func (s *Store) StartPersonSweepAttempt(
 		!validPersonSweepRunMode(input.Mode) || len(input.CursorEnvelope) == 0 {
 		return errors.New("start person sweep attempt: complete valid input is required")
 	}
-	envelope, err := json.Marshal(input.CursorEnvelope)
+	envelope, err := json.Marshal(input.CursorEnvelope, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("start person sweep attempt: encode cursor envelope: %w", err)
 	}

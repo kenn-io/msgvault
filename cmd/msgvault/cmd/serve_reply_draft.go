@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -46,7 +46,7 @@ type draftReplyTarget struct {
 
 type draftReplyOutput struct {
 	Status          string `json:"status"`
-	MessageID       int64  `json:"message_id,omitempty"`
+	MessageID       int64  `json:"message_id,omitzero"`
 	OperationRef    string `json:"operation_ref"`
 	RFC822MessageID string `json:"rfc822_message_id"`
 	SourceID        int64  `json:"source_id"`
@@ -139,7 +139,7 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 }
 
 func marshalDraftReplyOutput(output draftReplyOutput) []byte {
-	data, err := json.Marshal(output)
+	data, err := json.Marshal(output, json.Deterministic(true))
 	if err != nil {
 		return []byte("{\"status\":\"output_encoding_failed\"}")
 	}

@@ -7,7 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -1028,7 +1029,7 @@ func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []
 		ClientID: m.config.ClientID,
 	}
 
-	data, err := json.MarshalIndent(tf, "", "  ")
+	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return err
 	}
@@ -1304,7 +1305,7 @@ func fetchTokenProfileEmailFromEndpoint(
 		Email        string `json:"email"`
 		ID           string `json:"id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &profile); err != nil {
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
 				"could not verify token belongs to %s: "+

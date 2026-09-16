@@ -22,7 +22,7 @@ type PersonCompletionStore interface {
 
 type ParticipantCompletionHTTPRequest struct {
 	Query string `json:"query"`
-	Limit int    `json:"limit,omitempty" minimum:"0" maximum:"20"`
+	Limit int    `json:"limit,omitzero" minimum:"0" maximum:"20"`
 }
 
 type ParticipantCompletionHTTPRow struct {

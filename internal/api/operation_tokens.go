@@ -7,7 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -49,7 +49,7 @@ func (codec operationTokenCodec) seal(ctx context.Context, archiveUID string, pa
 	if err := validateOperationTokenKey(key, true); err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode operation token: %w", err)
 	}

@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -94,7 +95,7 @@ func (p *exaProvider) Start(ctx context.Context, request Request) (Attempt, erro
 		return Attempt{}, err
 	}
 	generated := p.config.Mode != "people"
-	var outputSchema json.RawMessage
+	var outputSchema jsontext.Value
 	if generated {
 		outputSchema, err = BuildExaOutputSchema(request.Targets)
 	} else {
@@ -124,7 +125,7 @@ func (p *exaProvider) Start(ctx context.Context, request Request) (Attempt, erro
 		Query: query, Category: "people", Type: exaRequestType(p.config.Mode),
 		NumResults: p.config.NumResults, OutputSchema: outputSchema,
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return Attempt{}, errors.New("encode Exa request")
 	}
@@ -189,11 +190,11 @@ func (p *exaProvider) Poll(context.Context, Attempt) (Result, error) {
 }
 
 type exaSearchRequest struct {
-	Query        string          `json:"query"`
-	Category     string          `json:"category"`
-	Type         string          `json:"type"`
-	NumResults   int             `json:"numResults"`
-	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Query        string         `json:"query"`
+	Category     string         `json:"category"`
+	Type         string         `json:"type"`
+	NumResults   int            `json:"numResults"`
+	OutputSchema jsontext.Value `json:"outputSchema,omitempty"`
 }
 
 type exaSearchResponse struct {
@@ -201,14 +202,14 @@ type exaSearchResponse struct {
 	Results            []exaSearchResult `json:"results"`
 	Output             *exaOutput        `json:"output"`
 	ResolvedSearchType string            `json:"resolvedSearchType"`
-	SearchTime         json.Number       `json:"searchTime"`
+	SearchTime         jsontext.Value    `json:"searchTime"`
 	CostDollars        *exaCostDollars   `json:"costDollars"`
 }
 
 type exaCostDollars struct {
-	Total    json.Number            `json:"total"`
-	Search   map[string]json.Number `json:"search"`
-	Contents map[string]json.Number `json:"contents"`
+	Total    jsontext.Value            `json:"total"`
+	Search   map[string]jsontext.Value `json:"search"`
+	Contents map[string]jsontext.Value `json:"contents"`
 }
 
 type exaSearchResult struct {
@@ -236,13 +237,13 @@ type exaEntity struct {
 }
 
 type exaPersonProperties struct {
-	Name             *string         `json:"name"`
-	FirstName        *string         `json:"firstName"`
-	LastName         *string         `json:"lastName"`
-	Location         *string         `json:"location"`
-	Research         json.RawMessage `json:"research"`
-	WorkHistory      []exaWork       `json:"workHistory"`
-	EducationHistory []exaEducation  `json:"educationHistory"`
+	Name             *string        `json:"name"`
+	FirstName        *string        `json:"firstName"`
+	LastName         *string        `json:"lastName"`
+	Location         *string        `json:"location"`
+	Research         jsontext.Value `json:"research"`
+	WorkHistory      []exaWork      `json:"workHistory"`
+	EducationHistory []exaEducation `json:"educationHistory"`
 }
 
 type exaWork struct {
@@ -269,8 +270,8 @@ type exaNamedEntity struct {
 }
 
 type exaOutput struct {
-	Content   map[string]json.RawMessage `json:"content"`
-	Grounding []exaGrounding             `json:"grounding"`
+	Content   map[string]jsontext.Value `json:"content"`
+	Grounding []exaGrounding            `json:"grounding"`
 }
 
 type exaGrounding struct {
@@ -377,14 +378,13 @@ func decodeExaResponse(body []byte) (exaSearchResponse, error) {
 	if err := jsonexact.Validate(body, exaSearchResponse{}); err != nil {
 		return exaSearchResponse{}, errors.New("invalid Exa response")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true), jsonexact.PreserveNumbers)
+
 	var response exaSearchResponse
-	if err := decoder.Decode(&response); err != nil {
+	if err := json.UnmarshalDecode(decoder, &response); err != nil {
 		return exaSearchResponse{}, errors.New("invalid Exa response")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return exaSearchResponse{}, errors.New("invalid Exa response")
 	}
 	return response, nil
@@ -568,13 +568,13 @@ func exaTypedValues(
 	target personfacts.TargetDescriptor,
 	capability exaPeopleCapability,
 	properties exaPersonProperties,
-) ([]json.RawMessage, error) {
-	stringValue := func(value *string) ([]json.RawMessage, error) {
+) ([]jsontext.Value, error) {
+	stringValue := func(value *string) ([]jsontext.Value, error) {
 		if value == nil || strings.TrimSpace(*value) == "" {
 			return nil, errors.New("typed string is absent")
 		}
-		encoded, err := json.Marshal(*value)
-		return []json.RawMessage{encoded}, err
+		encoded, err := json.Marshal(*value, json.Deterministic(true))
+		return []jsontext.Value{encoded}, err
 	}
 	switch capability {
 	case exaCapabilityName:
@@ -586,7 +586,7 @@ func exaTypedValues(
 	case exaCapabilityLocation:
 		return stringValue(properties.Location)
 	case exaCapabilityEmployment:
-		values := make([]json.RawMessage, 0, len(properties.WorkHistory))
+		values := make([]jsontext.Value, 0, len(properties.WorkHistory))
 		for _, work := range properties.WorkHistory {
 			if work.Company == nil || work.Company.Name == nil || strings.TrimSpace(*work.Company.Name) == "" {
 				return nil, errors.New("typed employment has no organization")
@@ -614,7 +614,7 @@ func exaTypedValues(
 			if err != nil {
 				return nil, err
 			}
-			encoded, err := json.Marshal(value)
+			encoded, err := json.Marshal(value, json.Deterministic(true))
 			if err != nil {
 				return nil, err
 			}
@@ -622,7 +622,7 @@ func exaTypedValues(
 		}
 		return values, nil
 	case exaCapabilityEducation:
-		values := make([]json.RawMessage, 0, len(properties.EducationHistory))
+		values := make([]jsontext.Value, 0, len(properties.EducationHistory))
 		for _, education := range properties.EducationHistory {
 			parts := make([]string, 0, 2)
 			if education.Degree != nil && strings.TrimSpace(*education.Degree) != "" {
@@ -635,7 +635,7 @@ func exaTypedValues(
 			if len(parts) == 0 {
 				return nil, errors.New("typed education is empty")
 			}
-			encoded, err := json.Marshal(strings.Join(parts, " — "))
+			encoded, err := json.Marshal(strings.Join(parts, " — "), json.Deterministic(true))
 			if err != nil {
 				return nil, err
 			}
@@ -647,11 +647,11 @@ func exaTypedValues(
 	}
 }
 
-func exaSubmittedValues(target personfacts.TargetDescriptor, raw json.RawMessage) ([]json.RawMessage, error) {
+func exaSubmittedValues(target personfacts.TargetDescriptor, raw jsontext.Value) ([]jsontext.Value, error) {
 	if target.Cardinality == personfacts.CardinalitySingle {
-		return []json.RawMessage{append(json.RawMessage(nil), raw...)}, nil
+		return []jsontext.Value{append(jsontext.Value(nil), raw...)}, nil
 	}
-	var values []json.RawMessage
+	var values []jsontext.Value
 	if err := decodeOneExaValue(raw, &values); err != nil {
 		return nil, err
 	}
@@ -660,7 +660,7 @@ func exaSubmittedValues(target personfacts.TargetDescriptor, raw json.RawMessage
 
 func exaClaim(
 	target personfacts.TargetDescriptor,
-	value json.RawMessage,
+	value jsontext.Value,
 	score int,
 	citations []Citation,
 ) (personfacts.ProposedClaim, error) {
@@ -677,7 +677,7 @@ func exaClaim(
 	}
 	return personfacts.ProposedClaim{
 		Target: target, Relation: personfacts.RelationSupport,
-		SubmittedValue: append(json.RawMessage(nil), value...), Evidence: evidence,
+		SubmittedValue: append(jsontext.Value(nil), value...), Evidence: evidence,
 		Origin:     personfacts.OriginEnrichment,
 		Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
 	}, nil
@@ -784,7 +784,7 @@ func exaCost(value *exaCostDollars) (Cost, error) {
 	if value == nil {
 		return Cost{}, nil
 	}
-	if value.Total == "" {
+	if len(value.Total) == 0 {
 		return Cost{}, errors.New("invalid Exa cost")
 	}
 	rational, ok := new(big.Rat).SetString(value.Total.String())
@@ -926,12 +926,12 @@ func exaFailure(status int, class FailureClass, requestID, retryAfter string) er
 }
 
 func decodeOneExaValue(data []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return errors.New("invalid Exa JSON value")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("invalid Exa JSON value")
 	}
 	return nil

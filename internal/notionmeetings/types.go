@@ -3,7 +3,8 @@
 package notionmeetings
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -56,19 +57,19 @@ type MeetingNotesData struct {
 }
 
 type MeetingNote struct {
-	Object         string                     `json:"object"`
-	ID             string                     `json:"id"`
-	Type           string                     `json:"type"`
-	MeetingNotes   MeetingNotesData           `json:"meeting_notes"`
-	CreatedTime    string                     `json:"created_time"`
-	LastEditedTime string                     `json:"last_edited_time"`
-	CreatedBy      UserRef                    `json:"created_by"`
-	LastEditedBy   UserRef                    `json:"last_edited_by"`
-	Parent         Parent                     `json:"parent"`
-	HasChildren    bool                       `json:"has_children"`
-	InTrash        bool                       `json:"in_trash"`
-	Extra          map[string]json.RawMessage `json:"-"`
-	Raw            json.RawMessage            `json:"-"`
+	Object         string                    `json:"object"`
+	ID             string                    `json:"id"`
+	Type           string                    `json:"type"`
+	MeetingNotes   MeetingNotesData          `json:"meeting_notes"`
+	CreatedTime    string                    `json:"created_time"`
+	LastEditedTime string                    `json:"last_edited_time"`
+	CreatedBy      UserRef                   `json:"created_by"`
+	LastEditedBy   UserRef                   `json:"last_edited_by"`
+	Parent         Parent                    `json:"parent"`
+	HasChildren    bool                      `json:"has_children"`
+	InTrash        bool                      `json:"in_trash"`
+	Extra          map[string]jsontext.Value `json:"-"`
+	Raw            jsontext.Value            `json:"-"`
 }
 
 func (m *MeetingNote) UnmarshalJSON(data []byte) error {
@@ -77,7 +78,7 @@ func (m *MeetingNote) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var extra map[string]json.RawMessage
+	var extra map[string]jsontext.Value
 	if err := json.Unmarshal(data, &extra); err != nil {
 		return err
 	}
@@ -103,9 +104,9 @@ func (m MeetingNote) Title() string {
 }
 
 type QueryResult struct {
-	Results []MeetingNote   `json:"results"`
-	HasMore bool            `json:"has_more"`
-	Raw     json.RawMessage `json:"-"`
+	Results []MeetingNote  `json:"results"`
+	HasMore bool           `json:"has_more"`
+	Raw     jsontext.Value `json:"-"`
 }
 
 type RichTextBlock struct {
@@ -113,11 +114,11 @@ type RichTextBlock struct {
 }
 
 type blockContent struct {
-	RichText   []RichText      `json:"rich_text"`
-	Caption    []RichText      `json:"caption"`
-	Title      json.RawMessage `json:"title"`
-	Expression string          `json:"expression"`
-	Cells      [][]RichText    `json:"cells"`
+	RichText   []RichText     `json:"rich_text"`
+	Caption    []RichText     `json:"caption"`
+	Title      jsontext.Value `json:"title"`
+	Expression string         `json:"expression"`
+	Cells      [][]RichText   `json:"cells"`
 }
 
 type Block struct {
@@ -137,7 +138,7 @@ type Block struct {
 	Toggle           RichTextBlock `json:"toggle"`
 	ToDo             RichTextBlock `json:"to_do"`
 	content          blockContent
-	Raw              json.RawMessage `json:"-"`
+	Raw              jsontext.Value `json:"-"`
 }
 
 func (b *Block) UnmarshalJSON(data []byte) error {
@@ -147,7 +148,7 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*b = Block(decoded)
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
@@ -229,20 +230,20 @@ func richTextPlainText(parts []RichText) string {
 }
 
 type BlockPage struct {
-	Object     string          `json:"object"`
-	Results    []Block         `json:"results"`
-	NextCursor string          `json:"next_cursor"`
-	HasMore    bool            `json:"has_more"`
-	Raw        json.RawMessage `json:"-"`
+	Object     string         `json:"object"`
+	Results    []Block        `json:"results"`
+	NextCursor string         `json:"next_cursor"`
+	HasMore    bool           `json:"has_more"`
+	Raw        jsontext.Value `json:"-"`
 }
 
 type MarkdownPage struct {
-	Object          string          `json:"object"`
-	ID              string          `json:"id"`
-	Markdown        string          `json:"markdown"`
-	Truncated       bool            `json:"truncated"`
-	UnknownBlockIDs []string        `json:"unknown_block_ids"`
-	Raw             json.RawMessage `json:"-"`
+	Object          string         `json:"object"`
+	ID              string         `json:"id"`
+	Markdown        string         `json:"markdown"`
+	Truncated       bool           `json:"truncated"`
+	UnknownBlockIDs []string       `json:"unknown_block_ids"`
+	Raw             jsontext.Value `json:"-"`
 }
 
 type UserPerson struct {
@@ -251,12 +252,12 @@ type UserPerson struct {
 }
 
 type User struct {
-	Object string          `json:"object"`
-	ID     string          `json:"id"`
-	Name   string          `json:"name"`
-	Type   string          `json:"type"`
-	Person UserPerson      `json:"person"`
-	Raw    json.RawMessage `json:"-"`
+	Object string         `json:"object"`
+	ID     string         `json:"id"`
+	Name   string         `json:"name"`
+	Type   string         `json:"type"`
+	Person UserPerson     `json:"person"`
+	Raw    jsontext.Value `json:"-"`
 }
 
 func (u *User) UnmarshalJSON(data []byte) error {
@@ -271,9 +272,9 @@ func (u *User) UnmarshalJSON(data []byte) error {
 }
 
 type UserPage struct {
-	Object     string          `json:"object"`
-	Results    []User          `json:"results"`
-	NextCursor string          `json:"next_cursor"`
-	HasMore    bool            `json:"has_more"`
-	Raw        json.RawMessage `json:"-"`
+	Object     string         `json:"object"`
+	Results    []User         `json:"results"`
+	NextCursor string         `json:"next_cursor"`
+	HasMore    bool           `json:"has_more"`
+	Raw        jsontext.Value `json:"-"`
 }

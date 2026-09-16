@@ -28,7 +28,7 @@ type ContactSummary struct {
 	DisplayName string            `json:"display_name,omitempty"`
 	Emails      []string          `json:"emails"`
 	Phones      []string          `json:"phones"`
-	Truncated   bool              `json:"truncated,omitempty"`
+	Truncated   bool              `json:"truncated,omitzero"`
 }
 
 type AddressBookIdentity struct {

@@ -2,7 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"sort"
 
@@ -302,13 +303,13 @@ func safeIDSchema(description string) *jsonschema.Schema {
 
 func nonNegativeIntegerSchema(description string, defaultValue int) *jsonschema.Schema {
 	schema := boundedIntegerSchema(description, 0, maxJSONSafeInteger)
-	schema.Default = json.RawMessage([]byte(json.Number(defaultValueString(defaultValue))))
+	schema.Default = jsontext.Value([]byte(jsontext.Value(defaultValueString(defaultValue))))
 	return schema
 }
 
 func signedSafeIntegerSchema(description string, defaultValue int) *jsonschema.Schema {
 	schema := boundedIntegerSchema(description, -maxJSONSafeInteger, maxJSONSafeInteger)
-	schema.Default = json.RawMessage([]byte(json.Number(defaultValueString(defaultValue))))
+	schema.Default = jsontext.Value([]byte(jsontext.Value(defaultValueString(defaultValue))))
 	return schema
 }
 
@@ -328,12 +329,12 @@ func scoreSchema(description string) *jsonschema.Schema {
 		Description: description,
 		Minimum:     &minimum,
 		Maximum:     &maximum,
-		Default:     json.RawMessage("0"),
+		Default:     jsontext.Value("0"),
 	}
 }
 
 func defaultValueString(value int) string {
-	data, err := json.Marshal(value)
+	data, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}
@@ -496,7 +497,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 	queryDesc := "Free-text query to embed (requires at least one free-text term). " +
 		"Gmail operators are metadata filters, not body search; combine with body terms or use search_metadata for filter-only queries."
 	mode := stringSchema("Search mode: vector (semantic only) or hybrid (BM25 + vector fused via RRF). Defaults to hybrid when omitted.", searchModeVector, searchModeHybrid)
-	mode.Default = json.RawMessage(`"hybrid"`)
+	mode.Default = jsontext.Value(`"hybrid"`)
 	return readDefinition(
 		ToolSemanticSearchMessages,
 		searchIntro+
@@ -519,7 +520,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 
 func getMessageDefinition(_ *handlers) toolDefinition {
 	bodyFormat := stringSchema("Which body representation to page: auto (default, plain text when available, HTML fallback), text, or html.", bodyFormatAuto, bodyFormatText, bodyFormatHTML)
-	bodyFormat.Default = json.RawMessage(`"auto"`)
+	bodyFormat.Default = jsontext.Value(`"auto"`)
 	return readDefinition(
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
@@ -582,7 +583,7 @@ func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition
 			"Keyword matches include raw-body char_offset and line. Vector matches always include snippet and score; char_offset and line may be omitted after preprocessing. " +
 			"Use a present char_offset with get_message center_at to read a larger window around the match."
 		mode := stringSchema("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)", searchModeKeyword, searchModeVector)
-		mode.Default = json.RawMessage(`"keyword"`)
+		mode.Default = jsontext.Value(`"keyword"`)
 		properties[toolArgMode] = mode
 		properties[toolArgMinScore] = scoreSchema("Minimum chunk similarity score (0–1) when mode=vector (default 0)")
 	}
@@ -705,10 +706,10 @@ func findSimilarMessagesDefinition(_ *handlers) toolDefinition {
 
 func searchDocumentsDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum results to return (default 20, max 100)", 1, 100)
-	limit.Default = json.RawMessage("20")
+	limit.Default = jsontext.Value("20")
 	mode := stringSchema("Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider",
 		"auto", "lexical", "semantic", "hybrid")
-	mode.Default = json.RawMessage(`"lexical"`)
+	mode.Default = jsontext.Value(`"lexical"`)
 	direction := stringSchema("How the owning message relates to the person",
 		"from_person", "to_person", "group")
 	definition := readDefinition(
@@ -748,7 +749,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 
 func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 	limit := boundedIntegerSchema("Maximum metadata results to return (default 100, max 100)", 1, 100)
-	limit.Default = json.RawMessage("100")
+	limit.Default = jsontext.Value("100")
 	direction := stringSchema("How the owning message relates to the person",
 		"from_person", "to_person", "group")
 	mimeFamily := stringSchema("Stable MIME family",

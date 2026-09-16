@@ -3,7 +3,8 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"mime"
@@ -29,9 +30,9 @@ type ImportJobRequest struct {
 	Account  string `json:"account" minLength:"1"`
 	After    string `json:"after,omitempty" pattern:"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"`
 	Before   string `json:"before,omitempty" pattern:"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"`
-	Limit    int    `json:"limit,omitempty" minimum:"0"`
+	Limit    int    `json:"limit,omitzero" minimum:"0"`
 	Query    string `json:"query,omitempty" doc:"Gmail search query; not supported for IMAP sources"`
-	NoResume bool   `json:"noresume,omitempty"`
+	NoResume bool   `json:"noresume,omitzero"`
 }
 
 type ImportJobSummary struct {
@@ -53,7 +54,7 @@ type ImportJobResponse struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	StartedAt  *time.Time        `json:"started_at"`
 	FinishedAt *time.Time        `json:"finished_at"`
-	Summary    *ImportJobSummary `json:"summary,omitempty"`
+	Summary    *ImportJobSummary `json:"summary,omitzero" nullable:"false"`
 }
 
 type importJobStore interface {
@@ -190,9 +191,9 @@ func decodeImportJobRequest(w http.ResponseWriter, r *http.Request) (ImportJobRe
 		return ImportJobRequest{}, false
 	}
 	var req ImportJobRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportRequestBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportRequestBytes), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &req); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Import request exceeds 16 KiB")
 			return ImportJobRequest{}, false

@@ -2,7 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -18,7 +19,7 @@ type savedViewDefinition struct {
 	IncompatibilityReason string    `json:"incompatibility_reason,omitempty"`
 	ID                    int64     `json:"id"`
 	Name                  string    `json:"name"`
-	Description           *string   `json:"description,omitempty"`
+	Description           *string   `json:"description,omitzero"`
 	CanonicalState        any       `json:"canonical_state"`
 	SchemaVersion         int       `json:"schema_version"`
 	Revision              int64     `json:"revision"`
@@ -36,14 +37,14 @@ type runSavedViewResponse struct {
 	Rows                   []query.EntryRow        `json:"rows,omitempty"`
 	Groups                 []query.ExploreGroupRow `json:"groups,omitempty"`
 	Files                  []query.ExploreFileFact `json:"files,omitempty"`
-	TotalCount             *int64                  `json:"total_count,omitempty"`
+	TotalCount             *int64                  `json:"total_count,omitzero"`
 	Returned               int                     `json:"returned"`
 	HasMore                bool                    `json:"has_more"`
 	NextCursor             string                  `json:"next_cursor,omitempty"`
 	CacheRevision          string                  `json:"cache_revision"`
 	SearchProvenance       query.SearchProvenance  `json:"search_provenance"`
 	CandidateSnapshotID    string                  `json:"candidate_snapshot_id,omitempty"`
-	CandidatePoolSaturated bool                    `json:"candidate_pool_saturated,omitempty"`
+	CandidatePoolSaturated bool                    `json:"candidate_pool_saturated,omitzero"`
 	SearchDeletionScope    string                  `json:"search_deletion_scope,omitempty"`
 }
 
@@ -339,12 +340,12 @@ func translateSavedViewRunError(err error) *toolResult {
 func savedViewStateArgument(
 	args map[string]any,
 	key string,
-) (store.SavedViewStateEnvelope, json.RawMessage, error) {
+) (store.SavedViewStateEnvelope, jsontext.Value, error) {
 	value, present := args[key]
 	if !present || value == nil {
 		return store.SavedViewStateEnvelope{}, nil, fmt.Errorf("%s parameter is required", key)
 	}
-	data, err := json.Marshal(value)
+	data, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return store.SavedViewStateEnvelope{}, nil, fmt.Errorf("%s is invalid", key)
 	}
@@ -355,7 +356,7 @@ func savedViewStateArgument(
 	if err := json.Unmarshal(data, &state); err != nil {
 		return store.SavedViewStateEnvelope{}, nil, fmt.Errorf("%s is invalid: %w", key, err)
 	}
-	return state, json.RawMessage(data), nil
+	return state, jsontext.Value(data), nil
 }
 
 func savedViewStateInputSchema() *jsonschema.Schema {

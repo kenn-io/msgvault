@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -374,7 +374,7 @@ func (s *Store) splitPersonMergeOnce(
 			AmbiguousRows: ambiguous, UnrestoredRows: unrestored,
 			IdentityRevision: identityRevision,
 		}
-		resultJSON, err := json.Marshal(result)
+		resultJSON, err := json.Marshal(result, json.Deterministic(true))
 		if err != nil {
 			return fmt.Errorf("encode person split idempotency result: %w", err)
 		}
@@ -444,7 +444,7 @@ func personSplitRequestHash(request PersonSplitRequest) (string, error) {
 		ExpectedSourceRevision int64   `json:"expected_source_revision"`
 		Actor                  string  `json:"actor"`
 	}{request.SourcePersonID, request.MergeID, request.ParticipantIDs,
-		request.ExpectedSourceRevision, request.Actor})
+		request.ExpectedSourceRevision, request.Actor}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person split request: %w", err)
 	}
@@ -1622,7 +1622,7 @@ func rebasePersonMergePostRowReferences(
 		return sql.NullString{}, false, err
 	}
 	post.RowKey = rowKey
-	rebased, err := json.Marshal(post)
+	rebased, err := json.Marshal(post, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, false, fmt.Errorf("encode rebased %s post-merge row: %w",
 			spec.TableName, err)

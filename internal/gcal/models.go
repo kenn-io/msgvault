@@ -7,7 +7,7 @@
 package gcal
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"time"
 )
 
@@ -39,15 +39,15 @@ type Calendar struct {
 	Description string `json:"description,omitempty"`
 	TimeZone    string `json:"timeZone,omitempty"`
 	AccessRole  string `json:"accessRole,omitempty"` // owner | writer | reader | freeBusyReader
-	Primary     bool   `json:"primary,omitempty"`
-	Deleted     bool   `json:"deleted,omitempty"`
+	Primary     bool   `json:"primary,omitzero"`
+	Deleted     bool   `json:"deleted,omitzero"`
 }
 
 // Person is an organizer/creator reference on an event.
 type Person struct {
 	Email       string `json:"email,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
-	Self        bool   `json:"self,omitempty"`
+	Self        bool   `json:"self,omitzero"`
 }
 
 // Attendee is one invitee on an event.
@@ -55,10 +55,10 @@ type Attendee struct {
 	Email          string `json:"email,omitempty"`
 	DisplayName    string `json:"displayName,omitempty"`
 	ResponseStatus string `json:"responseStatus,omitempty"` // needsAction | declined | tentative | accepted
-	Organizer      bool   `json:"organizer,omitempty"`
-	Self           bool   `json:"self,omitempty"`
-	Resource       bool   `json:"resource,omitempty"`
-	Optional       bool   `json:"optional,omitempty"`
+	Organizer      bool   `json:"organizer,omitzero"`
+	Self           bool   `json:"self,omitzero"`
+	Resource       bool   `json:"resource,omitzero"`
+	Optional       bool   `json:"optional,omitzero"`
 }
 
 // EventDateTime is an event start/end. Exactly one of DateTime (timed) or Date
@@ -112,7 +112,7 @@ type Event struct {
 	RecurringEventID  string        `json:"recurringEventId,omitempty"` // set on instances/exceptions of a series
 	OriginalStartTime EventDateTime `json:"originalStartTime,omitzero"`
 	ICalUID           string        `json:"iCalUID,omitempty"`
-	Sequence          int           `json:"sequence,omitempty"`
+	Sequence          int           `json:"sequence,omitzero"`
 	Attendees         []Attendee    `json:"attendees,omitempty"`
 	Transparency      string        `json:"transparency,omitempty"`
 	Visibility        string        `json:"visibility,omitempty"`
@@ -122,7 +122,7 @@ type Event struct {
 	// archival fidelity (stored in message_raw). It is not re-serialized from
 	// the mapped fields, so fields msgvault does not model (conferenceData,
 	// extendedProperties, ...) survive in the archive.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // IsCancelled reports whether the event is a cancellation/tombstone.

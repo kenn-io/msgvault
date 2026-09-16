@@ -51,7 +51,7 @@ type SourcesRequest struct {
 // MutationResult is the CLI-facing result for collection mutations.
 type MutationResult struct {
 	Name        string `json:"name"`
-	SourceCount int    `json:"source_count,omitempty"`
+	SourceCount int    `json:"source_count,omitzero"`
 }
 
 // ParseAccountsFlag parses a comma-separated --accounts flag value.

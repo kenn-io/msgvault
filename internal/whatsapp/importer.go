@@ -3,7 +3,7 @@ package whatsapp
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -354,7 +354,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 				}
 
 				// Store raw JSON for re-parsing.
-				rawJSON, err := json.Marshal(waMsg)
+				rawJSON, err := json.Marshal(waMsg, json.Deterministic(true))
 				if err == nil {
 					_ = imp.store.UpsertMessageRawWithFormat(messageID, rawJSON, "whatsapp_json")
 				}

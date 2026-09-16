@@ -5,7 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -375,7 +375,7 @@ func deleteSQLitePersons(ctx context.Context, tx *sql.Tx, vecTable string, gen v
 	if ids == nil {
 		ids = []int64{}
 	}
-	encoded, err := json.Marshal(ids)
+	encoded, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode person ids: %w", err)
 	}

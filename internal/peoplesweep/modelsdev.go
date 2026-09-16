@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"io"
 	"math/big"
 	"net"
@@ -212,7 +214,7 @@ func parseModelsDevCatalog(ctx context.Context, body []byte, hooks *modelsDevHoo
 	return result, nil
 }
 
-func modelsDevModels(ctx context.Context, raw json.RawMessage) ([]ModelSuggestion, error) {
+func modelsDevModels(ctx context.Context, raw jsontext.Value) ([]ModelSuggestion, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, nil
 	}
@@ -269,7 +271,7 @@ func modelsDevModels(ctx context.Context, raw json.RawMessage) ([]ModelSuggestio
 	return result, nil
 }
 
-func modelsDevPrices(ctx context.Context, raw json.RawMessage) (*int64, *int64, error) {
+func modelsDevPrices(ctx context.Context, raw jsontext.Value) (*int64, *int64, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, nil, nil
 	}
@@ -288,7 +290,7 @@ func modelsDevPrices(ctx context.Context, raw json.RawMessage) (*int64, *int64, 
 	return input, output, nil
 }
 
-func modelsDevPrice(raw json.RawMessage) (*int64, error) {
+func modelsDevPrice(raw jsontext.Value) (*int64, error) {
 	if len(raw) == 0 {
 		return nil, nil //nolint:nilnil // An omitted provider catalog price is an intentional optional value.
 	}
@@ -314,7 +316,7 @@ func modelsDevPrice(raw json.RawMessage) (*int64, error) {
 	return &converted, nil
 }
 
-func modelsDevEnvironment(raw json.RawMessage) ([]string, error) {
+func modelsDevEnvironment(raw jsontext.Value) ([]string, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, nil
 	}
@@ -331,60 +333,60 @@ func modelsDevEnvironment(raw json.RawMessage) ([]string, error) {
 	return slices.Compact(values), nil
 }
 
-func decodeModelsDevObject(ctx context.Context, raw []byte) (map[string]json.RawMessage, error) {
+func decodeModelsDevObject(ctx context.Context, raw []byte) (map[string]jsontext.Value, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw), jsonexact.PreserveNumbers)
+
+	start, err := decoder.ReadToken()
+	if err != nil || start.Kind() != '{' {
 		return nil, ErrModelsDevInvalid
 	}
-	result := make(map[string]json.RawMessage)
-	for decoder.More() {
+	result := make(map[string]jsontext.Value)
+	for decoder.PeekKind() != '}' && decoder.PeekKind() != ']' && decoder.PeekKind() != 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		token, tokenErr := decoder.Token()
-		key, ok := token.(string)
+		token, tokenErr := decoder.ReadToken()
+		key, ok := token.String(), token.Kind() == '"'
 		if tokenErr != nil || !ok {
 			return nil, ErrModelsDevInvalid
 		}
 		if _, duplicate := result[key]; duplicate {
 			return nil, ErrModelsDevInvalid
 		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
+		var value jsontext.Value
+		if err := json.UnmarshalDecode(decoder, &value); err != nil {
 			return nil, ErrModelsDevInvalid
 		}
-		result[key] = append(json.RawMessage(nil), value...)
+		result[key] = append(jsontext.Value(nil), value...)
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
+	end, err := decoder.ReadToken()
+	if err != nil || end.Kind() != '}' {
 		return nil, ErrModelsDevInvalid
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		return nil, ErrModelsDevInvalid
 	}
 	return result, nil
 }
 
-func decodeModelsDevValue(raw json.RawMessage, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
+func decodeModelsDevValue(raw jsontext.Value, destination any) error {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return ErrModelsDevInvalid
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		return ErrModelsDevInvalid
 	}
 	return nil
 }
 
-func requiredModelsDevString(fields map[string]json.RawMessage, name string) (string, error) {
+func requiredModelsDevString(fields map[string]jsontext.Value, name string) (string, error) {
 	raw, ok := fields[name]
 	if !ok {
 		return "", ErrModelsDevInvalid
@@ -396,7 +398,7 @@ func requiredModelsDevString(fields map[string]json.RawMessage, name string) (st
 	return value, nil
 }
 
-func optionalModelsDevString(fields map[string]json.RawMessage, name string) (string, error) {
+func optionalModelsDevString(fields map[string]jsontext.Value, name string) (string, error) {
 	raw, ok := fields[name]
 	if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return "", nil
@@ -408,7 +410,7 @@ func optionalModelsDevString(fields map[string]json.RawMessage, name string) (st
 	return value, nil
 }
 
-func optionalModelsDevBool(fields map[string]json.RawMessage, name string) (bool, error) {
+func optionalModelsDevBool(fields map[string]jsontext.Value, name string) (bool, error) {
 	raw, ok := fields[name]
 	if !ok {
 		return false, nil
@@ -486,7 +488,7 @@ func IndependentlyTrustedEndpoint(protocol Protocol, endpoint string) bool {
 	return port == "" || port == "443"
 }
 
-func sortedModelsDevKeys(values map[string]json.RawMessage) []string {
+func sortedModelsDevKeys(values map[string]jsontext.Value) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

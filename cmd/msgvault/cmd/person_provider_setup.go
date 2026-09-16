@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -374,9 +374,9 @@ func runPersonProviderAdd(
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(command.OutOrStdout()).Encode(personProviderAddOutput{
+		return json.MarshalWrite(command.OutOrStdout(), personProviderAddOutput{
 			Name: name, Fingerprint: profile.Fingerprint, Checked: true,
-		})
+		}, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Added and checked people provider profile %q; run `msgvault person provider consent %q --yes` to grant consent, then `msgvault person provider use %q` to select and enable it.\n",

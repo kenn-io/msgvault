@@ -3,7 +3,8 @@ package personfacts
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ import (
 // returns canonical JSON. Submitted-data defects are durable failures, not Go
 // errors; errors are reserved for internal encoding failures.
 func NormalizeClaimValue(
-	target TargetDescriptor, submitted json.RawMessage,
+	target TargetDescriptor, submitted jsontext.Value,
 ) (*NormalizedValue, *ValidationFailure, error) {
 	malformed := func(detail string) (*NormalizedValue, *ValidationFailure, error) {
 		return nil, &ValidationFailure{
@@ -76,7 +77,7 @@ func NormalizeClaimValue(
 	}
 
 	return &NormalizedValue{
-		JSON: append(json.RawMessage(nil), canonical...), Fingerprint: fingerprint(canonical),
+		JSON: append(jsontext.Value(nil), canonical...), Fingerprint: fingerprint(canonical),
 	}, nil, nil
 }
 
@@ -89,7 +90,7 @@ func supportedGenericValueType(valueType ValueType) bool {
 	}
 }
 
-func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]byte, error) {
+func normalizeGenericValue(valueType ValueType, submitted jsontext.Value) ([]byte, error) {
 	switch valueType {
 	case ValueText:
 		var value string
@@ -100,9 +101,9 @@ func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]by
 		if value == "" {
 			return nil, errors.New("text value must not be blank")
 		}
-		return json.Marshal(value)
+		return json.Marshal(value, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	case ValueInteger:
-		var value json.Number
+		var value jsontext.Value
 		if err := decodeJSONNumber(submitted, &value); err != nil {
 			return nil, fmt.Errorf("decode integer: %w", err)
 		}
@@ -112,7 +113,7 @@ func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]by
 		}
 		return []byte(strconv.FormatInt(integer, 10)), nil
 	case ValueReal:
-		var value json.Number
+		var value jsontext.Value
 		if err := decodeJSONNumber(submitted, &value); err != nil {
 			return nil, fmt.Errorf("decode real: %w", err)
 		}
@@ -122,7 +123,7 @@ func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]by
 		if err := decodeJSONValue(submitted, &value); err != nil {
 			return nil, fmt.Errorf("decode boolean: %w", err)
 		}
-		return json.Marshal(value)
+		return json.Marshal(value, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	case ValueDate:
 		var value string
 		if err := decodeJSONValue(submitted, &value); err != nil {
@@ -133,7 +134,7 @@ func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]by
 		if err != nil || parsed.Format("2006-01-02") != value {
 			return nil, fmt.Errorf("date %q must be a YYYY-MM-DD calendar date", value)
 		}
-		return json.Marshal(value)
+		return json.Marshal(value, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	case ValueTimestamp:
 		var value string
 		if err := decodeJSONValue(submitted, &value); err != nil {
@@ -143,13 +144,13 @@ func normalizeGenericValue(valueType ValueType, submitted json.RawMessage) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("timestamp must be RFC3339 with a timezone: %w", err)
 		}
-		return json.Marshal(parsed.UTC().Format(time.RFC3339Nano))
+		return json.Marshal(parsed.UTC().Format(time.RFC3339Nano), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	default:
 		return nil, fmt.Errorf("unsupported generic value type %s", valueType)
 	}
 }
 
-func normalizeEmploymentValue(submitted json.RawMessage) ([]byte, error) {
+func normalizeEmploymentValue(submitted jsontext.Value) ([]byte, error) {
 	if err := jsonexact.Validate(submitted, EmploymentValue{}); err != nil {
 		return nil, fmt.Errorf("validate employment fields: %w", err)
 	}
@@ -184,7 +185,7 @@ func normalizeEmploymentValue(submitted json.RawMessage) ([]byte, error) {
 	if partialDateAfterAtSharedPrecision(value.StartDate, value.EndDate) {
 		return nil, errors.New("employment start_date must not be after end_date at their shared precision")
 	}
-	return json.Marshal(value)
+	return json.Marshal(value, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 }
 
 func partialDateAfterAtSharedPrecision(start, end *PartialDateValue) bool {
@@ -231,12 +232,12 @@ func validatePartialDate(name string, value *PartialDateValue) error {
 }
 
 func decodeJSONValue(data []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errors.New("multiple JSON values")
 		}
@@ -245,20 +246,20 @@ func decodeJSONValue(data []byte, destination any) error {
 	return nil
 }
 
-func decodeJSONNumber(data []byte, destination *json.Number) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+func decodeJSONNumber(data []byte, destination *jsontext.Value) error {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
 	var value any
-	if err := decoder.Decode(&value); err != nil {
+	if err := json.UnmarshalDecode(decoder, &value); err != nil {
 		return err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return errors.New("multiple JSON values")
 		}
 		return err
 	}
-	number, ok := value.(json.Number)
+	number, ok := value.(jsontext.Value)
 	if !ok {
 		return errors.New("value must be a JSON number")
 	}
@@ -336,15 +337,15 @@ func canonicalNumber(raw string) ([]byte, error) {
 
 func canonicalScalarString(data []byte) (string, error) {
 	var value any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, &value); err != nil {
 		return "", err
 	}
 	switch value := value.(type) {
 	case string:
 		return value, nil
-	case json.Number:
+	case jsontext.Value:
 		return value.String(), nil
 	case bool:
 		return strconv.FormatBool(value), nil
@@ -354,13 +355,13 @@ func canonicalScalarString(data []byte) (string, error) {
 }
 
 func canonicalizeRawJSON(data []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), jsonexact.PreserveNumbers)
+
 	var value any
-	if err := decoder.Decode(&value); err != nil {
+	if err := json.UnmarshalDecode(decoder, &value); err != nil {
 		return nil, err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return nil, errors.New("multiple JSON values")
 		}
@@ -370,17 +371,17 @@ func canonicalizeRawJSON(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(normalized)
+	return json.Marshal(normalized, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 }
 
 func normalizeJSONNumbers(value any) (any, error) {
 	switch value := value.(type) {
-	case json.Number:
+	case jsontext.Value:
 		canonical, err := canonicalSubmittedJSONNumber(value.String())
 		if err != nil {
 			return nil, err
 		}
-		return json.Number(canonical), nil
+		return jsontext.Value(canonical), nil
 	case []any:
 		for i := range value {
 			normalized, err := normalizeJSONNumbers(value[i])

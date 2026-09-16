@@ -43,7 +43,7 @@ type Property struct {
 type Parameter struct {
 	Name         string           `json:"name"`
 	OriginalName string           `json:"original_name,omitempty"`
-	Bare         bool             `json:"bare,omitempty"`
+	Bare         bool             `json:"bare,omitzero"`
 	Values       []ParameterValue `json:"values"`
 }
 
@@ -56,8 +56,8 @@ type Parameter struct {
 type ParameterValue struct {
 	Raw      string `json:"raw,omitempty"`
 	Decoded  string `json:"decoded"`
-	Quoted   bool   `json:"quoted,omitempty"`
-	RawValid bool   `json:"raw_valid,omitempty"`
+	Quoted   bool   `json:"quoted,omitzero"`
+	RawValid bool   `json:"raw_valid,omitzero"`
 }
 
 // DecodeOptions bounds decoder resource use and compatibility behavior. Its

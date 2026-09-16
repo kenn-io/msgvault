@@ -3,7 +3,7 @@ package teams
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -932,7 +932,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	// message was constructed without going through a decode.
 	raw := []byte(gm.Raw)
 	if len(raw) == 0 {
-		marshaled, marshalErr := json.Marshal(gm)
+		marshaled, marshalErr := json.Marshal(gm, json.Deterministic(true))
 		if marshalErr != nil {
 			return 0, false, fmt.Errorf("marshal teams message raw archive: %w", marshalErr)
 		}

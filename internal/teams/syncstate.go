@@ -1,7 +1,7 @@
 package teams
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"time"
 )
 
@@ -35,7 +35,7 @@ func LoadSyncState(blob string) (*SyncState, error) {
 }
 
 func (s *SyncState) Marshal() (string, error) {
-	b, err := json.Marshal(s)
+	b, err := json.Marshal(s, json.Deterministic(true))
 	return string(b), err
 }
 

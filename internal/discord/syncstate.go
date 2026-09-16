@@ -1,7 +1,8 @@
 package discord
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,8 +18,8 @@ type ContainerState struct {
 	HighWater        string `json:"high_water,omitempty"`
 	BackfillBefore   string `json:"backfill_before,omitempty"`
 	BackfillUpper    string `json:"backfill_upper,omitempty"`
-	BackfillComplete bool   `json:"backfill_complete,omitempty"`
-	RetryRequired    bool   `json:"retry_required,omitempty"`
+	BackfillComplete bool   `json:"backfill_complete,omitzero"`
+	RetryRequired    bool   `json:"retry_required,omitzero"`
 	RepairLower      string `json:"repair_lower,omitempty"`
 }
 
@@ -32,7 +33,7 @@ type ThreadCatalogState struct {
 // SyncState is the versioned Discord cursor persisted in sync run state.
 type SyncState struct {
 	Version       int                           `json:"version"`
-	Full          bool                          `json:"full,omitempty"`
+	Full          bool                          `json:"full,omitzero"`
 	LowerBound    string                        `json:"lower_bound,omitempty"`
 	Containers    map[string]ContainerState     `json:"containers"`
 	ThreadCatalog map[string]ThreadCatalogState `json:"thread_catalog"`
@@ -62,13 +63,13 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 
 	state := &SyncState{}
-	decoder := json.NewDecoder(strings.NewReader(blob))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(state); err != nil {
+	decoder := jsontext.NewDecoder(strings.NewReader(blob), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, state); err != nil {
 		return nil, fmt.Errorf("decode Discord sync state: %w", err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = errors.New("unexpected trailing JSON value")
 		}
@@ -100,7 +101,7 @@ func (s *SyncState) Marshal() (string, error) {
 	if err := s.validate(); err != nil {
 		return "", fmt.Errorf("marshal Discord sync state: %w", err)
 	}
-	encoded, err := json.Marshal(s)
+	encoded, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal Discord sync state: %w", err)
 	}

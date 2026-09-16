@@ -25,7 +25,7 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
-	assertions.Contains(string(got), "JSON json.RawMessage")
+	assertions.Contains(string(got), "JSON jsontext.Value")
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))

@@ -1,7 +1,7 @@
 package beeper
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +29,7 @@ func SaveToken(tokensDir, token string) error {
 	if err := fileutil.SecureMkdirAll(tokensDir, 0700); err != nil {
 		return fmt.Errorf("create tokens dir: %w", err)
 	}
-	data, err := json.Marshal(tokenFile{AccessToken: token}) //nolint:gosec // serialized to a 0600 file on the user's own machine
+	data, err := json.Marshal(tokenFile{AccessToken: token}, json.Deterministic(true)) // serialized to a 0600 file on the user's own machine
 	if err != nil {
 		return err
 	}

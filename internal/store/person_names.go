@@ -33,39 +33,39 @@ type PersonName struct {
 	Envelope          ValueEnvelope  `json:"envelope"`
 	PersonID          int64          `json:"person_id"`
 	NameKind          PersonNameKind `json:"name_kind"`
-	Formatted         *string        `json:"formatted,omitempty"`
-	FamilyName        *string        `json:"family_name,omitempty"`
-	GivenName         *string        `json:"given_name,omitempty"`
-	AdditionalNames   *string        `json:"additional_names,omitempty"`
-	HonorificPrefixes *string        `json:"honorific_prefixes,omitempty"`
-	HonorificSuffixes *string        `json:"honorific_suffixes,omitempty"`
-	SecondarySurname  *string        `json:"secondary_surname,omitempty"`
-	Generation        *string        `json:"generation,omitempty"`
-	Language          *string        `json:"language,omitempty"`
-	Script            *string        `json:"script,omitempty"`
-	PhoneticSystem    *string        `json:"phonetic_system,omitempty"`
-	PhoneticScript    *string        `json:"phonetic_script,omitempty"`
-	SortAs            *string        `json:"sort_as,omitempty"`
+	Formatted         *string        `json:"formatted,omitzero" nullable:"false"`
+	FamilyName        *string        `json:"family_name,omitzero" nullable:"false"`
+	GivenName         *string        `json:"given_name,omitzero" nullable:"false"`
+	AdditionalNames   *string        `json:"additional_names,omitzero" nullable:"false"`
+	HonorificPrefixes *string        `json:"honorific_prefixes,omitzero" nullable:"false"`
+	HonorificSuffixes *string        `json:"honorific_suffixes,omitzero" nullable:"false"`
+	SecondarySurname  *string        `json:"secondary_surname,omitzero" nullable:"false"`
+	Generation        *string        `json:"generation,omitzero" nullable:"false"`
+	Language          *string        `json:"language,omitzero" nullable:"false"`
+	Script            *string        `json:"script,omitzero" nullable:"false"`
+	PhoneticSystem    *string        `json:"phonetic_system,omitzero" nullable:"false"`
+	PhoneticScript    *string        `json:"phonetic_script,omitzero" nullable:"false"`
+	SortAs            *string        `json:"sort_as,omitzero" nullable:"false"`
 	IsDerived         bool           `json:"is_derived"`
 	OriginalValue     string         `json:"original_value"`
 }
 
 type PersonNameInput struct {
 	NameKind          PersonNameKind     `json:"name_kind"`
-	Formatted         *string            `json:"formatted,omitempty"`
-	FamilyName        *string            `json:"family_name,omitempty"`
-	GivenName         *string            `json:"given_name,omitempty"`
-	AdditionalNames   *string            `json:"additional_names,omitempty"`
-	HonorificPrefixes *string            `json:"honorific_prefixes,omitempty"`
-	HonorificSuffixes *string            `json:"honorific_suffixes,omitempty"`
-	SecondarySurname  *string            `json:"secondary_surname,omitempty"`
-	Generation        *string            `json:"generation,omitempty"`
-	Language          *string            `json:"language,omitempty"`
-	Script            *string            `json:"script,omitempty"`
-	PhoneticSystem    *string            `json:"phonetic_system,omitempty"`
-	PhoneticScript    *string            `json:"phonetic_script,omitempty"`
-	SortAs            *string            `json:"sort_as,omitempty"`
-	IsDerived         bool               `json:"is_derived,omitempty"`
+	Formatted         *string            `json:"formatted,omitzero" nullable:"false"`
+	FamilyName        *string            `json:"family_name,omitzero" nullable:"false"`
+	GivenName         *string            `json:"given_name,omitzero" nullable:"false"`
+	AdditionalNames   *string            `json:"additional_names,omitzero" nullable:"false"`
+	HonorificPrefixes *string            `json:"honorific_prefixes,omitzero" nullable:"false"`
+	HonorificSuffixes *string            `json:"honorific_suffixes,omitzero" nullable:"false"`
+	SecondarySurname  *string            `json:"secondary_surname,omitzero" nullable:"false"`
+	Generation        *string            `json:"generation,omitzero" nullable:"false"`
+	Language          *string            `json:"language,omitzero" nullable:"false"`
+	Script            *string            `json:"script,omitzero" nullable:"false"`
+	PhoneticSystem    *string            `json:"phonetic_system,omitzero" nullable:"false"`
+	PhoneticScript    *string            `json:"phonetic_script,omitzero" nullable:"false"`
+	SortAs            *string            `json:"sort_as,omitzero" nullable:"false"`
+	IsDerived         bool               `json:"is_derived,omitzero"`
 	OriginalValue     string             `json:"original_value"`
 	Envelope          ValueEnvelopeInput `json:"envelope"`
 }

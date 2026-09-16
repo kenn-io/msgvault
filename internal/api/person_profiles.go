@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -77,7 +78,7 @@ type PersonSearchEngine interface {
 
 type PersonSearchRequest struct {
 	Query string `json:"query" minLength:"1"`
-	Limit int    `json:"limit,omitempty" minimum:"0" maximum:"100" default:"20"`
+	Limit int    `json:"limit,omitzero" minimum:"0" maximum:"100" default:"20"`
 }
 
 type PersonSearchResult struct {
@@ -577,7 +578,7 @@ func decodePersonRequest(w http.ResponseWriter, r *http.Request, target any) boo
 
 func decodePersonRequestFields(
 	w http.ResponseWriter, r *http.Request, target any,
-) (map[string]json.RawMessage, bool) {
+) (map[string]jsontext.Value, bool) {
 	return decodeEntityRequestFields(w, r, target, "person")
 }
 
@@ -591,24 +592,24 @@ func decodeEntityRequest(w http.ResponseWriter, r *http.Request, target any, ent
 
 func decodeEntityRequestFields(
 	w http.ResponseWriter, r *http.Request, target any, entity string,
-) (map[string]json.RawMessage, bool) {
+) (map[string]jsontext.Value, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request")
 		return nil, false
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request: "+err.Error())
 		return nil, false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			capitalizeASCII(entity)+" request must contain one JSON object")
 		return nil, false
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid "+entity+" request")
 		return nil, false

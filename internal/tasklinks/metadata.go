@@ -4,7 +4,8 @@ package tasklinks
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -38,7 +39,7 @@ type MessageIdentity struct {
 
 type MailLink struct {
 	MessageID        int64  `json:"message_id"`
-	ConversationID   int64  `json:"conversation_id,omitempty"`
+	ConversationID   int64  `json:"conversation_id,omitzero"`
 	Subject          string `json:"subject,omitempty"`
 	From             string `json:"from,omitempty"`
 	SentAt           string `json:"sent_at,omitempty"`
@@ -148,11 +149,11 @@ func indexMailLinks(metadata map[string]any) ([]MailLink, bool) {
 	if !ok {
 		return nil, false
 	}
-	data, err := json.Marshal(raw)
+	data, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
 		return nil, true
 	}
-	var elements []json.RawMessage
+	var elements []jsontext.Value
 	if err := json.Unmarshal(data, &elements); err != nil {
 		return nil, true
 	}
@@ -179,7 +180,7 @@ func rawMailLinks(metadata map[string]any) ([]any, []MailLink, error) {
 	if !ok {
 		return []any{}, []MailLink{}, nil
 	}
-	data, err := json.Marshal(raw)
+	data, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: encode existing value: %w", ErrUnsafeMailLinks, err)
 	}
@@ -193,7 +194,7 @@ func rawMailLinks(metadata map[string]any) ([]any, []MailLink, error) {
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: element %d is not an object", ErrUnsafeMailLinks, index)
 		}
-		encoded, err := json.Marshal(object)
+		encoded, err := json.Marshal(object, json.Deterministic(true))
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: encode element %d: %w", ErrUnsafeMailLinks, index, err)
 		}
@@ -228,7 +229,7 @@ func metadataWithLink(metadata map[string]any, link MailLink) (map[string]any, e
 	}
 	identity := MessageIdentity{ArchiveUID: link.ArchiveUID, MessageID: link.MessageID, SourceType: link.SourceType, SourceIdentifier: link.SourceIdentifier, SourceMessageID: link.SourceMessageID}
 	if len(Resolve(links, identity)) == 0 {
-		encoded, err := json.Marshal(link)
+		encoded, err := json.Marshal(link, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode new mail link: %w", err)
 		}

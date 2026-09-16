@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"mime"
@@ -43,12 +44,12 @@ type StructuredPersonProfile store.PersonProfile
 type ValueEnvelopeInput store.ValueEnvelopeInput
 
 type PersonProfilePatchRequest struct {
-	Names         *PersonNamePatchRequest         `json:"names,omitempty"`
-	ContactPoints *PersonContactPointPatchRequest `json:"contact_points,omitempty"`
-	Addresses     *PersonAddressPatchRequest      `json:"addresses,omitempty"`
-	Dates         *PersonDatePatchRequest         `json:"dates,omitempty"`
-	Categories    *PersonCategoryPatchRequest     `json:"categories,omitempty"`
-	Media         *PersonMediaPatchRequest        `json:"media,omitempty"`
+	Names         *PersonNamePatchRequest         `json:"names,omitzero" nullable:"false"`
+	ContactPoints *PersonContactPointPatchRequest `json:"contact_points,omitzero" nullable:"false"`
+	Addresses     *PersonAddressPatchRequest      `json:"addresses,omitzero" nullable:"false"`
+	Dates         *PersonDatePatchRequest         `json:"dates,omitzero" nullable:"false"`
+	Categories    *PersonCategoryPatchRequest     `json:"categories,omitzero" nullable:"false"`
+	Media         *PersonMediaPatchRequest        `json:"media,omitzero" nullable:"false"`
 }
 
 type PersonNamePatchRequest struct {
@@ -58,20 +59,20 @@ type PersonNamePatchRequest struct {
 
 type PersonNameInputRequest struct {
 	NameKind          store.PersonNameKind `json:"name_kind"`
-	Formatted         *string              `json:"formatted,omitempty"`
-	FamilyName        *string              `json:"family_name,omitempty"`
-	GivenName         *string              `json:"given_name,omitempty"`
-	AdditionalNames   *string              `json:"additional_names,omitempty"`
-	HonorificPrefixes *string              `json:"honorific_prefixes,omitempty"`
-	HonorificSuffixes *string              `json:"honorific_suffixes,omitempty"`
-	SecondarySurname  *string              `json:"secondary_surname,omitempty"`
-	Generation        *string              `json:"generation,omitempty"`
-	Language          *string              `json:"language,omitempty"`
-	Script            *string              `json:"script,omitempty"`
-	PhoneticSystem    *string              `json:"phonetic_system,omitempty"`
-	PhoneticScript    *string              `json:"phonetic_script,omitempty"`
-	SortAs            *string              `json:"sort_as,omitempty"`
-	IsDerived         bool                 `json:"is_derived,omitempty"`
+	Formatted         *string              `json:"formatted,omitzero" nullable:"false"`
+	FamilyName        *string              `json:"family_name,omitzero" nullable:"false"`
+	GivenName         *string              `json:"given_name,omitzero" nullable:"false"`
+	AdditionalNames   *string              `json:"additional_names,omitzero" nullable:"false"`
+	HonorificPrefixes *string              `json:"honorific_prefixes,omitzero" nullable:"false"`
+	HonorificSuffixes *string              `json:"honorific_suffixes,omitzero" nullable:"false"`
+	SecondarySurname  *string              `json:"secondary_surname,omitzero" nullable:"false"`
+	Generation        *string              `json:"generation,omitzero" nullable:"false"`
+	Language          *string              `json:"language,omitzero" nullable:"false"`
+	Script            *string              `json:"script,omitzero" nullable:"false"`
+	PhoneticSystem    *string              `json:"phonetic_system,omitzero" nullable:"false"`
+	PhoneticScript    *string              `json:"phonetic_script,omitzero" nullable:"false"`
+	SortAs            *string              `json:"sort_as,omitzero" nullable:"false"`
+	IsDerived         bool                 `json:"is_derived,omitzero"`
 	OriginalValue     string               `json:"original_value,omitempty"`
 	Envelope          ValueEnvelopeInput   `json:"envelope"`
 }
@@ -83,11 +84,11 @@ type PersonContactPointPatchRequest struct {
 
 type PersonContactPointInputRequest struct {
 	AddressKind   store.ContactAddressKind `json:"address_kind"`
-	ServiceSlug   *string                  `json:"service_slug,omitempty"`
-	ScopeKind     *string                  `json:"scope_kind,omitempty"`
-	ScopeValue    *string                  `json:"scope_value,omitempty"`
+	ServiceSlug   *string                  `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind     *string                  `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue    *string                  `json:"scope_value,omitzero" nullable:"false"`
 	OriginalValue string                   `json:"original_value"`
-	URI           *string                  `json:"uri,omitempty"`
+	URI           *string                  `json:"uri,omitzero" nullable:"false"`
 	Envelope      ValueEnvelopeInput       `json:"envelope"`
 }
 
@@ -98,20 +99,20 @@ type PersonAddressPatchRequest struct {
 
 type PersonAddressInputRequest struct {
 	AddressKind        store.PersonAddressKind `json:"address_kind"`
-	PostOfficeBox      *string                 `json:"post_office_box,omitempty"`
-	ExtendedAddress    *string                 `json:"extended_address,omitempty"`
-	StreetAddress      *string                 `json:"street_address,omitempty"`
-	Locality           *string                 `json:"locality,omitempty"`
-	Region             *string                 `json:"region,omitempty"`
-	PostalCode         *string                 `json:"postal_code,omitempty"`
-	CountryName        *string                 `json:"country_name,omitempty"`
-	ExtendedComponents *string                 `json:"extended_components,omitempty"`
-	FreeText           *string                 `json:"free_text,omitempty"`
-	Label              *string                 `json:"label,omitempty"`
-	GeoURI             *string                 `json:"geo_uri,omitempty"`
-	Timezone           *string                 `json:"timezone,omitempty"`
-	CountryCode        *string                 `json:"country_code,omitempty"`
-	PlaceURI           *string                 `json:"place_uri,omitempty"`
+	PostOfficeBox      *string                 `json:"post_office_box,omitzero" nullable:"false"`
+	ExtendedAddress    *string                 `json:"extended_address,omitzero" nullable:"false"`
+	StreetAddress      *string                 `json:"street_address,omitzero" nullable:"false"`
+	Locality           *string                 `json:"locality,omitzero" nullable:"false"`
+	Region             *string                 `json:"region,omitzero" nullable:"false"`
+	PostalCode         *string                 `json:"postal_code,omitzero" nullable:"false"`
+	CountryName        *string                 `json:"country_name,omitzero" nullable:"false"`
+	ExtendedComponents *string                 `json:"extended_components,omitzero" nullable:"false"`
+	FreeText           *string                 `json:"free_text,omitzero" nullable:"false"`
+	Label              *string                 `json:"label,omitzero" nullable:"false"`
+	GeoURI             *string                 `json:"geo_uri,omitzero" nullable:"false"`
+	Timezone           *string                 `json:"timezone,omitzero" nullable:"false"`
+	CountryCode        *string                 `json:"country_code,omitzero" nullable:"false"`
+	PlaceURI           *string                 `json:"place_uri,omitzero" nullable:"false"`
 	OriginalValue      string                  `json:"original_value,omitempty"`
 	Envelope           ValueEnvelopeInput      `json:"envelope"`
 }
@@ -123,10 +124,10 @@ type PersonDatePatchRequest struct {
 
 type PersonDateInputRequest struct {
 	DateKind      store.PersonDateKind `json:"date_kind"`
-	Label         *string              `json:"label,omitempty"`
+	Label         *string              `json:"label,omitzero" nullable:"false"`
 	Date          store.PartialDate    `json:"date,omitzero"`
-	DateText      *string              `json:"date_text,omitempty"`
-	CalendarScale *string              `json:"calendar_scale,omitempty"`
+	DateText      *string              `json:"date_text,omitzero" nullable:"false"`
+	CalendarScale *string              `json:"calendar_scale,omitzero" nullable:"false"`
 	OriginalValue string               `json:"original_value,omitempty"`
 	Envelope      ValueEnvelopeInput   `json:"envelope"`
 }
@@ -148,8 +149,8 @@ type PersonMediaPatchRequest struct {
 
 type PersonMediaInputRequest struct {
 	MediaKind     store.PersonMediaKind `json:"media_kind"`
-	MediaType     *string               `json:"media_type,omitempty"`
-	URI           *string               `json:"uri,omitempty"`
+	MediaType     *string               `json:"media_type,omitzero" nullable:"false"`
+	URI           *string               `json:"uri,omitzero" nullable:"false"`
 	Data          []byte                `json:"data,omitempty"`
 	OriginalValue string                `json:"original_value,omitempty"`
 	Envelope      ValueEnvelopeInput    `json:"envelope"`
@@ -417,20 +418,20 @@ func decodeProfilePatchRequest(
 		return patch, false
 	}
 	var request PersonProfilePatchRequest
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person profile patch: "+err.Error())
 		return patch, false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Person profile patch must contain one JSON object")
 		return patch, false
 	}
 	// The request DTO is the OpenAPI allowlist. Transcoding that validated
 	// subset keeps runtime acceptance identical to the generated contract
 	// while the store retains its response-oriented envelope model.
-	encoded, err := json.Marshal(request)
+	encoded, err := json.Marshal(request, json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person profile patch")
 		return patch, false

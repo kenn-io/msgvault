@@ -1,7 +1,7 @@
 package meetingimport
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -31,7 +31,7 @@ type canonicalMeeting struct {
 	SummaryText        string              `json:"summary_text,omitempty"`
 	Transcript         string              `json:"transcript,omitempty"`
 	TranscriptSegments []TranscriptSegment `json:"transcript_segments,omitempty"`
-	Organizer          *MeetingPerson      `json:"organizer,omitempty"`
+	Organizer          *MeetingPerson      `json:"organizer,omitzero"`
 	Attendees          []MeetingPerson     `json:"attendees,omitempty"`
 	Metadata           map[string]any      `json:"metadata,omitempty"`
 }
@@ -59,11 +59,11 @@ func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
 	}
 
 	body := buildBody(title, meeting)
-	raw, err := json.Marshal(buildCanonicalMeeting(meeting))
+	raw, err := json.Marshal(buildCanonicalMeeting(meeting), json.Deterministic(true))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal canonical meeting: %w", err)
 	}
-	metadata, err := json.Marshal(buildMessageMetadata(req))
+	metadata, err := json.Marshal(buildMessageMetadata(req), json.Deterministic(true))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal meeting metadata: %w", err)
 	}

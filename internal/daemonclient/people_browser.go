@@ -2,7 +2,8 @@ package daemonclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -706,7 +707,7 @@ func attributeValueFromGenerated(value generated.AttributeValue) store.Attribute
 		Type: store.AttributeValueType(value.Type), Text: copyString(value.Text),
 		Integer: copyInt64(value.Integer), Real: copyFloat64(value.Real),
 		Boolean: copyBool(value.Boolean), Date: copyString(value.Date),
-		Timestamp: copyTime(value.Timestamp), JSON: append(json.RawMessage(nil), value.JSON...),
+		Timestamp: copyTime(value.Timestamp), JSON: append(jsontext.Value(nil), value.JSON...),
 		RecordType: copyString(value.RecordType), RecordID: copyInt64(value.RecordID),
 	}
 }
@@ -715,7 +716,7 @@ func attributeValueToGenerated(value store.AttributeValue) generated.AttributeVa
 	return generated.AttributeValue{
 		Type: string(value.Type), Text: copyString(value.Text), Integer: copyInt64(value.Integer),
 		Real: copyFloat64(value.Real), Boolean: copyBool(value.Boolean), Date: copyString(value.Date),
-		Timestamp: copyTime(value.Timestamp), JSON: append(json.RawMessage(nil), value.JSON...),
+		Timestamp: copyTime(value.Timestamp), JSON: append(jsontext.Value(nil), value.JSON...),
 		RecordType: copyString(value.RecordType), RecordID: copyInt64(value.RecordID),
 	}
 }

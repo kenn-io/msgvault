@@ -24,19 +24,19 @@ type Employment struct {
 	ID             int64        `json:"id"`
 	PersonID       int64        `json:"person_id"`
 	OrganizationID int64        `json:"organization_id"`
-	Title          *string      `json:"title,omitempty"`
-	Role           *string      `json:"role,omitempty"`
-	Department     *string      `json:"department,omitempty"`
-	Location       *string      `json:"location,omitempty"`
-	AddressID      *int64       `json:"address_id,omitempty"`
-	Description    *string      `json:"description,omitempty"`
+	Title          *string      `json:"title,omitzero" nullable:"false"`
+	Role           *string      `json:"role,omitzero" nullable:"false"`
+	Department     *string      `json:"department,omitzero" nullable:"false"`
+	Location       *string      `json:"location,omitzero" nullable:"false"`
+	AddressID      *int64       `json:"address_id,omitzero" nullable:"false"`
+	Description    *string      `json:"description,omitzero" nullable:"false"`
 	StartDate      *PartialDate `json:"start_date,omitempty"`
 	EndDate        *PartialDate `json:"end_date,omitempty"`
 	IsCurrent      bool         `json:"is_current"`
 	IsPrimary      bool         `json:"is_primary"`
 	Source         Provenance   `json:"source"`
-	SourceRef      *string      `json:"source_ref,omitempty"`
-	Confidence     *float64     `json:"confidence,omitempty"`
+	SourceRef      *string      `json:"source_ref,omitzero" nullable:"false"`
+	Confidence     *float64     `json:"confidence,omitzero" nullable:"false"`
 	Revision       int64        `json:"revision"`
 	CreatedAt      time.Time    `json:"created_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`

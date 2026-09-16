@@ -2,7 +2,8 @@ package personfacts
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -793,7 +794,7 @@ func resolverEvidenceKey(evidence Evidence) string {
 	if key, err := EvidenceKey(evidence.Input); err == nil {
 		return key
 	}
-	encoded, err := json.Marshal(evidenceKeyView(evidence.Input))
+	encoded, err := json.Marshal(evidenceKeyView(evidence.Input), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return ""
 	}
@@ -1037,7 +1038,7 @@ func resolverInputFingerprint(
 	for index, item := range input.Current {
 		current[index] = resolverFingerprintCurrent{
 			Ref: item.Ref,
-			Normalized: canonicalNormalized{JSON: append(json.RawMessage(nil), item.Normalized.JSON...),
+			Normalized: canonicalNormalized{JSON: append(jsontext.Value(nil), item.Normalized.JSON...),
 				Fingerprint: item.Normalized.Fingerprint},
 			ActiveFrom:      portableFactTime(item.ActiveFrom).Format(time.RFC3339Nano),
 			ActiveUntil:     canonicalTimePointer(item.ActiveUntil),
@@ -1045,8 +1046,8 @@ func resolverInputFingerprint(
 		}
 	}
 	sort.Slice(current, func(i, j int) bool {
-		left, _ := json.Marshal(current[i])
-		right, _ := json.Marshal(current[j])
+		left, _ := json.Marshal(current[i], json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+		right, _ := json.Marshal(current[j], json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		return string(left) < string(right)
 	})
 
@@ -1062,7 +1063,7 @@ func resolverInputFingerprint(
 		}
 		if item.Normalized != nil {
 			view.Normalized = &canonicalNormalized{
-				JSON: append(json.RawMessage(nil), item.Normalized.JSON...), Fingerprint: item.Normalized.Fingerprint,
+				JSON: append(jsontext.Value(nil), item.Normalized.JSON...), Fingerprint: item.Normalized.Fingerprint,
 			}
 		}
 		if item.Failure != nil {
@@ -1081,8 +1082,8 @@ func resolverInputFingerprint(
 			})
 		}
 		sort.Slice(view.Evidence, func(i, j int) bool {
-			left, _ := json.Marshal(view.Evidence[i])
-			right, _ := json.Marshal(view.Evidence[j])
+			left, _ := json.Marshal(view.Evidence[i], json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+			right, _ := json.Marshal(view.Evidence[j], json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 			return string(left) < string(right)
 		})
 		claims[index] = view
@@ -1106,14 +1107,14 @@ func resolverInputFingerprint(
 		ResolvedAt: portableFactTime(input.ResolvedAt).Format(time.RFC3339Nano), Policy: policy,
 		PolicyContext: input.Policy, ProjectionContextFingerprint: input.ProjectionContextFingerprint,
 		Current: current, Claims: claims, Pin: input.Pin,
-	})
+	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode resolver input fingerprint: %w", err)
 	}
 	return fingerprint(encoded), nil
 }
 
-func resolverSubmittedValue(value json.RawMessage) string {
+func resolverSubmittedValue(value jsontext.Value) string {
 	canonical, err := canonicalizeRawJSON(value)
 	if err != nil {
 		return string(value)

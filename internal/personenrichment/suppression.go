@@ -6,7 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -272,7 +272,7 @@ func returnedIdentifierCoverageHash(manifest verifiedReturnedIdentifierManifest)
 		VerificationVersion string           `json:"verification_version"`
 		ProviderNamespace   string           `json:"provider_namespace"`
 		Digests             []coverageDigest `json:"digests"`
-	}{manifest.verificationVersion, manifest.providerNamespace, covered})
+	}{manifest.verificationVersion, manifest.providerNamespace, covered}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode returned-identifier coverage: %w", err)
 	}

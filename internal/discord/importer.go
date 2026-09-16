@@ -5,7 +5,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -513,13 +514,13 @@ func storedContainerNeedsImport(
 	if !state.BackfillComplete || state.RetryRequired || explicitlyIncluded {
 		return true, nil
 	}
-	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" || !json.Valid([]byte(metadata.String)) {
+	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" || !jsontext.Value([]byte(metadata.String)).IsValid() {
 		return true, nil
 	}
 	var archived struct {
-		DiscordChannelType *int            `json:"discord_channel_type"`
-		InaccessibleSince  json.RawMessage `json:"container_inaccessible_since"`
-		MissingSince       json.RawMessage `json:"container_missing_since"`
+		DiscordChannelType *int           `json:"discord_channel_type"`
+		InaccessibleSince  jsontext.Value `json:"container_inaccessible_since"`
+		MissingSince       jsontext.Value `json:"container_missing_since"`
 	}
 	_ = json.Unmarshal([]byte(metadata.String), &archived)
 	if archived.DiscordChannelType == nil {
@@ -1148,14 +1149,14 @@ func (imp *Importer) setContainerAccessMarker(
 		now = imp.now
 	}
 	if _, exists := metadata[marker]; !exists {
-		encodedTime, err := json.Marshal(now().UTC().Format(time.RFC3339Nano))
+		encodedTime, err := json.Marshal(now().UTC().Format(time.RFC3339Nano), json.Deterministic(true))
 		if err != nil {
 			return err
 		}
 		metadata[marker] = encodedTime
 	}
 	if reason != "" {
-		encodedReason, err := json.Marshal(reason)
+		encodedReason, err := json.Marshal(reason, json.Deterministic(true))
 		if err != nil {
 			return err
 		}
@@ -1165,9 +1166,9 @@ func (imp *Importer) setContainerAccessMarker(
 }
 
 func (imp *Importer) setConversationCatalogMetadata(
-	conversationID int64, catalogMetadata json.RawMessage, floor guildFloor,
+	conversationID int64, catalogMetadata jsontext.Value, floor guildFloor,
 ) error {
-	metadata := make(map[string]json.RawMessage)
+	metadata := make(map[string]jsontext.Value)
 	if len(catalogMetadata) != 0 {
 		if err := json.Unmarshal(catalogMetadata, &metadata); err != nil {
 			return fmt.Errorf("decode mapped Discord conversation metadata: %w", err)
@@ -1177,8 +1178,8 @@ func (imp *Importer) setConversationCatalogMetadata(
 	if err != nil {
 		return err
 	}
-	var existing map[string]json.RawMessage
-	if stored.Valid && json.Valid([]byte(stored.String)) {
+	var existing map[string]jsontext.Value
+	if stored.Valid && jsontext.Value([]byte(stored.String)).IsValid() {
 		if err := json.Unmarshal([]byte(stored.String), &existing); err != nil {
 			return fmt.Errorf("decode stored Discord conversation metadata: %w", err)
 		}
@@ -1210,10 +1211,10 @@ func (imp *Importer) setConversationCatalogMetadata(
 // the zero an ordinary channel would otherwise write back. A floor Discord did
 // answer with replaces the archived one outright, so a shrinking guild relaxes
 // its exclusions on the next run.
-func applyParticipantFloor(metadata, archived map[string]json.RawMessage, floor guildFloor) {
+func applyParticipantFloor(metadata, archived map[string]jsontext.Value, floor guildFloor) {
 	own := metadataCount(metadata, "member_count")
 	if own > 0 {
-		metadata["container_member_count"] = json.RawMessage(strconv.Itoa(own))
+		metadata["container_member_count"] = jsontext.Value(strconv.Itoa(own))
 	}
 	count := own
 	if floor.known && floor.count > 0 {
@@ -1226,7 +1227,7 @@ func applyParticipantFloor(metadata, archived map[string]json.RawMessage, floor 
 		delete(metadata, "member_count")
 		return
 	}
-	metadata["member_count"] = json.RawMessage(strconv.Itoa(count))
+	metadata["member_count"] = jsontext.Value(strconv.Itoa(count))
 }
 
 // applyMembershipMarker keeps member_count_unknown in step with the lookup
@@ -1234,10 +1235,10 @@ func applyParticipantFloor(metadata, archived map[string]json.RawMessage, floor 
 // readable one resolves it, and a run that made no lookup leaves whatever an
 // earlier run archived. The marker is what keeps purge from trusting a stale
 // count and backfill from admitting on it.
-func applyMembershipMarker(metadata, archived map[string]json.RawMessage, floor guildFloor) {
+func applyMembershipMarker(metadata, archived map[string]jsontext.Value, floor guildFloor) {
 	switch {
 	case floor.unreadable:
-		metadata["member_count_unknown"] = json.RawMessage("true")
+		metadata["member_count_unknown"] = jsontext.Value("true")
 	case floor.known && floor.count > 0:
 		delete(metadata, "member_count_unknown")
 	default:
@@ -1262,25 +1263,25 @@ func (imp *Importer) reconcileArchivedParticipantFloor(conversationID int64, flo
 	if err != nil {
 		return err
 	}
-	metadata := make(map[string]json.RawMessage)
+	metadata := make(map[string]jsontext.Value)
 	if stored.Valid && strings.TrimSpace(stored.String) != "" {
 		// A legacy opaque payload has no mergeable object. Preserving it whole
 		// matters more than a floor the next catalog refresh will record anyway.
-		if !json.Valid([]byte(stored.String)) {
+		if !jsontext.Value([]byte(stored.String)).IsValid() {
 			return nil
 		}
 		if err := json.Unmarshal([]byte(stored.String), &metadata); err != nil {
 			return fmt.Errorf("decode Discord conversation metadata: %w", err)
 		}
 	}
-	reconciled := make(map[string]json.RawMessage, len(metadata)+2)
+	reconciled := make(map[string]jsontext.Value, len(metadata)+2)
 	maps.Copy(reconciled, metadata)
 	if floor.known {
 		count := max(metadataCount(metadata, "container_member_count"), floor.count)
-		reconciled["member_count"] = json.RawMessage(strconv.Itoa(count))
+		reconciled["member_count"] = jsontext.Value(strconv.Itoa(count))
 	}
 	applyMembershipMarker(reconciled, metadata, floor)
-	unchanged := maps.EqualFunc(metadata, reconciled, func(left, right json.RawMessage) bool {
+	unchanged := maps.EqualFunc(metadata, reconciled, func(left, right jsontext.Value) bool {
 		return bytes.Equal(left, right)
 	})
 	if unchanged {
@@ -1289,7 +1290,7 @@ func (imp *Importer) reconcileArchivedParticipantFloor(conversationID int64, flo
 	return imp.writeContainerMetadata(conversationID, reconciled)
 }
 
-func metadataCount(metadata map[string]json.RawMessage, key string) int {
+func metadataCount(metadata map[string]jsontext.Value, key string) int {
 	raw, ok := metadata[key]
 	if !ok {
 		return 0
@@ -1305,10 +1306,10 @@ func metadataCount(metadata map[string]json.RawMessage, key string) int {
 // earlier catalog archived, so a preserved container's live media policy
 // weighs the same count its reconciled metadata records.
 func storedContainerMemberCount(metadata sql.NullString) int {
-	if !metadata.Valid || !json.Valid([]byte(metadata.String)) {
+	if !metadata.Valid || !jsontext.Value([]byte(metadata.String)).IsValid() {
 		return 0
 	}
-	var archived map[string]json.RawMessage
+	var archived map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(metadata.String), &archived); err != nil {
 		return 0
 	}
@@ -1323,8 +1324,8 @@ func (imp *Importer) clearContainerAccessMarkers(conversationID int64) error {
 	if !stored.Valid || strings.TrimSpace(stored.String) == "" {
 		return nil
 	}
-	metadata := make(map[string]json.RawMessage)
-	if !json.Valid([]byte(stored.String)) {
+	metadata := make(map[string]jsontext.Value)
+	if !jsontext.Value(stored.String).IsValid() {
 		// A legacy opaque metadata payload may still identify an explicitly
 		// selected stored container. With no safely mergeable object, preserve it.
 		return nil
@@ -1347,12 +1348,12 @@ func (imp *Importer) clearContainerAccessMarkers(conversationID int64) error {
 	return imp.writeContainerMetadata(conversationID, metadata)
 }
 
-func (imp *Importer) containerMetadata(conversationID int64) (map[string]json.RawMessage, error) {
+func (imp *Importer) containerMetadata(conversationID int64) (map[string]jsontext.Value, error) {
 	stored, err := imp.store.GetConversationMetadata(conversationID)
 	if err != nil {
 		return nil, err
 	}
-	metadata := make(map[string]json.RawMessage)
+	metadata := make(map[string]jsontext.Value)
 	if !stored.Valid || strings.TrimSpace(stored.String) == "" {
 		return metadata, nil
 	}
@@ -1363,9 +1364,9 @@ func (imp *Importer) containerMetadata(conversationID int64) (map[string]json.Ra
 }
 
 func (imp *Importer) writeContainerMetadata(
-	conversationID int64, metadata map[string]json.RawMessage,
+	conversationID int64, metadata map[string]jsontext.Value,
 ) error {
-	encoded, err := json.Marshal(metadata)
+	encoded, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode Discord conversation metadata: %w", err)
 	}

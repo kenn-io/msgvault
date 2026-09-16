@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -497,7 +498,7 @@ func (s *Store) lockPersonSweepWorkRowTx(
 }
 
 func personSweepRawEnvelopeHash(cursors []peoplesweep.GenerationCursor) (string, error) {
-	encoded, err := json.Marshal(cursors)
+	encoded, err := json.Marshal(cursors, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person sweep attempt envelope: %w", err)
 	}
@@ -869,12 +870,12 @@ func personBriefInsertFromResult(
 	}
 }
 
-func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) json.RawMessage {
-	encoded, err := json.Marshal(boundary.Canonical())
+func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) jsontext.Value {
+	encoded, err := json.Marshal(boundary.Canonical(), json.Deterministic(true))
 	if err != nil {
 		// BriefBoundary holds only strings, integers, and times, so marshalling
 		// cannot fail; an empty object keeps the column valid JSON if it ever does.
-		return json.RawMessage(`{}`)
+		return jsontext.Value(`{}`)
 	}
 	return encoded
 }

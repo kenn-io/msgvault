@@ -3,7 +3,8 @@ package daemonclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,7 +35,7 @@ import (
 type CLIStats struct {
 	Stats            *store.Stats `json:"stats"`
 	ScopeLabel       string       `json:"scope_label,omitempty"`
-	ScopeSourceCount int          `json:"scope_source_count,omitempty"`
+	ScopeSourceCount int          `json:"scope_source_count,omitzero"`
 }
 
 type CLICacheStats = cacheops.CacheStats
@@ -69,8 +71,8 @@ type CLIRunRequest struct {
 type CLIAddCalendarPlanRequest struct {
 	Email            string `json:"email"`
 	OAuthApp         string `json:"oauth_app,omitempty"`
-	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitempty"`
-	Headless         bool   `json:"headless,omitempty"`
+	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitzero"`
+	Headless         bool   `json:"headless,omitzero"`
 }
 
 type CLIAddCalendarPlan struct {
@@ -79,14 +81,14 @@ type CLIAddCalendarPlan struct {
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           string   `json:"cancel_hint,omitempty"`
 	OAuthApp             string   `json:"oauth_app,omitempty"`
-	OAuthAppResolved     bool     `json:"oauth_app_resolved,omitempty"`
-	NeedsClientCheck     bool     `json:"needs_client_check,omitempty"`
+	OAuthAppResolved     bool     `json:"oauth_app_resolved,omitzero"`
+	NeedsClientCheck     bool     `json:"needs_client_check,omitzero"`
 }
 
 type CLIEmbeddingsPlanRequest struct {
 	Operation    string `json:"operation"`
 	GenerationID int64  `json:"generation_id"`
-	Force        bool   `json:"force,omitempty"`
+	Force        bool   `json:"force,omitzero"`
 }
 
 type CLIEmbeddingsPlan struct {
@@ -96,13 +98,13 @@ type CLIEmbeddingsPlan struct {
 
 type CLIDeleteStagedPlanRequest struct {
 	BatchID             string `json:"batch_id,omitempty"`
-	Permanent           bool   `json:"permanent,omitempty"`
-	Yes                 bool   `json:"yes,omitempty"`
-	DryRun              bool   `json:"dry_run,omitempty"`
-	List                bool   `json:"list,omitempty"`
+	Permanent           bool   `json:"permanent,omitzero"`
+	Yes                 bool   `json:"yes,omitzero"`
+	DryRun              bool   `json:"dry_run,omitzero"`
+	List                bool   `json:"list,omitzero"`
 	Account             string `json:"account,omitempty"`
-	SourceID            *int64 `json:"source_id,omitempty"`
-	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitempty"`
+	SourceID            *int64 `json:"source_id,omitzero"`
+	RemoteDeleteEnabled bool   `json:"remote_delete_enabled,omitzero"`
 }
 
 type CLIDeleteStagedPlan struct {
@@ -112,8 +114,8 @@ type CLIDeleteStagedPlan struct {
 	ConfirmationMode          string   `json:"confirmation_mode,omitempty"`
 	PlannedBatchIDs           []string `json:"planned_batch_ids,omitempty"`
 	PlanFingerprint           string   `json:"plan_fingerprint,omitempty"`
-	ResolvedSourceID          *int64   `json:"resolved_source_id,omitempty"`
-	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitempty"`
+	ResolvedSourceID          *int64   `json:"resolved_source_id,omitzero"`
+	NeedsScopeEscalation      bool     `json:"needs_scope_escalation,omitzero"`
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
@@ -171,13 +173,13 @@ type CLISearchRequest struct {
 type CLISearch struct {
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
-	ScopeSourceCount int                    `json:"scope_source_count,omitempty"`
+	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
 	// IndexBuilt/IndexedMessages come from pre-0.18 daemons that built the
 	// FTS index synchronously inside the search request. Current daemons
 	// build in the background and report IndexState ("checking" or
 	// "building") instead.
-	IndexBuilt      bool   `json:"index_built,omitempty"`
-	IndexedMessages int64  `json:"indexed_messages,omitempty"`
+	IndexBuilt      bool   `json:"index_built,omitzero"`
+	IndexedMessages int64  `json:"indexed_messages,omitzero"`
 	IndexState      string `json:"index_state,omitempty"`
 }
 
@@ -297,7 +299,7 @@ type CLIIdentityRow struct {
 	Identifier  string     `json:"identifier,omitempty"`
 	Signals     []string   `json:"signals"`
 	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
-	None        bool       `json:"none,omitempty"`
+	None        bool       `json:"none,omitzero"`
 }
 
 // CLIIdentitiesRequest describes the CLI identity rows to fetch.
@@ -352,9 +354,9 @@ type CLIDeleteDedupedExecute struct {
 
 type cliRebuildFTSEvent struct {
 	Type    string `json:"type"`
-	Done    int64  `json:"done,omitempty"`
-	Total   int64  `json:"total,omitempty"`
-	Indexed int64  `json:"indexed,omitempty"`
+	Done    int64  `json:"done,omitzero"`
+	Total   int64  `json:"total,omitzero"`
+	Indexed int64  `json:"indexed,omitzero"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -623,10 +625,10 @@ func (c *Client) DiscoverCLIIdentities(
 	defer func() { _ = resp.Body.Close() }()
 
 	seenResult := false
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	for {
 		var generatedEvent generated.DiscoverEvent
-		err := decoder.Decode(&generatedEvent)
+		err := json.UnmarshalDecode(decoder, &generatedEvent)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -1437,10 +1439,10 @@ func queryResultFromBody(body []byte) (*query.QueryResult, error) {
 	if len(body) == 0 {
 		return &query.QueryResult{}, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
+	dec := jsontext.NewDecoder(bytes.NewReader(body), jsonexact.PreserveNumbers)
+
 	var result query.QueryResult
-	if err := dec.Decode(&result); err != nil {
+	if err := json.UnmarshalDecode(dec, &result); err != nil {
 		return nil, fmt.Errorf("decode query result: %w", err)
 	}
 	return &result, nil

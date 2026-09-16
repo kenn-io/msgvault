@@ -6,7 +6,8 @@
 package granola
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"time"
 )
@@ -166,7 +167,7 @@ type Note struct {
 	SummaryMarkdown  string              `json:"summary_markdown"`
 	Transcript       []TranscriptSegment `json:"transcript"`
 
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 func (n *Note) UnmarshalJSON(data []byte) error {

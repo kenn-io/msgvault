@@ -6,7 +6,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -86,7 +87,7 @@ func (s *ProviderSelection) UnmarshalTOML(value any) error {
 }
 
 func (s *ProviderSelection) MarshalTOML() ([]byte, error) {
-	return json.Marshal(s.Name)
+	return json.Marshal(s.Name, json.Deterministic(true))
 }
 
 // Config controls the model-backed people sweep. Disabled is the safe default.
@@ -227,7 +228,7 @@ type ProviderProfile struct {
 	PacketRendererPolicy  string           `json:"packet_renderer_policy"`
 	ProgramFingerprint    string           `json:"program_fingerprint"`
 	DisclosedPacketFields []string         `json:"disclosed_packet_fields"`
-	PolicyJSON            json.RawMessage  `json:"-"`
+	PolicyJSON            jsontext.Value   `json:"-"`
 }
 
 // ApplyDefaults fills operational defaults without enabling inference.
@@ -713,7 +714,7 @@ func policyJSONForProviderProfile(profile ProviderProfile) ([]byte, error) {
 	for index, fieldValue := range values {
 		policy.Field(index).Set(fieldValue)
 	}
-	return json.Marshal(policy.Interface())
+	return json.Marshal(policy.Interface(), json.Deterministic(true))
 }
 
 // validate rejects a brief lane that cannot run inside the person budget. The

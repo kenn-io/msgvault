@@ -1,7 +1,8 @@
 package slack
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -171,8 +172,8 @@ type BlockElement struct {
 // UnmarshalJSON decodes a BlockElement tolerantly (see type comment).
 func (e *BlockElement) UnmarshalJSON(b []byte) error {
 	var probe struct {
-		Type string          `json:"type"`
-		Text json.RawMessage `json:"text"`
+		Type string         `json:"type"`
+		Text jsontext.Value `json:"text"`
 	}
 	if err := json.Unmarshal(b, &probe); err != nil {
 		return err
@@ -215,7 +216,7 @@ type Message struct {
 	// Raw holds the exact original JSON for this message, captured during
 	// decode (see UnmarshalJSON) and archived verbatim so no API field is
 	// lost to our partial struct modelling.
-	Raw json.RawMessage `json:"-"`
+	Raw jsontext.Value `json:"-"`
 }
 
 // UnmarshalJSON decodes a Message while retaining the original bytes in Raw.
@@ -226,7 +227,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*m = Message(a)
-	m.Raw = json.RawMessage(strings.Clone(string(b)))
+	m.Raw = jsontext.Value(strings.Clone(string(b)))
 	return nil
 }
 

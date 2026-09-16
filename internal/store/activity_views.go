@@ -33,7 +33,7 @@ type ActivityRef struct {
 	DatePrecision    string            `json:"date_precision"`
 	Direction        ActivityDirection `json:"direction"`
 	SourceID         int64             `json:"source_id"`
-	ConversationID   *int64            `json:"conversation_id,omitempty"`
+	ConversationID   *int64            `json:"conversation_id,omitzero" nullable:"false"`
 	Role             ActivityRole      `json:"role"`
 	Evidence         ActivityEvidence  `json:"evidence"`
 }
@@ -89,7 +89,7 @@ type DayRequest struct {
 type DayPerson struct {
 	PersonID          int64         `json:"person_id"`
 	VCardUID          string        `json:"vcard_uid"`
-	DisplayName       *string       `json:"display_name,omitempty"`
+	DisplayName       *string       `json:"display_name,omitzero" nullable:"false"`
 	EventCount        int64         `json:"event_count"`
 	DirectCount       int64         `json:"direct_count"`
 	LastAt            time.Time     `json:"last_at"`

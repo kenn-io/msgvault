@@ -1,7 +1,8 @@
 package fbmessenger
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -199,22 +200,21 @@ func probeE2EEShape(filePath string) e2eeShape {
 		return e2eeShapeUnknown
 	}
 	defer func() { _ = f.Close() }()
-	dec := json.NewDecoder(f)
-	tok, err := dec.Token()
+	dec := jsontext.NewDecoder(f)
+	tok, err := dec.ReadToken()
 	if err != nil {
 		return e2eeShapeUnknown
 	}
-	d, ok := tok.(json.Delim)
-	if !ok || d != '{' {
+	if tok.Kind() != '{' {
 		return e2eeShapeNotThread
 	}
 	var hasP, hasM bool
-	for dec.More() {
-		tok, err := dec.Token()
+	for dec.PeekKind() != '}' && dec.PeekKind() != ']' && dec.PeekKind() != 0 {
+		tok, err := dec.ReadToken()
 		if err != nil {
 			return e2eeShapeUnknown
 		}
-		key, ok := tok.(string)
+		key, ok := tok.String(), tok.Kind() == '"'
 		if !ok {
 			return e2eeShapeUnknown
 		}
@@ -227,8 +227,8 @@ func probeE2EEShape(filePath string) e2eeShape {
 		if hasP && hasM {
 			return e2eeShapeThread
 		}
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
+		var skip jsontext.Value
+		if err := json.UnmarshalDecode(dec, &skip); err != nil {
 			return e2eeShapeUnknown
 		}
 	}

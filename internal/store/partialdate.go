@@ -16,9 +16,9 @@ var ErrInvalidPartialDate = errors.New("invalid partial date")
 // unspecified, never zero. Compact vCard spellings parse to the same shape.
 // Component storage is portable and indexable.
 type PartialDate struct {
-	Year  *int `json:"year,omitempty"`
-	Month *int `json:"month,omitempty"`
-	Day   *int `json:"day,omitempty"`
+	Year  *int `json:"year,omitzero" nullable:"false"`
+	Month *int `json:"month,omitzero" nullable:"false"`
+	Day   *int `json:"day,omitzero" nullable:"false"`
 }
 
 // ParsePartialDate accepts the reduced and truncated ISO forms used by vCard.

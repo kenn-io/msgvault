@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -97,7 +98,7 @@ func (v *frozenView) AuxiliaryArtifacts(ctx context.Context) ([]backup.Auxiliary
 		}
 	}
 	disclosure.ContainsNormalizedPlaintext = true
-	payload, err := json.Marshal(disclosure)
+	payload, err := json.Marshal(disclosure, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: encode document derivative disclosure: %w", err)
 	}
@@ -177,13 +178,13 @@ func (t *DocumentAuxiliaryTarget) StageAuxiliary(
 		return nil, errors.New("backupapp: restored auxiliary artifact set is unsupported")
 	}
 	var disclosure DocumentDisclosure
-	decoder := json.NewDecoder(bytes.NewReader(artifacts[0].Data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&disclosure); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(artifacts[0].Data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &disclosure); err != nil {
 		return nil, fmt.Errorf("backupapp: decode document derivative disclosure: %w", err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		return nil, errors.New("backupapp: document derivative disclosure has trailing data")
 	}
 	if (disclosure.SchemaVersion != 1 && disclosure.SchemaVersion != documentDisclosureSchema) ||

@@ -6,7 +6,8 @@ package backupapp
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
 
@@ -212,21 +213,21 @@ func (v *frozenView) hasNonCanonicalAttachmentPaths(ctx context.Context) (bool, 
 }
 
 // Stats implements backup.FrozenView.
-func (v *frozenView) Stats(ctx context.Context) (json.RawMessage, error) {
+func (v *frozenView) Stats(ctx context.Context) (jsontext.Value, error) {
 	st, err := computeManifestStats(ctx, v.tx)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(st)
+	return json.Marshal(st, json.Deterministic(true))
 }
 
 // RestoredStats implements backup.App.
-func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (json.RawMessage, error) {
+func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
 	st, err := computeManifestStats(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(st)
+	return json.Marshal(st, json.Deterministic(true))
 }
 
 // RestoredContentPaths maps each content and thumbnail hash in the restored
@@ -275,7 +276,7 @@ func (a *App) CheckManifest(m *backup.Manifest) []string {
 }
 
 // ParseStats decodes a manifest stats payload.
-func ParseStats(raw json.RawMessage) (Stats, error) {
+func ParseStats(raw jsontext.Value) (Stats, error) {
 	var st Stats
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return st, fmt.Errorf("backupapp: parsing manifest stats: %w", err)

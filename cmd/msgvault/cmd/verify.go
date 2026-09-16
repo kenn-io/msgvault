@@ -35,7 +35,7 @@ type verifyResult struct {
 	Email                    string `json:"email"`
 	ArchiveAccountFound      bool   `json:"archive_account_found"`
 	DatabaseIntegrityChecked bool   `json:"database_integrity_checked"`
-	DatabaseIntegrityOK      *bool  `json:"database_integrity_ok,omitempty"`
+	DatabaseIntegrityOK      *bool  `json:"database_integrity_ok,omitzero"`
 
 	GmailMessagesTotal int64   `json:"gmail_messages_total"`
 	ArchivedMessages   int64   `json:"archived_messages"`

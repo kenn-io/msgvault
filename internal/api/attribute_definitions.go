@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -53,18 +54,18 @@ type CreateAttributeDefinitionRequest struct {
 	ObjectType    string                  `json:"object_type" enum:"person,organization"`
 	Slug          string                  `json:"slug,omitempty"`
 	Label         string                  `json:"label"`
-	Description   *string                 `json:"description,omitempty"`
+	Description   *string                 `json:"description,omitzero" nullable:"false"`
 	ValueType     string                  `json:"value_type"`
 	FieldType     string                  `json:"field_type"`
-	RecordTarget  *string                 `json:"record_target,omitempty"`
+	RecordTarget  *string                 `json:"record_target,omitzero" nullable:"false"`
 	Cardinality   string                  `json:"cardinality,omitempty" enum:"single,multi"`
-	DisplayOrder  int64                   `json:"display_order,omitempty"`
-	IsRequired    bool                    `json:"is_required,omitempty"`
-	IsSearchable  bool                    `json:"is_searchable,omitempty"`
-	IsSensitive   bool                    `json:"is_sensitive,omitempty"`
-	IsAudited     bool                    `json:"is_audited,omitempty"`
-	Options       *store.AttributeOptions `json:"options,omitempty"`
-	VCardProperty *string                 `json:"vcard_property,omitempty"`
+	DisplayOrder  int64                   `json:"display_order,omitzero"`
+	IsRequired    bool                    `json:"is_required,omitzero"`
+	IsSearchable  bool                    `json:"is_searchable,omitzero"`
+	IsSensitive   bool                    `json:"is_sensitive,omitzero"`
+	IsAudited     bool                    `json:"is_audited,omitzero"`
+	Options       *store.AttributeOptions `json:"options,omitzero" nullable:"false"`
+	VCardProperty *string                 `json:"vcard_property,omitzero" nullable:"false"`
 }
 
 // StoreInput maps the request onto the store's input shape, fixing the
@@ -89,11 +90,11 @@ func (r CreateAttributeDefinitionRequest) StoreInput(
 
 // PatchAttributeDefinitionRequest carries mutable definition fields.
 type PatchAttributeDefinitionRequest struct {
-	Label        *string `json:"label,omitempty"`
-	Description  *string `json:"description,omitempty" nullable:"true"`
-	DisplayOrder *int64  `json:"display_order,omitempty"`
-	IsSensitive  *bool   `json:"is_sensitive,omitempty"`
-	IsActive     *bool   `json:"is_active,omitempty"`
+	Label        *string `json:"label,omitzero" nullable:"false"`
+	Description  *string `json:"description,omitzero" nullable:"true"`
+	DisplayOrder *int64  `json:"display_order,omitzero" nullable:"false"`
+	IsSensitive  *bool   `json:"is_sensitive,omitzero" nullable:"false"`
+	IsActive     *bool   `json:"is_active,omitzero" nullable:"false"`
 }
 
 func (s *Server) registerAttributeDefinitionRoutes(api huma.API) {
@@ -431,13 +432,13 @@ func decodeAttributeRequest(w http.ResponseWriter, r *http.Request, target any) 
 
 func decodeAttributeRequestFields(
 	w http.ResponseWriter, r *http.Request, target any,
-) (map[string]json.RawMessage, bool) {
+) (map[string]jsontext.Value, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid attribute request")
 		return nil, false
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"Attribute request must be a JSON object")
@@ -450,14 +451,14 @@ func decodeAttributeRequestFields(
 			return nil, false
 		}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"Invalid attribute request: "+err.Error())
 		return nil, false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"Attribute request must contain one JSON object")
 		return nil, false

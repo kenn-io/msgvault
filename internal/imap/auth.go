@@ -3,7 +3,7 @@ package imap
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +30,7 @@ func SaveCredentials(tokensDir, identifier, password string) error {
 		return fmt.Errorf("create tokens dir: %w", err)
 	}
 	creds := credentialsFile{Password: password}
-	data, err := json.Marshal(creds) //nolint:gosec // serialized to a 0600 file on the user's own machine
+	data, err := json.Marshal(creds, json.Deterministic(true)) // serialized to a 0600 file on the user's own machine
 	if err != nil {
 		return err
 	}

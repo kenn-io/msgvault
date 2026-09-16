@@ -1,7 +1,7 @@
 package meetingimport
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 
@@ -80,12 +80,12 @@ func TestDecodeRequestPreservesLargeNestedMetadataNumbers(t *testing.T) {
 
 	nested, ok := req.Meeting.Metadata["nested"].(map[string]any)
 	require.True(ok, "nested metadata object")
-	largeID, ok := nested["large_id"].(json.Number)
+	largeID, ok := nested["large_id"].(jsontext.Value)
 	require.True(ok, "large metadata identifier")
 	assert.Equal("9007199254740993", largeID.String())
 	deep, ok := nested["deep"].(map[string]any)
 	require.True(ok, "deep metadata object")
-	anotherID, ok := deep["another_id"].(json.Number)
+	anotherID, ok := deep["another_id"].(jsontext.Value)
 	require.True(ok, "deep metadata identifier")
 	assert.Equal("18446744073709551615", anotherID.String())
 }

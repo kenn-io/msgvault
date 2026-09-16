@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"encoding/csv"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -85,9 +86,9 @@ func writeJSON(
 		Rows:     rows,
 		RowCount: len(rows),
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	enc := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, result, json.Deterministic(true))
 }
 
 // displayVal formats a value for CSV/table output. SQL NULLs become
@@ -131,7 +132,6 @@ func writeCSV(
 
 // nil error return mirrors writeJSON/writeCSV so the format switch can
 // `return writeTable(...)` uniformly; text printing never fails.
-
 func writeTable(
 	w io.Writer, cols []string, rows [][]any,
 ) error {

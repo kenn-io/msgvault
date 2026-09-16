@@ -2,11 +2,14 @@ package meetingimport
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
 func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
@@ -31,16 +34,15 @@ func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
 		return Request{}, fmt.Errorf("%w: request must be valid UTF-8", ErrMalformedRequest)
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true), jsonexact.PreserveNumbers)
+
 	var req Request
-	if err := decoder.Decode(&req); err != nil {
+	if err := json.UnmarshalDecode(decoder, &req); err != nil {
 		return Request{}, fmt.Errorf("%w: %w", ErrMalformedRequest, err)
 	}
 
 	var trailing any
-	err = decoder.Decode(&trailing)
+	err = json.UnmarshalDecode(decoder, &trailing)
 	if err == nil {
 		return Request{}, fmt.Errorf("%w: trailing JSON value", ErrMalformedRequest)
 	}

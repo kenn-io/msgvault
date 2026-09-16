@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -151,7 +151,7 @@ func PersonFactSourceCursors(cursors []GenerationCursor) ([]personfacts.SourceCu
 	for i := range encoded {
 		result[i] = encoded[i].source
 	}
-	canonical, err := json.Marshal(result)
+	canonical, err := json.Marshal(result, json.Deterministic(true))
 	if err != nil {
 		return nil, "", fmt.Errorf("encode person fact source cursor envelope: %w", err)
 	}
@@ -174,10 +174,10 @@ func encodePersonFactSourceCursor(cursor GenerationCursor) (personfacts.SourceCu
 			return personfacts.SourceCursor{}, errors.New("person sweep optimistic cursor has an invalid range")
 		}
 		start, err = json.Marshal(sequenceCursorCoordinate{Bound: "exclusive", Sequence: cursor.CursorFrom,
-			DocumentKey: cursor.DocumentFromKey})
+			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
 		if err == nil {
 			end, err = json.Marshal(sequenceCursorCoordinate{Bound: "inclusive", Sequence: cursor.CursorThrough,
-				DocumentKey: cursor.DocumentToKey})
+				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
 		}
 	case GenerationCursorReconciliation:
 		if cursor.CursorFrom != 0 || cursor.CursorThrough != 0 ||
@@ -186,10 +186,10 @@ func encodePersonFactSourceCursor(cursor GenerationCursor) (personfacts.SourceCu
 			return personfacts.SourceCursor{}, errors.New("person sweep source-key cursor has an invalid range")
 		}
 		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey,
-			DocumentKey: cursor.DocumentFromKey})
+			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
 		if err == nil {
 			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey,
-				DocumentKey: cursor.DocumentToKey})
+				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
 		}
 	case GenerationCursorBackstop:
 		if cursor.CursorFrom != 0 || cursor.CursorThrough != 0 ||
@@ -199,10 +199,10 @@ func encodePersonFactSourceCursor(cursor GenerationCursor) (personfacts.SourceCu
 			return personfacts.SourceCursor{}, errors.New("person sweep backstop cursor has an invalid bounded range")
 		}
 		start, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "exclusive", SourceKey: cursor.ReconcileFromKey,
-			DocumentKey: cursor.DocumentFromKey})
+			DocumentKey: cursor.DocumentFromKey}, json.Deterministic(true))
 		if err == nil {
 			end, err = json.Marshal(sourceKeyCursorCoordinate{Bound: "inclusive", SourceKey: cursor.ReconcileToKey,
-				DocumentKey: cursor.DocumentToKey})
+				DocumentKey: cursor.DocumentToKey}, json.Deterministic(true))
 		}
 	default:
 		return personfacts.SourceCursor{}, fmt.Errorf("person sweep cursor has unknown mode %q", cursor.Mode)
@@ -428,7 +428,7 @@ type Worker struct {
 }
 
 func personSweepAttemptEnvelopeHash(cursors []GenerationCursor) (string, error) {
-	encoded, err := json.Marshal(cursors)
+	encoded, err := json.Marshal(cursors, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}

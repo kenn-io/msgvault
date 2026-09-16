@@ -3,7 +3,7 @@ package granola
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -62,7 +62,7 @@ type syncState struct {
 }
 
 func (s syncState) marshal() string {
-	b, err := json.Marshal(s)
+	b, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "{}"
 	}
@@ -286,11 +286,11 @@ type meetingMetadata struct {
 	UpdatedAt       string   `json:"updated_at,omitempty"`
 	ScheduledStart  string   `json:"scheduled_start,omitempty"`
 	ScheduledEnd    string   `json:"scheduled_end,omitempty"`
-	DurationSeconds int64    `json:"duration_seconds,omitempty"`
+	DurationSeconds int64    `json:"duration_seconds,omitzero"`
 	OrganizerEmail  string   `json:"organizer_email,omitempty"`
 	CalendarEventID string   `json:"calendar_event_id,omitempty"`
 	Folders         []string `json:"folders,omitempty"`
-	SegmentCount    int      `json:"transcript_segments,omitempty"`
+	SegmentCount    int      `json:"transcript_segments,omitzero"`
 	AccountID       string   `json:"account_identifier,omitempty"`
 }
 
@@ -351,7 +351,7 @@ func (imp *Importer) ingestNote(sourceID int64, identifier string, accountIdenti
 		SizeEstimate:            int64(len(body)),
 	}
 
-	metaJSON, err := json.Marshal(buildMetadata(n, identifier, organizerEmail))
+	metaJSON, err := json.Marshal(buildMetadata(n, identifier, organizerEmail), json.Deterministic(true))
 	if err != nil {
 		return false, fmt.Errorf("marshal metadata: %w", err)
 	}
@@ -359,7 +359,7 @@ func (imp *Importer) ingestNote(sourceID int64, identifier string, accountIdenti
 
 	raw := []byte(n.Raw)
 	if len(raw) == 0 {
-		if raw, err = json.Marshal(n); err != nil {
+		if raw, err = json.Marshal(n, json.Deterministic(true)); err != nil {
 			return false, fmt.Errorf("marshal raw note: %w", err)
 		}
 	}

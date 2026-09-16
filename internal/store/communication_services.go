@@ -50,11 +50,11 @@ type CommunicationService struct {
 	DisplayLabel         string    `json:"display_label"`
 	Aliases              []string  `json:"aliases"`
 	ScopePolicy          string    `json:"scope_policy"`
-	DefaultScopeKind     *string   `json:"default_scope_kind,omitempty"`
+	DefaultScopeKind     *string   `json:"default_scope_kind,omitzero" nullable:"false"`
 	Normalization        string    `json:"normalization"`
 	NormalizationVersion int       `json:"normalization_version"`
-	URIScheme            *string   `json:"uri_scheme,omitempty"`
-	ProfileURLTemplate   *string   `json:"profile_url_template,omitempty"`
+	URIScheme            *string   `json:"uri_scheme,omitzero" nullable:"false"`
+	ProfileURLTemplate   *string   `json:"profile_url_template,omitzero" nullable:"false"`
 	IsSystem             bool      `json:"is_system"`
 	IsActive             bool      `json:"is_active"`
 	CreatedAt            time.Time `json:"created_at"`

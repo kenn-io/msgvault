@@ -3,7 +3,8 @@ package fastmail
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -223,8 +224,8 @@ func setRequestHeaders(request *http.Request, token string, hasBody bool) {
 
 func decodeJSON(reader io.Reader, target any) error {
 	limited := io.LimitReader(reader, maxResponseBytes+1)
-	decoder := json.NewDecoder(limited)
-	return decoder.Decode(target)
+	decoder := jsontext.NewDecoder(limited)
+	return json.UnmarshalDecode(decoder, target)
 }
 
 func parseEndpoint(rawURL string) (*url.URL, error) {
@@ -276,7 +277,7 @@ func effectivePort(endpoint *url.URL) string {
 	return ""
 }
 
-func hasCapability(capabilities map[string]json.RawMessage, capability string) bool {
+func hasCapability(capabilities map[string]jsontext.Value, capability string) bool {
 	_, ok := capabilities[capability]
 	return ok
 }
@@ -312,28 +313,28 @@ type methodExpectation struct {
 }
 
 func buildJMAPRequest(using []string, methods []methodExpectation) ([]byte, error) {
-	request := jmapRequest{Using: using, MethodCalls: make([][]json.RawMessage, 0, len(methods))}
+	request := jmapRequest{Using: using, MethodCalls: make([][]jsontext.Value, 0, len(methods))}
 	for _, method := range methods {
-		name, err := json.Marshal(method.method)
+		name, err := json.Marshal(method.method, json.Deterministic(true))
 		if err != nil {
 			return nil, err
 		}
 		arguments, err := json.Marshal(struct {
 			AccountID string `json:"accountId"`
-		}{AccountID: method.accountID})
+		}{AccountID: method.accountID}, json.Deterministic(true))
 		if err != nil {
 			return nil, err
 		}
-		callID, err := json.Marshal(method.callID)
+		callID, err := json.Marshal(method.callID, json.Deterministic(true))
 		if err != nil {
 			return nil, err
 		}
-		request.MethodCalls = append(request.MethodCalls, []json.RawMessage{name, arguments, callID})
+		request.MethodCalls = append(request.MethodCalls, []jsontext.Value{name, arguments, callID})
 	}
-	return json.Marshal(request)
+	return json.Marshal(request, json.Deterministic(true))
 }
 
-func coreObjectLimit(capabilities map[string]json.RawMessage) int64 {
+func coreObjectLimit(capabilities map[string]jsontext.Value) int64 {
 	raw, ok := capabilities[CoreCapability]
 	if !ok {
 		return 0
@@ -347,7 +348,7 @@ func coreObjectLimit(capabilities map[string]json.RawMessage) int64 {
 	return settings.MaxObjectsInGet
 }
 
-func methodErrorType(arguments json.RawMessage) string {
+func methodErrorType(arguments jsontext.Value) string {
 	var payload struct {
 		Type string `json:"type"`
 	}
@@ -370,7 +371,7 @@ func parseMethodResponses(
 	seen := make(map[string]bool, len(methods))
 	var records []Record
 	for _, rawResponse := range response.MethodResponses {
-		var tuple []json.RawMessage
+		var tuple []jsontext.Value
 		if err := json.Unmarshal(rawResponse, &tuple); err != nil || len(tuple) != 3 {
 			return nil, fmt.Errorf("decode JMAP method response from %s", endpoint.Host)
 		}

@@ -1,7 +1,8 @@
 package accountops
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,7 +21,7 @@ type Store interface {
 type UpdateRequest struct {
 	Account     string `json:"account,omitempty"`
 	Email       string `json:"email,omitempty"`
-	SourceID    int64  `json:"source_id,omitempty"`
+	SourceID    int64  `json:"source_id,omitzero"`
 	SourceIDSet bool   `json:"-"`
 	DisplayName string `json:"display_name"`
 }
@@ -31,7 +32,7 @@ func (r *UpdateRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}

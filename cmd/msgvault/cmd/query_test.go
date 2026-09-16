@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,8 +72,8 @@ func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
 	result := &query.QueryResult{
 		Columns: []string{"name", "message_count", "id", "ratio"},
 		Rows: [][]any{
-			{"UNREAD", float64(1662130), json.Number("9007199254740993"), 2.5},
-			{nil, float64(0), json.Number("1722776"), float64(-1234567)},
+			{"UNREAD", float64(1662130), jsontext.Value("9007199254740993"), 2.5},
+			{nil, float64(0), jsontext.Value("1722776"), float64(-1234567)},
 		},
 		RowCount: 2,
 	}
@@ -116,7 +117,7 @@ func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
 func TestWriteQueryResult_FormatCaseInsensitive(t *testing.T) {
 	result := &query.QueryResult{
 		Columns:  []string{"n"},
-		Rows:     [][]any{{json.Number("1")}},
+		Rows:     [][]any{{jsontext.Value("1")}},
 		RowCount: 1,
 	}
 	for _, format := range []string{"JSON", "Json", "CSV", "Table", " table ", "TABLE"} {

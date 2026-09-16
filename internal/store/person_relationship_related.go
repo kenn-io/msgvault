@@ -51,15 +51,15 @@ type RelationshipReview struct {
 	RawRelatedValue        string                   `json:"raw_related_value"`
 	RawRelatedType         string                   `json:"raw_related_type"`
 	ValueKind              RelatedValueKind         `json:"value_kind"`
-	MatchedPersonID        *int64                   `json:"matched_person_id,omitempty"`
+	MatchedPersonID        *int64                   `json:"matched_person_id,omitzero" nullable:"false"`
 	Status                 RelationshipReviewStatus `json:"status"`
-	AcceptedRelationshipID *int64                   `json:"accepted_relationship_id,omitempty"`
+	AcceptedRelationshipID *int64                   `json:"accepted_relationship_id,omitzero" nullable:"false"`
 	Source                 Provenance               `json:"source"`
-	SourceRef              *string                  `json:"source_ref,omitempty"`
-	SourceResourceUID      *string                  `json:"source_resource_uid,omitempty"`
+	SourceRef              *string                  `json:"source_ref,omitzero" nullable:"false"`
+	SourceResourceUID      *string                  `json:"source_resource_uid,omitzero" nullable:"false"`
 	VCardIdentity          VCardIdentity            `json:"vcard_identity"`
 	CreatedBy              string                   `json:"created_by"`
-	ReviewedBy             *string                  `json:"reviewed_by,omitempty"`
+	ReviewedBy             *string                  `json:"reviewed_by,omitzero" nullable:"false"`
 	ReviewedAt             *time.Time               `json:"reviewed_at,omitempty"`
 	CreatedAt              time.Time                `json:"created_at"`
 	UpdatedAt              time.Time                `json:"updated_at"`
@@ -81,8 +81,8 @@ type RelatedImport struct {
 
 // RelatedResolution contains either an automatic edge or a durable review.
 type RelatedResolution struct {
-	Relationship *PersonRelationship `json:"relationship,omitempty"`
-	Review       *RelationshipReview `json:"review,omitempty"`
+	Relationship *PersonRelationship `json:"relationship,omitzero" nullable:"false"`
+	Review       *RelationshipReview `json:"review,omitzero" nullable:"false"`
 }
 
 // Status returns the occurrence's recorded decision, or empty when no review

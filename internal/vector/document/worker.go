@@ -86,7 +86,7 @@ type RunResult struct {
 	ProviderInputChars int `json:"provider_input_chars"`
 
 	AfterGenerationID GenerationID `json:"after_generation_id,omitempty"`
-	AfterChunkID      int64        `json:"after_chunk_id,omitempty"`
+	AfterChunkID      int64        `json:"after_chunk_id,omitzero"`
 	Exhausted         bool         `json:"exhausted"`
 }
 

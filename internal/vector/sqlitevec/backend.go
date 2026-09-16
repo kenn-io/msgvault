@@ -5,7 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -832,7 +832,7 @@ func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable string, gen v
 	if len(ids) == 0 {
 		return nil
 	}
-	blob, err := json.Marshal(ids)
+	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode msg ids: %w", err)
 	}
@@ -884,7 +884,7 @@ func countExistingMessages(ctx context.Context, tx *sql.Tx, gen vector.Generatio
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	blob, err := json.Marshal(ids)
+	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("encode ids: %w", err)
 	}
@@ -1243,7 +1243,7 @@ func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter) (stri
 	if len(ids) == 0 {
 		return "AND e.message_id IN (SELECT NULL WHERE 0)", nil, nil
 	}
-	blob, err := json.Marshal(ids)
+	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return "", nil, fmt.Errorf("encode filter ids: %w", err)
 	}
@@ -1274,7 +1274,7 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 	for i, h := range hits {
 		ids[i] = h.MessageID
 	}
-	blob, err := json.Marshal(ids)
+	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode hit ids: %w", err)
 	}
@@ -1837,7 +1837,7 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 	}
 
 	// Step 2 (main.db): how many of those are in-scope, live, AND stamped for gen.
-	blob, err := json.Marshal(ids)
+	blob, err := json.Marshal(ids, json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("encode embedded ids: %w", err)
 	}
@@ -1882,7 +1882,7 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 	if b.mainDB == nil {
 		return 0, errors.New("filtered coverage requires the main message database")
 	}
-	encoded, err := json.Marshal(messageIDs)
+	encoded, err := json.Marshal(messageIDs, json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("encode coverage message ids: %w", err)
 	}
@@ -1910,7 +1910,7 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 	if len(liveStampedIDs) == 0 {
 		return 0, nil
 	}
-	encoded, err = json.Marshal(liveStampedIDs)
+	encoded, err = json.Marshal(liveStampedIDs, json.Deterministic(true))
 	if err != nil {
 		return 0, fmt.Errorf("encode live stamped coverage ids: %w", err)
 	}

@@ -7,7 +7,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
 const personMergeSnapshotVersion = 1
@@ -68,10 +71,10 @@ const (
 // driver representations from changing canonical JSON.
 type personMergeSnapshotValue struct {
 	Kind    personMergeSnapshotValueKind `json:"kind"`
-	Integer *int64                       `json:"integer,omitempty"`
-	Real    *float64                     `json:"real,omitempty"`
-	Boolean *bool                        `json:"boolean,omitempty"`
-	Text    *string                      `json:"text,omitempty"`
+	Integer *int64                       `json:"integer,omitzero" nullable:"false"`
+	Real    *float64                     `json:"real,omitzero" nullable:"false"`
+	Boolean *bool                        `json:"boolean,omitzero" nullable:"false"`
+	Text    *string                      `json:"text,omitzero" nullable:"false"`
 	Bytes   []byte                       `json:"bytes,omitempty"`
 }
 
@@ -83,7 +86,7 @@ type personMergeSnapshotColumn struct {
 type personMergeSnapshotPerson struct {
 	ID                      int64   `json:"id"`
 	VCardUID                string  `json:"vcard_uid"`
-	DisplayName             *string `json:"display_name,omitempty"`
+	DisplayName             *string `json:"display_name,omitzero" nullable:"false"`
 	Revision                int64   `json:"revision"`
 	VCardProjectionRevision int64   `json:"vcard_projection_revision"`
 	CreatedAt               string  `json:"created_at"`
@@ -97,7 +100,7 @@ type personMergeSnapshotRow struct {
 	RowKey         string                      `json:"row_key,omitempty"`
 	OriginSide     personMergeOriginSide       `json:"origin_side"`
 	ProvenanceKind personMergeProvenanceKind   `json:"provenance_kind"`
-	ParticipantID  *int64                      `json:"participant_id,omitempty"`
+	ParticipantID  *int64                      `json:"participant_id,omitzero" nullable:"false"`
 	Columns        []personMergeSnapshotColumn `json:"columns"`
 }
 
@@ -700,7 +703,7 @@ func canonicalPersonMergeSnapshotRowKey(
 		}
 		key = append(key, personMergeSnapshotColumn{Name: name, Value: value})
 	}
-	encoded, err := json.Marshal(key)
+	encoded, err := json.Marshal(key, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode stable row key: %w", err)
 	}
@@ -893,19 +896,19 @@ func normalizePersonMergeSnapshotValue(raw any, databaseType string) (personMerg
 		value := personMergeSnapshotTextValue(raw)
 		if strings.Contains(databaseType, "JSON") {
 			var decoded any
-			decoder := json.NewDecoder(strings.NewReader(value))
-			decoder.UseNumber()
-			if err := decoder.Decode(&decoded); err != nil {
+			decoder := jsontext.NewDecoder(strings.NewReader(value), jsonexact.PreserveNumbers)
+
+			if err := json.UnmarshalDecode(decoder, &decoded); err != nil {
 				return personMergeSnapshotValue{}, err
 			}
 			var trailing any
-			if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 				if err == nil {
 					err = errors.New("multiple JSON values")
 				}
 				return personMergeSnapshotValue{}, err
 			}
-			canonical, err := json.Marshal(decoded)
+			canonical, err := json.Marshal(decoded, json.Deterministic(true))
 			if err != nil {
 				return personMergeSnapshotValue{}, err
 			}
@@ -1016,7 +1019,7 @@ func encodePersonMergeSnapshot(snapshot personMergeSnapshot) ([]byte, string, er
 		return nil, "", fmt.Errorf("%w: unsupported snapshot version %d",
 			ErrPersonMergeInvalid, snapshot.Version)
 	}
-	canonical, err := json.Marshal(snapshot)
+	canonical, err := json.Marshal(snapshot, json.Deterministic(true))
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal person merge snapshot: %w", err)
 	}

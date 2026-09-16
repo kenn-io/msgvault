@@ -3,7 +3,8 @@ package taskclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -61,12 +62,12 @@ func Discover(_ context.Context, options DiscoveryOptions) (*Client, error) {
 		return nil, err
 	}
 	var value descriptor
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &value); err != nil {
 		return nil, fmt.Errorf("%w: malformed descriptor", ErrIncompatible)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%w: trailing descriptor data", ErrIncompatible)
 	}
 	if value.ProtocolVersion != ProtocolVersion || strings.TrimSpace(value.InstanceID) == "" {

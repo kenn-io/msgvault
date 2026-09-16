@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -124,9 +125,9 @@ func (s *Server) handleCreateOrLinkMessageTask(w http.ResponseWriter, r *http.Re
 	}
 	var request TaskLinkMutationRequest
 	r.Body = http.MaxBytesReader(w, r.Body, MaxTaskLinkRequestBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	decoder := jsontext.NewDecoder(r.Body, json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &request); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Task request is too large")
 			return
@@ -134,7 +135,7 @@ func (s *Server) handleCreateOrLinkMessageTask(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid task request")
 		return
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Task request must contain exactly one JSON value")
 		return
 	}

@@ -59,20 +59,20 @@ type OrganizationAddress struct {
 	Envelope           ValueEnvelope     `json:"envelope"`
 	OrganizationID     int64             `json:"organization_id"`
 	AddressKind        PersonAddressKind `json:"address_kind"`
-	PostOfficeBox      *string           `json:"post_office_box,omitempty"`
-	ExtendedAddress    *string           `json:"extended_address,omitempty"`
-	StreetAddress      *string           `json:"street_address,omitempty"`
-	Locality           *string           `json:"locality,omitempty"`
-	Region             *string           `json:"region,omitempty"`
-	PostalCode         *string           `json:"postal_code,omitempty"`
-	CountryName        *string           `json:"country_name,omitempty"`
-	ExtendedComponents *string           `json:"extended_components,omitempty"`
-	FreeText           *string           `json:"free_text,omitempty"`
-	Label              *string           `json:"label,omitempty"`
-	GeoURI             *string           `json:"geo_uri,omitempty"`
-	Timezone           *string           `json:"timezone,omitempty"`
-	CountryCode        *string           `json:"country_code,omitempty"`
-	PlaceURI           *string           `json:"place_uri,omitempty"`
+	PostOfficeBox      *string           `json:"post_office_box,omitzero" nullable:"false"`
+	ExtendedAddress    *string           `json:"extended_address,omitzero" nullable:"false"`
+	StreetAddress      *string           `json:"street_address,omitzero" nullable:"false"`
+	Locality           *string           `json:"locality,omitzero" nullable:"false"`
+	Region             *string           `json:"region,omitzero" nullable:"false"`
+	PostalCode         *string           `json:"postal_code,omitzero" nullable:"false"`
+	CountryName        *string           `json:"country_name,omitzero" nullable:"false"`
+	ExtendedComponents *string           `json:"extended_components,omitzero" nullable:"false"`
+	FreeText           *string           `json:"free_text,omitzero" nullable:"false"`
+	Label              *string           `json:"label,omitzero" nullable:"false"`
+	GeoURI             *string           `json:"geo_uri,omitzero" nullable:"false"`
+	Timezone           *string           `json:"timezone,omitzero" nullable:"false"`
+	CountryCode        *string           `json:"country_code,omitzero" nullable:"false"`
+	PlaceURI           *string           `json:"place_uri,omitzero" nullable:"false"`
 	OriginalValue      string            `json:"original_value"`
 }
 
@@ -82,15 +82,15 @@ type OrganizationContactPoint struct {
 	Envelope             ValueEnvelope      `json:"envelope"`
 	OrganizationID       int64              `json:"organization_id"`
 	AddressKind          ContactAddressKind `json:"address_kind"`
-	ServiceSlug          *string            `json:"service_slug,omitempty"`
+	ServiceSlug          *string            `json:"service_slug,omitzero" nullable:"false"`
 	ServiceID            *int64             `json:"-"`
-	ScopeKind            *string            `json:"scope_kind,omitempty"`
-	ScopeValue           *string            `json:"scope_value,omitempty"`
+	ScopeKind            *string            `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue           *string            `json:"scope_value,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
 	NormalizedValue      string             `json:"normalized_value"`
 	Normalization        string             `json:"normalization"`
 	NormalizationVersion int                `json:"normalization_version"`
-	URI                  *string            `json:"uri,omitempty"`
+	URI                  *string            `json:"uri,omitzero" nullable:"false"`
 }
 
 type OrganizationContactPointInput = PersonContactPointInput
@@ -99,10 +99,10 @@ type OrganizationMedia struct {
 	Envelope       ValueEnvelope   `json:"envelope"`
 	OrganizationID int64           `json:"organization_id"`
 	MediaKind      PersonMediaKind `json:"media_kind"`
-	MediaType      *string         `json:"media_type,omitempty"`
-	URI            *string         `json:"uri,omitempty"`
-	ByteSize       *int64          `json:"byte_size,omitempty"`
-	ContentHash    *string         `json:"content_hash,omitempty"`
+	MediaType      *string         `json:"media_type,omitzero" nullable:"false"`
+	URI            *string         `json:"uri,omitzero" nullable:"false"`
+	ByteSize       *int64          `json:"byte_size,omitzero" nullable:"false"`
+	ContentHash    *string         `json:"content_hash,omitzero" nullable:"false"`
 	HasData        bool            `json:"has_data"`
 	OriginalValue  string          `json:"original_value"`
 }
@@ -114,10 +114,10 @@ type OrganizationMedia struct {
 // data and content_hash makes the row URI-only.
 type OrganizationMediaInput struct {
 	MediaKind     PersonMediaKind    `json:"media_kind"`
-	MediaType     *string            `json:"media_type,omitempty"`
-	URI           *string            `json:"uri,omitempty"`
+	MediaType     *string            `json:"media_type,omitzero" nullable:"false"`
+	URI           *string            `json:"uri,omitzero" nullable:"false"`
 	Data          []byte             `json:"data,omitempty"`
-	ContentHash   *string            `json:"content_hash,omitempty"`
+	ContentHash   *string            `json:"content_hash,omitzero" nullable:"false"`
 	OriginalValue string             `json:"original_value"`
 	Envelope      ValueEnvelopeInput `json:"envelope"`
 }

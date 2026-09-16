@@ -31,8 +31,8 @@ type TimelineRow struct {
 	FirstAt         time.Time `json:"first_at,omitempty"` //nolint:modernize // see comment above
 	MessageCount    int64     `json:"message_count"`
 	SourceID        int64     `json:"source_id"`
-	ConversationID  *int64    `json:"conversation_id,omitempty"`
-	AnchorMessageID *int64    `json:"anchor_message_id,omitempty"`
+	ConversationID  *int64    `json:"conversation_id,omitzero" nullable:"false"`
+	AnchorMessageID *int64    `json:"anchor_message_id,omitzero" nullable:"false"`
 	HasAttachments  bool      `json:"has_attachments"`
 }
 

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -2709,7 +2709,7 @@ func searchCacheKeyFor(conditions []string, args []any, cacheFP string) string {
 		A  []any    `json:"a"`
 		FP string   `json:"fp"`
 	}{conditions, args, cacheFP}
-	b, err := json.Marshal(key)
+	b, err := json.Marshal(key, json.Deterministic(true))
 	if err != nil {
 		// Fallback: should never happen with the types buildSearchConditions produces.
 		return fmt.Sprintf("%v#%v#%s", conditions, args, cacheFP)

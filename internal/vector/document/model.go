@@ -4,7 +4,7 @@ package document
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -118,7 +118,7 @@ func Fingerprint(extractionProfileID string, cfg vector.Config) (string, error) 
 		RecipeFingerprint: recipe.Fingerprint(), VectorSpace: spaceFingerprint,
 		TaskPrefixFingerprint: cfg.Embeddings.TaskPrefixFingerprint(),
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal document vector fingerprint: %w", err)
 	}
@@ -158,7 +158,7 @@ func egressFingerprint(extractionProfileID string, purpose docembedding.EgressPu
 		Version: 1, GenerationFingerprint: generationFingerprint,
 		DestinationFingerprint: destination,
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal document egress consent identity: %w", err)
 	}

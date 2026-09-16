@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sort"
@@ -898,7 +899,7 @@ func (s *Store) loadPersonFactResolvedClaimsTx(
 			ClaimKey: claim.ClaimKey,
 			Claim: personfacts.ProposedClaim{
 				Target: proposedTarget, Relation: claim.Relation,
-				SubmittedValue: append(json.RawMessage(nil), claim.SubmittedValue...),
+				SubmittedValue: append(jsontext.Value(nil), claim.SubmittedValue...),
 				ValidFrom:      personFactPortableTimePointer(claim.ValidFrom),
 				ValidUntil:     personFactPortableTimePointer(claim.ValidUntil),
 				Origin:         claim.Origin, Confidence: claim.Confidence,
@@ -1371,7 +1372,7 @@ func (p *personFactEmploymentProjector) projectionContext(
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ClaimKey < entries[j].ClaimKey })
-	encoded, err := json.Marshal(entries)
+	encoded, err := json.Marshal(entries, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode employment projection context: %w", err)
 	}
@@ -1776,7 +1777,7 @@ func personFactEmploymentNormalizedStableIdentity(
 		return "", false, fmt.Errorf("normalize employment claim %q organization for chronology: %w",
 			claimKey, err)
 	}
-	organization, err := json.Marshal(keys)
+	organization, err := json.Marshal(keys, json.Deterministic(true))
 	if err != nil {
 		return "", false, fmt.Errorf("encode employment claim %q organization identity: %w",
 			claimKey, err)
@@ -2192,8 +2193,8 @@ func canonicalPersonFactOrganizationReference(organization Organization) personf
 	return ref
 }
 
-func mustMarshalPersonFactEmployment(value personfacts.EmploymentValue) json.RawMessage {
-	encoded, err := json.Marshal(value)
+func mustMarshalPersonFactEmployment(value personfacts.EmploymentValue) jsontext.Value {
+	encoded, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}
@@ -2622,7 +2623,7 @@ func normalizedPersonFactAttributeValue(
 	return normalized, nil
 }
 
-func personFactAttributeValueJSON(value AttributeValue) (json.RawMessage, error) {
+func personFactAttributeValueJSON(value AttributeValue) (jsontext.Value, error) {
 	var scalar any
 	switch value.Type {
 	case AttributeValueText:
@@ -2642,7 +2643,7 @@ func personFactAttributeValueJSON(value AttributeValue) (json.RawMessage, error)
 	default:
 		return nil, fmt.Errorf("attribute value type %q is not a generic person fact", value.Type)
 	}
-	encoded, err := json.Marshal(scalar)
+	encoded, err := json.Marshal(scalar, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode stored person fact attribute: %w", err)
 	}
@@ -2728,7 +2729,7 @@ func copyPersonFactNormalized(value *personfacts.NormalizedValue) *personfacts.N
 		return nil
 	}
 	copyValue := *value
-	copyValue.JSON = append(json.RawMessage(nil), value.JSON...)
+	copyValue.JSON = append(jsontext.Value(nil), value.JSON...)
 	return &copyValue
 }
 

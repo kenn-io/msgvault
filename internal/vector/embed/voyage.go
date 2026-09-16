@@ -3,7 +3,7 @@ package embed
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -163,7 +163,7 @@ func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, in
 		OutputDimension:    c.cfg.Dimension,
 		OutputDType:        "float",
 		EnableAutoChunking: false,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal Voyage request: %w", err)
 	}
@@ -241,7 +241,7 @@ func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][
 	}
 
 	var response voyageResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &response); err != nil {
 		return nil, &retryError{err: fmt.Errorf("decode Voyage response: %w", err)}
 	}
 	return c.decodeVoyageResponse(response, inputs)

@@ -1,7 +1,8 @@
 package notionmeetings
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -25,25 +26,25 @@ type meetingMetadata struct {
 	HasSummary                 bool           `json:"has_summary"`
 	HasNotes                   bool           `json:"has_notes"`
 	HasTranscript              bool           `json:"has_transcript"`
-	MarkdownTranscriptFallback bool           `json:"markdown_transcript_fallback,omitempty"`
+	MarkdownTranscriptFallback bool           `json:"markdown_transcript_fallback,omitzero"`
 	UnresolvedAttendeeIDs      []string       `json:"unresolved_attendee_ids,omitempty"`
 	ResolvedUsers              []resolvedUser `json:"resolved_users,omitempty"`
 	Warnings                   []string       `json:"warnings,omitempty"`
 }
 
 type rawBlockTree struct {
-	Root  json.RawMessage   `json:"root,omitempty"`
-	Pages []json.RawMessage `json:"pages,omitempty"`
+	Root  jsontext.Value   `json:"root,omitempty"`
+	Pages []jsontext.Value `json:"pages,omitempty"`
 }
 
 type rawEvidence struct {
 	SchemaVersion  int               `json:"schema_version"`
-	Discovery      json.RawMessage   `json:"discovery"`
-	MeetingBlock   json.RawMessage   `json:"meeting_block"`
+	Discovery      jsontext.Value    `json:"discovery"`
+	MeetingBlock   jsontext.Value    `json:"meeting_block"`
 	Summary        rawBlockTree      `json:"summary,omitzero"`
 	Notes          rawBlockTree      `json:"notes,omitzero"`
 	Transcript     rawBlockTree      `json:"transcript,omitzero"`
-	PageMarkdown   json.RawMessage   `json:"page_markdown"`
+	PageMarkdown   jsontext.Value    `json:"page_markdown"`
 	Canonical      canonicalEvidence `json:"canonical"`
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
 	ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
@@ -81,7 +82,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 		UnresolvedAttendeeIDs:      h.UnresolvedAttendeeIDs,
 		ResolvedUsers:              h.ResolvedUsers,
 		Warnings:                   h.Warnings,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion meeting metadata: %w", err)
 	}
@@ -92,7 +93,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 		Transcript: rawForTree(h.TranscriptTree), PageMarkdown: rawForMarkdown(h.PageMarkdown),
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
 		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion raw evidence: %w", err)
 	}
@@ -146,14 +147,14 @@ func (h *HydratedMeeting) body(title string, start, end time.Time) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func rawForBlock(block *Block) json.RawMessage {
+func rawForBlock(block *Block) jsontext.Value {
 	if block == nil {
 		return nil
 	}
 	return block.Raw
 }
 
-func rawForMarkdown(page *MarkdownPage) json.RawMessage {
+func rawForMarkdown(page *MarkdownPage) jsontext.Value {
 	if page == nil {
 		return nil
 	}

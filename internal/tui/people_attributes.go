@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strconv"
@@ -401,8 +401,8 @@ func parsePeopleAttributeDraft(
 		}
 		return store.AttributeValue{Type: store.AttributeValueTimestamp, Timestamp: &value}, nil
 	case store.AttributeValueJSON:
-		raw := json.RawMessage(draft)
-		if !json.Valid(raw) {
+		raw := jsontext.Value(draft)
+		if !raw.IsValid() {
 			return invalid("enter valid JSON")
 		}
 		return store.AttributeValue{Type: store.AttributeValueJSON, JSON: raw}, nil

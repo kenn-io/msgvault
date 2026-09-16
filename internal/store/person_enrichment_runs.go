@@ -36,8 +36,8 @@ type PersonEnrichmentRun struct {
 	FailedCount           int64      `json:"failed_count"`
 	SuppressedCount       int64      `json:"suppressed_count"`
 	IdentityRejectedCount int64      `json:"identity_rejected_count"`
-	FailureClass          *string    `json:"failure_class,omitempty"`
-	SafeError             *string    `json:"safe_error,omitempty"`
+	FailureClass          *string    `json:"failure_class,omitzero" nullable:"false"`
+	SafeError             *string    `json:"safe_error,omitzero" nullable:"false"`
 }
 
 type personEnrichmentRunOutcome struct {

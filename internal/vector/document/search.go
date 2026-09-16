@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -440,7 +441,7 @@ func normalizeSearchRequest(request store.DocumentSearchRequest) (store.Document
 
 func hashSearchRequest(request store.DocumentSearchRequest) (string, error) {
 	request.Cursor = ""
-	encoded, err := json.Marshal(request)
+	encoded, err := json.Marshal(request, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document semantic search request: %w", err)
 	}
@@ -478,7 +479,7 @@ func digestSearchCandidates(results []store.DocumentSearchResult) (string, error
 			SemanticScore: result.SemanticScore, FusionScore: result.FusionScore, MatchedSignals: result.MatchedSignals,
 		}
 	}
-	encoded, err := json.Marshal(identities)
+	encoded, err := json.Marshal(identities, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document search candidate digest: %w", err)
 	}
@@ -507,7 +508,7 @@ func validateSearchCursor(value, requestHash string, revision int64, mode Search
 }
 
 func encodeSearchCursor(cursor searchCursor) (string, error) {
-	encoded, err := json.Marshal(cursor)
+	encoded, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode document semantic search cursor: %w", err)
 	}
@@ -520,9 +521,9 @@ func decodeSearchCursor(value string) (searchCursor, error) {
 		return searchCursor{}, store.ErrDocumentSearchInvalidCursor
 	}
 	var cursor searchCursor
-	decoder := json.NewDecoder(strings.NewReader(string(decoded)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cursor); err != nil || cursor.Version != searchCursorVersion || !validSearchDigest(cursor.RequestHash) || !validSearchDigest(cursor.CandidateDigest) || cursor.Revision < 0 || cursor.Offset < 1 || cursor.Offset > store.MaxLexicalDocumentSearchCandidateLimit || cursor.CandidateLimit < 1 || cursor.CandidateLimit > store.MaxLexicalDocumentSearchCandidateLimit || (cursor.GenerationID == 0) != (cursor.GenerationFingerprint == "") || (cursor.GenerationFingerprint != "" && !validSearchDigest(cursor.GenerationFingerprint)) {
+	decoder := jsontext.NewDecoder(strings.NewReader(string(decoded)), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &cursor); err != nil || cursor.Version != searchCursorVersion || !validSearchDigest(cursor.RequestHash) || !validSearchDigest(cursor.CandidateDigest) || cursor.Revision < 0 || cursor.Offset < 1 || cursor.Offset > store.MaxLexicalDocumentSearchCandidateLimit || cursor.CandidateLimit < 1 || cursor.CandidateLimit > store.MaxLexicalDocumentSearchCandidateLimit || (cursor.GenerationID == 0) != (cursor.GenerationFingerprint == "") || (cursor.GenerationFingerprint != "" && !validSearchDigest(cursor.GenerationFingerprint)) {
 		return searchCursor{}, store.ErrDocumentSearchInvalidCursor
 	}
 	mode, err := ParseSearchMode(cursor.EffectiveMode)
@@ -530,7 +531,7 @@ func decodeSearchCursor(value string) (searchCursor, error) {
 		(mode != SearchModeLexical && cursor.CandidateLimit > store.MaxDocumentSearchCandidateLimit) {
 		return searchCursor{}, store.ErrDocumentSearchInvalidCursor
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return searchCursor{}, store.ErrDocumentSearchInvalidCursor
 	}
 	return cursor, nil

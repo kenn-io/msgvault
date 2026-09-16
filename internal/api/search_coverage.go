@@ -41,7 +41,7 @@ type SearchCoverageResponse struct {
 	EligibleCount     int64                  `json:"eligible_count"`
 	EmbeddedCount     int64                  `json:"embedded_count"`
 	Percentage        float64                `json:"percentage"`
-	VectorGeneration  *int64                 `json:"vector_generation,omitempty"`
+	VectorGeneration  *int64                 `json:"vector_generation,omitzero" nullable:"false"`
 	VectorFingerprint string                 `json:"vector_fingerprint,omitempty"`
 	CacheRevision     string                 `json:"cache_revision"`
 	Status            SearchCoverageStatus   `json:"status" enum:"disabled,initializing,stale,incomplete,unavailable,ready"`
@@ -255,7 +255,7 @@ func searchCoverageContextHash(ctx query.Context) string {
 	}
 	return hashCanonicalValue(struct {
 		Context  query.Context `json:"context"`
-		Identity *identityKey  `json:"identity,omitempty"`
+		Identity *identityKey  `json:"identity,omitzero" nullable:"false"`
 	}{Context: ctx, Identity: identity}, false)
 }
 

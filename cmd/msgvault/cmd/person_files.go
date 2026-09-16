@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,9 +45,9 @@ type personFilesOutput struct {
 	PersonID      int64                                   `json:"person_id"`
 	RequestedLane string                                  `json:"requested_lane"`
 	Availability  map[string]personFilesLaneStatus        `json:"availability"`
-	Metadata      *generated.PersonFileSearchHTTPResponse `json:"metadata,omitempty"`
-	Documents     *store.DocumentSearchResponse           `json:"documents,omitempty"`
-	Visual        *visual.SearchResponse                  `json:"visual,omitempty"`
+	Metadata      *generated.PersonFileSearchHTTPResponse `json:"metadata,omitzero"`
+	Documents     *store.DocumentSearchResponse           `json:"documents,omitzero"`
+	Visual        *visual.SearchResponse                  `json:"visual,omitzero"`
 }
 
 func defaultPersonFilesCommandDeps() personFilesCommandDeps {
@@ -199,7 +199,7 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 				}
 			}
 			if jsonOutput {
-				return json.NewEncoder(command.OutOrStdout()).Encode(output)
+				return json.MarshalWrite(command.OutOrStdout(), output, json.Deterministic(true))
 			}
 			return writePersonFilesOutput(command, output)
 		},

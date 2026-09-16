@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -78,7 +78,7 @@ type Coverage struct {
 	Returned   int    `json:"returned"`
 	OldestEdit string `json:"oldest_edit,omitempty"`
 	NewestEdit string `json:"newest_edit,omitempty"`
-	Limited    bool   `json:"limited,omitempty"`
+	Limited    bool   `json:"limited,omitzero"`
 }
 
 type syncState struct {
@@ -92,7 +92,7 @@ type syncState struct {
 
 func (s syncState) marshal() (string, error) {
 	sort.Slice(s.Pending, func(i, j int) bool { return s.Pending[i].BlockID < s.Pending[j].BlockID })
-	encoded, err := json.Marshal(s)
+	encoded, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal Notion sync cursor: %w", err)
 	}

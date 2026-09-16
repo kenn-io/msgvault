@@ -127,7 +127,7 @@ type DocumentVectorGenerationStatus struct {
 	Obsolete                 int64                             `json:"stale_obsolete"`
 	CleanupPending           int64                             `json:"cleanup_pending"`
 	Failures                 []DocumentVectorFailureDiagnostic `json:"failures"`
-	FailureAfterGenerationID int64                             `json:"failure_after_generation_id,omitempty"`
+	FailureAfterGenerationID int64                             `json:"failure_after_generation_id,omitzero"`
 	FailureAfterToken        string                            `json:"failure_after_token,omitempty"`
 	FailuresExhausted        bool                              `json:"failures_exhausted"`
 }
@@ -136,7 +136,7 @@ type DocumentVectorGenerationStatus struct {
 type DocumentVectorFailureResetResult struct {
 	Scanned           int    `json:"scanned"`
 	Reset             int    `json:"reset"`
-	AfterGenerationID int64  `json:"after_generation_id,omitempty"`
+	AfterGenerationID int64  `json:"after_generation_id,omitzero"`
 	AfterToken        string `json:"after_token,omitempty"`
 	Exhausted         bool   `json:"exhausted"`
 }

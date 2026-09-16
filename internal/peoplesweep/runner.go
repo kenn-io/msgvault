@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -36,7 +37,7 @@ var (
 	providerMetadataPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
 )
 
-var syntheticCheckSchema = json.RawMessage(`{
+var syntheticCheckSchema = jsontext.Value(`{
 	"type":"object",
 	"properties":{"ok":{"type":"boolean","const":true}},
 	"required":["ok"],
@@ -206,7 +207,7 @@ func (r *Runner) PrepareRepair(
 	}{
 		OriginalRequest:  cloneStructuredRequest(request),
 		InvalidCandidate: string(failure.Candidate), ValidationErrors: errorsCopy,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return PreparedStructuredRequest{}, errors.New("encode structured inference repair instruction")
 	}
@@ -469,7 +470,7 @@ func (s *runnerExecutionSession) complete(
 }
 
 func cloneValidationFailure(failure ValidationFailure) ValidationFailure {
-	failure.Candidate = append(json.RawMessage(nil), failure.Candidate...)
+	failure.Candidate = append(jsontext.Value(nil), failure.Candidate...)
 	failure.Errors = slices.Clone(failure.Errors)
 	return failure
 }
@@ -668,20 +669,20 @@ func (r *Runner) validate(
 	return response, nil, nil
 }
 
-func newValidationFailure(candidate json.RawMessage, message string, repair bool) *ValidationFailure {
+func newValidationFailure(candidate jsontext.Value, message string, repair bool) *ValidationFailure {
 	if len(candidate) > maxValidationCandidateBytes {
 		candidate = candidate[:maxValidationCandidateBytes]
 	}
 	if len(message) > maxValidationMessageBytes {
 		message = message[:maxValidationMessageBytes]
 	}
-	return &ValidationFailure{Candidate: append(json.RawMessage(nil), candidate...),
+	return &ValidationFailure{Candidate: append(jsontext.Value(nil), candidate...),
 		Errors: []string{message}, repair: repair, summary: message}
 }
 
 func structuredResponseFromDriver(response DriverResponse) StructuredResponse {
 	return StructuredResponse{
-		Output:            append(json.RawMessage(nil), response.CandidateJSON...),
+		Output:            append(jsontext.Value(nil), response.CandidateJSON...),
 		ProviderRequestID: response.ProviderRequestID,
 		ProviderVersion:   response.ProviderVersion,
 		ModelVersion:      response.ModelVersion,
@@ -705,7 +706,7 @@ func decodeJSONSchemaInstance(data []byte, destination *any) error {
 
 func normalizeJSONSchemaNumbers(value any) (any, error) {
 	switch typed := value.(type) {
-	case json.Number:
+	case jsontext.Value:
 		if !strings.ContainsAny(string(typed), ".eE") {
 			integer, err := strconv.ParseInt(string(typed), 10, 64)
 			if err == nil {

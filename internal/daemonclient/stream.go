@@ -1,7 +1,8 @@
 package daemonclient
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +14,10 @@ func decodeCLIStream[T any](
 	handle func(T) (complete bool, err error),
 ) error {
 	complete := false
-	dec := json.NewDecoder(body)
+	dec := jsontext.NewDecoder(body)
 	for {
 		var event T
-		err := dec.Decode(&event)
+		err := json.UnmarshalDecode(dec, &event)
 		if errors.Is(err, io.EOF) {
 			break
 		}

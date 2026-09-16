@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -103,9 +104,9 @@ func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
 		"size":         len(data),
 		"data_base64":  base64.StdEncoding.EncodeToString(data),
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(output)
+	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, output, json.Deterministic(true))
 }
 
 func exportAttachmentStreamAsBase64(r io.Reader) error {

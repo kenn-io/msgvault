@@ -3,7 +3,8 @@ package api
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ type StatsResponse struct {
 	TotalLabels           int64             `json:"total_labels"`
 	TotalAttach           int64             `json:"total_attachments"`
 	DatabaseSize          int64             `json:"database_size_bytes"`
-	VectorSearch          *vector.StatsView `json:"vector_search,omitempty"`
+	VectorSearch          *vector.StatsView `json:"vector_search,omitzero" nullable:"false"`
 	VectorStatus          string            `json:"vector_status,omitempty"`
 	// VectorTextStatus reports the TEXT vector lane specifically. A
 	// multimodal-only daemon is vector-"ready" without serving semantic
@@ -131,7 +132,7 @@ type SyncRunStatus struct {
 	ErrorMessage      *string             `json:"error_message"`
 	CursorBefore      *string             `json:"cursor_before"`
 	CursorAfter       *string             `json:"cursor_after"`
-	SkippedCount      int64               `json:"skipped_count,omitempty"`
+	SkippedCount      int64               `json:"skipped_count,omitzero"`
 	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
 }
 
@@ -196,8 +197,8 @@ const (
 
 type HealthResponse struct {
 	Status    string           `json:"status"`
-	Vector    *VectorHealth    `json:"vector,omitempty"`
-	Operation *OperationHealth `json:"operation,omitempty"`
+	Vector    *VectorHealth    `json:"vector,omitzero" nullable:"false"`
+	Operation *OperationHealth `json:"operation,omitzero" nullable:"false"`
 	// AnalyticsEngine is the current analytics mode (one of the AnalyticsMode
 	// constants). It can change when background cache initialization installs a
 	// new engine. Empty when the server was built without one (tests, embedded
@@ -249,7 +250,7 @@ type DeepSearchResponse struct {
 	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
 	Count        int                 `json:"count"`
 	TotalCount   int64               `json:"total_count"`
-	Stats        *TotalStatsResponse `json:"stats,omitempty"`
+	Stats        *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	HasMore      bool                `json:"has_more"`
 	Offset       int                 `json:"offset"`
 	Limit        int                 `json:"limit"`
@@ -261,15 +262,15 @@ type BodySearchContext struct {
 	MessageID       int64    `json:"message_id"`
 	ContextSnippets []string `json:"context_snippets,omitempty"`
 	// ContextSnippetsTruncated reports contexts omitted by response or work caps.
-	ContextSnippetsTruncated bool `json:"context_snippets_truncated,omitempty"`
+	ContextSnippetsTruncated bool `json:"context_snippets_truncated,omitzero"`
 }
 
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
 	ID              int64    `json:"id"`
-	SourceID        int64    `json:"source_id,omitempty"`
+	SourceID        int64    `json:"source_id,omitzero"`
 	SourceMessageID string   `json:"source_message_id,omitempty"`
-	ConversationID  int64    `json:"conversation_id,omitempty"`
+	ConversationID  int64    `json:"conversation_id,omitzero"`
 	Subject         string   `json:"subject"`
 	MessageType     string   `json:"message_type,omitempty"`
 	From            string   `json:"from"`
@@ -293,12 +294,12 @@ type MessageDetail struct {
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
-	IsFromMe bool   `json:"is_from_me,omitempty"`
+	IsFromMe bool   `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
 	// out to keep the response within the cumulative inline-body budget.
 	// The snippet is still present; fetch the full body via
 	// GET /api/v1/messages/{id}.
-	BodyOmitted bool             `json:"body_omitted,omitempty"`
+	BodyOmitted bool             `json:"body_omitted,omitzero"`
 	Attachments []AttachmentInfo `json:"attachments"`
 }
 
@@ -344,7 +345,7 @@ type hybridSearchResponse struct {
 	Generation       hybridGenerationSummary `json:"generation"`
 	TookMS           int64                   `json:"took_ms"`
 	ScopeLabel       string                  `json:"scope_label,omitempty"`
-	ScopeSourceCount int                     `json:"scope_source_count,omitempty"`
+	ScopeSourceCount int                     `json:"scope_source_count,omitzero"`
 	Results          []hybridSearchItem      `json:"results"`
 }
 
@@ -374,15 +375,15 @@ type hybridGenerationSummary struct {
 type hybridSearchItem struct {
 	MessageSummary
 
-	Score            *scoreBreakdown     `json:"score,omitempty"`
+	Score            *scoreBreakdown     `json:"score,omitzero" nullable:"false"`
 	Matches          []hybridSearchMatch `json:"matches,omitempty"`
-	MatchesTruncated bool                `json:"matches_truncated,omitempty"`
+	MatchesTruncated bool                `json:"matches_truncated,omitzero"`
 }
 
 type hybridSearchMatch struct {
-	CharOffset *int    `json:"char_offset,omitempty"`
+	CharOffset *int    `json:"char_offset,omitzero" nullable:"false"`
 	Snippet    string  `json:"snippet"`
-	Line       *int    `json:"line,omitempty"`
+	Line       *int    `json:"line,omitzero" nullable:"false"`
 	Score      float64 `json:"score"`
 }
 
@@ -392,10 +393,10 @@ type hybridSearchMatch struct {
 // In particular, mode=vector reports vector with no rrf (RRF requires
 // two signals to fuse), and mode=fts reports bm25 with no rrf or vector.
 type scoreBreakdown struct {
-	RRF            *float64 `json:"rrf,omitempty"`
-	BM25           *float64 `json:"bm25,omitempty"`
-	Vector         *float64 `json:"vector,omitempty"`
-	SubjectBoosted bool     `json:"subject_boosted,omitempty"`
+	RRF            *float64 `json:"rrf,omitzero" nullable:"false"`
+	BM25           *float64 `json:"bm25,omitzero" nullable:"false"`
+	Vector         *float64 `json:"vector,omitzero" nullable:"false"`
+	SubjectBoosted bool     `json:"subject_boosted,omitzero"`
 }
 
 // writeJSON writes a JSON response.
@@ -1762,7 +1763,7 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 	tokenPath := sanitizeTokenPath(tokensDir, email)
 
 	// Marshal token back to JSON (normalized)
-	data, err := json.MarshalIndent(tf, "", "  ")
+	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to serialize token")
 		return
@@ -1840,8 +1841,8 @@ type AddAccountRequest struct {
 // POST /api/v1/accounts.
 func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	var req AddAccountRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		s.logger.Warn("invalid account request JSON", "error", err)
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request JSON format")
 		return
@@ -1937,8 +1938,8 @@ var ErrSQLQueryEngineUnavailable = errors.New("SQL query requires DuckDB engine 
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
+	dec := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
 		return
 	}
@@ -2039,7 +2040,7 @@ type TotalStatsResponse struct {
 	AttachmentSize        int64   `json:"attachment_size"`
 	LabelCount            int64   `json:"label_count"`
 	AccountCount          int64   `json:"account_count"`
-	AppliedSearchScope    *bool   `json:"applied_search_scope,omitempty"`
+	AppliedSearchScope    *bool   `json:"applied_search_scope,omitzero" nullable:"false"`
 	AppliedSourceIDs      []int64 `json:"applied_source_ids,omitempty"`
 }
 
@@ -2048,7 +2049,7 @@ type SearchFastResponse struct {
 	Query            string              `json:"query"`
 	Messages         []MessageSummary    `json:"messages"`
 	TotalCount       int64               `json:"total_count"`
-	Stats            *TotalStatsResponse `json:"stats,omitempty"`
+	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
 }
 
@@ -2081,7 +2082,7 @@ type TextMessagesResponse struct {
 }
 
 type TextSearchResponse struct {
-	AppliedSourceID *int64                 `json:"applied_source_id,omitempty"`
+	AppliedSourceID *int64                 `json:"applied_source_id,omitzero" nullable:"false"`
 	Count           int                    `json:"count"`
 	HasMore         bool                   `json:"has_more"`
 	Offset          int                    `json:"offset"`
@@ -2924,17 +2925,17 @@ type ChangedMessageJSON struct {
 	SourceMessageID     string  `json:"source_message_id,omitempty"`
 	ConversationID      int64   `json:"conversation_id"`
 	MessageType         string  `json:"message_type,omitempty"`
-	ListID              *string `json:"list_id,omitempty"`
+	ListID              *string `json:"list_id,omitzero" nullable:"false"`
 	Subject             string  `json:"subject,omitempty"`
 	Snippet             string  `json:"snippet,omitempty"`
-	SentAt              *string `json:"sent_at,omitempty" format:"date-time"`
-	ReceivedAt          *string `json:"received_at,omitempty" format:"date-time"`
-	InternalDate        *string `json:"internal_date,omitempty" format:"date-time"`
+	SentAt              *string `json:"sent_at,omitzero" nullable:"false" format:"date-time"`
+	ReceivedAt          *string `json:"received_at,omitzero" nullable:"false" format:"date-time"`
+	InternalDate        *string `json:"internal_date,omitzero" nullable:"false" format:"date-time"`
 	SizeEstimate        int64   `json:"size_estimate"`
 	HasAttachments      bool    `json:"has_attachments"`
 	AttachmentCount     int     `json:"attachment_count"`
-	DeletedAt           *string `json:"deleted_at,omitempty" format:"date-time"`
-	DeletedFromSourceAt *string `json:"deleted_from_source_at,omitempty" format:"date-time"`
+	DeletedAt           *string `json:"deleted_at,omitzero" nullable:"false" format:"date-time"`
+	DeletedFromSourceAt *string `json:"deleted_from_source_at,omitzero" nullable:"false" format:"date-time"`
 	ContentChangedAt    string  `json:"content_changed_at" format:"date-time"`
 }
 

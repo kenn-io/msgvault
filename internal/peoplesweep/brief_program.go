@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
 
 // The frozen "last time we talked" person brief program. It runs beside the
@@ -96,7 +97,7 @@ const briefAppreciationSchema = `{"type":"object","properties":{"text":{"type":"
 
 const briefUncertaintySchema = `{"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":200},"kind":{"type":"string","enum":["stale","conflict","attribution","ambiguous"]},"evidence_ids":` + evidenceIDsSchema + `},"required":["text","kind","evidence_ids"],"additionalProperties":false}`
 
-var briefSchema = json.RawMessage(`{"type":"object","properties":` +
+var briefSchema = jsontext.Value(`{"type":"object","properties":` +
 	`{"last_meaningful_interaction":` + briefInteractionSchema +
 	`,"highlights":{"type":"array","maxItems":8,"items":` + briefHighlightSchema + `}` +
 	`,"follow_ups":{"type":"array","maxItems":5,"items":` + briefFollowUpSchema + `}` +
@@ -107,22 +108,22 @@ var briefSchema = json.RawMessage(`{"type":"object","properties":` +
 	`,"additionalProperties":false}`)
 
 // BriefJSONSchema returns a copy of the frozen person brief output schema.
-func BriefJSONSchema() json.RawMessage {
-	return append(json.RawMessage(nil), briefSchema...)
+func BriefJSONSchema() jsontext.Value {
+	return append(jsontext.Value(nil), briefSchema...)
 }
 
 // BriefProgramFingerprint identifies the frozen brief instructions and schema
 // exactly as ProgramFingerprint identifies the extraction program.
 func BriefProgramFingerprint() string {
 	canonical, err := json.Marshal(struct {
-		ProgramID      string          `json:"program_id"`
-		ProgramVersion string          `json:"program_version"`
-		Instructions   string          `json:"instructions"`
-		Schema         json.RawMessage `json:"schema"`
+		ProgramID      string         `json:"program_id"`
+		ProgramVersion string         `json:"program_version"`
+		Instructions   string         `json:"instructions"`
+		Schema         jsontext.Value `json:"schema"`
 	}{
 		ProgramID: BriefProgramID, ProgramVersion: BriefProgramVersion,
 		Instructions: briefProgramText, Schema: briefSchema,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		panic("marshal frozen person brief program: " + err.Error())
 	}

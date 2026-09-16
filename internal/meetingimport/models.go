@@ -55,7 +55,7 @@ type Meeting struct {
 	SummaryText        string              `json:"summary_text,omitempty"`
 	Transcript         string              `json:"transcript,omitempty"`
 	TranscriptSegments []TranscriptSegment `json:"transcript_segments,omitempty"`
-	Organizer          *MeetingPerson      `json:"organizer,omitempty"`
+	Organizer          *MeetingPerson      `json:"organizer,omitzero" nullable:"false"`
 	Attendees          []MeetingPerson     `json:"attendees,omitempty"`
 	Metadata           map[string]any      `json:"metadata,omitempty"`
 }
@@ -68,7 +68,7 @@ type MeetingPerson struct {
 type TranscriptSegment struct {
 	Speaker       string   `json:"speaker"`
 	Text          string   `json:"text"`
-	OffsetSeconds *float64 `json:"offset_seconds,omitempty" minimum:"0"`
+	OffsetSeconds *float64 `json:"offset_seconds,omitzero" nullable:"false" minimum:"0"`
 }
 
 type NormalizedRequest struct {

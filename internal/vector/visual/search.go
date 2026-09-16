@@ -10,7 +10,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,7 +60,7 @@ type AttachmentSearchResult struct {
 	SentAt           time.Time               `json:"sent_at"`
 	Score            float64                 `json:"score"`
 	Rank             int                     `json:"rank"`
-	PersonProvenance *personscope.Provenance `json:"person_provenance,omitempty"`
+	PersonProvenance *personscope.Provenance `json:"person_provenance,omitzero" nullable:"false"`
 }
 
 type SearchResponse struct {
@@ -416,7 +416,7 @@ func visualSearchQueryHash(query SearchQuery) (string, error) {
 		MIMEPrefix: strings.ToLower(strings.TrimSpace(query.MIMEPrefix)),
 		Person:     query.Person, SourceID: query.SourceID, MessageID: query.MessageID,
 		After: query.After, Before: query.Before,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal visual search query: %w", err)
 	}
@@ -425,7 +425,7 @@ func visualSearchQueryHash(query SearchQuery) (string, error) {
 }
 
 func encodeSearchCursor(cursor searchCursor) (string, error) {
-	payload, err := json.Marshal(cursor)
+	payload, err := json.Marshal(cursor, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}

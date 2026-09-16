@@ -3,7 +3,8 @@ package notionmeetings
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -175,10 +176,10 @@ func (c *Client) ListUsers(ctx context.Context, cursor string) (*UserPage, error
 	return &result, nil
 }
 
-func validateListEnvelope(raw json.RawMessage) error {
+func validateListEnvelope(raw jsontext.Value) error {
 	var envelope struct {
-		Results *json.RawMessage `json:"results"`
-		HasMore *bool            `json:"has_more"`
+		Results *jsontext.Value `json:"results"`
+		HasMore *bool           `json:"has_more"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return fmt.Errorf("%w: decode list response: %w", ErrMalformedResponse, err)
@@ -189,7 +190,7 @@ func validateListEnvelope(raw json.RawMessage) error {
 	return nil
 }
 
-func validateBlockResponse(raw json.RawMessage, expectedID, expectedType string) error {
+func validateBlockResponse(raw jsontext.Value, expectedID, expectedType string) error {
 	var envelope struct {
 		Object      *string `json:"object"`
 		ID          *string `json:"id"`
@@ -210,7 +211,7 @@ func validateBlockResponse(raw json.RawMessage, expectedID, expectedType string)
 	if expectedType != "" && *envelope.Type != expectedType {
 		return fmt.Errorf("%w: block response has unexpected type", ErrMalformedResponse)
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("%w: decode block fields: %w", ErrMalformedResponse, err)
 	}
@@ -218,14 +219,14 @@ func validateBlockResponse(raw json.RawMessage, expectedID, expectedType string)
 	if !ok {
 		return fmt.Errorf("%w: block response is missing its type payload", ErrMalformedResponse)
 	}
-	var typePayload map[string]json.RawMessage
+	var typePayload map[string]jsontext.Value
 	if err := json.Unmarshal(payload, &typePayload); err != nil || typePayload == nil {
 		return fmt.Errorf("%w: block response has an invalid type payload", ErrMalformedResponse)
 	}
 	return nil
 }
 
-func validateMarkdownResponse(raw json.RawMessage, expectedID string) error {
+func validateMarkdownResponse(raw jsontext.Value, expectedID string) error {
 	var envelope struct {
 		Object          *string   `json:"object"`
 		ID              *string   `json:"id"`
@@ -255,11 +256,11 @@ const (
 	operationUsers
 )
 
-func (c *Client) doJSON(ctx context.Context, method, path string, payload any, target any, op operation) (json.RawMessage, error) {
+func (c *Client) doJSON(ctx context.Context, method, path string, payload any, target any, op operation) (jsontext.Value, error) {
 	var encoded []byte
 	var err error
 	if payload != nil {
-		encoded, err = json.Marshal(payload)
+		encoded, err = json.Marshal(payload, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode Notion request: %w", err)
 		}
@@ -298,7 +299,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 			if err := json.Unmarshal(body, target); err != nil {
 				return nil, fmt.Errorf("%w: decode response: %w", ErrMalformedResponse, err)
 			}
-			return append(json.RawMessage(nil), body...), nil
+			return append(jsontext.Value(nil), body...), nil
 		}
 
 		var providerErr struct {

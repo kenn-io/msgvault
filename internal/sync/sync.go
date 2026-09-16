@@ -1768,7 +1768,7 @@ func (s *Syncer) prepareMessage(
 
 	var metadata *sql.NullString
 	if origin := s.imapContentOrigin(raw.ID); s.opts.SourceType == sourceTypeIMAP && origin != "" {
-		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin})
+		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin}, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode IMAP content origin: %w", err)
 		}

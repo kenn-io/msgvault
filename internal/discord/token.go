@@ -2,7 +2,8 @@ package discord
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -422,7 +423,7 @@ func (m *TokenManager) writeLocked(record TokenRecord) error {
 		BotUserID: record.BotUserID, BotUsername: record.BotUsername,
 		AccessToken: record.AccessToken(), Binding: record.Binding,
 	}
-	data, err := json.MarshalIndent(stored, "", "  ") //nolint:gosec // the token file is the 0600 credential store
+	data, err := json.Marshal(stored, jsontext.WithIndent("  "), json.Deterministic(true)) // the token file is the 0600 credential store
 	if err != nil {
 		return fmt.Errorf("serialize Discord bot credential: %w", err)
 	}

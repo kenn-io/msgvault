@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,7 +19,7 @@ type anthropicRequest struct {
 	Messages   []anthropicMessage   `json:"messages"`
 	MaxTokens  int                  `json:"max_tokens"`
 	Tools      []anthropicTool      `json:"tools,omitempty"`
-	ToolChoice *anthropicToolChoice `json:"tool_choice,omitempty"`
+	ToolChoice *anthropicToolChoice `json:"tool_choice,omitzero"`
 }
 
 type anthropicMessage struct {
@@ -27,8 +28,8 @@ type anthropicMessage struct {
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name        string         `json:"name"`
+	InputSchema jsontext.Value `json:"input_schema"`
 }
 
 type anthropicToolChoice struct {
@@ -72,7 +73,7 @@ func (d *AnthropicMessagesDriver) Prepare(
 	default:
 		return PreparedStructuredRequest{}, errors.New("anthropic messages profile has unsupported output mode")
 	}
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		return PreparedStructuredRequest{}, errors.New("encode inference provider request")
 	}
@@ -80,10 +81,10 @@ func (d *AnthropicMessagesDriver) Prepare(
 }
 
 type anthropicEnvelope struct {
-	Type    string            `json:"type"`
-	Role    string            `json:"role"`
-	Model   string            `json:"model"`
-	Content []json.RawMessage `json:"content"`
+	Type    string           `json:"type"`
+	Role    string           `json:"role"`
+	Model   string           `json:"model"`
+	Content []jsontext.Value `json:"content"`
 	Usage   *struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
@@ -91,11 +92,11 @@ type anthropicEnvelope struct {
 }
 
 type anthropicContentBlock struct {
-	Type  string          `json:"type"`
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
-	Text  *string         `json:"text"`
+	Type  string         `json:"type"`
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input jsontext.Value `json:"input"`
+	Text  *string        `json:"text"`
 }
 
 func (d *AnthropicMessagesDriver) GeneratePrepared(
@@ -162,8 +163,8 @@ func (d *AnthropicMessagesDriver) GeneratePrepared(
 func extractAnthropicCandidate(
 	mode OutputMode,
 	toolName string,
-	content []json.RawMessage,
-) (json.RawMessage, error) {
+	content []jsontext.Value,
+) (jsontext.Value, error) {
 	if len(content) != 1 {
 		return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("provider response must contain exactly one structured content block"))
 	}
@@ -172,7 +173,7 @@ func extractAnthropicCandidate(
 		return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("decode provider content block"))
 	}
 
-	var candidate json.RawMessage
+	var candidate jsontext.Value
 	switch mode {
 	case OutputModeNativeJSONSchema:
 		if block.Type != "tool_use" || block.Name != toolName || block.Text != nil {
@@ -199,11 +200,11 @@ func extractAnthropicCandidate(
 		if err := decodeSingleJSONUseNumber([]byte(trimmed), &decoded); err != nil {
 			return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("provider returned invalid structured JSON"))
 		}
-		candidate = json.RawMessage(trimmed)
+		candidate = jsontext.Value(trimmed)
 	default:
 		return nil, errors.Join(ErrInvalidStructuredOutput, errors.New("provider response uses unsupported output mode"))
 	}
-	return append(json.RawMessage(nil), candidate...), nil
+	return append(jsontext.Value(nil), candidate...), nil
 }
 
 var _ StructuredDriver = (*AnthropicMessagesDriver)(nil)

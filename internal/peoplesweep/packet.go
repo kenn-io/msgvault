@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personscope"
 )
@@ -38,10 +40,10 @@ type PacketBatch struct {
 }
 
 type ProjectedValue struct {
-	TargetKey        string          `json:"target_key"`
-	Value            json.RawMessage `json:"value"`
-	ValueFingerprint string          `json:"value_fingerprint"`
-	EffectiveAt      *time.Time      `json:"effective_at"`
+	TargetKey        string         `json:"target_key"`
+	Value            jsontext.Value `json:"value"`
+	ValueFingerprint string         `json:"value_fingerprint"`
+	EffectiveAt      *time.Time     `json:"effective_at"`
 }
 
 type packetWireEnvelope struct {
@@ -348,7 +350,7 @@ func rejectAmbiguousEvidenceIDs(groups ...[]EvidenceItem) error {
 			return err
 		}
 		for _, item := range wire {
-			encoded, err := json.Marshal(item)
+			encoded, err := json.Marshal(item, json.Deterministic(true))
 			if err != nil {
 				return fmt.Errorf("encode person sweep evidence identity %q: %w", item.ID, err)
 			}
@@ -419,12 +421,12 @@ func marshalPacketEnvelope(packet EvidencePacket) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:musttag // Nested catalog and claim types own their canonical JSON shapes.
+	// Nested catalog and claim types own their canonical JSON shapes.
 	encoded, err := json.Marshal(packetWireEnvelope{
 		PersonID: packet.PersonID, ProgramID: packet.ProgramID, ProgramVersion: packet.ProgramVersion,
 		Catalog: packet.Catalog, CurrentProjection: packet.CurrentProjection,
 		UnresolvedClaims: packet.UnresolvedClaims, Seeds: seeds, Context: context,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical person sweep packet: %w", err)
 	}
@@ -521,17 +523,17 @@ func packetContainsSensitive(packet EvidencePacket) bool {
 	return false
 }
 
-func canonicalRawJSON(value json.RawMessage) (json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(value))
-	decoder.UseNumber()
+func canonicalRawJSON(value jsontext.Value) (jsontext.Value, error) {
+	decoder := jsontext.NewDecoder(bytes.NewReader(value), jsonexact.PreserveNumbers)
+
 	var decoded any
-	if err := decoder.Decode(&decoded); err != nil {
+	if err := json.UnmarshalDecode(decoder, &decoded); err != nil {
 		return nil, err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("JSON value contains trailing data")
 	}
-	encoded, err := json.Marshal(decoded)
+	encoded, err := json.Marshal(decoded, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}

@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -58,29 +59,29 @@ type PersonBriefEnrollment struct {
 // PersonBrief is one immutable dated brief version. Structured and RenderedText
 // are written once and never updated.
 type PersonBrief struct {
-	ID                        int64           `json:"id"`
-	PersonID                  int64           `json:"person_id"`
-	Version                   int             `json:"version"`
-	GenerationID              int64           `json:"generation_id"`
-	Status                    string          `json:"status"`
-	ProgramID                 string          `json:"program_id"`
-	ProgramVersion            string          `json:"program_version"`
-	ProgramFingerprint        string          `json:"program_fingerprint"`
-	Provider                  string          `json:"provider"`
-	ProviderVersion           string          `json:"provider_version"`
-	Model                     string          `json:"model"`
-	ModelVersion              string          `json:"model_version"`
-	ProviderPolicyFingerprint string          `json:"provider_policy_fingerprint"`
-	Boundary                  json.RawMessage `json:"boundary_json"`
-	Structured                json.RawMessage `json:"structured_json"`
-	RenderedText              string          `json:"rendered_text"`
-	RendererPolicy            string          `json:"renderer_policy"`
-	DroppedItemCount          int             `json:"dropped_item_count"`
-	GeneratedAt               time.Time       `json:"generated_at"`
-	SupersededAt              *time.Time      `json:"superseded_at"`
-	RejectedAt                *time.Time      `json:"rejected_at"`
-	RejectedReason            string          `json:"rejected_reason"`
-	CreatedAt                 time.Time       `json:"created_at"`
+	ID                        int64          `json:"id"`
+	PersonID                  int64          `json:"person_id"`
+	Version                   int            `json:"version"`
+	GenerationID              int64          `json:"generation_id"`
+	Status                    string         `json:"status"`
+	ProgramID                 string         `json:"program_id"`
+	ProgramVersion            string         `json:"program_version"`
+	ProgramFingerprint        string         `json:"program_fingerprint"`
+	Provider                  string         `json:"provider"`
+	ProviderVersion           string         `json:"provider_version"`
+	Model                     string         `json:"model"`
+	ModelVersion              string         `json:"model_version"`
+	ProviderPolicyFingerprint string         `json:"provider_policy_fingerprint"`
+	Boundary                  jsontext.Value `json:"boundary_json"`
+	Structured                jsontext.Value `json:"structured_json"`
+	RenderedText              string         `json:"rendered_text"`
+	RendererPolicy            string         `json:"renderer_policy"`
+	DroppedItemCount          int            `json:"dropped_item_count"`
+	GeneratedAt               time.Time      `json:"generated_at"`
+	SupersededAt              *time.Time     `json:"superseded_at"`
+	RejectedAt                *time.Time     `json:"rejected_at"`
+	RejectedReason            string         `json:"rejected_reason"`
+	CreatedAt                 time.Time      `json:"created_at"`
 }
 
 // PersonBriefInsert is one generated version, ready to be written inside the
@@ -97,8 +98,8 @@ type PersonBriefInsert struct {
 	Model                     string
 	ModelVersion              string
 	ProviderPolicyFingerprint string
-	Boundary                  json.RawMessage
-	Structured                json.RawMessage
+	Boundary                  jsontext.Value
+	Structured                jsontext.Value
 	RenderedText              string
 	RendererPolicy            string
 	DroppedItemCount          int
@@ -294,7 +295,7 @@ func (s *Store) ListBriefEligiblePeopleContext(
 			item.GeneratedAt = &generatedAt.Time
 		}
 		if boundary.Valid {
-			sequence, err := personBriefThroughSequence(json.RawMessage(boundary.String))
+			sequence, err := personBriefThroughSequence(jsontext.Value(boundary.String))
 			if err != nil {
 				return nil, fmt.Errorf("person %d: %w", item.PersonID, err)
 			}
@@ -605,7 +606,7 @@ func validatePersonBriefInsert(input PersonBriefInsert) error {
 	if strings.TrimSpace(input.RendererPolicy) == "" {
 		return errors.New("apply person brief: renderer policy is required")
 	}
-	if !json.Valid(input.Boundary) || !json.Valid(input.Structured) {
+	if !input.Boundary.IsValid() || !input.Structured.IsValid() {
 		return errors.New("apply person brief: boundary and structure must be JSON")
 	}
 	if input.DroppedItemCount < 0 {
@@ -630,7 +631,7 @@ func validatePersonBriefInsert(input PersonBriefInsert) error {
 // personBriefThroughSequence reads the archive commit sequence the version was
 // generated through. A boundary without one reports zero, which reads as "no
 // bound yet" to a scheduler.
-func personBriefThroughSequence(boundary json.RawMessage) (int64, error) {
+func personBriefThroughSequence(boundary jsontext.Value) (int64, error) {
 	if len(boundary) == 0 {
 		return 0, nil
 	}
@@ -664,8 +665,8 @@ func scanPersonBrief(row scanner) (PersonBrief, error) {
 		}
 		return PersonBrief{}, fmt.Errorf("scan person brief: %w", err)
 	}
-	brief.Boundary = json.RawMessage(boundary)
-	brief.Structured = json.RawMessage(structured)
+	brief.Boundary = jsontext.Value(boundary)
+	brief.Structured = jsontext.Value(structured)
 	brief.GeneratedAt = generatedAt.Time
 	brief.CreatedAt = createdAt.Time
 	if supersededAt.Valid {

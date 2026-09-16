@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -153,10 +153,10 @@ type documentStatusOutput struct {
 	BackupsMayContainText      bool                      `json:"backups_may_contain_normalized_plaintext"`
 	HostedTextEmbeddings       bool                      `json:"hosted_text_embeddings_enabled"`
 	PricingAssumptionOn        string                    `json:"pricing_assumption_on,omitempty"`
-	EstimatedSuccessfulCostUSD *float64                  `json:"estimated_successful_cost_usd,omitempty"`
+	EstimatedSuccessfulCostUSD *float64                  `json:"estimated_successful_cost_usd,omitzero"`
 	SpoolQuotaBytes            int64                     `json:"spool_quota_bytes"`
 	MinFreeSpaceBytes          int64                     `json:"min_free_space_bytes"`
-	ActiveRebuild              *documentRebuildStatus    `json:"active_rebuild,omitempty"`
+	ActiveRebuild              *documentRebuildStatus    `json:"active_rebuild,omitzero"`
 	Status                     store.DocumentIndexStatus `json:"status"`
 }
 
@@ -1044,7 +1044,7 @@ func runDocumentStatus(
 		ActiveRebuild: rebuildStatus, Status: status,
 	}
 	if jsonOutput {
-		return json.NewEncoder(command.OutOrStdout()).Encode(output)
+		return json.MarshalWrite(command.OutOrStdout(), output, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Profile: %s\nProvider: %s %s (%s, %s)\nFormats: %d authenticated\nRetention: %s\nTraining: %s\nPrivate spool: %s quota, %s free-space reserve\nEnabled: %t\nExact consent: %t\nEligible: %d occurrence(s), %d unique document(s), %s\nExcluded roles: %d unknown, %d ineligible\nCoverage: %d ready, %d staging, %d retrying, %d terminal, %d missing\nExtraction accounting: %d attempt(s), %d successful, %d failed, %s verified upload bytes\nProvider accounting: %d request(s), %d internal retry(s), %d ms total latency (%.1f ms average), %d processed unit(s), %s reported bytes, %d successful response(s) without provider bytes\nNormalized plaintext stored: %t\nBackups may contain normalized plaintext: %t\nHosted document text embeddings: %t\n",
@@ -1172,7 +1172,7 @@ func runSearchDocuments(
 		return err
 	}
 	if jsonOutput {
-		return json.NewEncoder(command.OutOrStdout()).Encode(response)
+		return json.MarshalWrite(command.OutOrStdout(), response, json.Deterministic(true))
 	}
 	writer := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "RANK\tATTACHMENT\tMESSAGE\tFILE\tMATCH\tEXCERPT")

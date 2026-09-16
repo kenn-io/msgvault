@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -51,7 +52,7 @@ type CodexRPCClient struct {
 
 type codexRPCNotification struct {
 	method string
-	params json.RawMessage
+	params jsontext.Value
 	size   int
 }
 
@@ -62,10 +63,10 @@ type codexRPCRequest struct {
 }
 
 type codexRPCEnvelope struct {
-	ID     json.RawMessage `json:"id"`
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
-	Result json.RawMessage `json:"result"`
+	ID     jsontext.Value `json:"id"`
+	Method string         `json:"method"`
+	Params jsontext.Value `json:"params"`
+	Result jsontext.Value `json:"result"`
 	Error  *struct {
 		Code int `json:"code"`
 	} `json:"error"`
@@ -143,7 +144,7 @@ func (c *CodexRPCClient) Call(ctx context.Context, method string, params any, re
 		return errors.New("invalid codex app-server RPC method")
 	}
 	c.nextID++
-	frame, err := json.Marshal(codexRPCRequest{Method: method, ID: c.nextID, Params: params})
+	frame, err := json.Marshal(codexRPCRequest{Method: method, ID: c.nextID, Params: params}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode codex app-server %s request", method)
 	}
@@ -164,7 +165,7 @@ func (c *CodexRPCClient) Notify(ctx context.Context, method string, params any) 
 	frame, err := json.Marshal(struct {
 		Method string `json:"method"`
 		Params any    `json:"params"`
-	}{Method: method, Params: params})
+	}{Method: method, Params: params}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode codex app-server %s notification", method)
 	}
@@ -250,7 +251,7 @@ func (c *CodexRPCClient) callFrameLocked(
 
 func (c *CodexRPCClient) nextNotification(
 	ctx context.Context,
-) (string, json.RawMessage, error) {
+) (string, jsontext.Value, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.initialize(); err != nil {
@@ -264,7 +265,7 @@ func (c *CodexRPCClient) nextNotification(
 		c.notifications[0] = codexRPCNotification{}
 		c.notifications = c.notifications[1:]
 		c.notificationBytes -= notification.size
-		return notification.method, append(json.RawMessage(nil), notification.params...), c.checkStderr()
+		return notification.method, append(jsontext.Value(nil), notification.params...), c.checkStderr()
 	}
 	raw, err := c.readFrame(ctx)
 	if err != nil {
@@ -280,10 +281,10 @@ func (c *CodexRPCClient) nextNotification(
 	if !codexRPCMethodPattern.MatchString(envelope.Method) {
 		return "", nil, errors.New("codex app-server returned a malformed notification method")
 	}
-	return envelope.Method, append(json.RawMessage(nil), envelope.Params...), c.checkStderr()
+	return envelope.Method, append(jsontext.Value(nil), envelope.Params...), c.checkStderr()
 }
 
-func (c *CodexRPCClient) enqueueNotification(method string, params json.RawMessage, frameBytes int) error {
+func (c *CodexRPCClient) enqueueNotification(method string, params jsontext.Value, frameBytes int) error {
 	if c.notificationErr != nil {
 		return c.notificationErr
 	}
@@ -293,7 +294,7 @@ func (c *CodexRPCClient) enqueueNotification(method string, params json.RawMessa
 		return c.notificationErr
 	}
 	c.notifications = append(c.notifications, codexRPCNotification{
-		method: method, params: append(json.RawMessage(nil), params...), size: frameBytes,
+		method: method, params: append(jsontext.Value(nil), params...), size: frameBytes,
 	})
 	c.notificationBytes += frameBytes
 	return nil

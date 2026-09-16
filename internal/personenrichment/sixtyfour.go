@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -96,17 +97,17 @@ type sixtyfourPollResponse struct {
 	CloseTime    string                    `json:"close_time"`
 	Status       string                    `json:"status"`
 	Result       *sixtyfourCompletedResult `json:"result"`
-	ChargeAmount json.Number               `json:"charge_amount"`
+	ChargeAmount jsontext.Value            `json:"charge_amount"`
 	TaskType     string                    `json:"task_type"`
 	Error        string                    `json:"error"`
 }
 
 type sixtyfourCompletedResult struct {
-	StructuredData  map[string]json.RawMessage `json:"structured_data"`
-	ConfidenceScore json.Number                `json:"confidence_score"`
-	Findings        *[]json.RawMessage         `json:"findings"`
-	Notes           string                     `json:"notes"`
-	References      map[string]string          `json:"references"`
+	StructuredData  map[string]jsontext.Value `json:"structured_data"`
+	ConfidenceScore jsontext.Value            `json:"confidence_score"`
+	Findings        *[]jsontext.Value         `json:"findings"`
+	Notes           string                    `json:"notes"`
+	References      map[string]string         `json:"references"`
 }
 
 type sixtyfourStructField struct {
@@ -140,7 +141,7 @@ func (p *sixtyfourProvider) Start(ctx context.Context, request Request) (Attempt
 	if err != nil {
 		return Attempt{}, err
 	}
-	payload, err := json.Marshal(sixtyfourRequest{LeadInfo: leadInfo, Struct: fields, Tier: p.config.Tier})
+	payload, err := json.Marshal(sixtyfourRequest{LeadInfo: leadInfo, Struct: fields, Tier: p.config.Tier}, json.Deterministic(true))
 	if err != nil {
 		return Attempt{}, errors.New("encode Sixtyfour request")
 	}
@@ -200,7 +201,7 @@ func (p *sixtyfourProvider) Poll(ctx context.Context, attempt Attempt) (Result, 
 	}
 	switch wire.Status {
 	case "running", "pending":
-		if wire.Result != nil || wire.ChargeAmount != "" || wire.Error != "" {
+		if wire.Result != nil || len(wire.ChargeAmount) != 0 || wire.Error != "" {
 			return Result{}, sixtyfourFailure(response.status, FailureInvalidOutput, "")
 		}
 		return Result{
@@ -210,7 +211,7 @@ func (p *sixtyfourProvider) Poll(ctx context.Context, attempt Attempt) (Result, 
 			GeneratedSchemaHash: attempt.GeneratedSchemaHash,
 		}, nil
 	case "failed", "cancelled":
-		if wire.Result != nil || wire.ChargeAmount != "" {
+		if wire.Result != nil || len(wire.ChargeAmount) != 0 {
 			return Result{}, sixtyfourFailure(response.status, FailureInvalidOutput, "")
 		}
 		return Result{}, sixtyfourFailure(response.status, FailureTerminal, "")
@@ -291,7 +292,7 @@ func validateSixtyfourPollAttempt(attempt Attempt) error {
 
 func buildSixtyfourStruct(
 	targets []personfacts.TargetDescriptor,
-) (json.RawMessage, map[string]any, error) {
+) (jsontext.Value, map[string]any, error) {
 	if len(targets) == 0 {
 		return nil, nil, errors.New("sixtyfour struct requires at least one target")
 	}
@@ -309,7 +310,7 @@ func buildSixtyfourStruct(
 		}
 		fields[target.Key] = value
 	}
-	encoded, err := json.Marshal(fields)
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode Sixtyfour struct: %w", err)
 	}
@@ -362,7 +363,7 @@ func sixtyfourLeadInfo(identity Identity) (map[string]any, error) {
 
 func decodeSixtyfourCompleted(
 	wire sixtyfourCompletedResult,
-	charge json.Number,
+	charge jsontext.Value,
 	attempt Attempt,
 ) (Result, error) {
 	if len(wire.StructuredData) == 0 || wire.Findings == nil || len(*wire.Findings) != 0 ||
@@ -430,7 +431,7 @@ func decodeSixtyfourCompleted(
 	}, nil
 }
 
-func sixtyfourIdentityMatch(key string, raw json.RawMessage, confidence int) (IdentityMatch, bool) {
+func sixtyfourIdentityMatch(key string, raw jsontext.Value, confidence int) (IdentityMatch, bool) {
 	var class IdentifierClass
 	switch key {
 	case "name":
@@ -469,7 +470,7 @@ func sixtyfourTargetByKey(attempt Attempt, key string) (personfacts.TargetDescri
 
 func sixtyfourClaim(
 	target personfacts.TargetDescriptor,
-	value json.RawMessage,
+	value jsontext.Value,
 	score int,
 ) (personfacts.ProposedClaim, error) {
 	if normalized, failure, err := personfacts.NormalizeClaimValue(target, value); err != nil || failure != nil || normalized == nil {
@@ -477,7 +478,7 @@ func sixtyfourClaim(
 	}
 	return personfacts.ProposedClaim{
 		Target: target, Relation: personfacts.RelationSupport,
-		SubmittedValue: append(json.RawMessage(nil), value...),
+		SubmittedValue: append(jsontext.Value(nil), value...),
 		Evidence: []personfacts.EvidenceInput{{
 			SourceClass: personfacts.EvidenceProviderAssertion,
 			Directness:  personfacts.Indirect, Authority: personfacts.AuthorityAggregator,
@@ -487,8 +488,8 @@ func sixtyfourClaim(
 	}, nil
 }
 
-func parseSixtyfourConfidence(value json.Number) (int, error) {
-	if value == "" {
+func parseSixtyfourConfidence(value jsontext.Value) (int, error) {
+	if len(value) == 0 {
 		return 0, errors.New("missing Sixtyfour confidence score")
 	}
 	parsed, err := strconv.ParseFloat(value.String(), 64)
@@ -498,11 +499,11 @@ func parseSixtyfourConfidence(value json.Number) (int, error) {
 	return SixtyfourFactConfidence(parsed)
 }
 
-func sixtyfourCost(value json.Number) (Cost, error) {
-	if value == "" {
+func sixtyfourCost(value jsontext.Value) (Cost, error) {
+	if len(value) == 0 {
 		return Cost{}, errors.New("missing Sixtyfour charge amount")
 	}
-	cents, err := value.Int64()
+	cents, err := strconv.ParseInt(value.String(), 10, 64)
 	if err != nil || cents < 0 || cents > math.MaxInt64/10_000 {
 		return Cost{}, errors.New("invalid Sixtyfour charge amount")
 	}
@@ -561,13 +562,12 @@ func decodeSixtyfour(data []byte, destination any) error {
 	if err := jsonexact.Validate(data, destination); err != nil {
 		return errors.New("invalid Sixtyfour response")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, destination); err != nil {
 		return errors.New("invalid Sixtyfour response")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("invalid Sixtyfour response")
 	}
 	return nil

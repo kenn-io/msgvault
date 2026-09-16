@@ -33,19 +33,19 @@ type EmploymentStore interface {
 type EmploymentBody struct {
 	PersonID       int64    `json:"person_id"`
 	OrganizationID int64    `json:"organization_id"`
-	Title          *string  `json:"title,omitempty" nullable:"true"`
-	Role           *string  `json:"role,omitempty" nullable:"true"`
-	Department     *string  `json:"department,omitempty" nullable:"true"`
-	Location       *string  `json:"location,omitempty" nullable:"true"`
-	AddressID      *int64   `json:"address_id,omitempty" nullable:"true"`
-	Description    *string  `json:"description,omitempty" nullable:"true"`
-	StartDate      *string  `json:"start_date,omitempty" nullable:"true"`
-	EndDate        *string  `json:"end_date,omitempty" nullable:"true"`
-	IsCurrent      *bool    `json:"is_current,omitempty" nullable:"true"`
-	IsPrimary      *bool    `json:"is_primary,omitempty" nullable:"true"`
+	Title          *string  `json:"title,omitzero" nullable:"true"`
+	Role           *string  `json:"role,omitzero" nullable:"true"`
+	Department     *string  `json:"department,omitzero" nullable:"true"`
+	Location       *string  `json:"location,omitzero" nullable:"true"`
+	AddressID      *int64   `json:"address_id,omitzero" nullable:"true"`
+	Description    *string  `json:"description,omitzero" nullable:"true"`
+	StartDate      *string  `json:"start_date,omitzero" nullable:"true"`
+	EndDate        *string  `json:"end_date,omitzero" nullable:"true"`
+	IsCurrent      *bool    `json:"is_current,omitzero" nullable:"true"`
+	IsPrimary      *bool    `json:"is_primary,omitzero" nullable:"true"`
 	Source         string   `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef      *string  `json:"source_ref,omitempty" nullable:"true"`
-	Confidence     *float64 `json:"confidence,omitempty" nullable:"true"`
+	SourceRef      *string  `json:"source_ref,omitzero" nullable:"true"`
+	Confidence     *float64 `json:"confidence,omitzero" nullable:"true"`
 }
 
 type EndEmploymentBody struct {
@@ -74,7 +74,7 @@ type EmploymentProjectionResponse struct {
 // primary-current employment projection.
 type EmploymentsResponse struct {
 	Employments []store.Employment            `json:"employments"`
-	Projection  *EmploymentProjectionResponse `json:"projection,omitempty"`
+	Projection  *EmploymentProjectionResponse `json:"projection,omitzero" nullable:"false"`
 }
 
 func (s *Server) registerEmploymentRoutes(api huma.API) {

@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -48,7 +49,7 @@ type StageDeletionFilter struct {
 	Domain        string `json:"domain,omitempty"`
 	Label         string `json:"label,omitempty"`
 	ListID        string `json:"list_id,omitempty"`
-	SourceID      *int64 `json:"source_id,omitempty"`
+	SourceID      *int64 `json:"source_id,omitzero" nullable:"false"`
 	After         string `json:"after,omitempty"`
 	Before        string `json:"before,omitempty"`
 }
@@ -90,12 +91,12 @@ func (f *StageDeletionFilter) toMessageFilter() (query.MessageFilter, *apiHTTPEr
 
 // StageDeletionRequest is the POST /api/v1/deletions body.
 type StageDeletionRequest struct {
-	Filter         *StageDeletionFilter `json:"filter,omitempty"`
+	Filter         *StageDeletionFilter `json:"filter,omitzero" nullable:"false"`
 	MessageIDs     []int64              `json:"message_ids,omitempty"`
-	Selection      *ExploreSelection    `json:"selection,omitempty"`
+	Selection      *ExploreSelection    `json:"selection,omitzero" nullable:"false"`
 	OperationToken string               `json:"operation_token,omitempty"`
 	Description    string               `json:"description,omitempty"`
-	DryRun         bool                 `json:"dry_run,omitempty"`
+	DryRun         bool                 `json:"dry_run,omitzero"`
 }
 
 // StageDeletionResponse covers both dry-run (200) and create (201).
@@ -105,13 +106,13 @@ type StageDeletionRequest struct {
 type StageDeletionResponse struct {
 	DryRun         bool                      `json:"dry_run"`
 	MessageCount   int                       `json:"message_count"`
-	MatchedCount   int                       `json:"matched_count,omitempty"`
-	SkippedCount   int                       `json:"skipped_count,omitempty"`
+	MatchedCount   int                       `json:"matched_count,omitzero"`
+	SkippedCount   int                       `json:"skipped_count,omitzero"`
 	Account        string                    `json:"account,omitempty"`
 	SampleGmailIDs []string                  `json:"sample_gmail_ids,omitempty"`
 	ID             string                    `json:"id,omitempty"`
 	Status         string                    `json:"status,omitempty"`
-	Source         *deletion.SourceReference `json:"source,omitempty"`
+	Source         *deletion.SourceReference `json:"source,omitzero" nullable:"false"`
 }
 
 // DeletionManifestSummary is one row of GET /api/v1/deletions.
@@ -137,9 +138,9 @@ type DeletionManifestDetail struct {
 	Description  string                    `json:"description"`
 	Account      string                    `json:"account,omitempty"`
 	MessageCount int                       `json:"message_count"`
-	Summary      *deletion.Summary         `json:"summary,omitempty"`
-	Execution    *deletion.Execution       `json:"execution,omitempty"`
-	Source       *deletion.SourceReference `json:"source,omitempty"`
+	Summary      *deletion.Summary         `json:"summary,omitzero" nullable:"false"`
+	Execution    *deletion.Execution       `json:"execution,omitzero" nullable:"false"`
+	Source       *deletion.SourceReference `json:"source,omitzero" nullable:"false"`
 }
 
 // CancelDeletionResponse is the DELETE /api/v1/deletions/{id} body.
@@ -162,10 +163,10 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	// Reject unknown fields: a typo in a narrowing filter key would
 	// otherwise be silently dropped while a remaining broad criterion
 	// stages far more messages than intended.
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
+	dec := jsontext.NewDecoder(r.Body, json.RejectUnknownMembers(true))
+
 	var req StageDeletionRequest
-	if err := dec.Decode(&req); err != nil {
+	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request",
 			fmt.Sprintf("invalid JSON request body: %v", err))
 		return
@@ -249,7 +250,7 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	// executed (or worse, could be forced onto the wrong account with
 	// --account).
 	manifest.Filters.Account = account
-	raw, err := json.Marshal(req)
+	raw, err := json.Marshal(req, json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request is not serializable")
 		return

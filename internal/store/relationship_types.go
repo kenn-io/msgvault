@@ -94,11 +94,11 @@ type RelationshipType struct {
 	ReverseLabel     string                    `json:"reverse_label"`
 	IsSymmetric      bool                      `json:"is_symmetric"`
 	IsCanonical      bool                      `json:"is_canonical"`
-	InverseTypeID    *int64                    `json:"inverse_type_id,omitempty"`
-	VCardRelatedType *string                   `json:"vcard_related_type,omitempty"`
-	Color            *string                   `json:"color,omitempty"`
-	Icon             *string                   `json:"icon,omitempty"`
-	Description      *string                   `json:"description,omitempty"`
+	InverseTypeID    *int64                    `json:"inverse_type_id,omitzero" nullable:"false"`
+	VCardRelatedType *string                   `json:"vcard_related_type,omitzero" nullable:"false"`
+	Color            *string                   `json:"color,omitzero" nullable:"false"`
+	Icon             *string                   `json:"icon,omitzero" nullable:"false"`
+	Description      *string                   `json:"description,omitzero" nullable:"false"`
 	Ownership        RelationshipTypeOwnership `json:"ownership"`
 	IsDeletable      bool                      `json:"is_deletable"`
 	Revision         int64                     `json:"revision"`

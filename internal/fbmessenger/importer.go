@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -799,7 +799,7 @@ func saveFbmessengerCheckpoint(
 		RootDir:          absRoot,
 		ThreadIndex:      threadIdx,
 		LastMessageIndex: lastMsgIdx,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal fbmessenger checkpoint: %w", err)
 	}

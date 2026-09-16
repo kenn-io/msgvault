@@ -1,7 +1,8 @@
 package gcal
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"time"
 )
 
@@ -153,10 +154,10 @@ func (w wireEvent) toEvent() Event {
 type wireEvents struct {
 	// Items are kept as raw JSON so each event's original bytes can be
 	// preserved verbatim in Event.Raw for the archive.
-	Items         []json.RawMessage `json:"items"`
-	NextPageToken string            `json:"nextPageToken"`
-	NextSyncToken string            `json:"nextSyncToken"`
-	TimeZone      string            `json:"timeZone"`
+	Items         []jsontext.Value `json:"items"`
+	NextPageToken string           `json:"nextPageToken"`
+	NextSyncToken string           `json:"nextSyncToken"`
+	TimeZone      string           `json:"timeZone"`
 }
 
 // decodeEvent unmarshals one event's JSON into the domain Event, preserving the
@@ -167,6 +168,6 @@ func decodeEvent(raw []byte) (Event, error) {
 		return Event{}, err
 	}
 	ev := w.toEvent()
-	ev.Raw = append(json.RawMessage(nil), raw...)
+	ev.Raw = append(jsontext.Value(nil), raw...)
 	return ev, nil
 }

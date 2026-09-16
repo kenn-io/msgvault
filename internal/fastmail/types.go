@@ -1,7 +1,7 @@
 package fastmail
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 )
 
@@ -51,23 +51,23 @@ func (e *ObjectLimitError) Error() string {
 }
 
 type sessionResponse struct {
-	APIURL          string                     `json:"apiUrl"`
-	Capabilities    map[string]json.RawMessage `json:"capabilities"`
-	Accounts        map[string]sessionAccount  `json:"accounts"`
-	PrimaryAccounts map[string]string          `json:"primaryAccounts"`
+	APIURL          string                    `json:"apiUrl"`
+	Capabilities    map[string]jsontext.Value `json:"capabilities"`
+	Accounts        map[string]sessionAccount `json:"accounts"`
+	PrimaryAccounts map[string]string         `json:"primaryAccounts"`
 }
 
 type sessionAccount struct {
-	AccountCapabilities map[string]json.RawMessage `json:"accountCapabilities"`
+	AccountCapabilities map[string]jsontext.Value `json:"accountCapabilities"`
 }
 
 type jmapRequest struct {
-	Using       []string            `json:"using"`
-	MethodCalls [][]json.RawMessage `json:"methodCalls"`
+	Using       []string           `json:"using"`
+	MethodCalls [][]jsontext.Value `json:"methodCalls"`
 }
 
 type jmapResponse struct {
-	MethodResponses []json.RawMessage `json:"methodResponses"`
+	MethodResponses []jsontext.Value `json:"methodResponses"`
 }
 
 type maskedEmailGetResponse struct {

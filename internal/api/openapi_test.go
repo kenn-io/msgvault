@@ -1300,8 +1300,8 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	require.NotNil(snapshot)
 	property := snapshot.Properties["snapshot"]
 	require.NotNil(property)
-	assert.Equal("json.RawMessage", property.Extensions["x-go-type"])
-	assert.Equal(map[string]any{"path": "encoding/json"},
+	assert.Equal("jsontext.Value", property.Extensions["x-go-type"])
+	assert.Equal(map[string]any{"path": "encoding/json/jsontext"},
 		property.Extensions["x-go-type-import"])
 }
 

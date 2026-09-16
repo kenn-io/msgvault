@@ -3,7 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -61,7 +61,7 @@ type PersonCluster struct {
 // carries curated labels only, never profile revisions.
 type PersonProfile struct {
 	ID          int64   `json:"id"`
-	DisplayName *string `json:"display_name,omitempty"`
+	DisplayName *string `json:"display_name,omitzero" nullable:"false"`
 	Revision    int64   `json:"revision"`
 }
 
@@ -93,8 +93,8 @@ type PersonSummary struct {
 	FirstAt                        time.Time          `json:"first_at"`
 	LastAt                         time.Time          `json:"last_at"`
 	CacheRevision                  string             `json:"cache_revision"`
-	Cluster                        *PersonCluster     `json:"cluster,omitempty"`
-	Profile                        *PersonProfile     `json:"profile,omitempty"`
+	Cluster                        *PersonCluster     `json:"cluster,omitzero" nullable:"false"`
+	Profile                        *PersonProfile     `json:"profile,omitzero" nullable:"false"`
 }
 
 type PersonSearchResponse struct {

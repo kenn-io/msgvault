@@ -1,7 +1,7 @@
 package store
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"slices"
@@ -35,15 +35,15 @@ func (*AttributeValueConflictError) Unwrap() error { return ErrAttributeValueCon
 // AttributeValue is a typed value union with exactly one populated member.
 type AttributeValue struct {
 	Type       AttributeValueType `json:"type"`
-	Text       *string            `json:"text,omitempty"`
-	Integer    *int64             `json:"integer,omitempty"`
-	Real       *float64           `json:"real,omitempty"`
-	Boolean    *bool              `json:"boolean,omitempty"`
-	Date       *string            `json:"date,omitempty"`
+	Text       *string            `json:"text,omitzero" nullable:"false"`
+	Integer    *int64             `json:"integer,omitzero" nullable:"false"`
+	Real       *float64           `json:"real,omitzero" nullable:"false"`
+	Boolean    *bool              `json:"boolean,omitzero" nullable:"false"`
+	Date       *string            `json:"date,omitzero" nullable:"false"`
 	Timestamp  *time.Time         `json:"timestamp,omitempty"`
-	JSON       json.RawMessage    `json:"json,omitempty"`
-	RecordType *string            `json:"record_type,omitempty"`
-	RecordID   *int64             `json:"record_id,omitempty"`
+	JSON       jsontext.Value     `json:"json,omitempty"`
+	RecordType *string            `json:"record_type,omitzero" nullable:"false"`
+	RecordID   *int64             `json:"record_id,omitzero" nullable:"false"`
 }
 
 // CanonicalString renders scalar values for choice matching.
@@ -168,8 +168,8 @@ func normalizeAttributeValue(
 		if len(value.JSON) == 0 {
 			return invalid("json value is required")
 		}
-		trimmed := json.RawMessage(strings.TrimSpace(string(value.JSON)))
-		if !json.Valid(trimmed) || string(trimmed) == "null" {
+		trimmed := jsontext.Value(strings.TrimSpace(string(value.JSON)))
+		if !trimmed.IsValid() || string(trimmed) == "null" {
 			return invalid("json value must be valid and non-null")
 		}
 		value.JSON = trimmed

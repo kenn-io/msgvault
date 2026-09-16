@@ -2,7 +2,8 @@ package personfacts
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sort"
@@ -82,7 +83,7 @@ func prepareClaim(
 ) (PreparedClaim, error) {
 	prepared := PreparedClaim{
 		Target: canonicalTarget(claim.Target), Relation: claim.Relation,
-		SubmittedValue: append(json.RawMessage(nil), claim.SubmittedValue...),
+		SubmittedValue: append(jsontext.Value(nil), claim.SubmittedValue...),
 		ValidFrom:      copyTimePointer(claim.ValidFrom), ValidUntil: copyTimePointer(claim.ValidUntil),
 		Origin: claim.Origin, Confidence: claim.Confidence,
 	}
@@ -279,7 +280,7 @@ func submittedEvidenceFingerprint(input EvidenceInput) (string, error) {
 		EventTime:     portableFactTime(input.EventTime).Format(time.RFC3339Nano),
 		RecordedTime:  portableFactTime(input.RecordedTime).Format(time.RFC3339Nano),
 		IdentityScore: input.IdentityScore,
-	})
+	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode submitted evidence identity: %w", err)
 	}
@@ -449,7 +450,7 @@ func ClaimKey(generationKey string, prepared PreparedClaim) (string, error) {
 	encoded, err := json.Marshal(struct {
 		GenerationKey string         `json:"generation_key"`
 		Claim         canonicalClaim `json:"claim"`
-	}{GenerationKey: generationKey, Claim: view})
+	}{GenerationKey: generationKey, Claim: view}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode claim key: %w", err)
 	}
@@ -468,7 +469,7 @@ func DecisionKey(resolutionFingerprint, claimKey string, action DecisionAction) 
 		ResolutionFingerprint string         `json:"resolution_fingerprint"`
 		ClaimKey              string         `json:"claim_key"`
 		Action                DecisionAction `json:"action"`
-	}{resolutionFingerprint, claimKey, action})
+	}{resolutionFingerprint, claimKey, action}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode decision key: %w", err)
 	}
@@ -503,7 +504,7 @@ func ResolutionInputFingerprint(input ResolutionInput) (string, error) {
 		}
 		return cloned.Claims[i].ClaimKey < cloned.Claims[j].ClaimKey
 	})
-	encoded, err := json.Marshal(cloned)
+	encoded, err := json.Marshal(cloned, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", fmt.Errorf("encode resolution input fingerprint: %w", err)
 	}
@@ -556,8 +557,8 @@ func validValidationFailure(failure *ValidationFailure) bool {
 }
 
 type canonicalNormalized struct {
-	JSON        json.RawMessage `json:"json"`
-	Fingerprint string          `json:"fingerprint"`
+	JSON        jsontext.Value `json:"json"`
+	Fingerprint string         `json:"fingerprint"`
 }
 
 type canonicalFailure struct {
@@ -639,7 +640,7 @@ func canonicalGenerationJSON(
 		Provider: input.Provider, ProviderVersion: input.ProviderVersion,
 		Model: input.Model, ModelVersion: input.ModelVersion, Policy: input.Policy,
 		Claims: claimViews, StatusChanges: statusViews,
-	})
+	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 }
 
 func canonicalClaimView(prepared PreparedClaim) canonicalClaim {
@@ -657,7 +658,7 @@ func canonicalClaimView(prepared PreparedClaim) canonicalClaim {
 	var normalized *canonicalNormalized
 	if prepared.Normalized != nil {
 		normalized = &canonicalNormalized{
-			JSON:        append(json.RawMessage(nil), prepared.Normalized.JSON...),
+			JSON:        append(jsontext.Value(nil), prepared.Normalized.JSON...),
 			Fingerprint: prepared.Normalized.Fingerprint,
 		}
 	}
@@ -679,8 +680,8 @@ func canonicalClaimView(prepared PreparedClaim) canonicalClaim {
 
 func sortPreparedClaims(claims []PreparedClaim) {
 	sort.Slice(claims, func(i, j int) bool {
-		left, _ := json.Marshal(canonicalClaimView(claims[i]))
-		right, _ := json.Marshal(canonicalClaimView(claims[j]))
+		left, _ := json.Marshal(canonicalClaimView(claims[i]), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+		right, _ := json.Marshal(canonicalClaimView(claims[j]), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		return string(left) < string(right)
 	})
 }
@@ -688,7 +689,7 @@ func sortPreparedClaims(claims []PreparedClaim) {
 func rejectDuplicateCanonicalClaims(claims []PreparedClaim) error {
 	var previous string
 	for i := range claims {
-		encoded, err := json.Marshal(canonicalClaimView(claims[i]))
+		encoded, err := json.Marshal(canonicalClaimView(claims[i]), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return fmt.Errorf("encode canonical claim for duplicate validation: %w", err)
 		}
@@ -727,7 +728,7 @@ func copyGenerationInput(input GenerationInput) GenerationInput {
 func copyProposedClaim(input ProposedClaim) ProposedClaim {
 	cloned := input
 	cloned.Target = canonicalTarget(input.Target)
-	cloned.SubmittedValue = append(json.RawMessage(nil), input.SubmittedValue...)
+	cloned.SubmittedValue = append(jsontext.Value(nil), input.SubmittedValue...)
 	cloned.Evidence = make([]EvidenceInput, len(input.Evidence))
 	for i := range input.Evidence {
 		cloned.Evidence[i] = copyEvidenceInput(input.Evidence[i])
@@ -756,12 +757,12 @@ func copyPreparedClaims(input []PreparedClaim) []PreparedClaim {
 func copyPreparedClaim(input PreparedClaim) PreparedClaim {
 	cloned := input
 	cloned.Target = canonicalTarget(input.Target)
-	cloned.SubmittedValue = append(json.RawMessage(nil), input.SubmittedValue...)
+	cloned.SubmittedValue = append(jsontext.Value(nil), input.SubmittedValue...)
 	cloned.SubmittedEvidenceFingerprints = append(
 		[]string(nil), input.SubmittedEvidenceFingerprints...)
 	if input.Normalized != nil {
 		cloned.Normalized = &NormalizedValue{
-			JSON: append(json.RawMessage(nil), input.Normalized.JSON...), Fingerprint: input.Normalized.Fingerprint,
+			JSON: append(jsontext.Value(nil), input.Normalized.JSON...), Fingerprint: input.Normalized.Fingerprint,
 		}
 	}
 	cloned.Evidence = make([]EvidenceInput, len(input.Evidence))
@@ -780,7 +781,7 @@ func copyResolutionInput(input ResolutionInput) ResolutionInput {
 	cloned.Target = canonicalTarget(input.Target)
 	cloned.Current = append([]CurrentProjection(nil), input.Current...)
 	for i := range cloned.Current {
-		cloned.Current[i].Normalized.JSON = append(json.RawMessage(nil), input.Current[i].Normalized.JSON...)
+		cloned.Current[i].Normalized.JSON = append(jsontext.Value(nil), input.Current[i].Normalized.JSON...)
 		cloned.Current[i].ActiveUntil = copyTimePointer(input.Current[i].ActiveUntil)
 	}
 	cloned.Claims = append([]ResolvedClaim(nil), input.Claims...)
@@ -788,7 +789,7 @@ func copyResolutionInput(input ResolutionInput) ResolutionInput {
 		cloned.Claims[i].Claim = copyProposedClaim(input.Claims[i].Claim)
 		if input.Claims[i].Normalized != nil {
 			cloned.Claims[i].Normalized = &NormalizedValue{
-				JSON:        append(json.RawMessage(nil), input.Claims[i].Normalized.JSON...),
+				JSON:        append(jsontext.Value(nil), input.Claims[i].Normalized.JSON...),
 				Fingerprint: input.Claims[i].Normalized.Fingerprint,
 			}
 		}
@@ -867,7 +868,7 @@ func evidenceSortKey(evidence Evidence) string {
 	if err == nil {
 		return key
 	}
-	encoded, err := json.Marshal(evidenceKeyView(evidence.Input))
+	encoded, err := json.Marshal(evidenceKeyView(evidence.Input), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return ""
 	}

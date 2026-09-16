@@ -3,7 +3,7 @@ package personenrichment
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -39,7 +39,7 @@ func ProgramFingerprint(descriptor ProgramDescriptor) (string, error) {
 	} else if descriptor.GeneratedSchemaHash != "" {
 		return "", errors.New("fixed typed schema must not have a generated schema hash")
 	}
-	canonical, err := json.Marshal(descriptor)
+	canonical, err := json.Marshal(descriptor, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode program descriptor: %w", err)
 	}

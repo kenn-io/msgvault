@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -68,10 +69,10 @@ func secretStateOf(value string, state providercredentials.State) SecretSettingS
 // keeping generated Go and TypeScript clients typed without exposing an
 // unstructured config map.
 type SettingValue struct {
-	String  *string   `json:"string,omitempty"`
-	Integer *int      `json:"integer,omitempty"`
-	Number  *float64  `json:"number,omitempty"`
-	Boolean *bool     `json:"boolean,omitempty"`
+	String  *string   `json:"string,omitzero" nullable:"false"`
+	Integer *int      `json:"integer,omitzero" nullable:"false"`
+	Number  *float64  `json:"number,omitzero" nullable:"false"`
+	Boolean *bool     `json:"boolean,omitzero" nullable:"false"`
 	Strings *[]string `json:"strings,omitempty"`
 }
 
@@ -80,9 +81,9 @@ type SettingValue struct {
 // remain authoritative at PATCH/PUT time.
 type SettingValidation struct {
 	Hint     string   `json:"hint,omitempty"`
-	Required bool     `json:"required,omitempty"`
-	Minimum  *float64 `json:"minimum,omitempty"`
-	Maximum  *float64 `json:"maximum,omitempty"`
+	Required bool     `json:"required,omitzero"`
+	Minimum  *float64 `json:"minimum,omitzero" nullable:"false"`
+	Maximum  *float64 `json:"maximum,omitzero" nullable:"false"`
 	// Format names a structured syntax the client can check as the user
 	// types and render with a purpose-built control.
 	Format string `json:"format,omitempty" enum:"cron"`
@@ -91,7 +92,7 @@ type SettingValidation struct {
 	// so a client that ignores Off still accepts what the daemon stores.
 	// Clients that understand Off render a switch beside the value control
 	// and bound the "on" values with OnMinimum.
-	Off *SettingOff `json:"off,omitempty"`
+	Off *SettingOff `json:"off,omitzero" nullable:"false"`
 }
 
 // SettingOff describes the one value that turns a setting off or hands it
@@ -116,7 +117,7 @@ type SettingOff struct {
 	Suggest string `json:"suggest,omitempty"`
 	// OnMinimum is the smallest value accepted while the setting is on. It
 	// is set when the off value sits below that range.
-	OnMinimum *float64 `json:"on_minimum,omitempty"`
+	OnMinimum *float64 `json:"on_minimum,omitzero" nullable:"false"`
 }
 
 // Setting describes one browser-managed allowlisted config value. ReadOnly
@@ -128,15 +129,15 @@ type Setting struct {
 	Label           string              `json:"label"`
 	Description     string              `json:"description"`
 	Kind            string              `json:"kind"`
-	Value           *SettingValue       `json:"value,omitempty"`
-	Secret          *SecretSettingState `json:"secret,omitempty"`
+	Value           *SettingValue       `json:"value,omitzero" nullable:"false"`
+	Secret          *SecretSettingState `json:"secret,omitzero" nullable:"false"`
 	Options         []string            `json:"options,omitempty"`
 	RestartRequired bool                `json:"restart_required"`
-	Testable        bool                `json:"testable,omitempty"`
-	ReadOnly        bool                `json:"read_only,omitempty"`
-	Inherited       bool                `json:"inherited,omitempty"`
+	Testable        bool                `json:"testable,omitzero"`
+	ReadOnly        bool                `json:"read_only,omitzero"`
+	Inherited       bool                `json:"inherited,omitzero"`
 	CredentialID    string              `json:"credential_id,omitempty"`
-	Validation      *SettingValidation  `json:"validation,omitempty"`
+	Validation      *SettingValidation  `json:"validation,omitzero" nullable:"false"`
 	// Section names one of the owning group's sections. Empty when the group
 	// has no sections.
 	Section string `json:"section,omitempty"`
@@ -177,8 +178,8 @@ type SecretSettingUpdate struct {
 
 type SettingUpdate struct {
 	Key    string               `json:"key"`
-	Value  *SettingValue        `json:"value,omitempty"`
-	Secret *SecretSettingUpdate `json:"secret,omitempty"`
+	Value  *SettingValue        `json:"value,omitzero" nullable:"false"`
+	Secret *SecretSettingUpdate `json:"secret,omitzero" nullable:"false"`
 }
 
 type SettingsPatchRequest struct {
@@ -548,13 +549,13 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request SettingsPatchRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings request")
 		return
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings request")
 		return
 	}

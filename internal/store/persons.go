@@ -48,7 +48,7 @@ func (e *PersonBindingConflictError) Unwrap() error {
 type Person struct {
 	ID             int64     `json:"id"`
 	VCardUID       string    `json:"vcard_uid"`
-	DisplayName    *string   `json:"display_name,omitempty"`
+	DisplayName    *string   `json:"display_name,omitzero" nullable:"false"`
 	Revision       int64     `json:"revision"`
 	ParticipantIDs []int64   `json:"participant_ids"`
 	CreatedAt      time.Time `json:"created_at"`

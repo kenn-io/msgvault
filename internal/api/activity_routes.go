@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -472,10 +473,10 @@ func (s *Server) handleCreateDayEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid daily entry request")
 		return
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true))
+
 	var request *CreateDailyNoteEntryRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := json.UnmarshalDecode(decoder, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid daily entry request")
 		return
 	}
@@ -483,7 +484,7 @@ func (s *Server) handleCreateDayEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid daily entry request")
 		return
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			"daily entry request must contain one JSON object")
 		return

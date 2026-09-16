@@ -622,8 +622,8 @@ type searchMessageItem struct {
 	// MatchesTruncated is true when more than maxContextSnippets (5) match
 	// excerpts were found; only the first 5 are returned.
 	Matches          []messageMatch        `json:"matches,omitempty"`
-	MatchesTruncated bool                  `json:"matches_truncated,omitempty"`
-	Score            *hybridScoreBreakdown `json:"score,omitempty"`
+	MatchesTruncated bool                  `json:"matches_truncated,omitzero"`
+	Score            *hybridScoreBreakdown `json:"score,omitzero"`
 }
 
 // searchMessages preserves the legacy combined search tool while clients
@@ -932,10 +932,10 @@ func (h *handlers) semanticSearchMessages(ctx context.Context, req toolRequest) 
 // can be distinguished from a legitimate 0.0 score. RRF is omitted in
 // mode=vector (only one signal, nothing to fuse).
 type hybridScoreBreakdown struct {
-	RRF            *float64 `json:"rrf,omitempty"`
-	BM25           *float64 `json:"bm25,omitempty"`
-	Vector         *float64 `json:"vector,omitempty"`
-	SubjectBoosted bool     `json:"subject_boosted,omitempty"`
+	RRF            *float64 `json:"rrf,omitzero"`
+	BM25           *float64 `json:"bm25,omitzero"`
+	Vector         *float64 `json:"vector,omitzero"`
+	SubjectBoosted bool     `json:"subject_boosted,omitzero"`
 }
 
 // HybridGeneration describes the active vector-index generation used to answer
@@ -1966,7 +1966,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 type getStatsResponse struct {
 	Stats        *query.TotalStats   `json:"stats"`
 	Accounts     []query.AccountInfo `json:"accounts"`
-	VectorSearch *vector.StatsView   `json:"vector_search,omitempty"`
+	VectorSearch *vector.StatsView   `json:"vector_search,omitzero"`
 }
 
 func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, error) {

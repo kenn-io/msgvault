@@ -2,7 +2,7 @@ package query
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -44,18 +44,18 @@ const CacheSchemaVersion = 28
 type CacheSyncState struct {
 	LastMessageID          int64     `json:"last_message_id"`
 	LastSyncAt             time.Time `json:"last_sync_at"`
-	SchemaVersion          int       `json:"schema_version,omitempty"`
-	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitempty"`
-	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitempty"`
-	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitempty"`
-	LastFailedSyncRunCount int64     `json:"last_failed_sync_run_count,omitempty"`
-	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitempty"`
-	IdentityRevision       int64     `json:"identity_revision,omitempty"`
+	SchemaVersion          int       `json:"schema_version,omitzero"`
+	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitzero"`
+	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitzero"`
+	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitzero"`
+	LastFailedSyncRunCount int64     `json:"last_failed_sync_run_count,omitzero"`
+	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitzero"`
+	IdentityRevision       int64     `json:"identity_revision,omitzero"`
 	// DerivedDataRevision tracks offline repairs that rewrite existing
 	// message, snippet, search, or attachment facts. Those rows are already
 	// inside the committed message ID boundary, so drift requires a full cache
 	// rebuild rather than an incremental append.
-	DerivedDataRevision int64 `json:"derived_data_revision,omitempty"`
+	DerivedDataRevision int64 `json:"derived_data_revision,omitzero"`
 	// AccountIdentityRevision tracks identity mutations that invalidate
 	// baked message data — confirming or removing a "me" address, and
 	// participant merges (which repoint messages.sender_id) — separately
@@ -64,21 +64,21 @@ type CacheSyncState struct {
 	// flag, which the lightweight identity-only refresh does not re-derive,
 	// so this field must only advance on a full rebuild — see
 	// cacheops.RefreshIdentityDatasets.
-	AccountIdentityRevision int64 `json:"account_identity_revision,omitempty"`
+	AccountIdentityRevision int64 `json:"account_identity_revision,omitzero"`
 	// ParticipantIdentifierRevision tracks identifier row and classification
 	// changes. Identifiers bake into the identity directory datasets
 	// (participant_identifiers, relationship_people search values) but not
 	// into per-row activity facts, so drift here alone is repaired by the
 	// derived-dataset refresh and never forces a full rebuild.
-	ParticipantIdentifierRevision int64 `json:"participant_identifier_revision,omitempty"`
+	ParticipantIdentifierRevision int64 `json:"participant_identifier_revision,omitzero"`
 	// ParticipantDisplayNameRevision tracks participant display-name changes.
 	// Display names bake into participants.parquet and the relationship_people
 	// labels/search values, but not into message facts, so drift here is
 	// repaired by the derived-dataset refresh without rewriting message
 	// shards.
-	ParticipantDisplayNameRevision int64 `json:"participant_display_name_revision,omitempty"`
+	ParticipantDisplayNameRevision int64 `json:"participant_display_name_revision,omitzero"`
 	// PersonDisplayNameRevision tracks curated names in replaceable derived datasets.
-	PersonDisplayNameRevision int64     `json:"person_display_name_revision,omitempty"`
+	PersonDisplayNameRevision int64     `json:"person_display_name_revision,omitzero"`
 	PublishedAt               time.Time `json:"published_at"`
 	DatasetFingerprint        string    `json:"dataset_fingerprint"`
 

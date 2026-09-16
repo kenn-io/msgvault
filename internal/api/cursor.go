@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -53,7 +53,7 @@ const changesCursorVersion = 1
 // "after that row" and skip the rows at or below it.
 type changesCursorPayload struct {
 	Time    string `json:"t"`
-	ID      *int64 `json:"i,omitempty"`
+	ID      *int64 `json:"i,omitzero" nullable:"false"`
 	Archive string `json:"a"`
 }
 
@@ -70,7 +70,7 @@ func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor
 		Time:    position.At().UTC().Format(changesTimeLayout),
 		ID:      id,
 		Archive: archiveUID,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		// Unreachable: every field of the payload marshals unconditionally.
 		panic(fmt.Sprintf("encode changes cursor: %v", err))

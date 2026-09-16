@@ -23,7 +23,7 @@ type IdentitySearchHTTPRequest struct {
 	IdentityQuery string             `json:"identity_query,omitempty"`
 	Sort          IdentitySearchSort `json:"sort"`
 	Cursor        string             `json:"cursor,omitempty"`
-	Limit         int                `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	Limit         int                `json:"limit,omitzero" minimum:"0" maximum:"500"`
 }
 
 type ParticipantSearchHTTPResponse struct {

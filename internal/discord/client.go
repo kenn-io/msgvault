@@ -2,7 +2,8 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
 const (
@@ -408,13 +411,13 @@ func decodeAPIError(operation string, status int, body []byte) *APIError {
 func retryDelay(headers http.Header, body []byte, attempt int) (time.Duration, bool) {
 	headerDelay, headerOK := secondsDuration(headers.Get("Retry-After"))
 	var payload struct {
-		RetryAfter json.Number `json:"retry_after"`
-		Global     bool        `json:"global"`
+		RetryAfter jsontext.Value `json:"retry_after"`
+		Global     bool           `json:"global"`
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	decoder.UseNumber()
-	decodeOK := decoder.Decode(&payload) == nil
-	jsonOK := decodeOK && payload.RetryAfter != ""
+	decoder := jsontext.NewDecoder(strings.NewReader(string(body)), jsonexact.PreserveNumbers)
+
+	decodeOK := json.UnmarshalDecode(decoder, &payload) == nil
+	jsonOK := decodeOK && len(payload.RetryAfter) != 0
 	jsonDelay, durationOK := secondsDuration(string(payload.RetryAfter))
 	jsonOK = jsonOK && durationOK
 	global := decodeOK && payload.Global ||

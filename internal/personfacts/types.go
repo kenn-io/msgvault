@@ -3,7 +3,7 @@ package personfacts
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"time"
 )
 
@@ -49,7 +49,7 @@ type TargetDescriptor struct {
 	ValueType    ValueType          `json:"value_type"`
 	Cardinality  Cardinality        `json:"cardinality"`
 	RecordTarget string             `json:"record_target,omitempty"`
-	MaxLength    int                `json:"max_length,omitempty"`
+	MaxLength    int                `json:"max_length,omitzero"`
 	Choices      []ChoiceDescriptor `json:"choices"`
 	Fields       []FieldDescriptor  `json:"fields"`
 	Sensitive    bool               `json:"sensitive"`
@@ -197,15 +197,15 @@ type EvidenceInput struct {
 }
 
 type OrganizationReference struct {
-	ID     *int64 `json:"id,omitempty"`
+	ID     *int64 `json:"id,omitzero" nullable:"false"`
 	Name   string `json:"name"`
 	Domain string `json:"domain,omitempty"`
 }
 
 type PartialDateValue struct {
 	Year  int `json:"year"`
-	Month int `json:"month,omitempty"`
-	Day   int `json:"day,omitempty"`
+	Month int `json:"month,omitzero"`
+	Day   int `json:"day,omitzero"`
 }
 
 type EmploymentValue struct {
@@ -214,8 +214,8 @@ type EmploymentValue struct {
 	Role         string                `json:"role,omitempty"`
 	Department   string                `json:"department,omitempty"`
 	Location     string                `json:"location,omitempty"`
-	StartDate    *PartialDateValue     `json:"start_date,omitempty"`
-	EndDate      *PartialDateValue     `json:"end_date,omitempty"`
+	StartDate    *PartialDateValue     `json:"start_date,omitzero" nullable:"false"`
+	EndDate      *PartialDateValue     `json:"end_date,omitzero" nullable:"false"`
 }
 
 type ConfidenceInputs struct {
@@ -230,7 +230,7 @@ type PolicyContext struct {
 type ProposedClaim struct {
 	Target         TargetDescriptor `json:"Target"`
 	Relation       ClaimRelation    `json:"Relation"`
-	SubmittedValue json.RawMessage  `json:"SubmittedValue"`
+	SubmittedValue jsontext.Value   `json:"SubmittedValue"`
 	Evidence       []EvidenceInput  `json:"Evidence"`
 	ValidFrom      *time.Time       `json:"ValidFrom"`
 	ValidUntil     *time.Time       `json:"ValidUntil"`
@@ -269,8 +269,8 @@ type EvidenceStatusChange struct {
 }
 
 type NormalizedValue struct {
-	JSON        json.RawMessage `json:"JSON"`
-	Fingerprint string          `json:"Fingerprint"`
+	JSON        jsontext.Value `json:"JSON"`
+	Fingerprint string         `json:"Fingerprint"`
 }
 
 type ValidationFailure struct {
@@ -293,7 +293,7 @@ type EvidenceAligner interface {
 type PreparedClaim struct {
 	Target                        TargetDescriptor
 	Relation                      ClaimRelation
-	SubmittedValue                json.RawMessage
+	SubmittedValue                jsontext.Value
 	SubmittedFingerprint          string
 	SubmittedEvidenceFingerprints []string
 	Normalized                    *NormalizedValue
@@ -370,7 +370,7 @@ type Claim struct {
 	Generation     Generation
 	Target         TargetRef
 	Relation       ClaimRelation
-	SubmittedValue json.RawMessage
+	SubmittedValue jsontext.Value
 	Normalized     *NormalizedValue
 	EvidenceIDs    []int64
 	ValidFrom      *time.Time
@@ -403,7 +403,7 @@ type PinState struct {
 	Target  TargetRef `json:"target"`
 	Pinned  bool      `json:"pinned"`
 	Actor   string    `json:"actor,omitempty"`
-	EventID *int64    `json:"event_id,omitempty"`
+	EventID *int64    `json:"event_id,omitzero" nullable:"false"`
 }
 
 type ResolutionInput struct {
@@ -443,16 +443,16 @@ type ProjectionPlan struct {
 }
 
 type Decision struct {
-	ID                int64          `json:"id,omitempty"`
-	PersonID          int64          `json:"person_id,omitempty"`
-	ResolutionID      int64          `json:"resolution_id,omitempty"`
+	ID                int64          `json:"id,omitzero"`
+	PersonID          int64          `json:"person_id,omitzero"`
+	ResolutionID      int64          `json:"resolution_id,omitzero"`
 	DecisionKey       string         `json:"decision_key,omitempty"`
 	ClaimKey          string         `json:"claim_key"`
 	Action            DecisionAction `json:"action"`
 	Reason            DecisionReason `json:"reason"`
 	Score             ScoreBreakdown `json:"score"`
 	CompetingClaimKey string         `json:"competing_claim_key,omitempty"`
-	Projection        *ProjectionRef `json:"projection,omitempty"`
+	Projection        *ProjectionRef `json:"projection,omitzero" nullable:"false"`
 	CreatedAt         time.Time      `json:"created_at"`
 }
 

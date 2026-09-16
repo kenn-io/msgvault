@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"reflect"
@@ -63,7 +63,7 @@ func (s *Store) LoadPersonFactState(
 			for _, value := range current {
 				effectiveAt := value.ActiveFrom.UTC()
 				state.Current = append(state.Current, peoplesweep.ProjectedValue{
-					TargetKey: target.Key, Value: append(json.RawMessage(nil), value.Normalized.JSON...),
+					TargetKey: target.Key, Value: append(jsontext.Value(nil), value.Normalized.JSON...),
 					ValueFingerprint: value.Normalized.Fingerprint, EffectiveAt: &effectiveAt,
 				})
 			}

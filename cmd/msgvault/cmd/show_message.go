@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -223,9 +224,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		output["deleted_from_source_at"] = msg.DeletedAt.UTC().Format(time.RFC3339)
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(output)
+	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	return json.MarshalEncode(enc, output, json.Deterministic(true))
 }
 
 func formatAddresses(addrs []query.Address) string {

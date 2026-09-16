@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -28,15 +29,15 @@ type SavedViewStore interface {
 }
 
 type SavedView struct {
-	IncompatibilityReason string          `json:"incompatibility_reason,omitempty" doc:"Definition validation error that prevents this Saved View from executing"`
-	ID                    int64           `json:"id"`
-	Name                  string          `json:"name"`
-	Description           *string         `json:"description,omitempty"`
-	CanonicalState        json.RawMessage `json:"canonical_state" doc:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
-	SchemaVersion         int             `json:"schema_version"`
-	Revision              int64           `json:"revision"`
-	CreatedAt             time.Time       `json:"created_at"`
-	UpdatedAt             time.Time       `json:"updated_at"`
+	IncompatibilityReason string         `json:"incompatibility_reason,omitempty" doc:"Definition validation error that prevents this Saved View from executing"`
+	ID                    int64          `json:"id"`
+	Name                  string         `json:"name"`
+	Description           *string        `json:"description,omitzero" nullable:"false"`
+	CanonicalState        jsontext.Value `json:"canonical_state" doc:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
+	SchemaVersion         int            `json:"schema_version"`
+	Revision              int64          `json:"revision"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
 }
 
 type SavedViewsResponse struct {
@@ -45,16 +46,16 @@ type SavedViewsResponse struct {
 
 type CreateSavedViewRequest struct {
 	Name           string                       `json:"name"`
-	Description    *string                      `json:"description,omitempty"`
+	Description    *string                      `json:"description,omitzero" nullable:"false"`
 	CanonicalState store.SavedViewStateEnvelope `json:"canonical_state"`
 	SchemaVersion  int                          `json:"schema_version"`
 }
 
 type PatchSavedViewRequest struct {
-	Name           *string                       `json:"name,omitempty"`
-	Description    *string                       `json:"description,omitempty"`
-	CanonicalState *store.SavedViewStateEnvelope `json:"canonical_state,omitempty"`
-	SchemaVersion  *int                          `json:"schema_version,omitempty"`
+	Name           *string                       `json:"name,omitzero" nullable:"false"`
+	Description    *string                       `json:"description,omitzero" nullable:"false"`
+	CanonicalState *store.SavedViewStateEnvelope `json:"canonical_state,omitzero" nullable:"false"`
+	SchemaVersion  *int                          `json:"schema_version,omitzero" nullable:"false"`
 }
 
 func (s *Server) registerSavedViewRoutes(api huma.API) {
@@ -245,7 +246,7 @@ func (s *Server) handlePatchSavedView(w http.ResponseWriter, r *http.Request) {
 		input.Description = normalizedDescription(request.Description)
 	}
 	if request.CanonicalState != nil {
-		input.CanonicalState = append(json.RawMessage(nil), fields["canonical_state"]...)
+		input.CanonicalState = append(jsontext.Value(nil), fields["canonical_state"]...)
 	}
 	if request.SchemaVersion != nil {
 		input.SchemaVersion = *request.SchemaVersion
@@ -297,7 +298,7 @@ func (s *Server) requireSavedViewStore(w http.ResponseWriter) bool {
 
 func decodeSavedViewRequest(
 	w http.ResponseWriter, r *http.Request, target any,
-) (map[string]json.RawMessage, bool) {
+) (map[string]jsontext.Value, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid Saved View request")
@@ -307,18 +308,17 @@ func decodeSavedViewRequest(
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid Saved View request")
 		return nil, false
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), json.RejectUnknownMembers(true), jsonexact.PreserveNumbers)
+
+	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid Saved View request")
 		return nil, false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid Saved View request")
 		return nil, false
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid Saved View request")
 		return nil, false
@@ -326,16 +326,16 @@ func decodeSavedViewRequest(
 	return fields, true
 }
 
-func isJSONNull(value json.RawMessage) bool {
+func isJSONNull(value jsontext.Value) bool {
 	return bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 }
 
 func savedViewInput(
-	name string, description *string, state json.RawMessage, schemaVersion int,
+	name string, description *string, state jsontext.Value, schemaVersion int,
 ) store.SavedViewInput {
 	return store.SavedViewInput{
 		Name: name, Description: normalizedDescription(description),
-		CanonicalState: append(json.RawMessage(nil), state...), SchemaVersion: schemaVersion,
+		CanonicalState: append(jsontext.Value(nil), state...), SchemaVersion: schemaVersion,
 	}
 }
 

@@ -1,7 +1,8 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"mime"
@@ -52,8 +53,8 @@ func hasJSONContentType(r *http.Request) bool {
 // already decoded, rejecting bodies like `{"a":1}{"b":2}` where a decoder
 // would silently act on the first value only. code preserves each route's
 // error-code idiom ("invalid_request", "invalid_json", ...).
-func requireSingleJSONValue(w http.ResponseWriter, dec *json.Decoder, code string) bool {
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+func requireSingleJSONValue(w http.ResponseWriter, dec *jsontext.Decoder, code string) bool {
+	if err := json.UnmarshalDecode(dec, &struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, code,
 			"request body must contain exactly one JSON value")
 		return false

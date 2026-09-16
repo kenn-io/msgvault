@@ -3,7 +3,7 @@ package whatsapp
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -340,7 +340,7 @@ func (imp *Importer) importApple(
 				); err != nil {
 					return summary, fmt.Errorf("store Apple message body: %w", err)
 				}
-				rawJSON, err := json.Marshal(sourceMessage)
+				rawJSON, err := json.Marshal(sourceMessage, json.Deterministic(true))
 				if err != nil {
 					return summary, fmt.Errorf("encode Apple message raw data: %w", err)
 				}

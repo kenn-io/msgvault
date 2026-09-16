@@ -3,7 +3,8 @@ package cmd
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -510,9 +511,9 @@ func writeDateRepairLedger(path string, ledger *dateRepairLedger) error {
 		_ = file.Close()
 		return fmt.Errorf("set ledger permissions: %w", err)
 	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(ledger); err != nil {
+	encoder := jsontext.NewEncoder(file, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+
+	if err := json.MarshalEncode(encoder, ledger, json.Deterministic(true)); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("encode ledger: %w", err)
 	}

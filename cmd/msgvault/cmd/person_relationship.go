@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -63,7 +63,7 @@ var relationshipTypeListCmd = &cobra.Command{
 			return errors.New("relationship types response was empty")
 		}
 		if personJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.RelationshipTypes)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.RelationshipTypes, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tSLUG\tFORWARD\tREVERSE\tSYMMETRIC\tVCARD TYPE\tOWNER\tREVISION")
@@ -271,7 +271,7 @@ var personRelationshipListCmd = &cobra.Command{
 			return errors.New("person relationships response was empty")
 		}
 		if personJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.Relationships)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.Relationships, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tCOUNTERPART\tIS\tDIRECTION\tFROM\tUNTIL\tSTATUS")
@@ -443,7 +443,7 @@ var personRelationshipReviewsCmd = &cobra.Command{
 			return errors.New("person relationship reviews response was empty")
 		}
 		if personJSON {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(resp.JSON200.Reviews)
+			return json.MarshalWrite(cmd.OutOrStdout(), resp.JSON200.Reviews, json.Deterministic(true))
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "ID\tPERSON\tRELATED VALUE\tTYPE\tKIND\tMATCHED\tSTATUS")
@@ -484,7 +484,7 @@ func writeCLIRelationshipType(cmd *cobra.Command, relationshipType *generated.Re
 		return errors.New("relationship type response was empty")
 	}
 	if personJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(relationshipType)
+		return json.MarshalWrite(cmd.OutOrStdout(), relationshipType, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Relationship type: %d\nSlug: %s\nForward: %s\nReverse: %s\nSymmetric: %t\nRevision: %d\n",
@@ -498,7 +498,7 @@ func writeCLIPersonRelationship(cmd *cobra.Command, edge *generated.PersonRelati
 		return errors.New("relationship response was empty")
 	}
 	if personJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(edge)
+		return json.MarshalWrite(cmd.OutOrStdout(), edge, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Relationship: %d\nPerson %d is the %s of person %d\nFrom: %s\nUntil: %s\nStatus: %s\nRevision: %d\n",

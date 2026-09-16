@@ -5,7 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -26,7 +27,7 @@ func (m *Manifest) Digest() (string, error) {
 	if err := m.ValidateVersion(); err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(m)
+	data, err := json.Marshal(m, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal manifest digest: %w", err)
 	}
@@ -113,16 +114,16 @@ type Manifest struct {
 	CreatedBy   string           `json:"created_by"` // "tui", "cli", "api"
 	Description string           `json:"description"`
 	Filters     Filters          `json:"filters"`
-	Summary     *Summary         `json:"summary,omitempty"`
+	Summary     *Summary         `json:"summary,omitzero" nullable:"false"`
 	GmailIDs    []string         `json:"gmail_ids"`
 	Status      Status           `json:"status"`
-	Execution   *Execution       `json:"execution,omitempty"`
-	Source      *SourceReference `json:"source,omitempty"`
+	Execution   *Execution       `json:"execution,omitzero" nullable:"false"`
+	Source      *SourceReference `json:"source,omitzero" nullable:"false"`
 	// RawFilter records the serialized staging criteria for provenance. Filters
 	// cannot represent every request field (search query, sender_name,
 	// recipient_name, source_id), so API and all-match TUI staging preserve the
 	// complete input here. It remains absent for explicit TUI/CLI selections.
-	RawFilter json.RawMessage `json:"raw_filter,omitempty"`
+	RawFilter jsontext.Value `json:"raw_filter,omitempty"`
 }
 
 // NewManifestForSource creates a source-bound version-2 manifest.
@@ -264,7 +265,7 @@ func (m *Manifest) Save(path string) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(m, "", "  ")
+	data, err := json.Marshal(m, jsontext.WithIndent("  "), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true))
 	if err != nil {
 		return err
 	}
@@ -396,7 +397,7 @@ func (m *Manager) acquireManifestLock(id string) (*flock.Flock, error) {
 // lock and verify the destination's presence under that lock; the rename then
 // replaces the existing file rather than resurrecting a moved one.
 func writeManifestAtomic(manifest *Manifest, path string) (retErr error) {
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := json.Marshal(manifest, jsontext.WithIndent("  "), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true))
 	if err != nil {
 		return err
 	}

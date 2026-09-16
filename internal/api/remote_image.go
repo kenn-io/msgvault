@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"net/netip"
 
@@ -29,8 +30,8 @@ type RemoteImageRequest struct {
 // Cache-Control: no-store middleware covers caching.
 func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
 	var req RemoteImageRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, remoteImageMaxRequestBytes))
-	if err := decoder.Decode(&req); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, remoteImageMaxRequestBytes))
+	if err := json.UnmarshalDecode(decoder, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be a JSON object with a 'url' field")
 		return
 	}

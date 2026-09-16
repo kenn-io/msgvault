@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -38,11 +38,11 @@ type PersonEnrichmentWork struct {
 	TriggerMask        int64      `json:"trigger_mask"`
 	TriggerGeneration  string     `json:"trigger_generation"`
 	DueAt              time.Time  `json:"due_at"`
-	LeaseOwner         *string    `json:"lease_owner,omitempty"`
+	LeaseOwner         *string    `json:"lease_owner,omitzero" nullable:"false"`
 	LeaseFence         int64      `json:"lease_fence"`
 	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
-	RunID              *int64     `json:"run_id,omitempty"`
-	ActiveAttemptID    *int64     `json:"active_attempt_id,omitempty"`
+	RunID              *int64     `json:"run_id,omitzero" nullable:"false"`
+	ActiveAttemptID    *int64     `json:"active_attempt_id,omitzero" nullable:"false"`
 	HasFreshTrigger    bool       `json:"has_fresh_trigger"`
 }
 
@@ -64,23 +64,23 @@ type PersonEnrichmentAttempt struct {
 	PayloadHash           string     `json:"payload_hash"`
 	RequestHash           string     `json:"request_hash"`
 	State                 string     `json:"state"`
-	ProviderRequestID     *string    `json:"provider_request_id,omitempty"`
-	ProviderJobID         *string    `json:"provider_job_id,omitempty"`
-	AdapterVersion        *string    `json:"adapter_version,omitempty"`
-	SchemaVersion         *string    `json:"schema_version,omitempty"`
+	ProviderRequestID     *string    `json:"provider_request_id,omitzero" nullable:"false"`
+	ProviderJobID         *string    `json:"provider_job_id,omitzero" nullable:"false"`
+	AdapterVersion        *string    `json:"adapter_version,omitzero" nullable:"false"`
+	SchemaVersion         *string    `json:"schema_version,omitzero" nullable:"false"`
 	GeneratedSchema       bool       `json:"generated_schema"`
-	GeneratedSchemaHash   *string    `json:"generated_schema_hash,omitempty"`
-	ProgramFingerprint    *string    `json:"program_fingerprint,omitempty"`
-	FactGenerationKey     *string    `json:"fact_generation_key,omitempty"`
-	LeaseOwner            *string    `json:"lease_owner,omitempty"`
+	GeneratedSchemaHash   *string    `json:"generated_schema_hash,omitzero" nullable:"false"`
+	ProgramFingerprint    *string    `json:"program_fingerprint,omitzero" nullable:"false"`
+	FactGenerationKey     *string    `json:"fact_generation_key,omitzero" nullable:"false"`
+	LeaseOwner            *string    `json:"lease_owner,omitzero" nullable:"false"`
 	LeaseFence            int64      `json:"lease_fence"`
 	LeaseUntil            *time.Time `json:"lease_until,omitempty"`
 	NextActionAt          *time.Time `json:"next_action_at,omitempty"`
 	AttemptCount          int64      `json:"attempt_count"`
 	HardCostCapEnforced   bool       `json:"hard_cost_cap_enforced"`
 	ReservedCostUSDMicros int64      `json:"reserved_cost_usd_micros"`
-	ActualCostUSDMicros   *int64     `json:"actual_cost_usd_micros,omitempty"`
-	FailureClass          *string    `json:"failure_class,omitempty"`
+	ActualCostUSDMicros   *int64     `json:"actual_cost_usd_micros,omitzero" nullable:"false"`
+	FailureClass          *string    `json:"failure_class,omitzero" nullable:"false"`
 	CreatedAt             time.Time  `json:"created_at"`
 	ProviderStartedAt     *time.Time `json:"provider_started_at,omitempty"`
 	CompletedAt           *time.Time `json:"completed_at,omitempty"`

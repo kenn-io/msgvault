@@ -2,7 +2,8 @@ package personenrichment
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ func EncodeDurableAttemptTargets(
 	if err != nil {
 		return "", nil, err
 	}
-	encoded, err := json.Marshal(canonical)
+	encoded, err := json.Marshal(canonical, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", nil, fmt.Errorf("encode durable attempt targets: %w", err)
 	}
@@ -49,12 +50,12 @@ func DecodeDurableAttemptTargets(raw string) ([]personfacts.TargetDescriptor, er
 	if err := jsonexact.Validate(data, &targets); err != nil {
 		return nil, fmt.Errorf("validate durable attempt targets: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&targets); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &targets); err != nil {
 		return nil, fmt.Errorf("decode durable attempt targets: %w", err)
 	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("durable attempt targets contain trailing JSON")
 	}
 	encoded, canonical, err := EncodeDurableAttemptTargets(targets)

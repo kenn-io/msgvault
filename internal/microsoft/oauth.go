@@ -9,7 +9,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -711,7 +712,7 @@ func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string, 
 	}
 
 	tf := tokenFile{Token: *token, Scopes: scopes, TenantID: tenantID}
-	data, err := json.MarshalIndent(tf, "", "  ")
+	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return err
 	}

@@ -3,7 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"time"
 )
@@ -102,7 +102,7 @@ func (s *Store) prepareCardDAVConflictIntentTx(ctx context.Context, tx *loggedTx
 		RemoteETag:                etag,
 		StartedAt:                 time.Now().UTC(),
 	}
-	encoded, err := json.Marshal(intent)
+	encoded, err := json.Marshal(intent, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s *Store) RefreshCardDAVConflictLocalIntentContext(ctx context.Context, pe
 			return err
 		}
 		intent.ConnectionGeneration, intent.BookSyncRevision = source.ConnectionGeneration, source.Book.SyncRevision
-		encoded, err := json.Marshal(intent)
+		encoded, err := json.Marshal(intent, json.Deterministic(true))
 		if err != nil {
 			return err
 		}

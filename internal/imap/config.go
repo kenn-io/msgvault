@@ -2,7 +2,7 @@
 package imap
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net"
 	"net/url"
@@ -93,7 +93,7 @@ func normalizeHost(host string) string {
 
 // ToJSON serializes the config to JSON.
 func (c *Config) ToJSON() (string, error) {
-	b, err := json.Marshal(c)
+	b, err := json.Marshal(c, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}

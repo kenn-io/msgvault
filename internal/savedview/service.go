@@ -5,7 +5,7 @@ package savedview
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/query"

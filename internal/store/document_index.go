@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
@@ -42,7 +44,7 @@ type DocumentExtractionProfile struct {
 	RetentionPosture  string
 	TrainingPosture   string
 	AllowedMediaTypes []string
-	PolicyJSON        json.RawMessage
+	PolicyJSON        jsontext.Value
 }
 
 type DocumentProviderConsent struct {
@@ -135,7 +137,7 @@ type DocumentIndexRebuildStatus struct {
 // DocumentIndexStatusResponse combines scoped coverage and rebuild progress.
 type DocumentIndexStatusResponse struct {
 	Status        DocumentIndexStatus         `json:"status"`
-	ActiveRebuild *DocumentIndexRebuildStatus `json:"active_rebuild,omitempty"`
+	ActiveRebuild *DocumentIndexRebuildStatus `json:"active_rebuild,omitzero" nullable:"false"`
 }
 
 type DocumentDerivativeGCResult struct {
@@ -1587,7 +1589,7 @@ func validateDocumentProfile(profile DocumentExtractionProfile) ([]byte, []byte,
 	if len(allowed) == 0 || slices.Contains(allowed, "") {
 		return nil, nil, errors.New("document extraction profile requires a media allowlist")
 	}
-	allowedJSON, err := json.Marshal(allowed)
+	allowedJSON, err := json.Marshal(allowed, json.Deterministic(true))
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode document extraction profile allowlist: %w", err)
 	}
@@ -1599,22 +1601,22 @@ func validateDocumentProfile(profile DocumentExtractionProfile) ([]byte, []byte,
 }
 
 func compactJSON(value []byte) ([]byte, error) {
-	if len(value) == 0 || !json.Valid(value) {
+	if len(value) == 0 || !jsontext.Value(value).IsValid() {
 		return nil, errors.New("value is not valid JSON")
 	}
-	var output bytes.Buffer
-	if err := json.Compact(&output, value); err != nil {
+	output := jsontext.Value(value).Clone()
+	if err := output.Compact(); err != nil {
 		return nil, err
 	}
-	return output.Bytes(), nil
+	return output, nil
 }
 
 func equalJSON(first, second []byte) bool {
 	decode := func(value []byte) (any, error) {
-		decoder := json.NewDecoder(bytes.NewReader(value))
-		decoder.UseNumber()
+		decoder := jsontext.NewDecoder(bytes.NewReader(value), jsonexact.PreserveNumbers)
+
 		var decoded any
-		if err := decoder.Decode(&decoded); err != nil {
+		if err := json.UnmarshalDecode(decoder, &decoded); err != nil {
 			return nil, err
 		}
 		return decoded, nil

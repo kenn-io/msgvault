@@ -3,7 +3,8 @@ package peoplesweep
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ func EncodePersonSweepEvidenceRef(ref EvidenceRef) (string, error) {
 	if err := validateEvidenceRef(ref); err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(ref)
+	payload, err := json.Marshal(ref, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode person sweep evidence ref: %w", err)
 	}
@@ -37,12 +38,12 @@ func DecodePersonSweepEvidenceRef(sourceRef string) (EvidenceRef, error) {
 	if err != nil {
 		return ref, fmt.Errorf("decode person sweep evidence ref: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&ref); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader(payload), json.RejectUnknownMembers(true))
+
+	if err := json.UnmarshalDecode(decoder, &ref); err != nil {
 		return EvidenceRef{}, fmt.Errorf("decode person sweep evidence ref JSON: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return EvidenceRef{}, errors.New("person sweep evidence ref has trailing JSON")
 	}
 	if err := validateEvidenceRef(ref); err != nil {

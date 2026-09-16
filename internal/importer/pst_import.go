@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -644,7 +644,7 @@ func savePstCheckpoint(st *store.Store, syncID int64, file, archiveID string, fo
 		FolderIndex: folderIndex,
 		FolderPath:  folderPath,
 		MsgIndex:    msgIndex,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}

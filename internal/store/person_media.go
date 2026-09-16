@@ -35,18 +35,18 @@ type PersonMedia struct {
 	Envelope      ValueEnvelope   `json:"envelope"`
 	PersonID      int64           `json:"person_id"`
 	MediaKind     PersonMediaKind `json:"media_kind"`
-	MediaType     *string         `json:"media_type,omitempty"`
-	URI           *string         `json:"uri,omitempty"`
-	ByteSize      *int64          `json:"byte_size,omitempty"`
-	ContentHash   *string         `json:"content_hash,omitempty"`
+	MediaType     *string         `json:"media_type,omitzero" nullable:"false"`
+	URI           *string         `json:"uri,omitzero" nullable:"false"`
+	ByteSize      *int64          `json:"byte_size,omitzero" nullable:"false"`
+	ContentHash   *string         `json:"content_hash,omitzero" nullable:"false"`
 	HasData       bool            `json:"has_data"`
 	OriginalValue string          `json:"original_value"`
 }
 
 type PersonMediaInput struct {
 	MediaKind     PersonMediaKind    `json:"media_kind"`
-	MediaType     *string            `json:"media_type,omitempty"`
-	URI           *string            `json:"uri,omitempty"`
+	MediaType     *string            `json:"media_type,omitzero" nullable:"false"`
+	URI           *string            `json:"uri,omitzero" nullable:"false"`
 	Data          []byte             `json:"data,omitempty"`
 	OriginalValue string             `json:"original_value"`
 	Envelope      ValueEnvelopeInput `json:"envelope"`
