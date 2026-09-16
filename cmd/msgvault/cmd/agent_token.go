@@ -176,7 +176,7 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated list of permissions to grant (accepted: "+strings.Join(agentgrant.KnownPermissionNames(), ", ")+")")
+		"Comma-separated list of permissions to grant (accepted: "+strings.Join(agentgrant.KnownPermissionNames(), ", ")+"); only draft-reply currently executes")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
 	agentTokenIssueCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")

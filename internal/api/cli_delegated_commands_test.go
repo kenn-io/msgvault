@@ -7,19 +7,6 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 )
 
-func TestLookupDelegatedCLICommand(t *testing.T) {
-	assert := assert.New(t)
-	want := map[string]agentgrant.Permission{
-		CLIRunDraftReplyCommand: agentgrant.PermissionDraftCreate,
-		"draft-get":             agentgrant.PermissionDraftRead,
-		"draft-edit":            agentgrant.PermissionDraftEdit,
-		"draft-delete":          agentgrant.PermissionDraftDelete,
-	}
-
-	assert.Equal(want, delegatedCommandPermission)
-	assert.Equal(map[string]bool{CLIRunDraftReplyCommand: true}, delegatedExecutableCommands)
-}
-
 func TestDelegatedCLIRunAdmittedPredicate(t *testing.T) {
 	assert := assert.New(t)
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{

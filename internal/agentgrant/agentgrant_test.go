@@ -223,12 +223,13 @@ func TestGrantHasPermissionIgnoresSource(t *testing.T) {
 		PermissionDraftRead,
 		PermissionDraftEdit,
 		PermissionDraftDelete,
-	}}
+	}, Sources: []SourceRef{{ID: 2, Type: "imap", Identifier: "bob@example.com"}}}
 	assert := assert.New(t)
 
-	for _, permission := range grant.Permissions {
-		assert.True(grant.HasPermission(permission))
-	}
+	assert.True(grant.HasPermission(PermissionDraftCreate))
+	assert.False(grant.Allows(PermissionDraftCreate, SourceRef{
+		ID: 1, Type: "imap", Identifier: "alice@example.com",
+	}))
 	assert.False(grant.HasPermission("unknown.permission"))
 }
 

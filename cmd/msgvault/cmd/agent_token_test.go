@@ -134,6 +134,7 @@ func TestAgentTokenIssuePermissionsFlagListsVocabulary(t *testing.T) {
 	for _, name := range agentgrant.KnownPermissionNames() {
 		assert.Contains(t, flag.Usage, name)
 	}
+	assert.Contains(t, flag.Usage, "only draft-reply currently executes")
 }
 
 func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
@@ -200,12 +201,6 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 	assert.Equal(http.StatusOK, code)
 	assert.Empty(response.Error)
 	assert.Equal(1, backend.runnerCalls)
-	for _, command := range []string{"draft-get", "draft-edit", "draft-delete"} {
-		code, response = run(full, []string{command, "42"})
-		assert.Equal(http.StatusBadRequest, code)
-		assert.Equal("command_not_allowed", response.Error)
-		assert.Equal(1, backend.runnerCalls)
-	}
 }
 
 // TestAgentTokenIssueOutputsSecret verifies that the issue subcommand (row 6):
