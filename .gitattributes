@@ -17,3 +17,6 @@ internal/vcard/registry/data/*.csv -text whitespace=blank-at-eol,blank-at-eof,sp
 # line endings on Windows checkouts.
 internal/slack/testdata/slackdump/standard/general/attachments/** -text
 internal/slack/testdata/slackdump/standard/__uploads/** -text
+
+# Keep the pinned upstream Vec1 source byte-for-byte reproducible.
+internal/vector/sqlitevec/vec1/vec1.c -text whitespace=-blank-at-eol,-blank-at-eof

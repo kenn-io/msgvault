@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -368,12 +369,22 @@ type SearchConfig struct {
 	KPerSignal        int     `toml:"k_per_signal"`
 	SubjectBoost      float64 `toml:"subject_boost"`
 	MaxPageSizeHybrid *int    `toml:"max_page_size_hybrid"`
+	SQLiteAccelerator string  `toml:"sqlite_accelerator"`
+	ANNNProbe         int     `toml:"ann_nprobe"`
+	ANNOversample     int     `toml:"ann_oversample"`
+	ANNThreads        int     `toml:"ann_threads"`
 }
 
 // DefaultMaxPageSizeHybrid is the hybrid page cap applied when config.toml
 // omits max_page_size_hybrid. Settings suggests the same value when the cap
 // is switched back on, so the two cannot drift apart.
-const DefaultMaxPageSizeHybrid = 50
+const (
+	DefaultMaxPageSizeHybrid = 50
+	DefaultSQLiteAccelerator = "auto"
+	DefaultANNNProbe         = 8
+	DefaultANNOversample     = 8
+	MaxANNThreads            = 128
+)
 
 // MaxPageSizeHybridClamp returns the effective per-request limit
 // clamp: zero means "no clamp", a positive value means "clamp to N".
@@ -566,6 +577,21 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	switch c.Search.SQLiteAccelerator {
+	case "", "auto", "exact":
+	default:
+		return fmt.Errorf("vector.search.sqlite_accelerator: must be %q or %q, got %q",
+			"auto", "exact", c.Search.SQLiteAccelerator)
+	}
+	if c.Search.ANNNProbe < 0 || c.Search.ANNNProbe > 65_536 {
+		return fmt.Errorf("vector.search.ann_nprobe: zero selects the default; otherwise must be between 1 and 65536, got %d", c.Search.ANNNProbe)
+	}
+	if c.Search.ANNOversample < 0 || c.Search.ANNOversample > 128 {
+		return fmt.Errorf("vector.search.ann_oversample: zero selects the default; otherwise must be between 1 and 128, got %d", c.Search.ANNOversample)
+	}
+	if c.Search.ANNThreads < 0 || c.Search.ANNThreads > MaxANNThreads {
+		return fmt.Errorf("vector.search.ann_threads: zero selects the default; otherwise must be between 1 and %d, got %d", MaxANNThreads, c.Search.ANNThreads)
+	}
 	return nil
 }
 
@@ -665,6 +691,18 @@ func (c *Config) ApplyDefaults() {
 	if c.Search.MaxPageSizeHybrid == nil {
 		v := DefaultMaxPageSizeHybrid
 		c.Search.MaxPageSizeHybrid = &v
+	}
+	if c.Search.SQLiteAccelerator == "" {
+		c.Search.SQLiteAccelerator = DefaultSQLiteAccelerator
+	}
+	if c.Search.ANNNProbe == 0 {
+		c.Search.ANNNProbe = DefaultANNNProbe
+	}
+	if c.Search.ANNOversample == 0 {
+		c.Search.ANNOversample = DefaultANNOversample
+	}
+	if c.Search.ANNThreads == 0 {
+		c.Search.ANNThreads = min(runtime.GOMAXPROCS(0), MaxANNThreads)
 	}
 	c.Multimodal.Provider = strings.ToLower(strings.TrimSpace(c.Multimodal.Provider))
 	if c.Multimodal.Provider == "" {

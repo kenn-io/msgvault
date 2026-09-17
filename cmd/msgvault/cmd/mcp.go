@@ -227,6 +227,12 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 		Hits:          hits,
 		PoolSaturated: resp.PoolSaturated,
 		HasMore:       resp.HasMore,
+		TookMS:        resp.TookMS,
+		Timings: mcpserver.HybridSearchTimings{
+			QueryEmbeddingMS: resp.Timings.QueryEmbeddingMS,
+			RetrievalMS:      resp.Timings.RetrievalMS,
+			HydrationMS:      resp.Timings.HydrationMS,
+		},
 		Generation: mcpserver.HybridGeneration{
 			ID:          resp.Generation.ID,
 			Model:       resp.Generation.Model,

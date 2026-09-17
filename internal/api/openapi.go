@@ -315,7 +315,10 @@ import (
 // carddav_inference_review_required. Additive (minor bump): existing CardDAV
 // routes are unchanged.
 // 2.26.0 adds optional web_url metadata to message result schemas.
-const APISchemaVersion = "2.26.0"
+// 2.27.0 adds required took_ms and timings fields to vector and hybrid
+// /api/v1/search responses. timings reports query embedding, retrieval, and
+// hydration latency. Additive (minor bump): existing search fields are unchanged.
+const APISchemaVersion = "2.27.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

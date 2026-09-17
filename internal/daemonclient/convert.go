@@ -266,6 +266,12 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 			Fingerprint: resp.Generation.Fingerprint,
 			State:       resp.Generation.State,
 		},
+		TookMS: resp.TookMs,
+		Timings: CLIHybridSearchTimings{
+			QueryEmbeddingMS: resp.Timings.QueryEmbeddingMs,
+			RetrievalMS:      resp.Timings.RetrievalMs,
+			HydrationMS:      resp.Timings.HydrationMs,
+		},
 		PoolSaturated:    resp.PoolSaturated,
 		ReturnedCount:    int(resp.Returned),
 		ScopeLabel:       stringValue(resp.ScopeLabel),

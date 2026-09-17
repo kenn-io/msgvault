@@ -344,9 +344,16 @@ type hybridSearchResponse struct {
 	HasMore          bool                    `json:"has_more"`
 	Generation       hybridGenerationSummary `json:"generation"`
 	TookMS           int64                   `json:"took_ms"`
+	Timings          hybridSearchTimings     `json:"timings"`
 	ScopeLabel       string                  `json:"scope_label,omitempty"`
 	ScopeSourceCount int                     `json:"scope_source_count,omitzero"`
 	Results          []hybridSearchItem      `json:"results"`
+}
+
+type hybridSearchTimings struct {
+	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
+	RetrievalMS      int64 `json:"retrieval_ms"`
+	HydrationMS      int64 `json:"hydration_ms"`
 }
 
 type similarSearchResponse struct {
@@ -1047,6 +1054,7 @@ func (s *Server) handleHybridSearch(
 		return
 	}
 
+	hydrationStarted := time.Now()
 	pageStart := min(offset, len(hits))
 	pageEnd := min(pageStart+pageSize, len(hits))
 	hasMore := pageEnd < len(hits)
@@ -1105,6 +1113,7 @@ func (s *Server) handleHybridSearch(
 	if includeMatches {
 		s.enrichHybridMatches(ctx, backend, vectorCfg, meta.Generation.ID, meta.QueryVector, items, minScore)
 	}
+	hydrationDuration := time.Since(hydrationStarted)
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
 		Query:            q,
@@ -1121,7 +1130,12 @@ func (s *Server) handleHybridSearch(
 			Fingerprint: meta.Generation.Fingerprint,
 			State:       string(meta.Generation.State),
 		},
-		TookMS:  time.Since(start).Milliseconds(),
+		TookMS: time.Since(start).Milliseconds(),
+		Timings: hybridSearchTimings{
+			QueryEmbeddingMS: meta.QueryEmbeddingDuration.Milliseconds(),
+			RetrievalMS:      meta.RetrievalDuration.Milliseconds(),
+			HydrationMS:      hydrationDuration.Milliseconds(),
+		},
 		Results: items,
 	})
 }

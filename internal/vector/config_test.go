@@ -285,12 +285,57 @@ func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
 	assert.Equal(60, c.Search.RRFK)
 	assert.Equal(100, c.Search.KPerSignal)
 	assert.InDelta(2.0, c.Search.SubjectBoost, 1e-9)
+	assert.Equal("auto", c.Search.SQLiteAccelerator)
+	assert.Equal(8, c.Search.ANNNProbe)
+	assert.Equal(8, c.Search.ANNOversample)
+	assert.GreaterOrEqual(c.Search.ANNThreads, 1)
+	assert.LessOrEqual(c.Search.ANNThreads, 128)
 	if assert.NotNil(c.Search.MaxPageSizeHybrid, "Search.MaxPageSizeHybrid should be set") {
 		assert.Equal(50, *c.Search.MaxPageSizeHybrid)
 	}
 	// Preprocess pointer must not be clobbered.
 	assert.False(c.Preprocess.StripQuotesEnabled(), "user explicitly set false")
 	assert.True(c.Preprocess.StripSignaturesEnabled(), "unset → default")
+}
+
+func TestConfigValidateSQLiteAcceleratorSearchSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "mode", mutate: func(c *Config) { c.Search.SQLiteAccelerator = "surprise" }, want: "sqlite_accelerator"},
+		{name: "nprobe", mutate: func(c *Config) { c.Search.ANNNProbe = -1 }, want: "ann_nprobe"},
+		{name: "oversample", mutate: func(c *Config) { c.Search.ANNOversample = -1 }, want: "ann_oversample"},
+		{name: "threads", mutate: func(c *Config) { c.Search.ANNThreads = 129 }, want: "ann_threads"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := validConfig()
+			c.ApplyDefaults()
+			tc.mutate(&c)
+			err := c.Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestConfigValidateSQLiteAcceleratorZeroValuesUseDefaults(t *testing.T) {
+	c := validConfig()
+	c.Search = SearchConfig{}
+	require.NoError(t, c.Validate())
+}
+
+func TestConfigGenerationFingerprintIgnoresSQLiteAcceleratorTuning(t *testing.T) {
+	c := validConfig()
+	c.ApplyDefaults()
+	want := c.GenerationFingerprint()
+	c.Search.SQLiteAccelerator = "exact"
+	c.Search.ANNNProbe = 17
+	c.Search.ANNOversample = 19
+	c.Search.ANNThreads = 3
+	assert.Equal(t, want, c.GenerationFingerprint())
 }
 
 // TestApplyDefaults_PreservesExplicitMaxPageSizeHybridZero guards the

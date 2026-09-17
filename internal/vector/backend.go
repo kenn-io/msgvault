@@ -395,6 +395,26 @@ type Backend interface {
 	Close() error
 }
 
+// SearchMetadata reports bounded-search behavior that cannot be inferred from
+// result length. Exact backends may omit this optional capability.
+type SearchMetadata struct {
+	PoolSaturated  bool
+	CandidateCount int
+	Accelerator    string
+}
+
+// MetadataSearchingBackend is an optional search capability for backends with
+// explicit candidate work ceilings.
+type MetadataSearchingBackend interface {
+	SearchWithMetadata(
+		ctx context.Context,
+		gen GenerationID,
+		queryVec []float32,
+		k int,
+		filter Filter,
+	) ([]Hit, SearchMetadata, error)
+}
+
 // FilteredCoverageBackend is the optional exact-coverage capability used by
 // analytical search. The caller resolves the canonical filtered population in
 // DuckDB; the vector backend intersects that population with one generation.
