@@ -350,7 +350,10 @@
   // popstate (see `handleHistoryFocus` below) — so a user who lands by
   // default, navigates elsewhere, then explicitly clicks back into
   // Relationships later is never silently bounced away again.
-  let arrivedWithoutExploreParam = untrack(() => new URLSearchParams(window.location.search).get('explore') === null);
+  let arrivedWithoutExploreParam = untrack(() => {
+    const parameters = new URLSearchParams(window.location.search);
+    return !parameters.has('workspace') && !parameters.has('explore');
+  });
   let landingFallbackApplied = false;
   let contextualViewerFile = $state<FileViewerTarget>();
   let contextualViewerReturnFocus = $state<HTMLElement>();

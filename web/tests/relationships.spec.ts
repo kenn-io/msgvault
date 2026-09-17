@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { exploreHistoryState } from './explore-state';
 
 const when = '2026-07-19T10:00:00Z';
 
@@ -176,7 +177,7 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   // pane's own open/close state lives outside the URL entirely — closing
   // the conversation reading pane that was still open underneath it too.
   await page.goBack();
-  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').relationshipTarget).toBeNull();
+  await expect.poll(async () => (await exploreHistoryState(page)).relationshipTarget).toBeNull();
   await expect(list.getByRole('row', { name: /Alice Example/ })).toHaveAttribute('aria-selected', 'false');
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeHidden();
   await expect(reading).toBeHidden();
@@ -219,7 +220,7 @@ test('person attachment gallery preserves directions and Media state across sour
   await expect(page.getByRole('radio', { name: 'Media' })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('checkbox', { name: 'Group conversations' })).toBeChecked();
   await expect(page.getByRole('button', { name: 'Open photo.png' })).toBeVisible();
-  const restored = JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}') as Record<string, unknown>;
+  const restored = await exploreHistoryState(page);
   expect(restored).toMatchObject({
     workspace: 'relationships', relationshipTarget: 'cluster:1', relationshipFiles: true,
     personFilePresentation: 'media', personFileDirections: ['from_person', 'group']

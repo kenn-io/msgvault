@@ -513,33 +513,72 @@ function normalize(value: unknown): ExploreURLState {
   } as ExploreURLState;
 }
 
+// Fields that only describe one workspace stay out of the link when another
+// workspace is shared; browser history still carries them for Back/Forward.
+const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<ExploreWorkspace>>> = {
+  directoryQuery: ['directory'],
+  directoryContactState: ['directory'],
+  directoryCategory: ['directory'],
+  directoryOrganization: ['directory'],
+  directoryPrimaryChannel: ['directory'],
+  directoryLastContactAfter: ['directory'],
+  directoryLastContactBefore: ['directory'],
+  directorySort: ['directory'],
+  directoryPersonID: ['directory', 'directory_review'],
+  reviewKind: ['directory_review'],
+  identityState: ['directory_review'],
+  relationshipReviewState: ['directory_review'],
+  fileSort: ['files'],
+  fileFilenameQuery: ['files'],
+  fileMIMEFamilies: ['files'],
+  personFilePresentation: ['relationships'],
+  personFileDirections: ['relationships'],
+  identityQuery: ['relationships'],
+  identitySort: ['relationships'],
+  analysisTarget: ['relationships'],
+  selectedIdentifier: ['relationships'],
+  relationshipFacet: ['relationships'],
+  relationshipTarget: ['relationships'],
+  relationshipShowAll: ['relationships'],
+  relationshipFiles: ['relationships'],
+  operationLane: ['operations'],
+  operationKind: ['operations'],
+  operationState: ['operations'],
+  operationStartedFrom: ['operations'],
+  operationStartedBefore: ['operations'],
+  operationRunID: ['operations'],
+  operationStatus: ['operations'],
+  settingsAuthority: ['settings']
+};
+// Keyboard focus and scroll position live only in browser history.
+const SESSION_ONLY_FIELDS = new Set<keyof ExploreURLState>(['activeRow', 'scrollAnchor']);
+
+function sharedDetails(state: ExploreURLState): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(state).filter(([key, value]) => {
+    const field = key as keyof ExploreURLState;
+    if (field === 'schemaVersion' || field === 'workspace' || field === 'searchMode') return false;
+    if (SESSION_ONLY_FIELDS.has(field)) return false;
+    const owners = WORKSPACE_FIELDS[field];
+    if (owners && !owners.includes(state.workspace)) return false;
+    return JSON.stringify(value) !== JSON.stringify(defaultExploreURLState[field]);
+  }));
+}
+
 export function serializeExploreURLState(state: ExploreURLState, baseSearch = ''): string {
   const parameters = new URLSearchParams(baseSearch.startsWith('?') ? baseSearch.slice(1) : baseSearch);
   const normalized = normalize(state);
-  parameters.delete(STATE_PARAMETER);
   parameters.set('workspace', normalized.workspace);
   // An explicit mode keeps a shared link independent of browser preferences.
   parameters.set('mode', normalized.searchMode);
-  const details = Object.fromEntries(Object.entries(normalized).filter(([key, value]) => {
-    if (key === 'workspace' || key === 'searchMode') return false;
-    if (key === 'activeRow' || key === 'scrollAnchor') return false;
-    if (key.startsWith('directory') && normalized.workspace !== 'directory' &&
-      !(key === 'directoryPersonID' && normalized.workspace === 'directory_review' &&
-        normalized.reviewKind === 'fact')) return false;
-    if (key.startsWith('file') && normalized.workspace !== 'files') return false;
-    if (['reviewKind', 'identityState', 'relationshipReviewState'].includes(key)) {
-      if (normalized.workspace !== 'directory_review') return false;
-    } else if ((key.startsWith('relationship') || key.startsWith('identity') ||
-      key.startsWith('personFile') || key === 'analysisTarget' || key === 'selectedIdentifier') &&
-      normalized.workspace !== 'relationships') return false;
-    if (key.startsWith('operation') && normalized.workspace !== 'operations') return false;
-    if (key === 'settingsAuthority' && normalized.workspace !== 'settings') return false;
-    return JSON.stringify(value) !== JSON.stringify(defaultExploreURLState[key]);
-  }));
-  if (Object.keys(details).length) {
-    parameters.set(STATE_PARAMETER, JSON.stringify({ schemaVersion: normalized.schemaVersion, ...details }));
-  }
+  const details = sharedDetails(normalized);
+  if (Object.keys(details).length === 0) parameters.delete(STATE_PARAMETER);
+  else parameters.set(STATE_PARAMETER, JSON.stringify({ schemaVersion: normalized.schemaVersion, ...details }));
   return `?${parameters.toString()}`;
+}
+
+function historyEntry(search: string, state: ExploreURLState): { exploreSearch: string; exploreState: unknown } {
+  // History entries must be structured-cloneable, so strip reactive proxies.
+  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)) };
 }
 
 export function parseExploreURLState(search: string): ExploreURLState {
@@ -763,9 +802,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({
-        exploreSearch: priorSearch, exploreState: JSON.parse(JSON.stringify(priorEntry)),
-      }, '', committedURL);
+      this.browser.history.replaceState(historyEntry(priorSearch, priorEntry), '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -779,7 +816,7 @@ export class ExploreState {
     }
     const search = serializeExploreURLState(this.current, baseSearch);
     const url = `${this.browser.location.pathname}${search}${this.browser.location.hash}`;
-    const history = { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(this.current)) };
+    const history = historyEntry(search, this.current);
     if (mode === 'push') {
       this.browser.history.pushState(history, '', url);
       this.committed = normalize(this.current);

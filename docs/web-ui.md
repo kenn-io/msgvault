@@ -109,10 +109,10 @@ email, calendar event, meeting note, other durable item, or chat conversation.
 Raw chat fragments appear only after drilling into a conversation. Filter,
 Group by, Show as, and Search form a shareable view. Ordinary tabs use short
 URLs such as `?workspace=everything&mode=full_text`. Filters, layout changes,
-and the selected item appear only when needed; default values and choices from
-other workspaces stay out of the link. Keyboard focus, scroll position, and
-choices from other workspaces stay in browser history, where Back and Forward
-restore them.
+and the selected item appear in the link only when they differ from the
+defaults. Keyboard focus, scroll position, and choices from other workspaces
+stay out of the link; browser history keeps them so Back and Forward restore
+them.
 
 Search mode is always explicit:
 

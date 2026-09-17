@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
+import { exploreHistoryState } from '../explore-state';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen = new Set<string>();
@@ -142,9 +143,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(relationshipTimeline).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(relationshipList).toBeFocused();
-  await expect.poll(() =>
-    JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').relationshipTarget
-  ).toBeNull();
+  await expect.poll(async () => (await exploreHistoryState(page)).relationshipTarget).toBeNull();
   await expect(page.getByRole('heading', { name: 'Beta Person' })).toBeHidden();
 
   await tabTo(page, 'Everything');
@@ -180,10 +179,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(renderedActiveRow).toBeVisible();
   await expect(grid).toHaveAttribute('aria-activedescendant', await renderedActiveRow.getAttribute('id') ?? '');
   await page.keyboard.press('End');
-  await expect.poll(() => {
-    const encoded = new URL(page.url()).searchParams.get('explore');
-    return JSON.parse(encoded ?? '{}').activeRow;
-  }).toBe(terminalServedRow.key);
+  await expect.poll(async () => (await exploreHistoryState(page)).activeRow).toBe(terminalServedRow.key);
   await expect(grid.locator(`[data-row-key="${terminalServedRow.key}"]`)).toBeVisible();
   await page.keyboard.press('Enter');
   const everythingReading = page.getByRole('complementary', { name: /Reading pane/ });

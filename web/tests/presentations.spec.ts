@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { selectKitOption } from './kit-ui';
+import { exploreHistoryState } from './explore-state';
 
 const rows = [1, 2].map((id) => ({
   key: `message:${id}`, kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -78,7 +79,7 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   await page.keyboard.press('Enter');
   const viewer = page.getByRole('dialog', { name: 'View pasta-analysis.pdf' });
   await expect(viewer).toBeVisible();
-  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}'))
+  expect(await exploreHistoryState(page))
     .toMatchObject({ selectedRow: 'attachment:7', activeRow: 'message:1:file:7' });
 
   await page.goBack();
@@ -92,14 +93,14 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   await viewer.getByRole('button', { name: 'Close file viewer' }).click();
   await expect(viewer).not.toBeVisible();
   await expect(files).toBeFocused();
-  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').selectedRow).toBeNull();
+  expect((await exploreHistoryState(page)).selectedRow).toBeNull();
 
   await files.focus();
   await page.keyboard.press('Enter');
   await expect(viewer).toBeVisible();
   await viewer.getByRole('button', { name: 'Open containing item' }).click();
   await expect(page.getByRole('complementary', { name: 'Reading pane: Presentation message 1' })).toBeVisible();
-  const tableState = JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}');
+  const tableState = await exploreHistoryState(page);
   expect(tableState).toMatchObject({ presentation: 'table', activeRow: 'message:1', scrollAnchor: null });
   expect(tableState.activeRow).not.toContain(':file:');
 

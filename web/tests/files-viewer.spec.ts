@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { exploreHistoryState } from './explore-state';
 
 function exploreURLState() {
   return {
@@ -101,10 +102,8 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   await page.keyboard.press('Home');
-  await expect.poll(() => {
-    const encoded = new URL(page.url()).searchParams.get('explore');
-    if (!encoded) return undefined;
-    const state = JSON.parse(encoded) as { activeRow?: string; fileFilenameQuery?: string };
+  await expect.poll(async () => {
+    const state = await exploreHistoryState(page);
     return { activeRow: state.activeRow, fileFilenameQuery: state.fileFilenameQuery };
   }).toEqual({ activeRow: 'file:7', fileFilenameQuery: 'pixel' });
   await expect(grid).toHaveAttribute('aria-busy', 'false');
@@ -208,10 +207,7 @@ test('Back from an open file viewer closes it and restores the Files list URL', 
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
-  await expect.poll(() => {
-    const encoded = new URL(page.url()).searchParams.get('explore');
-    return encoded ? (JSON.parse(encoded) as { activeRow?: string | null }).activeRow : undefined;
-  }).toBe('file:7');
+  await expect.poll(async () => (await exploreHistoryState(page)).activeRow).toBe('file:7');
   const listURL = page.url();
 
   await page.keyboard.press('Enter');
