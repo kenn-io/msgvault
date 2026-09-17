@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { MeetingRef } from '../../api/generated/models';
+  import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryReadBundle, DirectoryReadSection } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -26,6 +28,7 @@
     onOpenCardDAVConflict?: (conflictID: number) => void;
     onOpenCardDAVSettings?: () => void;
     onAnnounce?: (message: string) => void;
+    onOpenMeeting?: (meeting: MeetingRef) => void;
   }
 
   type DetailTab = 'overview' | 'organizations' | 'relationships' | 'network' | 'media';
@@ -40,7 +43,8 @@
     onSplitCommitted = () => undefined,
     onOpenCardDAVConflict = () => undefined,
     onOpenCardDAVSettings = () => undefined,
-    onAnnounce = () => undefined
+    onAnnounce = () => undefined,
+    onOpenMeeting = undefined
   }: Props = $props();
   let activeTab = $state<DetailTab>('overview');
   let organizationRequest = $state<{ id: number; key: number }>();
@@ -211,6 +215,11 @@
       {/if}
       {#if bundle.contactState}
         <section><h3>Contact state</h3><p>{bundle.contactState.cadence_status} · {bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {bundle.contactState.last_contact_at}{/if}</p></section>
+      {/if}
+      {#if bundle.person?.id === personID}
+        <MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }}
+          refreshKey={JSON.stringify([bundle.person.revision, [...bundle.person.participant_ids].sort((a, b) => a - b)])}
+          {onOpenMeeting} />
       {/if}
       <PersonBriefCard {client} {personID} {onAnnounce} />
       {#if bundle.activity}

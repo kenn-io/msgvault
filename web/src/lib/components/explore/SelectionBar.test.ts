@@ -1,11 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { createAPIClient } from '../../api/client';
 import type {
   ExplorePreflightResponse as GeneratedExplorePreflightResponse,
+  ExploreSelection as GeneratedExploreSelection,
   ExploreUnavailableAction as GeneratedExploreUnavailableAction,
 } from '../../api/generated/models';
-
 import { ExploreSelectionState } from '../../explore/state.svelte';
 import { predicateFingerprint } from '../../explore/selection';
 import SelectionBar from './SelectionBar.svelte';
@@ -99,5 +100,58 @@ describe('SelectionBar', () => {
     expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
     expect(screen.getByText('Export: selection_contains_items_without_exportable_files')).toBeDefined();
     expect(screen.getByText('Open in source: selection_contains_items_that_cannot_be_opened_in_source')).toBeDefined();
+  });
+
+  it('keeps meeting context independent from raw-export preflight eligibility', async () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:7', 'message:91']);
+    const meetingSelection: GeneratedExploreSelection = {
+      mode: 'explicit',
+      predicate: { filters: [], presentation: 'table' },
+      row_keys: ['message:7', 'message:91'],
+      cache_revision: 'cache-1',
+      search_provenance: {},
+    };
+    render(SelectionBar, {
+      selection,
+      totalCount: 2,
+      preflight: preflight([
+        { action: 'export', reason: 'selection_contains_items_without_exportable_files' },
+      ]),
+      client: createAPIClient(async () =>
+        Response.json(
+          { error: 'selection_not_all_meetings', message: 'Every selected row must be a meeting' },
+          { status: 400 },
+        ),
+      ),
+      meetingSelection,
+    });
+
+    expect(screen.getByText('Export: selection_contains_items_without_exportable_files')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
+  });
+
+  it('explains an explicit selection over the 100-meeting context limit before request', () => {
+    const rowKeys = Array.from({ length: 101 }, (_, index) => `message:${index + 1}`);
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(rowKeys);
+    const fetchFn = vi.fn<typeof fetch>();
+    render(SelectionBar, {
+      selection,
+      totalCount: rowKeys.length,
+      client: createAPIClient(fetchFn),
+      meetingSelection: {
+        mode: 'explicit',
+        predicate: { filters: [], presentation: 'table' },
+        row_keys: rowKeys,
+        cache_revision: 'cache-1',
+        search_provenance: {},
+      } satisfies GeneratedExploreSelection,
+    });
+
+    expect(screen.getByText('Meeting context accepts at most 100 meetings.')).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Export meeting context' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

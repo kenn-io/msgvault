@@ -1059,6 +1059,45 @@ describe('ExploreState history ownership', () => {
     state.destroy();
   });
 
+  it('retains only matching archive ownership across replacements and on the prior nested-push entry', async () => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window);
+    state.commitNavigation({ selectedRow: 'group:domain:exact.example' });
+    state.commitRestorableNavigation({ selectedRow: 'archive-meeting:42' });
+    const owned = { msgvaultArchivedMeeting: { id: 42, returnSelectedRow: 'group:domain:exact.example' } };
+    window.history.replaceState({ ...owned, unrelated: 'do not retain' }, '', window.location.href);
+    state.replaceCommittedNavigation({ conversationAnchor: '43' });
+    expect(window.history.state).toEqual(owned);
+    state.replaceTransient({ activeRow: 'message:9', scrollAnchor: { key: 'message:9', offset: 12 } });
+    expect(window.history.state).toEqual(owned);
+    state.commitRestorableNavigation({ selectedRow: 'archive-meeting:43', conversationAnchor: null });
+    expect(window.history.state).toBeNull();
+    const back = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true }));
+    window.history.back(); await back;
+    expect(window.history.state).toEqual(owned);
+    expect(state.current).toMatchObject({ selectedRow: 'archive-meeting:42', conversationAnchor: '43',
+      activeRow: 'message:9', scrollAnchor: { key: 'message:9', offset: 12 } });
+    state.replaceCommittedNavigation({ selectedRow: 'group:domain:exact.example' });
+    expect(window.history.state).toBeNull();
+    state.destroy();
+  });
+
+  it.each([
+    { id: 43, returnSelectedRow: 'group:domain:exact.example' },
+    { id: '42', returnSelectedRow: null },
+    { id: 42, returnSelectedRow: 7 },
+    { id: 42 },
+    null
+  ])('does not retain invalid archive history ownership %j', (marker) => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window);
+    state.commitRestorableNavigation({ selectedRow: 'archive-meeting:42' });
+    window.history.replaceState({ msgvaultArchivedMeeting: marker }, '', window.location.href);
+    state.replaceTransient({ activeRow: 'message:9' });
+    expect(window.history.state).toBeNull();
+    state.destroy();
+  });
+
   it('restores the previous committed search after transient typing is committed', async () => {
     window.history.replaceState(null, '', '/?feature=preview');
     const state = new ExploreState(window);

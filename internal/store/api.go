@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // participantDisplaySQL formats a participant joined as `p` (with the
@@ -1033,30 +1034,8 @@ func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 	return messages, ids, nil
 }
 
-// parseSQLiteTime parses a datetime string from SQLite into time.Time.
-// Uses the same comprehensive format list as dbTimeLayouts in sync.go.
-func parseSQLiteTime(s string) time.Time {
-	// Same formats as dbTimeLayouts - order matters: more specific first
-	layouts := []string{
-		"2006-01-02 15:04:05.999999999-07:00", // space-separated with fractional seconds and TZ
-		"2006-01-02T15:04:05.999999999-07:00", // T-separated with fractional seconds and TZ
-		"2006-01-02 15:04:05.999999999",       // space-separated with fractional seconds
-		"2006-01-02T15:04:05.999999999",       // T-separated with fractional seconds
-		"2006-01-02 15:04:05",                 // SQLite datetime('now') format
-		"2006-01-02T15:04:05",                 // T-separated basic
-		"2006-01-02 15:04",                    // space-separated without seconds
-		"2006-01-02T15:04",                    // T-separated without seconds
-		"2006-01-02",                          // date only
-		time.RFC3339,                          // e.g., "2006-01-02T15:04:05Z"
-		time.RFC3339Nano,                      // e.g., "2006-01-02T15:04:05.999999999Z07:00"
-	}
-	for _, layout := range layouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
-}
+// parseSQLiteTime shares the parser used by SQLite's exact instant key.
+func parseSQLiteTime(s string) time.Time { return sqliteutil.ParseTime(s) }
 
 // batchPopulate batch-loads recipients and labels for a slice of messages.
 func (s *Store) batchPopulate(messages []APIMessage, ids []int64) error {

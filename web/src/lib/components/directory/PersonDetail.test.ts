@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import type { DirectoryReadBundle } from '../../directory/models';
@@ -12,6 +13,8 @@ import PersonDetail from './PersonDetail.svelte';
 // makes no further request.
 function overviewCardResponse(request: Request): Response | undefined {
   const path = new URL(request.url).pathname;
+  const meetingResponse = meetingFixtureResponse(path);
+  if (meetingResponse) return meetingResponse;
   if (path === '/api/v1/people/7/tracking') {
     return Response.json({ person_id: 7, tracked: false, tracked_at: null });
   }

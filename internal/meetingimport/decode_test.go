@@ -118,6 +118,45 @@ func TestDecodeRequestRejectsMalformedAndTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeRequestRejectsExplicitNullActionItems(t *testing.T) {
+	body := strings.Replace(
+		validRequestJSON,
+		`"organizer":`,
+		`"action_items": null, "organizer":`,
+		1,
+	)
+
+	_, err := DecodeRequest(strings.NewReader(body), MaxRequestBytes)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrMalformedRequest)
+	assert.Contains(t, err.Error(), "action_items")
+}
+
+func TestDecodeRequestDistinguishesOmittedAndEmptyActionItems(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	omitted, err := DecodeRequest(strings.NewReader(validRequestJSON), MaxRequestBytes)
+	require.NoError(err)
+	assert.Nil(omitted.Meeting.ActionItems)
+
+	body := strings.Replace(
+		validRequestJSON,
+		`"organizer":`,
+		`"action_items": [], "organizer":`,
+		1,
+	)
+	decoded, err := DecodeRequest(strings.NewReader(body), MaxRequestBytes)
+	require.NoError(err)
+	require.NotNil(decoded.Meeting.ActionItems)
+	assert.Empty(*decoded.Meeting.ActionItems)
+
+	normalized, err := decoded.Normalize()
+	require.NoError(err)
+	require.NotNil(normalized.Meeting.ActionItems)
+	assert.Empty(*normalized.Meeting.ActionItems)
+}
+
 func TestDecodeRequestAllowsUnknownProviderMetadata(t *testing.T) {
 	body := strings.Replace(
 		validRequestJSON,
