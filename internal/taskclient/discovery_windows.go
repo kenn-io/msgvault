@@ -3,6 +3,7 @@
 package taskclient
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ func descriptorFileSecurityCheck() error {
 }
 
 func validateSecureFileOwner(os.FileInfo, uint32) error {
-	return fmt.Errorf("%w: file owner does not match daemon user", ErrInsecureDescriptor)
+	return errors.Join(fmt.Errorf("%w: file owner does not match daemon user", ErrInsecureDescriptor))
 }
 
 func openSecureRegularFile(string) (*os.File, error) {

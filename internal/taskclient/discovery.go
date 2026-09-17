@@ -127,13 +127,13 @@ func readSecureRegularFile(path string, expectedOwner uint32, maximum int64) ([]
 	if err != nil {
 		return nil, fmt.Errorf("%w: inspect secure file", ErrInsecureDescriptor)
 	}
-	if err := validateSecureFileInfo(info, expectedOwner); err != nil { //nolint:staticcheck // POSIX ownership validation can succeed; Windows intentionally refuses unsupported descriptor ownership checks.
+	if err := validateSecureFileInfo(info, expectedOwner); err != nil {
 		return nil, err
 	}
 	return readBounded(file, maximum)
 }
 
-func validateSecureFileInfo(info os.FileInfo, expectedOwner uint32) error { //nolint:staticcheck // Windows ownership validation always refuses unsupported descriptor ownership checks.
+func validateSecureFileInfo(info os.FileInfo, expectedOwner uint32) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%w: file must be regular and non-symlinked", ErrInsecureDescriptor)
 	}
