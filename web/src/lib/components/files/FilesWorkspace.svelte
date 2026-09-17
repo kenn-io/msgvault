@@ -722,9 +722,11 @@
 <svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
   <header class="workspace-header">
     <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
-    <span aria-live="polite"
-      >{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span
-    >
+    {#if !loading && !error && !unavailable}
+      <span aria-live="polite"
+        >{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span
+      >
+    {/if}
   </header>
 
   <div class="file-controls" aria-label="File filters">
@@ -864,7 +866,10 @@
           {:else if error && rows.length === 0}
             <div role="row">
               <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
-                <div class="notice" role="alert">{error}</div>
+                <div class="notice" role="alert">
+                  <span>{error}</span>
+                  <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
+                </div>
               </div>
             </div>
           {:else if loading && rows.length === 0}

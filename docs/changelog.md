@@ -135,6 +135,9 @@ See [searching](usage/searching.md), [vector search](usage/vector-search.md),
 
 ### Browser, terminal, and integrations
 
+- Understand failed archive queries: memory and temporary-disk failures now
+  explain the relevant settings and recovery steps. Files offers a retry and
+  shows a file count only after the listing loads successfully.
 - Use Web Directory to edit profiles, relationships, and employment, review
   identity matches and facts, merge or split profiles, publish CardDAV contacts,
   and inspect curated networks and person attachment galleries.

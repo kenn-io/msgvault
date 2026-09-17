@@ -88,6 +88,27 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByText(rendered);
     expect(grid.getAttribute('aria-rowcount')).toBe(expected);
+    expect(screen.queryByText('0 files') !== null).toBe(expected !== null);
+  });
+
+  it('shows query failure guidance and reloads files after retry', async () => {
+    let failed = true;
+    const fetchFn: typeof fetch = async () => failed
+      ? Response.json({
+        error: 'query_resource_exhausted',
+        message: 'This query needs more memory or temporary disk space.',
+      }, { status: 503 })
+      : Response.json(response());
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('more memory or temporary disk space');
+    failed = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry request' }));
+    expect(await screen.findByText('fixture.pdf')).not.toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('owns headers and virtual rows in one focusable grid', async () => {
