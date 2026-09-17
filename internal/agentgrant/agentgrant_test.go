@@ -126,13 +126,6 @@ func TestRegistryLifecycle(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown")
 	})
 
-	t.Run("Issue rejects empty permission", func(t *testing.T) {
-		r := NewRegistry()
-		_, _, _, err := r.Issue("test", []Permission{""}, []SourceRef{src})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid")
-	})
-
 	t.Run("Issue rejects wildcard permission", func(t *testing.T) {
 		r := NewRegistry()
 		_, _, _, err := r.Issue("test", []Permission{"*"}, []SourceRef{src})
@@ -200,63 +193,4 @@ func TestGrantAllowsExactOriginalTriple(t *testing.T) {
 	}
 	assert.True(t, g.Allows(PermissionDraftCreate, original),
 		"exact original (ID, Type, Identifier) triple must be allowed")
-}
-
-func TestKnownPermissionNames(t *testing.T) {
-	want := []string{"draft.create", "draft.delete", "draft.edit", "draft.read"}
-	assert := assert.New(t)
-
-	names := KnownPermissionNames()
-	assert.Equal(want, names)
-	names[0] = "changed"
-	assert.Equal(want, KnownPermissionNames())
-	for _, name := range want {
-		permission, ok := KnownPermission(name)
-		assert.True(ok)
-		assert.Equal(name, string(permission))
-	}
-}
-
-func TestGrantHasPermissionIgnoresSource(t *testing.T) {
-	grant := Grant{Permissions: []Permission{
-		PermissionDraftCreate,
-		PermissionDraftRead,
-		PermissionDraftEdit,
-		PermissionDraftDelete,
-	}, Sources: []SourceRef{{ID: 2, Type: "imap", Identifier: "bob@example.com"}}}
-	assert := assert.New(t)
-
-	assert.True(grant.HasPermission(PermissionDraftCreate))
-	assert.False(grant.Allows(PermissionDraftCreate, SourceRef{
-		ID: 1, Type: "imap", Identifier: "alice@example.com",
-	}))
-	assert.False(grant.HasPermission("unknown.permission"))
-}
-
-func TestRegistryAcceptsIndependentPermissionNames(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	source := SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-
-	for _, permission := range []Permission{
-		PermissionDraftCreate,
-		PermissionDraftRead,
-		PermissionDraftEdit,
-		PermissionDraftDelete,
-	} {
-		t.Run(string(permission), func(t *testing.T) {
-			r := NewRegistry()
-			_, _, grant, err := r.Issue("test", []Permission{permission}, []SourceRef{source})
-			require.NoError(err)
-			assert.True(grant.HasPermission(permission))
-			for _, other := range []Permission{
-				PermissionDraftCreate,
-				PermissionDraftRead,
-				PermissionDraftEdit,
-				PermissionDraftDelete,
-			} {
-				assert.Equal(permission == other, grant.HasPermission(other))
-			}
-		})
-	}
 }

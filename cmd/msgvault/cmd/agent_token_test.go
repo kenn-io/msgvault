@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +19,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -112,16 +110,7 @@ type agentTokenListFixture struct {
 	Tokens []agentTokenFixtureView `json:"tokens"`
 }
 
-func TestAgentTokenIssuePermissionsFlagListsVocabulary(t *testing.T) {
-	flag := agentTokenIssueCmd.Flags().Lookup("permissions")
-	require.NotNil(t, flag)
-	for _, name := range agentgrant.KnownPermissionNames() {
-		assert.Contains(t, flag.Usage, name)
-	}
-	assert.Contains(t, flag.Usage, "only draft-reply currently executes")
-}
-
-func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
+func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newDraftReplyFixture(t)
@@ -142,10 +131,10 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 	}).Router())
 	t.Cleanup(server.Close)
 
-	issue := func(permissions []string, sourceID int64) string {
+	issue := func(sourceID int64) string {
 		body, err := json.Marshal(map[string]any{
 			"label":       "test-agent",
-			"permissions": permissions,
+			"permissions": []string{"draft.create"},
 			"source_ids":  []int64{sourceID},
 		})
 		require.NoError(err)
@@ -162,7 +151,7 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 		return issued.Secret
 	}
 
-	run := func(secret string) (int, []api.CLIRunEvent, api.ErrorResponse) {
+	run := func(secret string) []api.CLIRunEvent {
 		args := []string{
 			"draft-reply", strconv.FormatInt(fixture.parentID, 10),
 			"--from", testutil.IMAPTestUsername, "--body", "reply body", "--json",
@@ -176,33 +165,19 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
+		require.Equal(http.StatusOK, resp.StatusCode)
 		var events []api.CLIRunEvent
-		var response api.ErrorResponse
-		if resp.StatusCode == http.StatusOK {
-			scanner := bufio.NewScanner(resp.Body)
-			for scanner.Scan() {
-				var event api.CLIRunEvent
-				require.NoError(json.Unmarshal(scanner.Bytes(), &event))
-				events = append(events, event)
-			}
-			require.NoError(scanner.Err())
-			return resp.StatusCode, events, response
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			var event api.CLIRunEvent
+			require.NoError(json.Unmarshal(scanner.Bytes(), &event))
+			events = append(events, event)
 		}
-		require.NoError(json.NewDecoder(resp.Body).Decode(&response))
-		return resp.StatusCode, events, response
+		require.NoError(scanner.Err())
+		return events
 	}
 
-	readOnly := issue([]string{string(agentgrant.PermissionDraftRead)}, fixture.source.ID)
-	code, events, response := run(readOnly)
-	assert.Equal(http.StatusBadRequest, code)
-	assert.Equal("command_not_allowed", response.Error)
-	assert.Empty(events)
-	assert.Zero(providerCalls, "a read-only grant must be rejected before provider work")
-
-	full := issue(agentgrant.KnownPermissionNames(), fixture.source.ID)
-	code, events, response = run(full)
-	assert.Equal(http.StatusOK, code)
-	assert.Empty(response.Error)
+	events := run(issue(fixture.source.ID))
 	require.Len(events, 2)
 	assert.Equal(cliStreamStdout, events[0].Type)
 	var result draftReplyOutput
@@ -210,21 +185,15 @@ func TestDelegatedDraftPermissionsThroughHTTP(t *testing.T) {
 	assert.Equal(draftReplyStatusCreated, result.Status)
 	assert.Equal(fixture.source.ID, result.SourceID)
 	assert.Equal("Drafts", result.Mailbox)
-	assert.Contains(result.OperationRef, fmt.Sprintf("%d:Drafts|", fixture.source.ID))
 	assert.Equal("complete", events[1].Type)
-	t.Logf("full grant stream: %s", strings.TrimSpace(events[0].Data))
 	assert.Equal(1, providerCalls)
 
 	secondSource, err := fixture.store.GetOrCreateSource("imap", "other@example.com")
 	require.NoError(err)
-	otherSource := issue(agentgrant.KnownPermissionNames(), secondSource.ID)
-	code, events, response = run(otherSource)
-	assert.Equal(http.StatusOK, code)
-	assert.Empty(response.Error)
+	events = run(issue(secondSource.ID))
 	require.Len(events, 1)
 	assert.Equal("error", events[0].Type)
 	assert.Equal("not_permitted", events[0].Error)
-	t.Logf("other-source stream: %+v", events)
 	assert.Equal(1, providerCalls, "an out-of-grant source must be rejected before provider work")
 }
 

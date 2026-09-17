@@ -1,5 +1,7 @@
 package api
 
+import "go.kenn.io/msgvault/internal/agentgrant"
+
 // CLIRunDraftReplyCommand names the daemon CLI command that the daemon runs
 // in-process instead of spawning a subprocess.
 const CLIRunDraftReplyCommand = "draft-reply"
@@ -8,6 +10,10 @@ const CLIRunDraftReplyCommand = "draft-reply"
 // route.
 func IsCLIRunDraftReply(args []string) bool {
 	return len(args) > 0 && args[0] == CLIRunDraftReplyCommand
+}
+
+func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
+	return grant != nil && IsCLIRunDraftReply(args) && grant.HasPermission(agentgrant.PermissionDraftCreate)
 }
 
 // CLIRunCodedError carries a fixed code for the client and the underlying

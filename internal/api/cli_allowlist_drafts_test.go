@@ -145,65 +145,39 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 }
 
 func TestDelegatedCLIRunRequiresGrantedPermission(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	reg := agentgrant.NewRegistry()
-	stub := &stubSourceStore{
-		src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
-	}
-	runnerCalls := 0
-	stub.runFunc = func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
-		runnerCalls++
-		return nil
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:    &config.Config{Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}},
-		Store:     stub,
-		Logger:    testLogger(),
-		Scheduler: newMockScheduler(),
-	})
-	srv.agentGrants = reg
-	source := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, readSecret, _, err := reg.Issue("read-only", []agentgrant.Permission{agentgrant.PermissionDraftRead}, []agentgrant.SourceRef{source})
-	require.NoError(err)
-	_, fullSecret, _, err := reg.Issue("full", []agentgrant.Permission{
-		agentgrant.PermissionDraftCreate,
-		agentgrant.PermissionDraftRead,
-		agentgrant.PermissionDraftEdit,
-		agentgrant.PermissionDraftDelete,
-	}, []agentgrant.SourceRef{source})
-	require.NoError(err)
-
-	request := func(secret string, args []string) (int, ErrorResponse) {
-		body, marshalErr := json.Marshal(CLIRunRequest{Args: args})
-		require.NoError(marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		resp := httptest.NewRecorder()
-		srv.Router().ServeHTTP(resp, req)
-		var errResp ErrorResponse
-		if resp.Code != http.StatusOK {
-			require.NoError(json.NewDecoder(resp.Body).Decode(&errResp))
-		}
-		return resp.Code, errResp
-	}
-
-	code, response := request(readSecret, []string{CLIRunDraftReplyCommand, "42"})
-	assert.Equal(http.StatusBadRequest, code)
-	assert.Equal("command_not_allowed", response.Error)
-	assert.Zero(runnerCalls, "missing draft.create must stop before the runner")
-
-	code, response = request(fullSecret, []string{CLIRunDraftReplyCommand, "42"})
-	assert.Equal(http.StatusOK, code)
-	assert.Equal(1, runnerCalls, "draft.create must admit draft-reply")
-	assert.Empty(response.Error)
-
-	for _, command := range []string{"draft-get", "draft-edit", "draft-delete"} {
-		code, response = request(fullSecret, []string{command, "42"})
-		assert.Equal(http.StatusBadRequest, code)
-		assert.Equal("command_not_allowed", response.Error)
-		assert.Equal(1, runnerCalls, "future delegated commands must not reach the runner")
+	for _, tc := range []struct {
+		name  string
+		grant *agentgrant.Grant
+		code  int
+		calls int
+	}{
+		{name: "draft.create", grant: &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}, code: http.StatusOK, calls: 1},
+		{name: "missing permission", grant: &agentgrant.Grant{}, code: http.StatusBadRequest},
+		{name: "nil grant", code: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			runnerCalls := 0
+			stub := &stubSourceStore{}
+			stub.runFunc = func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
+				runnerCalls++
+				return nil
+			}
+			srv := &Server{store: stub, logger: testLogger()}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewBufferString(`{"args":["draft-reply","42"]}`))
+			req = req.WithContext(context.WithValue(req.Context(), requestSecurityContextKey{}, requestSecurity{
+				auth: requestAuthentication{Mode: AuthModeDelegated, Grant: tc.grant},
+			}))
+			resp := httptest.NewRecorder()
+			srv.handleCLIRun(resp, req)
+			assert.Equal(tc.code, resp.Code)
+			assert.Equal(tc.calls, runnerCalls)
+			if tc.code != http.StatusOK {
+				var response ErrorResponse
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+				assert.Equal("command_not_allowed", response.Error)
+			}
+		})
 	}
 }
 

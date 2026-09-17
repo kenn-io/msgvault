@@ -546,13 +546,8 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 
 	// A grant that references a different source entirely.
 	outOfScopeGrant := &agentgrant.Grant{
-		ID: "g-out-of-scope",
-		Permissions: []agentgrant.Permission{
-			agentgrant.PermissionDraftCreate,
-			agentgrant.PermissionDraftRead,
-			agentgrant.PermissionDraftEdit,
-			agentgrant.PermissionDraftDelete,
-		},
+		ID:          "g-out-of-scope",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		Sources: []agentgrant.SourceRef{
 			{ID: fixture.source.ID + 999, Type: "imap", Identifier: "other@example.com"},
 		},

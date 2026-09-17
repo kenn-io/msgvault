@@ -206,11 +206,9 @@ See [Web UI](web-ui.md), [TUI](usage/tui.md),
   to a specific source and Drafts folder. The server must support UIDPLUS.
   Msgvault stores an archived copy; it never sends the email.
 - Add restricted agent grants. Owner-only `agent-token issue/list/revoke`
-  commands manage in-memory tokens with `draft.create`, `draft.read`,
-  `draft.edit`, and `draft.delete` permissions for named sources. Agents use
-  `--agent-url` and `--agent-token-file`; only `draft-reply` currently executes
-  through delegated mode, and sending is separate. Grants expire when revoked
-  or when the daemon restarts.
+  commands manage in-memory tokens with `draft.create` permission for named
+  sources. Agents use `--agent-url` and `--agent-token-file` to run only
+  `draft-reply`; grants expire when revoked or when the daemon restarts.
   Enable `[server] agent_access = true` with a non-empty `api_key`; see
   [agent-token](cli-reference.md#agent-token) and
   [configuration](configuration.md#server).
