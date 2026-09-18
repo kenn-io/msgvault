@@ -55,6 +55,8 @@ import (
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
+const ordinaryQueryCeiling = 20 * time.Millisecond
+
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
 // engine never reaches the embed step (e.g. ResolveActiveForFingerprint
 // fails first). Calling Embed signals a test bug — guard with a t.Fatal-
@@ -1345,14 +1347,11 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 		requestDone <- err
 	}()
 
-	require.Eventually(func() bool {
-		select {
-		case <-queryStarted:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond, "DuckDB query starts")
+	select {
+	case <-queryStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow("DuckDB query did not start")
+	}
 	assert.False(<-queryHasDeadline, "marked query context must not have a server deadline")
 	assert.Never(func() bool {
 		select {
@@ -1361,7 +1360,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 		default:
 			return false
 		}
-	}, 60*time.Millisecond, 5*time.Millisecond,
+	}, 3*ordinaryQueryCeiling, 5*time.Millisecond,
 		"marked query survives the 20ms ordinary query ceiling")
 
 	cancel()

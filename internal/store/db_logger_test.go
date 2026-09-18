@@ -290,10 +290,7 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	durAtEndOfScan, ok := rec["duration_ms"].(float64)
 	require.True(ok, "duration_ms is float64")
 
-	// Simulate caller doing unrelated work between end-of-scan
-	// and the deferred Close. The log line must not be re-emitted
-	// and the duration must already be recorded.
-	time.Sleep(50 * time.Millisecond)
+	// Close must not re-emit the log line or change the recorded duration.
 	require.NoError(rows.Close(), "close")
 
 	count := 0

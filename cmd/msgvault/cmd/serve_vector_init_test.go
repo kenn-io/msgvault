@@ -107,21 +107,6 @@ func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.S
 	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
 }
 
-func waitForVectorStatus(t *testing.T, srv *api.Server, want api.VectorStatus) string {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		status, msg := srv.VectorStatus()
-		if status == want {
-			return msg
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	status, _ := srv.VectorStatus()
-	require.Equal(t, want, status, "vector status never reached %s", want)
-	return ""
-}
-
 func TestVectorInitHandleWaitContextReturnsTrueWhenFinished(t *testing.T) {
 	h := &vectorInitHandle{done: make(chan struct{})}
 	close(h.done)
@@ -209,7 +194,8 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, sched)
 
 	requirements.True(h.WaitTimeout(5 * time.Second))
-	waitForVectorStatus(t, srv, api.VectorStatusReady)
+	status, _ := srv.VectorStatus()
+	requirements.Equal(api.VectorStatusReady, status)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/people/search",
 		strings.NewReader(`{"query":"synthetic"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -393,7 +379,8 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
 
 	require.True(t, h.WaitTimeout(5*time.Second))
-	detail := waitForVectorStatus(t, srv, api.VectorStatusStale)
+	status, detail := srv.VectorStatus()
+	require.Equal(t, api.VectorStatusStale, status)
 	assert := assert.New(t)
 	assert.Contains(detail, "old-model:384:c6000:e1", "detail names the stored fingerprint")
 	assert.Contains(detail, c.Vector.GenerationFingerprint(), "detail names the configured fingerprint")
@@ -413,7 +400,8 @@ func TestStartVectorInitReportsError(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
 
 	require.True(t, h.WaitTimeout(5*time.Second))
-	msg := waitForVectorStatus(t, srv, api.VectorStatusError)
+	status, msg := srv.VectorStatus()
+	require.Equal(t, api.VectorStatusError, status)
 	assert.Contains(t, msg, "migration exploded")
 }
 
