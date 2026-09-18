@@ -409,6 +409,7 @@ func TestStartVectorInitReportsError(t *testing.T) {
 
 func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
 		c := config.NewDefaultConfig()
 		c.Vector.Enabled = true
 		withTestConfig(t, c)
@@ -426,23 +427,32 @@ func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
 		h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
 		t.Cleanup(func() {
 			releaseWork()
-			require.True(t, h.WaitTimeout(5*time.Second))
-			require.NoError(t, srv.Shutdown(context.Background()), "shutdown")
+			require.True(h.WaitTimeout(5 * time.Second))
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
 			synctest.Wait()
 		})
 
-		// While init runs, the gate must be held: BeginWorkContext with an
-		// already-cancelled context must fail rather than acquire.
 		synctest.Wait()
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		_, ok := gate.BeginWorkContext(ctx)
-		assert.False(t, ok, "gate should be held during init")
+		_, _, held := gate.Holder()
+		require.True(held, "gate should be held during init")
+		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		defer cancel()
+		probeDone := make(chan bool, 1)
+		go func() {
+			done, ok := gate.BeginWorkContext(probeCtx)
+			if ok {
+				done()
+			}
+			probeDone <- ok
+		}()
+		synctest.Sleep(6 * time.Millisecond)
+		synctest.Wait()
+		assert.False(t, <-probeDone, "live gate probe must time out while init holds the gate")
 
 		releaseWork()
-		require.True(t, h.WaitTimeout(5*time.Second))
+		require.True(h.WaitTimeout(5 * time.Second))
 		done, ok := gate.BeginWork()
-		require.True(t, ok, "gate must be released after init")
+		require.True(ok, "gate must be released after init")
 		done()
 	})
 }

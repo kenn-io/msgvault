@@ -106,7 +106,7 @@ func bareDuration(pass *analysis.Pass, expr ast.Expr) (int64, bool) {
 	allowed = func(node ast.Expr) bool {
 		switch n := node.(type) {
 		case *ast.BasicLit:
-			return n.Kind == token.INT
+			return n.Kind == token.INT || n.Kind == token.FLOAT
 		case *ast.SelectorExpr:
 			ident, ok := n.X.(*ast.Ident)
 			if !ok {
@@ -128,7 +128,13 @@ func bareDuration(pass *analysis.Pass, expr ast.Expr) (int64, bool) {
 		return 0, false
 	}
 	value := pass.TypesInfo.Types[expr].Value
-	if value == nil || value.Kind() != constant.Int {
+	if value == nil {
+		return 0, false
+	}
+	if value.Kind() == constant.Float {
+		value = constant.ToInt(value)
+	}
+	if value.Kind() != constant.Int {
 		return 0, false
 	}
 	integer, ok := constant.Int64Val(value)

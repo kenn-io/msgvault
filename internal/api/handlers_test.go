@@ -2155,8 +2155,10 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 		probeRelease := make(chan struct{})
 		backfillEntered := make(chan struct{})
 		backfillRelease := make(chan struct{})
-		var releaseOnce sync.Once
-		release := func() { releaseOnce.Do(func() { close(backfillRelease) }) }
+		var probeReleaseOnce sync.Once
+		releaseProbe := func() { probeReleaseOnce.Do(func() { close(probeRelease) }) }
+		var backfillReleaseOnce sync.Once
+		releaseBackfill := func() { backfillReleaseOnce.Do(func() { close(backfillRelease) }) }
 		st := &mockStore{
 			needsFTSBackfillFunc: func() bool { <-probeRelease; return true },
 			backfillFTSFunc: func(func(done, total int64)) (int64, error) {
@@ -2177,7 +2179,12 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 			Store:  st, Engine: engine, Logger: testLogger(), RequestTimeout: 5 * time.Millisecond,
 		})
-		t.Cleanup(func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		t.Cleanup(func() {
+			releaseProbe()
+			releaseBackfill()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			synctest.Wait()
+		})
 		searchIndexState := func() string {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 			w := httptest.NewRecorder()
@@ -2197,10 +2204,10 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 			return resp.IndexState
 		}
 		assert.Equal("checking", searchIndexState(), "state while the probe runs")
-		close(probeRelease)
+		releaseProbe()
 		synctest.Wait()
 		assert.Equal("building", searchIndexState(), "state while the backfill runs")
-		release()
+		releaseBackfill()
 		synctest.Wait()
 		assert.True(srv.ftsIndexComplete.Load(), "backfill completion must set the memo flag")
 		assert.Empty(searchIndexState(), "state once the index is complete")
@@ -2821,6 +2828,7 @@ func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing
 		}()
 
 		synctest.Wait()
+		synctest.Sleep(6 * time.Millisecond)
 		releaseGate()
 		synctest.Wait()
 		<-done

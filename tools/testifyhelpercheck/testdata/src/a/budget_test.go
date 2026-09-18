@@ -10,14 +10,16 @@ import (
 )
 
 func TestPollingBudgets(t *testing.T) {
-	aliasedAssert.Eventually(t, func() bool { return true }, 999*time.Millisecond, time.Millisecond)        // want "assert.Eventually budget 999ms"
+	aliasedAssert.Eventually(t, func() bool { return true }, 999*time.Millisecond, time.Millisecond) // want "assert.Eventually budget 999ms"
+	// 0.5*time.Second is rejected because time.Second is a typed duration constant.
+	aliasedRequire.Eventually(t, func() bool { return true }, 0.5*1e9*time.Nanosecond, time.Millisecond)    // want "require.Eventually budget 500ms"
 	aliasedRequire.Neverf(t, func() bool { return false }, 0, time.Millisecond, "never")                    // want "require.Neverf budget 0s"
 	aliasedAssert.EventuallyWithT(t, func(*aliasedAssert.CollectT) {}, -time.Millisecond, time.Millisecond) // want "assert.EventuallyWithT budget -1ms"
 	aliasedRequire.Eventually(t, func() bool { return true }, time.Second, time.Millisecond)
 	aliasedAssert.Eventually(t, func() bool { return true }, namedBudget, time.Millisecond)
 	aliasedRequire.Eventually(t, func() bool { return true }, variableBudget(), time.Millisecond)
-	aliasedAssert.Eventually(t, func() bool { return true }, time.Second, time.Millisecond)                    // want "test has 8 direct testify package calls"
-	aliasedRequire.EventuallyWithTf(t, func(*aliasedRequire.CollectT) {}, time.Second, time.Millisecond, "ok") // want "test has 8 direct testify package calls"
+	aliasedAssert.Eventually(t, func() bool { return true }, time.Second, time.Millisecond)                    // want "test has 9 direct testify package calls"
+	aliasedRequire.EventuallyWithTf(t, func(*aliasedRequire.CollectT) {}, time.Second, time.Millisecond, "ok") // want "test has 9 direct testify package calls"
 
 	assertions := aliasedAssert.New(t)
 	assertions.Eventuallyf(func() bool { return true }, 999*time.Millisecond, time.Millisecond, "poll") // want "assert.Eventuallyf budget 999ms"

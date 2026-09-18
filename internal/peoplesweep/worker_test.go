@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -887,6 +888,8 @@ func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
 		store := &workerFailureStore{}
 		started := make(chan struct{}, 1)
 		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
 		runner := &workerProductionRunner{started: started, block: release}
 		worker := Worker{Config: Config{LeaseDuration: 30 * time.Millisecond}, Store: store, Runner: runner}
 		type result struct {
@@ -894,6 +897,13 @@ func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
 			err   error
 		}
 		done := make(chan result, 1)
+		joined := false
+		t.Cleanup(func() {
+			releaseWork()
+			if !joined {
+				<-done
+			}
+		})
 		go func() {
 			primary := PreparedStructuredRequest{}
 			execution, beginErr := runner.BeginStructuredExecution(t.Context(), primary)
@@ -914,8 +924,9 @@ func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
 		<-started
 		synctest.Sleep(30 * time.Millisecond)
 		assert.GreaterOrEqual(t, store.renewCalls.Load(), int64(2), "lease heartbeat renewals")
-		close(release)
+		releaseWork()
 		got := <-done
+		joined = true
 		require.NoError(t, got.err)
 		assert.Equal(t, int64(1), got.lease.Fence)
 	})
