@@ -96,11 +96,14 @@ func runEmbed(cmd *cobra.Command) error {
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:       vecPath,
-			MainPath:   cfg.DatabaseDSN(),
-			Dimension:  cfg.Vector.Embeddings.Dimension,
-			MainDB:     s.DB(),
-			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
+			Path:            vecPath,
+			MainPath:        cfg.DatabaseDSN(),
+			Dimension:       cfg.Vector.Embeddings.Dimension,
+			MainDB:          s.DB(),
+			BuildScope:      cfg.Vector.Embed.Scope.BuildScope(),
+			ANNOversample:   cfg.Vector.Search.ANNOversample,
+			ANNNProbe:       cfg.Vector.Search.ANNNProbe,
+			AcceleratorMode: cfg.Vector.Search.SQLiteAccelerator,
 		})
 		if err != nil {
 			return fmt.Errorf("open vectors.db: %w", err)

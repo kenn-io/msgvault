@@ -4484,6 +4484,7 @@ type HybridSearchResponse struct {
 	Returned         int64                   `json:"returned"`
 	ScopeLabel       *string                 `json:"scope_label,omitzero"`
 	ScopeSourceCount *int64                  `json:"scope_source_count,omitempty"`
+	Timings          HybridSearchTimings     `json:"timings"`
 	TookMs           int64                   `json:"took_ms"`
 }
 
@@ -4507,10 +4508,21 @@ func (h HybridSearchResponse) Validate() error {
 			}
 		}
 	}
+	if v, ok := any(h.Timings).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Timings", err)
+		}
+	}
 	if len(errors) == 0 {
 		return nil
 	}
 	return errors
+}
+
+type HybridSearchTimings struct {
+	HydrationMs      int64 `json:"hydration_ms"`
+	QueryEmbeddingMs int64 `json:"query_embedding_ms"`
+	RetrievalMs      int64 `json:"retrieval_ms"`
 }
 
 type IdentityConfirmationOutcome struct {

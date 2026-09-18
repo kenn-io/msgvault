@@ -1394,6 +1394,12 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 				},
 				HasMore:       true,
 				PoolSaturated: true,
+				TookMS:        12,
+				Timings: HybridSearchTimings{
+					QueryEmbeddingMS: 2,
+					RetrievalMS:      7,
+					HydrationMS:      3,
+				},
 				Generation: hybridGenerationSummary{
 					ID:          7,
 					Model:       "fake",
@@ -1434,6 +1440,12 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	require.NotNil(resp.Data[0].Matches[0].Score, "match score")
 	assert.InDelta(0.88, *resp.Data[0].Matches[0].Score, 0.001, "match score")
 	assert.Equal(int64(7), resp.Generation.ID, "generation")
+	assert.Equal(int64(12), resp.TookMS, "total timing")
+	assert.Equal(HybridSearchTimings{
+		QueryEmbeddingMS: 2,
+		RetrievalMS:      7,
+		HydrationMS:      3,
+	}, resp.Timings, "phase timings")
 }
 
 func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
@@ -1454,6 +1466,27 @@ func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
 	assert.Contains(t, text, "search_metadata", "filter-only guidance")
 	assert.NotContains(t, text, "mode=fts", "mode=fts is not a valid mode for search_message_bodies")
 	assert.False(t, searcherCalled, "filter-only query must fail before remote search")
+}
+
+func TestSearchMessageBodies_HybridResponseIncludesPhaseTimings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	h := &handlers{
+		engine: &querytest.MockEngine{},
+		hybridSearcher: hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
+			return &HybridSearchResult{Generation: HybridGeneration{State: "active"}}, nil
+		}),
+	}
+
+	result := callToolDirect(t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+		"query": "semantic terms",
+		"mode":  searchModeHybrid,
+	})
+	require.False(result.isError, "unexpected error: %s", resultText(t, result))
+	var payload map[string]json.RawMessage
+	require.NoError(json.Unmarshal([]byte(resultText(t, result)), &payload))
+	assert.Contains(payload, "took_ms")
+	assert.Contains(payload, "timings")
 }
 
 func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {

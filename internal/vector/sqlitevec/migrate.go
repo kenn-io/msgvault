@@ -39,8 +39,14 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	if err := migratePersonEmbeddings(ctx, db); err != nil {
 		return fmt.Errorf("migrate person embeddings: %w", err)
 	}
+	if err := migrateAcceleratorMetadata(ctx, db); err != nil {
+		return fmt.Errorf("migrate accelerator metadata: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, acceleratorMaintenanceSQL); err != nil {
+		return fmt.Errorf("install accelerator maintenance triggers: %w", err)
 	}
 	// Idempotent column additions for databases initialized before
 	// these columns existed. SQLite returns "duplicate column name"
@@ -87,6 +93,133 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	}
 	return EnsurePersonVectorTable(ctx, db, defaultDim)
 }
+
+// migrateAcceleratorMetadata adds and initializes the source counters before
+// installing the triggers that maintain them. The schema changes, potentially
+// long backfill, and trigger installation commit atomically so interruption
+// cannot leave a present-but-zero count that future opens mistake for complete.
+func migrateAcceleratorMetadata(ctx context.Context, db *sql.DB) error {
+	exists, err := tableExists(ctx, db, "index_generations")
+	if err != nil || !exists {
+		return err
+	}
+
+	hasCount, err := columnExists(ctx, db, "index_generations", "embedding_count")
+	if err != nil {
+		return err
+	}
+	hasRevision, err := columnExists(ctx, db, "index_generations", "vector_revision")
+	if err != nil {
+		return err
+	}
+	var installedTriggers int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'trigger' AND name IN (
+			'embeddings_vector_insert', 'embeddings_vector_delete',
+			'embeddings_vector_identity_update', 'embeddings_vector_generation_update'
+		)`).Scan(&installedTriggers); err != nil {
+		return fmt.Errorf("inspect accelerator maintenance triggers: %w", err)
+	}
+	if hasCount && hasRevision && installedTriggers == 4 {
+		return nil
+	}
+	hasEmbeddings := false
+	if !hasCount || installedTriggers != 4 {
+		hasEmbeddings, err = tableExists(ctx, db, "embeddings")
+		if err != nil {
+			return fmt.Errorf("inspect embeddings table for accelerator migration: %w", err)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin accelerator metadata migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if !hasCount {
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE index_generations ADD COLUMN embedding_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+			if isDuplicateColumnErr(err) {
+				// A concurrent migrator committed the same atomic migration,
+				// including its backfill and trigger installation.
+				return nil
+			}
+			return fmt.Errorf("add index_generations.embedding_count: %w", err)
+		}
+	}
+	// A missing trigger set may be the residue of an interrupted older
+	// migration. Recount in that one-time repair case as well as when the
+	// count column is first introduced.
+	if (!hasCount || installedTriggers != 4) && hasEmbeddings {
+		if _, err := tx.ExecContext(ctx, `UPDATE index_generations
+			SET embedding_count = (
+				SELECT COUNT(*) FROM embeddings
+				WHERE embeddings.generation_id = index_generations.id
+			)`); err != nil {
+			return fmt.Errorf("initialize generation embedding counts: %w", err)
+		}
+	}
+	if !hasRevision {
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE index_generations ADD COLUMN vector_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add index_generations.vector_revision: %w", err)
+		}
+	}
+	if hasEmbeddings {
+		if _, err := tx.ExecContext(ctx, acceleratorMaintenanceSQL); err != nil {
+			return fmt.Errorf("install accelerator maintenance triggers: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit accelerator metadata migration: %w", err)
+	}
+	return nil
+}
+
+// These triggers deliberately live in SQLite instead of Go write paths. An
+// older msgvault binary still fires them, causing a ready accelerator's saved
+// source revision to stop matching before a newer binary can use stale rows.
+const acceleratorMaintenanceSQL = `
+CREATE TRIGGER IF NOT EXISTS embeddings_vector_insert
+AFTER INSERT ON embeddings
+BEGIN
+    UPDATE index_generations
+       SET embedding_count = embedding_count + 1,
+           vector_revision = vector_revision + 1
+     WHERE id = NEW.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS embeddings_vector_delete
+AFTER DELETE ON embeddings
+BEGIN
+    UPDATE index_generations
+       SET embedding_count = embedding_count - 1,
+           vector_revision = vector_revision + 1
+     WHERE id = OLD.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS embeddings_vector_identity_update
+AFTER UPDATE OF message_id, chunk_index ON embeddings
+BEGIN
+    UPDATE index_generations
+       SET vector_revision = vector_revision + 1
+     WHERE id = NEW.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS embeddings_vector_generation_update
+AFTER UPDATE OF generation_id ON embeddings
+WHEN OLD.generation_id != NEW.generation_id
+BEGIN
+    UPDATE index_generations
+       SET embedding_count = embedding_count - 1,
+           vector_revision = vector_revision + 1
+     WHERE id = OLD.generation_id;
+    UPDATE index_generations
+       SET embedding_count = embedding_count + 1,
+           vector_revision = vector_revision + 1
+     WHERE id = NEW.generation_id;
+END;
+`
 
 // migrateEmbeddingsToChunked detects the pre-chunking schema (no
 // embedding_id column) and rewrites the embeddings table in place:

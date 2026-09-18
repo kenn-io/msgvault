@@ -350,11 +350,7 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 	return hits, nil
 }
 
-type personGenerationQueryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-func personGeneration(ctx context.Context, q personGenerationQueryer, gen vector.GenerationID) (int, error) {
+func personGeneration(ctx context.Context, q rowQueryer, gen vector.GenerationID) (int, error) {
 	var dim int
 	var state vector.GenerationState
 	err := q.QueryRowContext(ctx,

@@ -3,6 +3,7 @@
  */
 import type { HybridGenerationSummary } from "./hybridGenerationSummary";
 import type { HybridSearchItem } from "./hybridSearchItem";
+import type { HybridSearchTimings } from "./hybridSearchTimings";
 
 export interface HybridSearchResponse {
   generation: HybridGenerationSummary;
@@ -14,6 +15,7 @@ export interface HybridSearchResponse {
   returned: number;
   scope_label?: string;
   scope_source_count?: number;
+  timings: HybridSearchTimings;
   took_ms: number;
   [key: string]: unknown;
 }

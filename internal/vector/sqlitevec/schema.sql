@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS index_generations (
     completed_at  INTEGER,
     activated_at  INTEGER,
     state         TEXT NOT NULL,
-    message_count INTEGER NOT NULL DEFAULT 0
+    message_count INTEGER NOT NULL DEFAULT 0,
+    embedding_count INTEGER NOT NULL DEFAULT 0,
+    vector_revision INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_generations_active
     ON index_generations(state) WHERE state = 'active';
@@ -54,6 +56,22 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_gen_msg ON embeddings(generation_id, message_id);
+
+CREATE TABLE IF NOT EXISTS vector_accelerators (
+    generation_id     INTEGER PRIMARY KEY REFERENCES index_generations(id) ON DELETE CASCADE,
+    kind              TEXT NOT NULL CHECK (kind = 'vec1_ivf_opq'),
+    state             TEXT NOT NULL CHECK (state IN ('building', 'ready', 'stale')),
+    table_name        TEXT NOT NULL UNIQUE,
+    dimension         INTEGER NOT NULL,
+    indexed_count     INTEGER NOT NULL DEFAULT 0,
+    last_embedding_id INTEGER NOT NULL DEFAULT 0,
+    source_revision   INTEGER NOT NULL DEFAULT 0,
+    started_at        INTEGER NOT NULL,
+    completed_at      INTEGER,
+    model_config      TEXT NOT NULL,
+    vec1_version      TEXT NOT NULL,
+    last_error        TEXT
+);
 
 -- Person embeddings are a separate corpus. The synthetic embedding_id joins
 -- to person_vectors_vec_dN without ever entering message-owned tables.

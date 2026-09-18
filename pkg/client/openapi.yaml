@@ -4904,6 +4904,8 @@ components:
         scope_source_count:
           format: int64
           type: integer
+        timings:
+          $ref: "#/components/schemas/HybridSearchTimings"
         took_ms:
           format: int64
           type: integer
@@ -4915,7 +4917,24 @@ components:
         - has_more
         - generation
         - took_ms
+        - timings
         - results
+      type: object
+    HybridSearchTimings:
+      properties:
+        hydration_ms:
+          format: int64
+          type: integer
+        query_embedding_ms:
+          format: int64
+          type: integer
+        retrieval_ms:
+          format: int64
+          type: integer
+      required:
+        - query_embedding_ms
+        - retrieval_ms
+        - hydration_ms
       type: object
     IdentityConfirmationOutcome:
       properties:
@@ -12165,7 +12184,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.26.0
+  version: 2.27.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

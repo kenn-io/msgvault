@@ -56,6 +56,15 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require.NoError(err)
 	require.Equal("prune", pruneCmd.Name())
 
+	optimizeCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "optimize"})
+	require.NoError(err)
+	require.Equal("optimize", optimizeCmd.Name())
+
+	workerCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, embeddingsOptimizeWorkerName})
+	require.NoError(err)
+	require.True(workerCmd.Hidden)
+	require.True(skipsConfigLoad(workerCmd))
+
 	legacyCmd, _, err := rootCmd.Find([]string{"build-embeddings"})
 	require.NoError(err)
 	require.Equal("build-embeddings", legacyCmd.Name())

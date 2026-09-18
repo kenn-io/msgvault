@@ -28,4 +28,8 @@ func TestSQLiteVecExtensionLoads(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO t (generation_id, message_id, embedding) VALUES (?, ?, ?)`,
 		1, 42, []byte{0, 0, 0x80, 0x3f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 	require.NoError(err, "insert vector")
+
+	var vec1Info string
+	require.NoError(db.QueryRow(`SELECT vec1_info()`).Scan(&vec1Info), "query Vec1 info")
+	require.Contains(vec1Info, "version 0.7")
 }

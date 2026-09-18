@@ -20,7 +20,10 @@ var (
 	embeddingsActivateYes       bool
 )
 
-const embeddingsCommandName = "embeddings"
+const (
+	embeddingsCommandName        = "embeddings"
+	embeddingsOptimizeWorkerName = "__optimize-worker"
+)
 
 var embeddingsCmd = &cobra.Command{
 	Use:   embeddingsCommandName,
@@ -172,6 +175,8 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsRetireCmd)
 	embeddingsCmd.AddCommand(embeddingsActivateCmd)
 	embeddingsCmd.AddCommand(embeddingsPruneCmd)
+	embeddingsCmd.AddCommand(embeddingsOptimizeCmd)
+	embeddingsCmd.AddCommand(embeddingsOptimizeWorkerCmd)
 	rootCmd.AddCommand(embeddingsCmd)
 	rootCmd.AddCommand(embedCmd)
 }

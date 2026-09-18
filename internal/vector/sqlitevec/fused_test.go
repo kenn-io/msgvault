@@ -48,6 +48,49 @@ func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 	assert.Falsef(math.IsNaN(hits[0].VectorScore), "top hit VectorScore should not be NaN: %+v", hits[0])
 }
 
+func TestFusedSearch_ReadyAcceleratorFusesBothSignals(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	generationID := seedAndEmbed(t, b, map[int64][]float32{
+		1: unitVec(768, 0),
+		2: unitVec(768, 1),
+		3: unitVec(768, 2),
+	})
+	installReadyFlatAccelerator(t, b, generationID, 768)
+	require.NoError(t, b.ActivateGeneration(ctx, generationID, true))
+
+	hits, saturated, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms: []string{"meeting"}, QueryVec: unitVec(768, 1),
+		Generation: generationID, KPerSignal: 2, Limit: 5, RRFK: 60,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hits)
+	assert.Equal(t, int64(2), hits[0].MessageID)
+	assert.False(t, math.IsNaN(hits[0].BM25Score))
+	assert.False(t, math.IsNaN(hits[0].VectorScore))
+	assert.True(t, saturated, "the vector K+1 probe should report the capped pool")
+}
+
+func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	vectors := make(map[int64][]float32, 80)
+	for i := range 80 {
+		vectors[int64(i+1)] = []float32{1, float32(i) / 100, 0, 0}
+	}
+	generationID := seedAndEmbed(t, b, vectors)
+	installReadyFlatAccelerator(t, b, generationID, 4)
+	b.annWorkCeiling = 32
+	_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	require.NoError(t, err)
+
+	hits, saturated, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: generationID,
+		KPerSignal: 5, Limit: 5, RRFK: 60,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+	assert.True(t, saturated)
+}
+
 func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

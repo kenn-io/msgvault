@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-17"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.25.0**.
+it is separate from the binary release version. The current schema is **2.27.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.27.0 adds `took_ms` and a required `timings` breakdown
+(`query_embedding_ms`, `retrieval_ms`, and `hydration_ms`) to vector and hybrid
+`/api/v1/search` responses.
+
+Schema 2.26.0 adds optional `web_url` metadata to message result schemas.
 
 Schema 2.25.0 adds the CardDAV publication review flow:
 `GET /api/v1/carddav/publications/{person_id}/preview` returns the exact
@@ -1391,6 +1397,7 @@ query string can also carry `message_type:` / `message_type=` operators inside
       "state": "active"
     },
   "took_ms": 84,
+  "timings": {"query_embedding_ms": 12, "retrieval_ms": 41, "hydration_ms": 31},
   "results": [
     {
       "id": 12345,
@@ -1411,7 +1418,8 @@ query string can also carry `message_type:` / `message_type=` operators inside
 Vector and hybrid responses expose `returned` instead of `total`
 (ANN search does not have a meaningful total count), add a
 `generation` sub-object naming the index generation that answered
-the query, and include `took_ms`. The top-level `results` array
+the query, and include `took_ms` plus a `timings` breakdown
+(`query_embedding_ms`, `retrieval_ms`, and `hydration_ms`). The top-level `results` array
 replaces `messages`. `pool_saturated` is true when a vector or BM25
 candidate pool hit its configured cap (or pure vector search returned
 as many hits as requested), hinting that increasing the limit or

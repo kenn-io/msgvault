@@ -425,6 +425,14 @@ type HybridSearchResult struct {
 	PoolSaturated bool
 	Generation    HybridGeneration
 	HasMore       bool
+	TookMS        int64
+	Timings       HybridSearchTimings
+}
+
+type HybridSearchTimings struct {
+	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
+	RetrievalMS      int64 `json:"retrieval_ms"`
+	HydrationMS      int64 `json:"hydration_ms"`
 }
 
 type SimilarSearcher interface {
@@ -959,6 +967,8 @@ type searchMessageBodiesResponse struct {
 	Mode          string                  `json:"mode"`
 	PoolSaturated bool                    `json:"pool_saturated"`
 	Generation    hybridGenerationSummary `json:"generation"`
+	TookMS        int64                   `json:"took_ms"`
+	Timings       HybridSearchTimings     `json:"timings"`
 }
 
 // searchMessageBodiesHybrid runs vector or hybrid search via the configured
@@ -979,6 +989,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 			"vector_not_enabled: vector search is not configured on this server",
 		), nil
 	}
+	started := time.Now()
 
 	// Resolve account filter to a source ID for the structured Filter.
 	account, _ := args[toolArgAccount].(string)
@@ -1047,6 +1058,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	if err != nil {
 		return dependencyError("search semantic index", err)
 	}
+	hydrationStarted := time.Now()
 
 	// Bulk-hydrate hits in one round-trip instead of looping
 	// GetMessage per result (which fetches body, From, To, Cc, Bcc,
@@ -1100,6 +1112,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	if err := h.attachVectorChunkMatches(ctx, meta.Generation.ID, meta.QueryVector, page, minScore); err != nil {
 		return nil, err
 	}
+	hydrationDuration := time.Since(hydrationStarted)
 
 	nextPageServable := maxPage == 0 || requestedEnd < maxPage
 	hasMore := false
@@ -1121,6 +1134,12 @@ func (h *handlers) searchMessageBodiesHybrid(
 			Dimension:   meta.Generation.Dimension,
 			Fingerprint: meta.Generation.Fingerprint,
 			State:       string(meta.Generation.State),
+		},
+		TookMS: time.Since(started).Milliseconds(),
+		Timings: HybridSearchTimings{
+			QueryEmbeddingMS: meta.QueryEmbeddingDuration.Milliseconds(),
+			RetrievalMS:      meta.RetrievalDuration.Milliseconds(),
+			HydrationMS:      hydrationDuration.Milliseconds(),
 		},
 	})
 }
@@ -1210,6 +1229,8 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		Mode:              mode,
 		PoolSaturated:     result.PoolSaturated,
 		Generation:        result.Generation,
+		TookMS:            result.TookMS,
+		Timings:           result.Timings,
 	})
 }
 

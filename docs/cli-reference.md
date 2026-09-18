@@ -2143,6 +2143,8 @@ msgvault embeddings <subcommand> [flags]
 | `build` | Build or update the index. Incremental by default; `--full-rebuild` starts a new generation. |
 | `resume` | Continue scan-and-fill embedding for the building or active generation. Incremental by default; `--backstop` also scans below the watermark. |
 | `list` | List index generations with their state, model, dimension, and pending count. |
+| `optimize [generation-id]` | Build or resume the local SQLite search accelerator from stored vectors. |
+| `prune` | Remove embeddings for hard-deleted messages. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
 | `retire <generation-id>` | Retire a generation. |
 
@@ -2189,7 +2191,29 @@ msgvault embeddings resume --backstop
 msgvault embeddings list
 ```
 
-Print one row per index generation: ID, state (`building`, `active`, or `retired`), model, dimension, embedded message count, pending count, fingerprint, and the start, completion, and activation timestamps.
+Print one row per index generation: ID, generation state, model, dimension,
+coverage, accelerator state and row count, accelerator timestamps and last
+error, fingerprint, and generation timestamps.
+
+### embeddings optimize
+
+```bash
+msgvault embeddings optimize [generation-id]
+```
+
+Build or resume the SQLite approximate-search accelerator from vectors already
+stored for a generation. The active generation is used when the ID is omitted.
+The command never calls the embedding provider. It is safe to interrupt and
+rerun; the accelerator is not used for search until verification and atomic
+publication complete. PostgreSQL does not need this command.
+
+### embeddings prune
+
+```bash
+msgvault embeddings prune
+```
+
+Remove stored message embeddings whose source messages were hard-deleted.
 
 ### embeddings activate
 
