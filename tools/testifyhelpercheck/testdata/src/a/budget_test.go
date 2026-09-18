@@ -3,6 +3,7 @@ package a
 import (
 	"testing"
 	"time"
+	tm "time"
 
 	aliasedAssert "github.com/stretchr/testify/assert"
 	aliasedRequire "github.com/stretchr/testify/require"
@@ -43,4 +44,22 @@ func TestNegativeSpace(t *testing.T) {
 	aliasedAssert.Eventually(t, func() bool { return true }, variableBudget(), time.Millisecond)
 	time.Sleep(time.Millisecond)
 	_ = "assert.Eventually(t, f, 999*time.Millisecond)"
+}
+
+func TestAliasedTimeBudget(t *testing.T) {
+	aliasedAssert.Eventually(t, func() bool { return true }, 999*tm.Millisecond, tm.Millisecond) // want "assert.Eventually budget 999ms"
+}
+
+func TestShadowedTimeImport(t *testing.T) {
+	time := struct{ Millisecond time.Duration }{}
+	aliasedAssert.Eventually(t, func() bool { return true }, time.Millisecond, time.Millisecond)
+}
+
+type unrelatedAssertions struct{}
+
+func (unrelatedAssertions) Eventually(*testing.T, func() bool, time.Duration, time.Duration) {}
+
+func TestUnrelatedEventuallyMethod(t *testing.T) {
+	var assertions unrelatedAssertions
+	assertions.Eventually(t, func() bool { return true }, 999*time.Millisecond, time.Millisecond)
 }

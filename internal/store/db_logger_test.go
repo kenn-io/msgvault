@@ -304,8 +304,7 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 		}
 	}
 	assert.Equal(1, count, "query log lines")
-	// Equality proves the duration recorded at end-of-scan did not absorb the
-	// 50ms of post-iteration work, without imposing a host-speed ceiling.
+	// Equality proves Close does not re-record the duration after end-of-scan.
 	assert.InDelta(durAtEndOfScan, lastDuration, 0, "duration_ms changed after Close")
 }
 

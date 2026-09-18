@@ -913,6 +913,7 @@ func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
 		}()
 		<-started
 		synctest.Sleep(30 * time.Millisecond)
+		assert.GreaterOrEqual(t, store.renewCalls.Load(), int64(2), "lease heartbeat renewals")
 		close(release)
 		got := <-done
 		require.NoError(t, got.err)

@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -406,37 +408,43 @@ func TestStartVectorInitReportsError(t *testing.T) {
 }
 
 func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
-	c := config.NewDefaultConfig()
-	c.Vector.Enabled = true
-	withTestConfig(t, c)
+	synctest.Test(t, func(t *testing.T) {
+		c := config.NewDefaultConfig()
+		c.Vector.Enabled = true
+		withTestConfig(t, c)
 
-	gate := api.NewSerialOperationGate()
-	release := make(chan struct{})
-	overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
-		<-release
-		return nil, ctx.Err()
+		gate := api.NewSerialOperationGate()
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
+		overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
+			<-release
+			return nil, ctx.Err()
+		})
+
+		srv := newVectorInitTestServer(t)
+		h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
+		t.Cleanup(func() {
+			releaseWork()
+			require.True(t, h.WaitTimeout(5*time.Second))
+			require.NoError(t, srv.Shutdown(context.Background()), "shutdown")
+			synctest.Wait()
+		})
+
+		// While init runs, the gate must be held: BeginWorkContext with an
+		// already-cancelled context must fail rather than acquire.
+		synctest.Wait()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, ok := gate.BeginWorkContext(ctx)
+		assert.False(t, ok, "gate should be held during init")
+
+		releaseWork()
+		require.True(t, h.WaitTimeout(5*time.Second))
+		done, ok := gate.BeginWork()
+		require.True(t, ok, "gate must be released after init")
+		done()
 	})
-
-	srv := newVectorInitTestServer(t)
-	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
-
-	// While init runs, the gate must be held: BeginWorkContext with an
-	// already-cancelled context must fail rather than acquire.
-	assert.Eventually(t, func() bool {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-		done, ok := gate.BeginWorkContext(ctx)
-		if ok {
-			done()
-		}
-		return !ok
-	}, 2*time.Second, 10*time.Millisecond, "gate should be held during init")
-
-	close(release)
-	require.True(t, h.WaitTimeout(5*time.Second))
-	done, ok := gate.BeginWork()
-	require.True(t, ok, "gate must be released after init")
-	done()
 }
 
 func TestStartVectorInitAbortsQuietlyOnCancel(t *testing.T) {

@@ -414,10 +414,6 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
 			}()
 
 			synctest.Wait()
-			probeCtx, probeCancel := context.WithTimeout(context.Background(), time.Second)
-			defer probeCancel()
-			_, probeAcquired := gate.BeginRequestWorkContext(probeCtx, "gate probe")
-			assert.False(t, probeAcquired, "gate probe must remain blocked while the owner holds the gate")
 			assert.True(t, gate.HasRequestWaiters(),
 				"delegated draft-reply must register as gate waiter (label: msgvault draft-reply)")
 

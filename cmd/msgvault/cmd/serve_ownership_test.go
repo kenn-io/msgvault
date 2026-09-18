@@ -83,13 +83,11 @@ func TestRuntimeRecordHeartbeatRepublishesUntilCancelled(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { defer close(done); runtimeRecordHeartbeat(ctx, owner, 10*time.Millisecond) }()
+		t.Cleanup(func() { cancel(); <-done; require.NoError(owner.Close(), "close ownership") })
 		synctest.Sleep(10 * time.Millisecond)
 		synctest.Wait()
 		_, statErr := os.Stat(path)
 		require.NoError(statErr, "heartbeat republishes the pruned record")
-		cancel()
-		<-done
-		require.NoError(owner.Close(), "close ownership")
 	})
 }
 
@@ -106,13 +104,12 @@ func TestRuntimeRecordHeartbeatDoesNotRepublishAfterOwnershipClose(t *testing.T)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { defer close(done); runtimeRecordHeartbeat(ctx, owner, time.Millisecond) }()
+		t.Cleanup(func() { cancel(); <-done; require.NoError(owner.Close(), "close ownership") })
 		require.NoError(owner.Close(), "close ownership")
 		require.NoError(owner.SetStartupPhase("still starting"), "startup phase update after close")
 		synctest.Sleep(100 * time.Millisecond)
 		_, statErr := os.Stat(path)
 		assert.ErrorIs(statErr, os.ErrNotExist, "closed ownership must stay unpublished")
-		cancel()
-		<-done
 	})
 }
 

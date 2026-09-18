@@ -109,7 +109,7 @@ func bareDuration(pass *analysis.Pass, expr ast.Expr) (int64, bool) {
 			return n.Kind == token.INT
 		case *ast.SelectorExpr:
 			ident, ok := n.X.(*ast.Ident)
-			if !ok || ident.Name != "time" {
+			if !ok {
 				return false
 			}
 			obj, ok := pass.TypesInfo.Uses[ident].(*types.PkgName)
