@@ -709,8 +709,9 @@ func TestBeeperMediaCASBoundary(t *testing.T) {
 		t.Run(storage, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			blobs := casStore(t, wav, storage)
-			file, err := prepareMediaUpload(t.Context(), blobs, descriptor)
+			file, format, err := prepareMediaUpload(t.Context(), blobs, descriptor)
 			require.NoError(err)
+			assert.Equal("wav", format)
 			got, err := io.ReadAll(file)
 			require.NoError(err)
 			closeAndRemove(file)
@@ -990,6 +991,100 @@ func TestBeeperMediaGaps(t *testing.T) {
 	assert.Empty(deliveryNextActions(t, world.st, "destination-gaps"))
 }
 
+// TestBeeperMediaAliasIdentity sends verified WAV and MP3 under the labels
+// Docbank accepts, whatever MIME alias or extension the provider reported.
+func TestBeeperMediaAliasIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t,
+		voiceSpec{id: "mp3", asset: "mxc://beeper.local/mp3", mime: "audio/mp3", fileName: "voice.mp3", data: syntheticMP3(10)},
+		voiceSpec{id: "wave", asset: "mxc://beeper.local/wave", mime: "audio/wave", fileName: "voice.wav", data: syntheticWAV(800, 21)},
+		voiceSpec{id: "vnd", asset: "mxc://beeper.local/vnd", mime: "audio/vnd.wave", fileName: "memo.wave", data: syntheticWAV(800, 22)},
+		voiceSpec{id: "opus", asset: "mxc://beeper.local/opus", mime: "audio/ogg", fileName: "voice.ogg",
+			data: append([]byte("OggS"), make([]byte, 60)...)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-alias"), 6)
+
+	states := map[string]string{}
+	for _, row := range occurrenceRows(t, world.st, "destination-alias") {
+		states[row.MessageID] = row.State + ":" + row.ErrorCode
+	}
+	assert.Equal(map[string]string{"mp3": "retained:", "wave": "retained:", "vnd": "retained:",
+		"opus": "blocked:unsupported_media"}, states)
+	docbank.mu.Lock()
+	metadata := append([]string(nil), docbank.retentionMetadata...)
+	docbank.mu.Unlock()
+	var sent []string
+	for _, raw := range metadata {
+		var fields docbankmedia.SuppliedMetadata
+		require.NoError(json.Unmarshal([]byte(raw), &fields))
+		sent = append(sent, fields.Filename+" "+fields.MediaType)
+	}
+	assert.ElementsMatch([]string{"voice.mp3 audio/mpeg", "voice.wav audio/wav", "memo.wav audio/wav"}, sent)
+}
+
+// TestBeeperMediaSpoolUnavailable waits out a local spool failure as a source
+// gap with a five-minute retry instead of a permanent transport block.
+func TestBeeperMediaSpoolUnavailable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "spool words", data: syntheticWAV(800, 23)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-spool")
+	missing := filepath.Join(t.TempDir(), "missing")
+	restore := map[string]string{}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		restore[name] = os.Getenv(name)
+		t.Setenv(name, missing)
+	}
+
+	// A cancelled pass writes nothing.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := submitter.RunBatch(cancelled)
+	require.ErrorIs(err, context.Canceled)
+	assert.Empty(occurrenceRows(t, world.st, "destination-spool"))
+
+	before := time.Now().UTC()
+	runPasses(t, submitter, 1)
+	rows := occurrenceRows(t, world.st, "destination-spool")
+	require.Len(rows, 1)
+	assert.Equal("source_unavailable:source_unavailable", rows[0].State+":"+rows[0].ErrorCode)
+	deliveries := deliveryRows(t, world.st, "destination-spool")
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact:", deliveries[0].Phase+":"+deliveries[0].ErrorCode)
+	docbank.mu.Lock()
+	assert.Zero(docbank.requests)
+	docbank.mu.Unlock()
+
+	// A restart leaves the gap waiting for its retry, which succeeds once the spool recovers.
+	require.NoError(world.st.ReconsiderBlockedBeeperMediaOperations(t.Context(), "destination-spool"))
+	_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-spool", before.Add(4*time.Minute))
+	require.NoError(err)
+	assert.False(ready, "the gap waits five minutes")
+	operation, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-spool", before.Add(6*time.Minute))
+	require.NoError(err)
+	require.True(ready)
+	assert.Equal(rows[0].OperationID, operation.OperationID)
+	for name, value := range restore {
+		t.Setenv(name, value)
+	}
+	_, err = world.st.DB().Exec(world.st.Rebind(`
+		UPDATE beeper_media_occurrences SET next_action_at = updated_at WHERE destination_key = ?`),
+		"destination-spool")
+	require.NoError(err)
+	runPasses(t, submitter, 4)
+	rows = occurrenceRows(t, world.st, "destination-spool")
+	require.Len(rows, 1)
+	assert.Equal("retained:", rows[0].State+":"+rows[0].ErrorCode)
+	assert.Equal("done", deliveryRows(t, world.st, "destination-spool")[0].Phase)
+}
+
 func deliveryNextActions(t *testing.T, st *store.Store, destination string) []string {
 	t.Helper()
 	rows, err := st.DB().Query(st.Rebind(`
@@ -1112,6 +1207,9 @@ func (f *fakeDocbank) submit(w http.ResponseWriter, r *http.Request) {
 	raw, content, err := readContractMultipart(r, &metadata)
 	if err == nil {
 		err = validContractUpload(metadata.OperationID, metadata.SHA256, metadata.ByteLength, content)
+	}
+	if err == nil {
+		err = validMediaIdentity(metadata.Filename, metadata.MediaType)
 	}
 	if err != nil {
 		f.reject(w, err)
@@ -1313,6 +1411,16 @@ func validContractUpload(operationID, digest string, length int64, content []byt
 	return nil
 }
 
+// validMediaIdentity applies Docbank's exact supplied-media filename and type pairs.
+func validMediaIdentity(filename, mediaType string) error {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext == ".wav" && (mediaType == "audio/wav" || mediaType == "audio/x-wav") ||
+		ext == ".mp3" && mediaType == "audio/mpeg" {
+		return nil
+	}
+	return fmt.Errorf("supplied media requires a WAV or MP3 filename and media type, got %q %q", filename, mediaType)
+}
+
 func writeDocbankJSON(w http.ResponseWriter, value any) {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1424,6 +1532,16 @@ func syntheticWAV(samples int, seed byte) []byte {
 	copy(data[36:40], "data")
 	binary.LittleEndian.PutUint32(data[40:44], uint32(len(audio)))
 	copy(data[44:], audio)
+	return data
+}
+
+// syntheticMP3 returns MPEG-1 Layer III frames at 128 kbps and 44.1 kHz.
+func syntheticMP3(frames int) []byte {
+	const frameBytes = 417
+	data := make([]byte, frames*frameBytes)
+	for offset := 0; offset < len(data); offset += frameBytes {
+		data[offset], data[offset+1], data[offset+2] = 0xff, 0xfb, 0x90
+	}
 	return data
 }
 

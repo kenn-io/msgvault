@@ -396,7 +396,7 @@ func (w *MediaSubmitter) retain(
 		descriptor.SourceSHA256 != operation.SourceSHA256 {
 		return unavailable(errBeeperMediaSourceChanged.Error())
 	}
-	file, err := prepareMediaUpload(actionCtx, w.blobs, descriptor)
+	file, format, err := prepareMediaUpload(actionCtx, w.blobs, descriptor)
 	if err != nil {
 		if actionCtx.Err() != nil {
 			return false, w.finishClientError(ctx, actionCtx, operation, err)
@@ -415,8 +415,9 @@ func (w *MediaSubmitter) retain(
 	if err := json.Unmarshal([]byte(prepared.FrozenRequestJSON), &occurrence); err != nil {
 		return false, fmt.Errorf("decode saved beeper media occurrence: %w", err)
 	}
+	filename, mediaType := mediaWireIdentity(operation.Filename, format)
 	receipt, err := w.client.Submit(actionCtx, docbankmedia.SuppliedMetadata{
-		OperationID: prepared.OperationID, Filename: operation.Filename, MediaType: operation.MIMEType,
+		OperationID: prepared.OperationID, Filename: filename, MediaType: mediaType,
 		SHA256: operation.SourceSHA256, ByteLength: operation.ByteLength, Occurrence: occurrence,
 	}, file)
 	if err != nil {
@@ -846,16 +847,26 @@ func mediaTimestamp(raw []byte, parsed time.Time) docbankmedia.Timestamp {
 	return result
 }
 
+// mediaWireIdentity uses the only labels Docbank accepts: .wav with audio/wav, .mp3 with audio/mpeg.
+func mediaWireIdentity(filename, format string) (string, string) {
+	mediaType := "audio/wav"
+	if format == "mp3" {
+		mediaType = "audio/mpeg"
+	}
+	return strings.TrimSuffix(filename, filepath.Ext(filename)) + "." + format, mediaType
+}
+
+// prepareMediaUpload returns the verified spool and its inspected format; local spool I/O failures retry as source gaps.
 func prepareMediaUpload(
 	ctx context.Context, blobs *attachmentstore.Store, descriptor MediaDescriptor,
-) (*os.File, error) {
+) (*os.File, string, error) {
 	if blobs == nil || descriptor.SourceSHA256 == "" || descriptor.ByteLength < 1 ||
 		descriptor.ByteLength > beeperMediaSourceLimit {
-		return nil, errBeeperMediaUnsupported
+		return nil, "", errBeeperMediaUnsupported
 	}
 	file, err := os.CreateTemp("", "msgvault-docbank-media-*")
 	if err != nil {
-		return nil, fmt.Errorf("create media spool: %w", err)
+		return nil, "", fmt.Errorf("%w: create media spool: %w", errBeeperMediaSourceUnavailable, err)
 	}
 	remove := true
 	defer func() {
@@ -868,7 +879,7 @@ func prepareMediaUpload(
 	// checked, so corrupt or truncated bytes never reach the upload spool.
 	reader, declaredSize, err := blobs.OpenStream(ctx, descriptor.SourceSHA256)
 	if err != nil {
-		return nil, fmt.Errorf("%w: open media source", errBeeperMediaSourceUnavailable)
+		return nil, "", fmt.Errorf("%w: open media source", errBeeperMediaSourceUnavailable)
 	}
 	hash := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(file, hash),
@@ -876,19 +887,32 @@ func prepareMediaUpload(
 	closeErr := reader.Close()
 	if copyErr != nil || closeErr != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, "", ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: verify media source", errBeeperMediaSourceUnavailable)
+		return nil, "", fmt.Errorf("%w: verify media source", errBeeperMediaSourceUnavailable)
 	}
 	if declaredSize != descriptor.ByteLength || written != descriptor.ByteLength ||
 		hex.EncodeToString(hash.Sum(nil)) != descriptor.SourceSHA256 {
-		return nil, fmt.Errorf("%w: media source identity changed", errBeeperMediaSourceUnavailable)
+		return nil, "", fmt.Errorf("%w: media source identity changed", errBeeperMediaSourceUnavailable)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return nil, "", fmt.Errorf("%w: rewind media spool: %w", errBeeperMediaSourceUnavailable, err)
 	}
+	// Provider aliases such as audio/mp3 fail the inspector's identity check, so inspect under canonical labels.
+	header := make([]byte, 12)
+	if _, err := io.ReadFull(file, header); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, "", fmt.Errorf("%w: read media spool: %w", errBeeperMediaSourceUnavailable, err)
+	}
+	format := "mp3"
+	if string(header[:4]) == "RIFF" && string(header[8:]) == "WAVE" {
+		format = "wav"
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, "", fmt.Errorf("%w: rewind media spool: %w", errBeeperMediaSourceUnavailable, err)
+	}
+	inspectName, inspectType := mediaWireIdentity("audio", format)
 	policy := media.InspectionPolicy{
-		Filename: descriptor.Filename, DeclaredMediaType: descriptor.MIMEType,
+		Filename: inspectName, DeclaredMediaType: inspectType,
 		ExpectedBytes: descriptor.ByteLength, ExpectedSHA256: descriptor.SourceSHA256,
 		DescriptorFingerprint: descriptor.SourceSHA256, ProfileFingerprint: descriptor.SourceSHA256,
 		DisclosureFingerprint: descriptor.SourceSHA256, InputKind: document.RenditionInputOriginalFile,
@@ -901,16 +925,16 @@ func prepareMediaUpload(
 	}
 	record, err := media.InspectCapability(file, policy)
 	if err != nil {
-		return nil, errBeeperMediaUnsupported
+		return nil, "", errBeeperMediaUnsupported
 	}
-	if !record.Eligible || (record.Format != "wav" && record.Format != "mp3") {
-		return nil, errBeeperMediaUnsupported
+	if !record.Eligible || record.Format != format {
+		return nil, "", errBeeperMediaUnsupported
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return nil, "", fmt.Errorf("%w: rewind media spool: %w", errBeeperMediaSourceUnavailable, err)
 	}
 	remove = false
-	return file, nil
+	return file, record.Format, nil
 }
 
 func closeAndRemove(file *os.File) {

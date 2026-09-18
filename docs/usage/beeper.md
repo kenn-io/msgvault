@@ -195,9 +195,11 @@ What you need:
   library built into msgvault does not provide them.
 - `upload_consent = true`. It allows transport to that URL only. Docbank's own
   processing consent decides whether the transcript is processed.
-- WAV or MP3 audio. Docbank accepts no other codec, so OGG/Opus, M4A and other
-  formats stay local with the `unsupported_media` code. msgvault never converts
-  audio or runs speech recognition.
+- WAV or MP3 audio. msgvault checks the bytes and sends them as `audio/wav` or
+  `audio/mpeg`, whatever type the provider reported. Docbank accepts no other
+  codec, so OGG/Opus, M4A and other formats stay local with the
+  `unsupported_media` code. msgvault never converts audio or runs speech
+  recognition.
 
 What happens:
 
@@ -226,7 +228,8 @@ What happens:
   which also resumes checking a queued job. Unsupported codecs and other
   local source problems stay `blocked` across restarts until the message
   changes, and so does their transcript delivery, with the same code.
-  Missing or corrupt local bytes wait as `source_unavailable`.
+  Missing or corrupt local bytes, or a temporary upload copy that can't be
+  written, wait as `source_unavailable` and retry after five minutes.
 - A processed delivery reaches `done` only after Docbank reports coverage
   for its own processing request, not for another transcript of the same
   audio. A failed Docbank job or a failed processing request ends as `done`
