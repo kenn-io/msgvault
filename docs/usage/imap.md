@@ -5,7 +5,7 @@ description: Archive IMAP mail efficiently, choose folders, and repair stored la
 ---
 
 Archive mail from an IMAP account, then keep it current without downloading
-unchanged messages again. Start with [IMAP account setup](/docs/setup/#add-an-imap-account)
+unchanged messages again. Start with [IMAP account setup](../setup.md#add-an-imap-account)
 if you have not connected the account yet.
 
 ```bash

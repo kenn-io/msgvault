@@ -195,7 +195,7 @@ msgvault sync-full you@fastmail.com
 IMAP accounts are stored in the same database as Gmail accounts. All tools
 (Web UI, TUI, search, MCP, and REST API) work with IMAP messages the same way.
 To start with only part of a large account, see
-[IMAP Folder Sync](/docs/usage/imap/) for `--folder` and `--skip-folder` examples.
+[IMAP Folder Sync](usage/imap.md) for `--folder` and `--skip-folder` examples.
 
 !!! tip "Microsoft 365 / Outlook.com"
     For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
