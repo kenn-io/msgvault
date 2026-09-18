@@ -2281,7 +2281,6 @@ func TestHandleCLISearchRejectsInvalidDeletionScope(t *testing.T) {
 // trust an index the rebuild left partial.
 func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 
@@ -2344,7 +2343,6 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 // here the rebuild is still running when the probe finishes, then fails.
 func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 
@@ -2438,7 +2436,6 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 		gate := NewSerialOperationGate()
