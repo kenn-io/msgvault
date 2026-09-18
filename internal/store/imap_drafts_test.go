@@ -50,8 +50,9 @@ func TestPersistIMAPDraft(t *testing.T) {
 		{EmailAddress: "alice@example.com", Domain: "example.com"},
 		{EmailAddress: "user@example.com", Domain: "example.com"},
 	}
-	id, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
+	draft, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
 	requirements.NoError(err)
+	id := draft.CurrentMessageID
 	assertions.Positive(id)
 	var draftMembershipCount, cursorCount int
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), id).Scan(&draftMembershipCount))
@@ -91,8 +92,9 @@ func TestPersistIMAPDraft(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(store.IMAPDraftSourceMessageID(receipt), oldSourceID)
 
-	newID, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
+	newDraft, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(id, newID)
 	oldRaw, err := st.GetMessageRaw(id)
 	requirements.NoError(err)

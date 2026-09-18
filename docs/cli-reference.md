@@ -165,6 +165,31 @@ changes. Draft creation never moves an IMAP cursor.
 
 ---
 
+## draft-get, draft-edit, and draft-delete
+
+Read, edit, or delete an IMAP draft created by `draft-reply`:
+
+```bash
+msgvault draft-get <draft-id> [--json]
+msgvault draft-edit <draft-id> --revision <n> --body <text> [--json]
+msgvault draft-delete <draft-id> --revision <n> [--json]
+```
+
+The creation result supplies the opaque `draft_id` and initial revision.
+
+- `--revision` is required for edit and delete; use the current positive revision.
+- `--body` is required for edit; `--body=` sets an empty plain-text body.
+- `--json` emits one JSON result.
+
+`draft-get` reads retained archive content, including discarded drafts, without
+connecting to IMAP or requiring the source's draft mutation grant. Edit and
+delete require the same source policy as `draft-reply`. Delete removes the
+provider draft and retains its archived content. These commands never send mail.
+See [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
+provider checks, retention, and retry behavior.
+
+---
+
 ## list-folders
 
 List the selectable folders in one or all configured IMAP accounts, including

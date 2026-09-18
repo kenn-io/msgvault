@@ -330,3 +330,152 @@ func writeFoldedHeader(raw *bytes.Buffer, name, value string) {
 	}
 	raw.WriteString(line + "\r\n")
 }
+
+// BuildDraftReplacement keeps the envelope and thread headers of a plain-text
+// draft while replacing its body and assigning a new Date and Message-ID.
+func BuildDraftReplacement(currentRaw []byte, body string, now time.Time, messageID string) (ReplyDraft, error) {
+	if len(currentRaw) == 0 {
+		return ReplyDraft{}, errors.New("draft message is empty")
+	}
+	if !utf8.ValidString(body) || strings.ContainsAny(body, "\x00") {
+		return ReplyDraft{}, errors.New("invalid draft body")
+	}
+	message, err := mail.ReadMessage(bytes.NewReader(currentRaw))
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("read draft headers: %w", err)
+	}
+	if err := validateSingletonHeaders(message.Header); err != nil {
+		return ReplyDraft{}, err
+	}
+	contentType := message.Header.Get("Content-Type")
+	if contentType != "" {
+		mediaType, _, err := stdmime.ParseMediaType(contentType)
+		if err != nil {
+			return ReplyDraft{}, fmt.Errorf("invalid draft Content-Type: %w", err)
+		}
+		if !strings.EqualFold(mediaType, "text/plain") {
+			return ReplyDraft{}, errors.New("draft replacement requires a plain-text message")
+		}
+	}
+	parsedCurrent, err := msgmime.Parse(currentRaw)
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("parse draft MIME: %w", err)
+	}
+	if len(parsedCurrent.Attachments) != 0 || parsedCurrent.BodyHTML != "" {
+		return ReplyDraft{}, errors.New("draft replacement does not support multipart or attachments")
+	}
+
+	from, err := parseDraftHeaderAddresses(message.Header, "From", true)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+	to, err := parseDraftHeaderAddresses(message.Header, "To", true)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+	cc, err := parseDraftHeaderAddresses(message.Header, "Cc", false)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+	bcc, err := parseDraftHeaderAddresses(message.Header, "Bcc", false)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+	if len(from) != 1 || len(to) == 0 {
+		return ReplyDraft{}, errors.New("draft must contain one From and at least one To address")
+	}
+	subject := decodeHeader(message.Header.Get("Subject"))
+	if !validHeaderValue(subject) {
+		return ReplyDraft{}, errors.New("invalid draft Subject header")
+	}
+	inReplyTo, err := parseMessageIDHeader(message.Header.Get("In-Reply-To"))
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("invalid draft In-Reply-To: %w", err)
+	}
+	references, err := parseMessageIDHeader(message.Header.Get("References"))
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("invalid draft References: %w", err)
+	}
+	if messageID == "" {
+		messageID, err = newReplyMessageID()
+		if err != nil {
+			return ReplyDraft{}, err
+		}
+	}
+	messageID, err = normalizeWireMessageID(messageID)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
+
+	fromValue := formatAddresses(from)
+	toValue := formatAddresses(to)
+	ccValue := formatAddresses(cc)
+	bccValue := formatAddresses(bcc)
+	for _, value := range []string{fromValue, toValue, ccValue, bccValue} {
+		if value != "" && !validHeaderValue(value) {
+			return ReplyDraft{}, errors.New("invalid draft address header")
+		}
+	}
+	var raw bytes.Buffer
+	writeHeader := func(name, value string) {
+		_, _ = fmt.Fprintf(&raw, "%s: %s\r\n", name, value)
+	}
+	writeHeader("Date", now.UTC().Format(time.RFC1123Z))
+	writeHeader("From", fromValue)
+	writeHeader("To", toValue)
+	if ccValue != "" {
+		writeHeader("Cc", ccValue)
+	}
+	if bccValue != "" {
+		writeHeader("Bcc", bccValue)
+	}
+	if subject != "" {
+		if !isASCII(subject) {
+			subject = stdmime.QEncoding.Encode("UTF-8", subject)
+		}
+		writeHeader("Subject", subject)
+	}
+	writeHeader("Message-ID", "<"+messageID+">")
+	if len(inReplyTo) > 0 {
+		writeHeader("In-Reply-To", formatMessageIDs(inReplyTo))
+	}
+	if len(references) > 0 {
+		writeFoldedHeader(&raw, "References", formatMessageIDs(references))
+	}
+	writeHeader("MIME-Version", "1.0")
+	writeHeader("Content-Type", `text/plain; charset="utf-8"`)
+	writeHeader("Content-Transfer-Encoding", "quoted-printable")
+	raw.WriteString("\r\n")
+	qp := quotedprintable.NewWriter(&raw)
+	if _, err := io.WriteString(qp, body); err != nil {
+		return ReplyDraft{}, fmt.Errorf("encode draft body: %w", err)
+	}
+	if err := qp.Close(); err != nil {
+		return ReplyDraft{}, fmt.Errorf("close draft body: %w", err)
+	}
+	parsed, err := msgmime.Parse(raw.Bytes())
+	if err != nil {
+		return ReplyDraft{}, fmt.Errorf("parse composed draft: %w", err)
+	}
+	return ReplyDraft{Raw: raw.Bytes(), Parsed: parsed}, nil
+}
+
+func parseDraftHeaderAddresses(header mail.Header, name string, required bool) ([]*mail.Address, error) {
+	values := headerValues(header, name)
+	if len(values) == 0 {
+		if required {
+			return nil, fmt.Errorf("draft is missing %s header", name)
+		}
+		return nil, nil
+	}
+	addresses, err := mail.ParseAddressList(strings.Join(values, ", "))
+	if err != nil {
+		return nil, fmt.Errorf("invalid draft %s header: %w", name, err)
+	}
+	for _, address := range addresses {
+		if err := validateAddress(address); err != nil {
+			return nil, fmt.Errorf("invalid draft %s address: %w", name, err)
+		}
+	}
+	return addresses, nil
+}

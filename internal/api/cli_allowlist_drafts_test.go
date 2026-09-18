@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,13 +19,23 @@ import (
 )
 
 func TestCLIRunDraftAllowlist(t *testing.T) {
-	assert.True(t, cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
-	assert.False(t, cliRunCommandAllowed([]string{"configure-imap-drafts"}))
-	assert.False(t, cliRunCommandAllowed([]string{"draft-reply"}))
+	assertions := assert.New(t)
+	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
+	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-edit", "draft-abc", "--revision=1", "--body=body"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-delete", "draft-abc", "--revision=1"}))
+	assertions.False(cliRunCommandAllowed([]string{"configure-imap-drafts"}))
+	assertions.False(cliRunCommandAllowed([]string{"draft-reply"}))
+	assertions.False(cliRunCommandAllowed([]string{"draft-get"}))
 }
 
 // newDelegatedTestServer creates a server with agentGrants enabled and issues a grant.
 func newDelegatedTestServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	return newDelegatedTestServerWithGate(t, nil)
+}
+
+func newDelegatedTestServerWithGate(t *testing.T, gate OperationGate) (*Server, string) {
 	t.Helper()
 	reg := agentgrant.NewRegistry()
 	stub := &stubSourceStore{
@@ -41,10 +52,11 @@ func newDelegatedTestServer(t *testing.T) (*Server, string) {
 		},
 	}
 	srv := NewServerWithOptions(ServerOptions{
-		Config:    cfg,
-		Store:     stub,
-		Logger:    testLogger(),
-		Scheduler: newMockScheduler(),
+		Config:        cfg,
+		Store:         stub,
+		Logger:        testLogger(),
+		Scheduler:     newMockScheduler(),
+		OperationGate: gate,
 	})
 	srv.agentGrants = reg
 
@@ -176,6 +188,120 @@ func TestDelegatedCLIRunRequiresGrantedPermission(t *testing.T) {
 				var response ErrorResponse
 				require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
 				assert.Equal("command_not_allowed", response.Error)
+			}
+		})
+	}
+}
+
+func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) {
+	gate := NewSerialOperationGate()
+	srv, secret := newDelegatedTestServerWithGate(t, gate)
+	serverStore, ok := srv.store.(*stubSourceStore)
+	setupRequirements := require.New(t)
+	setupRequirements.True(ok, "delegated fixture must expose its stub store")
+
+	runnerCalls := 0
+	serverStore.runFunc = func(_ context.Context, _ CLIRunRequest, _ func(CLIRunEvent) error) error {
+		runnerCalls++
+		return nil
+	}
+
+	oldWaitLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldWaitLimit })
+
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "owner draft operation")
+	setupRequirements.True(ok, "hold operation gate for delegated requests")
+	defer release()
+
+	commands := []struct {
+		name string
+		args []string
+	}{
+		{name: "get", args: []string{"draft-get", "draft-abc"}},
+		{name: "edit", args: []string{"draft-edit", "draft-abc", "--revision=1", "--body=updated"}},
+		{name: "delete", args: []string{"draft-delete", "draft-abc", "--revision=1"}},
+	}
+
+	for _, command := range commands {
+		t.Run(command.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			body, err := json.Marshal(CLIRunRequest{Args: command.args})
+			requirements.NoError(err)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+			response := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				srv.Router().ServeHTTP(response, req)
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(200 * time.Millisecond):
+				requirements.FailNow("delegated lifecycle rejection must not wait on a held operation gate")
+			}
+
+			assertions.Equal(http.StatusBadRequest, response.Code)
+			var apiError ErrorResponse
+			requirements.NoError(json.NewDecoder(response.Body).Decode(&apiError))
+			assertions.Equal("command_not_allowed", apiError.Error)
+			assertions.Equal(0, runnerCalls)
+			assertions.False(gate.HasRequestWaiters())
+		})
+	}
+}
+
+func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
+	gate := &recordingOperationGate{allow: true}
+	srv, _ := newDelegatedTestServerWithGate(t, gate)
+	serverStore, ok := srv.store.(*stubSourceStore)
+	setupRequirements := require.New(t)
+	setupRequirements.True(ok, "owner fixture must expose its stub store")
+
+	runnerCalls := 0
+	serverStore.runFunc = func(_ context.Context, _ CLIRunRequest, _ func(CLIRunEvent) error) error {
+		runnerCalls++
+		return nil
+	}
+
+	commands := []struct {
+		name string
+		args []string
+	}{
+		{name: "get", args: []string{"draft-get", "draft-abc"}},
+		{name: "edit", args: []string{"draft-edit", "draft-abc", "--revision=1", "--body=updated"}},
+		{name: "delete", args: []string{"draft-delete", "draft-abc", "--revision=1"}},
+	}
+
+	for _, command := range commands {
+		t.Run(command.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			body, err := json.Marshal(CLIRunRequest{Args: command.args})
+			requirements.NoError(err)
+			beforeRuns := runnerCalls
+			beforeBegins, beforeDone := gate.counts()
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Api-Key", "test-owner-key")
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, req)
+
+			assertions.Equal(http.StatusOK, response.Code)
+			assertions.Equal(beforeRuns+1, runnerCalls)
+			begins, done := gate.counts()
+			if command.name == "get" {
+				assertions.Equal(beforeBegins, begins)
+				assertions.Equal(beforeDone, done)
+			} else {
+				assertions.Equal(beforeBegins+1, begins)
+				assertions.Equal(beforeDone+1, done)
 			}
 		})
 	}

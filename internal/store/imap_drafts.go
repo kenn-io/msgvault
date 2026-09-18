@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const imapDraftFlagsJSON = `["\\Draft"]`
@@ -18,21 +21,54 @@ type IMAPDraftReceipt struct {
 	UID         uint32
 }
 
-// PersistIMAPDraftContext commits the local message snapshot and its exact
-// mailbox membership in one transaction. It never changes sync cursors.
+// IMAPDraftPending contains durable evidence for an edit or delete that has
+// not completed its provider cleanup.
+type IMAPDraftPending struct {
+	Operation          string
+	OriginalMessageID  int64
+	OriginalReceipt    IMAPDraftReceipt
+	Raw                []byte
+	ReplacementReceipt *IMAPDraftReceipt
+	Code               string
+}
+
+// IMAPDraft is the Store-owned lifecycle record for one managed draft.
+type IMAPDraft struct {
+	DraftID          string
+	SourceID         int64
+	CurrentMessageID int64
+	CurrentReceipt   IMAPDraftReceipt
+	Revision         int64
+	DiscardedAt      *time.Time
+	Pending          *IMAPDraftPending
+}
+
+var (
+	ErrIMAPDraftNotFound = errors.New("IMAP draft not found")
+	ErrIMAPDraftRevision = errors.New("IMAP draft revision mismatch")
+	ErrIMAPDraftPending  = errors.New("IMAP draft has a pending operation")
+	ErrIMAPDraftState    = errors.New("invalid IMAP draft state")
+)
+
+// PersistIMAPDraftContext commits the local message snapshot, exact mailbox
+// membership, and managed ownership in one transaction.
 func (s *Store) PersistIMAPDraftContext(
 	ctx context.Context,
 	receipt IMAPDraftReceipt,
 	participants []ParticipantPersistData,
 	build func([]int64) *MessagePersistData,
-) (int64, error) {
-	if receipt.SourceID <= 0 || strings.TrimSpace(receipt.Mailbox) == "" || receipt.UID == 0 || receipt.UIDValidity == 0 {
-		return 0, errors.New("invalid IMAP draft receipt")
+) (IMAPDraft, error) {
+	if err := validateIMAPDraftReceipt(receipt); err != nil {
+		return IMAPDraft{}, err
 	}
 	if build == nil {
-		return 0, errors.New("persist IMAP draft requires a message builder")
+		return IMAPDraft{}, errors.New("persist IMAP draft requires a message builder")
 	}
-	var messageID int64
+	draftID, err := newIMAPDraftID()
+	if err != nil {
+		return IMAPDraft{}, err
+	}
+	var draft IMAPDraft
 	before := func(ctx context.Context, tx *loggedTx) error {
 		var sourceType string
 		if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id = ?`, receipt.SourceID).Scan(&sourceType); err != nil {
@@ -55,10 +91,8 @@ func (s *Store) PersistIMAPDraftContext(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check IMAP draft membership: %w", err)
 		}
-		// APPEND can reuse a key held by an old-generation membership at this
-		// UID, a moved row after the folder changes generation, or a tombstoned
-		// orphan with no memberships. Preserve that row under an invalidated key;
-		// sync still owns membership retirement and cursors.
+		// APPEND can reuse a key after a folder epoch reset. Keep the old
+		// archive row, but free the provider key before inserting the new one.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
 			WHERE source_id = ? AND source_message_id = ? AND (EXISTS (
@@ -77,8 +111,7 @@ func (s *Store) PersistIMAPDraftContext(
 			return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
 		}
 		err = tx.QueryRowContext(ctx, `
-			SELECT id FROM messages
-			WHERE source_id = ? AND source_message_id = ?
+			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt)).Scan(&existing)
 		if err == nil {
 			return errors.New("source_key_conflict")
@@ -103,7 +136,7 @@ func (s *Store) PersistIMAPDraftContext(
 		}
 		return data, nil
 	}
-	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, id int64) error {
+	after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO imap_message_memberships
 				(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
@@ -118,13 +151,40 @@ func (s *Store) PersistIMAPDraftContext(
 		if err := replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, id, []int64{labelID}); err != nil {
 			return fmt.Errorf("persist IMAP draft label: %w", err)
 		}
-		messageID = id
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO imap_drafts (
+				draft_id, source_id, current_message_id, current_mailbox,
+				current_uidvalidity, current_uid, revision, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, 1, %s, %s)
+		`, s.dialect.Now(), s.dialect.Now()), draftID, receipt.SourceID, id,
+			receipt.Mailbox, receipt.UIDValidity, receipt.UID); err != nil {
+			return fmt.Errorf("persist IMAP draft ownership: %w", err)
+		}
+		draft = IMAPDraft{
+			DraftID: draftID, SourceID: receipt.SourceID, CurrentMessageID: id,
+			CurrentReceipt: receipt, Revision: 1,
+		}
 		return nil
 	}
 	if _, err := s.persistMessageWithParticipantsTransaction(ctx, before, participants, build, prepare, after); err != nil {
-		return 0, err
+		return IMAPDraft{}, err
 	}
-	return messageID, nil
+	return draft, nil
+}
+
+func validateIMAPDraftReceipt(receipt IMAPDraftReceipt) error {
+	if receipt.SourceID <= 0 || strings.TrimSpace(receipt.Mailbox) == "" || receipt.UID == 0 || receipt.UIDValidity == 0 {
+		return errors.New("invalid IMAP draft receipt")
+	}
+	return nil
+}
+
+func newIMAPDraftID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate IMAP draft ID: %w", err)
+	}
+	return "draft-" + hex.EncodeToString(raw[:]), nil
 }
 
 // IMAPDraftSourceMessageID returns the composite provider key used by sync.

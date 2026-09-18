@@ -245,6 +245,78 @@ outcome to decide what to do next:
 | `remote_unknown` or `accepted_unidentified` | Inspect the Drafts folder before retrying; the draft may already exist.                                                                              |
 | `remote_accepted_local_failed`              | The server accepted the draft, but the local save failed. Use the reported `operation_ref` and mailbox receipt to inspect it before another request. |
 
+## Manage a created draft
+
+The creation result includes an opaque `draft_id` and revision `1`. Read the
+archived draft and its current revision through the daemon:
+
+```bash
+msgvault draft-get <draft-id> --json
+```
+
+`draft-get` never connects to IMAP or changes pending operations. It also reads
+discarded drafts and works when the source's draft mutation grant is disabled
+or its provider configuration is unavailable.
+
+### Edit or delete the provider draft
+
+Use the current revision from `draft-get` or the last successful operation:
+
+```bash
+msgvault draft-edit <draft-id> --revision 1 --body 'Updated text' --json
+msgvault draft-delete <draft-id> --revision 2 --json
+```
+
+Edit and delete require the same daemon-host `[[imap.drafts]]` grant and provider
+configuration as draft creation. Policy changes take effect after a daemon
+restart. Neither command sends mail.
+
+Editing supports plain-text drafts without attachments. `--body=` sets an empty
+body. The edit preserves the From, To, Cc, Bcc, Subject, In-Reply-To, and References
+headers. Msgvault appends one replacement, records the new revision, removes the
+exact old UID, and confirms that it is absent.
+
+Delete removes the exact provider draft and marks the managed draft
+`discarded` after confirming its absence. The local archived content remains
+readable with `draft-get`; ordinary archive garbage collection retains it.
+A discarded draft cannot be edited. Repeating delete with its current revision
+returns `already_discarded`.
+
+### Provider checks before a change
+
+Msgvault refuses stale revisions, UIDVALIDITY changes, external moves, a missing
+`\Draft` flag, an existing `\Deleted` flag, or missing UIDPLUS before writing.
+Edits also reject multipart drafts. An active source sync returns `sync_active`;
+retry after it finishes.
+
+When the mailbox supplies CONDSTORE metadata, msgvault uses the exact UID's
+positive MODSEQ to guard its singleton `UID STORE`, then verifies that UID's
+flags. If the server or mailbox does not support CONDSTORE, including an explicit
+`NOMODSEQ` response, msgvault runs a fresh `SELECT` and exact-UID `FETCH`
+immediately before the nonconditional `UID STORE`. An unexplained missing MODSEQ
+refuses the change before writing.
+
+Every removal path checks the mailbox generation and requires both `\Draft` and
+`\Deleted` again before `UID EXPUNGE`, then confirms exact-UID absence.
+`UID EXPUNGE` itself is not conditional, so another client can still change flags
+after the last check.
+
+### If an edit or delete does not finish
+
+- A delete failure before any remote write clears the pending claim. After
+  resolving the reported problem, retry with the same revision.
+- An uncertain APPEND or removal returns a nonzero result with the saved
+  candidate and available receipt evidence. The operation stays pending and
+  blocks further changes. Inspect the provider state before any manual
+  reconciliation; general recovery for uncertain writes is not available.
+- If `draft-get <draft-id> --json` reports `pending_code: "removed"`, removal was
+  confirmed and saved, but local completion is still pending. Repeat the matching
+  `draft-edit` or `draft-delete` command with the revision from that read to finish
+  locally without another remote write. The source policy still applies. For an
+  edit, `--body` must match the already published replacement after MIME
+  normalization. A `removed` observation in an error response alone is not enough;
+  `draft-get` must report the saved pending code.
+
 ## Keep edited outgoing mail current
 
 After you edit or send a draft in your mail application, IMAP sync can update

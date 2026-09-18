@@ -1727,6 +1727,71 @@ CREATE TABLE IF NOT EXISTS imap_message_memberships (
 CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
+CREATE TABLE IF NOT EXISTS imap_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    current_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    current_mailbox TEXT NOT NULL,
+    current_uidvalidity BIGINT NOT NULL,
+    current_uid BIGINT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    discarded_at TIMESTAMPTZ,
+    pending_operation TEXT,
+    pending_original_message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
+    pending_original_mailbox TEXT,
+    pending_original_uidvalidity BIGINT,
+    pending_original_uid BIGINT,
+    pending_raw BYTEA,
+    pending_replacement_mailbox TEXT,
+    pending_replacement_uidvalidity BIGINT,
+    pending_replacement_uid BIGINT,
+    pending_code TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        (pending_operation IS NULL
+            AND pending_original_message_id IS NULL
+            AND pending_original_mailbox IS NULL
+            AND pending_original_uidvalidity IS NULL
+            AND pending_original_uid IS NULL
+            AND pending_raw IS NULL
+            AND pending_replacement_mailbox IS NULL
+            AND pending_replacement_uidvalidity IS NULL
+            AND pending_replacement_uid IS NULL
+            AND pending_code IS NULL)
+        OR (pending_operation IS NOT NULL
+            AND pending_operation IN ('edit', 'delete')
+            AND pending_original_message_id IS NOT NULL
+            AND pending_original_mailbox IS NOT NULL
+            AND pending_original_uidvalidity IS NOT NULL
+            AND pending_original_uidvalidity > 0
+            AND pending_original_uid IS NOT NULL
+            AND pending_original_uid > 0
+            AND ((pending_operation = 'edit' AND pending_raw IS NOT NULL AND length(pending_raw) > 0)
+                OR (pending_operation = 'delete' AND pending_raw IS NULL))
+            AND (pending_operation = 'edit'
+                OR (pending_replacement_mailbox IS NULL
+                    AND pending_replacement_uidvalidity IS NULL
+                    AND pending_replacement_uid IS NULL)))
+    ),
+    CHECK (discarded_at IS NULL OR pending_operation IS NULL),
+    CHECK (current_uidvalidity > 0 AND current_uid > 0),
+    CHECK ((pending_replacement_mailbox IS NULL
+            AND pending_replacement_uidvalidity IS NULL
+            AND pending_replacement_uid IS NULL)
+        OR (pending_replacement_mailbox IS NOT NULL
+            AND pending_replacement_uidvalidity IS NOT NULL
+            AND pending_replacement_uidvalidity > 0
+            AND pending_replacement_uid IS NOT NULL
+            AND pending_replacement_uid > 0))
+);
+
+CREATE INDEX IF NOT EXISTS idx_imap_drafts_current_message
+    ON imap_drafts(current_message_id);
+
+CREATE INDEX IF NOT EXISTS idx_imap_drafts_pending_original_message
+    ON imap_drafts(pending_original_message_id);
+
 CREATE TABLE IF NOT EXISTS source_import_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
