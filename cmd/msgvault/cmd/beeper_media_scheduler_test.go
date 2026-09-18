@@ -356,10 +356,12 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 	go func() { stopped <- media.TriggerJob(beeperMediaSubmitJob) }()
 	<-otherServer.arrived
 	require.NoError(shutdownServeRuntime(waitCtx, io.Discard, nil, serveSchedulers{sched, media}, gate))
+	shutdownWait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	select {
 	case err := <-stopped:
 		require.ErrorIs(err, context.Canceled)
-	default:
+	case <-shutdownWait.Done():
 		require.FailNow("shutdown returned before the upload stopped")
 	}
 	assert.Equal(map[string]string{
