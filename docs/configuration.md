@@ -843,7 +843,8 @@ upload_consent = true             # allow archive audio to leave msgvault
 
 The daemon reads these settings at startup, so restart it after a change. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route
-stops the job and keeps its rows. `upload_consent` covers transport only; the
+stops the job and keeps its rows. A failed setup, such as an invalid `url`,
+does the same and logs a warning. `upload_consent` covers transport only; the
 Docbank daemon's own processing consent still decides whether transcripts are
 processed.
 

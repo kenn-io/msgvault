@@ -212,6 +212,37 @@ func TestBeeperMediaConfig(t *testing.T) {
 	assert.Len(retentionRows(t, st), 1)
 }
 
+// TestBeeperMediaInvalidConfigUnregisters keeps a failed reconfiguration from
+// leaving an idle journal consumer that holds change log cleanup.
+func TestBeeperMediaInvalidConfigUnregisters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
+	_, httpServer := newRetentionServer(t)
+	sched := scheduler.New(nil)
+	defer func() { <-sched.Stop().Done() }()
+	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
+		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
+	require.True(consumerRegistered(t, st))
+	require.Len(retentionRows(t, st), 1)
+
+	// An invalid endpoint removes the job and consumer but keeps receipts.
+	invalid := cfg
+	invalid.URL = "http://docbank.example.com"
+	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, invalid, nil))
+	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
+	assert.False(consumerRegistered(t, st))
+	assert.Len(retentionRows(t, st), 1)
+
+	// A valid restart registers the consumer again.
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
+	assert.True(consumerRegistered(t, st))
+}
+
 type yieldTracker struct {
 	yield atomic.Bool
 }

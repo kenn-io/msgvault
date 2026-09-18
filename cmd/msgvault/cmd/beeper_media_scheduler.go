@@ -64,15 +64,37 @@ func configureBeeperMediaJob(
 	logger *slog.Logger,
 ) error {
 	if !cfg.Enabled {
-		sched.RemoveJob(beeperMediaSubmitJob)
-		err := withBeeperMediaGate(ctx, gate, func() error {
-			return st.UnregisterAttachmentChangeConsumer(ctx, store.BeeperMediaAttachmentConsumerKey)
-		})
-		if errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
-			return nil
-		}
-		return err
+		return removeBeeperMediaRoute(ctx, sched, gate, st)
 	}
+	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, cfg, logger)
+	if err != nil {
+		// An idle registered consumer would hold attachment change log cleanup for every provider.
+		return errors.Join(err, removeBeeperMediaRoute(ctx, sched, gate, st))
+	}
+	return nil
+}
+
+// removeBeeperMediaRoute drops the job and its journal consumer; receipts stay.
+func removeBeeperMediaRoute(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store) error {
+	sched.RemoveJob(beeperMediaSubmitJob)
+	err := withBeeperMediaGate(ctx, gate, func() error {
+		return st.UnregisterAttachmentChangeConsumer(ctx, store.BeeperMediaAttachmentConsumerKey)
+	})
+	if errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
+		return nil
+	}
+	return err
+}
+
+func addBeeperMediaRoute(
+	ctx context.Context,
+	sched *scheduler.Scheduler,
+	gate api.LabeledOperationGate,
+	st *store.Store,
+	blobs *attachmentstore.Store,
+	cfg config.DocbankIntegrationConfig,
+	logger *slog.Logger,
+) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	lookupKey := func() (string, error) {
 		if cfg.APIKeyEnv == "" {
