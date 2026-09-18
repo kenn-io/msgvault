@@ -435,6 +435,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("configure document reconciliation: %w", err)
 	}
+	if err := configureBeeperMediaJob(ctx, sched, s, blobStore, cfg.Integrations.Docbank, logger); err != nil {
+		logger.Warn("Beeper media submission unavailable", "error", err)
+	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)

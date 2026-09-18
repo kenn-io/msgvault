@@ -1,0 +1,1091 @@
+package beeper
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+const docbankTestKey = "synthetic-docbank-key"
+
+// voiceSpec is one synthetic Beeper audio message served by fakeBeeper.
+type voiceSpec struct {
+	id, asset, mime, fileName, transcript string
+	data                                  []byte
+	ordinary                              bool
+}
+
+type mediaWorld struct {
+	st     *store.Store
+	blobs  *attachmentstore.Store
+	dir    string
+	imp    *Importer
+	beeper *fakeBeeper
+}
+
+// importVoiceChat runs the production Beeper importer against a fake Beeper
+// API so every test starts from rows, raw JSON and CAS written by capture.
+func importVoiceChat(t *testing.T, specs ...voiceSpec) *mediaWorld {
+	t.Helper()
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!audio:beeper.local", AccountID: "signal", Network: "Signal", Title: "Audio", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i, spec := range specs {
+		attachment := map[string]any{
+			"id": spec.asset, "type": "audio", "isVoiceNote": !spec.ordinary,
+			"mimeType": spec.mime, "fileName": spec.fileName, "fileSize": len(spec.data),
+		}
+		if spec.transcript != "" {
+			attachment["transcription"] = map[string]any{
+				"transcription": spec.transcript, "engine": "synthetic", "language": "en",
+			}
+		}
+		ch.Msgs = append(ch.Msgs, fakeMsg{
+			ID: spec.id, SortKey: i, Timestamp: base.Add(time.Duration(i)*time.Minute + 123*time.Millisecond),
+			Type: "VOICE", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+			Attachments: []map[string]any{attachment},
+		})
+		f.setAsset(spec.asset, spec.data)
+	}
+	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	t.Cleanup(done)
+	dir := t.TempDir()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: dir})
+	require.NoError(t, err)
+	blobs, err := attachmentstore.New(store.NewPackCatalog(st), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, blobs.Close()) })
+	return &mediaWorld{st: st, blobs: blobs, dir: dir, imp: imp, beeper: f}
+}
+
+func (w *mediaWorld) submitter(t *testing.T, server *httptest.Server, destination string) *MediaSubmitter {
+	t.Helper()
+	client, err := docbankmedia.NewClient(server.URL, func() (string, error) { return docbankTestKey, nil })
+	require.NoError(t, err)
+	return NewMediaSubmitter(w.st, w.blobs, client, destination)
+}
+
+func runPasses(t *testing.T, submitter *MediaSubmitter, passes int) {
+	t.Helper()
+	for range passes {
+		_, err := submitter.RunBatch(t.Context())
+		require.NoError(t, err)
+	}
+}
+
+type occurrenceRow struct {
+	Ref, Revision, State, OperationID, ErrorCode, SourceID, SourceVersionID string
+	ContentVersionID, OccurrenceID, Coverage, ProcessingKey, MessageID      string
+}
+
+func occurrenceRows(t *testing.T, st *store.Store, destination string) []occurrenceRow {
+	t.Helper()
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT occurrence_ref, revision, retention_state, retention_operation_id, error_code,
+		       source_id, source_version_id, content_version_id, occurrence_id, coverage_state,
+		       processing_key, source_message_id
+		FROM beeper_media_occurrences WHERE destination_key = ?
+		ORDER BY source_message_id, revision`), destination)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var result []occurrenceRow
+	for rows.Next() {
+		var row occurrenceRow
+		require.NoError(t, rows.Scan(&row.Ref, &row.Revision, &row.State, &row.OperationID, &row.ErrorCode,
+			&row.SourceID, &row.SourceVersionID, &row.ContentVersionID, &row.OccurrenceID, &row.Coverage,
+			&row.ProcessingKey, &row.MessageID))
+		result = append(result, row)
+	}
+	require.NoError(t, rows.Err())
+	return result
+}
+
+type deliveryRow struct {
+	Phase, SourceID, SourceVersionID, ContentVersionID, Donor, SuppliedInput string
+	JobID, OperationState, Coverage, ErrorCode                               string
+}
+
+func deliveryRows(t *testing.T, st *store.Store, destination string) []deliveryRow {
+	t.Helper()
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT phase, source_id, source_version_id, content_version_id, donor_occurrence_id,
+		       supplied_input_id, job_id, operation_state, coverage_state, error_code
+		FROM beeper_media_deliveries WHERE destination_key = ? ORDER BY processing_key`), destination)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var result []deliveryRow
+	for rows.Next() {
+		var row deliveryRow
+		require.NoError(t, rows.Scan(&row.Phase, &row.SourceID, &row.SourceVersionID, &row.ContentVersionID,
+			&row.Donor, &row.SuppliedInput, &row.JobID, &row.OperationState, &row.Coverage, &row.ErrorCode))
+		result = append(result, row)
+	}
+	require.NoError(t, rows.Err())
+	return result
+}
+
+func TestBeeperMediaSubmission(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wav := syntheticWAV(1600, 1)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "a complete provider transcript", data: wav})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-a")
+
+	runPasses(t, submitter, 5)
+
+	docbank.mu.Lock()
+	require.Len(docbank.uploads, 1)
+	assert.Equal(wav, docbank.uploads[0])
+	assert.Equal([]string{"a complete provider transcript"}, docbank.transcripts)
+	require.Len(docbank.retentionOps, 1)
+	require.Len(docbank.artifactOps, 1)
+	require.Len(docbank.processOps, 1)
+	for _, id := range []string{docbank.retentionOps[0], docbank.artifactOps[0], docbank.processOps[0]} {
+		parsed, err := uuid.Parse(id)
+		require.NoError(err)
+		assert.Equal(uuid.Version(4), parsed.Version())
+	}
+	occurrence := docbank.occurrences[0]
+	docbank.mu.Unlock()
+	assert.True(strings.HasPrefix(occurrence.Ref, "msgvault:"))
+	assert.NotEmpty(occurrence.Revision)
+	assert.Equal("voice.wav", occurrence.Filename)
+	assert.Equal("instant", occurrence.Message.Precision)
+	assert.True(strings.HasSuffix(occurrence.Message.Raw, ".123Z"))
+
+	rows := occurrenceRows(t, world.st, "destination-a")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Equal("source-1", rows[0].SourceID)
+	assert.Equal("audio-version-1", rows[0].SourceVersionID)
+	assert.Equal("audio-content-1", rows[0].ContentVersionID)
+	assert.Equal("occurrence-1", rows[0].OccurrenceID)
+	deliveries := deliveryRows(t, world.st, "destination-a")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal("succeeded", deliveries[0].OperationState)
+	assert.Equal("transcribed", deliveries[0].Coverage)
+
+	mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "destination-a", "", 10)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	assert.Equal("occurrence-1", mappings[0].DocbankOccurrenceID)
+	assert.Equal("voice1", mappings[0].SourceMessageID)
+}
+
+func TestBeeperMediaSyncIsolation(t *testing.T) {
+	for fault, wantCode := range map[string]string{
+		"http-503": "server_error", "malformed-json": "invalid_receipt", "wait-for-cancel": "",
+	} {
+		t.Run(fault, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			wav := syntheticWAV(800, 2)
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+				mime: "audio/wav", fileName: "voice.wav", transcript: "provider words", data: wav})
+			docbank := newFakeDocbank(t)
+			switch fault {
+			case "http-503":
+				docbank.status = http.StatusServiceUnavailable
+			case "malformed-json":
+				docbank.malformed = true
+			default:
+				docbank.hang = true
+			}
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			submitter := world.submitter(t, server, "destination-fault")
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			_, err := submitter.RunBatch(ctx)
+			cancel()
+			if fault == "wait-for-cancel" {
+				require.ErrorIs(err, context.DeadlineExceeded)
+			} else {
+				require.NoError(err)
+			}
+			rows := occurrenceRows(t, world.st, "destination-fault")
+			require.Len(rows, 1)
+			assert.Equal("pending", rows[0].State)
+			assert.Equal(wantCode, rows[0].ErrorCode)
+
+			// Capture keeps its own completion and checkpoint after the fault.
+			world.beeper.appendMsg("!audio:beeper.local", fakeMsg{
+				ID: "text-after-fault", SortKey: 99, Timestamp: time.Now().Add(-29 * 24 * time.Hour).UTC(),
+				Text: "later text", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+			})
+			summary, err := world.imp.Import(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: world.dir})
+			require.NoError(err)
+			assert.EqualValues(0, summary.Errors)
+			var added int
+			require.NoError(world.st.DB().QueryRow(
+				`SELECT COUNT(*) FROM messages WHERE source_message_id = 'text-after-fault'`).Scan(&added))
+			assert.Equal(1, added)
+			src, err := world.st.GetOrCreateSource("beeper", "signal")
+			require.NoError(err)
+			run, err := world.st.GetLastSuccessfulSync(src.ID)
+			require.NoError(err)
+			assert.True(run.CursorAfter.Valid)
+			var state, hash string
+			require.NoError(world.st.DB().QueryRow(`
+				SELECT attachment_state, content_hash FROM attachments
+				WHERE source_attachment_id = 'beeper:mxc://beeper.local/voice1'`).Scan(&state, &hash))
+			assert.Equal("stored", state)
+			assert.Equal(sha256Hex(wav), hash)
+		})
+	}
+}
+
+func TestBeeperMediaRestart(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 3)})
+	docbank := newFakeDocbank(t)
+	docbank.dropRetention = true
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+
+	runPasses(t, world.submitter(t, server, "destination-restart"), 1)
+	rows := occurrenceRows(t, world.st, "destination-restart")
+	require.Len(rows, 1)
+	assert.Equal("pending", rows[0].State)
+	assert.Equal("transport", rows[0].ErrorCode)
+
+	// A new worker stands in for a restarted daemon once the retry delay passes.
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	runPasses(t, world.submitter(t, server, "destination-restart"), 1)
+
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	require.Len(docbank.retentionOps, 2)
+	assert.Equal(docbank.retentionOps[0], docbank.retentionOps[1])
+	require.Len(docbank.retentionMetadata, 2)
+	assert.Equal(docbank.retentionMetadata[0], docbank.retentionMetadata[1])
+	assert.Equal(rows[0].OperationID, docbank.retentionOps[0])
+	rows = occurrenceRows(t, world.st, "destination-restart")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Equal("source-1", rows[0].SourceID)
+	assert.Equal("occurrence-1", rows[0].OccurrenceID)
+}
+
+// TestBeeperMediaStepTimeout keeps a step that outlives its own deadline from
+// holding the queue: it backs off like a transport fault and the next item runs.
+func TestBeeperMediaStepTimeout(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t,
+		voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1", mime: "audio/wav",
+			fileName: "voice.wav", data: syntheticWAV(800, 11)},
+		voiceSpec{id: "voice2", asset: "mxc://beeper.local/voice2", mime: "audio/wav",
+			fileName: "voice.wav", data: syntheticWAV(800, 12)})
+	docbank := newFakeDocbank(t)
+	docbank.hang = true
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-timeout")
+	submitter.actionTimeout = 100 * time.Millisecond
+
+	runPasses(t, submitter, 1)
+	rows := occurrenceRows(t, world.st, "destination-timeout")
+	require.Len(rows, 2)
+	var timedOut string
+	for _, row := range rows {
+		assert.Equal("pending", row.State)
+		if row.ErrorCode != "" {
+			assert.Equal("timeout", row.ErrorCode)
+			timedOut = row.MessageID
+		}
+	}
+	require.NotEmpty(timedOut)
+
+	docbank.mu.Lock()
+	docbank.hang = false
+	docbank.mu.Unlock()
+	runPasses(t, submitter, 3)
+
+	docbank.mu.Lock()
+	assert.Len(docbank.uploads, 1, "the timed-out item waits for its backoff")
+	docbank.mu.Unlock()
+	for _, row := range occurrenceRows(t, world.st, "destination-timeout") {
+		if row.MessageID == timedOut {
+			assert.Equal("pending", row.State)
+			assert.Equal("timeout", row.ErrorCode)
+		} else {
+			assert.Equal("retained", row.State)
+		}
+	}
+}
+
+// TestBeeperMediaStatusRejection keeps a queued job after a rejected poll and
+// resumes observing it when the daemon restarts.
+func TestBeeperMediaStatusRejection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "status words", data: syntheticWAV(800, 13)})
+	docbank := newFakeDocbank(t)
+	docbank.jobHTTPStatus = http.StatusUnauthorized
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-status")
+
+	runPasses(t, submitter, 4)
+	deliveries := deliveryRows(t, world.st, "destination-status")
+	require.Len(deliveries, 1)
+	assert.Equal("blocked", deliveries[0].Phase)
+	assert.Equal("unauthorized", deliveries[0].ErrorCode)
+	assert.NotEmpty(deliveries[0].JobID)
+	assert.Equal("pending", deliveries[0].Coverage)
+	jobID := deliveries[0].JobID
+
+	docbank.mu.Lock()
+	docbank.jobHTTPStatus = 0
+	requests := docbank.requests
+	docbank.mu.Unlock()
+	runPasses(t, submitter, 2)
+	docbank.mu.Lock()
+	assert.Equal(requests, docbank.requests, "a blocked poll waits for restart")
+	docbank.mu.Unlock()
+
+	require.NoError(world.st.ReconsiderBlockedBeeperMediaOperations(t.Context(), "destination-status"))
+	runPasses(t, submitter, 1)
+	deliveries = deliveryRows(t, world.st, "destination-status")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal(jobID, deliveries[0].JobID)
+	assert.Equal("succeeded", deliveries[0].OperationState)
+	assert.Equal("transcribed", deliveries[0].Coverage)
+	assert.Empty(deliveries[0].ErrorCode)
+}
+
+// TestBeeperMediaCoverageAfterJob keeps observing a completed job until
+// Docbank publishes its coverage.
+func TestBeeperMediaCoverageAfterJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "coverage words", data: syntheticWAV(800, 14)})
+	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-coverage")
+
+	runPasses(t, submitter, 4)
+	deliveries := deliveryRows(t, world.st, "destination-coverage")
+	require.Len(deliveries, 1)
+	assert.Equal("observing", deliveries[0].Phase)
+	assert.Equal("queued", deliveries[0].OperationState)
+	assert.Equal("pending", deliveries[0].Coverage)
+
+	docbank.mu.Lock()
+	docbank.coverage = "transcribed"
+	docbank.mu.Unlock()
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	runPasses(t, submitter, 1)
+	deliveries = deliveryRows(t, world.st, "destination-coverage")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal("succeeded", deliveries[0].OperationState)
+	assert.Equal("transcribed", deliveries[0].Coverage)
+}
+
+// TestBeeperMediaProcessingFailure records Docbank's failed processing
+// receipt, which has no job, as a terminal result and sends no more retries.
+func TestBeeperMediaProcessingFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "failed words", data: syntheticWAV(800, 15)})
+	docbank := newFakeDocbank(t)
+	docbank.failProcessing = true
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-failed")
+
+	runPasses(t, submitter, 3)
+	deliveries := deliveryRows(t, world.st, "destination-failed")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal("failed", deliveries[0].OperationState)
+	assert.Equal("unavailable", deliveries[0].Coverage)
+	assert.Equal("processing_failed", deliveries[0].ErrorCode)
+	assert.Empty(deliveries[0].JobID)
+
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	runPasses(t, submitter, 3)
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	assert.Len(docbank.processOps, 1)
+}
+
+func TestBeeperMediaCASBoundary(t *testing.T) {
+	wav := syntheticWAV(800, 4)
+	digest := sha256Hex(wav)
+	descriptor := MediaDescriptor{SourceSHA256: digest, ByteLength: int64(len(wav)),
+		Filename: "voice.wav", MIMEType: "audio/wav"}
+
+	for _, storage := range []string{"loose", "packed"} {
+		t.Run(storage, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			blobs := casStore(t, wav, storage)
+			file, err := prepareMediaUpload(t.Context(), blobs, descriptor)
+			require.NoError(err)
+			got, err := io.ReadAll(file)
+			require.NoError(err)
+			closeAndRemove(file)
+			assert.Equal(wav, got)
+		})
+	}
+
+	for name, stored := range map[string][]byte{
+		"corrupt": append([]byte("RIFX"), wav[4:]...), "truncated": wav[:len(wav)/2], "zero-bytes": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+				mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: wav})
+			require.NoError(os.WriteFile(filepath.Join(world.dir, digest[:2], digest), stored, 0o600))
+			docbank := newFakeDocbank(t)
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			runPasses(t, world.submitter(t, server, "destination-cas"), 1)
+			docbank.mu.Lock()
+			assert.Zero(docbank.requests)
+			docbank.mu.Unlock()
+			rows := occurrenceRows(t, world.st, "destination-cas")
+			require.Len(rows, 1)
+			assert.Equal("source_unavailable", rows[0].State)
+			assert.Equal("source_unavailable", rows[0].ErrorCode)
+			data, err := os.ReadFile(filepath.Join(world.dir, digest[:2], digest))
+			require.NoError(err)
+			assert.Equal(stored, data)
+		})
+	}
+	spools, err := filepath.Glob(filepath.Join(os.TempDir(), "msgvault-docbank-media-*"))
+	require.NoError(t, err)
+	assert.Empty(t, spools)
+}
+
+func TestBeeperMediaTranscriptBoundary(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	long := strings.TrimSpace(strings.Repeat("long provider words ", 2000))
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: long, data: syntheticWAV(800, 5)})
+
+	var body, metadata string
+	require.NoError(world.st.DB().QueryRow(`
+		SELECT b.body_text, COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+		FROM messages m JOIN message_bodies b ON b.message_id = m.id
+		JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_message_id = 'voice1'`).Scan(&body, &metadata))
+	assert.Contains(body, long)
+	assert.Less(len(metadata), 32768+1024)
+
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-transcript"), 3)
+	docbank.mu.Lock()
+	require.Len(docbank.transcripts, 1)
+	assert.Equal(long, docbank.transcripts[0])
+	assert.Greater(len(docbank.transcripts[0]), 32768)
+	docbank.mu.Unlock()
+
+	candidate := store.BeeperMediaCandidate{SourceType: "beeper", SourceIdentifier: "signal",
+		SourceConversationID: "chat", SourceMessageID: "message-1", SourceAttachmentID: "beeper:mxc://audio",
+		SourcePartKey: "beeper:mxc://audio", ContentHash: strings.Repeat("a", 64), ByteLength: 10}
+	_, _, err := describeMedia(syntheticRaw(t, "message-1", "mxc://audio", strings.Repeat("x", 16777216)), candidate, "archive")
+	require.NoError(err)
+	_, _, err = describeMedia(syntheticRaw(t, "message-1", "mxc://audio", strings.Repeat("x", 16777217)), candidate, "archive")
+	require.ErrorIs(err, errBeeperMediaTranscriptTooLarge)
+	_, _, err = describeMedia(append(syntheticRaw(t, "message-1", "mxc://audio", "ok"), 0xff), candidate, "archive")
+	require.ErrorIs(err, errBeeperMediaRawInvalid)
+}
+
+func TestBeeperMediaReceiptIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "identity words", data: syntheticWAV(800, 6)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-receipt"), 3)
+
+	rows := occurrenceRows(t, world.st, "destination-receipt")
+	require.Len(rows, 1)
+	assert.Equal("audio-version-1", rows[0].SourceVersionID)
+	assert.Equal("audio-content-1", rows[0].ContentVersionID)
+	assert.Equal("occurrence-1", rows[0].OccurrenceID)
+	deliveries := deliveryRows(t, world.st, "destination-receipt")
+	require.Len(deliveries, 1)
+	assert.Equal("input-1", deliveries[0].SuppliedInput)
+	assert.Equal("audio-content-1", deliveries[0].ContentVersionID)
+	assert.Equal("occurrence-1", deliveries[0].Donor)
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	require.Len(docbank.artifactReceipts, 1)
+	assert.Equal("transcript-content-1", docbank.artifactReceipts[0].ContentVersionID)
+	assert.NotEqual(rows[0].ContentVersionID, docbank.artifactReceipts[0].ContentVersionID)
+}
+
+func TestBeeperMediaSharedContent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wav := syntheticWAV(800, 7)
+	world := importVoiceChat(t,
+		voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared words", data: wav},
+		voiceSpec{id: "voice2", asset: "mxc://beeper.local/voice2", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared words", data: wav})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-shared")
+	runPasses(t, submitter, 6)
+
+	rows := occurrenceRows(t, world.st, "destination-shared")
+	require.Len(rows, 2)
+	assert.NotEqual(rows[0].Ref, rows[1].Ref)
+	assert.NotEqual(rows[0].OccurrenceID, rows[1].OccurrenceID)
+	assert.Equal(rows[0].SourceID, rows[1].SourceID)
+	assert.Equal(rows[0].ContentVersionID, rows[1].ContentVersionID)
+	assert.Equal(rows[0].ProcessingKey, rows[1].ProcessingKey)
+	require.Len(deliveryRows(t, world.st, "destination-shared"), 1)
+	docbank.mu.Lock()
+	assert.Len(docbank.uploads, 2)
+	assert.Len(docbank.artifactOps, 1)
+	assert.Len(docbank.processOps, 1)
+	requests := docbank.requests
+	docbank.mu.Unlock()
+
+	// A repeated complete backfill finds nothing to change or send.
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET updated_at = '2001-02-03 04:05:06'`)
+	require.NoError(err)
+	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET updated_at = '2001-02-03 04:05:06'`)
+	require.NoError(err)
+	before := tableSnapshot(t, world.st)
+	runPasses(t, submitter, 3)
+	assert.Equal(before, tableSnapshot(t, world.st))
+	docbank.mu.Lock()
+	assert.Equal(requests, docbank.requests)
+	docbank.mu.Unlock()
+}
+
+func TestBeeperMediaEligibility(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	voice, ordinary := syntheticWAV(800, 8), syntheticWAV(900, 9)
+	fakeWAV := []byte("this is not audio at all, only text bytes")
+	world := importVoiceChat(t,
+		voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1", mime: "audio/wav", fileName: "voice.wav", data: voice},
+		voiceSpec{id: "audio1", asset: "mxc://beeper.local/audio1", mime: "audio/wav", fileName: "song.wav", data: ordinary, ordinary: true},
+		voiceSpec{id: "fake1", asset: "mxc://beeper.local/fake1", mime: "audio/wav", fileName: "claim.wav", data: fakeWAV})
+
+	other, err := world.st.GetOrCreateSource("whatsapp", "beeper-lookalike")
+	require.NoError(err)
+	conversation, err := world.st.EnsureConversation(other.ID, "whatsapp-thread", "Thread")
+	require.NoError(err)
+	otherMessage, err := world.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: other.ID,
+		SourceMessageID: "beeper-message", MessageType: "whatsapp", SizeEstimate: 10})
+	require.NoError(err)
+	require.NoError(world.st.UpsertAttachmentRecord(t.Context(), otherMessage, store.AttachmentWrite{
+		Filename: "beeper.wav", MIMEType: "audio/wav", StoragePath: sha256Hex(voice)[:2] + "/" + sha256Hex(voice),
+		ContentHash: sha256Hex(voice), Size: int64(len(voice)), SourceAttachmentID: "beeper:mxc://beeper.local/voice1",
+		MediaType: "voice_note", State: attachmentpolicy.StateStored, Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}))
+	var beeperMessage int64
+	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'voice1'`).Scan(&beeperMessage))
+	require.NoError(world.st.UpsertAttachmentRecord(t.Context(), beeperMessage, store.AttachmentWrite{
+		Filename: "preview.wav", MIMEType: "audio/wav", StoragePath: sha256Hex(ordinary)[:2] + "/" + sha256Hex(ordinary),
+		ContentHash: sha256Hex(ordinary), Size: int64(len(ordinary)), SourceAttachmentID: "beeper:preview",
+		MediaType: "audio", State: attachmentpolicy.StateStored, Role: store.AttachmentRolePreview,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}))
+
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-eligible"), 4)
+
+	docbank.mu.Lock()
+	assert.ElementsMatch([][]byte{voice, ordinary}, docbank.uploads)
+	docbank.mu.Unlock()
+	states := map[string]string{}
+	for _, row := range occurrenceRows(t, world.st, "destination-eligible") {
+		states[row.MessageID] = row.State + ":" + row.ErrorCode
+	}
+	assert.Equal(map[string]string{
+		"voice1": "retained:", "audio1": "retained:", "fake1": "blocked:unsupported_media",
+	}, states)
+	var messageType string
+	require.NoError(world.st.DB().QueryRow(`SELECT message_type FROM messages WHERE source_message_id = 'audio1'`).Scan(&messageType))
+	assert.Equal("beeper", messageType)
+}
+
+func TestBeeperMediaGaps(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t,
+		voiceSpec{id: "plain", asset: "mxc://beeper.local/plain", mime: "audio/wav", fileName: "plain.wav", data: syntheticWAV(800, 10)},
+		voiceSpec{id: "opus", asset: "mxc://beeper.local/opus", mime: "audio/ogg", fileName: "voice.ogg",
+			transcript: "ogg words", data: append([]byte("OggS"), make([]byte, 60)...)},
+		voiceSpec{id: "m4a", asset: "mxc://beeper.local/m4a", mime: "audio/mp4", fileName: "voice.m4a",
+			transcript: "m4a words", data: append([]byte("\x00\x00\x00\x18ftypM4A "), make([]byte, 60)...)},
+		voiceSpec{id: "gap", asset: "mxc://beeper.local/gap", mime: "audio/wav", fileName: "gap.wav",
+			transcript: "gap words", data: syntheticWAV(800, 11)})
+	var gapMessage int64
+	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'gap'`).Scan(&gapMessage))
+	require.NoError(world.st.UpsertMessageRawWithFormat(gapMessage,
+		[]byte(`{"id":"gap","timestamp":"2026-01-01T00:00:00Z","attachments":[]}`), "beeper_json"))
+
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-gaps"), 5)
+
+	states := map[string]string{}
+	for _, row := range occurrenceRows(t, world.st, "destination-gaps") {
+		states[row.MessageID] = row.State + ":" + row.ErrorCode + ":" + row.Coverage
+	}
+	assert.Equal(map[string]string{
+		"plain": "retained::unprocessed", "opus": "blocked:unsupported_media:",
+		"m4a": "blocked:unsupported_media:", "gap": "blocked:source_part_missing:",
+	}, states)
+	for _, delivery := range deliveryRows(t, world.st, "destination-gaps") {
+		assert.Equal("pending-artifact", delivery.Phase)
+		assert.Empty(delivery.SuppliedInput)
+	}
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	assert.Len(docbank.uploads, 1)
+	assert.Empty(docbank.transcripts)
+	assert.Empty(docbank.processOps)
+}
+
+// fakeDocbank decodes the Docbank media wire contract at e33d77e4: strict
+// metadata-then-file multipart, X-Api-Key, UUIDv4 replay and top-level
+// HTTP 200 receipts. It never returns an inline transcript field.
+type fakeDocbank struct {
+	t                 *testing.T
+	mu                sync.Mutex
+	status            int
+	malformed         bool
+	hang              bool
+	jobHTTPStatus     int
+	coverage          string
+	failProcessing    bool
+	dropRetention     bool
+	requests          int
+	next              int
+	sources           map[string]int
+	occurrenceIDs     map[string]string
+	replies           map[string]docbankmedia.Receipt
+	firstMetadata     map[string]string
+	uploads           [][]byte
+	occurrences       []docbankmedia.Occurrence
+	retentionOps      []string
+	retentionMetadata []string
+	artifactOps       []string
+	artifactReceipts  []docbankmedia.Receipt
+	transcripts       []string
+	processOps        []string
+	lastProcess       map[string]string
+	rejected          []string
+}
+
+func newFakeDocbank(t *testing.T) *fakeDocbank {
+	t.Helper()
+	f := &fakeDocbank{t: t, sources: map[string]int{}, occurrenceIDs: map[string]string{},
+		replies: map[string]docbankmedia.Receipt{}, firstMetadata: map[string]string{},
+		lastProcess: map[string]string{}, coverage: "transcribed"}
+	t.Cleanup(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		assert.Empty(t, f.rejected, "fake Docbank rejected a request")
+	})
+	return f
+}
+
+// reject records a contract violation and answers as Docbank's validator does.
+func (f *fakeDocbank) reject(w http.ResponseWriter, err error) {
+	f.mu.Lock()
+	f.rejected = append(f.rejected, err.Error())
+	f.mu.Unlock()
+	http.Error(w, "validation", http.StatusUnprocessableEntity)
+}
+
+func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.requests++
+	status, malformed, hang, jobHTTPStatus := f.status, f.malformed, f.hang, f.jobHTTPStatus
+	f.mu.Unlock()
+	switch {
+	case hang:
+		// Draining lets the server notice when the client abandons the request.
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+		return
+	case status != 0:
+		http.Error(w, "private response body", status)
+		return
+	case r.Header.Get("X-Api-Key") != docbankTestKey:
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	case malformed:
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"vault_uid":`))
+		return
+	}
+	path := r.URL.Path
+	switch {
+	case r.Method == http.MethodPost && path == "/api/v1/media/sources":
+		f.submit(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/artifacts"):
+		f.artifact(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/api/v1/media/sources/"), "/artifacts"))
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/retry"):
+		f.retry(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/api/v1/media/sources/"), "/retry"))
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/processing/jobs/") && jobHTTPStatus != 0:
+		http.Error(w, "private response body", jobHTTPStatus)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/processing/jobs/"):
+		id := strings.TrimPrefix(path, "/api/v1/processing/jobs/")
+		writeDocbankJSON(w, map[string]any{"job_id": id, "state": "completed", "phase": "done",
+			"embedding_job_ids": []string{}, "completed_bindings": 1})
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/"):
+		source := strings.TrimPrefix(path, "/api/v1/media/sources/")
+		f.mu.Lock()
+		operation, coverage := f.lastProcess[source], f.coverage
+		f.mu.Unlock()
+		state := "succeeded"
+		if coverage == "pending" {
+			state = "queued"
+		}
+		writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+			OperationID: operation, OperationState: state, CoverageState: coverage})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (f *fakeDocbank) submit(w http.ResponseWriter, r *http.Request) {
+	var metadata docbankmedia.SuppliedMetadata
+	raw, content, err := readContractMultipart(r, &metadata)
+	if err == nil {
+		err = validContractUpload(metadata.OperationID, metadata.SHA256, metadata.ByteLength, content)
+	}
+	if err != nil {
+		f.reject(w, err)
+		return
+	}
+	f.mu.Lock()
+	f.retentionOps = append(f.retentionOps, metadata.OperationID)
+	f.retentionMetadata = append(f.retentionMetadata, string(raw))
+	receipt, replay := f.replies[metadata.OperationID]
+	if replay {
+		assert.Equal(f.t, f.firstMetadata[metadata.OperationID], string(raw), "replayed metadata changed")
+	} else {
+		source, known := f.sources[metadata.SHA256]
+		if !known {
+			f.next++
+			source = f.next
+			f.sources[metadata.SHA256] = source
+		}
+		key := metadata.Occurrence.Ref + "|" + metadata.Occurrence.Revision
+		if f.occurrenceIDs[key] == "" {
+			f.occurrenceIDs[key] = "occurrence-" + strconv.Itoa(len(f.occurrenceIDs)+1)
+		}
+		receipt = docbankmedia.Receipt{VaultUID: "vault-1", SourceID: "source-" + strconv.Itoa(source),
+			SourceVersionID: "audio-version-" + strconv.Itoa(source), ContentVersionID: "audio-content-" + strconv.Itoa(source),
+			OccurrenceID: f.occurrenceIDs[key], OperationID: metadata.OperationID, Outcome: "content_available",
+			OperationState: "succeeded", CoverageState: "unprocessed"}
+		f.replies[metadata.OperationID] = receipt
+		f.firstMetadata[metadata.OperationID] = string(raw)
+		f.uploads = append(f.uploads, content)
+		f.occurrences = append(f.occurrences, metadata.Occurrence)
+	}
+	drop := f.dropRetention
+	f.dropRetention = false
+	f.mu.Unlock()
+	if drop {
+		// The request was accepted, but its response is lost in transit.
+		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+		return
+	}
+	writeDocbankJSON(w, receipt)
+}
+
+func (f *fakeDocbank) artifact(w http.ResponseWriter, r *http.Request, source string) {
+	var metadata docbankmedia.ArtifactMetadata
+	_, content, err := readContractMultipart(r, &metadata)
+	if err == nil {
+		err = validContractUpload(metadata.OperationID, metadata.SHA256, metadata.ByteLength, content)
+	}
+	if err != nil {
+		f.reject(w, err)
+		return
+	}
+	assert.Equal(f.t, "transcript", metadata.Kind)
+	assert.Equal(f.t, "provider", metadata.Origin)
+	assert.Equal(f.t, "beeper", metadata.Provider)
+	assert.Equal(f.t, "text/plain", metadata.MediaType)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.artifactOps = append(f.artifactOps, metadata.OperationID)
+	receipt, replay := f.replies[metadata.OperationID]
+	if !replay {
+		n := strconv.Itoa(len(f.artifactReceipts) + 1)
+		receipt = docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+			SourceVersionID: "transcript-version-" + n, ContentVersionID: "transcript-content-" + n,
+			OccurrenceID: metadata.OccurrenceID, OperationID: metadata.OperationID,
+			OperationState: "succeeded", CoverageState: "unprocessed", SuppliedInputID: "input-" + n}
+		f.replies[metadata.OperationID] = receipt
+		f.artifactReceipts = append(f.artifactReceipts, receipt)
+		f.transcripts = append(f.transcripts, string(content))
+	}
+	writeDocbankJSON(w, receipt)
+}
+
+func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source string) {
+	var body struct {
+		OperationID string                  `json:"operation_id"`
+		Processing  docbankmedia.Processing `json:"processing"`
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err == nil {
+		err = json.Unmarshal(data, &body, json.RejectUnknownMembers(true))
+	}
+	if err != nil {
+		f.reject(w, err)
+		return
+	}
+	assert.Equal(f.t, "supplied-transcript", body.Processing.Profile)
+	assert.NotEmpty(f.t, body.Processing.SuppliedInputID)
+	f.mu.Lock()
+	f.processOps = append(f.processOps, body.OperationID)
+	f.lastProcess[source] = body.OperationID
+	failed := f.failProcessing
+	f.mu.Unlock()
+	if failed {
+		// Docbank's saved receipt after a non-retryable enqueue failure has no job.
+		writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+			OperationID: body.OperationID, OperationState: "failed", CoverageState: "unavailable",
+			SuppliedInputID: body.Processing.SuppliedInputID})
+		return
+	}
+	writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+		OperationID: body.OperationID, JobID: sha256Hex([]byte(body.OperationID)),
+		OperationState: "queued", CoverageState: "pending", SuppliedInputID: body.Processing.SuppliedInputID})
+}
+
+// readContractMultipart enforces Docbank's metadata-then-file envelope.
+func readContractMultipart(r *http.Request, metadata any) ([]byte, []byte, error) {
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	first, err := reader.NextPart()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	if first.FormName() != "metadata" || first.FileName() != "" {
+		return nil, nil, errors.New("first multipart part must be metadata")
+	}
+	raw, err := io.ReadAll(io.LimitReader(first, 64<<10))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	if err := json.Unmarshal(raw, metadata, json.RejectUnknownMembers(true)); err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	second, err := reader.NextPart()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	if second.FormName() != "file" || second.FileName() == "" {
+		return nil, nil, errors.New("second multipart part must be a file")
+	}
+	content, err := io.ReadAll(second)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read multipart: %w", err)
+	}
+	if _, err := reader.NextPart(); !errors.Is(err, io.EOF) {
+		return nil, nil, errors.New("media upload requires exactly metadata and file parts")
+	}
+	return raw, content, nil
+}
+
+func validContractUpload(operationID, digest string, length int64, content []byte) error {
+	id, err := uuid.Parse(operationID)
+	switch {
+	case err != nil || id.Version() != 4:
+		return errors.New("operation_id must be UUIDv4")
+	case sha256Hex(content) != digest || int64(len(content)) != length:
+		return errors.New("upload digest or length mismatch")
+	}
+	return nil
+}
+
+func writeDocbankJSON(w http.ResponseWriter, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		http.Error(w, "encode", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
+}
+
+// casStore places content in loose or packed CAS behind the production reader.
+func casStore(t *testing.T, content []byte, storage string) *attachmentstore.Store {
+	t.Helper()
+	root := t.TempDir()
+	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(t, err)
+	hash, err := packstore.ParseHash(pack.ComputeBlobID(content).String())
+	require.NoError(t, err)
+	require.Equal(t, sha256Hex(content), hash.String())
+	location := packstore.Location{Member: true}
+	if storage == "loose" {
+		path := layout.LoosePath(hash)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, content, 0o600))
+	} else {
+		require.NoError(t, pack.MkdirAllSynced(layout.PacksDir()))
+		writer, err := pack.NewWriter(layout.PacksDir(), pack.WriterOptions{})
+		require.NoError(t, err)
+		entry, err := writer.Append(content)
+		require.NoError(t, err)
+		packID := writer.ID()
+		_, err = writer.Seal(layout.PackPath(packID))
+		require.NoError(t, err)
+		location.Pack = &packstore.IndexEntry{Hash: hash, PackID: packID, Offset: int64(entry.Offset),
+			StoredLen: int64(entry.StoredLen), RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C}
+	}
+	blobs, err := attachmentstore.New(casResolver{hash: location}, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, blobs.Close()) })
+	return blobs
+}
+
+type casResolver map[packstore.Hash]packstore.Location
+
+func (r casResolver) Resolve(_ context.Context, hash packstore.Hash) (packstore.Location, error) {
+	location, ok := r[hash]
+	if !ok {
+		return packstore.Location{}, errors.New("unknown hash")
+	}
+	return location, nil
+}
+
+func tableSnapshot(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	var snapshot []string
+	for _, query := range []string{
+		`SELECT occurrence_ref || '|' || revision || '|' || retention_state || '|' || retention_operation_id || '|' ||
+		        error_code || '|' || COALESCE(CAST(next_action_at AS TEXT), '') || '|' || raw_hash || '|' ||
+		        CAST(attachment_id AS TEXT) || '|' || CAST(updated_at AS TEXT)
+		 FROM beeper_media_occurrences ORDER BY occurrence_ref, revision`,
+		`SELECT processing_key || '|' || phase || '|' || COALESCE(pending_operation_id, '') || '|' ||
+		        COALESCE(CAST(next_action_at AS TEXT), '') || '|' || CAST(updated_at AS TEXT)
+		 FROM beeper_media_deliveries ORDER BY processing_key`,
+	} {
+		func() {
+			rows, err := st.DB().Query(query)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			for rows.Next() {
+				var value string
+				require.NoError(t, rows.Scan(&value))
+				snapshot = append(snapshot, value)
+			}
+			require.NoError(t, rows.Err())
+		}()
+	}
+	return snapshot
+}
+
+func syntheticRaw(t *testing.T, messageID, asset, transcript string) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"id": messageID, "timestamp": "2026-09-16T10:11:12.123Z",
+		"attachments": []map[string]any{{"id": asset, "type": "audio", "isVoiceNote": true,
+			"mimeType": "audio/wav", "fileName": "voice.wav",
+			"transcription": map[string]any{"transcription": transcript, "engine": "synthetic"}}},
+	})
+	require.NoError(t, err)
+	return data
+}
+
+// syntheticWAV returns a valid 8 kHz mono PCM WAV whose samples vary by seed.
+func syntheticWAV(samples int, seed byte) []byte {
+	audio := make([]byte, samples*2)
+	for i := range audio {
+		audio[i] = seed + byte(i%7)
+	}
+	data := make([]byte, 44+len(audio))
+	copy(data[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+	copy(data[8:16], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(data[16:20], 16)
+	binary.LittleEndian.PutUint16(data[20:22], 1)
+	binary.LittleEndian.PutUint16(data[22:24], 1)
+	binary.LittleEndian.PutUint32(data[24:28], 8000)
+	binary.LittleEndian.PutUint32(data[28:32], 16000)
+	binary.LittleEndian.PutUint16(data[32:34], 2)
+	binary.LittleEndian.PutUint16(data[34:36], 16)
+	copy(data[36:40], "data")
+	binary.LittleEndian.PutUint32(data[40:44], uint32(len(audio)))
+	copy(data[44:], audio)
+	return data
+}
+
+func sha256Hex(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}

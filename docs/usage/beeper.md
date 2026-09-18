@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-18"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -177,6 +177,64 @@ FROM attachments a
 JOIN messages m ON m.id = a.message_id
 WHERE m.message_type = 'beeper'
 GROUP BY is_share;
+```
+
+## Send audio to Docbank
+
+The daemon can copy stored Beeper audio to a separately running Docbank media
+service. Docbank keeps the recording, imports Beeper's own transcript, and
+processes it with its `supplied-transcript` profile. msgvault records which
+Docbank source and occurrence belong to each live message. Configure the
+destination in
+[`[integrations.docbank]`](/docs/configuration/#send-beeper-audio-to-docbank).
+
+What you need:
+
+- A Docbank server with the media HTTP routes
+  ([docbank#346](https://github.com/kenn-io/docbank/pull/346)). The Docbank
+  library built into msgvault does not provide them.
+- `upload_consent = true`. It allows transport to that URL only. Docbank's own
+  processing consent decides whether the transcript is processed.
+- WAV or MP3 audio. Docbank accepts no other codec, so OGG/Opus, M4A and other
+  formats stay local with the `unsupported_media` code. msgvault never converts
+  audio or runs speech recognition.
+
+What happens:
+
+- Voice notes and ordinary audio both qualify when they are stored, standalone
+  Beeper attachments. Previews, stickers and other sources are skipped.
+- msgvault reads the complete transcript for that attachment from the archived
+  raw message, not the 32 KiB metadata copy. Audio without a transcript is
+  still kept by Docbank and reported as `unprocessed`.
+- Each minute the job checks up to 100 stored attachments and 100 attachment
+  changes, then sends at most one Docbank request. Existing archives are
+  backfilled this way after you enable the route.
+- The same recording in several messages gets one occurrence per message.
+  Docbank stores the bytes once, and each exact transcript is processed once.
+- A hidden, source-deleted, removed or replaced message loses its mapping
+  (`revoked`). Other messages sharing the audio keep theirs. msgvault decides
+  which occurrences are live; Docbank keeps the shared evidence.
+- Network errors, requests that run past 30 seconds, HTTP 429 and 5xx
+  responses retry after five minutes with the same operation ID. Rejected
+  credentials or requests stay `blocked` until the daemon restarts, which also
+  resumes checking a queued job. Missing or corrupt local bytes wait as
+  `source_unavailable`.
+- A processed delivery reaches `done` only after Docbank reports its coverage.
+  A failed Docbank job or a failed processing request ends as `done` with
+  `operation_state` set to `failed`.
+
+Provider transcripts stay searchable through the normal message text. This
+route does not add search over Docbank's processed output yet. Check progress
+with a query:
+
+```sql
+SELECT retention_state, error_code, COUNT(*)
+FROM beeper_media_occurrences
+GROUP BY retention_state, error_code;
+
+SELECT phase, coverage_state, COUNT(*)
+FROM beeper_media_deliveries
+GROUP BY phase, coverage_state;
 ```
 
 ## Scheduled sync
