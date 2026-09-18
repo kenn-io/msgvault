@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +36,23 @@ enabled = true
 	var encoded bytes.Buffer
 	require.NoError(toml.NewEncoder(&encoded).Encode(cfg))
 	assert.NotContains(encoded.String(), "password")
+}
+
+func TestCardDAVConfigProvider(t *testing.T) {
+	for _, provider := range []string{"", "google", "googl"} {
+		t.Run(provider, func(t *testing.T) {
+			required := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			required.NoError(os.WriteFile(path, []byte(fmt.Sprintf("[carddav]\nprovider = %q\n", provider)), 0600))
+			cfg, err := Load(path, "")
+			if provider == "googl" {
+				required.ErrorContains(err, "carddav.provider")
+				return
+			}
+			required.NoError(err)
+			assert.Equal(t, provider, cfg.CardDAV.Provider)
+		})
+	}
 }
 
 func TestIMAPDraftConfig(t *testing.T) {

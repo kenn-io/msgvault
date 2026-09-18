@@ -28,7 +28,8 @@ func normalizeCardDAVAccountRequest(req CardDAVAccountRequest) CardDAVAccountReq
 }
 
 func cardDAVCredentialMatchesConfig(credential carddav.Credential, cfg config.CardDAVConfig) bool {
-	return credential.Google == (cfg.Provider == "google") && credential.OAuthApp == cfg.OAuthApp
+	return credential.OAuthApp == cfg.OAuthApp &&
+		((cfg.Provider == "" && !credential.Google) || (cfg.Provider == "google" && credential.Google))
 }
 
 func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDAVAccountRequest) (carddav.Credential, error) {
