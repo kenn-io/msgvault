@@ -1245,7 +1245,7 @@ func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
 			Logger:         testLogger(),
 			RequestTimeout: 5 * time.Millisecond,
 		})
-		t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		body := strings.NewReader(`{"args":["deduplicate","--dry-run"]}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
@@ -2179,12 +2179,12 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 			Store:  st, Engine: engine, Logger: testLogger(), RequestTimeout: 5 * time.Millisecond,
 		})
-		t.Cleanup(func() {
+		defer func() {
 			releaseProbe()
 			releaseBackfill()
 			require.NoError(srv.Shutdown(context.Background()), "shutdown")
 			synctest.Wait()
-		})
+		}()
 		searchIndexState := func() string {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 			w := httptest.NewRecorder()
@@ -2309,7 +2309,7 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 			Engine: engine,
 			Logger: testLogger(),
 		})
-		t.Cleanup(func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		// First search spawns the ensure worker, which blocks inside the probe.
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
@@ -2365,7 +2365,7 @@ func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
 		}
 		srv := newCLIHandlerTestServer(st)
 		srv.SetAnalyticsEngine(engine, srv.AnalyticsMode())
-		t.Cleanup(func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		rebuildDone := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
@@ -2462,7 +2462,7 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 			Logger:        testLogger(),
 			OperationGate: gate,
 		})
-		t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		// The search itself must not queue behind the held gate.
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
@@ -2500,7 +2500,7 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 			Engine: engine,
 			Logger: testLogger(),
 		})
-		t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		doSearch := func() {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
@@ -2552,7 +2552,7 @@ func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 			Engine: engine,
 			Logger: testLogger(),
 		})
-		t.Cleanup(func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		// The first search spawns the probe worker and returns without waiting.
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
@@ -2605,7 +2605,7 @@ func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
 			Engine: engine,
 			Logger: testLogger(),
 		})
-		t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		var labelDuringBackfill string
 		st.backfillFTSFunc = func(progress func(done, total int64)) (int64, error) {
@@ -2814,7 +2814,7 @@ func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing
 			OperationGate:  gate,
 			RequestTimeout: 5 * time.Millisecond,
 		})
-		t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
 		resp := httptest.NewRecorder()
@@ -7961,7 +7961,7 @@ func TestHandleMessageInline_ConcurrentSingleParse(t *testing.T) {
 			return append([]byte(nil), engine.raw...), nil
 		}
 		srv := newTestServerWithEngine(t, engine)
-		t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() })
+		defer func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
 		const n = 16
 		var wg sync.WaitGroup
