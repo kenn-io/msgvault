@@ -151,6 +151,53 @@ func (s *Store) UpsertAttachmentRecord(
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
 }
 
+// UpsertAttachmentRecordPreservingStored updates one keyed attachment occurrence
+// while retaining a previously stored blob when a later source snapshot cannot
+// provide the file. A later successful snapshot still replaces changed bytes.
+func (s *Store) UpsertAttachmentRecordPreservingStored(
+	ctx context.Context,
+	messageID int64,
+	write AttachmentWrite,
+) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	if write.SourcePartKey == "" {
+		return errors.New("preserving a stored attachment requires a source-part key")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.syncGeneration != nil {
+			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+				return err
+			}
+		}
+		if write.StoragePath == "" && write.ContentHash == "" {
+			var storagePath, contentHash, state, skipReason string
+			var size int64
+			err := tx.QueryRow(`
+				SELECT storage_path, COALESCE(content_hash, ''), COALESCE(size, 0),
+				       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+				FROM attachments WHERE message_id = ? AND source_part_key = ?
+			`, messageID, write.SourcePartKey).Scan(
+				&storagePath, &contentHash, &size, &state, &skipReason,
+			)
+			switch {
+			case err == nil && storagePath != "" && contentHash != "":
+				write.StoragePath = storagePath
+				write.ContentHash = contentHash
+				write.Size = size
+				write.State = attachmentpolicy.DownloadState(state)
+				write.SkipReason = attachmentpolicy.SkipReason(skipReason)
+			case err == nil, errors.Is(err, sql.ErrNoRows):
+			default:
+				return fmt.Errorf("load stored attachment occurrence: %w", err)
+			}
+		}
+		return s.upsertAttachmentRecord(tx, messageID, write)
+	})
+}
+
 // UpsertAttachmentRecordWithStats atomically updates an attachment and its message
 // stats. Callers skip unchanged records and request cache invalidation unless the
 // message is new and its attachments will be included in an incremental export.
@@ -205,6 +252,24 @@ func (s *Store) DeleteLegacyHashlessAttachmentsContext(ctx context.Context, mess
 			  AND (content_hash IS NULL OR content_hash = '')
 			  AND storage_path = ''
 		`, messageID)
+		return err
+	})
+}
+
+// DeleteKeyedAttachmentsExceptContext removes source-owned attachment
+// occurrences that are no longer present in the current source snapshot. An
+// empty keep key removes every occurrence under the prefix; attachments owned
+// by other importers are left untouched.
+func (s *Store) DeleteKeyedAttachmentsExceptContext(
+	ctx context.Context, messageID int64, sourcePartKeyPrefix, keepSourcePartKey string,
+) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ?
+			  AND SUBSTR(source_part_key, 1, LENGTH(?)) = ?
+			  AND (? = '' OR source_part_key <> ?)
+		`, messageID, sourcePartKeyPrefix, sourcePartKeyPrefix, keepSourcePartKey, keepSourcePartKey)
 		return err
 	})
 }

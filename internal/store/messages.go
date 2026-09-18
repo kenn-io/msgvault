@@ -72,11 +72,20 @@ type ParticipantPersistData struct {
 	Domain       string
 }
 
+// MessageDeliveryEvidence is provider-observed delivery state. A valid field
+// enriches the archived message; an invalid field preserves existing evidence.
+// Local read state is deliberately outside this type.
+type MessageDeliveryEvidence struct {
+	DeliveredAt sql.NullTime
+	IsDelivered sql.NullBool
+}
+
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
 	Message                   *Message
 	Conversation              *ConversationPersistData
+	Delivery                  *MessageDeliveryEvidence
 	Metadata                  *sql.NullString
 	BodyText                  sql.NullString
 	BodyHTML                  sql.NullString
@@ -376,13 +385,16 @@ type MessageLabelRef struct {
 // ConversationPersistData optionally makes conversation identity, title, and
 // membership part of PersistMessage's transaction. When absent, PersistMessage
 // uses Message.ConversationID as before. A nil Participants slice carries no
-// membership snapshot, so existing conversation membership is preserved; a
-// non-nil slice — empty or not — authoritatively replaces the roster.
+// membership snapshot, so existing conversation membership is preserved. A
+// non-nil slice authoritatively replaces the roster unless
+// PreserveExistingParticipants requests additive merge semantics.
 type ConversationPersistData struct {
-	SourceConversationID string
-	ConversationType     string
-	Title                string
-	Participants         []ConversationParticipantRef
+	SourceConversationID         string
+	ConversationType             string
+	Title                        string
+	Participants                 []ConversationParticipantRef
+	PreserveExistingType         bool
+	PreserveExistingParticipants bool
 }
 
 // Message represents a message in the database.
@@ -417,8 +429,9 @@ type Message struct {
 // MessageMetadataRecord is the archive identity and optional provider metadata
 // for one message returned by MessageMetadataBatch.
 type MessageMetadataRecord struct {
-	ID       int64
-	Metadata sql.NullString
+	ID                   int64
+	Metadata             sql.NullString
+	SourceConversationID sql.NullString
 }
 
 // MessageWithRawMetadata identifies an archived message and the RFC822
@@ -661,6 +674,41 @@ func (s *Store) MessageMetadataBatch(
 		})
 	if err != nil {
 		return nil, err
+	}
+	return result, nil
+}
+
+// SourceMessageMetadata loads the archive identity and provider metadata of
+// every message from one source in a single query. Importers whose source
+// message IDs embed occurrence numbers derived from the current export's row
+// count use this to reconcile rows against the complete archived set instead
+// of probing unbounded higher IDs with one query per candidate group. The
+// result is keyed by source_message_id, holds no message bodies, and stays
+// linear in the archived messages of the source.
+func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadataRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ?`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("load source message metadata: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]MessageMetadataRecord)
+	for rows.Next() {
+		var sourceMessageID string
+		var record MessageMetadataRecord
+		if err := rows.Scan(
+			&sourceMessageID, &record.ID, &record.Metadata, &record.SourceConversationID,
+		); err != nil {
+			return nil, fmt.Errorf("scan source message metadata: %w", err)
+		}
+		result[sourceMessageID] = record
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate source message metadata: %w", err)
 	}
 	return result, nil
 }
@@ -1981,17 +2029,22 @@ func (s *Store) persistMessageWith(
 	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
-		conversationID, err := ensureConversationWithType(
+		conversationID, err := ensureConversationWithTypePolicy(
 			q, s.dialect, data.Message.SourceID,
 			data.Conversation.SourceConversationID,
 			data.Conversation.ConversationType,
 			data.Conversation.Title,
+			data.Conversation.PreserveExistingType,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("ensure conversation: %w", err)
 		}
 		if data.Conversation.Participants != nil {
-			if err := replaceConversationParticipantsTx(
+			if data.Conversation.PreserveExistingParticipants {
+				if err := mergeConversationParticipantsWith(q, s.dialect, conversationID, data.Conversation.Participants); err != nil {
+					return 0, fmt.Errorf("merge conversation participants: %w", err)
+				}
+			} else if err := replaceConversationParticipantsTx(
 				ctx, tx, s.dialect, conversationID, data.Conversation.Participants,
 			); err != nil {
 				return 0, fmt.Errorf("replace conversation participants: %w", err)
@@ -2005,6 +2058,11 @@ func (s *Store) persistMessageWith(
 	messageID, err := upsertMessageWith(q, s.dialect, message)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
+	}
+	if data.Delivery != nil {
+		if err := setMessageDeliveryEvidenceWith(q, messageID, *data.Delivery); err != nil {
+			return 0, fmt.Errorf("set delivery evidence: %w", err)
+		}
 	}
 	if data.Metadata != nil {
 		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
@@ -2058,6 +2116,23 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	return messageID, nil
+}
+
+func setMessageDeliveryEvidenceWith(q querier, messageID int64, evidence MessageDeliveryEvidence) error {
+	if !evidence.DeliveredAt.Valid && !evidence.IsDelivered.Valid {
+		return nil
+	}
+	_, err := q.Exec(`
+		UPDATE messages SET
+			delivered_at = CASE WHEN ? THEN ? ELSE delivered_at END,
+			is_delivered = CASE WHEN ? THEN ? ELSE is_delivered END
+		WHERE id = ?
+	`,
+		evidence.DeliveredAt.Valid, evidence.DeliveredAt,
+		evidence.IsDelivered.Valid, evidence.IsDelivered,
+		messageID,
+	)
+	return err
 }
 
 // Participant represents a person in the participants table.
@@ -2841,6 +2916,22 @@ func (s *Store) SetMessageReplyContext(ctx context.Context, messageID, replyToMe
 		_, err := q.Exec(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`,
 			replyToMessageID, messageID)
 		return err
+	})
+}
+
+// ClearMessageRepliesContext removes generic reply links from the supplied
+// source messages. Importers use it before recomputing heuristic links from a
+// complete provider snapshot, so a newly ambiguous relationship is not kept.
+func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return execInChunksContext(ctx, tx, messageIDs, []any{sourceID},
+			`UPDATE messages SET reply_to_message_id = NULL WHERE source_id = ? AND id IN (%s)`)
 	})
 }
 
@@ -3793,8 +3884,41 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 }
 
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
+	return ensureConversationWithTypePolicy(q, dialect, sourceID, sourceConversationID, conversationType, title, false)
+}
+
+func ensureConversationWithTypePolicy(
+	q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string,
+	preserveExistingType bool,
+) (int64, error) {
 	now := dialect.Now()
 	var id int64
+	if preserveExistingType {
+		err := q.QueryRow(fmt.Sprintf(`
+			INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+			VALUES (?, ?, ?, ?, %s, %s)
+			ON CONFLICT (source_id, source_conversation_id) DO UPDATE
+			SET title = CASE WHEN EXCLUDED.title IS NOT NULL AND EXCLUDED.title != ''
+			                 THEN EXCLUDED.title ELSE conversations.title END,
+			    updated_at = %s
+			WHERE EXCLUDED.title IS NOT NULL AND EXCLUDED.title != ''
+			  AND COALESCE(conversations.title, '') <> EXCLUDED.title
+			RETURNING id
+		`, now, now, now), sourceID, sourceConversationID, conversationType, title).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if err := q.QueryRow(
+			`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`,
+			sourceID, sourceConversationID,
+		).Scan(&id); err != nil {
+			return 0, fmt.Errorf("ensure conversation %d/%q: %w", sourceID, sourceConversationID, err)
+		}
+		return id, nil
+	}
 	// The conflict UPDATE only fires when it would change something. The
 	// SQLite activity conversation trigger requeues every message in the
 	// conversation on ANY conversations UPDATE, so an unconditional upsert
@@ -5036,6 +5160,25 @@ type ConversationParticipantRef struct {
 	Role          string
 }
 
+func mergeConversationParticipantsWith(
+	q querier, dialect Dialect, conversationID int64, participants []ConversationParticipantRef,
+) error {
+	for _, participant := range participants {
+		if participant.ParticipantID == 0 {
+			continue
+		}
+		if _, err := q.Exec(fmt.Sprintf(`
+			INSERT INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+			VALUES (?, ?, ?, %s)
+			ON CONFLICT (conversation_id, participant_id) DO UPDATE SET role = excluded.role
+			WHERE conversation_participants.role IS DISTINCT FROM excluded.role`, dialect.Now()),
+			conversationID, participant.ParticipantID, participant.Role); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ReplaceConversationParticipants atomically replaces a conversation's
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
@@ -5563,6 +5706,52 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 		var raw []byte
 		var compression sql.NullString
 		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+			return nil, err
+		}
+		if compression.Valid && compression.String == "zlib" {
+			r, zerr := zlib.NewReader(bytes.NewReader(raw))
+			if zerr != nil {
+				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
+			}
+			raw, err = io.ReadAll(r)
+			_ = r.Close()
+			if err != nil {
+				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
+			}
+		}
+		item.RawData = raw
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// ScanArchivedRawMessagesForConversation is the conversation-scoped variant
+// used by consumers that only need provider payloads. It deliberately avoids
+// joining message_bodies, so resolving a small slice of archive history does
+// not read every stored body for the source.
+func (s *Store) ScanArchivedRawMessagesForConversation(
+	sourceID int64, sourceConversationID, format string, afterID int64, limit int,
+) ([]ArchivedRawMessage, error) {
+	rows, err := s.db.Query(s.Rebind(`
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN message_raw r ON r.message_id = m.id
+		WHERE m.source_id = ? AND c.source_id = ?
+		  AND c.source_conversation_id = ? AND r.raw_format = ? AND m.id > ?
+		ORDER BY m.id
+		LIMIT ?
+	`), sourceID, sourceID, sourceConversationID, format, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("scan archived raw messages for conversation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchivedRawMessage
+	for rows.Next() {
+		var item ArchivedRawMessage
+		var raw []byte
+		var compression sql.NullString
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression); err != nil {
 			return nil, err
 		}
 		if compression.Valid && compression.String == "zlib" {
