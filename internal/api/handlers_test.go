@@ -2486,7 +2486,6 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 // index). This is the fix for the CLI-search-slow-vs-fast-search divergence.
 func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		assert := assert.New(t)
 		st := &mockStore{needsFTSBackfill: false}
 		engine := &querytest.MockEngine{
@@ -2528,7 +2527,6 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 // doing instead of reporting it idle.
 func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 
@@ -2589,7 +2587,6 @@ func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 // gate label.
 func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 
@@ -2793,7 +2790,6 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 
 func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
 		require := require.New(t)
 		assert := assert.New(t)
 		gate := NewSerialOperationGate()
