@@ -76,7 +76,9 @@ func TestDraftMailboxModSeq(t *testing.T) {
 		code    string
 	}{
 		{name: "persistent", options: draftRemovalWireOptions{fetchModSeq: "41"}},
-		{name: "NOMODSEQ", options: draftRemovalWireOptions{noModSeq: true}},
+		{name: "NOMODSEQ", options: draftRemovalWireOptions{noModSeq: true}, code: "modseq_unusable"},
+		{name: "missing SELECT MODSEQ", options: draftRemovalWireOptions{omitSelectModSeq: true}, code: "modseq_unusable"},
+		{name: "without CONDSTORE", options: draftRemovalWireOptions{noCondStore: true, omitSelectModSeq: true}},
 		{name: "missing message MODSEQ", code: "modseq_unusable"},
 		{name: "zero message MODSEQ", options: draftRemovalWireOptions{fetchModSeq: "0"}, code: "modseq_unusable"},
 		{name: "FETCH failure", options: draftRemovalWireOptions{fetchError: true}, code: "fetch_failed"},
@@ -97,7 +99,11 @@ func TestDraftMailboxModSeq(t *testing.T) {
 			}
 			assertions.False(observation.WriteAttempted)
 			commands := strings.Join(server.commandTexts(), "\n")
-			assertions.Contains(commands, "EXAMINE \"Drafts\" (CONDSTORE)")
+			if scenario.options.noCondStore {
+				assertions.NotContains(commands, "(CONDSTORE)")
+			} else {
+				assertions.Contains(commands, "EXAMINE \"Drafts\" (CONDSTORE)")
+			}
 			assertions.NotContains(commands, "UID STORE")
 
 			removed, err := client.RemoveDraft(t.Context(), receipt)
@@ -107,13 +113,14 @@ func TestDraftMailboxModSeq(t *testing.T) {
 				assertions.Equal(scenario.code, removed.Code)
 				assertions.False(removed.WriteAttempted)
 				assertions.NotContains(commands, "UID STORE")
+				assertions.NotContains(commands, "UID EXPUNGE")
 				return
 			}
 			requirements.NoError(err)
 			assertions.True(removed.Complete)
 			assertions.True(removed.WriteAttempted)
 			assertions.Contains(commands, "UID EXPUNGE 7")
-			if scenario.options.noModSeq {
+			if scenario.options.noCondStore {
 				assertions.NotContains(commands, "MODSEQ")
 				assertions.NotContains(commands, "UNCHANGEDSINCE")
 				assertions.Contains(commands, "UID STORE 7 +FLAGS.SILENT (\\Deleted)")
@@ -125,10 +132,12 @@ func TestDraftMailboxModSeq(t *testing.T) {
 }
 
 type draftRemovalWireOptions struct {
-	conflict    bool
-	noModSeq    bool
-	fetchModSeq string
-	fetchError  bool
+	conflict         bool
+	noModSeq         bool
+	noCondStore      bool
+	omitSelectModSeq bool
+	fetchModSeq      string
+	fetchError       bool
 }
 
 type draftRemovalWireServer struct {
@@ -194,7 +203,11 @@ func serveDraftRemovalWireConn(conn net.Conn, server *draftRemovalWireServer, op
 		upper := strings.ToUpper(command)
 		switch {
 		case upper == "CAPABILITY":
-			_, _ = fmt.Fprintf(conn, "* CAPABILITY IMAP4rev1 UIDPLUS CONDSTORE\r\n%s OK CAPABILITY completed\r\n", tag)
+			caps := "IMAP4rev1 UIDPLUS"
+			if !options.noCondStore {
+				caps += " CONDSTORE"
+			}
+			_, _ = fmt.Fprintf(conn, "* CAPABILITY %s\r\n%s OK CAPABILITY completed\r\n", caps, tag)
 		case strings.HasPrefix(upper, "LOGIN "):
 			_, _ = fmt.Fprintf(conn, "%s OK LOGIN completed\r\n", tag)
 		case strings.HasPrefix(upper, "SELECT ") || strings.HasPrefix(upper, "EXAMINE "):
@@ -206,9 +219,13 @@ func serveDraftRemovalWireConn(conn net.Conn, server *draftRemovalWireServer, op
 			if options.noModSeq {
 				modSeqCode = "NOMODSEQ"
 			}
+			modSeqResponse := "* OK [" + modSeqCode + "]\r\n"
+			if options.omitSelectModSeq {
+				modSeqResponse = ""
+			}
 			_, _ = fmt.Fprintf(conn,
-				"* FLAGS (\\Draft \\Deleted)\r\n* %d EXISTS\r\n* OK [UIDVALIDITY 77]\r\n* OK [UIDNEXT 8]\r\n* OK [%s]\r\n%s OK SELECT completed\r\n",
-				exists, modSeqCode, tag)
+				"* FLAGS (\\Draft \\Deleted)\r\n* %d EXISTS\r\n* OK [UIDVALIDITY 77]\r\n* OK [UIDNEXT 8]\r\n%s%s OK SELECT completed\r\n",
+				exists, modSeqResponse, tag)
 		case strings.HasPrefix(upper, "UID FETCH "):
 			if options.fetchError || (options.noModSeq && strings.Contains(upper, "MODSEQ")) {
 				_, _ = fmt.Fprintf(conn, "%s BAD FETCH rejected\r\n", tag)

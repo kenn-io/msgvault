@@ -291,10 +291,12 @@ retry after it finishes.
 
 When the mailbox supplies CONDSTORE metadata, msgvault uses the exact UID's
 positive MODSEQ to guard its singleton `UID STORE`, then verifies that UID's
-flags. If the server or mailbox does not support CONDSTORE, including an explicit
-`NOMODSEQ` response, msgvault runs a fresh `SELECT` and exact-UID `FETCH`
-immediately before the nonconditional `UID STORE`. An unexplained missing MODSEQ
-refuses the change before writing.
+flags. If the server does not advertise CONDSTORE, msgvault runs a fresh `SELECT`
+and exact-UID `FETCH` immediately before the nonconditional `UID STORE`.
+When CONDSTORE is advertised, missing or zero mailbox or message MODSEQ metadata
+refuses the change before writing with `modseq_unusable`. This also applies to
+`NOMODSEQ` mailboxes: the current IMAP parser cannot distinguish that response
+from missing metadata.
 
 Every removal path checks the mailbox generation and requires both `\Draft` and
 `\Deleted` again before `UID EXPUNGE`, then confirms exact-UID absence.

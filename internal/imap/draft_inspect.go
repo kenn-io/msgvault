@@ -77,8 +77,14 @@ func (c *Client) selectDraftMailbox(
 			receipt.Mailbox, receipt.UIDValidity, selected.UIDValidity,
 		)
 	}
-	// go-imap leaves HighestModSeq at zero for NOMODSEQ mailboxes.
-	return observation, condStore && selected.HighestModSeq != 0, nil
+	if condStore && selected.HighestModSeq == 0 {
+		// The parser discards NOMODSEQ, so zero cannot distinguish it from
+		// missing metadata. Refuse both before any draft write.
+		observation.State = draftObservationStateIncomplete
+		observation.Code = "modseq_unusable"
+		return observation, false, errors.New("draft mailbox has no usable HIGHESTMODSEQ")
+	}
+	return observation, condStore, nil
 }
 
 func inspectDraftUID(conn *imapclient.Client, receipt DraftReceipt, observation DraftObservation) (DraftObservation, error) {
