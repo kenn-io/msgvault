@@ -173,14 +173,11 @@ func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 	}
 	cancel()
 
-	require.Eventually(func() bool {
-		select {
-		case <-requestCanceled:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches HTTP request")
+	select {
+	case <-requestCanceled:
+	case <-time.After(2 * time.Second):
+		require.FailNow("root cancellation reaches HTTP request")
+	}
 	require.Error(<-done, "canceled compatibility request")
 }
 
@@ -1818,14 +1815,11 @@ func TestRunCLIRepairMessagePropagatesCancellation(t *testing.T) {
 	go func() {
 		done <- s.RunCLIRepairMessage(ctx, generated.CLIRepairMessageRequest{Audit: &audit}, nil)
 	}()
-	require.Eventually(t, func() bool {
-		select {
-		case <-repairStarted:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
+	select {
+	case <-repairStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "repair request did not start")
+	}
 	cancel()
 
 	require.ErrorIs(t, <-done, context.Canceled)

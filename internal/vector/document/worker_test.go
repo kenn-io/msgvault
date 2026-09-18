@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -795,47 +796,49 @@ func TestWorkerRunCancelsBackendPutWhenHeartbeatLosesClaim(t *testing.T) {
 }
 
 func TestWorkerRunStopsRenewingClaimBeforeCommitAfterSynchronousRenewal(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	commitStarted := make(chan struct{})
-	releaseCommit := make(chan struct{})
-	ledger.beforeCommit = func(string) {
-		close(commitStarted)
-		<-releaseCommit
-	}
-	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{
-		vectors: [][][]float32{{{1, 2, 3}}},
-	}, &fakeDocumentVectorBackend{})
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
-	type outcome struct {
-		result RunResult
-		err    error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		result, err := worker.Run(t.Context(), 1, 1)
-		done <- outcome{result: result, err: err}
-	}()
-	select {
-	case <-commitStarted:
-	case <-time.After(time.Second):
-		requirements.FailNow("worker did not reach commit")
-	}
-	before := ledger.renewTokenCallCount("token-a")
-	time.Sleep(30 * time.Millisecond)
-	after := ledger.renewTokenCallCount("token-a")
-	close(releaseCommit)
-	completed := <-done
-	time.Sleep(30 * time.Millisecond)
-	afterStop := ledger.renewTokenCallCount("token-a")
+	synctest.Test(t, func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+		commitStarted := make(chan struct{})
+		releaseCommit := make(chan struct{})
+		ledger.beforeCommit = func(string) {
+			close(commitStarted)
+			<-releaseCommit
+		}
+		worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{
+			vectors: [][][]float32{{{1, 2, 3}}},
+		}, &fakeDocumentVectorBackend{})
+		worker.deps.LeaseDuration = 100 * time.Millisecond
+		worker.deps.HeartbeatInterval = 10 * time.Millisecond
+		type outcome struct {
+			result RunResult
+			err    error
+		}
+		done := make(chan outcome, 1)
+		go func() {
+			result, err := worker.Run(t.Context(), 1, 1)
+			done <- outcome{result: result, err: err}
+		}()
+		select {
+		case <-commitStarted:
+		case <-time.After(time.Second):
+			requirements.FailNow("worker did not reach commit")
+		}
+		before := ledger.renewTokenCallCount("token-a")
+		synctest.Sleep(30 * time.Millisecond)
+		after := ledger.renewTokenCallCount("token-a")
+		close(releaseCommit)
+		completed := <-done
+		synctest.Sleep(30 * time.Millisecond)
+		afterStop := ledger.renewTokenCallCount("token-a")
 
-	requirements.NoError(completed.err)
-	assertions.Equal(1, completed.result.Published)
-	assertions.Equal(1, before, "claim is synchronously renewed before commit")
-	assertions.Equal(before, after, "heartbeat no longer owns a claim once commit begins")
-	assertions.Equal(after, afterStop, "worker shutdown leaves no heartbeat goroutine renewing claims")
+		requirements.NoError(completed.err)
+		assertions.Equal(1, completed.result.Published)
+		assertions.Equal(1, before, "claim is synchronously renewed before commit")
+		assertions.Equal(before, after, "heartbeat no longer owns a claim once commit begins")
+		assertions.Equal(after, afterStop, "worker shutdown leaves no heartbeat goroutine renewing claims")
+	})
 }
 
 func TestWorkerRunCancelsCommitWhenAnotherClaimLosesHeartbeat(t *testing.T) {

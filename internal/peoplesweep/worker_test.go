@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -882,40 +884,52 @@ func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request App
 }
 
 func TestPersonSweepWorkerHeartbeatsLeaseDuringProviderIO(t *testing.T) {
-	store := &workerFailureStore{}
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	runner := &workerProductionRunner{started: started, block: release}
-	worker := Worker{Config: Config{LeaseDuration: 30 * time.Millisecond}, Store: store, Runner: runner}
-	type result struct {
-		lease Lease
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		primary := PreparedStructuredRequest{}
-		execution, beginErr := runner.BeginStructuredExecution(t.Context(), primary)
-		if beginErr != nil {
-			done <- result{err: beginErr}
-			return
+	synctest.Test(t, func(t *testing.T) {
+		store := &workerFailureStore{}
+		started := make(chan struct{}, 1)
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
+		runner := &workerProductionRunner{started: started, block: release}
+		worker := Worker{Config: Config{LeaseDuration: 30 * time.Millisecond}, Store: store, Runner: runner}
+		type result struct {
+			lease Lease
+			err   error
 		}
-		call, prepareErr := execution.PrimaryCall(primary)
-		if prepareErr != nil {
-			done <- result{err: prepareErr}
-			return
-		}
-		lease, _, err := worker.runPreparedWithLeaseHeartbeat(t.Context(), Lease{
-			PersonID: 7, WorkerID: "worker-fixture", Fence: 1,
-		}, func(context.Context) error { return nil }, call)
-		done <- result{lease: lease, err: err}
-	}()
-	<-started
-	require.Eventually(t, func() bool { return store.renewCalls.Load() >= 2 },
-		500*time.Millisecond, 5*time.Millisecond)
-	close(release)
-	got := <-done
-	require.NoError(t, got.err)
-	assert.Equal(t, int64(1), got.lease.Fence)
+		done := make(chan result, 1)
+		joined := false
+		t.Cleanup(func() {
+			releaseWork()
+			if !joined {
+				<-done
+			}
+		})
+		go func() {
+			primary := PreparedStructuredRequest{}
+			execution, beginErr := runner.BeginStructuredExecution(t.Context(), primary)
+			if beginErr != nil {
+				done <- result{err: beginErr}
+				return
+			}
+			call, prepareErr := execution.PrimaryCall(primary)
+			if prepareErr != nil {
+				done <- result{err: prepareErr}
+				return
+			}
+			lease, _, err := worker.runPreparedWithLeaseHeartbeat(t.Context(), Lease{
+				PersonID: 7, WorkerID: "worker-fixture", Fence: 1,
+			}, func(context.Context) error { return nil }, call)
+			done <- result{lease: lease, err: err}
+		}()
+		<-started
+		synctest.Sleep(30 * time.Millisecond)
+		assert.GreaterOrEqual(t, store.renewCalls.Load(), int64(2), "lease heartbeat renewals")
+		releaseWork()
+		got := <-done
+		joined = true
+		require.NoError(t, got.err)
+		assert.Equal(t, int64(1), got.lease.Fence)
+	})
 }
 
 func TestPersonSweepWorkerCanceledProviderUsesDetachedCleanup(t *testing.T) {

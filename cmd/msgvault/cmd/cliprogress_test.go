@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -27,14 +28,14 @@ func TestCLIProgress_OnProgressBeforeOnStart(t *testing.T) {
 }
 
 func TestCLIProgress_OnStartResetsForReuse(t *testing.T) {
-	p := &CLIProgress{}
-	p.OnStart(100)
-	first := p.startTime
-
-	time.Sleep(5 * time.Millisecond)
-	p.OnStart(200)
-
-	require.True(t, p.startTime.After(first), "OnStart should reset startTime on subsequent calls")
+	synctest.Test(t, func(t *testing.T) {
+		p := &CLIProgress{}
+		p.OnStart(100)
+		first := p.startTime
+		synctest.Sleep(5 * time.Millisecond)
+		p.OnStart(200)
+		require.True(t, p.startTime.After(first), "OnStart should reset startTime on subsequent calls")
+	})
 }
 
 func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
