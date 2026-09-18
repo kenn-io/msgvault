@@ -1724,6 +1724,81 @@ CREATE TABLE IF NOT EXISTS attachment_change_consumers (
     CHECK (last_sequence >= baseline_sequence)
 );
 
+-- Beeper supplied-media occurrence identity and shared processing state. These
+-- rows retain only local evidence and remote receipt identities.
+CREATE TABLE IF NOT EXISTS beeper_media_occurrences (
+    destination_key         TEXT NOT NULL,
+    occurrence_ref          TEXT NOT NULL,
+    revision                TEXT NOT NULL,
+    source_type             TEXT NOT NULL,
+    source_identifier       TEXT NOT NULL,
+    source_conversation_id  TEXT NOT NULL,
+    source_message_id       TEXT NOT NULL,
+    source_attachment_id    TEXT NOT NULL,
+    source_part_key         TEXT NOT NULL,
+    source_row_id           INTEGER NOT NULL DEFAULT 0,
+    message_id              INTEGER NOT NULL DEFAULT 0,
+    attachment_id           INTEGER NOT NULL DEFAULT 0,
+    source_sha256           TEXT NOT NULL,
+    byte_length             INTEGER NOT NULL CHECK (byte_length > 0),
+    raw_hash                TEXT NOT NULL DEFAULT '',
+    transcript_sha256       TEXT NOT NULL DEFAULT '',
+    language                TEXT NOT NULL DEFAULT '',
+    occurrence_json         TEXT NOT NULL,
+    request_filename        TEXT NOT NULL,
+    request_mime_type       TEXT NOT NULL,
+    retention_operation_id  TEXT NOT NULL DEFAULT '',
+    retention_state         TEXT NOT NULL DEFAULT 'pending'
+        CHECK (retention_state IN ('pending', 'retained', 'blocked', 'source_unavailable', 'revoked')),
+    next_action_at          DATETIME,
+    error_code              TEXT NOT NULL DEFAULT '',
+    vault_uid               TEXT NOT NULL DEFAULT '',
+    source_id               TEXT NOT NULL DEFAULT '',
+    source_version_id       TEXT NOT NULL DEFAULT '',
+    content_version_id      TEXT NOT NULL DEFAULT '',
+    occurrence_id           TEXT NOT NULL DEFAULT '',
+    processing_key          TEXT NOT NULL DEFAULT '',
+    coverage_state          TEXT NOT NULL DEFAULT '',
+    created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (destination_key, occurrence_ref, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_ready
+    ON beeper_media_occurrences(destination_key, retention_state, next_action_at, occurrence_ref);
+CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_processing
+    ON beeper_media_occurrences(destination_key, processing_key, retention_state);
+
+CREATE TABLE IF NOT EXISTS beeper_media_deliveries (
+    destination_key          TEXT NOT NULL,
+    processing_key           TEXT NOT NULL,
+    source_sha256            TEXT NOT NULL,
+    byte_length              INTEGER NOT NULL CHECK (byte_length > 0),
+    transcript_sha256        TEXT NOT NULL DEFAULT '',
+    language                 TEXT NOT NULL DEFAULT '',
+    provider                 TEXT NOT NULL DEFAULT 'beeper',
+    profile                  TEXT NOT NULL DEFAULT 'supplied-transcript',
+    phase                    TEXT NOT NULL DEFAULT 'pending-artifact'
+        CHECK (phase IN ('pending-artifact', 'pending-process', 'observing', 'done', 'blocked', 'source_unavailable')),
+    source_id                TEXT NOT NULL DEFAULT '',
+    source_version_id        TEXT NOT NULL DEFAULT '',
+    content_version_id       TEXT NOT NULL DEFAULT '',
+    donor_occurrence_id      TEXT NOT NULL DEFAULT '',
+    supplied_input_id        TEXT NOT NULL DEFAULT '',
+    pending_operation_id     TEXT,
+    frozen_request_json      TEXT,
+    next_action_at           DATETIME,
+    error_code               TEXT NOT NULL DEFAULT '',
+    processing_operation_id  TEXT NOT NULL DEFAULT '',
+    job_id                   TEXT NOT NULL DEFAULT '',
+    operation_state          TEXT NOT NULL DEFAULT '',
+    coverage_state           TEXT NOT NULL DEFAULT '',
+    created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (destination_key, processing_key)
+);
+CREATE INDEX IF NOT EXISTS idx_beeper_media_deliveries_ready
+    ON beeper_media_deliveries(destination_key, phase, next_action_at, processing_key);
+
 -- Provider-independent visual indexing lifecycle. Dense vectors live in the
 -- selected vector backend; only opaque publication tokens are authoritative
 -- here, which keeps SQLite cross-database publication crash-safe.

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-18"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -120,6 +120,12 @@ See [people](usage/people.md), [profile automation](usage/people-automation.md),
   fresh capability probe proves Docbank's local slide bound.
 - Search image and video content through a separately configured visual
   provider, after its capabilities have been checked.
+- Send stored Beeper WAV and MP3 audio, with Beeper's own transcript, to a
+  separately running Docbank media service that has the media HTTP routes. The
+  daemon backfills in small scheduled batches after `upload_consent` is set,
+  and Docbank's own consent still controls processing. msgvault keeps each
+  live message mapped to its Docbank occurrence; search over processed audio is
+  not included yet.
 - Find mailing-list traffic with `list:` or `list-id:` and browse Lists
   grouping. `repair-list-ids` previews an offline backfill; `--apply` writes it.
   Use `conversation_id:` to select one local conversation.
@@ -130,7 +136,8 @@ See [people](usage/people.md), [profile automation](usage/people-automation.md),
   Fetching these images can activate tracking.
 
 See [searching](usage/searching.md), [vector search](usage/vector-search.md),
-[document indexing](usage/document-indexing.md), and
+[document indexing](usage/document-indexing.md),
+[Beeper audio](usage/beeper.md#send-audio-to-docbank), and
 [remote images](usage/remote-images.md).
 
 ### Browser, terminal, and integrations
