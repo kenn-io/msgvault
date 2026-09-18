@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -460,6 +461,162 @@ func TestBeeperMediaProcessingFailure(t *testing.T) {
 	assert.Len(docbank.processOps, 1)
 }
 
+// TestBeeperMediaCoverageOwnership settles each processing operation from its
+// own receipt. Docbank's source status names the newest operation but takes
+// coverage from the newest succeeded one on the same audio.
+func TestBeeperMediaCoverageOwnership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wav := syntheticWAV(800, 16)
+	world := importVoiceChat(t,
+		voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "first transcript", data: wav},
+		voiceSpec{id: "voice2", asset: "mxc://beeper.local/voice2", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "second transcript", data: wav})
+	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-owner")
+
+	runPasses(t, submitter, 8)
+	docbank.mu.Lock()
+	require.Len(docbank.processOps, 2)
+	olderJob, newerJob := sha256Hex([]byte(docbank.processOps[0])), sha256Hex([]byte(docbank.processOps[1]))
+	// The older operation succeeds; the newer one's job completes but its receipt stays queued.
+	docbank.coverage = "transcribed"
+	docbank.holdIndex[1] = true
+	replays := docbank.replays
+	docbank.mu.Unlock()
+	byJob := func() map[string]deliveryRow {
+		rows := map[string]deliveryRow{}
+		for _, row := range deliveryRows(t, world.st, "destination-owner") {
+			rows[row.JobID] = row
+		}
+		return rows
+	}
+	for _, row := range byJob() {
+		assert.Equal("observing", row.Phase)
+	}
+	due := func() {
+		_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+		require.NoError(err)
+	}
+
+	due()
+	runPasses(t, submitter, 2)
+	rows := byJob()
+	assert.Equal("done", rows[olderJob].Phase)
+	assert.Equal("succeeded", rows[olderJob].OperationState)
+	assert.Equal("transcribed", rows[olderJob].Coverage, "the older operation reads its own receipt")
+	assert.Equal("observing", rows[newerJob].Phase, "another operation's coverage cannot settle this one")
+	assert.Equal("queued", rows[newerJob].OperationState)
+	assert.Equal("pending", rows[newerJob].Coverage)
+	docbank.mu.Lock()
+	assert.Equal(replays+1, docbank.replays)
+	delete(docbank.holdIndex, 1)
+	docbank.mu.Unlock()
+
+	due()
+	runPasses(t, submitter, 1)
+	rows = byJob()
+	assert.Equal("done", rows[newerJob].Phase)
+	assert.Equal("succeeded", rows[newerJob].OperationState)
+	assert.Equal("transcribed", rows[newerJob].Coverage)
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	assert.Len(docbank.processOps, 2, "reading a saved receipt starts no new processing")
+}
+
+// TestBeeperMediaLargeUpload gives a large upload time proportional to its
+// size, so a slow but working link retains it instead of retrying forever.
+func TestBeeperMediaLargeUpload(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wav := syntheticWAV(800, 17)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", data: wav})
+	docbank := newFakeDocbank(t)
+	docbank.submitDelay = 300 * time.Millisecond
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-large")
+	submitter.actionTimeout = 50 * time.Millisecond
+	submitter.uploadRate = 0
+
+	// Without a size allowance the transfer outlives the fixed deadline.
+	runPasses(t, submitter, 1)
+	rows := occurrenceRows(t, world.st, "destination-large")
+	require.Len(rows, 1)
+	assert.Equal("pending", rows[0].State)
+	assert.Equal("timeout", rows[0].ErrorCode)
+
+	// Scale the rate so this file's allowance is at least ten seconds.
+	submitter.uploadRate = max(1, int64(len(wav))/10)
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	runPasses(t, submitter, 1)
+	rows = occurrenceRows(t, world.st, "destination-large")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Empty(rows[0].ErrorCode)
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	require.Len(docbank.retentionOps, 2)
+	assert.Equal(docbank.retentionOps[0], docbank.retentionOps[1])
+	assert.Len(docbank.uploads, 1)
+}
+
+// TestBeeperMediaHiddenPending retires a pending row whose message is hidden
+// before upload, sends nothing for it, and reopens it if the message returns.
+func TestBeeperMediaHiddenPending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	hidden, live := syntheticWAV(800, 18), syntheticWAV(800, 19)
+	world := importVoiceChat(t,
+		voiceSpec{id: "hidden", asset: "mxc://beeper.local/hidden", mime: "audio/wav", fileName: "voice.wav", data: hidden},
+		voiceSpec{id: "live", asset: "mxc://beeper.local/live", mime: "audio/wav", fileName: "voice.wav", data: live})
+	// Discovery without upload consent records both rows as pending.
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-hidden"), 1)
+	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
+		assert.Equal("pending", row.State)
+	}
+	var hiddenID, liveID int64
+	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'hidden'`).Scan(&hiddenID))
+	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'live'`).Scan(&liveID))
+	_, err := world.st.MergeDuplicates(liveID, []int64{hiddenID}, "batch-hidden")
+	require.NoError(err)
+
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-hidden")
+	runPasses(t, submitter, 2)
+	states := map[string]string{}
+	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
+		states[row.MessageID] = row.State + ":" + row.ErrorCode
+	}
+	assert.Equal(map[string]string{"hidden": "revoked:no_live_occurrence", "live": "retained:"}, states)
+
+	_, err = world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	docbank.mu.Lock()
+	requests := docbank.requests
+	docbank.mu.Unlock()
+	runPasses(t, submitter, 3)
+	docbank.mu.Lock()
+	assert.Equal(requests, docbank.requests, "a revoked row is not retried")
+	assert.Equal([][]byte{live}, docbank.uploads)
+	docbank.mu.Unlock()
+
+	_, err = world.st.UndoDedup("batch-hidden")
+	require.NoError(err)
+	runPasses(t, submitter, 2)
+	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
+		assert.Equal("retained", row.State, row.MessageID)
+	}
+}
+
 func TestBeeperMediaCASBoundary(t *testing.T) {
 	wav := syntheticWAV(800, 4)
 	digest := sha256Hex(wav)
@@ -701,10 +858,24 @@ func TestBeeperMediaGaps(t *testing.T) {
 		assert.Empty(delivery.SuppliedInput)
 	}
 	docbank.mu.Lock()
-	defer docbank.mu.Unlock()
 	assert.Len(docbank.uploads, 1)
 	assert.Empty(docbank.transcripts)
 	assert.Empty(docbank.processOps)
+	requests := docbank.requests
+	docbank.mu.Unlock()
+
+	// A daemon restart retries remote blocks only; local source gaps stay blocked.
+	require.NoError(world.st.ReconsiderBlockedBeeperMediaOperations(t.Context(), "destination-gaps"))
+	_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-gaps", time.Now().UTC())
+	require.NoError(err)
+	assert.False(ready, "unsupported audio is not queued again")
+	runPasses(t, world.submitter(t, server, "destination-gaps"), 3)
+	for _, row := range occurrenceRows(t, world.st, "destination-gaps") {
+		assert.Equal(states[row.MessageID], row.State+":"+row.ErrorCode+":"+row.Coverage)
+	}
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	assert.Equal(requests, docbank.requests)
 }
 
 // fakeDocbank decodes the Docbank media wire contract at e33d77e4: strict
@@ -720,7 +891,10 @@ type fakeDocbank struct {
 	coverage          string
 	failProcessing    bool
 	dropRetention     bool
+	submitDelay       time.Duration
+	holdIndex         map[int]bool
 	requests          int
+	replays           int
 	next              int
 	sources           map[string]int
 	occurrenceIDs     map[string]string
@@ -734,7 +908,8 @@ type fakeDocbank struct {
 	artifactReceipts  []docbankmedia.Receipt
 	transcripts       []string
 	processOps        []string
-	lastProcess       map[string]string
+	sourceOps         map[string][]string
+	processReceipts   map[string]docbankmedia.Receipt
 	rejected          []string
 }
 
@@ -742,7 +917,8 @@ func newFakeDocbank(t *testing.T) *fakeDocbank {
 	t.Helper()
 	f := &fakeDocbank{t: t, sources: map[string]int{}, occurrenceIDs: map[string]string{},
 		replies: map[string]docbankmedia.Receipt{}, firstMetadata: map[string]string{},
-		lastProcess: map[string]string{}, coverage: "transcribed"}
+		sourceOps: map[string][]string{}, processReceipts: map[string]docbankmedia.Receipt{},
+		holdIndex: map[int]bool{}, coverage: "transcribed"}
 	t.Cleanup(func() {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -796,16 +972,7 @@ func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeDocbankJSON(w, map[string]any{"job_id": id, "state": "completed", "phase": "done",
 			"embedding_job_ids": []string{}, "completed_bindings": 1})
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/"):
-		source := strings.TrimPrefix(path, "/api/v1/media/sources/")
-		f.mu.Lock()
-		operation, coverage := f.lastProcess[source], f.coverage
-		f.mu.Unlock()
-		state := "succeeded"
-		if coverage == "pending" {
-			state = "queued"
-		}
-		writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
-			OperationID: operation, OperationState: state, CoverageState: coverage})
+		f.sourceStatus(w, strings.TrimPrefix(path, "/api/v1/media/sources/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -847,9 +1014,17 @@ func (f *fakeDocbank) submit(w http.ResponseWriter, r *http.Request) {
 		f.uploads = append(f.uploads, content)
 		f.occurrences = append(f.occurrences, metadata.Occurrence)
 	}
-	drop := f.dropRetention
+	drop, delay := f.dropRetention, f.submitDelay
 	f.dropRetention = false
 	f.mu.Unlock()
+	if delay > 0 {
+		// A slow link: the response arrives only after the upload's transfer time.
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
 	if drop {
 		// The request was accepted, but its response is lost in transit.
 		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
@@ -907,20 +1082,58 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 	assert.Equal(f.t, "supplied-transcript", body.Processing.Profile)
 	assert.NotEmpty(f.t, body.Processing.SuppliedInputID)
 	f.mu.Lock()
-	f.processOps = append(f.processOps, body.OperationID)
-	f.lastProcess[source] = body.OperationID
-	failed := f.failProcessing
-	f.mu.Unlock()
-	if failed {
-		// Docbank's saved receipt after a non-retryable enqueue failure has no job.
-		writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
-			OperationID: body.OperationID, OperationState: "failed", CoverageState: "unavailable",
-			SuppliedInputID: body.Processing.SuppliedInputID})
+	defer f.mu.Unlock()
+	if _, replay := f.processReceipts[body.OperationID]; replay {
+		// Docbank replays a known operation ID with its saved receipt.
+		f.replays++
+		writeDocbankJSON(w, f.processingReceiptLocked(body.OperationID))
 		return
 	}
-	writeDocbankJSON(w, docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+	receipt := docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
 		OperationID: body.OperationID, JobID: sha256Hex([]byte(body.OperationID)),
-		OperationState: "queued", CoverageState: "pending", SuppliedInputID: body.Processing.SuppliedInputID})
+		OperationState: "queued", CoverageState: "pending", SuppliedInputID: body.Processing.SuppliedInputID}
+	if f.failProcessing {
+		// Docbank's saved receipt after a non-retryable enqueue failure has no job.
+		receipt.JobID, receipt.OperationState, receipt.CoverageState = "", "failed", "unavailable"
+	}
+	f.processOps = append(f.processOps, body.OperationID)
+	f.sourceOps[source] = append(f.sourceOps[source], body.OperationID)
+	f.processReceipts[body.OperationID] = receipt
+	writeDocbankJSON(w, receipt)
+}
+
+// processingReceiptLocked applies the continuation worker: a queued operation
+// succeeds with the configured coverage unless the test holds it.
+func (f *fakeDocbank) processingReceiptLocked(operationID string) docbankmedia.Receipt {
+	receipt := f.processReceipts[operationID]
+	held := f.coverage == "pending" || f.holdIndex[slices.Index(f.processOps, operationID)]
+	if receipt.OperationState == "queued" && !held {
+		receipt.OperationState, receipt.CoverageState = "succeeded", f.coverage
+	}
+	return receipt
+}
+
+// sourceStatus follows Docbank e33d77e4: the newest processing operation
+// supplies the operation fields, while coverage comes from the newest
+// succeeded operation on the same source.
+func (f *fakeDocbank) sourceStatus(w http.ResponseWriter, source string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	receipt := docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+		OperationState: "succeeded", CoverageState: "unprocessed"}
+	operations := f.sourceOps[source]
+	if len(operations) > 0 {
+		newest := f.processingReceiptLocked(operations[len(operations)-1])
+		receipt.OperationID, receipt.JobID = newest.OperationID, newest.JobID
+		receipt.OperationState, receipt.CoverageState = newest.OperationState, newest.CoverageState
+		for _, operation := range slices.Backward(operations) {
+			if older := f.processingReceiptLocked(operation); older.OperationState == "succeeded" {
+				receipt.CoverageState = older.CoverageState
+				break
+			}
+		}
+	}
+	writeDocbankJSON(w, receipt)
 }
 
 // readContractMultipart enforces Docbank's metadata-then-file envelope.

@@ -232,6 +232,52 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 	assert.Empty(oldSource)
 }
 
+// TestBeeperMediaReconsiderBlocked reopens remote blocks at daemon start while
+// local source gaps and revoked rows stay put.
+func TestBeeperMediaReconsiderBlocked(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	finish := map[string]store.BeeperMediaResult{
+		"remote":    {ErrorCode: "forbidden"},
+		"codec":     {ErrorCode: "unsupported_media"},
+		"source":    {ErrorCode: "source_changed"},
+		"withdrawn": {ErrorCode: "no_live_occurrence", Revoked: true},
+	}
+	for i, name := range []string{"remote", "codec", "source", "withdrawn"} {
+		audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, name, strings.Repeat(string(rune('a'+i)), 64))
+		mapping := audio.mapping("reconsider", "r1", "")
+		require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), mapping))
+		prepared, err := f.Store.PrepareBeeperMediaOperation(t.Context(), retainOperation(mapping))
+		require.NoError(err)
+		applied, err := f.Store.FinishBeeperMediaOperation(t.Context(), prepared, finish[name])
+		require.NoError(err)
+		require.True(applied)
+	}
+
+	require.NoError(f.Store.ReconsiderBlockedBeeperMediaOperations(t.Context(), "reconsider"))
+	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+		SELECT source_message_id, retention_state, next_action_at IS NOT NULL
+		FROM beeper_media_occurrences WHERE destination_key = ?`), "reconsider")
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	states := map[string]string{}
+	for rows.Next() {
+		var message, state string
+		var scheduled bool
+		require.NoError(rows.Scan(&message, &state, &scheduled))
+		states[message] = fmt.Sprintf("%s:%t", state, scheduled)
+	}
+	require.NoError(rows.Err())
+	assert.Equal(map[string]string{
+		"remote": "pending:true", "codec": "blocked:false", "source": "blocked:false", "withdrawn": "revoked:false",
+	}, states)
+	operation, ok, err := f.Store.NextBeeperMediaOperation(t.Context(), "reconsider", time.Now().UTC().Add(time.Hour))
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal("msgvault:remote", operation.OccurrenceRef)
+}
+
 func TestBeeperMediaLiveMappings(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

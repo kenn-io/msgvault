@@ -14,6 +14,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// beeperMediaLocalGapCodes are source gaps that a daemon restart cannot fix.
+var beeperMediaLocalGapCodes = []any{"source_raw_invalid", "source_part_missing", "source_part_ambiguous",
+	"unsupported_media", "source_transcript_invalid", "source_transcript_too_large", "source_changed",
+	"source_unavailable", "no_live_occurrence"}
+
 const (
 	BeeperMediaAttachmentConsumerKey = "beeper-media/v1"
 
@@ -172,6 +177,7 @@ type BeeperMediaResult struct {
 	ErrorCode           string
 	Retry               bool
 	SourceUnavailable   bool
+	Revoked             bool
 }
 
 // BeeperMediaScan is a namespaced rolling scan checkpoint. BaselineSequence
@@ -708,7 +714,9 @@ func (s *Store) FinishBeeperMediaOperation(
 			}
 			if result.ErrorCode != "" {
 				state, next := BeeperMediaRetentionBlocked, any(nil)
-				if result.Retry {
+				if result.Revoked {
+					state = BeeperMediaRetentionRevoked
+				} else if result.Retry {
 					state, next = BeeperMediaRetentionPending, retryAt
 				} else if result.SourceUnavailable {
 					state, next = BeeperMediaRetentionSourceUnavailable, retryAt
@@ -805,19 +813,20 @@ func (s *Store) FinishBeeperMediaOperation(
 
 // ReconsiderBlockedBeeperMediaOperations lets a daemon start retry remote
 // steps that were blocked by configuration or service capability. Local
-// source gaps have no operation ID and stay blocked until the source changes.
+// source gaps stay blocked until the source changes.
 func (s *Store) ReconsiderBlockedBeeperMediaOperations(ctx context.Context, destination string) error {
 	if destination == "" {
 		return errors.New("beeper media destination is required")
 	}
 	now := s.timestampValue(time.Now().UTC())
+	localGaps := `error_code NOT IN (?` + strings.Repeat(", ?", len(beeperMediaLocalGapCodes)-1) + `)`
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if _, err := q.Exec(`
 			UPDATE beeper_media_occurrences
 			SET retention_state = 'pending', next_action_at = ?, updated_at = `+s.dialect.Now()+`
-			WHERE destination_key = ? AND retention_state = 'blocked' AND retention_operation_id <> ''`,
-			now, destination); err != nil {
+			WHERE destination_key = ? AND retention_state = 'blocked' AND retention_operation_id <> ''
+			  AND `+localGaps, append([]any{now, destination}, beeperMediaLocalGapCodes...)...); err != nil {
 			return fmt.Errorf("reconsider blocked beeper media retention: %w", err)
 		}
 		if _, err := q.Exec(`
@@ -825,8 +834,8 @@ func (s *Store) ReconsiderBlockedBeeperMediaOperations(ctx context.Context, dest
 			SET phase = CASE WHEN job_id <> '' THEN 'observing'
 			                 WHEN supplied_input_id = '' THEN 'pending-artifact' ELSE 'pending-process' END,
 			    next_action_at = ?, updated_at = `+s.dialect.Now()+`
-			WHERE destination_key = ? AND phase = 'blocked'`,
-			now, destination); err != nil {
+			WHERE destination_key = ? AND phase = 'blocked' AND `+localGaps,
+			append([]any{now, destination}, beeperMediaLocalGapCodes...)...); err != nil {
 			return fmt.Errorf("reconsider blocked beeper media processing: %w", err)
 		}
 		return nil

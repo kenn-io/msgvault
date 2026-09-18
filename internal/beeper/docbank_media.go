@@ -29,6 +29,8 @@ const (
 	beeperMediaScanPageSize    = 100
 	beeperMediaJournalPageSize = 100
 	beeperMediaActionTimeout   = 30 * time.Second
+	// ponytail: an upload gets one extra second per 256 KiB (~2 Mbit/s); lower the rate if slower links time out.
+	beeperMediaUploadRate      = 256 << 10
 	beeperMediaTranscriptLimit = 16 << 20
 	// ponytail: the pinned inspector stops at 1 GiB, below Docbank's 2 GiB upload ceiling; raise with the Docbank pin.
 	beeperMediaSourceLimit = 1 << 30
@@ -84,6 +86,7 @@ type MediaSubmitter struct {
 	client        *docbankmedia.Client
 	destination   string
 	actionTimeout time.Duration
+	uploadRate    int64
 }
 
 // NewMediaSubmitter returns a worker for one destination. A nil client keeps
@@ -92,7 +95,8 @@ func NewMediaSubmitter(
 	st *store.Store, blobs *attachmentstore.Store, client *docbankmedia.Client, destination string,
 ) *MediaSubmitter {
 	return &MediaSubmitter{
-		store: st, blobs: blobs, client: client, destination: destination, actionTimeout: beeperMediaActionTimeout,
+		store: st, blobs: blobs, client: client, destination: destination,
+		actionTimeout: beeperMediaActionTimeout, uploadRate: beeperMediaUploadRate,
 	}
 }
 
@@ -283,7 +287,12 @@ func (w *MediaSubmitter) runOperation(
 	ctx context.Context, archiveUID string, operation store.BeeperMediaOperation,
 ) (bool, error) {
 	// Only remote and spool work runs under the step deadline, so a timed-out step can still record its retry.
-	actionCtx, cancel := context.WithTimeout(ctx, w.actionTimeout)
+	timeout := w.actionTimeout
+	if operation.Kind == store.BeeperMediaOperationRetain && w.uploadRate > 0 {
+		// Copying and uploading scale with size, so large audio gets a proportionally longer bounded deadline.
+		timeout += time.Duration(operation.ByteLength/w.uploadRate) * time.Second
+	}
+	actionCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	switch operation.Kind {
 	case store.BeeperMediaOperationRetain:
@@ -309,7 +318,10 @@ func (w *MediaSubmitter) retain(
 	}
 	candidate, err := w.store.GetBeeperMediaCandidate(ctx, operation.AttachmentID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return unavailable(errBeeperMediaNoLiveOccurrence.Error())
+		// A hidden or deleted message retires its pending row; discovery reopens it if the message returns.
+		return false, w.finishOperation(ctx, operation, store.BeeperMediaResult{
+			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(), Revoked: true,
+		})
 	}
 	if err != nil {
 		return false, err
@@ -453,8 +465,8 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 	return w.finishOperation(ctx, prepared, result)
 }
 
-// status reads the exact processing job. Source coverage counts only when
-// Docbank reports it for this variant's processing operation.
+// status reads the exact processing job and this operation's own receipt. It
+// settles only when that receipt has failed or has succeeded with final coverage.
 func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.BeeperMediaOperation) error {
 	mappings, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 1)
 	if err != nil {
@@ -476,24 +488,42 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 	if source.VaultUID != mappings[0].VaultUID || source.SourceID != operation.DocbankSourceID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
-	ownCoverage := source.OperationID == operation.OperationID
-	result := store.BeeperMediaResult{OperationState: job.State}
-	switch job.State {
-	case "completed", "partial":
-		result.OperationState, result.Terminal = "succeeded", true
-		if ownCoverage && source.OperationState == "failed" {
-			result.OperationState = "failed"
-		} else if ownCoverage && !terminalMediaCoverage(source.CoverageState) {
-			// Docbank publishes coverage after the job completes; keep polling until it settles.
-			result.OperationState, result.Terminal = source.OperationState, false
-		}
-	case "failed", "abandoned":
-		result.OperationState, result.Terminal, result.ErrorCode = "failed", true, job.FailureCode
+	own, err := w.ownProcessingReceipt(actionCtx, operation, source)
+	if err != nil {
+		return w.finishClientError(ctx, actionCtx, operation, err)
 	}
-	if ownCoverage {
-		result.CoverageState = source.CoverageState
+	if own.VaultUID != mappings[0].VaultUID || own.SourceID != operation.DocbankSourceID {
+		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
+	}
+	result := store.BeeperMediaResult{OperationState: own.OperationState, CoverageState: own.CoverageState}
+	switch {
+	case job.State == "failed" || job.State == "abandoned":
+		result.OperationState, result.Terminal, result.ErrorCode = "failed", true, job.FailureCode
+	case own.OperationState == "failed" || own.OperationState == "cancelled":
+		result.OperationState, result.Terminal = "failed", true
+	case own.OperationState == "succeeded" && terminalMediaCoverage(own.CoverageState):
+		result.Terminal = true
+	}
+	if result.OperationState == "failed" && !terminalMediaCoverage(result.CoverageState) {
+		result.CoverageState = "unavailable"
 	}
 	return w.finishOperation(ctx, operation, result)
+}
+
+// ownProcessingReceipt returns this operation's receipt. Docbank's source
+// status names only the newest operation and takes coverage from the newest
+// succeeded one, so an older operation replays its saved retry receipt.
+func (w *MediaSubmitter) ownProcessingReceipt(
+	ctx context.Context, operation store.BeeperMediaOperation, source docbankmedia.Receipt,
+) (docbankmedia.Receipt, error) {
+	if source.OperationID != operation.OperationID {
+		return w.client.Process(ctx, operation.DocbankSourceID, operation.OperationID, operation.SuppliedInputID)
+	}
+	if source.OperationState != "succeeded" {
+		// Until this operation succeeds, source coverage belongs to an earlier one.
+		source.CoverageState = ""
+	}
+	return source, nil
 }
 
 func terminalMediaCoverage(state string) bool {

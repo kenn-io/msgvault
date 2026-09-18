@@ -212,16 +212,20 @@ What happens:
 - The same recording in several messages gets one occurrence per message.
   Docbank stores the bytes once, and each exact transcript is processed once.
 - A hidden, source-deleted, removed or replaced message loses its mapping
-  (`revoked`). Other messages sharing the audio keep theirs. msgvault decides
-  which occurrences are live; Docbank keeps the shared evidence.
-- Network errors, requests that run past 30 seconds, HTTP 429 and 5xx
-  responses retry after five minutes with the same operation ID. Rejected
-  credentials or requests stay `blocked` until the daemon restarts, which also
-  resumes checking a queued job. Missing or corrupt local bytes wait as
-  `source_unavailable`.
-- A processed delivery reaches `done` only after Docbank reports its coverage.
-  A failed Docbank job or a failed processing request ends as `done` with
-  `operation_state` set to `failed`.
+  (`revoked`), including audio still waiting to be sent. Other messages
+  sharing the audio keep theirs. msgvault decides which occurrences are live;
+  Docbank keeps the shared evidence.
+- Network errors, HTTP 429 and 5xx responses retry after five minutes with the
+  same operation ID. So does a request that runs out of time: each request
+  gets 30 seconds, and an audio upload gets one more second per 256 KiB.
+  Rejected credentials or requests stay `blocked` until the daemon restarts,
+  which also resumes checking a queued job. Unsupported codecs and other
+  local source problems stay `blocked` across restarts until the message
+  changes. Missing or corrupt local bytes wait as `source_unavailable`.
+- A processed delivery reaches `done` only after Docbank reports coverage
+  for its own processing request, not for another transcript of the same
+  audio. A failed Docbank job or a failed processing request ends as `done`
+  with `operation_state` set to `failed`.
 
 Provider transcripts stay searchable through the normal message text. This
 route does not add search over Docbank's processed output yet. Check progress
