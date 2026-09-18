@@ -925,7 +925,7 @@ func prepareMediaUpload(
 	}
 	record, err := media.InspectCapability(file, policy)
 	if err != nil {
-		return nil, "", errBeeperMediaUnsupported
+		return nil, "", fmt.Errorf("%w: inspect media spool: %w", errBeeperMediaSourceUnavailable, err)
 	}
 	if !record.Eligible || record.Format != format {
 		return nil, "", errBeeperMediaUnsupported
