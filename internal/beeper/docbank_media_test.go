@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -209,6 +210,87 @@ func TestBeeperMediaSubmission(t *testing.T) {
 	require.Len(mappings, 1)
 	assert.Equal("occurrence-1", mappings[0].DocbankOccurrenceID)
 	assert.Equal("voice1", mappings[0].SourceMessageID)
+}
+
+// TestBeeperMediaGatedWrites runs every operation kind behind a recording
+// operation gate. The archive changes only while the gate is held, and no
+// Docbank request runs under it.
+func TestBeeperMediaGatedWrites(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "a gated transcript", data: syntheticWAV(1600, 3)})
+	docbank := newFakeDocbank(t)
+	var held atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.False(held.Load(), "Docbank request %s ran under the operation gate", r.URL.Path)
+		docbank.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	var released []string
+	acquired := 0
+	submitter := world.submitter(t, server, "destination-gated").WithOperationGate(
+		func(context.Context) (func(), bool) {
+			assert.Equal(released, mediaArchiveState(t, world.st), "the archive changed while the gate was free")
+			held.Store(true)
+			acquired++
+			return func() {
+				held.Store(false)
+				released = mediaArchiveState(t, world.st)
+			}, true
+		})
+
+	for range 5 {
+		released = mediaArchiveState(t, world.st)
+		_, err := submitter.RunBatch(t.Context())
+		require.NoError(err)
+		assert.Equal(released, mediaArchiveState(t, world.st), "the archive changed after the last release")
+	}
+	rows := occurrenceRows(t, world.st, "destination-gated")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	deliveries := deliveryRows(t, world.st, "destination-gated")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal("transcribed", deliveries[0].Coverage)
+	assert.GreaterOrEqual(acquired, 9, "discovery, prepare and finish each take the gate")
+	docbank.mu.Lock()
+	requests := docbank.requests
+	docbank.mu.Unlock()
+	assert.Equal(5, requests)
+
+	// A busy gate ends the pass before any write or request.
+	before := mediaArchiveState(t, world.st)
+	busy := world.submitter(t, server, "destination-busy").WithOperationGate(
+		func(context.Context) (func(), bool) { return func() {}, false })
+	result, err := busy.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Zero(result.Examined)
+	assert.Equal(before, mediaArchiveState(t, world.st))
+	docbank.mu.Lock()
+	assert.Equal(requests, docbank.requests)
+	docbank.mu.Unlock()
+}
+
+// mediaArchiveState covers every table the media worker writes.
+func mediaArchiveState(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	state := tableSnapshot(t, st)
+	rows, err := st.DB().Query(`
+		SELECT key || '=' || value FROM archive_metadata
+		UNION ALL
+		SELECT consumer_key || '|' || CAST(last_sequence AS TEXT) || '|' || CAST(reconciliation_complete AS TEXT)
+		FROM attachment_change_consumers
+		ORDER BY 1`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	for rows.Next() {
+		var value string
+		require.NoError(t, rows.Scan(&value))
+		state = append(state, value)
+	}
+	require.NoError(t, rows.Err())
+	return state
 }
 
 func TestBeeperMediaSyncIsolation(t *testing.T) {
@@ -853,10 +935,14 @@ func TestBeeperMediaGaps(t *testing.T) {
 		"plain": "retained::unprocessed", "opus": "blocked:unsupported_media:",
 		"m4a": "blocked:unsupported_media:", "gap": "blocked:source_part_missing:",
 	}, states)
-	for _, delivery := range deliveryRows(t, world.st, "destination-gaps") {
-		assert.Equal("pending-artifact", delivery.Phase)
+	// Transcript deliveries of unsupported audio are retired with the same code.
+	deliveries := deliveryRows(t, world.st, "destination-gaps")
+	require.Len(deliveries, 2)
+	for _, delivery := range deliveries {
+		assert.Equal("blocked:unsupported_media", delivery.Phase+":"+delivery.ErrorCode)
 		assert.Empty(delivery.SuppliedInput)
 	}
+	assert.Empty(deliveryNextActions(t, world.st, "destination-gaps"))
 	docbank.mu.Lock()
 	assert.Len(docbank.uploads, 1)
 	assert.Empty(docbank.transcripts)
@@ -873,9 +959,52 @@ func TestBeeperMediaGaps(t *testing.T) {
 	for _, row := range occurrenceRows(t, world.st, "destination-gaps") {
 		assert.Equal(states[row.MessageID], row.State+":"+row.ErrorCode+":"+row.Coverage)
 	}
+	assert.Equal(deliveries, deliveryRows(t, world.st, "destination-gaps"))
 	docbank.mu.Lock()
-	defer docbank.mu.Unlock()
 	assert.Equal(requests, docbank.requests)
+	docbank.mu.Unlock()
+
+	// A new source revision of the same audio and transcript reopens its delivery.
+	var opusMessage int64
+	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'opus'`).Scan(&opusMessage))
+	raw, err := world.st.GetMessageRawContext(t.Context(), opusMessage)
+	require.NoError(err)
+	var envelope map[string]any
+	require.NoError(json.Unmarshal(raw, &envelope))
+	envelope["timestamp"] = "2026-02-02T03:04:05.678Z"
+	raw, err = json.Marshal(envelope)
+	require.NoError(err)
+	require.NoError(world.st.UpsertMessageRawWithFormat(opusMessage, raw, "beeper_json"))
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-gaps"), 1)
+	phases := map[string]int{}
+	for _, delivery := range deliveryRows(t, world.st, "destination-gaps") {
+		phases[delivery.Phase+":"+delivery.ErrorCode]++
+	}
+	assert.Equal(map[string]int{"pending-artifact:": 1, "blocked:unsupported_media": 1}, phases)
+
+	// Retention finds the codec unsupported again and retires the delivery again.
+	runPasses(t, world.submitter(t, server, "destination-gaps"), 2)
+	for _, delivery := range deliveryRows(t, world.st, "destination-gaps") {
+		assert.Equal("blocked:unsupported_media", delivery.Phase+":"+delivery.ErrorCode)
+	}
+	assert.Empty(deliveryNextActions(t, world.st, "destination-gaps"))
+}
+
+func deliveryNextActions(t *testing.T, st *store.Store, destination string) []string {
+	t.Helper()
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT processing_key FROM beeper_media_deliveries
+		WHERE destination_key = ? AND next_action_at IS NOT NULL`), destination)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var keys []string
+	for rows.Next() {
+		var key string
+		require.NoError(t, rows.Scan(&key))
+		keys = append(keys, key)
+	}
+	require.NoError(t, rows.Err())
+	return keys
 }
 
 // fakeDocbank decodes the Docbank media wire contract at e33d77e4: strict

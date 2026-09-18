@@ -46,6 +46,7 @@ var (
 	errBeeperMediaSourceChanged      = errors.New("source_changed")
 	errBeeperMediaSourceUnavailable  = errors.New("source_unavailable")
 	errBeeperMediaNoLiveOccurrence   = errors.New("no_live_occurrence")
+	errBeeperMediaGateBusy           = errors.New("operation gate busy")
 )
 
 // MediaDescriptor contains immutable claims for one verified Beeper media
@@ -87,6 +88,7 @@ type MediaSubmitter struct {
 	destination   string
 	actionTimeout time.Duration
 	uploadRate    int64
+	gate          func(context.Context) (func(), bool)
 }
 
 // NewMediaSubmitter returns a worker for one destination. A nil client keeps
@@ -100,30 +102,89 @@ func NewMediaSubmitter(
 	}
 }
 
+// WithOperationGate makes Store writes wait for the daemon operation gate.
+// Spooling and HTTP run outside it; a refused gate ends the pass.
+func (w *MediaSubmitter) WithOperationGate(gate func(context.Context) (func(), bool)) *MediaSubmitter {
+	w.gate = gate
+	return w
+}
+
 // RunBatch commits bounded discovery before selecting one remote step. A
 // remote failure is recorded on its operation and never fails the pass.
 func (w *MediaSubmitter) RunBatch(ctx context.Context) (MediaBatchResult, error) {
 	if w == nil || w.store == nil || w.destination == "" {
 		return MediaBatchResult{}, errors.New("beeper media submitter is not configured")
 	}
-	archiveUID, err := w.store.ArchiveUIDContext(ctx)
-	if err != nil {
-		return MediaBatchResult{}, err
-	}
-	result, err := w.discover(ctx, archiveUID)
-	if err != nil || w.client == nil || w.blobs == nil {
-		return result, err
-	}
-	operation, ok, err := w.store.NextBeeperMediaOperation(ctx, w.destination, time.Now().UTC())
+	var result MediaBatchResult
+	var archiveUID string
+	var operation store.BeeperMediaOperation
+	var ok bool
+	err := w.gated(ctx, func() error {
+		var err error
+		if archiveUID, err = w.store.ArchiveUIDContext(ctx); err != nil {
+			return err
+		}
+		if result, err = w.discover(ctx, archiveUID); err != nil || w.client == nil || w.blobs == nil {
+			return err
+		}
+		operation, ok, err = w.store.NextBeeperMediaOperation(ctx, w.destination, time.Now().UTC())
+		return err
+	})
 	if err != nil || !ok {
-		return result, err
+		return result, endMediaPass(err)
 	}
 	// ponytail: one remote action per pass (~1,440/day); batch once a measured backlog outgrows it.
 	retained, err := w.runOperation(ctx, archiveUID, operation)
 	if retained {
 		result.Retained++
 	}
-	return result, err
+	return result, endMediaPass(err)
+}
+
+// endMediaPass treats a busy gate as the end of the pass; the saved operation
+// ID replays on the next one.
+func endMediaPass(err error) error {
+	if errors.Is(err, errBeeperMediaGateBusy) {
+		return nil
+	}
+	return err
+}
+
+// gated runs one Store step under the operation gate so backup freeze sees no writer.
+func (w *MediaSubmitter) gated(ctx context.Context, step func() error) error {
+	if w.gate == nil {
+		return step()
+	}
+	release, ok := w.gate(ctx)
+	if !ok {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errBeeperMediaGateBusy
+	}
+	defer release()
+	return step()
+}
+
+func (w *MediaSubmitter) prepareOperation(
+	ctx context.Context, operation store.BeeperMediaOperation,
+) (store.BeeperMediaOperation, error) {
+	var prepared store.BeeperMediaOperation
+	err := w.gated(ctx, func() (err error) {
+		prepared, err = w.store.PrepareBeeperMediaOperation(ctx, operation)
+		return err
+	})
+	return prepared, err
+}
+
+// liveMappings is gated because the Store revokes stale mappings while listing.
+func (w *MediaSubmitter) liveMappings(ctx context.Context, processingKey string, limit int) ([]store.BeeperMediaMapping, error) {
+	var mappings []store.BeeperMediaMapping
+	err := w.gated(ctx, func() (err error) {
+		mappings, err = w.store.ListLiveBeeperMediaMappings(ctx, w.destination, processingKey, limit)
+		return err
+	})
+	return mappings, err
 }
 
 func (w *MediaSubmitter) discover(ctx context.Context, archiveUID string) (MediaBatchResult, error) {
@@ -346,7 +407,7 @@ func (w *MediaSubmitter) retain(
 		return false, w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: mediaGapCode(err)})
 	}
 	defer closeAndRemove(file)
-	prepared, err := w.store.PrepareBeeperMediaOperation(ctx, operation)
+	prepared, err := w.prepareOperation(ctx, operation)
 	if err != nil {
 		return false, err
 	}
@@ -361,7 +422,7 @@ func (w *MediaSubmitter) retain(
 	if err != nil {
 		return false, w.finishClientError(ctx, actionCtx, prepared, err)
 	}
-	return w.store.FinishBeeperMediaOperation(ctx, prepared, store.BeeperMediaResult{
+	return w.finish(ctx, prepared, store.BeeperMediaResult{
 		VaultUID: receipt.VaultUID, DocbankSourceID: receipt.SourceID,
 		SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID,
 		DocbankOccurrenceID: receipt.OccurrenceID, CoverageState: receipt.CoverageState,
@@ -373,7 +434,7 @@ func (w *MediaSubmitter) retain(
 func (w *MediaSubmitter) artifact(
 	ctx, actionCtx context.Context, archiveUID string, operation store.BeeperMediaOperation,
 ) error {
-	mappings, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 100)
+	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 100)
 	if err != nil {
 		return err
 	}
@@ -404,7 +465,7 @@ func (w *MediaSubmitter) artifact(
 	})
 	operation.DocbankSourceID, operation.SourceVersionID = donor.DocbankSourceID, donor.SourceVersionID
 	operation.ContentVersionID, operation.DocbankOccurrenceID = donor.ContentVersionID, donor.DocbankOccurrenceID
-	prepared, err := w.store.PrepareBeeperMediaOperation(ctx, operation)
+	prepared, err := w.prepareOperation(ctx, operation)
 	if err != nil {
 		return err
 	}
@@ -428,7 +489,7 @@ func (w *MediaSubmitter) artifact(
 
 // process explicitly queues the supplied-transcript profile once per key.
 func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store.BeeperMediaOperation) error {
-	mappings, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 1)
+	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 1)
 	if err != nil {
 		return err
 	}
@@ -440,7 +501,7 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
 		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
 	})
-	prepared, err := w.store.PrepareBeeperMediaOperation(ctx, operation)
+	prepared, err := w.prepareOperation(ctx, operation)
 	if err != nil {
 		return err
 	}
@@ -468,7 +529,7 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 // status reads the exact processing job and this operation's own receipt. It
 // settles only when that receipt has failed or has succeeded with final coverage.
 func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.BeeperMediaOperation) error {
-	mappings, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 1)
+	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 1)
 	if err != nil {
 		return err
 	}
@@ -552,8 +613,19 @@ func (w *MediaSubmitter) finishClientError(
 func (w *MediaSubmitter) finishOperation(
 	ctx context.Context, operation store.BeeperMediaOperation, result store.BeeperMediaResult,
 ) error {
-	_, err := w.store.FinishBeeperMediaOperation(ctx, operation, result)
+	_, err := w.finish(ctx, operation, result)
 	return err
+}
+
+func (w *MediaSubmitter) finish(
+	ctx context.Context, operation store.BeeperMediaOperation, result store.BeeperMediaResult,
+) (bool, error) {
+	var retained bool
+	err := w.gated(ctx, func() (err error) {
+		retained, err = w.store.FinishBeeperMediaOperation(ctx, operation, result)
+		return err
+	})
+	return retained, err
 }
 
 func mappingCandidate(mapping store.BeeperMediaMapping) store.BeeperMediaCandidate {

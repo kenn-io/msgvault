@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -129,6 +130,36 @@ type serveRuntimeAPIServer interface {
 
 type serveRuntimeScheduler interface {
 	Stop() context.Context
+}
+
+// serveSchedulers stops every daemon scheduler and reports when all have drained.
+type serveSchedulers []serveRuntimeScheduler
+
+func (s serveSchedulers) Stop() context.Context {
+	stopped := make([]context.Context, 0, len(s))
+	for _, sched := range s {
+		stopped = append(stopped, sched.Stop())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for _, done := range stopped {
+			<-done.Done()
+		}
+		cancel()
+	}()
+	return ctx
+}
+
+// newServeSchedulers returns the daemon scheduler, whose jobs hold the
+// operation gate, and one for Beeper media delivery. A media upload can run
+// for minutes, so that job takes the gate only around its Store writes.
+func newServeSchedulers(
+	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
+) (*scheduler.Scheduler, *scheduler.Scheduler) {
+	sched := scheduler.New(syncFunc).WithLogger(logger).
+		WithWorkTracker(combineWorkTrackers(idle, labelWorkTracker(gate, "a scheduled sync")))
+	media := scheduler.New(nil).WithLogger(logger).WithWorkTracker(combineWorkTrackers(idle))
+	return sched, media
 }
 
 type serveRuntimeOperationGate interface {
@@ -344,8 +375,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
-	sched := scheduler.New(syncFunc).WithLogger(logger).
-		WithWorkTracker(combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a scheduled sync")))
+	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate)
 	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
 		return fmt.Errorf("configure CardDAV: %w", err)
@@ -435,7 +465,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("configure document reconciliation: %w", err)
 	}
-	if err := configureBeeperMediaJob(ctx, sched, s, blobStore, cfg.Integrations.Docbank, logger); err != nil {
+	if err := configureBeeperMediaJob(ctx, mediaSched, operationGate, s, blobStore, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Beeper media submission unavailable", "error", err)
 	}
 	if err := registerActivityProjectionJob(
@@ -584,8 +614,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start the scheduler
+	// Start the schedulers
 	sched.Start()
+	mediaSched.Start()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -609,7 +640,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		personEnrichmentConfig: cfg.People.Enrichment,
 		lookupEnv:              personEnrichmentEnvironmentLookup(cfg),
 	}
-	schedAdapter := &schedulerAdapter{scheduler: sched}
+	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
 	// Create and start API server
 	var apiServer *api.Server
@@ -743,7 +774,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate)
+	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
 	if shutdownErr == nil {
 		resourceCleanupSafe = true
 	}
@@ -3255,9 +3286,18 @@ func registerPersonEnrichmentJob(
 
 // schedulerAdapter adapts scheduler.Scheduler to api.SyncScheduler.
 // Since api.AccountStatus is a type alias for scheduler.AccountStatus,
-// the adapter methods are simple pass-throughs.
+// the adapter methods are simple pass-throughs. Jobs on the media scheduler
+// join the same job status and trigger by name.
 type schedulerAdapter struct {
 	scheduler *scheduler.Scheduler
+	media     *scheduler.Scheduler
+}
+
+func (a *schedulerAdapter) jobScheduler(name string) *scheduler.Scheduler {
+	if a.media != nil && a.media.IsJobScheduled(name) {
+		return a.media
+	}
+	return a.scheduler
 }
 
 func (a *schedulerAdapter) IsScheduled(email string) bool {
@@ -3281,19 +3321,24 @@ func (a *schedulerAdapter) Status() []api.AccountStatus {
 }
 
 func (a *schedulerAdapter) JobStatus() []api.JobStatus {
-	return a.scheduler.JobStatus()
+	jobs := a.scheduler.JobStatus()
+	if a.media != nil {
+		jobs = append(jobs, a.media.JobStatus()...)
+		slices.SortFunc(jobs, func(x, y api.JobStatus) int { return strings.Compare(x.Name, y.Name) })
+	}
+	return jobs
 }
 
 func (a *schedulerAdapter) IsJobScheduled(name string) bool {
-	return a.scheduler.IsJobScheduled(name)
+	return a.jobScheduler(name).IsJobScheduled(name)
 }
 
 func (a *schedulerAdapter) TriggerJob(name string) error {
-	return a.scheduler.TriggerJob(name)
+	return a.jobScheduler(name).TriggerJob(name)
 }
 
 func (a *schedulerAdapter) StartJob(name string) error {
-	return a.scheduler.StartJob(name)
+	return a.jobScheduler(name).StartJob(name)
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves

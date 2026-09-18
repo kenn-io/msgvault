@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
@@ -20,11 +22,42 @@ import (
 const (
 	beeperMediaSubmitJob  = "beeper-media-submit"
 	beeperMediaSubmitCron = "* * * * *"
+	beeperMediaGateLabel  = "Beeper media submission"
 )
+
+// beeperMediaGateWait bounds each wait for the operation gate; a busy gate ends
+// the pass. Variable only so tests can shorten it.
+var beeperMediaGateWait = 30 * time.Second
+
+// beeperMediaGate takes the operation gate for one media Store step.
+func beeperMediaGate(gate api.LabeledOperationGate) func(context.Context) (func(), bool) {
+	if gate == nil {
+		return nil
+	}
+	return func(ctx context.Context) (func(), bool) {
+		waitCtx, cancel := context.WithTimeout(ctx, beeperMediaGateWait)
+		defer cancel()
+		return gate.BeginLabeledWorkContext(waitCtx, beeperMediaGateLabel)
+	}
+}
+
+// withBeeperMediaGate runs a setup Store write under the operation gate.
+func withBeeperMediaGate(ctx context.Context, gate api.LabeledOperationGate, write func() error) error {
+	if gate == nil {
+		return write()
+	}
+	release, ok := beeperMediaGate(gate)(ctx)
+	if !ok {
+		return errors.New("operation gate unavailable for Beeper media setup")
+	}
+	defer release()
+	return write()
+}
 
 func configureBeeperMediaJob(
 	ctx context.Context,
 	sched *scheduler.Scheduler,
+	gate api.LabeledOperationGate,
 	st *store.Store,
 	blobs *attachmentstore.Store,
 	cfg config.DocbankIntegrationConfig,
@@ -32,7 +65,9 @@ func configureBeeperMediaJob(
 ) error {
 	if !cfg.Enabled {
 		sched.RemoveJob(beeperMediaSubmitJob)
-		err := st.UnregisterAttachmentChangeConsumer(ctx, store.BeeperMediaAttachmentConsumerKey)
+		err := withBeeperMediaGate(ctx, gate, func() error {
+			return st.UnregisterAttachmentChangeConsumer(ctx, store.BeeperMediaAttachmentConsumerKey)
+		})
 		if errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
 			return nil
 		}
@@ -62,11 +97,13 @@ func configureBeeperMediaJob(
 	var submitClient *docbankmedia.Client
 	if cfg.UploadConsent {
 		submitClient = client
-		if err := st.ReconsiderBlockedBeeperMediaOperations(ctx, destination); err != nil {
+		if err := withBeeperMediaGate(ctx, gate, func() error {
+			return st.ReconsiderBlockedBeeperMediaOperations(ctx, destination)
+		}); err != nil {
 			return err
 		}
 	}
-	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination)
+	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination).WithOperationGate(beeperMediaGate(gate))
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,

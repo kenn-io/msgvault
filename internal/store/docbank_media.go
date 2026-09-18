@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +19,15 @@ import (
 var beeperMediaLocalGapCodes = []any{"source_raw_invalid", "source_part_missing", "source_part_ambiguous",
 	"unsupported_media", "source_transcript_invalid", "source_transcript_too_large", "source_changed",
 	"source_unavailable", "no_live_occurrence"}
+
+// beeperMediaResumedPhase is the step a reopened delivery resumes from.
+const beeperMediaResumedPhase = `CASE WHEN job_id <> '' THEN 'observing'
+	WHEN supplied_input_id = '' THEN 'pending-artifact' ELSE 'pending-process' END`
+
+// beeperMediaLocalGapFilter matches error_code against beeperMediaLocalGapCodes.
+func beeperMediaLocalGapFilter() string {
+	return `error_code IN (?` + strings.Repeat(", ?", len(beeperMediaLocalGapCodes)-1) + `)`
+}
 
 const (
 	BeeperMediaAttachmentConsumerKey = "beeper-media/v1"
@@ -288,6 +298,7 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 		}
 
 		existing, err := s.readBeeperMediaOccurrence(q, mapping.DestinationKey, mapping.OccurrenceRef, mapping.Revision)
+		reopened := true
 		if errors.Is(err, sql.ErrNoRows) {
 			if mapping.RetentionState != BeeperMediaRetentionBlocked {
 				mapping.RetentionState = BeeperMediaRetentionPending
@@ -310,10 +321,14 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 					return err
 				}
 			}
+			reopened = existing.RetentionState != next.RetentionState
 			mapping = next
 		}
 
-		if mapping.ProcessingKey == "" || mapping.RetentionState == BeeperMediaRetentionBlocked {
+		if mapping.RetentionState == BeeperMediaRetentionBlocked {
+			return s.retireBeeperMediaDeliveries(q, mapping.DestinationKey, mapping.OccurrenceRef, mapping.ErrorCode)
+		}
+		if mapping.ProcessingKey == "" {
 			return nil
 		}
 		if _, err := q.Exec(`
@@ -327,8 +342,44 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 			s.timestampValue(time.Now().UTC())); err != nil {
 			return fmt.Errorf("create beeper media processing state: %w", err)
 		}
+		if !reopened {
+			return nil
+		}
+		// A new or restored occurrence can supply audio again, so a delivery retired by a source gap resumes.
+		if _, err := q.Exec(`
+			UPDATE beeper_media_deliveries
+			SET phase = `+beeperMediaResumedPhase+`, next_action_at = ?, error_code = '', updated_at = `+s.dialect.Now()+`
+			WHERE destination_key = ? AND processing_key = ? AND phase = 'blocked' AND `+beeperMediaLocalGapFilter(),
+			append([]any{s.timestampValue(time.Now().UTC()), mapping.DestinationKey, mapping.ProcessingKey},
+				beeperMediaLocalGapCodes...)...); err != nil {
+			return fmt.Errorf("reopen beeper media processing state: %w", err)
+		}
 		return nil
 	})
+}
+
+// retireBeeperMediaDeliveries blocks an unstarted transcript delivery of this
+// occurrence once no pending or retained occurrence can supply its audio.
+func (s *Store) retireBeeperMediaDeliveries(q boundQuerier, destination, occurrenceRef, code string) error {
+	if !slices.Contains(beeperMediaLocalGapCodes, any(code)) {
+		return nil
+	}
+	if _, err := q.Exec(`
+		UPDATE beeper_media_deliveries
+		SET phase = 'blocked', next_action_at = NULL, error_code = ?, updated_at = `+s.dialect.Now()+`
+		WHERE destination_key = ? AND phase = 'pending-artifact'
+		  AND processing_key IN (
+			SELECT processing_key FROM beeper_media_occurrences
+			WHERE destination_key = ? AND occurrence_ref = ? AND processing_key <> '')
+		  AND NOT EXISTS (
+			SELECT 1 FROM beeper_media_occurrences o
+			WHERE o.destination_key = beeper_media_deliveries.destination_key
+			  AND o.processing_key = beeper_media_deliveries.processing_key
+			  AND o.retention_state IN ('pending', 'source_unavailable', 'retained'))`,
+		code, destination, destination, occurrenceRef); err != nil {
+		return fmt.Errorf("retire beeper media processing state: %w", err)
+	}
+	return nil
 }
 
 // reconciledBeeperMediaOccurrence merges current local evidence into a saved
@@ -695,6 +746,7 @@ func (s *Store) FinishBeeperMediaOperation(
 		q := boundQuerier{ctx: ctx, q: tx}
 		var res sql.Result
 		var err error
+		var retireCode string
 		switch operation.Kind {
 		case BeeperMediaOperationRetain:
 			where := `WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?
@@ -725,6 +777,9 @@ func (s *Store) FinishBeeperMediaOperation(
 					UPDATE beeper_media_occurrences
 					SET retention_state = ?, next_action_at = ?, error_code = ?, updated_at = `+s.dialect.Now()+`
 					`+where, append([]any{state, next, result.ErrorCode}, key...)...)
+				if state == BeeperMediaRetentionBlocked {
+					retireCode = result.ErrorCode
+				}
 				break
 			}
 			res, err = q.Exec(`
@@ -806,7 +861,10 @@ func (s *Store) FinishBeeperMediaOperation(
 		}
 		count, err := res.RowsAffected()
 		applied = count == 1
-		return err
+		if err != nil || !applied || retireCode == "" {
+			return err
+		}
+		return s.retireBeeperMediaDeliveries(q, operation.DestinationKey, operation.OccurrenceRef, retireCode)
 	})
 	return applied, err
 }
@@ -819,7 +877,7 @@ func (s *Store) ReconsiderBlockedBeeperMediaOperations(ctx context.Context, dest
 		return errors.New("beeper media destination is required")
 	}
 	now := s.timestampValue(time.Now().UTC())
-	localGaps := `error_code NOT IN (?` + strings.Repeat(", ?", len(beeperMediaLocalGapCodes)-1) + `)`
+	localGaps := `NOT ` + beeperMediaLocalGapFilter()
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if _, err := q.Exec(`
@@ -831,8 +889,7 @@ func (s *Store) ReconsiderBlockedBeeperMediaOperations(ctx context.Context, dest
 		}
 		if _, err := q.Exec(`
 			UPDATE beeper_media_deliveries
-			SET phase = CASE WHEN job_id <> '' THEN 'observing'
-			                 WHEN supplied_input_id = '' THEN 'pending-artifact' ELSE 'pending-process' END,
+			SET phase = `+beeperMediaResumedPhase+`,
 			    next_action_at = ?, updated_at = `+s.dialect.Now()+`
 			WHERE destination_key = ? AND phase = 'blocked' AND `+localGaps,
 			append([]any{now, destination}, beeperMediaLocalGapCodes...)...); err != nil {

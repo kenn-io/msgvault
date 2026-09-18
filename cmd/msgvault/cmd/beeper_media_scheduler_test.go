@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
@@ -72,11 +74,12 @@ type retentionServer struct {
 	hang       atomic.Bool
 	failStatus atomic.Int32
 	arrived    chan struct{}
+	release    chan struct{}
 }
 
 func newRetentionServer(t *testing.T) (*retentionServer, *httptest.Server) {
 	t.Helper()
-	server := &retentionServer{arrived: make(chan struct{}, 10)}
+	server := &retentionServer{arrived: make(chan struct{}, 10), release: make(chan struct{})}
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.mu.Lock()
 		server.requests++
@@ -103,15 +106,17 @@ func newRetentionServer(t *testing.T) (*retentionServer, *httptest.Server) {
 		}
 		assert.NoError(t, json.UnmarshalRead(part, &metadata))
 		server.arrived <- struct{}{}
-		if server.hang.Load() {
-			_, _ = io.Copy(io.Discard, r.Body)
-			<-r.Context().Done()
-			server.mu.Lock()
-			server.operations = append(server.operations, metadata.OperationID)
-			server.mu.Unlock()
-			return
-		}
 		_, _ = io.Copy(io.Discard, r.Body)
+		if server.hang.Load() {
+			select {
+			case <-r.Context().Done():
+				server.mu.Lock()
+				server.operations = append(server.operations, metadata.OperationID)
+				server.mu.Unlock()
+				return
+			case <-server.release:
+			}
+		}
 		server.mu.Lock()
 		server.operations = append(server.operations, metadata.OperationID)
 		server.mu.Unlock()
@@ -165,18 +170,18 @@ func TestBeeperMediaConfig(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 
 	// Absent configuration registers nothing.
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, config.DocbankIntegrationConfig{}, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 	assert.False(consumerRegistered(t, st))
 
 	// Remote plaintext is refused before any job exists.
-	require.Error(configureBeeperMediaJob(t.Context(), sched, st, blobs, config.DocbankIntegrationConfig{
+	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
 		Enabled: true, URL: "http://docbank.example.com", APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 
 	// Without upload consent the job records local discovery only.
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, config.DocbankIntegrationConfig{
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv}, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending::"}, retentionRows(t, st))
@@ -185,7 +190,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 
 	// A missing credential sends nothing and records only a stable code.
 	t.Setenv(beeperMediaTestKeyEnv, "")
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, config.DocbankIntegrationConfig{
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending:credential_unavailable:"}, retentionRows(t, st))
@@ -201,7 +206,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 	assert.Equal(1, server.requestCount())
 
 	// Disabling removes the job and its journal consumer but keeps receipts.
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, config.DocbankIntegrationConfig{}, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 	assert.False(consumerRegistered(t, st))
 	assert.Len(retentionRows(t, st), 1)
@@ -227,7 +232,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	sched := scheduler.New(nil).WithWorkTracker(tracker)
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
 		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
 	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
@@ -259,7 +264,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	// A new destination starts its own delivery scope.
 	otherServer, otherHTTP := newRetentionServer(t)
 	cfg.URL = otherHTTP.URL
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
 	otherDestination := beeperMediaDestinationKey(otherHTTP.URL, archiveUID)
 	otherServer.hang.Store(true)
 	stopped := make(chan error, 1)
@@ -275,6 +280,130 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 		destination: "retained::source", otherDestination: "pending::",
 	}, retentionRows(t, st))
 	require.Error(sched.TriggerJob(beeperMediaSubmitJob))
+}
+
+// TestBeeperMediaGatedStoreWrites composes the daemon schedulers. A long
+// upload holds no operation gate, while every media Store write waits for it,
+// so a backup freeze sees no writer.
+func TestBeeperMediaGatedStoreWrites(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
+	wait := beeperMediaGateWait
+	beeperMediaGateWait = 100 * time.Millisecond
+	t.Cleanup(func() { beeperMediaGateWait = wait })
+	server, httpServer := newRetentionServer(t)
+	gate := api.NewSerialOperationGate()
+	logger := slog.New(slog.DiscardHandler)
+	sched, media := newServeSchedulers(nil, logger, nil, gate)
+	require.NoError(sched.AddJob(scheduler.Job{Name: "test-gated-job", Schedule: "0 0 1 1 *",
+		Run: func(context.Context) error { return nil }}))
+	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
+		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, cfg, logger))
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	waitCtx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+
+	// While a backup freeze holds the gate, the pass ends before any write.
+	freeze, ok := gate.BeginLabeledWorkContext(waitCtx, "backup freeze")
+	require.True(ok)
+	require.NoError(media.TriggerJob(beeperMediaSubmitJob))
+	assert.Empty(retentionRows(t, st))
+	assert.False(consumerRegistered(t, st))
+	assert.Zero(server.requestCount())
+	freeze()
+
+	// An upload in flight holds no gate, so the freeze starts at once.
+	server.hang.Store(true)
+	done := make(chan error, 1)
+	go func() { done <- media.TriggerJob(beeperMediaSubmitJob) }()
+	<-server.arrived
+	_, _, held := gate.Holder()
+	assert.False(held, "an upload in flight holds no operation gate")
+	assert.Equal(map[string]string{destination: "pending::"}, retentionRows(t, st))
+	freeze, ok = gate.BeginLabeledWorkContext(waitCtx, "backup freeze")
+	require.True(ok)
+
+	// The finished upload can't record its receipt under the freeze.
+	close(server.release)
+	select {
+	case err := <-done:
+		require.NoError(err)
+	case <-waitCtx.Done():
+		require.FailNow("upload pass did not end while the gate was held")
+	}
+	assert.Equal(map[string]string{destination: "pending::"}, retentionRows(t, st))
+	freeze()
+
+	// The next pass replays the saved operation ID and records the receipt.
+	require.NoError(media.TriggerJob(beeperMediaSubmitJob))
+	assert.Equal(map[string]string{destination: "retained::source"}, retentionRows(t, st))
+	server.mu.Lock()
+	require.Len(server.operations, 2)
+	assert.Equal(server.operations[0], server.operations[1])
+	server.mu.Unlock()
+
+	// Daemon shutdown cancels an upload in flight and drains both schedulers.
+	otherServer, otherHTTP := newRetentionServer(t)
+	cfg.URL = otherHTTP.URL
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, cfg, logger))
+	otherServer.hang.Store(true)
+	stopped := make(chan error, 1)
+	go func() { stopped <- media.TriggerJob(beeperMediaSubmitJob) }()
+	<-otherServer.arrived
+	require.NoError(shutdownServeRuntime(waitCtx, io.Discard, nil, serveSchedulers{sched, media}, gate))
+	select {
+	case err := <-stopped:
+		require.ErrorIs(err, context.Canceled)
+	default:
+		require.FailNow("shutdown returned before the upload stopped")
+	}
+	assert.Equal(map[string]string{
+		destination: "retained::source", beeperMediaDestinationKey(otherHTTP.URL, archiveUID): "pending::",
+	}, retentionRows(t, st))
+	assert.True(gate.Draining())
+	require.Error(media.TriggerJob(beeperMediaSubmitJob))
+	require.Error(sched.TriggerJob("test-gated-job"))
+}
+
+// TestBeeperMediaJobStatus shows the API's scheduler adapter lists and runs
+// the media job alongside the gated daemon jobs.
+func TestBeeperMediaJobStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
+	_, httpServer := newRetentionServer(t)
+	gate := api.NewSerialOperationGate()
+	logger := slog.New(slog.DiscardHandler)
+	sched, media := newServeSchedulers(nil, logger, nil, gate)
+	defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
+	require.NoError(sched.AddJob(scheduler.Job{Name: "test-gated-job", Schedule: "0 0 1 1 *",
+		Run: func(context.Context) error { return nil }}))
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, config.DocbankIntegrationConfig{
+		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv}, logger))
+	var adapter api.SyncScheduler = &schedulerAdapter{scheduler: sched, media: media}
+
+	assert.True(adapter.IsJobScheduled(beeperMediaSubmitJob))
+	assert.True(adapter.IsJobScheduled("test-gated-job"))
+	require.NoError(adapter.TriggerJob(beeperMediaSubmitJob))
+	jobs := map[string]api.JobStatus{}
+	for _, job := range adapter.JobStatus() {
+		jobs[job.Name] = job
+	}
+	require.Contains(jobs, beeperMediaSubmitJob)
+	require.Contains(jobs, "test-gated-job")
+	assert.Equal(beeperMediaSubmitCron, jobs[beeperMediaSubmitJob].Schedule)
+	assert.False(jobs[beeperMediaSubmitJob].LastRun.IsZero())
+	assert.Empty(jobs[beeperMediaSubmitJob].LastError)
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	assert.Equal(map[string]string{beeperMediaDestinationKey(httpServer.URL, archiveUID): "pending::"},
+		retentionRows(t, st))
 }
 
 func testWAV() []byte {

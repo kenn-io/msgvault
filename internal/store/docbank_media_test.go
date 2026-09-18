@@ -278,6 +278,70 @@ func TestBeeperMediaReconsiderBlocked(t *testing.T) {
 	assert.Equal("msgvault:remote", operation.OccurrenceRef)
 }
 
+// TestBeeperMediaUnsupportedDelivery retires a transcript delivery once no
+// occurrence can supply its audio, and reopens it for a new source revision.
+func TestBeeperMediaUnsupportedDelivery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	shared, solo := strings.Repeat("a", 64), strings.Repeat("c", 64)
+	first := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "first", shared)
+	second := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "second", shared)
+	remote := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "remote", solo)
+	finish := func(mapping store.BeeperMediaMapping, code string) {
+		t.Helper()
+		prepared, err := f.Store.PrepareBeeperMediaOperation(t.Context(), retainOperation(mapping))
+		require.NoError(err)
+		applied, err := f.Store.FinishBeeperMediaOperation(t.Context(), prepared, store.BeeperMediaResult{ErrorCode: code})
+		require.NoError(err)
+		require.True(applied)
+	}
+	deliveries := func() map[string]string {
+		t.Helper()
+		rows, err := f.Store.DB().Query(f.Store.Rebind(`
+			SELECT processing_key, phase, error_code, next_action_at IS NOT NULL
+			FROM beeper_media_deliveries WHERE destination_key = ?`), "unsupported")
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		result := map[string]string{}
+		for rows.Next() {
+			var key, phase, code string
+			var scheduled bool
+			require.NoError(rows.Scan(&key, &phase, &code, &scheduled))
+			result[key] = fmt.Sprintf("%s:%s:%t", phase, code, scheduled)
+		}
+		require.NoError(rows.Err())
+		return result
+	}
+	firstMapping := first.mapping("unsupported", "r1", "shared-key")
+	secondMapping := second.mapping("unsupported", "r1", "shared-key")
+	remoteMapping := remote.mapping("unsupported", "r1", "solo-key")
+	for _, mapping := range []store.BeeperMediaMapping{firstMapping, secondMapping, remoteMapping} {
+		require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), mapping))
+	}
+
+	// A pending sibling can still supply the audio, so the delivery waits.
+	finish(firstMapping, "unsupported_media")
+	assert.Equal("pending-artifact::true", deliveries()["shared-key"])
+
+	// The last possible supplier's codec gap retires it; a remote block does not.
+	finish(secondMapping, "unsupported_media")
+	finish(remoteMapping, "forbidden")
+	want := map[string]string{
+		"shared-key": "blocked:unsupported_media:false", "solo-key": "pending-artifact::true",
+	}
+	assert.Equal(want, deliveries())
+
+	// Restart and an unchanged rescan keep the retired delivery blocked.
+	require.NoError(f.Store.ReconsiderBlockedBeeperMediaOperations(t.Context(), "unsupported"))
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), firstMapping))
+	assert.Equal(want["shared-key"], deliveries()["shared-key"])
+
+	// A changed source revision can supply the audio again.
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), first.mapping("unsupported", "r2", "shared-key")))
+	assert.Equal("pending-artifact::true", deliveries()["shared-key"])
+}
+
 func TestBeeperMediaLiveMappings(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

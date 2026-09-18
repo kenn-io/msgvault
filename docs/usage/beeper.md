@@ -208,7 +208,11 @@ What happens:
   still kept by Docbank and reported as `unprocessed`.
 - Each minute the job checks up to 100 stored attachments and 100 attachment
   changes, then sends at most one Docbank request. Existing archives are
-  backfilled this way after you enable the route.
+  backfilled this way after you enable the route. Uploads run outside the
+  daemon's operation lock, so a long upload doesn't delay syncs, imports or
+  API requests, and they don't interrupt it. The job takes the lock only to
+  record progress. If the lock stays busy, for example during a backup, the
+  pass ends and a later pass resends the request with the same operation ID.
 - The same recording in several messages gets one occurrence per message.
   Docbank stores the bytes once, and each exact transcript is processed once.
 - A hidden, source-deleted, removed or replaced message loses its mapping
@@ -221,7 +225,8 @@ What happens:
   Rejected credentials or requests stay `blocked` until the daemon restarts,
   which also resumes checking a queued job. Unsupported codecs and other
   local source problems stay `blocked` across restarts until the message
-  changes. Missing or corrupt local bytes wait as `source_unavailable`.
+  changes, and so does their transcript delivery, with the same code.
+  Missing or corrupt local bytes wait as `source_unavailable`.
 - A processed delivery reaches `done` only after Docbank reports coverage
   for its own processing request, not for another transcript of the same
   audio. A failed Docbank job or a failed processing request ends as `done`
