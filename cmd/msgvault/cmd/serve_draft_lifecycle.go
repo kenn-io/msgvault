@@ -323,6 +323,16 @@ func localDraftEvidenceContext(ctx context.Context) (context.Context, context.Ca
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
+func (a *storeAPIAdapter) releaseDraftSourceAndRefreshCache(ctx context.Context, source *store.Source, execution *store.SyncExecution) {
+	if err := execution.Release(); err != nil {
+		logger.Error("release source after draft write", "source_id", source.ID, "error", err)
+	}
+	// Committed changes must reach the cache even if cleanup or output fails.
+	refreshCtx, cancel := localDraftEvidenceContext(ctx)
+	defer cancel()
+	a.refreshDraftCache(refreshCtx, source)
+}
+
 func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	ctx context.Context,
 	req api.CLIRunRequest,
@@ -414,6 +424,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if err != nil {
 			return draftReplyError("cleanup_local_failed", err)
 		}
+		defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 		status := "edited"
 		if intent.Operation == api.CLIRunDraftDeleteCommand {
 			status = "deleted"
@@ -425,10 +436,6 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
 			return draftReplyError("output_failed", err)
 		}
-		if err := execution.Release(); err != nil {
-			logger.Error("release source after draft completion", "source_id", source.ID, "error", err)
-		}
-		a.refreshDraftCache(ctx, source)
 		return nil
 	}
 	clientFactory := a.draftClientFactory
@@ -582,15 +589,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if err != nil {
 		return reportAcceptedLocalFailure(err)
 	}
-	defer func() {
-		if err := execution.Release(); err != nil {
-			logger.Error("release source after draft edit", "source_id", source.ID, "error", err)
-		}
-		// The replacement is durable even if cleanup or response delivery fails.
-		refreshCtx, cancelRefresh := localDraftEvidenceContext(ctx)
-		defer cancelRefresh()
-		a.refreshDraftCache(refreshCtx, source)
-	}()
+	defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	if ctx.Err() != nil {
 		output, outputErr := a.draftLifecycleOutput(evidenceCtx, published, "pending", nil, nil)
 		if outputErr == nil {
@@ -726,6 +725,7 @@ func (a *storeAPIAdapter) runDraftDelete(
 		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, draftLifecycleObservationOutput(inspection), removed, emit)
 		return draftReplyError("cleanup_local_failed", err)
 	}
+	defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	output, err := a.draftLifecycleOutput(evidenceCtx, finished, "deleted", nil, draftLifecycleObservationOutput(removed))
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
@@ -733,10 +733,6 @@ func (a *storeAPIAdapter) runDraftDelete(
 	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
 		return draftReplyError("output_failed", err)
 	}
-	if err := execution.Release(); err != nil {
-		logger.Error("release source after draft delete", "source_id", source.ID, "error", err)
-	}
-	a.refreshDraftCache(evidenceCtx, source)
 	return nil
 }
 
