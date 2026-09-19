@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +29,22 @@ func TestBuildDraftReplacement(t *testing.T) {
 	requirements.Contains(text, "Date: Tue, 15 Sep 2026 20:00:00 +0000")
 	requirements.Contains(text, "new")
 	requirements.Equal("<new@example.com>", result.Parsed.MessageID)
+}
+
+func TestBuildDraftReplacementPreservesReplyTo(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := []byte("From: owner@example.com\r\nTo: recipient@example.com\r\nReply-To: Replies <replies@example.com>\r\n\r\nold body\r\n")
+	replacement, err := BuildDraftReplacement(raw, "new body", time.Now(), "replacement@example.com")
+	require.NoError(err)
+	require.Len(replacement.Parsed.ReplyTo, 1)
+	assert.Equal("Replies", replacement.Parsed.ReplyTo[0].Name)
+	assert.Equal("replies@example.com", replacement.Parsed.ReplyTo[0].Email)
+
+	reply, err := BuildReply(replacement.Raw, "recipient@example.com", "response", time.Now(), "reply@example.com")
+	require.NoError(err)
+	require.Len(reply.Parsed.To, 1)
+	assert.Equal("replies@example.com", reply.Parsed.To[0].Email)
 }
 
 func TestBuildDraftReplacementRejectsMultipart(t *testing.T) {

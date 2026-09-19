@@ -381,6 +381,10 @@ func BuildDraftReplacement(currentRaw []byte, body string, now time.Time, messag
 	if err != nil {
 		return ReplyDraft{}, err
 	}
+	replyTo, err := parseDraftHeaderAddresses(message.Header, "Reply-To", false)
+	if err != nil {
+		return ReplyDraft{}, err
+	}
 	if len(from) != 1 || len(to) == 0 {
 		return ReplyDraft{}, errors.New("draft must contain one From and at least one To address")
 	}
@@ -411,7 +415,8 @@ func BuildDraftReplacement(currentRaw []byte, body string, now time.Time, messag
 	toValue := formatAddresses(to)
 	ccValue := formatAddresses(cc)
 	bccValue := formatAddresses(bcc)
-	for _, value := range []string{fromValue, toValue, ccValue, bccValue} {
+	replyToValue := formatAddresses(replyTo)
+	for _, value := range []string{fromValue, toValue, ccValue, bccValue, replyToValue} {
 		if value != "" && !validHeaderValue(value) {
 			return ReplyDraft{}, errors.New("invalid draft address header")
 		}
@@ -428,6 +433,9 @@ func BuildDraftReplacement(currentRaw []byte, body string, now time.Time, messag
 	}
 	if bccValue != "" {
 		writeHeader("Bcc", bccValue)
+	}
+	if replyToValue != "" {
+		writeHeader("Reply-To", replyToValue)
 	}
 	if subject != "" {
 		if !isASCII(subject) {

@@ -272,9 +272,9 @@ configuration as draft creation. Policy changes take effect after a daemon
 restart. Neither command sends mail.
 
 Editing supports plain-text drafts without attachments. `--body=` sets an empty
-body. The edit preserves the From, To, Cc, Bcc, Subject, In-Reply-To, and References
-headers. Msgvault appends one replacement, records the new revision, removes the
-exact old UID, and confirms that it is absent.
+body. The edit preserves the From, To, Cc, Bcc, Reply-To, Subject, In-Reply-To, and
+References headers. Msgvault appends one replacement, records the new revision,
+removes the exact old UID, and confirms that it is absent.
 
 Delete removes the exact provider draft and marks the managed draft
 `discarded` after confirming its absence. The local archived content remains
