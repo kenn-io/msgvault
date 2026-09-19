@@ -230,10 +230,12 @@ source_id = 42
 enabled = true
 ```
 
-The Gmail OAuth token must contain `gmail.modify`, `mail.google.com`, or
-`gmail.compose`. The daemon lists Gmail send-as entries and accepts `--from`
-when it is the primary address or an accepted alias. Service-account sources
-use the scopes in their delegated assertion.
+Creating a Gmail draft requires `gmail.modify`, `mail.google.com`, or
+`gmail.compose`. Creation also lists Gmail send-as entries, so the token must
+cover `gmail.settings.basic`, `gmail.modify`, `gmail.readonly`, or
+`mail.google.com`. The daemon accepts `--from` when it is the primary address
+or an accepted alias. Service-account sources use the scopes in their
+delegated assertion.
 
 Gmail writes use one provider request. A transport failure, response-read
 failure, 5xx, 429, or rate-limit 403 returns `remote_unknown`; retrying the
@@ -262,13 +264,16 @@ The creation result supplies the opaque `draft_id` and initial revision.
 - `--json` emits one JSON result.
 
 `draft-get` reads retained archive content, including discarded drafts, without
-connecting to a provider or requiring the source's draft mutation grant. Edit
-and delete require the same source policy as `draft-reply`. Delete removes the
-provider draft and retains its archived content. Gmail edit and delete inspect
-the current provider message ID before making a change. A Gmail web edit
-advances the local revision and returns `changed_externally`; the next mutation
-must name that revision. A pending Gmail `remote_unknown` blocks further edits
-and deletes. These commands never send mail.
+connecting to a provider or requiring the source's draft mutation grant. For
+IMAP drafts, edit and delete continue to require the configured `[[imap.drafts]]`
+policy. For Gmail drafts, edit and delete require the configured
+`[[gmail.drafts]]` policy and one of `gmail.modify`, `mail.google.com`, or
+`gmail.compose`. They do not list send-as entries. Delete removes the provider
+draft and retains its archived content. Gmail edit and delete inspect the
+current provider message ID before making a change. A Gmail web edit advances
+the local revision and returns `changed_externally`; the next mutation must name
+that revision. A pending Gmail `remote_unknown` blocks further edits and
+deletes. These commands never send mail.
 
 Recovery and delegated grants apply to IMAP drafts only. `draft-recover`
 refuses a Gmail draft ID with `not_supported`, and a delegated token cannot

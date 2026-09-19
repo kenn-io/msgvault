@@ -410,6 +410,9 @@ func (c *Client) DeleteDraft(ctx context.Context, draftID string) error {
 	if err != nil {
 		return classifyDraftWrite(err)
 	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
 	var response map[string]any
 	if err := json.Unmarshal(data, &response); err != nil || response == nil {
 		if err == nil {

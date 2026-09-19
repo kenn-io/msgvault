@@ -34,6 +34,7 @@ func gmailTestBuild(sourceID, conversationID int64, receipt store.GmailDraftRece
 }
 
 func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
+	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -98,6 +99,98 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	plan, err := st.PlanGCContext(t.Context())
 	require.NoError(err)
 	assert.Equal(int64(1), plan.SourceDeleted)
+}
+
+func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "adopt@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "adopt-thread", "Adopt thread")
+	require.NoError(err)
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "adopt@example.com", Domain: "example.com"},
+		{EmailAddress: "user@example.com", Domain: "example.com"},
+	}
+	makeDraft := func(draftID, messageID string) store.GmailDraft {
+		receipt := store.GmailDraftReceipt{
+			SourceID: source.ID, GmailDraftID: draftID,
+			GmailMessageID: messageID, ThreadID: "adopt-thread",
+		}
+		draft, persistErr := st.PersistGmailDraftContext(t.Context(), receipt, participants,
+			gmailTestBuild(source.ID, conversationID, receipt, []byte("original")))
+		require.NoError(persistErr)
+		return draft
+	}
+
+	draft := makeDraft("gmail-draft-reuse", "gmail-message-original")
+	existingMessageID, err := st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, SourceMessageID: "gmail-message-observed",
+			ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+		},
+		Conversation: &store.ConversationPersistData{
+			SourceConversationID: "adopt-thread", ConversationType: "email_thread",
+		},
+		BodyText: sql.NullString{String: "observed", Valid: true},
+		RawMIME:  []byte("observed"),
+	})
+	require.NoError(err)
+	observed := store.GmailDraftReceipt{
+		SourceID: source.ID, GmailDraftID: "gmail-draft-reuse",
+		GmailMessageID: "gmail-message-observed", ThreadID: "adopt-thread",
+	}
+	adopted, err := st.AdoptGmailDraftObservationContext(t.Context(), draft.DraftID, 1, observed, participants,
+		gmailTestBuild(source.ID, conversationID, observed, []byte("observed")))
+	require.NoError(err)
+	assert.Equal(existingMessageID, adopted.CurrentMessageID)
+	assert.Equal(int64(2), adopted.Revision)
+	assert.Equal(observed.GmailMessageID, adopted.CurrentReceipt.GmailMessageID)
+	var predecessorDeleted sql.NullTime
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), draft.CurrentMessageID).Scan(&predecessorDeleted))
+	assert.True(predecessorDeleted.Valid)
+
+	fresh := makeDraft("gmail-draft-insert", "gmail-message-original-2")
+	observed = store.GmailDraftReceipt{
+		SourceID: source.ID, GmailDraftID: fresh.CurrentReceipt.GmailDraftID,
+		GmailMessageID: "gmail-message-inserted", ThreadID: "adopt-thread",
+	}
+	adopted, err = st.AdoptGmailDraftObservationContext(t.Context(), fresh.DraftID, 1, observed, participants,
+		gmailTestBuild(source.ID, conversationID, observed, []byte("inserted")))
+	require.NoError(err)
+	assert.NotEqual(fresh.CurrentMessageID, adopted.CurrentMessageID)
+	assert.Equal("gmail-message-inserted", adopted.CurrentReceipt.GmailMessageID)
+}
+
+func TestGmailDraftAbortClearsClaim(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "abort@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "abort-thread", "Abort thread")
+	require.NoError(err)
+	receipt := store.GmailDraftReceipt{
+		SourceID: source.ID, GmailDraftID: "gmail-draft-abort",
+		GmailMessageID: "gmail-message-abort", ThreadID: "abort-thread",
+	}
+	draft, err := st.PersistGmailDraftContext(t.Context(), receipt,
+		[]store.ParticipantPersistData{{EmailAddress: "abort@example.com"}, {EmailAddress: "user@example.com"}},
+		gmailTestBuild(source.ID, conversationID, receipt, []byte("original")))
+	require.NoError(err)
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, 1, store.GmailDraftOperationEdit, []byte("candidate"))
+	require.NoError(err)
+
+	active, err := st.AbortGmailDraftContext(t.Context(), draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal(int64(1), active.Revision)
+	assert.Nil(active.Pending)
+	loaded, err := st.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Nil(loaded.Pending)
 }
 
 func TestGmailDraftPendingOriginalRetainedByGC(t *testing.T) {
