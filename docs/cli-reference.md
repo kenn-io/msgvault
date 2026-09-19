@@ -2991,7 +2991,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions` | `draft.create`, `draft.edit`, `draft.delete` |
+| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create`, `draft.edit`, `draft.delete` |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 
 The grant is valid until revoked or until the daemon restarts.

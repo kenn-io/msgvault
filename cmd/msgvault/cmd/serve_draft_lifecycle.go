@@ -899,11 +899,11 @@ func (a *storeAPIAdapter) runDraftRecover(
 	if err != nil {
 		return err
 	}
-	settled, err := a.settleDraftRecovery(ctx, intent, draft, emit)
-	if settled || err != nil {
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
 		return err
 	}
-	if err := a.validateManagedDraftSource(draft, source); err != nil {
+	settled, err := a.settleDraftRecovery(ctx, intent, draft, emit)
+	if settled || err != nil {
 		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
@@ -913,7 +913,14 @@ func (a *storeAPIAdapter) runDraftRecover(
 		}
 		return draftReplyError("sync_lock_failed", err)
 	}
-	defer func() { _ = execution.Release() }()
+	refreshScheduled := false
+	defer func() {
+		if refreshScheduled {
+			a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+			return
+		}
+		_ = execution.Release()
+	}()
 
 	draft, err = a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
@@ -926,11 +933,11 @@ func (a *storeAPIAdapter) runDraftRecover(
 	if err != nil {
 		return err
 	}
-	settled, err = a.settleDraftRecovery(ctx, intent, draft, emit)
-	if settled || err != nil {
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
 		return err
 	}
-	if err := a.validateManagedDraftSource(draft, source); err != nil {
+	settled, err = a.settleDraftRecovery(ctx, intent, draft, emit)
+	if settled || err != nil {
 		return err
 	}
 	if draft.Pending == nil {
@@ -944,7 +951,7 @@ func (a *storeAPIAdapter) runDraftRecover(
 		if finishErr != nil {
 			return draftReplyError("cleanup_local_failed", finishErr)
 		}
-		defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+		refreshScheduled = true
 		status := "edited"
 		if finished.DiscardedAt != nil {
 			status = "deleted"
@@ -1028,7 +1035,7 @@ func (a *storeAPIAdapter) runDraftRecover(
 			cancel()
 			draft = publishedDraft
 			published = true
-			defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+			refreshScheduled = true
 		}
 	}
 
@@ -1098,9 +1105,7 @@ func (a *storeAPIAdapter) runDraftRecover(
 		a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, cleanupObservation, emit)
 		return draftReplyError("cleanup_local_failed", err)
 	}
-	if !published {
-		defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
-	}
+	refreshScheduled = true
 	status := "edited"
 	if finished.DiscardedAt != nil {
 		status = "deleted"

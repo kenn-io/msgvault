@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	emersionimap "github.com/emersion/go-imap/v2"
@@ -16,6 +17,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -60,6 +62,66 @@ func recoveryUIDNext(t *testing.T, fixture reviewManagedLifecycleFixture) uint32
 	status, err := client.Status("Drafts", &emersionimap.StatusOptions{UIDNext: true}).Wait()
 	require.NoError(t, err)
 	return uint32(status.UIDNext)
+}
+
+func newDraftRecoveryHTTPServer(t *testing.T, fixture reviewManagedLifecycleFixture) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{
+			HomeDir: t.TempDir(),
+			Server:  config.ServerConfig{APIKey: "owner-key", AgentAccess: true},
+		},
+		Store:  fixture.adapter,
+		Logger: slog.New(slog.DiscardHandler),
+	}).Router())
+}
+
+func issueDraftRecoveryToken(t *testing.T, server *httptest.Server, sourceID int64, permission string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"label":       "recovery-agent",
+		"permissions": []string{permission},
+		"source_ids":  []int64{sourceID},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "owner-key")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var issued struct {
+		Secret string `json:"secret"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&issued))
+	return issued.Secret
+}
+
+func runDraftRecoveryHTTP(t *testing.T, server *httptest.Server, secret, draftID string, revision int64) []api.CLIRunEvent {
+	t.Helper()
+	body, err := json.Marshal(api.CLIRunRequest{Args: []string{
+		draftRecoverCommand, draftID, "--revision", strconv.FormatInt(revision, 10), "--json",
+	}})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Msgvault-Agent-Token", secret)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var events []api.CLIRunEvent
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		var event api.CLIRunEvent
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+		events = append(events, event)
+	}
+	require.NoError(t, scanner.Err())
+	return events
 }
 
 func TestDraftRecoverReconcilesManualCleanup(t *testing.T) {
@@ -155,6 +217,62 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 	assertions.Equal("not_permitted", denied[0].Error)
 }
 
+func TestDraftRecoverPolicyPrecedesSettledOutputThroughHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		permission string
+		prepare    func(*testing.T, reviewManagedLifecycleFixture) (string, int64)
+	}{
+		{
+			name:       "active",
+			permission: string(agentgrant.PermissionDraftEdit),
+			prepare: func(_ *testing.T, fixture reviewManagedLifecycleFixture) (string, int64) {
+				return fixture.draft.DraftID, fixture.draft.Revision
+			},
+		},
+		{
+			name:       "discarded",
+			permission: string(agentgrant.PermissionDraftDelete),
+			prepare: func(t *testing.T, fixture reviewManagedLifecycleFixture) (string, int64) {
+				requirements := require.New(t)
+				_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+				requirements.NoError(err)
+				removeRecoveryOriginal(t, fixture)
+				_, err = runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+				requirements.NoError(err)
+				latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+				requirements.NoError(err)
+				return latest.DraftID, latest.Revision
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			fixture, _ := newDraftRecoveryFixture(t)
+			draftID, revision := tc.prepare(t, fixture)
+			providerCalls := 0
+			fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+				providerCalls++
+				return nil, errors.New("policy refusal must not connect")
+			}
+			fixture.adapter.draftPolicy = nil
+			execution, err := fixture.store.AcquireSyncExecutionContext(t.Context(), fixture.source.ID)
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = execution.Release() })
+			server := newDraftRecoveryHTTPServer(t, fixture)
+			t.Cleanup(server.Close)
+			secret := issueDraftRecoveryToken(t, server, fixture.source.ID, tc.permission)
+
+			events := runDraftRecoveryHTTP(t, server, secret, draftID, revision)
+			requirements.Len(events, 1)
+			assertions.Empty(events[0].Data)
+			assertions.Equal("draft_disabled", events[0].Error)
+			assertions.Zero(providerCalls)
+		})
+	}
+}
+
 func TestDraftRecoverPublishesKnownReplacement(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -211,6 +329,115 @@ func TestDraftRecoverCleansUpPublishedEdit(t *testing.T) {
 	requirements.Nil(latest.Pending)
 }
 
+func TestDraftRecoverRefusesUnavailableReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code string
+	}{
+		{name: "absent", code: "absent"},
+		{name: "deleted", code: "already_deleted"},
+		{name: "not draft", code: "not_draft"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			fixture, user := newDraftRecoveryFixture(t)
+			candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Replacement\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+			if tc.name == "deleted" || tc.name == "not draft" {
+				testutil.AppendIMAPRawMessage(t, user, "Drafts", candidate)
+				if tc.name == "deleted" {
+					reviewStoreFlagsForLifecycle(t, fixture.config.Addr(), 2, emersionimap.StoreFlagsAdd, emersionimap.FlagDraft)
+					reviewStoreFlagsForLifecycle(t, fixture.config.Addr(), 2, emersionimap.StoreFlagsAdd, emersionimap.FlagDeleted)
+				}
+			}
+			_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+			requirements.NoError(err)
+			replacement := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+			requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, 1, "append_uidplus", &replacement))
+
+			uidNextBefore := recoveryUIDNext(t, fixture)
+			events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+			requirements.Error(err)
+			assertions.Equal(tc.code, err.Error())
+			requirements.Len(events, 1)
+			assertions.Equal(cliStreamStderr, events[0].Type)
+			assertions.Contains(events[0].Data, `"status":"refused"`)
+			assertions.Equal(uidNextBefore, recoveryUIDNext(t, fixture))
+
+			latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+			requirements.NoError(err)
+			assertions.Equal(int64(1), latest.Revision)
+			assertions.Equal(fixture.draft.CurrentReceipt, latest.CurrentReceipt)
+			requirements.NotNil(latest.Pending)
+			assertions.Equal(store.IMAPDraftOperationEdit, latest.Pending.Operation)
+			assertions.Equal("append_uidplus", latest.Pending.Code)
+			assertions.Equal(replacement, *latest.Pending.ReplacementReceipt)
+		})
+	}
+}
+
+func TestDraftRecoverRemovesPresentOriginal(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, _ := newDraftRecoveryFixture(t)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	uidNextBefore := recoveryUIDNext(t, fixture)
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var output draftLifecycleOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	assertions.Equal("deleted", output.Status)
+	assertions.Equal(int64(2), output.Revision)
+	assertions.Equal(uidNextBefore, recoveryUIDNext(t, fixture))
+	assertions.Equal(uint32(0), reviewDraftMailboxCount(t, fixture.config.Addr()))
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	assertions.Nil(latest.Pending)
+	assertions.NotNil(latest.DiscardedAt)
+}
+
+func TestDraftRecoverArchivedReplacementReportsAcceptedLocalFailure(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, user := newDraftRecoveryFixture(t)
+	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Replacement\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+	testutil.AppendIMAPRawMessage(t, user, "Drafts", candidate)
+	reviewStoreFlagsForLifecycle(t, fixture.config.Addr(), 2, emersionimap.StoreFlagsAdd, emersionimap.FlagDraft)
+	message, err := fixture.store.GetMessageContext(t.Context(), fixture.draft.CurrentMessageID)
+	requirements.NoError(err)
+	archivedReceipt := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+	_, err = fixture.store.PersistIMAPDraftContext(t.Context(), archivedReceipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: fixture.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(archivedReceipt),
+				MessageType: store.MessageTypeEmail, ConversationID: message.ConversationID,
+			},
+			RawMIME: candidate,
+		}
+	})
+	requirements.NoError(err)
+	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+	requirements.NoError(err)
+	requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, 1, "append_uidplus", &archivedReceipt))
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.Error(err)
+	assertions.Equal("accepted_local_failed", err.Error())
+	requirements.Len(events, 1)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	assertions.Contains(events[0].Data, `"status":"accepted_local_failed"`)
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), latest.Revision)
+	assertions.Equal(fixture.draft.CurrentReceipt, latest.CurrentReceipt)
+	requirements.NotNil(latest.Pending)
+	assertions.Equal("append_uidplus", latest.Pending.Code)
+	assertions.Equal(archivedReceipt, *latest.Pending.ReplacementReceipt)
+}
+
 func TestDraftRecoverRefusesDifferingRecordedGenerations(t *testing.T) {
 	requirements := require.New(t)
 	fixture, _ := newDraftRecoveryFixture(t)
@@ -228,6 +455,94 @@ func TestDraftRecoverRefusesDifferingRecordedGenerations(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotNil(latest.Pending)
 	assert.Equal(t, int64(1), latest.Revision)
+}
+
+func TestDraftRecoverKeepsRowUnchangedOnRemovalGenerationRefusal(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	control := &reviewUIDValidityChangeControl{}
+	addr, user := startReviewUIDValidityChangeServer(t, control)
+	fixture := newReviewManagedLifecycleFixtureOnServer(t, addr, func() {
+		testutil.AppendIMAPRawMessage(t, user, "Drafts", []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\nContent-Type: text/plain\r\n\r\noriginal\r\n"))
+	})
+	control.selects.Store(0)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	before, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	var beforeUpdatedAt string
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT CAST(updated_at AS TEXT) FROM imap_drafts WHERE draft_id = ?
+	`), fixture.draft.DraftID).Scan(&beforeUpdatedAt))
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.Error(err)
+	assertions.Equal("uidvalidity_mismatch", err.Error())
+	requirements.Len(events, 1)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	assertions.Contains(events[0].Data, `"code":"uidvalidity_mismatch"`)
+	assertions.Equal(int32(2), control.selects.Load())
+	after, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	var afterUpdatedAt string
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+		SELECT CAST(updated_at AS TEXT) FROM imap_drafts WHERE draft_id = ?
+	`), fixture.draft.DraftID).Scan(&afterUpdatedAt))
+	assertions.Equal(before.Revision, after.Revision)
+	assertions.Equal(before.CurrentReceipt, after.CurrentReceipt)
+	requirements.NotNil(after.Pending)
+	assertions.Equal(before.Pending.Code, after.Pending.Code)
+	assertions.Equal(before.Pending.OriginalReceipt, after.Pending.OriginalReceipt)
+	assertions.Equal(before.Pending.ReplacementReceipt, after.Pending.ReplacementReceipt)
+	assertions.Equal(beforeUpdatedAt, afterUpdatedAt)
+}
+
+func TestDraftRecoverRecordsWriteAttemptedRemovalFailure(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	addr, user := startReviewExpungeFailureServer(t)
+	fixture := newReviewManagedLifecycleFixtureOnServer(t, addr, func() {
+		testutil.AppendIMAPRawMessage(t, user, "Drafts", []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\nContent-Type: text/plain\r\n\r\noriginal\r\n"))
+	})
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.Error(err)
+	assertions.Equal("expunge_failed", err.Error())
+	requirements.Len(events, 1)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	assertions.Contains(events[0].Data, `"pending_code":"expunge_failed"`)
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	requirements.NotNil(latest.Pending)
+	assertions.Equal("expunge_failed", latest.Pending.Code)
+	assertions.Equal(int64(1), latest.Revision)
+}
+
+func TestDraftRecoverReportsProviderRefusal(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, _ := newDraftRecoveryFixture(t)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		return imaplib.NewClient(&imaplib.Config{
+			Host: "127.0.0.1", Port: 1, Username: testutil.IMAPTestUsername,
+		}, testutil.IMAPTestPassword), nil
+	}
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.Error(err)
+	assertions.Equal("provider_refused", err.Error())
+	requirements.Len(events, 1)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	assertions.Contains(events[0].Data, `"status":"refused"`)
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	requirements.NotNil(latest.Pending)
+	assertions.Empty(latest.Pending.Code)
+	assertions.Equal(int64(1), latest.Revision)
 }
 
 func TestDraftRecoverRefusesUnknownReplacement(t *testing.T) {
@@ -319,6 +634,257 @@ func TestDraftRecoverSavedRemovedDeleteFinishesWithoutProvider(t *testing.T) {
 	requirements.Len(events, 1)
 	assertions.Contains(events[0].Data, `"status":"deleted"`)
 	assertions.Equal(uint32(1), reviewDraftMailboxCount(t, fixture.config.Addr()))
+}
+
+func TestDraftRecoverSavedRemovedEditFinishesWithoutProvider(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, user := newDraftRecoveryFixture(t)
+	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Replacement\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+	testutil.AppendIMAPRawMessage(t, user, "Drafts", candidate)
+	reviewStoreFlagsForLifecycle(t, fixture.config.Addr(), 2, emersionimap.StoreFlagsAdd, emersionimap.FlagDraft)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+	requirements.NoError(err)
+	replacement := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+	requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, 1, "append_uidplus", &replacement))
+	published := publishRecoveryReplacement(t, fixture, candidate)
+	requirements.Equal(int64(2), published.Revision)
+	requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil))
+	fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		return nil, errors.New("saved removal must finish locally")
+	}
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "2", "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	assertions.Contains(events[0].Data, `"status":"edited"`)
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	assertions.Nil(latest.Pending)
+	assertions.Equal(int64(2), latest.Revision)
+	assertions.Equal(replacement, latest.CurrentReceipt)
+}
+
+func TestDraftRecoverReloadsSettledStateAfterSourceLock(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, user := newDraftRecoveryFixture(t)
+	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Replacement\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+	testutil.AppendIMAPRawMessage(t, user, "Drafts", candidate)
+	reviewStoreFlagsForLifecycle(t, fixture.config.Addr(), 2, emersionimap.StoreFlagsAdd, emersionimap.FlagDraft)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+	requirements.NoError(err)
+	replacement := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+	requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, 1, "append_uidplus", &replacement))
+	published := publishRecoveryReplacement(t, fixture, candidate)
+	requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil))
+	providerCalls := 0
+	fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return nil, errors.New("settled recovery must not connect")
+	}
+	fired := false
+	previous := slog.Default()
+	slog.SetDefault(slog.New(reviewDraftCommitHandler{
+		Handler: slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		onCommit: func() {
+			if fired {
+				return
+			}
+			fired = true
+			_, finishErr := fixture.store.FinishIMAPDraftRemovalContext(t.Context(), fixture.draft.DraftID, published.Revision)
+			requirements.NoError(finishErr)
+		},
+	}))
+	defer slog.SetDefault(previous)
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "2", "--json")
+	requirements.NoError(err)
+	requirements.True(fired)
+	requirements.Len(events, 1)
+	assertions.Contains(events[0].Data, `"status":"active"`)
+	assertions.Zero(providerCalls)
+}
+
+func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, reviewManagedLifecycleFixture)
+	}{
+		{
+			name: "action",
+			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+					UPDATE imap_drafts
+					SET pending_operation = 'delete', pending_raw = NULL,
+					    pending_replacement_mailbox = NULL,
+					    pending_replacement_uidvalidity = NULL,
+					    pending_replacement_uid = NULL
+					WHERE draft_id = ?
+				`), fixture.draft.DraftID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "source type",
+			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+					UPDATE sources SET source_type = 'gmail' WHERE id = ?
+				`), fixture.source.ID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "source identifier",
+			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+					UPDATE sources SET identifier = 'imap://changed@example.test:143' WHERE id = ?
+				`), fixture.source.ID)
+				require.NoError(t, err)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			fixture, _ := newDraftRecoveryFixture(t)
+			candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+			_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+			requirements.NoError(err)
+			replacement := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+			requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), fixture.draft.DraftID, 1, "append_uidplus", &replacement))
+			grant := &agentgrant.Grant{
+				ID:          "reload-grant",
+				Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit},
+				Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}},
+			}
+			providerCalls := 0
+			fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+				providerCalls++
+				return nil, errors.New("reload denial must not connect")
+			}
+			fired := false
+			previous := slog.Default()
+			slog.SetDefault(slog.New(reviewDraftCommitHandler{
+				Handler: slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}),
+				onCommit: func() {
+					if fired {
+						return
+					}
+					fired = true
+					tc.mutate(t, fixture)
+				},
+			}))
+			defer slog.SetDefault(previous)
+
+			var events []api.CLIRunEvent
+			err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args:  []string{draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json"},
+				Grant: grant,
+			}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			requirements.Error(err)
+			assertions.Equal("not_permitted", err.Error())
+			assertions.True(fired)
+			assertions.Empty(events)
+			assertions.Zero(providerCalls)
+		})
+	}
+}
+
+func TestDraftRecoverRejectsInvalidPendingOperation(t *testing.T) {
+	testutil.SkipIfPostgres(t, "invalid pending operation injection uses SQLite check-constraint bypass")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, _ := newDraftRecoveryFixture(t)
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	requirements.NoError(func() error {
+		_, err := fixture.store.DB().Exec("PRAGMA ignore_check_constraints = ON")
+		return err
+	}())
+	_, err = fixture.store.DB().Exec(fixture.store.Rebind(`
+		UPDATE imap_drafts SET pending_operation = 'invalid' WHERE draft_id = ?
+	`), fixture.draft.DraftID)
+	requirements.NoError(err)
+	requirements.NoError(func() error {
+		_, err := fixture.store.DB().Exec("PRAGMA ignore_check_constraints = OFF")
+		return err
+	}())
+	providerCalls := 0
+	fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return nil, errors.New("invalid operation must not connect")
+	}
+
+	events, err := runReviewLifecycle(t, fixture.adapter, draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json")
+	requirements.Error(err)
+	assertions.Equal("invalid_state", err.Error())
+	assertions.Empty(events)
+	assertions.Zero(providerCalls)
+}
+
+func TestDraftRecoverRejectsWrongSourceAndAction(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		permission agentgrant.Permission
+		source     func(reviewManagedLifecycleFixture) agentgrant.SourceRef
+	}{
+		{
+			name:       "wrong action",
+			permission: agentgrant.PermissionDraftDelete,
+			source: func(fixture reviewManagedLifecycleFixture) agentgrant.SourceRef {
+				return agentgrant.SourceRef{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}
+			},
+		},
+		{
+			name:       "wrong source type",
+			permission: agentgrant.PermissionDraftEdit,
+			source: func(fixture reviewManagedLifecycleFixture) agentgrant.SourceRef {
+				return agentgrant.SourceRef{ID: fixture.source.ID, Type: "gmail", Identifier: fixture.source.Identifier}
+			},
+		},
+		{
+			name:       "wrong source identifier",
+			permission: agentgrant.PermissionDraftEdit,
+			source: func(fixture reviewManagedLifecycleFixture) agentgrant.SourceRef {
+				return agentgrant.SourceRef{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: "imap://changed@example.test:143"}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			fixture, _ := newDraftRecoveryFixture(t)
+			candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+			_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+			requirements.NoError(err)
+			grant := &agentgrant.Grant{
+				ID:          "denial-grant",
+				Permissions: []agentgrant.Permission{tc.permission},
+				Sources:     []agentgrant.SourceRef{tc.source(fixture)},
+			}
+			providerCalls := 0
+			fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+				providerCalls++
+				return nil, errors.New("denial must not connect")
+			}
+			var events []api.CLIRunEvent
+			err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args:  []string{draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json"},
+				Grant: grant,
+			}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			requirements.Error(err)
+			assertions.Equal("not_permitted", err.Error())
+			assertions.Empty(events)
+			assertions.Zero(providerCalls)
+		})
+	}
 }
 
 func TestDraftRecoverSettledRepeatNoProvider(t *testing.T) {

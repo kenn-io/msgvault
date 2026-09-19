@@ -345,10 +345,13 @@ timestamp, and revision unchanged.
   blocks further changes. Inspect the provider state before any manual
   reconciliation; general recovery for uncertain writes is not available.
 - If `draft-get <draft-id> --json` reports `pending_code: "removed"`, removal was
-  confirmed and saved, but local completion is still pending. Run
-  `draft-recover` with the revision from that read. It finishes locally
-  without another remote write. A `removed` observation in an error response
-  alone is not enough;
+  confirmed and saved, but local completion is still pending. `draft-recover` is
+  the preferred local completion route. Run it with the revision from that
+  read; it finishes locally without another remote write. You can also repeat
+  the matching `draft-edit` or `draft-delete` command with that revision. The
+  source policy still applies. For an edit, `--body` must match the already
+  published replacement after MIME normalization. A `removed` observation in
+  an error response alone is not enough;
   `draft-get` must report the saved pending code.
 
 ## Keep edited outgoing mail current

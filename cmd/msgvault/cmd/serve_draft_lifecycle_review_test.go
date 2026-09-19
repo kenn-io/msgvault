@@ -1391,6 +1391,83 @@ type reviewDropAppendSession struct {
 	conn *imapserver.Conn
 }
 
+type reviewUIDValidityChangeControl struct {
+	selects atomic.Int32
+}
+
+type reviewUIDValidityChangeSession struct {
+	imapserver.Session
+
+	control *reviewUIDValidityChangeControl
+}
+
+func (s *reviewUIDValidityChangeSession) Select(
+	mailbox string,
+	options *emersionimap.SelectOptions,
+) (*emersionimap.SelectData, error) {
+	data, err := s.Session.Select(mailbox, options)
+	if err != nil {
+		return nil, err
+	}
+	if s.control.selects.Add(1) == 2 {
+		changed := *data
+		changed.UIDValidity++
+		return &changed, nil
+	}
+	return data, nil
+}
+
+type reviewExpungeFailureSession struct {
+	imapserver.Session
+}
+
+func (s *reviewExpungeFailureSession) Expunge(
+	*imapserver.ExpungeWriter,
+	*emersionimap.UIDSet,
+) error {
+	return errors.New("synthetic UID EXPUNGE failure")
+}
+
+func startReviewCustomIMAPServer(
+	t *testing.T,
+	wrap func(imapserver.Session) imapserver.Session,
+) (string, *imapmemserver.User) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	user := imapmemserver.NewUser(testutil.IMAPTestUsername, testutil.IMAPTestPassword)
+	require.NoError(t, user.Create("Drafts", nil))
+	memServer := imapmemserver.New()
+	memServer.AddUser(user)
+	server := imapserver.New(&imapserver.Options{
+		Caps:         emersionimap.CapSet{emersionimap.CapIMAP4rev1: {}, emersionimap.CapUIDPlus: {}},
+		InsecureAuth: true,
+		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			return wrap(memServer.NewSession()), nil, nil
+		},
+	})
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
+	return ln.Addr().String(), user
+}
+
+func startReviewUIDValidityChangeServer(
+	t *testing.T,
+	control *reviewUIDValidityChangeControl,
+) (string, *imapmemserver.User) {
+	t.Helper()
+	return startReviewCustomIMAPServer(t, func(session imapserver.Session) imapserver.Session {
+		return &reviewUIDValidityChangeSession{Session: session, control: control}
+	})
+}
+
+func startReviewExpungeFailureServer(t *testing.T) (string, *imapmemserver.User) {
+	t.Helper()
+	return startReviewCustomIMAPServer(t, func(session imapserver.Session) imapserver.Session {
+		return &reviewExpungeFailureSession{Session: session}
+	})
+}
+
 func (s *reviewDropAppendSession) Append(
 	mailbox string,
 	r emersionimap.LiteralReader,
