@@ -3,10 +3,12 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +19,52 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestDraftReplyOutputFailureRefreshesCache(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics cache rebuild uses a SQLite snapshot")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	cacheRoot := t.TempDir()
+	cacheDB := filepath.Join(cacheRoot, "cache.db")
+	analyticsDir := filepath.Join(cacheRoot, "analytics")
+	checkSourceUnlocked := adapter.draftCacheRefresh
+	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
+		if err := checkSourceUnlocked(ctx, label); err != nil {
+			return err
+		}
+		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+			return err
+		}
+		_, err := buildCache(cacheDB, analyticsDir, true)
+		return err
+	}
+	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var created draftReplyOutput
+	err := adapter.runCLIReplyDraft(ctx, api.CLIRunRequest{
+		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "createdcache", "--json"},
+	}, func(event api.CLIRunEvent) error {
+		requirements.NoError(json.Unmarshal([]byte(event.Data), &created))
+		cancel()
+		return errors.New("output disconnected")
+	})
+	requirements.ErrorContains(err, "output_failed")
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	requirements.NoError(err)
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	results, err := engine.SearchFast(t.Context(), search.Parse("createdcache"), query.MessageFilter{}, 100, 0)
+	requirements.NoError(err)
+	requirements.Len(results, 1, "created draft must reach search despite output failure and cancellation")
+	assertions.Equal(draft.CurrentMessageID, results[0].ID)
+}
 
 func TestDraftEditCancelledAfterPublicationRefreshesCache(t *testing.T) {
 	testutil.SkipIfPostgres(t, "analytics cache rebuild uses a SQLite snapshot")

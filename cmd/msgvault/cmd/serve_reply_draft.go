@@ -248,19 +248,14 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 		_ = emitDraftReplyOutput(emit, cliStreamStderr, intent.JSON, result)
 		return draftReplyError(draftReplyStatusLocalFailed, err)
 	}
+	defer a.releaseDraftSourceAndRefreshCache(ctx, target.source, execution)
 	result.DraftID = draft.DraftID
 	result.Revision = draft.Revision
 	result.MessageID = draft.CurrentMessageID
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}
-	// The draft is durable and reported. Free the source for syncs before the
-	// cache rebuild, which can take a while and needs no lock.
-	if err := execution.Release(); err != nil {
-		logger.Error("release source after draft", "source_id", target.source.ID, "error", err)
-	}
 	_ = client.Close()
-	a.refreshDraftCache(ctx, target.source)
 	return nil
 }
 
