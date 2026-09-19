@@ -215,6 +215,10 @@ See [Web UI](web-ui.md), [TUI](usage/tui.md),
   Enable `[server] agent_access = true` with a non-empty `api_key`; see
   [agent-token](cli-reference.md#agent-token) and
   [configuration](configuration.md#server).
+- Read, edit, and delete managed IMAP drafts with `draft-get`, `draft-edit`, and
+  `draft-delete`. Reads use retained archive content; edits and deletes require
+  the reported revision and exact provider receipt. Uncertain provider results
+  keep candidate evidence and block the draft until recovery support is added.
 - Refresh the archived body, recipients, and attachments when a trusted outgoing
   IMAP copy is edited or moves from Drafts to Sent. Ordinary received-mail and
   All Mail copies cannot replace that content. Historical rows that already lost

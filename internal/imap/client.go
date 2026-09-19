@@ -550,16 +550,45 @@ func (c *Client) withConn(ctx context.Context, fn func(*imapclient.Client) error
 	}
 	err := fn(c.conn)
 	if err != nil && isNetworkError(err) {
-		if c.conn != nil {
-			_ = c.conn.Close()
-		}
-		c.conn = nil
-		c.selectedMailbox = ""
-		c.selectedUIDValidity = 0
-		c.qresyncEnabled = false
-		c.clearQresyncCapture()
+		c.invalidateConnLocked(c.conn)
 	}
 	return err
+}
+
+// withDraftConn keeps a draft operation's transport tied to its context.
+// The callback may wait for a server response, so cancellation closes the
+// captured connection and prevents it from being reused.
+func (c *Client) withDraftConn(ctx context.Context, fn func(*imapclient.Client) error) error {
+	return c.withConn(ctx, func(conn *imapclient.Client) error {
+		cancelDone := make(chan struct{})
+		stopCancel := context.AfterFunc(ctx, func() {
+			_ = conn.Close()
+			close(cancelDone)
+		})
+		defer func() {
+			if !stopCancel() {
+				<-cancelDone
+				c.invalidateConnLocked(conn)
+				return
+			}
+			if ctx.Err() != nil {
+				c.invalidateConnLocked(conn)
+			}
+		}()
+		return fn(conn)
+	})
+}
+
+func (c *Client) invalidateConnLocked(conn *imapclient.Client) {
+	if conn == nil || c.conn != conn {
+		return
+	}
+	_ = conn.Close()
+	c.conn = nil
+	c.selectedMailbox = ""
+	c.selectedUIDValidity = 0
+	c.qresyncEnabled = false
+	c.clearQresyncCapture()
 }
 
 // selectMailbox selects a mailbox if not already selected. Caller must hold mu.

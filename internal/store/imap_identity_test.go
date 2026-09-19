@@ -266,7 +266,7 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 	newReceipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 30, UID: 1,
 	}
-	newID, err := f.store.PersistIMAPDraftContext(t.Context(), newReceipt, nil,
+	newDraft, err := f.store.PersistIMAPDraftContext(t.Context(), newReceipt, nil,
 		func([]int64) *store.MessagePersistData {
 			return &store.MessagePersistData{
 				Message: &store.Message{
@@ -281,6 +281,7 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 			}
 		})
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
 }
 
@@ -291,7 +292,7 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 10, UID: 1,
 	}
-	draftID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
+	draft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
 		func([]int64) *store.MessagePersistData {
 			return &store.MessagePersistData{
 				Message: &store.Message{
@@ -305,6 +306,7 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 			}
 		})
 	requirements.NoError(err)
+	draftID := draft.CurrentMessageID
 	requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
 		Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2,
 	}}))
@@ -343,7 +345,7 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 10, UID: 1,
 	}
-	draftID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
+	draft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
 		func([]int64) *store.MessagePersistData {
 			return &store.MessagePersistData{
 				Message: &store.Message{
@@ -357,6 +359,7 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 			}
 		})
 	requirements.NoError(err)
+	draftID := draft.CurrentMessageID
 	requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{
 		Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2,
 	}}))
@@ -503,15 +506,18 @@ func TestIMAPIdentity_NewPublishedCopyKeepsKey(t *testing.T) {
 					RawMIME: fmt.Appendf(nil, "Subject: Generation %d\r\n\r\ncontent %d\r\n", receipt.UIDValidity, receipt.UIDValidity),
 				}
 			}
-			oldID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, build)
+			oldDraft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, build)
 			requirements.NoError(err)
+			oldID := oldDraft.CurrentMessageID
 			oldRaw, err := f.store.GetMessageRaw(oldID)
 			requirements.NoError(err)
 			requirements.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{{Mailbox: "Drafts", UIDValidity: 10, UIDNext: 2}}))
 			receipt.UIDValidity = 20
 			var newID int64
 			if mode == "append" {
-				newID, err = f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, build)
+				newDraft, persistErr := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, build)
+				err = persistErr
+				newID = newDraft.CurrentMessageID
 			} else {
 				changed, rekeyErr := f.store.RekeyMessageSourceID(oldID, "Drafts|1", fmt.Sprintf("msgvault-invalidated:%d", oldID))
 				requirements.NoError(rekeyErr)
@@ -700,7 +706,7 @@ func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *tes
 	receipt := store.IMAPDraftReceipt{
 		SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1,
 	}
-	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
+	newDraft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil,
 		func([]int64) *store.MessagePersistData {
 			return &store.MessagePersistData{
 				Message: &store.Message{
@@ -714,6 +720,7 @@ func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *tes
 			}
 		})
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
 	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
 	requirements.NoError(err)
@@ -751,7 +758,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 	assertions.Equal("Drafts|1", key)
 	assertions.Zero(membershipCount(t, st, source.ID))
 	assertions.True(messageTombstoned(t, st, oldID))
-	newID, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil,
+	newDraft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil,
 		func([]int64) *store.MessagePersistData {
 			return &store.MessagePersistData{
 				Message: &store.Message{
@@ -765,6 +772,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 			}
 		})
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
 	retainedRaw, err := st.GetMessageRaw(oldID)
 	requirements.NoError(err)
@@ -798,13 +806,14 @@ func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1}
 	newRaw := []byte("Subject: Replacement\r\n\r\nnew content\r\n")
-	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+	newDraft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{
 			Message: &store.Message{SourceID: f.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), ConversationID: f.convID, MessageType: store.MessageTypeEmail},
 			RawMIME: newRaw,
 		}
 	})
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
 	retainedRaw, err := f.store.GetMessageRaw(oldID)
 	requirements.NoError(err)
@@ -857,10 +866,11 @@ func TestIMAPIdentity_OmittedReplacedKeyAllowsAppend(t *testing.T) {
 	archive.Memberships = nil
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
 	receipt := store.IMAPDraftReceipt{SourceID: f.source.ID, Mailbox: "Drafts", UIDValidity: 20, UID: 1}
-	newID, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+	newDraft, err := f.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{Message: &store.Message{SourceID: f.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), ConversationID: f.convID, MessageType: store.MessageTypeEmail}}
 	})
 	requirements.NoError(err)
+	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
 	retainedRaw, err := f.store.GetMessageRaw(oldID)
 	requirements.NoError(err)

@@ -1888,86 +1888,106 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 ) (int64, error) {
 	var messageID int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if s.dialect.DriverName() != postgresDriverName {
-			// Reserve SQLite's writer slot before any prior-state or related
-			// snapshot reads. Otherwise a concurrent commit can leave this
-			// deferred WAL transaction unable to upgrade to a writer.
-			if _, err := tx.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-				return fmt.Errorf("lock message persistence: %w", err)
-			}
-		}
-		if len(participants) > 1 {
-			// Participant merges take the directory lock before rewriting
-			// message rows. Keep the same order when a repair's preflight
-			// callback locks its target message for identity revalidation.
-			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
-				return err
-			}
-		}
-		if beforeParticipants != nil {
-			if err := beforeParticipants(ctx, tx); err != nil {
-				return err
-			}
-		}
-		q := boundQuerier{ctx: ctx, q: tx}
-		participantIDs := make([]int64, len(participants))
-		participantInserted := false
-		for idx, participant := range participants {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			participantID, err := ensureParticipantWith(
-				q,
-				s.dialect,
-				participant.EmailAddress,
-				participant.DisplayName,
-				participant.Domain,
-				func() error {
-					participantInserted = true
-					return nil
-				},
-			)
-			if err != nil {
-				return fmt.Errorf("ensure participant %d: %w", idx, err)
-			}
-			participantIDs[idx] = participantID
-		}
-		if participantInserted {
-			if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
-				return err
-			}
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		data := build(participantIDs)
-		if data == nil || data.Message == nil {
-			return errors.New("persist message requires a message")
-		}
-		if prepare != nil {
-			var err error
-			data, err = prepare(ctx, tx, data)
-			if err != nil {
-				return err
-			}
-		}
-		if err := s.requireSyncSource(data.Message.SourceID); err != nil {
-			return err
-		}
-		id, err := s.persistMessageWith(ctx, tx, data)
-		if err != nil {
-			return err
-		}
-		if afterPersist != nil {
-			if err := afterPersist(ctx, tx, data, id); err != nil {
-				return err
-			}
-		}
-		messageID = id
-		return nil
+		var err error
+		messageID, err = s.persistMessageWithParticipantsTx(
+			ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
+		)
+		return err
 	})
 	return messageID, err
+}
+
+// persistMessageWithParticipantsTx applies the participant and message
+// persistence steps to an existing transaction. Lifecycle owners use this to
+// publish a message and their ownership row in one commit.
+func (s *Store) persistMessageWithParticipantsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	beforeParticipants messagePersistBeforeParticipants,
+	participants []ParticipantPersistData,
+	build func([]int64) *MessagePersistData,
+	prepare messagePersistPrepare,
+	afterPersist messagePersistAfter,
+) (int64, error) {
+	var messageID int64
+	if s.dialect.DriverName() != postgresDriverName {
+		// Reserve SQLite's writer slot before any prior-state or related
+		// snapshot reads. Otherwise a concurrent commit can leave this
+		// deferred WAL transaction unable to upgrade to a writer.
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+			return 0, fmt.Errorf("lock message persistence: %w", err)
+		}
+	}
+	if len(participants) > 1 {
+		// Participant merges take the directory lock before rewriting
+		// message rows. Keep the same order when a repair's preflight
+		// callback locks its target message for identity revalidation.
+		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
+	if beforeParticipants != nil {
+		if err := beforeParticipants(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	participantIDs := make([]int64, len(participants))
+	participantInserted := false
+	for idx, participant := range participants {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		participantID, err := ensureParticipantWith(
+			q,
+			s.dialect,
+			participant.EmailAddress,
+			participant.DisplayName,
+			participant.Domain,
+			func() error {
+				participantInserted = true
+				return nil
+			},
+		)
+		if err != nil {
+			return 0, fmt.Errorf("ensure participant %d: %w", idx, err)
+		}
+		participantIDs[idx] = participantID
+	}
+	if participantInserted {
+		if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	data := build(participantIDs)
+	if data == nil || data.Message == nil {
+		return 0, errors.New("persist message requires a message")
+	}
+	if prepare != nil {
+		var err error
+		data, err = prepare(ctx, tx, data)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if err := s.requireSyncSource(data.Message.SourceID); err != nil {
+		return 0, err
+	}
+	id, err := s.persistMessageWith(ctx, tx, data)
+	if err != nil {
+		return 0, err
+	}
+	if afterPersist != nil {
+		if err := afterPersist(ctx, tx, data, id); err != nil {
+			return 0, err
+		}
+	}
+	messageID = id
+	return messageID, nil
 }
 
 func (s *Store) persistMessageWith(

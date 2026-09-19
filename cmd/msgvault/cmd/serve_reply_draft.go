@@ -46,6 +46,8 @@ type draftReplyTarget struct {
 
 type draftReplyOutput struct {
 	Status          string `json:"status"`
+	DraftID         string `json:"draft_id,omitempty"`
+	Revision        int64  `json:"revision,omitzero"`
 	MessageID       int64  `json:"message_id,omitzero"`
 	OperationRef    string `json:"operation_ref"`
 	RFC822MessageID string `json:"rfc822_message_id"`
@@ -210,7 +212,16 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	}
 	defer func() { _ = execution.Release() }()
 
-	receipt, err := a.appendDraftReply(ctx, target, reply.Raw, emit)
+	clientFactory := a.draftClientFactory
+	if clientFactory == nil {
+		clientFactory = defaultDraftClientFactory
+	}
+	client, err := clientFactory(ctx, target.source)
+	if err != nil {
+		return draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
+	}
+	defer func() { _ = client.Close() }()
+	receipt, err := a.appendDraftReplyWithClient(ctx, client, target, reply.Raw, emit)
 	if err != nil {
 		return err
 	}
@@ -227,7 +238,9 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 		UID:             receipt.UID,
 		UIDValidity:     receipt.UIDValidity,
 	}
-	localID, err := a.store.PersistIMAPDraftContext(ctx, receiptModel, draftReplyParticipants(reply.Parsed), func(ids []int64) *store.MessagePersistData {
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
+	draft, err := a.store.PersistIMAPDraftContext(evidenceCtx, receiptModel, draftReplyParticipants(reply.Parsed), func(ids []int64) *store.MessagePersistData {
 		return draftReplyPersistData(target, reply, receiptModel, messageIDValue, ids)
 	})
 	if err != nil {
@@ -235,7 +248,9 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 		_ = emitDraftReplyOutput(emit, cliStreamStderr, intent.JSON, result)
 		return draftReplyError(draftReplyStatusLocalFailed, err)
 	}
-	result.MessageID = localID
+	result.DraftID = draft.DraftID
+	result.Revision = draft.Revision
+	result.MessageID = draft.CurrentMessageID
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}
@@ -244,6 +259,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err := execution.Release(); err != nil {
 		logger.Error("release source after draft", "source_id", target.source.ID, "error", err)
 	}
+	_ = client.Close()
 	a.refreshDraftCache(ctx, target.source)
 	return nil
 }
@@ -339,23 +355,13 @@ func defaultDraftClientFactory(ctx context.Context, source *store.Source) (*imap
 	return imapClient, nil
 }
 
-// appendDraftReply sends the single APPEND. Any failure after this point
-// leaves a state the operator must inspect before retrying.
-func (a *storeAPIAdapter) appendDraftReply(
+func (a *storeAPIAdapter) appendDraftReplyWithClient(
 	ctx context.Context,
+	client *imaplib.Client,
 	target draftReplyTarget,
 	raw []byte,
 	emit func(api.CLIRunEvent) error,
 ) (imaplib.DraftAppendResult, error) {
-	clientFactory := a.draftClientFactory
-	if clientFactory == nil {
-		clientFactory = defaultDraftClientFactory
-	}
-	client, err := clientFactory(ctx, target.source)
-	if err != nil {
-		return imaplib.DraftAppendResult{}, draftReplyError("invalid_source", fmt.Errorf("build IMAP client for source %d: %w", target.source.ID, err))
-	}
-	defer func() { _ = client.Close() }()
 	receipt, err := client.AppendDraft(ctx, target.mailbox, raw)
 	if err != nil {
 		if emit != nil {
@@ -437,8 +443,8 @@ func emitDraftReplyOutput(emit func(api.CLIRunEvent) error, stream string, asJSO
 	case asJSON:
 		text = string(marshalDraftReplyOutput(result)) + "\n"
 	case result.Status == draftReplyStatusCreated:
-		text = fmt.Sprintf("created draft message %d (%s|%d|%d), operation %s\n",
-			result.MessageID, result.Mailbox, result.UIDValidity, result.UID, result.OperationRef)
+		text = fmt.Sprintf("created draft message %d (%s|%d|%d), operation %s, draft %s revision %d\n",
+			result.MessageID, result.Mailbox, result.UIDValidity, result.UID, result.OperationRef, result.DraftID, result.Revision)
 	default:
 		text = fmt.Sprintf("remote accepted; local persistence failed, inspect operation %s\n", result.OperationRef)
 	}
