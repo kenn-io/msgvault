@@ -499,7 +499,7 @@ func classifyDraftWrite(err error) error {
 		switch {
 		case statusErr.StatusCode == http.StatusUnauthorized:
 			return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
-		case statusErr.StatusCode == http.StatusForbidden && isInsufficientScopeError(statusErr.Error()):
+		case statusErr.StatusCode == http.StatusForbidden && IsInsufficientScopeError(statusErr.Error()):
 			return &DraftWriteError{State: DraftStateRejected, Code: "insufficient_scope", Err: err}
 		case statusErr.StatusCode == http.StatusTooManyRequests:
 			return &DraftWriteError{State: DraftStateRemoteUnknown, Code: "remote_unknown", Err: err}
@@ -510,11 +510,13 @@ func classifyDraftWrite(err error) error {
 	return &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
 }
 
-func isInsufficientScopeError(message string) bool {
+// IsInsufficientScopeError reports the provider messages Gmail uses when an
+// OAuth grant does not contain the required scope.
+func IsInsufficientScopeError(message string) bool {
 	message = strings.ToLower(message)
 	return strings.Contains(message, "access_token_scope_insufficient") ||
-		strings.Contains(message, "insufficient permission") ||
-		strings.Contains(message, "insufficient scope")
+		strings.Contains(message, "insufficient authentication scopes") ||
+		strings.Contains(message, "insufficient permission")
 }
 
 type historyMessageChange struct {

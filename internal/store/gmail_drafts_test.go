@@ -100,6 +100,47 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	assert.Equal(int64(1), plan.SourceDeleted)
 }
 
+func TestGmailDraftPendingOriginalRetainedByGC(t *testing.T) {
+	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "pending@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "pending-thread", "Pending thread")
+	require.NoError(err)
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "pending@example.com", Domain: "example.com"},
+		{EmailAddress: "user@example.com", Domain: "example.com"},
+	}
+	receipt := store.GmailDraftReceipt{
+		SourceID: source.ID, GmailDraftID: "gmail-draft-pending",
+		GmailMessageID: "gmail-message-pending", ThreadID: "pending-thread",
+	}
+	draft, err := st.PersistGmailDraftContext(t.Context(), receipt, participants,
+		gmailTestBuild(source.ID, conversationID, receipt, []byte("original")))
+	require.NoError(err)
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision,
+		store.GmailDraftOperationEdit, []byte("candidate"))
+	require.NoError(err)
+
+	// A sync deletion can arrive while the local replacement is pending.
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?
+	`), draft.CurrentMessageID)
+	require.NoError(err)
+
+	plan, err := st.PlanGCContext(t.Context())
+	require.NoError(err)
+	assert.Zero(plan.SourceDeleted)
+	assert.Empty(plan.SourceDeletedIDs)
+	deleted, err := st.ExecuteGCContext(t.Context(), plan)
+	require.NoError(err)
+	assert.Zero(deleted)
+	_, err = st.GetMessageContext(t.Context(), draft.CurrentMessageID)
+	require.NoError(err)
+}
+
 func TestGmailDraftDeleteInspection404FinishesWithoutClaim(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

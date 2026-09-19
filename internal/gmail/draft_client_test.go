@@ -115,6 +115,64 @@ func TestDraftMutation429IsRemoteUnknownWithoutReplay(t *testing.T) {
 	assert.Equal(int32(1), requests.Load())
 }
 
+func TestIsInsufficientScopeErrorRecognizesProviderMessages(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{
+			name:    "access token scope insufficient",
+			message: "googleapi: Error 403: ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+			want:    true,
+		},
+		{
+			name:    "insufficient authentication scopes",
+			message: "googleapi: Error 403: insufficient authentication scopes",
+			want:    true,
+		},
+		{
+			name:    "insufficient permission",
+			message: "googleapi: Error 403: Insufficient Permission",
+			want:    true,
+		},
+		{
+			name:    "generic insufficient text",
+			message: "provider returned insufficient data",
+			want:    false,
+		},
+		{
+			name:    "scope shorthand",
+			message: "provider returned insufficient scope",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsInsufficientScopeError(tt.message))
+		})
+	}
+}
+
+func TestExistingTrashRetriesServerError(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var requests atomic.Int32
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method)
+		assert.Equal("/gmail/v1/users/me/messages/message-1/trash", r.URL.Path)
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	require.NoError(client.TrashMessage(t.Context(), "message-1"))
+	assert.Equal(int32(2), requests.Load())
+}
+
 func TestDraftMalformedSuccessIsRemoteUnknown(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

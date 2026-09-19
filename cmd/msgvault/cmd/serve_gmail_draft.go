@@ -259,9 +259,9 @@ func gmailWriteCause(err error) error {
 
 func gmailReadErrorCode(err error) string {
 	if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
-		return "draft_absent"
+		return "provider_absent"
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "insufficient") {
+	if gmail.IsInsufficientScopeError(err.Error()) {
 		return "insufficient_scope"
 	}
 	return "provider_refused"
@@ -455,11 +455,69 @@ func emitGmailDraftLifecycleOutput(
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: string(data) + "\n"})
 	}
-	data := fmt.Sprintf("draft %s revision %d %s\nstatus: %s\ncontent:\n%s\n",
+	var data strings.Builder
+	fmt.Fprintf(&data, "draft %s revision %d %s\n",
 		textutil.SanitizeTerminal(output.DraftID), output.Revision,
-		textutil.SanitizeTerminal(output.Lifecycle), textutil.SanitizeTerminal(output.Status),
-		textutil.SanitizeTerminalMultiline(output.Content))
-	return emit(api.CLIRunEvent{Type: stream, Data: data})
+		textutil.SanitizeTerminal(output.Lifecycle))
+	fmt.Fprintf(&data, "status: %s\n", textutil.SanitizeTerminal(output.Status))
+	fmt.Fprintf(&data, "receipt (revision %d): %s\n", output.Revision,
+		textutil.SanitizeTerminal(formatGmailDraftLifecycleReceipt(output.Receipt)))
+	fmt.Fprintf(&data, "content:\n%s\n",
+		strings.TrimRight(textutil.SanitizeTerminalMultiline(output.Content), "\n"))
+	if output.PendingOperation != "" {
+		fmt.Fprintf(&data, "pending operation: %s\n", textutil.SanitizeTerminal(output.PendingOperation))
+	}
+	if output.CandidateContent != "" {
+		fmt.Fprintf(&data, "candidate content:\n%s\n",
+			strings.TrimRight(textutil.SanitizeTerminalMultiline(output.CandidateContent), "\n"))
+	}
+	if output.Status == "accepted_local_failed" && output.ProviderObservation != nil &&
+		output.ProviderObservation.State == "present" && output.ProviderObservation.Present {
+		fmt.Fprintf(&data, "acknowledged replacement receipt: %s\n",
+			textutil.SanitizeTerminal(formatGmailDraftLifecycleObservation(*output.ProviderObservation)))
+	}
+	if output.Observation != nil && output.Status == "pending" {
+		fmt.Fprintf(&data, "old provider receipt: %s\n",
+			textutil.SanitizeTerminal(formatGmailDraftLifecycleObservation(*output.Observation)))
+	}
+	providerOutcome := output.PendingCode
+	if providerOutcome == "" {
+		observations := []*gmailDraftLifecycleObservation{output.ProviderObservation, output.Observation}
+		if output.Status == "pending" {
+			observations = []*gmailDraftLifecycleObservation{output.Observation, output.ProviderObservation}
+		}
+		for _, observation := range observations {
+			if observation == nil {
+				continue
+			}
+			providerOutcome = observation.Code
+			if providerOutcome == "" {
+				providerOutcome = observation.State
+			}
+			if providerOutcome != "" {
+				break
+			}
+		}
+	}
+	if providerOutcome != "" {
+		fmt.Fprintf(&data, "provider outcome: %s\n", textutil.SanitizeTerminal(providerOutcome))
+	}
+	if output.Status == "pending" || output.Status == "accepted_local_failed" || output.ManualReconciliation {
+		fmt.Fprintf(&data, "old draft ID remains blocked at revision %d\n", output.Revision)
+		fmt.Fprintln(&data, "manual action: reconcile the provider receipt and local state before retrying")
+	}
+	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
+}
+
+func formatGmailDraftLifecycleReceipt(receipt gmailDraftLifecycleReceipt) string {
+	return fmt.Sprintf("gmail_draft_id=%s gmail_message_id=%s thread_id=%s",
+		receipt.GmailDraftID, receipt.GmailMessageID, receipt.ThreadID)
+}
+
+func formatGmailDraftLifecycleObservation(observation gmailDraftLifecycleObservation) string {
+	return fmt.Sprintf("state=%s code=%s gmail_draft_id=%s gmail_message_id=%s thread_id=%s present=%t",
+		observation.State, observation.Code, observation.GmailDraftID,
+		observation.GmailMessageID, observation.ThreadID, observation.Present)
 }
 
 func (a *storeAPIAdapter) loadManagedGmailDraftSource(ctx context.Context, draft store.GmailDraft) (*store.Source, error) {
