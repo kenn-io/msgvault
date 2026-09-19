@@ -71,6 +71,62 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	requirements.True(oldDeleted.Valid)
 }
 
+func TestManagedIMAPDraftReplacementUIDReuse(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		uidValidity uint32
+		conflict    bool
+	}{
+		{name: "previous generation", uidValidity: 1},
+		{name: "same generation", uidValidity: 2, conflict: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
+			requirements.NoError(err)
+			conversationID, err := st.EnsureConversation(source.ID, "draft-uid-reuse", "Draft UID reuse")
+			requirements.NoError(err)
+			build := func(receipt store.IMAPDraftReceipt, raw string) func([]int64) *store.MessagePersistData {
+				return func([]int64) *store.MessagePersistData {
+					return &store.MessagePersistData{
+						Message: &store.Message{
+							SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+							MessageType: store.MessageTypeEmail, ConversationID: conversationID,
+						},
+						RawMIME: []byte(raw),
+					}
+				}
+			}
+			oldReceipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: scenario.uidValidity, UID: 2}
+			archived, err := st.PersistIMAPDraftContext(t.Context(), oldReceipt, nil, build(oldReceipt, "archived"))
+			requirements.NoError(err)
+			current := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 2, UID: 1}
+			draft, err := st.PersistIMAPDraftContext(t.Context(), current, nil, build(current, "current"))
+			requirements.NoError(err)
+			_, err = st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, 1, store.IMAPDraftOperationEdit, []byte("replacement"))
+			requirements.NoError(err)
+			replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 2, UID: 2}
+			requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 1, "append_uidplus", &replacement))
+			published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, 1, nil, build(replacement, "replacement"))
+			if scenario.conflict {
+				requirements.ErrorContains(err, "replacement source key already belongs")
+			} else {
+				requirements.NoError(err)
+				assertions.Equal(int64(2), published.Revision)
+				assertions.Equal(replacement, published.CurrentReceipt)
+				raw, err := st.GetMessageRaw(published.CurrentMessageID)
+				requirements.NoError(err)
+				assertions.Equal("replacement", string(raw))
+			}
+			raw, err := st.GetMessageRaw(archived.CurrentMessageID)
+			requirements.NoError(err)
+			assertions.Equal("archived", string(raw))
+		})
+	}
+}
+
 func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
 	requirements := require.New(t)

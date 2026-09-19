@@ -91,24 +91,8 @@ func (s *Store) PersistIMAPDraftContext(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check IMAP draft membership: %w", err)
 		}
-		// APPEND can reuse a key after a folder epoch reset. Keep the old
-		// archive row, but free the provider key before inserting the new one.
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
-			WHERE source_id = ? AND source_message_id = ? AND (EXISTS (
-				SELECT 1 FROM imap_message_memberships
-				WHERE message_id = messages.id AND source_id = messages.source_id
-				  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
-			) OR (EXISTS (
-				SELECT 1 FROM imap_folder_state WHERE source_id = messages.source_id AND mailbox = ? AND uidvalidity <> ?
-			) AND NOT EXISTS (
-				SELECT 1 FROM imap_message_memberships WHERE source_id = messages.source_id AND message_id = messages.id AND mailbox = ? AND uid = ?
-			)) OR (deleted_from_source_at IS NOT NULL AND NOT EXISTS (
-				SELECT 1 FROM imap_message_memberships WHERE source_id = messages.source_id AND message_id = messages.id
-			)))
-		`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity,
-			receipt.Mailbox, receipt.UIDValidity, receipt.Mailbox, receipt.UID); err != nil {
-			return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
+		if err := invalidatePreviousIMAPDraftSourceKey(ctx, tx, receipt); err != nil {
+			return err
 		}
 		err = tx.QueryRowContext(ctx, `
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
@@ -170,6 +154,29 @@ func (s *Store) PersistIMAPDraftContext(
 		return IMAPDraft{}, err
 	}
 	return draft, nil
+}
+
+// APPEND can reuse a key after a folder epoch reset. Keep the old
+// archive row, but free the provider key before inserting the new one.
+func invalidatePreviousIMAPDraftSourceKey(ctx context.Context, tx *loggedTx, receipt IMAPDraftReceipt) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages SET source_message_id = 'msgvault-invalidated:' || CAST(id AS TEXT)
+		WHERE source_id = ? AND source_message_id = ? AND (EXISTS (
+			SELECT 1 FROM imap_message_memberships
+			WHERE message_id = messages.id AND source_id = messages.source_id
+			  AND mailbox = ? AND uid = ? AND uidvalidity <> ?
+		) OR (EXISTS (
+			SELECT 1 FROM imap_folder_state WHERE source_id = messages.source_id AND mailbox = ? AND uidvalidity <> ?
+		) AND NOT EXISTS (
+			SELECT 1 FROM imap_message_memberships WHERE source_id = messages.source_id AND message_id = messages.id AND mailbox = ? AND uid = ?
+		)) OR (deleted_from_source_at IS NOT NULL AND NOT EXISTS (
+			SELECT 1 FROM imap_message_memberships WHERE source_id = messages.source_id AND message_id = messages.id
+		)))
+	`, receipt.SourceID, IMAPDraftSourceMessageID(receipt), receipt.Mailbox, receipt.UID, receipt.UIDValidity,
+		receipt.Mailbox, receipt.UIDValidity, receipt.Mailbox, receipt.UID); err != nil {
+		return fmt.Errorf("invalidate previous IMAP draft source key: %w", err)
+	}
+	return nil
 }
 
 func validateIMAPDraftReceipt(receipt IMAPDraftReceipt) error {

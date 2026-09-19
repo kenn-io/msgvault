@@ -401,6 +401,9 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 			return errors.New("IMAP draft replacement receipt is not recorded")
 		}
 		receipt := *draft.Pending.ReplacementReceipt
+		if err := invalidatePreviousIMAPDraftSourceKey(ctx, tx, receipt); err != nil {
+			return err
+		}
 		var existingMessageID int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
