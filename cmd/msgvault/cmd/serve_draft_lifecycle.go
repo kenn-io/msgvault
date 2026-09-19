@@ -582,6 +582,15 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if err != nil {
 		return reportAcceptedLocalFailure(err)
 	}
+	defer func() {
+		if err := execution.Release(); err != nil {
+			logger.Error("release source after draft edit", "source_id", source.ID, "error", err)
+		}
+		// The replacement is durable even if cleanup or response delivery fails.
+		refreshCtx, cancelRefresh := localDraftEvidenceContext(ctx)
+		defer cancelRefresh()
+		a.refreshDraftCache(refreshCtx, source)
+	}()
 	if ctx.Err() != nil {
 		output, outputErr := a.draftLifecycleOutput(evidenceCtx, published, "pending", nil, nil)
 		if outputErr == nil {
@@ -623,10 +632,6 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
 		return draftReplyError("output_failed", err)
 	}
-	if err := execution.Release(); err != nil {
-		logger.Error("release source after draft edit", "source_id", source.ID, "error", err)
-	}
-	a.refreshDraftCache(evidenceCtx, source)
 	return nil
 }
 
