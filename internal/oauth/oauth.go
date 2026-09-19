@@ -104,6 +104,41 @@ var ScopesGmailWrite = []string{
 	ScopeGmailSettingsSharing,
 }
 
+// ScopesGmailDraftWrite are the accepted grants for creating, editing, or
+// deleting a Gmail draft.
+var ScopesGmailDraftWrite = []string{
+	ScopeGmailFull,
+	ScopeGmailModify,
+	ScopeGmailCompose,
+}
+
+// ScopesGmailDraftRead are the accepted grants for reading a Gmail draft.
+var ScopesGmailDraftRead = []string{
+	ScopeGmailFull,
+	ScopeGmailModify,
+	ScopeGmailCompose,
+	ScopeGmailReadonly,
+}
+
+// ScopesGmailSendAsList are the accepted grants for listing send-as entries.
+var ScopesGmailSendAsList = []string{
+	ScopeGmailSettingsBasic,
+	ScopeGmailFull,
+	ScopeGmailModify,
+	ScopeGmailReadonly,
+}
+
+// GrantCoversAnyScope reports whether a stored grant contains one accepted
+// scope. Operation sets stay separate because Gmail assigns them separately.
+func GrantCoversAnyScope(granted, accepted []string) bool {
+	for _, scope := range accepted {
+		if slices.Contains(granted, scope) {
+			return true
+		}
+	}
+	return false
+}
+
 // gmailScopePrefixes match every scope Google issues for Gmail. A scope
 // carrying one of these is Gmail's; anything else belongs to another API.
 var gmailScopePrefixes = []string{

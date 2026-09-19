@@ -599,6 +599,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
+		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -786,6 +787,13 @@ func snapshotIMAPDraftPolicy(cfg *config.Config) []config.IMAPDraftSource {
 		return nil
 	}
 	return append([]config.IMAPDraftSource(nil), cfg.IMAP.Drafts...)
+}
+
+func snapshotGmailDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
+	if cfg == nil {
+		return nil
+	}
+	return append([]config.GmailDraftSource(nil), cfg.Gmail.Drafts...)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
@@ -1234,9 +1242,11 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store              *store.Store
-	draftPolicy        []config.IMAPDraftSource
-	draftClientFactory func(context.Context, *store.Source) (*imaplib.Client, error)
+	store                   *store.Store
+	draftPolicy             []config.IMAPDraftSource
+	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
+	gmailDraftPolicy        []config.GmailDraftSource
+	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
@@ -1838,6 +1848,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	}
 	if api.IsCLIRunDraftReply(req.Args) {
 		return a.runCLIReplyDraft(ctx, req, emit)
+	}
+	if api.IsCLIRunDraftSendAs(req.Args) {
+		return a.runCLIDraftSendAs(ctx, req, emit)
 	}
 	if api.IsCLIRunDraftLifecycle(req.Args) {
 		return a.runCLIDraftLifecycle(ctx, req, emit)

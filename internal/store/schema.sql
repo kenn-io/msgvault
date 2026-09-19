@@ -1982,6 +1982,51 @@ CREATE INDEX IF NOT EXISTS idx_imap_drafts_current_message
 CREATE INDEX IF NOT EXISTS idx_imap_drafts_pending_original_message
     ON imap_drafts(pending_original_message_id);
 
+-- Managed Gmail drafts retain the stable provider draft ID while Gmail
+-- replaces the enclosed message ID on each update.
+CREATE TABLE IF NOT EXISTS gmail_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    gmail_draft_id TEXT NOT NULL,
+    current_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    current_gmail_message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    discarded_at DATETIME,
+    pending_operation TEXT,
+    pending_original_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    pending_original_gmail_message_id TEXT,
+    pending_raw BLOB,
+    pending_replacement_gmail_message_id TEXT,
+    pending_code TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, gmail_draft_id),
+    CHECK (
+        (pending_operation IS NULL
+            AND pending_original_message_id IS NULL
+            AND pending_original_gmail_message_id IS NULL
+            AND pending_raw IS NULL
+            AND pending_replacement_gmail_message_id IS NULL
+            AND pending_code IS NULL)
+        OR (pending_operation IN ('edit', 'delete')
+            AND pending_original_message_id IS NOT NULL
+            AND pending_original_gmail_message_id IS NOT NULL
+            AND length(trim(pending_original_gmail_message_id)) > 0
+            AND ((pending_operation = 'edit' AND pending_raw IS NOT NULL AND length(pending_raw) > 0)
+                OR (pending_operation = 'delete' AND pending_raw IS NULL))
+            AND (pending_operation = 'edit' OR pending_replacement_gmail_message_id IS NULL))
+    ),
+    CHECK (pending_operation = 'edit' OR pending_replacement_gmail_message_id IS NULL),
+    CHECK (discarded_at IS NULL OR pending_operation IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_drafts_current_message
+    ON gmail_drafts(current_message_id);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_drafts_pending_original_message
+    ON gmail_drafts(pending_original_message_id);
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,

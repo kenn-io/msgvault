@@ -235,6 +235,11 @@ func TestOperationCost(t *testing.T) {
 		{OpMessagesDelete, 10},
 		{OpMessagesBatchDelete, 50},
 		{OpProfile, 1},
+		{OpDraftsCreate, 10},
+		{OpDraftsGet, 20},
+		{OpDraftsUpdate, 15},
+		{OpDraftsDelete, 10},
+		{OpSendAsList, 1},
 		{Operation(999), 1}, // Unknown operation defaults to 1
 	}
 
@@ -242,6 +247,15 @@ func TestOperationCost(t *testing.T) {
 		got := tc.op.Cost()
 		assert.Equal(t, tc.cost, got, "Operation(%d).Cost()", tc.op)
 	}
+}
+
+func TestDraftOperationsRemoteMutationSet(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(OpDraftsCreate.remoteMutation())
+	assert.False(OpDraftsGet.remoteMutation())
+	assert.True(OpDraftsUpdate.remoteMutation())
+	assert.True(OpDraftsDelete.remoteMutation())
+	assert.False(OpSendAsList.remoteMutation())
 }
 
 func TestNewRateLimiter(t *testing.T) {

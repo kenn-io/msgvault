@@ -200,6 +200,9 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 		return draftReplyError("invalid_reply_metadata", errors.New("composed reply has no usable Message-ID"))
 	}
 	messageIDValue = "<" + messageIDValue + ">"
+	if target.source.SourceType == "gmail" {
+		return a.runGmailReplyDraft(ctx, intent, target, reply, messageIDValue, emit)
+	}
 
 	// Hold the source's sync lock from APPEND through local publication so a
 	// concurrent sync cannot reconcile a stale mailbox snapshot over the draft.
@@ -310,19 +313,29 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return draftReplyTarget{}, err
 	}
-	mailbox, err := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
-	if err != nil {
-		return draftReplyTarget{}, err
-	}
-	if !source.SyncConfig.Valid {
-		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d has no sync config", source.ID))
-	}
-	imapConfig, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
-	if err != nil {
-		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config: %w", source.ID, err))
-	}
-	if imapConfig.Identifier() != source.Identifier {
-		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
+	var mailbox string
+	switch source.SourceType {
+	case "imap":
+		mailbox, err = authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
+		if err != nil {
+			return draftReplyTarget{}, err
+		}
+		if !source.SyncConfig.Valid {
+			return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d has no sync config", source.ID))
+		}
+		imapConfig, configErr := imaplib.ConfigFromJSON(source.SyncConfig.String)
+		if configErr != nil {
+			return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config: %w", source.ID, configErr))
+		}
+		if imapConfig.Identifier() != source.Identifier {
+			return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
+		}
+	case "gmail":
+		if err := authorizeGmailDraft(a.gmailDraftPolicy, source.ID, source.SourceType); err != nil {
+			return draftReplyTarget{}, err
+		}
+	default:
+		return draftReplyTarget{}, draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source", source.ID, source.SourceType))
 	}
 	raw, err := a.store.GetMessageRawContext(ctx, parent.ID)
 	if err != nil {

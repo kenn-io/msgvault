@@ -391,6 +391,15 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if req.Grant != nil {
 			return draftReplyNotPermitted(err)
 		}
+		if errors.Is(err, store.ErrIMAPDraftNotFound) {
+			gmailDraft, gmailErr := a.store.GetGmailDraftContext(ctx, intent.DraftID)
+			if gmailErr == nil {
+				if intent.Operation == api.CLIRunDraftRecoverCommand {
+					return draftReplyError("not_supported", errors.New("draft-recover supports IMAP drafts only"))
+				}
+				return a.runCLIGmailDraftLifecycle(ctx, intent, gmailDraft, emit)
+			}
+		}
 		return draftReplyError("draft_not_found", err)
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {

@@ -36,6 +36,11 @@ const (
 	OpCalendarListList // 1 unit
 	OpEventsList       // 1 unit
 	OpEventsGet        // 1 unit
+	OpDraftsCreate     // 10 units
+	OpDraftsGet        // 20 units
+	OpDraftsUpdate     // 15 units
+	OpDraftsDelete     // 10 units
+	OpSendAsList       // 1 unit
 )
 
 // Cost returns the quota cost for an operation.
@@ -49,8 +54,23 @@ func (o Operation) Cost() int {
 		return 50
 	case OpHistoryList:
 		return 2
+	case OpDraftsCreate, OpDraftsDelete:
+		return 10
+	case OpDraftsGet:
+		return 20
+	case OpDraftsUpdate:
+		return 15
 	default:
-		return 1 // OpLabelsList, OpProfile, unknown
+		return 1 // OpLabelsList, OpProfile, OpSendAsList, unknown
+	}
+}
+
+func (o Operation) remoteMutation() bool {
+	switch o {
+	case OpDraftsCreate, OpDraftsUpdate, OpDraftsDelete:
+		return true
+	default:
+		return false
 	}
 }
 
