@@ -176,7 +176,6 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 		Sources:     append([]SourceRef(nil), sources...),
 		CreatedAt:   time.Now(),
 	}
-	g = cloneGrant(g)
 
 	r.mu.Lock()
 	r.entries[id] = entry{digest: digest, grant: cloneGrant(g)}

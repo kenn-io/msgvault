@@ -148,6 +148,7 @@ func newAgentTokenTestServer(t *testing.T) (*Server, *agentgrant.Registry) {
 
 type agentTokenIdentityStore struct {
 	*stubSourceStore
+
 	identities []store.AccountIdentity
 }
 

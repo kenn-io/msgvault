@@ -131,26 +131,23 @@ func parseAgentTokenSourceIDs(raw string) ([]int64, error) {
 }
 
 func parseAgentTokenSenders(values []string) (map[int64][]string, error) {
-	filtered := values[:0]
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" && strings.TrimSpace(value) != "[]" {
-			filtered = append(filtered, value)
-		}
-	}
-	if len(filtered) == 0 {
-		return nil, nil
-	}
 	result := make(map[int64][]string)
-	for _, value := range filtered {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "[]" {
+			continue
+		}
 		sourceID, address, ok := strings.Cut(value, "=")
 		if !ok || strings.TrimSpace(address) == "" {
-			return nil, fmt.Errorf("--sender must use SOURCE_ID=ADDRESS")
+			return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
 		}
 		id, err := strconv.ParseInt(strings.TrimSpace(sourceID), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("invalid sender source ID %q", sourceID)
+			return nil, errors.New("invalid sender source ID " + strconv.Quote(sourceID))
 		}
 		result[id] = append(result[id], strings.TrimSpace(address))
+	}
+	if len(result) == 0 {
+		return nil, nil
 	}
 	return result, nil
 }

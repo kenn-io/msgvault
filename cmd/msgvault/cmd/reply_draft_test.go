@@ -38,6 +38,18 @@ func TestDraftReplyArgsRejectsDuplicateJSON(t *testing.T) {
 	requirements.ErrorContains(err, "invalid_args")
 }
 
+func TestDraftReplyArgsAcceptsSourceAndReplyAll(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	intent, err := parseDraftReplyArgs([]string{
+		"draft-reply", "42", "--source-id", "7", "--all", "--from", "alice@example.com", "--body", "body",
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(7), intent.SourceID)
+	assertions.True(intent.SourceIDSet)
+	assertions.True(intent.ReplyAll)
+}
+
 func TestAuthorizeIMAPDraftUsesExactSource(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

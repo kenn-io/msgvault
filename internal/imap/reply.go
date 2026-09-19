@@ -126,9 +126,6 @@ func messageIDList(id string) []string {
 
 func replyRecipients(header mail.Header, from *mail.Address, options ReplyOptions) (to, cc []*mail.Address, err error) {
 	replyTo := header.Get("Reply-To")
-	if options.ReplyAll && len(headerValues(header, "Reply-To")) > 0 {
-		replyTo = strings.Join(headerValues(header, "Reply-To"), ", ")
-	}
 	if replyTo == "" {
 		replyTo = header.Get("From")
 	}

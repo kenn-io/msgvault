@@ -39,7 +39,6 @@ func (c *Client) IssueAgentToken(
 	for sourceID, values := range selections {
 		encodedSelections[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
 	}
-	_ = encodedSelections
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.IssueAgentTokenResp, error) {
 		return client.IssueAgentTokenWithResponse(ctx, &generated.IssueAgentTokenRequestOptions{
 			Body: &generated.IssueAgentTokenBody{

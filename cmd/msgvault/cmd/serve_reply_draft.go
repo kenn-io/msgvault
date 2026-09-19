@@ -21,7 +21,6 @@ import (
 )
 
 var (
-	errDraftReplyFromRequired = errors.New("--from is required")
 	errDraftReplyBodyRequired = errors.New("--body is required")
 )
 
@@ -191,15 +190,6 @@ func authorizeIMAPDraft(policy []config.IMAPDraftSource, sourceID int64, sourceT
 	return "", draftReplyError("draft_disabled", fmt.Errorf("source %d has no enabled [[imap.drafts]] grant", sourceID))
 }
 
-func hasConfirmedSourceIdentity(identities []store.AccountIdentity, address string) bool {
-	for _, identity := range identities {
-		if !identity.ConfirmedAt.IsZero() && store.EqualIdentifier(identity.Address, address) {
-			return true
-		}
-	}
-	return false
-}
-
 func draftSourceRef(source *store.Source) agentgrant.SourceRef {
 	return agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}
 }
@@ -310,6 +300,9 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			Account: account, SourceID: sourceID, SourceIDSet: sourceIDSet,
 		})
 		if err != nil {
+			if grant != nil {
+				return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("destination source is not available"))
+			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("resolve destination source: %w", err))
 		}
 	} else if parentSource != nil && parentSource.SourceType == "imap" {
@@ -351,6 +344,9 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		parent, err := a.store.GetMessageContext(ctx, *parentID)
 		if err != nil {
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load message %d: %w", *parentID, err))
+		}
+		if !store.IsEmailMessageType(parent.MessageType) {
+			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", errors.New("parent message is not an email"))
 		}
 		raw, err := a.store.GetMessageRawContext(ctx, parent.ID)
 		if err != nil {
@@ -420,18 +416,6 @@ func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source
 		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
 	return nil
-}
-
-func (a *storeAPIAdapter) resolveDraftReplyTarget(
-	ctx context.Context,
-	intent draftReplyIntent,
-	grant *agentgrant.Grant,
-) (draftReplyTarget, error) {
-	target, _, _, err := a.resolveDraftTarget(
-		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
-		intent.From, grant,
-	)
-	return target, err
 }
 
 func (a *storeAPIAdapter) createDraft(

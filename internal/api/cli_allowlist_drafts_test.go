@@ -113,6 +113,11 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code)
 	})
 
+	t.Run("draft-compose is admitted with draft.create", func(t *testing.T) {
+		code := sendDelegated([]string{"draft-compose", "--source-id=1", "--to=alice@example.com", "--body=hi"})
+		assert.Equal(t, http.StatusOK, code)
+	})
+
 	t.Run("add-imap returns command_not_allowed", func(t *testing.T) {
 		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"add-imap", "imap://example.com"}})
 		require.NoError(t, marshalErr)

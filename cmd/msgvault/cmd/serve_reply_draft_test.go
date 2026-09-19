@@ -78,8 +78,9 @@ func TestDraftPolicySnapshotRequiresDaemonRestart(t *testing.T) {
 
 func TestConfirmedSourceIdentityRejectsMismatch(t *testing.T) {
 	identities := []store.AccountIdentity{{Address: "user@example.com", ConfirmedAt: time.Now()}}
-	assert.False(t, hasConfirmedSourceIdentity(identities, "other@example.com"))
-	assert.True(t, hasConfirmedSourceIdentity(identities, "USER@example.com"))
+	eligible, _ := confirmedDraftIdentities(identities)
+	assert.NotContains(t, eligible, store.NormalizeIdentifierForCompare("other@example.com"))
+	assert.Contains(t, eligible, store.NormalizeIdentifierForCompare("USER@example.com"))
 }
 
 // draftReplyFixture is one archived IMAP parent message on a source backed by
@@ -562,7 +563,7 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 		From:      testutil.IMAPTestUsername,
 		Body:      "reply body",
 	}
-	_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, outOfScopeGrant)
+	_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfScopeGrant)
 	requirements.Error(err)
 	assertions.Equal("not_permitted", err.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
@@ -606,7 +607,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 			store:       fixture.store,
 			draftPolicy: nil,
 		}
-		_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, inGrant)
+		_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant)
 		require.Error(t, err)
 		assert.Equal(t, "draft_disabled", err.Error())
 	})
@@ -616,7 +617,30 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		// authorizeDelegatedDraftSource runs first, so the code is not_permitted,
 		// not draft_disabled — the caller cannot infer whether drafting is configured.
 		adapter := fixture.grantedAdapter()
-		_, err := adapter.resolveDraftReplyTarget(t.Context(), intent, outOfGrant)
+		_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfGrant)
+		require.Error(t, err)
+		assert.Equal(t, "not_permitted", err.Error())
+	})
+
+	t.Run("grant without the selected sender returns not_permitted", func(t *testing.T) {
+		adapter := fixture.grantedAdapter()
+		grantWithoutSender := &agentgrant.Grant{
+			ID:          "g-no-sender",
+			Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: "imap", Identifier: fixture.source.Identifier}},
+		}
+		_, _, _, err := adapter.resolveDraftTarget(
+			t.Context(), &intent.MessageID, "", 0, false, intent.From, grantWithoutSender,
+		)
+		require.Error(t, err)
+		assert.Equal(t, "not_permitted", err.Error())
+	})
+
+	t.Run("destination resolution hides missing sources from grants", func(t *testing.T) {
+		adapter := fixture.grantedAdapter()
+		_, _, _, err := adapter.resolveDraftTarget(
+			t.Context(), &intent.MessageID, "", fixture.source.ID+999, true, intent.From, inGrant,
+		)
 		require.Error(t, err)
 		assert.Equal(t, "not_permitted", err.Error())
 	})
