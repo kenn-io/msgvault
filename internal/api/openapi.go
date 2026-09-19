@@ -318,7 +318,9 @@ import (
 // 2.27.0 adds deterministic meeting context, archived action-item listing,
 // and duration metrics with exact direct or Explore scope. Additive (minor
 // bump): meeting import and every existing route retain their behavior.
-const APISchemaVersion = "2.27.0"
+// 2.28.0 adds frozen sender keys to agent-token source views and optional
+// sender selections to owner token issuance.
+const APISchemaVersion = "2.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

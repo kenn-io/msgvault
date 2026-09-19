@@ -280,6 +280,12 @@ components:
           items:
             type: string
           type: array
+        sender_selections:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
         source_ids:
           items:
             format: int64
@@ -339,12 +345,17 @@ components:
           type: integer
         identifier:
           type: string
+        sender_keys:
+          items:
+            type: string
+          type: array
         type:
           type: string
       required:
         - id
         - type
         - identifier
+        - sender_keys
       type: object
     AgentTokenView:
       additionalProperties: true

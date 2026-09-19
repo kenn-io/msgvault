@@ -204,6 +204,7 @@ func TestDelegatedDraftReplyCreatesDraft(t *testing.T) {
 			ID:         fixture.source.ID,
 			Type:       fixture.source.SourceType,
 			Identifier: fixture.source.Identifier,
+			SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)},
 		}},
 	}
 
@@ -579,6 +580,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		ID:         fixture.source.ID,
 		Type:       fixture.source.SourceType,
 		Identifier: fixture.source.Identifier,
+		SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)},
 	}
 	inGrant := &agentgrant.Grant{
 		ID:          "g-in-grant",

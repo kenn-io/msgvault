@@ -3,17 +3,49 @@ package daemonclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const agentTokenSenderMinAPISchemaVersion = "2.27.0"
+
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
-func (c *Client) IssueAgentToken(ctx context.Context, label string, permissions []string, sourceIDs []int64) (*generated.AgentTokenIssueResponse, error) {
+func (c *Client) IssueAgentToken(
+	ctx context.Context,
+	label string,
+	permissions []string,
+	sourceIDs []int64,
+	senderSelections ...map[int64][]string,
+) (*generated.AgentTokenIssueResponse, error) {
+	var selections map[int64][]string
+	if len(senderSelections) > 0 {
+		selections = senderSelections[0]
+	}
+	if selections != nil {
+		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
+		if err != nil {
+			return nil, fmt.Errorf("check agent-token sender capability: %w", err)
+		}
+		if !compatible {
+			version, _ := c.APISchemaVersion(ctx)
+			return nil, fmt.Errorf("agent-token sender selection requires daemon API schema %s or newer (daemon reports %q)", agentTokenSenderMinAPISchemaVersion, version)
+		}
+	}
+	encodedSelections := make(map[string][]string, len(selections))
+	for sourceID, values := range selections {
+		encodedSelections[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
+	}
+	_ = encodedSelections
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.IssueAgentTokenResp, error) {
 		return client.IssueAgentTokenWithResponse(ctx, &generated.IssueAgentTokenRequestOptions{
-			Body: &generated.AgentTokenIssueRequest{Label: label, Permissions: permissions, SourceIds: sourceIDs},
+			Body: &generated.IssueAgentTokenBody{
+				Label: label, Permissions: permissions, SourceIds: sourceIDs,
+				SenderSelections: encodedSelections,
+			},
 		})
 	})
 	if err != nil {

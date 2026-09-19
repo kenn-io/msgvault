@@ -106,7 +106,12 @@ Commands that access archive state keep their usual stdout/stderr output while u
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
-4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` and `draft-recover` are available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
+4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
+   remote daemon as a restricted caller. `draft-reply`, `draft-compose`, and
+   `draft-recover` are available in this mode. The CLI rejects owner
+   configuration (`--config`, `--home`, `--local`) and never writes the token
+   to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
+   generated OpenAPI clients do not model this transport detail.
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
@@ -186,13 +191,21 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## draft-reply
 
-Create one reply draft from an archived IMAP message. The daemon requires a
-confirmed `--from` identity and an operator grant in `[[imap.drafts]]`.
+Create one reply draft from an archived message. The daemon requires an
+operator grant in `[[imap.drafts]]` for the live IMAP destination. `--from` is
+optional when exactly one confirmed identity is eligible.
 
 ```bash
-msgvault draft-reply <message-id> --from <address> --body <text>
-msgvault draft-reply <message-id> --from <address> --body= --json
+msgvault draft-reply <message-id> --body <text>
+msgvault draft-reply <message-id> --all --account <account> --from <address> --body <text>
+msgvault draft-reply <message-id> --source-id 42 --body= --json
 ```
+
+Use `--all` to include the parent sender, To, and Cc recipients. Msgvault
+deduplicates them in order, removes the destination account's confirmed
+identities, and never copies the parent's Bcc recipients. Use `--account` or
+`--source-id` to choose a destination. An offline parent requires one of those
+selectors; msgvault never treats imported provenance as provider credentials.
 
 The daemon appends the composed message to the configured literal mailbox with
 the `\Draft` flag, then stores the local message and its `(mailbox, uidvalidity,
@@ -217,15 +230,39 @@ not grant access or change the mailbox. The host policy applies per source. For
 owner callers (API key, browser session, or keyless loopback), any owner caller
 that can reach the daemon can create drafts on a granted source. A delegated
 caller authenticated with a restricted agent token additionally requires that
-the target source appear in the token's grant; see [agent-token](#agent-token).
+the target source and selected sender appear in the token's frozen grant; see
+[agent-token](#agent-token). A draft `From` choice is local header selection.
+It does not prove provider send-as permission. Draft creation never sends mail.
 A later sync reconciles the saved membership when the mailbox's UIDVALIDITY
 changes. Draft creation never moves an IMAP cursor.
 
 ---
 
+## draft-compose
+
+Create a new plain-text IMAP draft on one selected live source. Provide at least
+one `--to`, `--cc`, or `--bcc` value. The flags are repeatable and keep their
+envelope roles.
+
+```bash
+msgvault draft-compose --account you@example.com \
+  --from you@example.com --to recipient@example.com \
+  --subject 'Project update' --body 'Draft text'
+msgvault draft-compose --source-id 42 --to recipient@example.com \
+  --bcc private@example.com --json
+```
+
+The source selector is required. The daemon applies the same host draft policy,
+confirmed identity check, delegated sender grant, UIDPLUS requirement, and
+structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
+the draft so the mail application can use it. It never sends the message or
+validates provider send-as rights.
+
+---
+
 ## draft-get, draft-edit, draft-delete, and draft-recover
 
-Read, edit, or delete an IMAP draft created by `draft-reply`:
+Read, edit, or delete an IMAP draft created by `draft-reply` or `draft-compose`:
 
 ```bash
 msgvault draft-get <draft-id> [--json]
@@ -3225,7 +3262,8 @@ can read, never pass it as a flag or environment variable.
 ```bash
 msgvault agent-token issue --label <name> \
   --permissions draft.create \
-  --source-ids <id>[,<id>...]
+  --source-ids <id>[,<id>...] \
+  --sender <source-id>=<address>
 ```
 
 | Flag | Description |
@@ -3233,8 +3271,15 @@ msgvault agent-token issue --label <name> \
 | `--label <name>` | (required) Human-readable name for the grant |
 | `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
+| `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
 The grant is valid until revoked or until the daemon restarts.
+
+When `--sender` is omitted for a selected source, issuance snapshots every
+currently confirmed valid mailbox identity. Sender selections are stored as
+canonical mailbox keys and remain fixed until the token is revoked. Adding an
+alias later does not expand an existing grant. A source with no selected sender
+has no delegated draft sender authority.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
@@ -3253,7 +3298,8 @@ Agent-token commands return an error when `server.agent_access` is disabled.
 msgvault agent-token list
 ```
 
-Each row shows the grant ID, label, permissions, sources (as `id/type/identifier`), and creation time.
+Each row shows the grant ID, label, permissions, sources (as
+`id/type/identifier`), frozen sender keys, and creation time.
 
 ### agent-token revoke
 

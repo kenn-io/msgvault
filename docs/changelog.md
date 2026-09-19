@@ -26,8 +26,16 @@ All notable changes to msgvault, grouped by release.
   locally deleted records. Upgrade the daemon for API schema 2.27.0 support.
   See the [meeting guide](usage/meetings.md).
 
+- Added fresh IMAP draft composition, reply-all recipient selection, explicit
+  destination and sender selection, and frozen sender restrictions for
+  delegated draft creation. Drafts keep their To, Cc, and Bcc roles and are
+  never sent by msgvault.
+
 ## 0.20.0
 <small>2026-09-22</small>
+
+macOS analytics cache builds use the existing CSV export without the unusable
+SQLite extension download and warning.
 
 Manage people and relationships, search inside attachments, and bring more of
 your communications into the archive. Review the upgrade notes before updating

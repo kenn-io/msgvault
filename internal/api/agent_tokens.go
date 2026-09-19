@@ -5,7 +5,11 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/mail"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -28,9 +32,10 @@ type agentGrantSourceResolver interface {
 
 // agentTokenIssueRequest is the body for POST /agent-tokens.
 type agentTokenIssueRequest struct {
-	Label       string   `json:"label"`
-	Permissions []string `json:"permissions"`
-	SourceIDs   []int64  `json:"source_ids"`
+	Label            string              `json:"label"`
+	Permissions      []string            `json:"permissions"`
+	SourceIDs        []int64             `json:"source_ids"`
+	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
 }
 
 // agentTokenIssueResponse is the 201 body returned by issueAgentToken.
@@ -56,9 +61,10 @@ type agentTokenView struct {
 }
 
 type agentTokenSourceView struct {
-	ID         int64  `json:"id"`
-	Type       string `json:"type"`
-	Identifier string `json:"identifier"`
+	ID         int64    `json:"id"`
+	Type       string   `json:"type"`
+	Identifier string   `json:"identifier"`
+	SenderKeys []string `json:"sender_keys"`
 }
 
 type agentTokenListResponse struct {
@@ -72,7 +78,10 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 	}
 	sources := make([]agentTokenSourceView, len(g.Sources))
 	for i, s := range g.Sources {
-		sources[i] = agentTokenSourceView{ID: s.ID, Type: s.Type, Identifier: s.Identifier}
+		sources[i] = agentTokenSourceView{
+			ID: s.ID, Type: s.Type, Identifier: s.Identifier,
+			SenderKeys: append([]string{}, s.SenderKeys...),
+		}
 	}
 	return agentTokenView{
 		ID:          g.ID,
@@ -81,6 +90,76 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 		Sources:     sources,
 		CreatedAt:   g.CreatedAt,
 	}
+}
+
+type agentGrantIdentityResolver interface {
+	ListAccountIdentitiesContext(ctx context.Context, sourceID int64) ([]store.AccountIdentity, error)
+}
+
+func canonicalMailboxIdentity(value string) (string, bool) {
+	address, err := mail.ParseAddress(strings.TrimSpace(value))
+	if err != nil || address == nil || address.Address == "" || !strings.Contains(address.Address, "@") {
+		return "", false
+	}
+	return store.NormalizeIdentifierForCompare(address.Address), true
+}
+
+func senderKeysForSource(
+	ctx context.Context,
+	resolver agentGrantIdentityResolver,
+	source *store.Source,
+	selected []string,
+	selectedSet bool,
+) ([]string, error) {
+	if resolver == nil {
+		if selectedSet && len(selected) > 0 {
+			return nil, errors.New("sender selections are unavailable")
+		}
+		return nil, nil
+	}
+	identities, err := resolver.ListAccountIdentitiesContext(ctx, source.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list identities for source %d: %w", source.ID, err)
+	}
+	valid := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if !identity.ConfirmedAt.IsZero() {
+			if key, ok := canonicalMailboxIdentity(identity.Address); ok {
+				valid[key] = struct{}{}
+			}
+		}
+	}
+	if !selectedSet {
+		keys := make([]string, 0, len(valid))
+		for _, identity := range identities {
+			if !identity.ConfirmedAt.IsZero() {
+				if key, ok := canonicalMailboxIdentity(identity.Address); ok {
+					if _, seen := valid[key]; seen {
+						keys = append(keys, key)
+						delete(valid, key)
+					}
+				}
+			}
+		}
+		return keys, nil
+	}
+	keys := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, value := range selected {
+		key, ok := canonicalMailboxIdentity(value)
+		if !ok {
+			return nil, fmt.Errorf("sender %q is not a valid mailbox identity", value)
+		}
+		if _, ok := valid[key]; !ok {
+			return nil, fmt.Errorf("sender %q is not a confirmed identity on source %d", value, source.ID)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("sender %q was selected more than once", value)
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys, nil
 }
 
 // ownerAPIKeyPresented returns true when the request carries the owner API key.
@@ -149,6 +228,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sources := make([]agentgrant.SourceRef, 0, len(req.SourceIDs))
+	resolvedSources := make([]*store.Source, 0, len(req.SourceIDs))
 	for _, id := range req.SourceIDs {
 		src, err := resolver.GetSourceByIDContext(r.Context(), id)
 		if errors.Is(err, store.ErrSourceNotFound) {
@@ -165,6 +245,34 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 			Type:       src.SourceType,
 			Identifier: src.Identifier,
 		})
+		resolvedSources = append(resolvedSources, src)
+	}
+
+	identityResolver, _ := s.store.(agentGrantIdentityResolver)
+	validSourceIDs := make(map[int64]struct{}, len(sources))
+	for _, source := range sources {
+		validSourceIDs[source.ID] = struct{}{}
+	}
+	for sourceID := range req.SenderSelections {
+		id, err := strconv.ParseInt(sourceID, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection source ID is invalid")
+			return
+		}
+		if _, ok := validSourceIDs[id]; !ok {
+			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection names an unselected source")
+			return
+		}
+	}
+	for i := range sources {
+		key := strconv.FormatInt(sources[i].ID, 10)
+		selected, selectedSet := req.SenderSelections[key]
+		senderKeys, err := senderKeysForSource(r.Context(), identityResolver, resolvedSources[i], selected, selectedSet)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sender", err.Error())
+			return
+		}
+		sources[i].SenderKeys = senderKeys
 	}
 
 	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources)

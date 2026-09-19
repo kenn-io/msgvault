@@ -234,9 +234,10 @@ func (a Address) Validate() error {
 }
 
 type AgentTokenIssueRequest struct {
-	Label       string   `json:"label" validate:"required"`
-	Permissions []string `json:"permissions" validate:"required"`
-	SourceIds   []int64  `json:"source_ids" validate:"required"`
+	Label            string              `json:"label" validate:"required"`
+	Permissions      []string            `json:"permissions" validate:"required"`
+	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
+	SourceIds        []int64             `json:"source_ids" validate:"required"`
 }
 
 func (a AgentTokenIssueRequest) Validate() error {
@@ -306,9 +307,10 @@ func (a AgentTokenListResponse) Validate() error {
 }
 
 type AgentTokenSourceView struct {
-	ID         int64  `json:"id"`
-	Identifier string `json:"identifier" validate:"required"`
-	Type       string `json:"type" validate:"required"`
+	ID         int64    `json:"id"`
+	Identifier string   `json:"identifier" validate:"required"`
+	SenderKeys []string `json:"sender_keys" validate:"required"`
+	Type       string   `json:"type" validate:"required"`
 }
 
 func (a AgentTokenSourceView) Validate() error {
