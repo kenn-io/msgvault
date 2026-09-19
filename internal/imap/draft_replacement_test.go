@@ -61,6 +61,15 @@ func TestBuildDraftReplacementAcceptsEmptyBody(t *testing.T) {
 	requirements.Empty(result.Parsed.BodyText)
 }
 
+func TestBuildDraftReplacementPreservesCcOnlyEnvelope(t *testing.T) {
+	requirements := require.New(t)
+	result, err := BuildDraftReplacement([]byte("From: alice@example.com\r\nCc: carol@example.com\r\nBcc: secret@example.com\r\n\r\nold\r\n"), "new", time.Now(), "cc-only@example.com")
+	requirements.NoError(err)
+	requirements.Empty(result.Parsed.To)
+	requirements.Len(result.Parsed.Cc, 1)
+	requirements.Len(result.Parsed.Bcc, 1)
+}
+
 func TestBuildDraftReplacementRejectsMalformedOrRichDraft(t *testing.T) {
 	requirements := require.New(t)
 	for _, raw := range []string{

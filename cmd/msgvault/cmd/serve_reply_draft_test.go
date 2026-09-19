@@ -81,6 +81,14 @@ func TestConfirmedSourceIdentityRejectsMismatch(t *testing.T) {
 	eligible, _ := confirmedDraftIdentities(identities)
 	assert.NotContains(t, eligible, store.NormalizeIdentifierForCompare("other@example.com"))
 	assert.Contains(t, eligible, store.NormalizeIdentifierForCompare("USER@example.com"))
+	adapter := &storeAPIAdapter{}
+	_, _, err := adapter.selectDraftSender(
+		[]store.AccountIdentity{
+			{Address: "user@example.com", ConfirmedAt: time.Now()},
+			{Address: "alias@example.com", ConfirmedAt: time.Now()},
+		}, "", nil, &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"},
+	)
+	assert.ErrorContains(t, err, "from_ambiguous")
 }
 
 // draftReplyFixture is one archived IMAP parent message on a source backed by
@@ -563,7 +571,10 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 		From:      testutil.IMAPTestUsername,
 		Body:      "reply body",
 	}
-	_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfScopeGrant)
+	target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfScopeGrant)
+	assertions.Empty(target)
+	assertions.Empty(selectedFrom)
+	assertions.Empty(selfAddresses)
 	requirements.Error(err)
 	assertions.Equal("not_permitted", err.Error())
 	coded, ok := errors.AsType[*api.CLIRunCodedError](err)
@@ -575,6 +586,8 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 // It verifies that authorizeDelegatedDraftSource runs BEFORE authorizeIMAPDraft
 // so an out-of-grant source cannot infer whether drafting is configured.
 func TestDraftRequiresBothChecks(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	fixture := newDraftReplyFixture(t)
 
 	inGrantRef := agentgrant.SourceRef{
@@ -607,9 +620,12 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 			store:       fixture.store,
 			draftPolicy: nil,
 		}
-		_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant)
-		require.Error(t, err)
-		assert.Equal(t, "draft_disabled", err.Error())
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant)
+		assertions.Empty(target)
+		assertions.Empty(selectedFrom)
+		assertions.Empty(selfAddresses)
+		requirements.Error(err)
+		assertions.Equal("draft_disabled", err.Error())
 	})
 
 	t.Run("grant out-of-scope but draft policy exists returns not_permitted", func(t *testing.T) {
@@ -617,9 +633,12 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		// authorizeDelegatedDraftSource runs first, so the code is not_permitted,
 		// not draft_disabled — the caller cannot infer whether drafting is configured.
 		adapter := fixture.grantedAdapter()
-		_, _, _, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfGrant)
-		require.Error(t, err)
-		assert.Equal(t, "not_permitted", err.Error())
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfGrant)
+		assertions.Empty(target)
+		assertions.Empty(selectedFrom)
+		assertions.Empty(selfAddresses)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
 	})
 
 	t.Run("grant without the selected sender returns not_permitted", func(t *testing.T) {
@@ -629,19 +648,57 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 			Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 			Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: "imap", Identifier: fixture.source.Identifier}},
 		}
-		_, _, _, err := adapter.resolveDraftTarget(
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
 			t.Context(), &intent.MessageID, "", 0, false, intent.From, grantWithoutSender,
 		)
-		require.Error(t, err)
-		assert.Equal(t, "not_permitted", err.Error())
+		assertions.Empty(target)
+		assertions.Empty(selectedFrom)
+		assertions.Empty(selfAddresses)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
+	})
+
+	t.Run("automatic sender selection respects the frozen grant", func(t *testing.T) {
+		adapter := fixture.grantedAdapter()
+		grantWithoutCurrentSender := &agentgrant.Grant{
+			ID:          "g-other-sender",
+			Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: "imap", Identifier: fixture.source.Identifier, SenderKeys: []string{"alias@example.com"}}},
+		}
+		from := ""
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
+			t.Context(), &intent.MessageID, "", 0, false, from, grantWithoutCurrentSender,
+		)
+		assertions.Empty(target)
+		assertions.Empty(selectedFrom)
+		assertions.Empty(selfAddresses)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
 	})
 
 	t.Run("destination resolution hides missing sources from grants", func(t *testing.T) {
 		adapter := fixture.grantedAdapter()
-		_, _, _, err := adapter.resolveDraftTarget(
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
 			t.Context(), &intent.MessageID, "", fixture.source.ID+999, true, intent.From, inGrant,
 		)
-		require.Error(t, err)
-		assert.Equal(t, "not_permitted", err.Error())
+		assertions.Empty(target)
+		assertions.Empty(selectedFrom)
+		assertions.Empty(selfAddresses)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
+	})
+
+	t.Run("non-email parent is refused before MIME parsing", func(t *testing.T) {
+		_, updateErr := fixture.store.DB().Exec(
+			fixture.store.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"),
+			store.MessageTypeGoogleChat, fixture.parentID,
+		)
+		requirements.NoError(updateErr)
+		adapter := fixture.grantedAdapter()
+		_, _, _, err := adapter.resolveDraftTarget(
+			t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant,
+		)
+		requirements.Error(err)
+		assertions.Equal("invalid_parent", err.Error())
 	})
 }

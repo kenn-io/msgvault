@@ -133,3 +133,27 @@ func TestAgentTokenBusyResponseRetriesAndNotifies(t *testing.T) {
 	assert.GreaterOrEqual(t, notifyCount, 1, "busy notifier must have fired at least once")
 	assert.Contains(t, notifyMsg, "msgvault sync", "notifier message must name the holder")
 }
+
+func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	postCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.26.0"}`))
+	})
+	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
+		postCount++
+		w.WriteHeader(http.StatusCreated)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
+	requirements.NoError(err)
+	_, err = client.IssueAgentToken(t.Context(), "old-daemon", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}})
+	requirements.Error(err)
+	assertions.Contains(err.Error(), "requires daemon API schema 2.27.0")
+	assertions.Zero(postCount)
+}

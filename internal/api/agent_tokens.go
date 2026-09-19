@@ -259,6 +259,10 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection source ID is invalid")
 			return
 		}
+		if strconv.FormatInt(id, 10) != sourceID {
+			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection source ID must be canonical")
+			return
+		}
 		if _, ok := validSourceIDs[id]; !ok {
 			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection names an unselected source")
 			return

@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +39,5 @@ func TestGetMessageSourceContextReadsOnlyTheMessageSource(t *testing.T) {
 	assertions.Equal("mbox", got.SourceType)
 
 	_, err = st.GetMessageSourceContext(t.Context(), 999999)
-	requirements.Error(err)
-	assertions.True(errors.Is(err, store.ErrMessageNotFound))
+	requirements.ErrorIs(err, store.ErrMessageNotFound)
 }
