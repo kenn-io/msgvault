@@ -249,14 +249,7 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 	apiKey := deps.APIKey
 	switch vectorCfg.Embeddings.EffectiveAPIFormat() {
 	case vector.APIFormatOpenAI:
-		clientConfig := embed.Config{
-			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: apiKey,
-			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
-			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
-			DocumentPrefix:  vectorCfg.Embeddings.DocumentPrefix,
-			QueryPrefix:     vectorCfg.Embeddings.QueryPrefix,
-			RejectRedirects: true,
-		}
+		clientConfig := openAIEmbedConfig(vectorCfg, apiKey)
 		messageClient := embed.NewClient(clientConfig)
 		documentClientConfig := clientConfig
 		documentClientConfig.BeforeRequest = deps.DocumentGate
@@ -290,24 +283,15 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			QuerySemanticClient: queryClient,
 		}, nil
 	case vector.APIFormatVoyageContextual:
-		if vectorCfg.Embeddings.Model != "voyage-context-4" {
-			return nil, fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
-				vector.APIFormatVoyageContextual, "voyage-context-4", vectorCfg.Embeddings.Model)
+		clientConfig, err := voyageContextualEmbedConfig(vectorCfg, apiKey)
+		if err != nil {
+			return nil, err
 		}
 		publisher, ok := deps.Backend.(vector.DocumentPublisher)
 		if !ok {
 			return nil, errors.New("voyage contextual embeddings require a document publisher backend")
 		}
-		clientConfig := embed.VoyageConfig{
-			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: apiKey,
-			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
-			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
-			DocumentPrefix:  vectorCfg.Embeddings.DocumentPrefix,
-			QueryPrefix:     vectorCfg.Embeddings.QueryPrefix,
-			RejectRedirects: true,
-			Limits: embed.RequestLimits{MaxDocuments: vectorCfg.Embeddings.BatchSize,
-				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
-		}
+
 		messageClient := embed.NewVoyageClient(clientConfig)
 		documentClientConfig := clientConfig
 		documentClientConfig.BeforeRequest = deps.DocumentGate
@@ -346,6 +330,62 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 			Convergence: checker, PersonGate: personGate, SemanticClient: documentClient,
 			QuerySemanticClient: queryClient,
 		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)
+	}
+}
+
+// openAIEmbedConfig keeps indexing and query clients on the same settings.
+func openAIEmbedConfig(vectorCfg vector.Config, apiKey string) embed.Config {
+	return embed.Config{
+		Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: apiKey,
+		Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
+		Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+		DocumentPrefix:  vectorCfg.Embeddings.DocumentPrefix,
+		QueryPrefix:     vectorCfg.Embeddings.QueryPrefix,
+		RejectRedirects: true,
+	}
+}
+
+// voyageContextualEmbedConfig keeps indexing and query clients on the same settings.
+func voyageContextualEmbedConfig(vectorCfg vector.Config, apiKey string) (embed.VoyageConfig, error) {
+	if vectorCfg.Embeddings.Model != "voyage-context-4" {
+		return embed.VoyageConfig{}, fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
+			vector.APIFormatVoyageContextual, "voyage-context-4", vectorCfg.Embeddings.Model)
+	}
+	return embed.VoyageConfig{
+		Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: apiKey,
+		Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
+		Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+		DocumentPrefix:  vectorCfg.Embeddings.DocumentPrefix,
+		QueryPrefix:     vectorCfg.Embeddings.QueryPrefix,
+		RejectRedirects: true,
+		Limits: embed.RequestLimits{MaxDocuments: vectorCfg.Embeddings.BatchSize,
+			MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
+	}, nil
+}
+
+// newQueryEmbeddingClient selects the query-time embedding client for the
+// configured vector.embeddings.api_format, using the same constructors
+// newEmbeddingRuntime uses for the indexing side.
+//
+// Query-only callers (search, eval) need this rather than newEmbeddingRuntime:
+// they never embed a document, so they must not require the document
+// publisher backend or build an embed worker. Constructing embed.NewClient
+// unconditionally here would send an OpenAI-compatible request body to
+// Voyage's /contextualizedembeddings endpoint under a config that indexed with
+// the contextual one — the wrong endpoint, the wrong request shape, and no
+// input_type=query role.
+func newQueryEmbeddingClient(vectorCfg vector.Config, apiKey string) (hybrid.EmbeddingClient, error) {
+	switch vectorCfg.Embeddings.EffectiveAPIFormat() {
+	case vector.APIFormatOpenAI:
+		return embed.NewClient(openAIEmbedConfig(vectorCfg, apiKey)), nil
+	case vector.APIFormatVoyageContextual:
+		clientConfig, err := voyageContextualEmbedConfig(vectorCfg, apiKey)
+		if err != nil {
+			return nil, err
+		}
+		return embed.NewVoyageClient(clientConfig), nil
 	default:
 		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)
 	}
