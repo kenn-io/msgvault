@@ -176,8 +176,6 @@ github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUq
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
 github.com/hhrutter/tiff v1.0.6 h1:p5I4Oi20jit3uWIBBaAoMDqrKztw/1JQCQC2TgqK1qU=
 github.com/hhrutter/tiff v1.0.6/go.mod h1:9+PDcnTBkMrJ8fWXkN1ZPv5ZNcKsFuTGVQU3ysaQbco=
-github.com/hstern/go-imap/v2 v2.0.0-beta.8.0.20260621192506-dabdeca47dc7 h1:nwt9R8tzoiZXAo3jcoMQbLNxEJzTTCOIaKa90emTJE4=
-github.com/hstern/go-imap/v2 v2.0.0-beta.8.0.20260621192506-dabdeca47dc7/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
 github.com/inbucket/html2text v1.0.0 h1:N5kza++4uBBDJ2Z3KUnTRyPNoBcW+YfOgNiNmNB+sgs=
 github.com/inbucket/html2text v1.0.0/go.mod h1:5TrhXQKGU+LXurODaSm55Y9eXoPBRnYiOz4x2XfUoJU=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
@@ -263,6 +261,8 @@ github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
+github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20260916140841-7dc6eaf3b23f h1:09wQGbWNjzsbRIQ2osxFyxVFWJjifkhG8k7vUJUTqGY=
+github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20260916140841-7dc6eaf3b23f/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
 github.com/rogpeppe/go-internal v1.15.0 h1:D0RCU5rMAp+SpgkiNdrjfJ+LX4J1M32V2NeCY7EJ6hc=
 github.com/rogpeppe/go-internal v1.15.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
 github.com/rotisserie/eris v0.5.4 h1:Il6IvLdAapsMhvuOahHWiBnl1G++Q0/L5UIkI5mARSk=

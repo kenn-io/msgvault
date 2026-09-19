@@ -74,10 +74,14 @@ func (c *Client) RemoveDraft(ctx context.Context, receipt DraftReceipt) (DraftOb
 			storeOptions = &imaplib.StoreOptions{UnchangedSince: modSeq}
 		}
 		writeAttempted = true
-		storeErr := conn.Store(uids, &imaplib.StoreFlags{
+		storeCommand := conn.Store(uids, &imaplib.StoreFlags{
 			Op: imaplib.StoreFlagsAdd, Silent: true,
 			Flags: []imaplib.Flag{imaplib.FlagDeleted},
-		}, storeOptions).Close()
+		}, storeOptions)
+		storeErr := storeCommand.Close()
+		if storeErr == nil && storeCommand.ModifiedUIDs().Contains(imaplib.UID(receipt.UID)) {
+			storeErr = errors.New("draft target changed before UID STORE")
+		}
 		if storeErr != nil && isNetworkError(storeErr) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				observation.State = draftObservationStateIncomplete

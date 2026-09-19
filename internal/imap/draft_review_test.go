@@ -24,25 +24,32 @@ import (
 
 func TestDraftRemoveExactUIDCondStoreWire(t *testing.T) {
 	for _, scenario := range []struct {
-		name     string
-		conflict bool
+		name            string
+		conflictStatus  string
+		externalDeleted bool
 	}{
 		{name: "success"},
-		{name: "conflict", conflict: true},
+		{name: "NO conflict", conflictStatus: "NO"},
+		{name: "OK conflict", conflictStatus: "OK"},
+		{name: "OK conflict with external Deleted", conflictStatus: "OK", externalDeleted: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			addr, server := startDraftRemovalWireServer(t, draftRemovalWireOptions{conflict: scenario.conflict, fetchModSeq: "41"})
+			addr, server := startDraftRemovalWireServer(t, draftRemovalWireOptions{
+				conflictStatus: scenario.conflictStatus, externalDeleted: scenario.externalDeleted, fetchModSeq: "41",
+			})
 			client := reviewIMAPClient(t, addr)
 			removed, err := client.RemoveDraft(t.Context(), DraftReceipt{
 				Mailbox: "Drafts", UIDValidity: 77, UID: 7,
 			})
 			assertions.True(removed.WriteAttempted)
-			if scenario.conflict {
+			if scenario.conflictStatus != "" {
 				requirements.Error(err)
 				assertions.Equal("store_conflict", removed.Code)
 				assertions.False(removed.Complete)
+				assertions.True(removed.Present)
+				assertions.Equal(scenario.externalDeleted, removed.Deleted)
 			} else {
 				requirements.NoError(err)
 				assertions.True(removed.Complete)
@@ -59,7 +66,7 @@ func TestDraftRemoveExactUIDCondStoreWire(t *testing.T) {
 			assertions.Contains(joined, "UID STORE 7 (UNCHANGEDSINCE 41) +FLAGS.SILENT (\\Deleted)")
 			assertions.Contains(joined, "SELECT \"Drafts\"")
 			assertions.Contains(joined, "UID FETCH 7 (UID FLAGS)")
-			if scenario.conflict {
+			if scenario.conflictStatus != "" {
 				assertions.NotContains(joined, "UID EXPUNGE")
 				return
 			}
@@ -132,7 +139,8 @@ func TestDraftMailboxModSeq(t *testing.T) {
 }
 
 type draftRemovalWireOptions struct {
-	conflict         bool
+	conflictStatus   string
+	externalDeleted  bool
 	noModSeq         bool
 	noCondStore      bool
 	omitSelectModSeq bool
@@ -246,8 +254,12 @@ func serveDraftRemovalWireConn(conn net.Conn, server *draftRemovalWireServer, op
 		case strings.HasPrefix(upper, "UID STORE "):
 			if options.noModSeq && strings.Contains(upper, "UNCHANGEDSINCE") {
 				_, _ = fmt.Fprintf(conn, "%s BAD STORE rejected\r\n", tag)
-			} else if options.conflict {
-				_, _ = fmt.Fprintf(conn, "%s NO [MODIFIED 7] conditional conflict\r\n", tag)
+			} else if options.conflictStatus != "" {
+				if options.externalDeleted {
+					deleted = true
+					options.fetchModSeq = "42"
+				}
+				_, _ = fmt.Fprintf(conn, "%s %s [MODIFIED 7] conditional conflict\r\n", tag, options.conflictStatus)
 			} else {
 				deleted = true
 				_, _ = fmt.Fprintf(conn, "%s OK UID STORE completed\r\n", tag)
