@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -422,6 +423,64 @@ func TestGmailDraftAcceptedResponseSurvivesCancellation(t *testing.T) {
 	}
 }
 
+func TestGmailDraftLifecycleRefreshRunsAfterOutput(t *testing.T) {
+	for _, operation := range []string{
+		api.CLIRunDraftEditCommand,
+		api.CLIRunDraftDeleteCommand,
+		api.CLIRunDraftEditCommand + " external adoption",
+	} {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := newGmailDraftTestFixture(t)
+			draft := fixture.seedDraft(t, "original")
+			if operation == api.CLIRunDraftEditCommand {
+				fixture.client.updateDraft = &gmail.Draft{
+					ID:      "gmail-draft-managed",
+					Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
+				}
+			} else if operation == api.CLIRunDraftDeleteCommand {
+				// The seeded provider receipt is current, so delete needs no extra setup.
+			} else {
+				fixture.client.getDraft = &gmail.Draft{
+					ID: "gmail-draft-managed",
+					Message: gmail.RawMessage{
+						ID: "gmail-message-external", ThreadID: "gmail-thread-1",
+						Raw: gmailDraftTestRaw("external", "gmail-external@example.test"),
+					},
+				}
+			}
+
+			var events []api.CLIRunEvent
+			refreshSawOutput := false
+			fixture.adapter.draftCacheRefresh = func(ctx context.Context, _ string) error {
+				refreshSawOutput = len(events) == 1
+				require.NoError(ctx.Err())
+				return nil
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			args := []string{api.CLIRunDraftDeleteCommand, draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--json"}
+			if operation == api.CLIRunDraftEditCommand || strings.HasSuffix(operation, "external adoption") {
+				args[0] = api.CLIRunDraftEditCommand
+				args = append(args, "--body", "candidate")
+			}
+			err := fixture.adapter.runCLIDraftLifecycle(ctx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				cancel()
+				return nil
+			})
+			if strings.HasSuffix(operation, "external adoption") {
+				require.ErrorContains(err, "changed_externally")
+			} else {
+				require.NoError(err)
+			}
+			require.Len(events, 1)
+			assert.True(refreshSawOutput)
+		})
+	}
+}
+
 func (f gmailDraftTestFixture) lifecycleContext(ctx context.Context, operation string, draft store.GmailDraft, body string, asJSON bool) ([]api.CLIRunEvent, error) {
 	args := []string{operation, draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10)}
 	if operation == api.CLIRunDraftEditCommand {
@@ -487,6 +546,44 @@ func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenPublicationFails(t *tes
 	}, cliStreamStderr, false, output))
 	assert.Contains(human.Data, "pending replacement Gmail message ID: gmail-message-edited")
 	assert.Contains(human.Data, "acknowledged replacement receipt:")
+}
+
+func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenOutcomeRecordFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t, "original")
+	_, err := fixture.store.DB().Exec(`
+		CREATE TRIGGER fail_gmail_draft_outcome
+		BEFORE UPDATE OF pending_code ON gmail_drafts
+		WHEN NEW.pending_code = 'accepted_local_failed'
+		BEGIN
+			SELECT RAISE(FAIL, 'injected Gmail outcome failure');
+		END
+	`)
+	require.NoError(err)
+	fixture.client.updateDraft = &gmail.Draft{
+		ID:      "gmail-draft-managed",
+		Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
+	}
+
+	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate", true)
+	require.Error(err)
+	assert.Equal("accepted_local_failed", err.Error())
+	require.Len(events, 1)
+	var output gmailDraftLifecycleOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	assert.Equal("accepted_local_failed", output.Status)
+	assert.Equal("gmail-message-original", output.Receipt.GmailMessageID)
+	assert.Equal("gmail-message-edited", output.PendingReplacementGmailMessageID)
+	require.NotNil(output.ProviderObservation)
+	assert.Equal("gmail-message-edited", output.ProviderObservation.GmailMessageID)
+	assert.True(output.ManualReconciliation)
+
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	require.NotNil(latest.Pending)
+	assert.Empty(latest.Pending.ReplacementGmailMessageID)
 }
 
 func TestGmailDraftRemoteUnknownCreateHumanOutputIncludesRFC822ID(t *testing.T) {
