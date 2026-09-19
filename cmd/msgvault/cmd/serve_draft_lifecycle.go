@@ -850,6 +850,8 @@ func (a *storeAPIAdapter) refuseDraftRecovery(
 	}
 	output, outputErr := a.draftLifecycleOutput(ctx, draft, "refused", providerObservation, nil)
 	if outputErr == nil {
+		output.PendingCode = code
+		output.ManualReconciliation = true
 		if emitErr := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); emitErr != nil {
 			return draftReplyError("output_failed", emitErr)
 		}
@@ -940,9 +942,6 @@ func (a *storeAPIAdapter) runDraftRecover(
 	if settled || err != nil {
 		return err
 	}
-	if draft.Pending == nil {
-		return draftReplyError("invalid_state", errors.New("recovery requires a pending draft operation"))
-	}
 
 	if draft.Pending.Code == store.IMAPDraftCodeRemoved {
 		evidenceCtx, cancel := localDraftEvidenceContext(ctx)
@@ -965,10 +964,6 @@ func (a *storeAPIAdapter) runDraftRecover(
 		}
 		return nil
 	}
-	if draft.Pending.Operation == store.IMAPDraftOperationEdit && draft.Pending.ReplacementReceipt == nil {
-		return draftReplyError("unknown_replacement", errors.New("pending edit has no recorded replacement receipt"))
-	}
-
 	clientFactory := a.draftClientFactory
 	if clientFactory == nil {
 		clientFactory = defaultDraftClientFactory
@@ -984,15 +979,6 @@ func (a *storeAPIAdapter) runDraftRecover(
 		code := draftLifecycleObservationCode(originalObservation, "provider_refused")
 		return a.refuseDraftRecovery(ctx, intent, draft, code, err, &originalObservation, emit)
 	}
-	if originalObservation.Present && !originalObservation.Draft {
-		code := draftLifecycleObservationCode(originalObservation, "not_draft")
-		return a.refuseDraftRecovery(ctx, intent, draft, code, errors.New("recorded original is not a draft"), &originalObservation, emit)
-	}
-	if !originalObservation.Present && originalObservation.State != "absent" {
-		code := draftLifecycleObservationCode(originalObservation, "provider_refused")
-		return a.refuseDraftRecovery(ctx, intent, draft, code, errors.New("recorded original observation is incomplete"), &originalObservation, emit)
-	}
-
 	published := false
 	if draft.Pending.Operation == store.IMAPDraftOperationEdit {
 		replacementReceipt := *draft.Pending.ReplacementReceipt
