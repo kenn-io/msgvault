@@ -16,10 +16,14 @@ type Permission string
 
 const (
 	PermissionDraftCreate Permission = "draft.create"
+	PermissionDraftEdit   Permission = "draft.edit"
+	PermissionDraftDelete Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
 	string(PermissionDraftCreate): PermissionDraftCreate,
+	string(PermissionDraftEdit):   PermissionDraftEdit,
+	string(PermissionDraftDelete): PermissionDraftDelete,
 }
 
 func KnownPermission(s string) (Permission, bool) {

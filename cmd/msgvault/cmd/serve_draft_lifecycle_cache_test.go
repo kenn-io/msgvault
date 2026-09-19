@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -196,4 +197,60 @@ func TestDraftDeleteOutputFailureRefreshesCache(t *testing.T) {
 			assertions.Empty(results, "completed deletion must reach search despite output failure and cancellation")
 		})
 	}
+}
+
+func TestDraftRecoverRefreshesCache(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics cache rebuild uses a SQLite snapshot")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	created := createReviewDraft(t, fixture, adapter, "recovercache")
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	requirements.NoError(err)
+	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	client := imaplib.NewClient(fixture.config, testutil.IMAPTestPassword)
+	removed, err := client.RemoveDraft(t.Context(), recoveryTestReceipt(draft.CurrentReceipt))
+	requirements.NoError(err)
+	requirements.True(removed.Complete)
+	requirements.NoError(client.Close())
+
+	cacheRoot := t.TempDir()
+	cacheDB := filepath.Join(cacheRoot, "cache.db")
+	analyticsDir := filepath.Join(cacheRoot, "analytics")
+	checkSourceUnlocked := adapter.draftCacheRefresh
+	adapter.draftCacheRefresh = func(ctx context.Context, label string) error {
+		if err := checkSourceUnlocked(ctx, label); err != nil {
+			return err
+		}
+		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+			return err
+		}
+		_, err := buildCache(cacheDB, analyticsDir, true)
+		return err
+	}
+	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
+
+	events, err := runReviewLifecycle(t, adapter, "draft-recover", created.DraftID, "--revision", "1", "--json")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	results, err := engine.SearchFast(t.Context(), search.Parse("recovercache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
+	requirements.NoError(err)
+	assertions.Empty(results)
+	rows, err := engine.Aggregate(t.Context(), query.ViewLabels, query.DefaultAggregateOptions())
+	requirements.NoError(err)
+	var draftCount int64
+	for _, row := range rows {
+		if row.Key == "Drafts" {
+			draftCount = row.Count
+		}
+	}
+	assertions.Equal(int64(0), draftCount)
 }

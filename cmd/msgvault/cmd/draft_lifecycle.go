@@ -6,6 +6,7 @@ func init() {
 	rootCmd.AddCommand(newDraftGetCommand())
 	rootCmd.AddCommand(newDraftEditCommand())
 	rootCmd.AddCommand(newDraftDeleteCommand())
+	rootCmd.AddCommand(newDraftRecoverCommand())
 }
 
 func newDraftGetCommand() *cobra.Command {
@@ -38,6 +39,19 @@ func newDraftDeleteCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-delete <draft-id>",
 		Short: "Delete a managed IMAP draft",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runDaemonCLICommandHTTPFromCobra,
+	}
+	command.Flags().Int64("revision", 0, "current draft revision")
+	_ = command.MarkFlagRequired("revision")
+	command.Flags().Bool("json", false, "emit one JSON result")
+	return command
+}
+
+func newDraftRecoverCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "draft-recover <draft-id>",
+		Short: "Recover an interrupted managed IMAP draft edit or delete",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}

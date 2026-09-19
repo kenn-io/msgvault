@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
@@ -143,6 +144,10 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 	case api.CLIRunDraftDeleteCommand:
 		if !revisionSet || bodySet {
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-delete requires --revision and no body"))
+		}
+	case api.CLIRunDraftRecoverCommand:
+		if !revisionSet || bodySet {
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-recover requires --revision and no body"))
 		}
 	}
 	return intent, nil
@@ -302,21 +307,28 @@ func (a *storeAPIAdapter) loadManagedDraftSource(ctx context.Context, draft stor
 	if err != nil {
 		return nil, draftReplyError("invalid_source", err)
 	}
-	mailbox, err := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
-	if err != nil {
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
 		return nil, err
 	}
+	return source, nil
+}
+
+func (a *storeAPIAdapter) validateManagedDraftSource(draft store.IMAPDraft, source *store.Source) error {
+	mailbox, err := authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
+	if err != nil {
+		return err
+	}
 	if mailbox != draft.CurrentReceipt.Mailbox {
-		return nil, draftReplyError("invalid_mailbox", errors.New("draft receipt mailbox is outside the current owner grant"))
+		return draftReplyError("invalid_mailbox", errors.New("draft receipt mailbox is outside the current owner grant"))
 	}
 	if !source.SyncConfig.Valid {
-		return nil, draftReplyError("invalid_source", errors.New("source has no sync config"))
+		return draftReplyError("invalid_source", errors.New("source has no sync config"))
 	}
 	config, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
 	if err != nil || config.Identifier() != source.Identifier {
-		return nil, draftReplyError("invalid_source", errors.New("source sync config identity does not match the source"))
+		return draftReplyError("invalid_source", errors.New("source sync config identity does not match the source"))
 	}
-	return source, nil
+	return nil
 }
 
 func localDraftEvidenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -359,6 +371,9 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	}
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
+	}
+	if intent.Operation == api.CLIRunDraftRecoverCommand {
+		return a.runDraftRecover(ctx, intent, draft, req.Grant, emit)
 	}
 	if draft.DiscardedAt != nil {
 		if intent.Operation == api.CLIRunDraftDeleteCommand {
@@ -727,6 +742,370 @@ func (a *storeAPIAdapter) runDraftDelete(
 	}
 	defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	output, err := a.draftLifecycleOutput(evidenceCtx, finished, "deleted", nil, draftLifecycleObservationOutput(removed))
+	if err != nil {
+		return draftReplyError("draft_read_failed", err)
+	}
+	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
+		return draftReplyError("output_failed", err)
+	}
+	return nil
+}
+
+func draftRecoveryPermission(draft store.IMAPDraft) (agentgrant.Permission, error) {
+	if draft.DiscardedAt != nil {
+		return agentgrant.PermissionDraftDelete, nil
+	}
+	if draft.Pending == nil {
+		return agentgrant.PermissionDraftEdit, nil
+	}
+	switch draft.Pending.Operation {
+	case store.IMAPDraftOperationEdit:
+		return agentgrant.PermissionDraftEdit, nil
+	case store.IMAPDraftOperationDelete:
+		return agentgrant.PermissionDraftDelete, nil
+	default:
+		return "", draftReplyError("invalid_state", fmt.Errorf("unknown pending draft operation %q", draft.Pending.Operation))
+	}
+}
+
+func draftProviderReceipt(receipt store.IMAPDraftReceipt) imaplib.DraftReceipt {
+	return imaplib.DraftReceipt{
+		Mailbox: receipt.Mailbox, UIDValidity: receipt.UIDValidity, UID: receipt.UID,
+	}
+}
+
+func (a *storeAPIAdapter) authorizeDraftRecovery(
+	ctx context.Context,
+	draft store.IMAPDraft,
+	grant *agentgrant.Grant,
+) (*store.Source, error) {
+	permission, err := draftRecoveryPermission(draft)
+	if err != nil {
+		return nil, err
+	}
+	source, err := a.store.GetSourceByIDContext(ctx, draft.SourceID)
+	if err != nil {
+		if grant != nil {
+			return nil, draftReplyNotPermitted(fmt.Errorf("load source %d: %w", draft.SourceID, err))
+		}
+		return nil, draftReplyError("invalid_source", err)
+	}
+	if grant != nil {
+		ref := agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}
+		if !grant.Allows(permission, ref) {
+			return nil, draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
+		}
+	}
+	return source, nil
+}
+
+func (a *storeAPIAdapter) settleDraftRecovery(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	draft store.IMAPDraft,
+	emit func(api.CLIRunEvent) error,
+) (bool, error) {
+	status := ""
+	switch {
+	case draft.DiscardedAt != nil:
+		status = "already_discarded"
+	case draft.Pending == nil:
+		status = draftLifecycleActive
+	case draft.Pending.Operation == store.IMAPDraftOperationEdit && draft.Pending.ReplacementReceipt == nil:
+		output, err := a.draftLifecycleOutput(ctx, draft, "unknown_replacement", nil, nil)
+		if err != nil {
+			return true, draftReplyError("draft_read_failed", err)
+		}
+		output.PendingCode = "unknown_replacement"
+		output.ManualReconciliation = true
+		if err := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); err != nil {
+			return true, draftReplyError("output_failed", err)
+		}
+		return true, draftReplyError("unknown_replacement", errors.New("pending edit has no recorded replacement receipt"))
+	default:
+		return false, nil
+	}
+	output, err := a.draftLifecycleOutput(ctx, draft, status, nil, nil)
+	if err != nil {
+		return true, draftReplyError("draft_read_failed", err)
+	}
+	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); err != nil {
+		return true, draftReplyError("output_failed", err)
+	}
+	return true, nil
+}
+
+func (a *storeAPIAdapter) refuseDraftRecovery(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	draft store.IMAPDraft,
+	code string,
+	cause error,
+	observation *imaplib.DraftObservation,
+	emit func(api.CLIRunEvent) error,
+) error {
+	var providerObservation *draftLifecycleObservation
+	if observation != nil {
+		providerObservation = draftLifecycleObservationOutput(*observation)
+	}
+	output, outputErr := a.draftLifecycleOutput(ctx, draft, "refused", providerObservation, nil)
+	if outputErr == nil {
+		if emitErr := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); emitErr != nil {
+			return draftReplyError("output_failed", emitErr)
+		}
+	}
+	if cause == nil {
+		cause = errors.New("provider refused draft recovery")
+	}
+	return draftReplyError(code, cause)
+}
+
+func (a *storeAPIAdapter) publishRecoveredDraftReplacement(
+	ctx context.Context,
+	draft store.IMAPDraft,
+) (store.IMAPDraft, error) {
+	if draft.Pending == nil || draft.Pending.Operation != store.IMAPDraftOperationEdit || draft.Pending.ReplacementReceipt == nil {
+		return store.IMAPDraft{}, errors.New("known replacement is required for draft publication")
+	}
+	parsed, err := msgmime.Parse(draft.Pending.Raw)
+	if err != nil {
+		return store.IMAPDraft{}, fmt.Errorf("parse recorded draft replacement: %w", err)
+	}
+	replacement := imaplib.ReplyDraft{
+		Raw:    append([]byte(nil), draft.Pending.Raw...),
+		Parsed: parsed,
+	}
+	message, err := a.store.GetMessageContext(ctx, draft.CurrentMessageID)
+	if err != nil {
+		return store.IMAPDraft{}, fmt.Errorf("load draft message for replacement: %w", err)
+	}
+	replyTo, err := a.store.GetMessageReplyToMessageIDContext(ctx, draft.CurrentMessageID)
+	if err != nil {
+		return store.IMAPDraft{}, fmt.Errorf("load draft reply link for replacement: %w", err)
+	}
+	receipt := *draft.Pending.ReplacementReceipt
+	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, replacement, receipt)
+	return a.store.PublishIMAPDraftReplacementContext(ctx, draft.DraftID, draft.Revision, participants, build)
+}
+
+func (a *storeAPIAdapter) runDraftRecover(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	draft store.IMAPDraft,
+	grant *agentgrant.Grant,
+	emit func(api.CLIRunEvent) error,
+) error {
+	source, err := a.authorizeDraftRecovery(ctx, draft, grant)
+	if err != nil {
+		return err
+	}
+	settled, err := a.settleDraftRecovery(ctx, intent, draft, emit)
+	if settled || err != nil {
+		return err
+	}
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
+		return err
+	}
+	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrSyncAlreadyActive) {
+			return draftReplyError("sync_active", err)
+		}
+		return draftReplyError("sync_lock_failed", err)
+	}
+	defer func() { _ = execution.Release() }()
+
+	draft, err = a.store.GetIMAPDraftContext(ctx, intent.DraftID)
+	if err != nil {
+		return draftReplyError("draft_not_found", err)
+	}
+	if draft.Revision != intent.Revision {
+		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
+	}
+	source, err = a.authorizeDraftRecovery(ctx, draft, grant)
+	if err != nil {
+		return err
+	}
+	settled, err = a.settleDraftRecovery(ctx, intent, draft, emit)
+	if settled || err != nil {
+		return err
+	}
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
+		return err
+	}
+	if draft.Pending == nil {
+		return draftReplyError("invalid_state", errors.New("recovery requires a pending draft operation"))
+	}
+
+	if draft.Pending.Code == store.IMAPDraftCodeRemoved {
+		evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+		defer cancel()
+		finished, finishErr := a.store.FinishIMAPDraftRemovalContext(evidenceCtx, draft.DraftID, draft.Revision)
+		if finishErr != nil {
+			return draftReplyError("cleanup_local_failed", finishErr)
+		}
+		defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+		status := "edited"
+		if finished.DiscardedAt != nil {
+			status = "deleted"
+		}
+		output, outputErr := a.draftLifecycleOutput(evidenceCtx, finished, status, nil, nil)
+		if outputErr != nil {
+			return draftReplyError("draft_read_failed", outputErr)
+		}
+		if outputErr := emitDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output); outputErr != nil {
+			return draftReplyError("output_failed", outputErr)
+		}
+		return nil
+	}
+	if draft.Pending.Operation == store.IMAPDraftOperationEdit && draft.Pending.ReplacementReceipt == nil {
+		return draftReplyError("unknown_replacement", errors.New("pending edit has no recorded replacement receipt"))
+	}
+
+	clientFactory := a.draftClientFactory
+	if clientFactory == nil {
+		clientFactory = defaultDraftClientFactory
+	}
+	client, err := clientFactory(ctx, source)
+	if err != nil {
+		return draftReplyError("invalid_source", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	originalObservation, err := client.InspectDraft(ctx, draftProviderReceipt(draft.Pending.OriginalReceipt))
+	if err != nil {
+		code := draftLifecycleObservationCode(originalObservation, "provider_refused")
+		return a.refuseDraftRecovery(ctx, intent, draft, code, err, &originalObservation, emit)
+	}
+	if originalObservation.Present && !originalObservation.Draft {
+		code := draftLifecycleObservationCode(originalObservation, "not_draft")
+		return a.refuseDraftRecovery(ctx, intent, draft, code, errors.New("recorded original is not a draft"), &originalObservation, emit)
+	}
+	if !originalObservation.Present && originalObservation.State != "absent" {
+		code := draftLifecycleObservationCode(originalObservation, "provider_refused")
+		return a.refuseDraftRecovery(ctx, intent, draft, code, errors.New("recorded original observation is incomplete"), &originalObservation, emit)
+	}
+
+	published := false
+	if draft.Pending.Operation == store.IMAPDraftOperationEdit {
+		replacementReceipt := *draft.Pending.ReplacementReceipt
+		published = draft.CurrentReceipt == replacementReceipt
+		if !published {
+			if draft.Pending.OriginalReceipt.UIDValidity != replacementReceipt.UIDValidity {
+				return a.refuseDraftRecovery(
+					ctx, intent, draft, "uidvalidity_mismatch",
+					errors.New("recorded original and replacement generations differ"),
+					&originalObservation, emit,
+				)
+			}
+			replacementObservation, replacementErr := client.InspectDraft(ctx, draftProviderReceipt(replacementReceipt))
+			if replacementErr != nil || !replacementObservation.Present || !replacementObservation.Draft || replacementObservation.Deleted {
+				code := draftLifecycleObservationCode(replacementObservation, "provider_refused")
+				if replacementErr == nil {
+					switch {
+					case !replacementObservation.Present:
+						code = "absent"
+					case replacementObservation.Deleted:
+						code = "already_deleted"
+					case !replacementObservation.Draft:
+						code = "not_draft"
+					}
+					replacementErr = errors.New("recorded replacement is unavailable for publication")
+				}
+				return a.refuseDraftRecovery(ctx, intent, draft, code, replacementErr, &replacementObservation, emit)
+			}
+			publicationCtx, cancel := localDraftEvidenceContext(ctx)
+			publishedDraft, publishErr := a.publishRecoveredDraftReplacement(publicationCtx, draft)
+			if publishErr != nil {
+				output, outputErr := a.draftLifecycleOutput(publicationCtx, draft, "accepted_local_failed", draftLifecycleObservationOutput(replacementObservation), nil)
+				if outputErr == nil {
+					output.ManualReconciliation = true
+					_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+				}
+				cancel()
+				return draftReplyError("accepted_local_failed", publishErr)
+			}
+			cancel()
+			draft = publishedDraft
+			published = true
+			defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+		}
+	}
+
+	cleanupObservation := originalObservation
+	if originalObservation.Present {
+		if draft.Pending.Operation == store.IMAPDraftOperationEdit {
+			replacementObservation, replacementErr := client.InspectDraft(ctx, draftProviderReceipt(*draft.Pending.ReplacementReceipt))
+			if replacementErr != nil || !replacementObservation.Present || !replacementObservation.Draft || replacementObservation.Deleted {
+				code := draftLifecycleObservationCode(replacementObservation, "provider_refused")
+				if replacementErr == nil {
+					switch {
+					case !replacementObservation.Present:
+						code = "absent"
+					case replacementObservation.Deleted:
+						code = "already_deleted"
+					case !replacementObservation.Draft:
+						code = "not_draft"
+					}
+					replacementErr = errors.New("recorded replacement is unavailable for cleanup")
+				}
+				evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+				defer cancel()
+				a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, replacementObservation, emit)
+				return draftReplyError(code, replacementErr)
+			}
+		}
+		cleanupObservation, err = client.RemoveDraft(ctx, draftProviderReceipt(draft.Pending.OriginalReceipt))
+		if err != nil || !cleanupObservation.Complete {
+			code := draftLifecycleObservationCode(cleanupObservation, "cleanup_incomplete")
+			if !cleanupObservation.WriteAttempted {
+				if published {
+					evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+					defer cancel()
+					a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, cleanupObservation, emit)
+					if err == nil {
+						err = errors.New("provider cleanup was not attempted")
+					}
+					return draftReplyError(code, err)
+				}
+				return a.refuseDraftRecovery(ctx, intent, draft, code, err, &cleanupObservation, emit)
+			}
+			evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+			defer cancel()
+			recordErr := a.store.RecordIMAPDraftOutcomeContext(evidenceCtx, draft.DraftID, draft.Revision, code, nil)
+			a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, cleanupObservation, emit)
+			if recordErr != nil {
+				if err == nil {
+					err = errors.New("provider cleanup is incomplete")
+				}
+				return draftReplyError("local_persistence_failed", errors.Join(err, recordErr))
+			}
+			if err == nil {
+				err = errors.New("provider cleanup is incomplete")
+			}
+			return draftReplyError(code, err)
+		}
+	}
+
+	evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+	defer cancel()
+	if err := a.store.RecordIMAPDraftOutcomeContext(evidenceCtx, draft.DraftID, draft.Revision, store.IMAPDraftCodeRemoved, nil); err != nil {
+		a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, cleanupObservation, emit)
+		return draftReplyError("local_persistence_failed", err)
+	}
+	finished, err := a.store.FinishIMAPDraftRemovalContext(evidenceCtx, draft.DraftID, draft.Revision)
+	if err != nil {
+		a.emitDraftLifecyclePending(evidenceCtx, intent, draft, nil, cleanupObservation, emit)
+		return draftReplyError("cleanup_local_failed", err)
+	}
+	if !published {
+		defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
+	}
+	status := "edited"
+	if finished.DiscardedAt != nil {
+		status = "deleted"
+	}
+	output, err := a.draftLifecycleOutput(evidenceCtx, finished, status, nil, draftLifecycleObservationOutput(cleanupObservation))
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}

@@ -669,6 +669,13 @@ func TestAgentDelegatedCapableCommandSucceeds(t *testing.T) {
 	require.NoError(t, err, "draft-reply with agent flags should succeed in PersistentPreRunE")
 }
 
+func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
+	withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+
+	err := rootCmd.PersistentPreRunE(&cobra.Command{Use: "draft-recover"}, nil)
+	require.NoError(t, err)
+}
+
 // TestAgentDelegatedNonCapableCommandReturnsError verifies that a command
 // not in the delegated-capable set (serve) returns "not available in
 // agent-delegated mode" when agent flags are present.

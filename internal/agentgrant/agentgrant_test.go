@@ -194,3 +194,27 @@ func TestGrantAllowsExactOriginalTriple(t *testing.T) {
 	assert.True(t, g.Allows(PermissionDraftCreate, original),
 		"exact original (ID, Type, Identifier) triple must be allowed")
 }
+
+func TestDraftPermissionsRemainIndependent(t *testing.T) {
+	assertions := assert.New(t)
+	src := SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	for _, permission := range []Permission{PermissionDraftCreate, PermissionDraftEdit, PermissionDraftDelete} {
+		grant := Grant{Permissions: []Permission{permission}, Sources: []SourceRef{src}}
+		assertions.True(grant.Allows(permission, src))
+		for _, other := range []Permission{PermissionDraftCreate, PermissionDraftEdit, PermissionDraftDelete} {
+			if other == permission {
+				continue
+			}
+			assertions.False(grant.Allows(other, src))
+		}
+	}
+	assertions.Equal(PermissionDraftEdit, mustKnownPermission(t, "draft.edit"))
+	assertions.Equal(PermissionDraftDelete, mustKnownPermission(t, "draft.delete"))
+}
+
+func mustKnownPermission(t *testing.T, name string) Permission {
+	t.Helper()
+	permission, ok := KnownPermission(name)
+	require.True(t, ok)
+	return permission
+}

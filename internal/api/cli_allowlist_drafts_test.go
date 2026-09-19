@@ -24,9 +24,27 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-edit", "draft-abc", "--revision=1", "--body=body"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-delete", "draft-abc", "--revision=1"}))
+	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-recover", "draft-abc", "--revision=1"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-recover", "draft-abc", "--revision=1"}))
 	assertions.False(cliRunCommandAllowed([]string{"configure-imap-drafts"}))
 	assertions.False(cliRunCommandAllowed([]string{"draft-reply"}))
 	assertions.False(cliRunCommandAllowed([]string{"draft-get"}))
+}
+
+func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
+	source := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+	assert.True(t, delegatedCLIRunAdmitted(
+		[]string{"draft-recover", "draft-abc", "--revision=1"},
+		&agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}},
+	))
+	assert.True(t, delegatedCLIRunAdmitted(
+		[]string{"draft-recover", "draft-abc", "--revision=1"},
+		&agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete}},
+	))
+	assert.False(t, delegatedCLIRunAdmitted(
+		[]string{"draft-recover", "draft-abc", "--revision=1"},
+		&agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{source}},
+	))
 }
 
 // newDelegatedTestServer creates a server with agentGrants enabled and issues a grant.

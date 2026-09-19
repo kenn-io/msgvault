@@ -165,7 +165,7 @@ changes. Draft creation never moves an IMAP cursor.
 
 ---
 
-## draft-get, draft-edit, and draft-delete
+## draft-get, draft-edit, draft-delete, and draft-recover
 
 Read, edit, or delete an IMAP draft created by `draft-reply`:
 
@@ -173,11 +173,13 @@ Read, edit, or delete an IMAP draft created by `draft-reply`:
 msgvault draft-get <draft-id> [--json]
 msgvault draft-edit <draft-id> --revision <n> --body <text> [--json]
 msgvault draft-delete <draft-id> --revision <n> [--json]
+msgvault draft-recover <draft-id> --revision <n> [--json]
 ```
 
 The creation result supplies the opaque `draft_id` and initial revision.
 
-- `--revision` is required for edit and delete; use the current positive revision.
+- `--revision` is required for edit, delete, and recover; use the current
+  positive revision.
 - `--body` is required for edit; `--body=` sets an empty plain-text body.
 - `--json` emits one JSON result.
 
@@ -185,8 +187,12 @@ The creation result supplies the opaque `draft_id` and initial revision.
 connecting to IMAP or requiring the source's draft mutation grant. Edit and
 delete require the same source policy as `draft-reply`. Delete removes the
 provider draft and retains its archived content. These commands never send mail.
-See [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
-provider checks, retention, and retry behavior.
+Recovery resumes a pending operation from recorded receipts. It can publish a
+known replacement or finish confirmed removal without APPEND. Delegated
+recovery requires `draft.edit` for an edit or active repeat and `draft.delete`
+for a delete or discarded repeat, scoped to the source in the grant. See
+[Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
+provider checks, retention, and recovery limits.
 
 ---
 
@@ -2985,7 +2991,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create` |
+| `--permissions` | `draft.create`, `draft.edit`, `draft.delete` |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 
 The grant is valid until revoked or until the daemon restarts.

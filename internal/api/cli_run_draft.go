@@ -7,9 +7,10 @@ import "go.kenn.io/msgvault/internal/agentgrant"
 const CLIRunDraftReplyCommand = "draft-reply"
 
 const (
-	CLIRunDraftGetCommand    = "draft-get"
-	CLIRunDraftEditCommand   = "draft-edit"
-	CLIRunDraftDeleteCommand = "draft-delete"
+	CLIRunDraftGetCommand     = "draft-get"
+	CLIRunDraftEditCommand    = "draft-edit"
+	CLIRunDraftDeleteCommand  = "draft-delete"
+	CLIRunDraftRecoverCommand = "draft-recover"
 )
 
 // IsCLIRunDraftReply reports whether args invoke the in-process draft-reply
@@ -19,7 +20,17 @@ func IsCLIRunDraftReply(args []string) bool {
 }
 
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
-	return grant != nil && IsCLIRunDraftReply(args) && grant.HasPermission(agentgrant.PermissionDraftCreate)
+	if grant == nil || len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case CLIRunDraftReplyCommand:
+		return grant.HasPermission(agentgrant.PermissionDraftCreate)
+	case CLIRunDraftRecoverCommand:
+		return grant.HasPermission(agentgrant.PermissionDraftEdit) || grant.HasPermission(agentgrant.PermissionDraftDelete)
+	default:
+		return false
+	}
 }
 
 // IsCLIRunDraftLifecycle reports whether args invoke one of the managed draft
@@ -29,7 +40,7 @@ func IsCLIRunDraftLifecycle(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case CLIRunDraftGetCommand, CLIRunDraftEditCommand, CLIRunDraftDeleteCommand:
+	case CLIRunDraftGetCommand, CLIRunDraftEditCommand, CLIRunDraftDeleteCommand, CLIRunDraftRecoverCommand:
 		return true
 	default:
 		return false

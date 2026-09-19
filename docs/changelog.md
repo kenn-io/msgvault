@@ -209,16 +209,19 @@ See [Web UI](web-ui.md), [TUI](usage/tui.md),
   to a specific source and Drafts folder. The server must support UIDPLUS.
   Msgvault stores an archived copy; it never sends the email.
 - Add restricted agent grants. Owner-only `agent-token issue/list/revoke`
-  commands manage in-memory tokens with `draft.create` permission for named
-  sources. Agents use `--agent-url` and `--agent-token-file` to run only
-  `draft-reply`; grants expire when revoked or when the daemon restarts.
+  commands manage in-memory tokens with `draft.create`, `draft.edit`, and
+  `draft.delete` permissions for named sources. Agents use `--agent-url` and
+  `--agent-token-file` to run `draft-reply` or `draft-recover`; grants expire
+  when revoked or when the daemon restarts.
   Enable `[server] agent_access = true` with a non-empty `api_key`; see
   [agent-token](cli-reference.md#agent-token) and
   [configuration](configuration.md#server).
 - Read, edit, and delete managed IMAP drafts with `draft-get`, `draft-edit`, and
-  `draft-delete`. Reads use retained archive content; edits and deletes require
-  the reported revision and exact provider receipt. Uncertain provider results
-  keep candidate evidence and block the draft until recovery support is added.
+  `draft-delete`, plus `draft-recover` for interrupted operations. Reads use
+  retained archive content; edits, deletes, and recovery require the reported
+  revision and exact provider receipt. Recovery uses saved replacement bytes and
+  never replays APPEND. Uncertain provider results retain their evidence for a
+  later recovery attempt.
 - Refresh the archived body, recipients, and attachments when a trusted outgoing
   IMAP copy is edited or moves from Drafts to Sent. Ordinary received-mail and
   All Mail copies cannot replace that content. Historical rows that already lost

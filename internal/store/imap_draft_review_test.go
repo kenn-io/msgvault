@@ -267,6 +267,50 @@ func TestManagedIMAPDraftSourceCascade(t *testing.T) {
 	requirements.ErrorIs(err, store.ErrIMAPDraftNotFound)
 }
 
+func TestManagedIMAPDraftRecoveryCompletionIsIdempotent(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	edit := newReviewManagedDraftOnStore(t, st, "recovery-edit", 81, "original")
+	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+	_, err := st.ClaimIMAPDraftContext(t.Context(), edit.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+	requirements.NoError(err)
+	replacement := store.IMAPDraftReceipt{SourceID: edit.source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 82}
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), edit.draft.DraftID, 1, "append_uidplus", &replacement))
+	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), edit.draft.DraftID, 1, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: edit.source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(replacement),
+				MessageType: store.MessageTypeEmail, ConversationID: edit.conversationID,
+			},
+			BodyText: sql.NullString{String: "candidate", Valid: true}, RawMIME: candidate,
+		}
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), edit.draft.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil))
+	finished, err := st.FinishIMAPDraftRemovalContext(t.Context(), edit.draft.DraftID, published.Revision)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), finished.Revision)
+	assertions.Nil(finished.Pending)
+	assertions.Equal(replacement, finished.CurrentReceipt)
+	oldRaw, err := st.GetMessageRaw(edit.draft.CurrentMessageID)
+	requirements.NoError(err)
+	assertions.Contains(string(oldRaw), "original")
+
+	delete := newReviewManagedDraftOnStore(t, st, "recovery-delete", 83, "to delete")
+	claimed, err := st.ClaimIMAPDraftContext(t.Context(), delete.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	requirements.NoError(err)
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), claimed.DraftID, 1, store.IMAPDraftCodeRemoved, nil))
+	finished, err = st.FinishIMAPDraftRemovalContext(t.Context(), claimed.DraftID, 1)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), finished.Revision)
+	assertions.NotNil(finished.DiscardedAt)
+	deleteRaw, err := st.GetMessageRaw(delete.draft.CurrentMessageID)
+	requirements.NoError(err)
+	assertions.Contains(string(deleteRaw), "to delete")
+}
+
 func newReviewManagedDraft(
 	t *testing.T,
 	name string,

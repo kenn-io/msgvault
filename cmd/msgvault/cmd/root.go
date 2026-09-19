@@ -243,7 +243,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
 	switch cmd.Name() {
-	case "draft-reply":
+	case "draft-reply", "draft-recover":
 		return true
 	}
 	return false
