@@ -702,3 +702,17 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		assertions.Equal("invalid_parent", err.Error())
 	})
 }
+
+func TestDraftReplyPersistDataScopesCrossSourceConversation(t *testing.T) {
+	requirements := require.New(t)
+	parentRaw := []byte("From: sender@example.com\r\nMessage-ID: <parent@example.com>\r\nSubject: Imported\r\n\r\nold\r\n")
+	reply, err := imaplib.BuildReply(parentRaw, "owner@example.com", "reply", time.Now(), "draft@example.com")
+	requirements.NoError(err)
+	target := draftReplyTarget{
+		parent:       &store.APIMessage{ID: 7, SourceConversationID: "INBOX|9"},
+		parentSource: &store.Source{ID: 1},
+		source:       &store.Source{ID: 2},
+	}
+	data := draftReplyPersistData(target, reply, store.IMAPDraftReceipt{SourceID: 2, Mailbox: "Drafts", UIDValidity: 1, UID: 4}, "draft@example.com", []int64{1, 2})
+	requirements.Equal("draft-reply-1-2-INBOX|9", data.Conversation.SourceConversationID)
+}

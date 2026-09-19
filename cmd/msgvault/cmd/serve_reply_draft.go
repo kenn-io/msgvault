@@ -563,6 +563,9 @@ func draftReplyPersistData(
 		if conversationKey == "" {
 			conversationKey = fmt.Sprintf("draft-reply-%d", target.parent.ID)
 		}
+		if target.parentSource != nil && target.parentSource.ID != target.source.ID {
+			conversationKey = fmt.Sprintf("draft-reply-%d-%d-%s", target.parentSource.ID, target.source.ID, conversationKey)
+		}
 	} else {
 		conversationKey = fmt.Sprintf("draft-compose-%d-%s", receipt.SourceID, store.IMAPDraftSourceMessageID(receipt))
 	}
