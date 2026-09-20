@@ -298,15 +298,15 @@ func TestManagedIMAPDraftRecoveryCompletionIsIdempotent(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(string(oldRaw), "original")
 
-	delete := newReviewManagedDraftOnStore(t, st, "recovery-delete", 83, "to delete")
-	claimed, err := st.ClaimIMAPDraftContext(t.Context(), delete.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+	deleted := newReviewManagedDraftOnStore(t, st, "recovery-delete", 83, "to delete")
+	claimed, err := st.ClaimIMAPDraftContext(t.Context(), deleted.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 	requirements.NoError(err)
 	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), claimed.DraftID, 1, store.IMAPDraftCodeRemoved, nil))
 	finished, err = st.FinishIMAPDraftRemovalContext(t.Context(), claimed.DraftID, 1)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), finished.Revision)
 	assertions.NotNil(finished.DiscardedAt)
-	deleteRaw, err := st.GetMessageRaw(delete.draft.CurrentMessageID)
+	deleteRaw, err := st.GetMessageRaw(deleted.draft.CurrentMessageID)
 	requirements.NoError(err)
 	assertions.Contains(string(deleteRaw), "to delete")
 }

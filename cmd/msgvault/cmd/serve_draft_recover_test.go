@@ -90,7 +90,7 @@ func issueDraftRecoveryToken(t *testing.T, server *httptest.Server, sourceID int
 	req.Header.Set("X-Api-Key", "owner-key")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var issued struct {
 		Secret string `json:"secret"`
@@ -111,7 +111,7 @@ func runDraftRecoveryHTTP(t *testing.T, server *httptest.Server, secret, draftID
 	req.Header.Set("X-Msgvault-Agent-Token", secret)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var events []api.CLIRunEvent
 	scanner := bufio.NewScanner(resp.Body)
@@ -174,7 +174,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 		req.Header.Set("X-Api-Key", "owner-key")
 		resp, err := http.DefaultClient.Do(req)
 		requirements.NoError(err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		requirements.Equal(http.StatusCreated, resp.StatusCode)
 		var issued struct {
 			Secret string `json:"secret"`
@@ -183,8 +183,8 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 		return issued.Secret
 	}
 
-	run := func(secret string) []api.CLIRunEvent {
-		body, err := json.Marshal(api.CLIRunRequest{Args: []string{draftRecoverCommand, fixture.draft.DraftID, "--revision", "1", "--json"}})
+	run := func(secret, draftID string, revision int64) []api.CLIRunEvent {
+		body, err := json.Marshal(api.CLIRunRequest{Args: []string{draftRecoverCommand, draftID, "--revision", strconv.FormatInt(revision, 10), "--json"}})
 		requirements.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		requirements.NoError(err)
@@ -192,7 +192,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 		req.Header.Set("X-Msgvault-Agent-Token", secret)
 		resp, err := http.DefaultClient.Do(req)
 		requirements.NoError(err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		requirements.Equal(http.StatusOK, resp.StatusCode)
 		var events []api.CLIRunEvent
 		scanner := bufio.NewScanner(resp.Body)
@@ -205,16 +205,77 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 		return events
 	}
 
-	allowed := run(issue("draft.edit"))
+	allowed := run(issue("draft.edit"), fixture.draft.DraftID, 1)
 	requirements.Len(allowed, 2)
 	assertions.Equal(cliStreamStdout, allowed[0].Type)
 	assertions.Contains(allowed[0].Data, `"status":"active"`)
+	var delegatedOutput draftLifecycleOutput
+	requirements.NoError(json.Unmarshal([]byte(allowed[0].Data), &delegatedOutput))
+	assertions.Empty(delegatedOutput.Content)
+	assertions.Empty(delegatedOutput.RawMIME)
+	assertions.Empty(delegatedOutput.CandidateContent)
 	assertions.Equal("complete", allowed[1].Type)
 
-	denied := run(issue("draft.delete"))
+	denied := run(issue("draft.delete"), fixture.draft.DraftID, 1)
 	requirements.Len(denied, 1)
 	assertions.Empty(denied[0].Data)
 	assertions.Equal("not_permitted", denied[0].Error)
+
+	otherSource, err := fixture.store.GetOrCreateSource("imap", "imap://other@example.com:143")
+	requirements.NoError(err)
+	conversationID, err := fixture.store.EnsureConversation(otherSource.ID, "other-draft", "Other draft")
+	requirements.NoError(err)
+	otherReceipt := store.IMAPDraftReceipt{SourceID: otherSource.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
+	otherDraft, err := fixture.store.PersistIMAPDraftContext(t.Context(), otherReceipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: otherSource.ID, SourceMessageID: store.IMAPDraftSourceMessageID(otherReceipt),
+				MessageType: store.MessageTypeEmail, ConversationID: conversationID,
+			},
+			RawMIME: []byte("From: alice@example.com\r\n\r\nother\r\n"),
+		}
+	})
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		name     string
+		draftID  string
+		revision int64
+	}{
+		{name: "missing", draftID: "missing-draft", revision: 1},
+		{name: "out of scope current", draftID: otherDraft.DraftID, revision: 1},
+		{name: "out of scope stale", draftID: otherDraft.DraftID, revision: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Helper()
+			events := run(issue("draft.edit"), tc.draftID, tc.revision)
+			requirements.Len(events, 1)
+			assertions.Empty(events[0].Data)
+			assertions.Equal("not_permitted", events[0].Error)
+		})
+	}
+}
+
+func TestDraftRecoverDelegatedUnknownReplacementRedactsCandidate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture, _ := newDraftRecoveryFixture(t)
+	server := newDraftRecoveryHTTPServer(t, fixture)
+	defer server.Close()
+	secret := issueDraftRecoveryToken(t, server, fixture.source.ID, string(agentgrant.PermissionDraftEdit))
+	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
+	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate)
+	requirements.NoError(err)
+
+	events := runDraftRecoveryHTTP(t, server, secret, fixture.draft.DraftID, 1)
+	requirements.Len(events, 2)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	var output draftLifecycleOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	assertions.Equal("unknown_replacement", output.PendingCode)
+	assertions.Empty(output.Content)
+	assertions.Empty(output.RawMIME)
+	assertions.Empty(output.CandidateContent)
+	assertions.Equal("unknown_replacement", events[1].Error)
 }
 
 func TestDraftRecoverPolicyPrecedesSettledOutputThroughHTTP(t *testing.T) {
@@ -234,6 +295,7 @@ func TestDraftRecoverPolicyPrecedesSettledOutputThroughHTTP(t *testing.T) {
 			name:       "discarded",
 			permission: string(agentgrant.PermissionDraftDelete),
 			prepare: func(t *testing.T, fixture reviewManagedLifecycleFixture) (string, int64) {
+				t.Helper()
 				requirements := require.New(t)
 				_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 				requirements.NoError(err)
@@ -576,12 +638,14 @@ func TestDraftRecoverPolicy(t *testing.T) {
 		code  string
 	}{
 		{name: "draft disabled", setup: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+			t.Helper()
 			requirements := require.New(t)
 			_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 			requirements.NoError(err)
 			fixture.adapter.draftPolicy = nil
 		}, code: "draft_disabled"},
 		{name: "invalid mailbox", setup: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+			t.Helper()
 			requirements := require.New(t)
 			_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 			requirements.NoError(err)
@@ -714,6 +778,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 		{
 			name: "action",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				t.Helper()
 				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
 					UPDATE imap_drafts
 					SET pending_operation = 'delete', pending_raw = NULL,
@@ -728,6 +793,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 		{
 			name: "source type",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				t.Helper()
 				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
 					UPDATE sources SET source_type = 'gmail' WHERE id = ?
 				`), fixture.source.ID)
@@ -737,6 +803,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 		{
 			name: "source identifier",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
+				t.Helper()
 				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
 					UPDATE sources SET identifier = 'imap://changed@example.test:143' WHERE id = ?
 				`), fixture.source.ID)

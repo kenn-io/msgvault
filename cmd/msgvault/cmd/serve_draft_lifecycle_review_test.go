@@ -1407,7 +1407,7 @@ func (s *reviewUIDValidityChangeSession) Select(
 ) (*emersionimap.SelectData, error) {
 	data, err := s.Session.Select(mailbox, options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("select mailbox: %w", err)
 	}
 	if s.control.selects.Add(1) == 2 {
 		changed := *data
