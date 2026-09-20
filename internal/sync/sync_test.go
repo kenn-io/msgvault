@@ -4095,7 +4095,7 @@ func TestIncrementalSyncReusesPersistedGmailDraftMessageID(t *testing.T) {
 
 	summary := runIncrementalSync(t, env)
 	assertions.Equal(int64(0), summary.MessagesAdded)
-	assertions.Equal(0, len(env.Mock.GetMessageCalls), "sync skips the persisted message body")
+	assertions.Empty(env.Mock.GetMessageCalls, "sync skips the persisted message body")
 	var count int
 	requirements.NoError(env.Store.DB().QueryRow(env.Store.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?

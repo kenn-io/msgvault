@@ -47,9 +47,9 @@ type GmailDraft struct {
 }
 
 var (
-	ErrGmailDraftNotFound = errors.New("Gmail draft not found")
-	ErrGmailDraftRevision = errors.New("Gmail draft revision mismatch")
-	ErrGmailDraftPending  = errors.New("Gmail draft has a pending operation")
+	ErrGmailDraftNotFound = errors.New("gmail draft not found")
+	ErrGmailDraftRevision = errors.New("gmail draft revision mismatch")
+	ErrGmailDraftPending  = errors.New("gmail draft has a pending operation")
 	ErrGmailDraftState    = errors.New("invalid Gmail draft state")
 )
 
@@ -118,7 +118,7 @@ func (s *Store) PersistGmailDraftContext(
 			return nil, errors.New("source_key_conflict")
 		}
 		if data.MIMEAttachmentReplacement != nil {
-			return nil, errors.New("Gmail draft persistence cannot replace attachments")
+			return nil, errors.New("gmail draft persistence cannot replace attachments")
 		}
 		return prepareGmailDraftMessage(ctx, tx, receipt.SourceID, data)
 	}
@@ -457,7 +457,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		}
 		if draft.Pending == nil || draft.Pending.Operation != GmailDraftOperationEdit ||
 			draft.Pending.ReplacementGmailMessageID != newGmailMessageID {
-			return errors.New("Gmail draft replacement receipt is not recorded")
+			return errors.New("gmail draft replacement receipt is not recorded")
 		}
 		var existingMessageID int64
 		if err := tx.QueryRowContext(ctx, `

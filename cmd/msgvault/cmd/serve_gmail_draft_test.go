@@ -13,15 +13,14 @@ import (
 )
 
 func TestAuthorizeGmailDraftRequiresEnabledSourcePolicy(t *testing.T) {
-	assertions := assert.New(t)
-	assertions.ErrorContains(authorizeGmailDraft(nil, 42, "gmail"), "draft_disabled")
-	assertions.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42}}, 42, "gmail"), "draft_disabled")
-	assertions.NoError(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "gmail"))
-	assertions.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "imap"), "draft_disabled")
+	requirements := require.New(t)
+	requirements.ErrorContains(authorizeGmailDraft(nil, 42, "gmail"), "draft_disabled")
+	requirements.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42}}, 42, "gmail"), "draft_disabled")
+	requirements.NoError(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "gmail"))
+	requirements.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "imap"), "draft_disabled")
 }
 
 func TestValidateGmailSendAsRequiresPrimaryOrAccepted(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	entries := []gmail.SendAs{
 		{Email: "pending@example.com", VerificationStatus: "pending"},
@@ -30,8 +29,8 @@ func TestValidateGmailSendAsRequiresPrimaryOrAccepted(t *testing.T) {
 	}
 	requirements.NoError(validateGmailSendAs(entries, "ACCEPTED@example.com"))
 	requirements.NoError(validateGmailSendAs(entries, "primary@example.com"))
-	assertions.ErrorContains(validateGmailSendAs(entries, "pending@example.com"), "invalid_from")
-	assertions.ErrorContains(validateGmailSendAs(entries, "missing@example.com"), "invalid_from")
+	requirements.ErrorContains(validateGmailSendAs(entries, "pending@example.com"), "invalid_from")
+	requirements.ErrorContains(validateGmailSendAs(entries, "missing@example.com"), "invalid_from")
 }
 
 func TestParseDraftSendAsArgs(t *testing.T) {
@@ -42,7 +41,7 @@ func TestParseDraftSendAsArgs(t *testing.T) {
 	assertions.Equal("alice@example.com", account)
 	assertions.True(jsonOutput)
 	_, _, err = parseDraftSendAsArgs([]string{"draft-send-as"})
-	assertions.ErrorContains(err, "invalid_args")
+	requirements.ErrorContains(err, "invalid_args")
 }
 
 func TestGmailReadErrorCodeUsesProviderMessages(t *testing.T) {

@@ -164,7 +164,7 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	}
 	if draft == nil {
 		return emitGmailDraftReplyFailure(emit, intent.JSON, target, messageIDValue,
-			&gmail.DraftWriteError{State: gmail.DraftStateRemoteUnknown, Code: "remote_unknown", Err: errors.New("Gmail create returned no draft")})
+			&gmail.DraftWriteError{State: gmail.DraftStateRemoteUnknown, Code: "remote_unknown", Err: errors.New("gmail create returned no draft")})
 	}
 	receipt := store.GmailDraftReceipt{
 		SourceID: target.source.ID, GmailDraftID: draft.ID,
@@ -381,10 +381,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 	}
 }
 
-func gmailDraftAttachmentWrites(attachments []msgmime.Attachment) (*[]store.AttachmentWrite, error) {
-	if len(attachments) == 0 {
-		return nil, nil
-	}
+func gmailDraftAttachmentWrites(attachments []msgmime.Attachment) ([]store.AttachmentWrite, error) {
 	attachmentsDir := ""
 	if cfg != nil {
 		attachmentsDir = cfg.AttachmentsDir()
@@ -399,7 +396,7 @@ func gmailDraftAttachmentWrites(attachments []msgmime.Attachment) (*[]store.Atta
 			writes = append(writes, write)
 		}
 	}
-	return &writes, nil
+	return writes, nil
 }
 
 func gmailAddressStrings(addresses []msgmime.Address) []string {
@@ -768,9 +765,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			GmailMessageID: observed.Message.ID, ThreadID: observed.Message.ThreadID,
 		}
 		participants := gmailDraftParticipants(parsed)
-		attachmentWrites, attachmentErr := gmailDraftAttachmentWrites(parsed.Attachments)
-		if attachmentErr != nil {
-			return draftReplyError("local_persistence_failed", attachmentErr)
+		var attachmentWrites *[]store.AttachmentWrite
+		if len(parsed.Attachments) > 0 {
+			writes, attachmentErr := gmailDraftAttachmentWrites(parsed.Attachments)
+			if attachmentErr != nil {
+				return draftReplyError("local_persistence_failed", attachmentErr)
+			}
+			attachmentWrites = &writes
 		}
 		adopted, adoptErr := a.store.AdoptGmailDraftObservationContext(
 			evidenceCtx, intent.DraftID, intent.Revision, observedReceipt, participants,
@@ -792,12 +793,12 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); err != nil {
 			return draftReplyError("output_failed", err)
 		}
-		return draftReplyError("changed_externally", errors.New("Gmail draft changed outside msgvault"))
+		return draftReplyError("changed_externally", errors.New("gmail draft changed outside msgvault"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
 		return a.runGmailDraftEdit(ctx, intent, draft, source, client, replacement, finish, refresh, emit)
 	}
-	return a.runGmailDraftDelete(ctx, intent, draft, source, client, finish, refresh, emit)
+	return a.runGmailDraftDelete(ctx, intent, draft, client, finish, refresh, emit)
 }
 
 func (a *storeAPIAdapter) runGmailDraftEdit(
@@ -852,7 +853,7 @@ func (a *storeAPIAdapter) runGmailDraftEdit(
 			output.ManualReconciliation = true
 			_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 		}
-		return draftReplyError("remote_unknown", errors.New("Gmail update returned no draft"))
+		return draftReplyError("remote_unknown", errors.New("gmail update returned no draft"))
 	}
 	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
 	defer cancelEvidence()
@@ -894,7 +895,6 @@ func (a *storeAPIAdapter) runGmailDraftDelete(
 	ctx context.Context,
 	intent draftLifecycleIntent,
 	draft store.GmailDraft,
-	source *store.Source,
 	client gmail.DraftAPI,
 	finish func(),
 	refresh func(),

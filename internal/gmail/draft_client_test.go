@@ -43,21 +43,29 @@ func TestDraftClientWireMethods(t *testing.T) {
 	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.EscapedPath())
 		body, err := io.ReadAll(r.Body)
-		require.NoError(err)
+		if !assert.NoError(err) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/gmail/v1/users/me/drafts":
 			var request draftRequestJSON
-			require.NoError(json.Unmarshal(body, &request))
+			if !assert.NoError(json.Unmarshal(body, &request)) {
+				return
+			}
 			assert.Equal("thread-parent", request.Message.ThreadID)
 			decoded, decodeErr := decodeBase64URL(request.Message.Raw)
-			require.NoError(decodeErr)
+			if !assert.NoError(decodeErr) {
+				return
+			}
 			assert.Equal(raw, decoded)
 			_, _ = w.Write([]byte(`{"id":"draft-1","message":{"id":"message-1","threadId":"thread-parent","labelIds":["DRAFT"],"raw":"` + paddedRaw + `"}}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/drafts/draft-1"):
 			_, _ = w.Write([]byte(`{"id":"draft-1","message":{"id":"message-1","threadId":"thread-parent","raw":"` + paddedRaw + `"}}`))
 		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/drafts/draft-1"):
 			var request draftRequestJSON
-			require.NoError(json.Unmarshal(body, &request))
+			if !assert.NoError(json.Unmarshal(body, &request)) {
+				return
+			}
 			assert.Equal("draft-1", request.ID)
 			_, _ = w.Write([]byte(`{"id":"draft-1","message":{"id":"message-2","threadId":"thread-parent","raw":"` + paddedRaw + `"}}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/drafts/draft-1"):
@@ -103,7 +111,9 @@ func TestDraftDeleteAcceptsEmptySuccessBody(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusNoContent} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodDelete, r.Method)
+				if !assert.Equal(t, http.MethodDelete, r.Method) {
+					return
+				}
 				w.WriteHeader(status)
 			}))
 			require.NoError(t, client.DeleteDraft(t.Context(), "draft-1"))

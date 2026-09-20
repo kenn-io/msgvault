@@ -29,7 +29,7 @@ const (
 	rawRequestTimeout = 5 * time.Minute
 )
 
-var errWriteOutcomeUnknown = errors.New("Gmail write outcome is unknown")
+var errWriteOutcomeUnknown = errors.New("gmail write outcome is unknown")
 
 // Client implements the Gmail API interface.
 type Client struct {
@@ -147,8 +147,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if remoteMutation {
-				var retrieveErr *oauth2.RetrieveError
-				if errors.As(err, &retrieveErr) {
+				if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 					return nil, fmt.Errorf("http request: %w", err)
 				}
 				return nil, fmt.Errorf("%w: http request: %w", errWriteOutcomeUnknown, err)
@@ -231,7 +230,7 @@ func newStatusError(statusCode int, body []byte) *StatusError {
 	case http.StatusUnauthorized:
 		msg = "unauthorized (401): token may be invalid"
 	case http.StatusForbidden:
-		msg = fmt.Sprintf("forbidden (403): %s", string(body))
+		msg = "forbidden (403): " + string(body)
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		msg = fmt.Sprintf("server error (%d)", statusCode)
 	default:
@@ -435,11 +434,7 @@ func (c *Client) ListSendAs(ctx context.Context) ([]SendAs, error) {
 	}
 	entries := make([]SendAs, len(response.SendAs))
 	for i, entry := range response.SendAs {
-		entries[i] = SendAs{
-			Email: entry.Email, DisplayName: entry.DisplayName,
-			VerificationStatus: entry.VerificationStatus,
-			Primary:            entry.Primary, Default: entry.Default,
-		}
+		entries[i] = SendAs(entry)
 	}
 	return entries, nil
 }
@@ -490,15 +485,13 @@ func classifyDraftWrite(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return &DraftWriteError{State: DraftStateCancelled, Code: "cancelled", Err: err}
 	}
-	var retrieveErr *oauth2.RetrieveError
-	if errors.As(err, &retrieveErr) {
+	if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
 	}
 	if _, ok := errors.AsType[*NotFoundError](err); ok {
 		return &DraftWriteError{State: DraftStateRejected, Code: "draft_absent", Err: err}
 	}
-	var statusErr *StatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*StatusError](err); ok {
 		switch {
 		case statusErr.StatusCode == http.StatusUnauthorized:
 			return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
