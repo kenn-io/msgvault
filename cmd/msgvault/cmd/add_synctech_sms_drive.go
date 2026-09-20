@@ -293,7 +293,7 @@ func importOneDriveBackup(ctx context.Context, st *store.Store, imp *synctechsms
 		Checksum:   file.Checksum,
 		Size:       file.Size,
 		ModifiedAt: sql.NullTime{Time: file.ModifiedTime, Valid: !file.ModifiedTime.IsZero()},
-		Status:     "pending",
+		Status:     laneStatePending,
 	}
 	if err := st.UpsertSourceImportItem(item); err != nil {
 		return synctechsms.ImportSummary{}, err
