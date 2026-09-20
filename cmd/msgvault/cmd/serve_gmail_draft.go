@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	msgsync "go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -316,6 +317,20 @@ func gmailDraftMessagePersistData(
 	receipt store.GmailDraftReceipt,
 	rfc822 string,
 ) func([]int64) *store.MessagePersistData {
+	return gmailDraftMessagePersistDataWithAttachments(
+		sourceID, replyToMessageID, parsed, raw, receipt, rfc822, nil,
+	)
+}
+
+func gmailDraftMessagePersistDataWithAttachments(
+	sourceID int64,
+	replyToMessageID int64,
+	parsed *msgmime.Message,
+	raw []byte,
+	receipt store.GmailDraftReceipt,
+	rfc822 string,
+	attachmentWrites *[]store.AttachmentWrite,
+) func([]int64) *store.MessagePersistData {
 	return func(ids []int64) *store.MessagePersistData {
 		fromCount := len(parsed.From)
 		if fromCount == 0 {
@@ -359,10 +374,32 @@ func gmailDraftMessagePersistData(
 				{Type: "cc", ParticipantIDs: ccIDs, EmailAddresses: ccAddresses},
 				{Type: "bcc", ParticipantIDs: bccIDs, EmailAddresses: bccAddresses},
 			},
-			LabelRefs: []store.MessageLabelRef{{SourceLabelID: "DRAFT", Info: store.LabelInfo{Name: "DRAFT", Type: "system"}}},
-			FTS:       &store.FTSDoc{Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstGmailAddress(parsed.From), ToAddrs: strings.Join(toAddresses, " ")},
+			LabelRefs:                 []store.MessageLabelRef{{SourceLabelID: "DRAFT", Info: store.LabelInfo{Name: "DRAFT", Type: "system"}}},
+			MIMEAttachmentReplacement: attachmentWrites,
+			FTS:                       &store.FTSDoc{Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstGmailAddress(parsed.From), ToAddrs: strings.Join(toAddresses, " ")},
 		}
 	}
+}
+
+func gmailDraftAttachmentWrites(attachments []msgmime.Attachment) (*[]store.AttachmentWrite, error) {
+	if len(attachments) == 0 {
+		return nil, nil
+	}
+	attachmentsDir := ""
+	if cfg != nil {
+		attachmentsDir = cfg.AttachmentsDir()
+	}
+	writes := make([]store.AttachmentWrite, 0, len(attachments))
+	for i := range attachments {
+		write, err := msgsync.StoreMIMEAttachment(attachmentsDir, &attachments[i])
+		if err != nil {
+			return nil, fmt.Errorf("store Gmail draft attachment %q: %w", attachments[i].Filename, err)
+		}
+		if write.StoragePath != "" {
+			writes = append(writes, write)
+		}
+	}
+	return &writes, nil
 }
 
 func gmailAddressStrings(addresses []msgmime.Address) []string {
@@ -731,10 +768,14 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			GmailMessageID: observed.Message.ID, ThreadID: observed.Message.ThreadID,
 		}
 		participants := gmailDraftParticipants(parsed)
+		attachmentWrites, attachmentErr := gmailDraftAttachmentWrites(parsed.Attachments)
+		if attachmentErr != nil {
+			return draftReplyError("local_persistence_failed", attachmentErr)
+		}
 		adopted, adoptErr := a.store.AdoptGmailDraftObservationContext(
 			evidenceCtx, intent.DraftID, intent.Revision, observedReceipt, participants,
-			gmailDraftMessagePersistData(source.ID, replyTo.Int64, parsed, observed.Message.Raw, observedReceipt,
-				messageRFC822ID(parsed)),
+			gmailDraftMessagePersistDataWithAttachments(source.ID, replyTo.Int64, parsed, observed.Message.Raw, observedReceipt,
+				messageRFC822ID(parsed), attachmentWrites),
 		)
 		if adoptErr != nil {
 			return draftReplyError("local_persistence_failed", adoptErr)

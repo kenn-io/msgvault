@@ -18,6 +18,7 @@ import (
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 type scriptedGmailDraftClient struct {
@@ -119,7 +120,10 @@ func newSQLiteGmailDraftTestFixture(t *testing.T) gmailDraftTestFixture {
 func newGmailDraftTestFixtureWithStore(t *testing.T, newStore func(*testing.T) *store.Store) gmailDraftTestFixture {
 	t.Helper()
 	previousCfg := cfg
-	cfg = &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}}
+	cfg = &config.Config{
+		Data:  config.DataConfig{DataDir: t.TempDir()},
+		OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"},
+	}
 	t.Cleanup(func() { cfg = previousCfg })
 
 	st := newStore(t)
@@ -180,6 +184,18 @@ func gmailDraftTestRaw(body, messageID string) []byte {
 		"From: owner@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\nMessage-ID: <%s>\r\n\r\n%s\r\n",
 		messageID, body,
 	))
+}
+
+func gmailDraftTestRawWithAttachment(messageID string) []byte {
+	return testemail.NewMessage().
+		From("owner@example.test").
+		To("sender@example.test").
+		Subject("Re: Question").
+		Header("Message-ID", "<"+messageID+">").
+		Body("external with attachment").
+		WithAttachment("notes.txt", "text/plain", []byte("attachment bytes")).
+		CRLF().
+		Bytes()
 }
 
 func (f gmailDraftTestFixture) create(t *testing.T, body string, asJSON bool) ([]api.CLIRunEvent, error) {
@@ -352,6 +368,36 @@ func TestGmailDraftExternalAdoptionReturnsFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(2), adopted.Revision)
 	assert.Equal("gmail-message-external", adopted.CurrentReceipt.GmailMessageID)
+}
+
+func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t, "original")
+	fixture.client.getDraft = &gmail.Draft{
+		ID: "gmail-draft-managed",
+		Message: gmail.RawMessage{
+			ID: "gmail-message-external-attachment", ThreadID: "gmail-thread-1",
+			Raw: gmailDraftTestRawWithAttachment("gmail-external-attachment@example.test"),
+		},
+	}
+
+	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate", true)
+	require.Error(err)
+	assert.Equal("changed_externally", err.Error())
+	require.Len(events, 1)
+
+	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	message, err := fixture.store.GetMessageContext(t.Context(), adopted.CurrentMessageID)
+	require.NoError(err)
+	require.Len(message.Attachments, 1)
+	assert.True(message.HasAttachments)
+	assert.Equal("notes.txt", message.Attachments[0].Filename)
+	assert.Equal("text/plain", message.Attachments[0].MimeType)
+	assert.Equal(int64(len("attachment bytes")), message.Attachments[0].Size)
+	assert.NotEmpty(message.Attachments[0].ContentHash)
 }
 
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {

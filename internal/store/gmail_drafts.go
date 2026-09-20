@@ -570,7 +570,20 @@ func (s *Store) AdoptGmailDraftObservationContext(
 				}
 				return prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
 			}
-			messageID, err = s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, nil)
+			after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+				if data.MIMEAttachmentReplacement == nil {
+					return nil
+				}
+				q := boundQuerier{ctx: ctx, q: tx}
+				if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
+					return fmt.Errorf("persist observed Gmail attachments: %w", err)
+				}
+				if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+					return fmt.Errorf("recompute observed Gmail attachment stats: %w", err)
+				}
+				return nil
+			}
+			messageID, err = s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, after)
 		} else if err != nil {
 			return fmt.Errorf("find observed Gmail message: %w", err)
 		}
