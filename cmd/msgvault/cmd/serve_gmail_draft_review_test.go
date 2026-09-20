@@ -109,12 +109,20 @@ type gmailDraftTestFixture struct {
 }
 
 func newGmailDraftTestFixture(t *testing.T) gmailDraftTestFixture {
+	return newGmailDraftTestFixtureWithStore(t, testutil.NewTestStore)
+}
+
+func newSQLiteGmailDraftTestFixture(t *testing.T) gmailDraftTestFixture {
+	return newGmailDraftTestFixtureWithStore(t, testutil.NewSQLiteTestStore)
+}
+
+func newGmailDraftTestFixtureWithStore(t *testing.T, newStore func(*testing.T) *store.Store) gmailDraftTestFixture {
 	t.Helper()
 	previousCfg := cfg
 	cfg = &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}}
 	t.Cleanup(func() { cfg = previousCfg })
 
-	st := testutil.NewTestStore(t)
+	st := newStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(t, err)
 	require.NoError(t, st.AddAccountIdentity(source.ID, source.Identifier, "manual"))
@@ -175,6 +183,10 @@ func gmailDraftTestRaw(body, messageID string) []byte {
 }
 
 func (f gmailDraftTestFixture) create(t *testing.T, body string, asJSON bool) ([]api.CLIRunEvent, error) {
+	return f.createContext(t.Context(), t, body, asJSON)
+}
+
+func (f gmailDraftTestFixture) createContext(ctx context.Context, t *testing.T, body string, asJSON bool) ([]api.CLIRunEvent, error) {
 	t.Helper()
 	args := []string{
 		api.CLIRunDraftReplyCommand, strconv.FormatInt(f.parentID, 10),
@@ -184,7 +196,7 @@ func (f gmailDraftTestFixture) create(t *testing.T, body string, asJSON bool) ([
 		args = append(args, "--json")
 	}
 	var events []api.CLIRunEvent
-	err := f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+	err := f.adapter.runCLIReplyDraft(ctx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
 		events = append(events, event)
 		return nil
 	})
@@ -481,6 +493,36 @@ func TestGmailDraftLifecycleRefreshRunsAfterOutput(t *testing.T) {
 	}
 }
 
+func TestGmailDraftCreateOutputsReceiptBeforeCacheRefreshAfterCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	var events []api.CLIRunEvent
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fixture.adapter.draftCacheRefresh = func(refreshCtx context.Context, _ string) error {
+		assert.Len(events, 1)
+		assert.ErrorIs(ctx.Err(), context.Canceled)
+		assert.NoError(refreshCtx.Err())
+		return nil
+	}
+	args := []string{
+		api.CLIRunDraftReplyCommand, strconv.FormatInt(fixture.parentID, 10),
+		"--from", fixture.source.Identifier, "--body", "created after cancellation", "--json",
+	}
+	err := fixture.adapter.runCLIReplyDraft(ctx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		cancel()
+		return nil
+	})
+	require.NoError(err)
+	require.Len(events, 1)
+	var output gmailDraftReplyOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	assert.Equal(gmailDraftStatusCreated, output.Status)
+	assert.Equal("gmail-draft-created", output.GmailDraftID)
+}
+
 func (f gmailDraftTestFixture) lifecycleContext(ctx context.Context, operation string, draft store.GmailDraft, body string, asJSON bool) ([]api.CLIRunEvent, error) {
 	args := []string{operation, draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10)}
 	if operation == api.CLIRunDraftEditCommand {
@@ -551,7 +593,7 @@ func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenPublicationFails(t *tes
 func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenOutcomeRecordFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	fixture := newGmailDraftTestFixture(t)
+	fixture := newSQLiteGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t, "original")
 	_, err := fixture.store.DB().Exec(`
 		CREATE TRIGGER fail_gmail_draft_outcome

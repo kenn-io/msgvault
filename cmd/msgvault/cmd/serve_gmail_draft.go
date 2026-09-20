@@ -188,12 +188,13 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 		finish(true)
 		return draftReplyError(gmailDraftStatusLocalFailed, err)
 	}
-	finish(true)
 	result.DraftID = localDraft.DraftID
 	result.Revision = localDraft.Revision
 	result.MessageID = localDraft.CurrentMessageID
-	if err := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result); err != nil {
-		return draftReplyError("output_failed", err)
+	outputErr := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result)
+	finish(true)
+	if outputErr != nil {
+		return draftReplyError("output_failed", outputErr)
 	}
 	return nil
 }
