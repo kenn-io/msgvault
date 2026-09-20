@@ -716,3 +716,19 @@ func TestDraftReplyPersistDataScopesCrossSourceConversation(t *testing.T) {
 	data := draftReplyPersistData(target, reply, store.IMAPDraftReceipt{SourceID: 2, Mailbox: "Drafts", UIDValidity: 1, UID: 4}, "draft@example.com", []int64{1, 2})
 	requirements.Equal("draft-reply-1-2-INBOX|9", data.Conversation.SourceConversationID)
 }
+
+func TestDraftReplyPersistDataScopesComposeConversationByUIDValidity(t *testing.T) {
+	requirements := require.New(t)
+	parentRaw := []byte("From: sender@example.com\r\nMessage-ID: <parent@example.com>\r\nSubject: Imported\r\n\r\nold\r\n")
+	reply, err := imaplib.BuildReply(parentRaw, "owner@example.com", "compose", time.Now(), "draft@example.com")
+	requirements.NoError(err)
+	target := draftReplyTarget{source: &store.Source{ID: 2}}
+	first := draftReplyPersistData(target, reply, store.IMAPDraftReceipt{SourceID: 2, Mailbox: "Drafts", UIDValidity: 1, UID: 4}, "draft@example.com", []int64{1, 2})
+	second := draftReplyPersistData(target, reply, store.IMAPDraftReceipt{SourceID: 2, Mailbox: "Drafts", UIDValidity: 2, UID: 4}, "draft@example.com", []int64{1, 2})
+
+	requirements.NotEqual(first.Conversation.SourceConversationID, second.Conversation.SourceConversationID)
+	requirements.Equal("draft-compose-2-1-Drafts|4", first.Conversation.SourceConversationID)
+	requirements.Equal("draft-compose-2-2-Drafts|4", second.Conversation.SourceConversationID)
+	requirements.Equal("Drafts|4", first.Message.SourceMessageID)
+	requirements.Equal("Drafts|4", second.Message.SourceMessageID)
+}

@@ -567,7 +567,7 @@ func draftReplyPersistData(
 			conversationKey = fmt.Sprintf("draft-reply-%d-%d-%s", target.parentSource.ID, target.source.ID, conversationKey)
 		}
 	} else {
-		conversationKey = fmt.Sprintf("draft-compose-%d-%s", receipt.SourceID, store.IMAPDraftSourceMessageID(receipt))
+		conversationKey = fmt.Sprintf("draft-compose-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
 	}
 	at := fromCount
 	fromIDs := ids[:fromCount]
