@@ -446,6 +446,45 @@ func TestGmailDraftUncertainOutcomeRecordFailureReturnsLocalPersistenceCode(t *t
 	assert.Equal(1, fixture.client.updateCalls)
 }
 
+func TestGmailDraftDeleteOutcomeRecordFailureIsRetryableAfterReinspection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newSQLiteGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	_, err := fixture.store.DB().Exec(`
+		CREATE TRIGGER fail_gmail_draft_delete_outcome
+		BEFORE UPDATE OF pending_code ON gmail_drafts
+		WHEN NEW.pending_code = 'deleted'
+		BEGIN
+			SELECT RAISE(FAIL, 'injected Gmail delete outcome failure');
+		END
+	`)
+	require.NoError(err)
+
+	events, err := fixture.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
+	require.Error(err)
+	assert.Equal("local_persistence_failed", err.Error())
+	require.Len(events, 1)
+	pending, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	require.NotNil(pending.Pending)
+	assert.Empty(pending.Pending.Code)
+	deleteCalls := fixture.client.deleteCalls
+
+	_, err = fixture.store.DB().Exec("DROP TRIGGER fail_gmail_draft_delete_outcome")
+	require.NoError(err)
+	fixture.client.getErr = &gmail.NotFoundError{Path: "/drafts/gmail-draft-managed"}
+	events, err = fixture.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Equal(deleteCalls, fixture.client.deleteCalls)
+
+	finished, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.NotNil(finished.DiscardedAt)
+	assert.Nil(finished.Pending)
+}
+
 func TestGmailDraftExternalAdoptionReturnsFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

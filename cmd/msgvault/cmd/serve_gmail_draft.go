@@ -789,6 +789,76 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
 }
 
+func (a *storeAPIAdapter) retryGmailDraftDeleteWithUnknownOutcome(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	draft store.GmailDraft,
+	emit func(api.CLIRunEvent) error,
+) error {
+	source, err := a.loadManagedGmailDraftSource(ctx, draft)
+	if err != nil {
+		return err
+	}
+	if err := gmailDraftScopeGate(source, oauth.ScopesGmailDraftWrite); err != nil {
+		return err
+	}
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
+	execution, err := a.store.AcquireSyncExecutionContext(evidenceCtx, source.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrSyncAlreadyActive) {
+			return draftReplyError("sync_active", err)
+		}
+		return draftReplyError("sync_lock_failed", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = execution.Release()
+		}
+	}()
+	finish := func() {
+		if released {
+			return
+		}
+		released = true
+		if err := execution.Release(); err != nil {
+			logger.Error("release source after Gmail draft outcome recovery", "source_id", source.ID, "error", err)
+		}
+	}
+	refresh := func() {
+		refreshCtx, cancelRefresh := localDraftEvidenceContext(ctx)
+		defer cancelRefresh()
+		a.refreshDraftCache(refreshCtx, source)
+	}
+	clientFactory := a.gmailDraftClientFactory
+	if clientFactory == nil {
+		clientFactory = defaultGmailDraftClientFactory
+	}
+	client, err := clientFactory(evidenceCtx, source)
+	if err != nil {
+		return draftReplyError("invalid_source", err)
+	}
+	defer func() { _ = client.Close() }()
+	observed, err := client.GetDraft(evidenceCtx, draft.CurrentReceipt.GmailDraftID)
+	if err != nil {
+		if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
+			return a.completeGmailDraftDelete(ctx, intent, draft, gmailDraftAbsentOutcome, finish, refresh, emit)
+		}
+		return draftReplyError(gmailReadErrorCode(err), err)
+	}
+	observation := &gmailDraftLifecycleObservation{
+		State:          "present",
+		Code:           "pending_confirmation",
+		GmailDraftID:   observed.ID,
+		GmailMessageID: observed.Message.ID,
+		ThreadID:       observed.Message.ThreadID,
+		Present:        true,
+	}
+	a.emitGmailDraftPending(evidenceCtx, intent, draft, observation, observation.Code, emit)
+	return draftReplyError("pending_operation", store.ErrGmailDraftPending)
+}
+
 func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	ctx context.Context,
 	intent draftLifecycleIntent,
@@ -816,9 +886,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		return draftReplyError("draft_discarded", errors.New("discarded drafts cannot be edited"))
 	}
 	if draft.Pending != nil {
-		if intent.Operation != api.CLIRunDraftDeleteCommand ||
-			!gmailDraftDeleteOutcomeIsConfirmed(draft.Pending.Code) ||
-			draft.Pending.Operation != store.GmailDraftOperationDelete {
+		if intent.Operation != api.CLIRunDraftDeleteCommand || draft.Pending.Operation != store.GmailDraftOperationDelete {
+			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
+		}
+		if draft.Pending.Code == "" {
+			return a.retryGmailDraftDeleteWithUnknownOutcome(ctx, intent, draft, emit)
+		}
+		if !gmailDraftDeleteOutcomeIsConfirmed(draft.Pending.Code) {
 			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
 		}
 		return a.retryConfirmedGmailDraftDelete(ctx, intent, draft, emit)
