@@ -668,6 +668,13 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
 | `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
+If a Web UI query runs out of memory or temporary disk space, its error names
+the query-limit settings above. Try filters that narrow the results. On the
+machine running msgvault, check available memory and free disk space before
+raising these limits in `config.toml`. Restart the daemon to apply the change,
+then retry the query. The limits cap resource use; they do not reserve memory
+or disk space. Cache builds have separate `builder_*` limits.
+
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
 usable cache is ready; if the cache cannot be built or opened, `msgvault serve`

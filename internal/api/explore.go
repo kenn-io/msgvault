@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/duckdb/duckdb-go/v2"
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -1948,7 +1949,15 @@ func (s *Server) writeExploreError(ctx context.Context, w http.ResponseWriter, e
 		return
 	}
 	s.logger.Error("exploration failed", "error", err)
-	writeError(w, http.StatusInternalServerError, "explore_failed", "Couldn't load results")
+	if resourceErr, ok := errors.AsType[*duckdb.Error](err); ok && resourceErr.Type == duckdb.ErrorTypeOutOfMemory {
+		writeError(w, http.StatusServiceUnavailable, "query_resource_exhausted",
+			"This query ran out of memory or temporary disk space. Try narrowing the results with filters. "+
+				"The person running msgvault can check available resources and increase analytics.query_memory_limit "+
+				"or analytics.query_temp_limit in config.toml, then restart the server.")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "explore_failed",
+		"Couldn't load results. Try again. If this keeps happening, ask the person running msgvault to check the server logs.")
 }
 
 type ExploreCacheUnavailableResponse struct {

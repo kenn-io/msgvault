@@ -80,6 +80,28 @@ test('compact workspace links preserve browser navigation and reopen the selecte
   await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
 });
 
+test('query failures explain recovery in Everything and Files', async ({ page }) => {
+  const failure = {
+    error: 'query_resource_exhausted',
+    message: 'This query ran out of memory or temporary disk space. Try narrowing the results with filters. ' +
+      'The person running msgvault can check available resources and increase analytics.query_memory_limit ' +
+      'or analytics.query_temp_limit in config.toml, then restart the server.',
+  };
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ status: 503, json: failure }));
+  const failFiles = (route: import('@playwright/test').Route) => route.fulfill({ status: 503, json: failure });
+  await page.route('**/api/v1/files/search', failFiles);
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('analytics.query_memory_limit');
+  await expect(page.getByRole('alert')).toContainText('restart the server');
+
+  await selectKitTopBarTab(page, 'Files');
+  await expect(page.getByRole('alert')).toContainText('analytics.query_temp_limit');
+  await expect(page.getByText('0 files', { exact: true })).toHaveCount(0);
+  await page.unroute('**/api/v1/files/search', failFiles);
+  await page.getByRole('button', { name: 'Retry request' }).click();
+  await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
+});
+
 test('one registry drives selection, searchable help, palette, and editable suspension', async ({ page }) => {
   const grid = page.getByRole('grid', { name: 'Everything results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
