@@ -62,6 +62,7 @@ type draftLifecycleOutput struct {
 	CandidateContent     string                     `json:"candidate_content,omitempty"`
 	PendingOperation     string                     `json:"pending_operation,omitempty"`
 	PendingCode          string                     `json:"pending_code,omitempty"`
+	RefusalCode          string                     `json:"refusal_code,omitempty"`
 	PendingReceipt       *draftLifecycleReceipt     `json:"pending_receipt,omitempty"`
 	ProviderObservation  *draftLifecycleObservation `json:"provider_observation,omitempty"`
 	Observation          *draftLifecycleObservation `json:"observation,omitempty"`
@@ -178,6 +179,33 @@ func draftLifecycleObservationCode(observation imaplib.DraftObservation, fallbac
 	return fallback
 }
 
+func draftLifecycleMetadata(
+	draft store.IMAPDraft,
+	status string,
+	providerObservation *draftLifecycleObservation,
+	observation *draftLifecycleObservation,
+) draftLifecycleOutput {
+	lifecycle := draftLifecycleActive
+	if draft.DiscardedAt != nil {
+		lifecycle = "discarded"
+	}
+	output := draftLifecycleOutput{
+		Status: status, DraftID: draft.DraftID, Revision: draft.Revision,
+		Lifecycle: lifecycle, MessageID: draft.CurrentMessageID,
+		SourceID: draft.SourceID, Receipt: draftLifecycleReceiptOutput(draft.CurrentReceipt),
+		ProviderObservation: providerObservation, Observation: observation,
+	}
+	if draft.Pending != nil {
+		output.PendingOperation = draft.Pending.Operation
+		output.PendingCode = draft.Pending.Code
+		if draft.Pending.ReplacementReceipt != nil {
+			receipt := draftLifecycleReceiptOutput(*draft.Pending.ReplacementReceipt)
+			output.PendingReceipt = &receipt
+		}
+	}
+	return output
+}
+
 func (a *storeAPIAdapter) draftLifecycleOutput(
 	ctx context.Context,
 	draft store.IMAPDraft,
@@ -193,27 +221,11 @@ func (a *storeAPIAdapter) draftLifecycleOutput(
 	if err != nil {
 		return draftLifecycleOutput{}, fmt.Errorf("load managed draft MIME: %w", err)
 	}
-	lifecycle := draftLifecycleActive
-	if draft.DiscardedAt != nil {
-		lifecycle = "discarded"
-	}
-	output := draftLifecycleOutput{
-		Status: status, DraftID: draft.DraftID, Revision: draft.Revision,
-		Lifecycle: lifecycle, MessageID: draft.CurrentMessageID,
-		SourceID: draft.SourceID, Receipt: draftLifecycleReceiptOutput(draft.CurrentReceipt),
-		Content: message.BodyText, RawMIME: string(raw),
-		ProviderObservation: providerObservation, Observation: observation,
-	}
+	output := draftLifecycleMetadata(draft, status, providerObservation, observation)
+	output.Content = message.BodyText
+	output.RawMIME = string(raw)
 	if draft.Pending != nil {
-		output.PendingOperation = draft.Pending.Operation
-		output.PendingCode = draft.Pending.Code
-		if len(draft.Pending.Raw) > 0 {
-			output.CandidateContent = string(draft.Pending.Raw)
-		}
-		if draft.Pending.ReplacementReceipt != nil {
-			receipt := draftLifecycleReceiptOutput(*draft.Pending.ReplacementReceipt)
-			output.PendingReceipt = &receipt
-		}
+		output.CandidateContent = string(draft.Pending.Raw)
 	}
 	return output, nil
 }
@@ -226,16 +238,10 @@ func (a *storeAPIAdapter) draftRecoveryOutput(
 	observation *draftLifecycleObservation,
 	grant *agentgrant.Grant,
 ) (draftLifecycleOutput, error) {
-	output, err := a.draftLifecycleOutput(ctx, draft, status, providerObservation, observation)
-	if err != nil {
-		return draftLifecycleOutput{}, err
-	}
 	if grant != nil {
-		output.Content = ""
-		output.RawMIME = ""
-		output.CandidateContent = ""
+		return draftLifecycleMetadata(draft, status, providerObservation, observation), nil
 	}
-	return output, nil
+	return a.draftLifecycleOutput(ctx, draft, status, providerObservation, observation)
 }
 
 func emitDraftLifecycleOutput(
@@ -283,6 +289,9 @@ func emitDraftLifecycleOutput(
 	if output.Observation != nil && output.Status == "pending" {
 		fmt.Fprintf(&data, "old provider receipt: %s\n",
 			textutil.SanitizeTerminal(formatDraftLifecycleObservationReceipt(*output.Observation)))
+	}
+	if output.RefusalCode != "" {
+		fmt.Fprintf(&data, "recovery refusal: %s\n", textutil.SanitizeTerminal(output.RefusalCode))
 	}
 	providerOutcome := output.PendingCode
 	if providerOutcome == "" {
@@ -686,26 +695,10 @@ func (a *storeAPIAdapter) emitDraftLifecyclePending(
 	}
 	output, err := a.draftRecoveryOutput(ctx, draft, "pending", providerObservation, draftLifecycleObservationOutput(observation), grant)
 	if err != nil {
-		output = draftLifecycleOutput{
-			Status: "pending", DraftID: draft.DraftID, Revision: draft.Revision, Lifecycle: draftLifecycleActive,
-			MessageID: draft.CurrentMessageID, SourceID: draft.SourceID, Receipt: draftLifecycleReceiptOutput(draft.CurrentReceipt),
-			ProviderObservation: providerObservation, Observation: draftLifecycleObservationOutput(observation),
+		output = draftLifecycleMetadata(draft, "pending", providerObservation, draftLifecycleObservationOutput(observation))
+		if grant == nil && draft.Pending != nil {
+			output.CandidateContent = string(draft.Pending.Raw)
 		}
-		if draft.Pending != nil {
-			output.PendingOperation = draft.Pending.Operation
-			if grant == nil {
-				output.CandidateContent = string(draft.Pending.Raw)
-			}
-			if draft.Pending.ReplacementReceipt != nil {
-				receipt := draftLifecycleReceiptOutput(*draft.Pending.ReplacementReceipt)
-				output.PendingReceipt = &receipt
-			}
-		}
-	}
-	if observation.Code != "" {
-		output.PendingCode = observation.Code
-	} else if output.PendingCode == "" {
-		output.PendingCode = "cleanup_incomplete"
 	}
 	output.ManualReconciliation = true
 	_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
@@ -802,6 +795,7 @@ func draftProviderReceipt(receipt store.IMAPDraftReceipt) imaplib.DraftReceipt {
 
 func (a *storeAPIAdapter) authorizeDraftRecovery(
 	ctx context.Context,
+	intent draftLifecycleIntent,
 	draft store.IMAPDraft,
 	grant *agentgrant.Grant,
 ) (*store.Source, error) {
@@ -821,6 +815,12 @@ func (a *storeAPIAdapter) authorizeDraftRecovery(
 		if !grant.Allows(permission, ref) {
 			return nil, draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 		}
+	}
+	if draft.Revision != intent.Revision {
+		return nil, draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
+	}
+	if err := a.validateManagedDraftSource(draft, source); err != nil {
+		return nil, err
 	}
 	return source, nil
 }
@@ -843,7 +843,7 @@ func (a *storeAPIAdapter) settleDraftRecovery(
 		if err != nil {
 			return true, draftReplyError("draft_read_failed", err)
 		}
-		output.PendingCode = "unknown_replacement"
+		output.RefusalCode = "unknown_replacement"
 		output.ManualReconciliation = true
 		if err := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); err != nil {
 			return true, draftReplyError("output_failed", err)
@@ -876,13 +876,16 @@ func (a *storeAPIAdapter) refuseDraftRecovery(
 	if observation != nil {
 		providerObservation = draftLifecycleObservationOutput(*observation)
 	}
-	output, outputErr := a.draftRecoveryOutput(ctx, draft, "refused", providerObservation, nil, grant)
-	if outputErr == nil {
-		output.PendingCode = code
-		output.ManualReconciliation = true
-		if emitErr := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); emitErr != nil {
-			return draftReplyError("output_failed", emitErr)
-		}
+	evidenceCtx, cancel := localDraftEvidenceContext(ctx)
+	defer cancel()
+	output, outputErr := a.draftRecoveryOutput(evidenceCtx, draft, "refused", providerObservation, nil, grant)
+	if outputErr != nil {
+		return draftReplyError("draft_read_failed", errors.Join(cause, outputErr))
+	}
+	output.RefusalCode = code
+	output.ManualReconciliation = true
+	if emitErr := emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); emitErr != nil {
+		return draftReplyError("output_failed", errors.Join(cause, emitErr))
 	}
 	if cause == nil {
 		cause = errors.New("provider refused draft recovery")
@@ -925,17 +928,8 @@ func (a *storeAPIAdapter) runDraftRecover(
 	grant *agentgrant.Grant,
 	emit func(api.CLIRunEvent) error,
 ) error {
-	if grant == nil && draft.Revision != intent.Revision {
-		return draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
-	}
-	source, err := a.authorizeDraftRecovery(ctx, draft, grant)
+	source, err := a.authorizeDraftRecovery(ctx, intent, draft, grant)
 	if err != nil {
-		return err
-	}
-	if draft.Revision != intent.Revision {
-		return draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
-	}
-	if err := a.validateManagedDraftSource(draft, source); err != nil {
 		return err
 	}
 	settled, err := a.settleDraftRecovery(ctx, intent, draft, grant, emit)
@@ -960,19 +954,13 @@ func (a *storeAPIAdapter) runDraftRecover(
 
 	draft, err = a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
+		if grant != nil {
+			return draftReplyNotPermitted(err)
+		}
 		return draftReplyError("draft_not_found", err)
 	}
-	if grant == nil && draft.Revision != intent.Revision {
-		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
-	}
-	source, err = a.authorizeDraftRecovery(ctx, draft, grant)
+	source, err = a.authorizeDraftRecovery(ctx, intent, draft, grant)
 	if err != nil {
-		return err
-	}
-	if draft.Revision != intent.Revision {
-		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
-	}
-	if err := a.validateManagedDraftSource(draft, source); err != nil {
 		return err
 	}
 	settled, err = a.settleDraftRecovery(ctx, intent, draft, grant, emit)
@@ -1064,27 +1052,6 @@ func (a *storeAPIAdapter) runDraftRecover(
 
 	cleanupObservation := originalObservation
 	if originalObservation.Present {
-		if draft.Pending.Operation == store.IMAPDraftOperationEdit {
-			replacementObservation, replacementErr := client.InspectDraft(ctx, draftProviderReceipt(*draft.Pending.ReplacementReceipt))
-			if replacementErr != nil || !replacementObservation.Present || !replacementObservation.Draft || replacementObservation.Deleted {
-				code := draftLifecycleObservationCode(replacementObservation, "provider_refused")
-				if replacementErr == nil {
-					switch {
-					case !replacementObservation.Present:
-						code = "absent"
-					case replacementObservation.Deleted:
-						code = "already_deleted"
-					case !replacementObservation.Draft:
-						code = "not_draft"
-					}
-					replacementErr = errors.New("recorded replacement is unavailable for cleanup")
-				}
-				evidenceCtx, cancel := localDraftEvidenceContext(ctx)
-				defer cancel()
-				a.emitDraftLifecyclePending(evidenceCtx, intent, draft, grant, nil, replacementObservation, emit)
-				return draftReplyError(code, replacementErr)
-			}
-		}
 		cleanupObservation, err = client.RemoveDraft(ctx, draftProviderReceipt(draft.Pending.OriginalReceipt))
 		if err != nil || !cleanupObservation.Complete {
 			code := draftLifecycleObservationCode(cleanupObservation, "cleanup_incomplete")

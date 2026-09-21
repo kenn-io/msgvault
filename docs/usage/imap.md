@@ -322,19 +322,34 @@ absence and finishes the Store transition locally. A known unpublished
 replacement is published from its saved bytes, then the original is removed
 with the existing conditional `UID STORE` and `UID EXPUNGE` sequence. Recovery
 never searches a mailbox, adopts a moved copy, calls APPEND, or rolls back a
-publication.
+publication. Once a replacement is published locally, cleanup of the original
+can finish even if another client has since sent or deleted the replacement.
+Only an unpublished replacement must still be a live draft.
 
 `draft.edit` authorizes active and pending edits. `draft.delete` authorizes
 discarded and pending deletes. A delegated token must also name the exact source
 type and identifier. Wrong actions, sources, or revisions return before draft
 content, policy errors, locks, or provider work are disclosed.
 
-The replacement observation only gates the next cleanup step. Another client
-can change that replacement between observation and removal because IMAP has no
-transaction spanning both copies. If cleanup fails after publication, the new
-revision and pending evidence remain for another recovery attempt. A generation
-or SELECT refusal before `UID STORE` leaves the pending code, receipts,
-timestamp, and revision unchanged.
+If the original already has `\Deleted`, recovery returns `already_deleted`
+without a provider write. This includes removal interrupted after `UID STORE`
+succeeded. Repeating recovery cannot clear that state: use an IMAP client to
+expunge the exact original UID in the recorded mailbox and UIDVALIDITY, then run
+`draft-recover` with the revision from the recovery output or `draft-get`.
+Recovery may have published a replacement locally and advanced the revision
+before cleanup was refused. For a published edit, remove the original
+copy, not the replacement. Check the receipt before expunging; do not purge all
+deleted messages in the mailbox. Saved cancellation evidence does not establish
+who set the flag, so automatic removal of an already-deleted UID is outside this
+command's scope.
+
+If cleanup fails after publication, the new revision and pending evidence stay
+saved. Recovery can retry when the original is still an undeleted draft or is
+confirmed absent; an already-deleted original needs the manual step above.
+A generation or SELECT refusal before `UID STORE` leaves the pending code,
+receipts, timestamp, and revision unchanged. Output keeps the saved
+`pending_code`. Refused results use `refusal_code`; pending cleanup results use
+`observation.code` for the current provider result.
 
 ### If an edit or delete does not finish
 

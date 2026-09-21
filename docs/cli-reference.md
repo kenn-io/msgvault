@@ -48,7 +48,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
-4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` is available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
+4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` and `draft-recover` are available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
@@ -190,7 +190,13 @@ provider draft and retains its archived content. These commands never send mail.
 Recovery resumes a pending operation from recorded receipts. It can publish a
 known replacement or finish confirmed removal without APPEND. Delegated
 recovery requires `draft.edit` for an edit or active repeat and `draft.delete`
-for a delete or discarded repeat, scoped to the source in the grant. See
+for a delete or discarded repeat, scoped to the source in the grant. An active
+draft with no pending operation requires `draft.edit`, including after a delete
+was aborted before writing. `draft-get`, `draft-edit`, and `draft-delete` remain
+owner-only; delegated edit and delete commands are outside this release's scope.
+Recovery output keeps the saved `pending_code`. Refused results use
+`refusal_code`; pending cleanup results describe the current provider result in
+`observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
 provider checks, retention, and recovery limits.
 
@@ -2991,7 +2997,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permission names to grant; accepted values: `draft.create`, `draft.edit`, `draft.delete` |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 
 The grant is valid until revoked or until the daemon restarts.

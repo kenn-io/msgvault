@@ -807,7 +807,6 @@ func TestDraftLifecycleCleanupOutcomeEvidence(t *testing.T) {
 				requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
 				assertions.Equal("pending", output.Status)
 				assertions.True(output.ManualReconciliation)
-				assertions.Equal("store_conflict", output.PendingCode)
 				requirements.NotNil(output.Observation)
 				assertions.Equal("store_conflict", output.Observation.Code)
 				assertions.Equal(uint32(1), output.Observation.UID)
@@ -819,6 +818,7 @@ func TestDraftLifecycleCleanupOutcomeEvidence(t *testing.T) {
 				latest, loadErr := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 				requirements.NoError(loadErr)
 				requirements.NotNil(latest.Pending)
+				assertions.Equal(latest.Pending.Code, output.PendingCode)
 				assertions.Equal(latest.Revision, output.Revision)
 				if fault != "none" {
 					assertions.Equal("local_persistence_failed", err.Error())

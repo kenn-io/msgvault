@@ -334,9 +334,8 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // requestGateEligible reports whether the request should participate in the
 // operation gate. Owner, session, and loopback requests register as waiters or
 // holders on any gated route. Delegated callers reach this predicate only on
-// /api/v1/cli/run; cliRunGateDecision further restricts gate entry to the one
-// command the caller may reach (draft-reply), so any other body skips the gate
-// and the handler issues the rejection. All other gated routes reject delegated
+// /api/v1/cli/run; cliRunGateDecision further restricts gate entry to draft-reply
+// and draft-recover. Other bodies skip the gate and the handler rejects them. All other gated routes reject delegated
 // callers at the auth layer without touching gate state.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
 // reach the API auth layer without touching gate state.
