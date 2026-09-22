@@ -1,12 +1,18 @@
 package importer
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
+	pstlib "github.com/mooijtech/go-pst/v6/pkg"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pstreader "go.kenn.io/msgvault/internal/pst"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -39,8 +45,66 @@ func TestImportPst_SupportPST(t *testing.T) {
 	assert.Equal(int64(17), summary.MessagesProcessed, "MessagesProcessed")
 	assert.Equal(int64(17), summary.MessagesAdded, "MessagesAdded")
 	assert.Equal(int64(0), summary.MessagesSkipped, "MessagesSkipped on first import")
+	assert.Equal(int64(0), summary.Errors, "Errors")
 	assert.False(summary.HardErrors, "HardErrors")
 	assert.Positive(summary.FoldersImported, "FoldersImported")
+}
+
+func countEmptyAttachmentTables(t *testing.T, path string) int {
+	t.Helper()
+	require := require.New(t)
+
+	pst, err := pstreader.Open(path)
+	require.NoError(err, "open PST")
+	t.Cleanup(func() {
+		require.NoError(pst.Close(), "close PST")
+	})
+
+	count := 0
+	require.NoError(pst.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
+		msgIter, err := folder.GetMessageIterator()
+		if err != nil {
+			return nil //nolint:nilerr // skip folders whose message iterator cannot be read
+		}
+		for msgIter.Next() {
+			msg := msgIter.Value()
+			if pstreader.ExtractMessage(msg, entry.Path) == nil {
+				continue
+			}
+			_, err := msg.GetAttachmentIterator()
+			if errors.Is(err, pstlib.ErrTableContextNoRows) {
+				count++
+			}
+		}
+		return nil
+	}), "walk folders")
+
+	return count
+}
+
+// TestImportPst_EmptyAttachmentTableArchive imports a real PST containing a
+// message flagged with attachments whose attachment table has no rows. Set
+// MSGVAULT_TEST_PST_EMPTY_ATTACHMENT_TABLE to its path to run it.
+func TestImportPst_EmptyAttachmentTableArchive(t *testing.T) {
+	pstPath := os.Getenv("MSGVAULT_TEST_PST_EMPTY_ATTACHMENT_TABLE")
+	if pstPath == "" {
+		t.Skip("set MSGVAULT_TEST_PST_EMPTY_ATTACHMENT_TABLE to a PST containing an empty attachment table")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	require.Positive(countEmptyAttachmentTables(t, pstPath), "archive has no empty attachment table")
+
+	var logs bytes.Buffer
+	st := openIntegrationStore(t)
+	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+		Identifier: "user@example.com",
+		NoResume:   true,
+		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	require.NoError(err, "ImportPst")
+	assert.NotContains(logs.String(), "read attachments failed")
+	assert.Positive(summary.MessagesProcessed, "MessagesProcessed")
+	assert.False(summary.HardErrors, "HardErrors")
 }
 
 // TestImportPst_SupportPST_Idempotent verifies that re-importing the same PST

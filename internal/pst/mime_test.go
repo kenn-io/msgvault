@@ -2,13 +2,83 @@ package pst
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	pstlib "github.com/mooijtech/go-pst/v6/pkg"
+	"github.com/rotisserie/eris"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func goPSTIteratorErr(cause error) error {
+	err := eris.Wrap(cause, "failed to get attachment table context")
+	err = eris.Wrap(err, "failed to get attachment table context")
+	return eris.Wrap(err, "failed to get attachment count")
+}
+
+func TestNoAttachments(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "empty attachment table",
+			err:  goPSTIteratorErr(pstlib.ErrTableContextNoRows),
+			want: true,
+		},
+		{
+			name: "empty attachment table rewrapped",
+			err:  fmt.Errorf("get attachment iterator: %w", goPSTIteratorErr(pstlib.ErrTableContextNoRows)),
+			want: true,
+		},
+		{
+			name: "attachment flag unset",
+			err:  pstlib.ErrAttachmentsNotFound,
+			want: true,
+		},
+		{
+			name: "same text without sentinel",
+			err:  goPSTIteratorErr(errors.New("go-pst: there are no rows in this table context")),
+			want: false,
+		},
+		{
+			name: "table without columns",
+			err:  goPSTIteratorErr(pstlib.ErrTableContextNoColumns),
+			want: false,
+		},
+		{
+			name: "missing local descriptor",
+			err:  goPSTIteratorErr(eris.Wrap(pstlib.ErrLocalDescriptorNotFound, "failed to find attachment local descriptor")),
+			want: false,
+		},
+		{
+			name: "invalid attachment index",
+			err:  goPSTIteratorErr(pstlib.ErrAttachmentIndexInvalid),
+			want: false,
+		},
+		{
+			name: "size cap",
+			err:  errAttachmentTooLarge,
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, noAttachments(tt.err))
+		})
+	}
+}
 
 func TestWindowsFiletimeToTime(t *testing.T) {
 	tests := []struct {

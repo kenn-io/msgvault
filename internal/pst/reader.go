@@ -236,12 +236,21 @@ func (lw *limitWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// noAttachments reports whether err from GetAttachmentIterator means the
+// message has no attachments to read: either its has-attachments flag is
+// unset, or the flag is set but its attachment table has no rows.
+func noAttachments(err error) bool {
+	return eris.Is(err, pstlib.ErrAttachmentsNotFound) ||
+		eris.Is(err, pstlib.ErrTableContextNoRows)
+}
+
 // ReadAttachments reads all attachments from a pstlib.Message into memory.
-// Returns an empty slice (not an error) when there are no attachments.
+// Returns an empty slice (not an error) when there are no attachments,
+// including a message flagged with attachments whose table has no rows.
 // Individual attachment read errors are returned as a non-nil error.
 func ReadAttachments(msg *pstlib.Message, maxBytes int64) ([]AttachmentEntry, error) {
 	iter, err := msg.GetAttachmentIterator()
-	if eris.Is(err, pstlib.ErrAttachmentsNotFound) {
+	if noAttachments(err) {
 		return nil, nil
 	}
 	if err != nil {
