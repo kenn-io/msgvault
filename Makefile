@@ -461,13 +461,18 @@ docs-assets-branch:
 docs-generated-assets-branch:
 	bash docs/screenshots/update-generated-assets-branch.sh
 
+# Build locally so the sibling website/ directory is available to both deploys.
 # Deploy docs to Vercel staging
 docs-deploy-staging:
-	cd docs && vercel
+	cd docs && vercel pull --yes --environment=preview
+	cd docs && vercel build
+	cd docs && vercel deploy --prebuilt
 
 # Deploy docs to Vercel production
 docs-deploy:
-	cd docs && vercel --prod
+	cd docs && vercel pull --yes --environment=production
+	cd docs && vercel build --prod
+	cd docs && vercel deploy --prebuilt --prod
 
 # Build the MIME shootout tool
 shootout:

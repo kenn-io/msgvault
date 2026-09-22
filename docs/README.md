@@ -66,6 +66,12 @@ and copies the static marketing site to `/`. `make docs-check` runs source
 validation, builds that actual layout, and checks the output and redirects.
 Use `make docs-serve` to inspect it at `http://127.0.0.1:8000`.
 
+Deploy with `make docs-deploy-staging` for a Vercel preview or
+`make docs-deploy` for production. Both targets pull the matching Vercel
+environment, build locally with access to `docs/` and `website/`, and upload
+the built site. Running `vercel` directly from `docs/` uploads only that
+directory, so the remote build cannot find the sibling `website/` sources.
+
 Check a representative rendered page after changing structure, navigation,
 tables, diagrams, or HTML. Inspect links, headings, and mobile line wrapping.
 For prose changes, run the existing docs checks; do not add tests that search
