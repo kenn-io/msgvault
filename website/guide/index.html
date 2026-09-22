@@ -99,7 +99,8 @@
       <header class="hero compact">
         <p class="eyebrow">Lifecycle guide</p>
         <h1>The archive lifecycle</h1>
-        <p class="lede">One archive moves through nine stages. Source access and media policies determine what is captured. Optional hosted processing sends selected data to the providers you configure.</p>
+        <p class="lede">Follow your archive from first capture to long-term ownership. Source access and media policies determine what is captured. Optional hosted processing sends selected data to the providers you configure.</p>
+        <p class="caption">This guide describes current main, including unreleased work. See the <a href="/docs/changelog/#unreleased">changelog</a> for release and upgrade details.</p>
         <ol class="guide-nav" aria-label="Guide stops">
           <li><a href="#capture">01 Capture</a></li>
           <li><a href="#preserve">02 Preserve</a></li>
@@ -117,8 +118,8 @@
         <li class="guide-stop" id="capture">
           <div class="guide-copy">
             <h2>Capture every channel</h2>
-            <p>Live sources sync on a schedule — Gmail, IMAP, Slack, Teams, Discord, Beeper, Google Calendar, CardDAV, meeting notes. Local exports import on demand — MBOX, Maildir, Apple Mail, PST, EML, Slackdump, WhatsApp, iMessage, Messenger, SMS backups. Interrupted syncs resume from checkpoints.</p>
-            <a href="/docs/usage/importing/">Importing local email</a>
+            <p>Choose a connected source for recurring sync or import a local export. Supported sources include email, chat, calendars, meeting notes, and contacts. Each source guide explains setup, captured history, media limits, and how interrupted work resumes.</p>
+            <a href="/docs/guides/sources/">Choose a source</a>
           </div>
           <div class="guide-media">
             <figure class="diagram">
@@ -130,7 +131,7 @@
         <li class="guide-stop guide-stop-text" id="preserve">
           <div class="guide-copy">
             <h2>Preserve the original</h2>
-            <p>Raw provider payloads are retained compressed beside the parsed record. Attachments are content-addressed by SHA-256, deduplicated, and sealed into immutable packs. Cross-account duplicates hide behind a reversible safety ladder — msgvault checks source preference, raw message evidence, and attachment completeness under defined rules.</p>
+            <p>Keep original message data alongside the records used for browsing. Downloaded attachments share storage when their contents match. They start as individual files and can be grouped into packs. Preview duplicate messages before hiding extra copies; hidden copies remain available to restore.</p>
             <a href="/docs/architecture/storage/">Data storage</a>
           </div>
           <div class="guide-media">
@@ -145,7 +146,7 @@
         <li class="guide-stop" id="resolve">
           <div class="guide-copy">
             <h2>Resolve identities into people</h2>
-            <p>Every source knows you and your contacts by different addresses and handles. Identity discovery classifies the evidence; observed people cluster from explicit archive links, never from matching display names. Nothing merges without proof.</p>
+            <p>Connect the addresses and handles that belong to the same person. msgvault groups identities using explicit links in the archive; matching display names alone do not merge people. Review suggested identity matches before accepting them.</p>
             <a href="/docs/usage/people/">People, profiles, and identities</a>
           </div>
           <div class="guide-media">
@@ -157,8 +158,8 @@
 
         <li class="guide-stop" id="curate">
           <div class="guide-copy">
-            <h2>Curate durable profiles</h2>
-            <p>Promote the people who matter into durable profiles with stable IDs and vCard UIDs. Attach typed attributes, organizations, employment history, and relationships over a fact ledger with evidence and reversible merges. Watch each relationship's activity calendar and temperature across every channel.</p>
+            <h2>Maintain saved profiles</h2>
+            <p>Save a profile to keep contact details, notes, employment, and relationships together. Inspect the evidence behind profile facts and correct them when needed. Activity calendars show when you were in contact; profile history records supported merges and reversals.</p>
             <a href="/docs/usage/people/">Curating people</a>
           </div>
           <div class="guide-media">
@@ -174,7 +175,7 @@
         <li class="guide-stop" id="understand">
           <div class="guide-copy">
             <h2>Understand with your models</h2>
-            <p>Opt in to semantic search by pointing msgvault at an embedding server you choose — local ones included. The embedded Docbank document engine extracts and indexes attachment text and images behind explicit, fail-closed consent. Search indexes can be rebuilt from the archive. Stored evidence and curated profiles remain part of the record.</p>
+            <p>Enable search by meaning with a local or hosted embedding service. Separately configure document and image processing, and approve uploads before sending attachment content to a provider. You can rebuild search indexes from the archive; stored evidence and saved profiles remain part of the record.</p>
             <a href="/docs/usage/vector-search/">Vector search</a>
           </div>
           <div class="guide-media">
@@ -187,23 +188,23 @@
         <li class="guide-stop" id="search">
           <div class="guide-copy">
             <h2>Search by word or meaning</h2>
-            <p>Full-text search with Gmail-style operators answers instantly and offline. Semantic mode finds results by meaning. Hybrid mode combines keyword and vector rankings, with explicit coverage and ranking details; msgvault never quietly substitutes one mode for another.</p>
+            <p>Find messages offline with keywords and filters such as sender, subject, and date. Semantic search finds related meanings using your configured service. Hybrid search combines both. Coverage and ranking details show which content the selected mode can find.</p>
             <a href="/docs/usage/searching/">Searching</a>
           </div>
           <div class="guide-media">
             <figure class="capture">
               <a href="/docs/assets/static/analytical-dark-comfortable-darwin.png" data-lightbox>
-                <img src="/docs/assets/static/analytical-dark-comfortable-darwin.png" alt="msgvault Everything workspace showing unified search over email, events, and files with full-text, semantic, and hybrid modes">
+                <img src="/docs/assets/static/analytical-dark-comfortable-darwin.png" alt="msgvault Everything workspace showing email rows from the public Enron fixture">
               </a>
-              <figcaption class="caption">One search over everything: email, chats, events, meetings, and files.</figcaption>
+              <figcaption class="caption">The Everything workspace browsing email in the public Enron fixture. Files has a separate attachment search.</figcaption>
             </figure>
           </div>
         </li>
 
         <li class="guide-stop" id="analyze">
           <div class="guide-copy">
-            <h2>Analyze decades in milliseconds</h2>
-            <p>A DuckDB-over-Parquet analytics cache answers aggregate questions across hundreds of thousands of messages in milliseconds: senders, domains, labels, time. Drill down from a decade to a single message in the TUI or the browser.</p>
+            <h2>Understand patterns over time</h2>
+            <p>See which people, domains, labels, and periods account for your messages and storage. Drill down from a group to individual messages in the terminal or browser. SQLite archives use a separate analytics cache so these summaries do not scan message bodies.</p>
             <a href="/docs/usage/analytics/">Analytics and stats</a>
           </div>
           <div class="guide-media">
@@ -218,8 +219,8 @@
 
         <li class="guide-stop guide-stop-text" id="act">
           <div class="guide-copy">
-            <h2>Act with a safety ladder</h2>
-            <p>Stage a deletion manifest from the CLI, browser, TUI, or MCP and review it before execution. The separate CLI execution step requires client consent. Gmail and IMAP default to moving messages to Trash; permanent deletion requires explicit opt-in. Archived content remains searchable unless you separately purge it locally.</p>
+            <h2>Review before deleting</h2>
+            <p>Select messages and create a deletion manifest: a saved list you can review before removing mail from a provider. A separate CLI command requires your consent to execute it. Gmail and IMAP move messages to Trash by default; permanent deletion needs an explicit option. Archived content remains available unless you separately purge it locally.</p>
             <a href="/docs/usage/deletion/">Deleting email</a>
           </div>
           <div class="guide-media">
@@ -235,7 +236,7 @@
         <li class="guide-stop" id="own">
           <div class="guide-copy">
             <h2>Own the whole system</h2>
-            <p>Run it on a laptop or serve it from your own NAS: the daemon carries the Web UI, HTTP API, scheduler, and MCP server in one binary. Verifiable backup snapshots restore the archive with no provider in the loop.</p>
+            <p>Run msgvault on your laptop or your own server. One binary provides the browser interface, API, scheduled work, and tools for assistants. For SQLite archives, backup snapshots include the database and attachments and restore without contacting the original providers. PostgreSQL archives require separate database backups.</p>
             <a href="/docs/usage/backup/">Backup and restore</a>
           </div>
           <div class="guide-media">

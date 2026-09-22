@@ -1,9 +1,12 @@
 ---
+last_edited: "2026-09-22"
 title: SQL Queries
-description: Run arbitrary SQL against your archived email using DuckDB.
+description: Run read-only DuckDB queries against the analytics cache.
 ---
 
-The `msgvault query` command lets you run SQL directly against your archive's Parquet analytics cache using an in-memory DuckDB engine. This gives you full SQL expressiveness for ad-hoc analysis, custom reports, and data exploration beyond what the built-in analytics commands provide.
+Use `msgvault query` for ad-hoc analysis across email, chat, calendar, and
+meeting data in the Parquet analytics cache. The daemon runs one read-only
+DuckDB statement. It rejects writes, session changes, and multiple statements.
 
 ## Basic Usage
 
@@ -145,10 +148,10 @@ msgvault query --format table "
 "
 ```
 
-Known values are `email`, `calendar_event`, `meeting_transcript`, `beeper`,
-`teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`,
-`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
-`google_voice_voicemail`.
+Known values are `email`, `google_chat`, `calendar_event`,
+`meeting_transcript`, `beeper`, `teams`, `discord`, `slack`, `sms`, `mms`,
+`rcs`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`google_voice_text`, `google_voice_call`, and `google_voice_voicemail`.
 
 ### Label statistics
 

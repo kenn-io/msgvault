@@ -8,7 +8,7 @@ const outputDir = process.env.MSGVAULT_DOCS_SCREENSHOT_OUTPUT ?? '';
 const platform = process.env.MSGVAULT_DOCS_SCREENSHOT_PLATFORM ?? 'darwin';
 
 const exploreURL = (workspace: 'everything' | 'relationships') =>
-  `/?explore=${encodeURIComponent(JSON.stringify({ workspace }))}`;
+  `/?workspace=${workspace}`;
 
 async function waitForOverview(page: import('@playwright/test').Page) {
   const grid = page.getByRole('grid', { name: 'Everything results' });
@@ -90,6 +90,16 @@ test.describe('documentation fixture capture', () => {
         await expect.poll(async () => await timeline.getByRole('row').count()).toBeGreaterThan(0);
         await expect(timeline.locator('[role="row"]').first()).toContainText(/\S/);
         await expect(page.getByLabel('Relationship activity intensity from less to more')).toBeVisible();
+        // Show activity from the fixture rather than an empty current year.
+        const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+        const year = calendar.locator('.year');
+        while (Number(await year.textContent()) > 2001) {
+          const previousYear = Number(await year.textContent()) - 1;
+          await page.getByRole('button', { name: 'Previous relationship year' }).click();
+          await expect(year).toHaveText(String(previousYear));
+        }
+        await expect(year).toHaveText('2001');
+        await expect(calendar.getByText('No interactions in 2001.')).toHaveCount(0);
         await captureEvidence(page, filename);
       }
     }

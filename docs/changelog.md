@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-22"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,8 +10,9 @@ All notable changes to msgvault, grouped by release.
 
 Since **0.19.3**, msgvault has added richer people profiles, document and image
 search, background operations, and more ways to import and maintain an archive.
-This section covers work on `main` through **September 15, 2026**. These changes
-are not included in 0.19.3; this is not a new release announcement.
+This is a working summary for the planned **0.20.0** release. Final release
+details will be added when it is cut. These changes are not included in 0.19.3;
+this is not a new release announcement.
 
 macOS analytics cache builds use the existing CSV export without the unusable
 SQLite extension download and warning.
@@ -25,7 +26,7 @@ SQLite extension download and warning.
   users need their own database backup; see
   [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.25.0**. Analytical
+  compatibility boundary; the current schema is **2.26.0**. Analytical
   `/api/v1/people/*` routes moved to `/api/v1/participants/*`. Durable profiles
   moved from `/api/v1/persons/*` to `/api/v1/people/*`. The old paths were
   removed. Clients reject incompatible daemons; authenticated `/api/v1/health`
@@ -272,9 +273,11 @@ See [sources](guides/sources.md), [imports](usage/importing.md),
   removed; local builds and installers remain available.
 - Generate the browser API client with Orval and pinned OpenAPI tools. Local
   SQLite test scheduling scales to available CPU and memory; PostgreSQL
-  configurations remain separately covered. Synthetic media examples and
-  relevance judgments prepare future retrieval evaluation; they do not add audio
-  transcription or a runnable evaluation workflow.
+  configurations remain separately covered.
+- Compare keyword, semantic, and hybrid search with `msgvault eval`, using
+  queries and relevance ratings you provide. See the [evaluation command](cli-reference.md#eval)
+  for input formats, metrics, and backend limits. Synthetic media examples do
+  not add audio transcription.
 
 See [Development](development.md) for build and check commands.
 

@@ -4,6 +4,9 @@ Follow your archive from first capture to long-term ownership. Source access
 and media policies determine what is captured. Optional hosted processing
 sends selected data to the providers you configure.
 
+This guide describes current `main`, including unreleased work. See the
+[changelog](/docs/changelog/#unreleased) for release and upgrade details.
+
 1. [Capture](#capture)
 2. [Preserve](#preserve)
 3. [Resolve](#resolve)
@@ -16,83 +19,84 @@ sends selected data to the providers you configure.
 
 ## Capture
 
-Live sources sync on a schedule — Gmail, IMAP, Slack, Teams, Discord, Beeper,
-Google Calendar, CardDAV, meeting notes. Local exports import on demand — MBOX, Maildir,
-Apple Mail, PST, EML, Slackdump, WhatsApp, iMessage, Messenger, and SMS backups.
-Interrupted syncs resume from checkpoints.
+Choose a connected source for recurring sync or import a local export.
+Supported sources include email, chat, calendars, meeting notes, and contacts.
+Each source guide explains setup, captured history, media limits, and how
+interrupted work resumes.
 
-[Importing local email](/docs/usage/importing/)
+[Choose a source](/docs/guides/sources/)
 
 ## Preserve
 
-Raw provider payloads are retained compressed beside the parsed record.
-Attachments are content-addressed by SHA-256, deduplicated, and sealed into
-immutable packs. Cross-account duplicates hide behind a reversible safety
-ladder — msgvault checks source preference, raw message evidence, and attachment
-completeness under defined rules.
+Keep original message data alongside the records used for browsing. Downloaded
+attachments share storage when their contents match. They start as individual
+files and can be grouped into packs. Preview duplicate messages before hiding
+extra copies; hidden copies remain available to restore.
 
 [Data storage](/docs/architecture/storage/)
 
 ## Resolve
 
-Every source knows you and your contacts by different addresses and handles.
-Identity discovery classifies the evidence; observed people cluster from
-explicit archive links, never from matching display names. Nothing merges
-without proof.
+Connect the addresses and handles that belong to the same person. msgvault
+groups identities using explicit links in the archive; matching display names
+alone do not merge people. Review suggested identity matches before accepting
+them.
 
 [People, profiles, and identities](/docs/usage/people/)
 
 ## Curate
 
-Promote the people who matter into durable profiles with stable IDs and vCard
-UIDs. Attach typed attributes, organizations, employment history, and
-relationships over a fact ledger with evidence and reversible merges. Watch
-each relationship's activity calendar and temperature across every channel.
+Save a profile to keep contact details, notes, employment, and relationships
+together. Inspect the evidence behind profile facts and correct them when
+needed. Activity calendars show when you were in contact; profile history
+records supported merges and reversals.
 
 [Curating people](/docs/usage/people/)
 
 ## Understand
 
-Opt in to semantic search by pointing msgvault at an embedding server you
-choose — local ones included. The embedded Docbank document engine extracts
-and indexes attachment text and images behind explicit, fail-closed consent.
-Search indexes can be rebuilt from the archive. Stored evidence and curated
-profiles remain part of the record.
+Enable search by meaning with a local or hosted embedding service. Separately
+configure document and image processing, and approve uploads before sending
+attachment content to a provider. You can rebuild search indexes from the
+archive; stored evidence and saved profiles remain part of the record.
 
 [Vector search](/docs/usage/vector-search/)
 
 ## Search
 
-Full-text search with Gmail-style operators answers instantly and offline.
-Semantic mode finds results by meaning. Hybrid mode combines keyword and
-vector rankings, with explicit coverage and ranking details; msgvault never quietly
-substitutes one mode for another.
+Find messages offline with keywords and filters such as sender, subject, and
+date. Semantic search finds related meanings using your configured service.
+Hybrid search combines both. Coverage and ranking details show which content
+the selected mode can find.
 
 [Searching](/docs/usage/searching/)
 
 ## Analyze
 
-A DuckDB-over-Parquet analytics cache answers aggregate questions across
-hundreds of thousands of messages in milliseconds: senders, domains, labels,
-time. Drill down from a decade to a single message in the TUI or the browser.
+See which people, domains, labels, and periods account for your messages and
+storage. Drill down from a group to individual messages in the terminal or
+browser. SQLite archives use a separate analytics cache so these summaries do
+not scan message bodies.
 
 [Analytics and stats](/docs/usage/analytics/)
 
 ## Act
 
-Stage a deletion manifest from the CLI, browser, TUI, or MCP and review it
-before execution. The separate CLI execution step requires client consent.
-Gmail and IMAP default to moving messages to Trash; permanent deletion requires
-explicit opt-in. Archived content remains searchable unless you separately
-purge it locally.
+Select messages and create a deletion manifest: a saved list you can review
+before removing mail from a provider. A separate CLI command requires your
+consent to execute it. Gmail and IMAP move messages to Trash by default;
+permanent deletion needs an explicit option. Archived content remains
+available unless you separately purge it locally.
 
 [Deleting email](/docs/usage/deletion/)
 
 ## Own
 
-Run it on a laptop or serve it from your own NAS: the daemon carries the Web
-UI, HTTP API, scheduler, and MCP server in one binary. Verifiable backup
-snapshots restore the archive with no provider in the loop.
+Run msgvault on your laptop or your own server. One binary provides the browser
+interface, API, scheduled work, and tools for assistants. For SQLite archives,
+backup snapshots include the database and attachments and restore without
+contacting the original providers. PostgreSQL archives require separate
+database backups.
 
 [Backup and restore](/docs/usage/backup/)
 

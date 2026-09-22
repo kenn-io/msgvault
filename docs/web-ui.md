@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-22"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -22,31 +22,6 @@ you do not need a separate web application process.
 | Did sync, enrichment, or indexing finish? | Operations and Sources |
 | What is staged for deletion? | Deletions |
 | How do I change the daemon's configuration? | Settings |
-
-<figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
-  <figcaption>Relationships ranked view and selected activity timeline.</figcaption>
-</figure>
-
-<figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
-  <figcaption>Relationships workspace in light theme with compact density.</figcaption>
-</figure>
-
-<figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
-  <figcaption>Dark theme with comfortable density.</figcaption>
-</figure>
-
-<figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
-  <figcaption>Light theme with compact density.</figcaption>
-</figure>
-
-The screenshots use a curated public Enron research-data fixture. Authentic
-names and message text are intentional; the repository's `docs-fixtures`
-branch records provenance, attribution, and the content review. Screenshots
-illustrate the workflows; newer controls may differ from these captures.
 
 ## Start and discover the URL
 
@@ -104,6 +79,16 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 
 ## Explore and search
 
+<figure class="screenshot" data-lightbox>
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Everything workspace showing archived email in light theme with compact rows" loading="lazy">
+  <figcaption>Browse archived email in Everything. Select the image to view it at full size.</figcaption>
+</figure>
+
+The screenshots use a curated public Enron research-data fixture. Authentic
+names and message text are intentional; the repository's `docs-fixtures`
+branch records provenance, attribution, and the content review. This fixture
+contains email only; it does not illustrate chat, calendar, or attachment content.
+
 Everything opens as a compact, sortable table of logical entries: one row per
 email, calendar event, meeting note, other durable item, or chat conversation.
 Raw chat fragments appear only after drilling into a conversation. Filter,
@@ -116,18 +101,18 @@ them.
 
 Search mode is always explicit:
 
-- **Full text** searches the complete lexical index.
+- **Full text** matches words in the text index.
 - **Semantic** ranks only content covered by the current embedding generation.
-- **Hybrid** combines complete lexical matching with semantic ranking where it
-  is available.
+- **Hybrid** combines keyword matches with semantic ranking where it is
+  available.
 
 The context strip reports semantic coverage. Disabled, building, stale,
 incomplete, unavailable, and ready are different states; msgvault never silently
 changes the requested mode. Semantic-only results cannot include unembedded
 content. Hybrid retains full-text coverage and labels the semantic contribution.
 
-Search execution also has explicit terminal states. **Timed out** means the
-selected search backend did not finish within the request budget; it is an
+When a search fails, the UI explains what happened and keeps your query.
+**Timed out** means the selected search backend did not finish within the request budget; it is an
 error, not an empty result, and the query and filters remain available to retry.
 **Incompatible mode** means the daemon, browser contract, or current index
 cannot safely honor the selected search mode. Update or rebuild the named
@@ -135,6 +120,13 @@ component, or deliberately select a supported mode. Msgvault does not quietly
 substitute full-text search for either state.
 
 ## Read messages
+
+Open a `/messages/<id>` link to go directly to an archived message. CLI
+`search --json` and `show-message --json` responses include a `web_url` when
+the selected daemon has an HTTP address. The link uses that daemon's address;
+the person opening it still needs access to the archive. Links to chat messages
+open a bounded part of the conversation around the selected message, with
+controls to load earlier or later messages.
 
 Click an entry in Everything to open its preview below the results. On wide
 windows, choose **Preview position → Right** to read beside the results.
@@ -152,9 +144,8 @@ applies to the open message. Light mode preserves designed email colors.
 ## Cache states
 
 The web tables share one analytical cache across message types. When it is missing,
-building, stale, or unavailable, the UI names that state instead of quietly
-switching selected modalities to a different read path. Run `msgvault
-build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
+building, stale, or unavailable, the UI names that state and offers the
+available recovery steps. Run `msgvault build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
 true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
@@ -189,6 +180,11 @@ to load an image and permission to archive remote images during ingest are
 separate choices.
 
 ## People and domains
+
+<figure class="screenshot" data-lightbox>
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Relationships workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
+  <figcaption>Select a person to explore their activity and messages.</figcaption>
+</figure>
 
 People combines identifiers backed by explicit archive identity evidence; it
 does not merge records merely because their display names match. Select a
@@ -278,7 +274,7 @@ backoff to show the run and live progress; it opens no streaming connection. If
 the accepted run never appears, the UI reports `sync_start_not_observed` rather
 than claiming success. Conflicting runs and unavailable capabilities retain
 their explicit errors or reasons. Full resync, pause/resume, schedule editing,
-and source add/remove are outside this workspace's initial scope.
+and source add/remove are not available in Sources.
 
 ## Operations
 

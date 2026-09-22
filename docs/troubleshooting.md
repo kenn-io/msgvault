@@ -236,15 +236,20 @@ If you hit Gmail API rate limits during large syncs:
 
 ## Database Corruption
 
-If the database is corrupted:
+Do not delete a corrupt database. An archive can contain local imports and
+provider-deleted messages that a new sync cannot recover.
 
-1. Back up your database: `cp ~/.msgvault/msgvault.db ~/.msgvault/msgvault.db.bak`
-2. Delete and re-sync:
-   ```bash
-   rm ~/.msgvault/msgvault.db
-   msgvault init-db
-   msgvault sync-full you@gmail.com
-   ```
+1. Stop the daemon with `msgvault daemon stop` or stop its Docker/systemd
+   service.
+2. Preserve the complete data directory, including the database, WAL and SHM
+   files, attachments, configuration, and tokens.
+3. Restore a verified snapshot into an empty directory. Follow
+   [Restoring to a New Machine](/docs/usage/backup/#restoring-to-a-new-machine);
+   the same empty-target rule applies on the original machine.
+
+If no verified backup exists, keep the damaged directory unchanged and ask for
+recovery help before initializing another archive. Re-syncing is only a
+reconstruction option when every source record is still available upstream.
 
 ## Interrupted Syncs
 
@@ -315,7 +320,10 @@ api_port = 9090
 
 ### HTTP 429 Too Many Requests
 
-The API server enforces a rate limit of 10 requests per second per client IP. If you are hitting this limit, space out your requests or check the `Retry-After` response header for the wait duration.
+The general API limit allows 10 requests per second per client IP with a burst
+of 20. Trusted, authenticated loopback requests are exempt, except session
+login. Some expensive endpoints have tighter limits. If you receive 429, space
+out requests and follow the `Retry-After` header.
 
 ## Using Logs for Troubleshooting
 

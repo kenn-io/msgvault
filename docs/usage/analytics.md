@@ -1,8 +1,11 @@
 ---
+last_edited: "2026-09-22"
 title: Analytics & Stats
 description: Archive statistics, top senders, domains, and labels.
 ---
 
+Use the built-in aggregate commands for a quick archive summary. They query the
+configured remote server when one is set; otherwise they use the local daemon.
 
 ## Stats
 
@@ -12,7 +15,14 @@ Show overall archive statistics:
 msgvault stats
 ```
 
-Displays total message count, account breakdown, date range, storage size, and attachment count.
+The output includes message, thread, attachment, label, and account counts plus
+the database size. Source-deleted messages are reported separately when any
+exist. Scope the counts to one account or collection when needed:
+
+```bash
+msgvault stats --account you@example.com
+msgvault stats --collection work
+```
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/stats.svg" alt="msgvault stats command output" loading="lazy">
 </figure>
@@ -39,7 +49,6 @@ msgvault list-labels
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
 </figure>
-These commands query the configured daemon or remote server. For interactive
-exploration, use the [Web UI](/docs/web-ui/) to combine search, filters, grouping,
-and modality-aware drill-down in a shareable URL-backed context. The
-[TUI](/docs/usage/tui/) provides a terminal-native analytical workflow.
+For interactive exploration, use the [Web UI](/docs/web-ui/) to combine search,
+filters, and grouping, then share a link to that view. Use the
+[TUI](/docs/usage/tui/) to explore the same archive from the terminal.

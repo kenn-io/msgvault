@@ -42,14 +42,14 @@ Then [follow the archive lifecycle](/guide/).
 
 ## Every channel. One archive.
 
-Twenty years of correspondence should not be scattered across a dozen walled
-gardens. msgvault syncs live sources and imports local exports into one schema,
-keeping raw payloads and content-addressed attachments intact.
+Bring history from several providers into one searchable archive. Sync connected
+accounts or import local exports. Keep original message data and downloaded
+attachments alongside the records you browse.
 
 - **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
-- **Chat** — Slack, Teams, Discord, and every network behind Beeper; WhatsApp,
-  iMessage, Messenger, and SMS imports.
+- **Chat** — Slack, Teams, Discord, and chats available through Beeper Desktop;
+  WhatsApp, iMessage, Google Voice, Messenger, and SMS imports.
 - **Meetings** — Granola, Circleback, and Notion AI Meeting Notes in the same
   searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
@@ -58,37 +58,37 @@ keeping raw payloads and content-addressed attachments intact.
 
 ## Messages come from addresses. Relationships come from people.
 
-The people layer resolves decades of addresses, handles, and phone numbers into
-the people behind them — with archive evidence and user curation kept strictly
-apart.
+Connect the addresses, handles, and phone numbers that belong to one person.
+Keep information found in the archive separate from the profile details you
+choose to save.
 
-### Observed, not guessed
+### Identity evidence
 
-Observed people are assembled from explicit archive links across sources. Equal
-display names alone never merge two people.
+msgvault groups identities using explicit links in the archive. Matching display
+names alone do not merge two people.
 
-### Durable profiles
+### Saved profiles
 
-A promoted profile gets a stable ID and vCard UID, so names, notes, and typed
-attributes survive later identity changes. Merge profiles with history and explicit reversal controls.
+Save a profile to keep names, notes, and contact details when linked identities
+change. Review profile history, merge duplicates, and reverse supported merges.
 
-### Fact ledger
+### Profile history
 
-Organizations, employment history, typed relationships, and custom attributes
-rest on immutable evidence, deterministic decisions, and per-person pins.
+Maintain organizations, employment, relationships, and custom fields. Inspect
+the evidence behind a fact and pin a correction so automated updates keep your
+choice.
 
 ### Activity
 
-An activity calendar tracks interaction with each person across email, chat,
-calendar, and meetings, year by year, including current and peak relationship
-temperature.
+See when you exchanged messages or shared events and meetings. Activity
+calendars and relationship scores help you find frequent contacts and people you
+have not heard from recently.
 
 ## Work the archive in the browser
 
-The daemon serves a dense, keyboard-driven browser application: relationships,
-a unified Everything table, files, saved views, Directory, operation history,
-source status, deletion staging, and settings. Every analytical slice is URL-addressable, so Back and
-Forward restore exact views.
+Search messages, browse files, and maintain contacts in the browser. Save a
+useful view or share its URL with someone who has access to your archive.
+Browser Back and Forward restore your browsing context.
 
 Maintain profiles, review identities and merges, publish contacts through
 CardDAV, and catch up with a saved conversation brief in **Directory**.
@@ -97,28 +97,30 @@ credentials and restart-pending changes. [Explore the workspaces](/docs/web-ui/)
 
 ## Semantic search and document understanding
 
-Keyword search reads your archive offline. Semantic search, document extraction,
-and visual search are opt-in, with explicit consent recording exactly what
-leaves your machine and where it goes.
+Keyword search reads your archive offline. Optional search by meaning sends
+message and query text to the embedding service you configure, which can run
+locally. Document, image, and profile processing have separate settings and
+consent steps.
 
-- **Hybrid search:** FTS5 with Gmail-style operators, pure semantic search,
-  or hybrid BM25-plus-vector fusion via reciprocal rank fusion, with an
-  explain mode that shows why each result ranked.
-- **Local models:** use a supported local or hosted embedding endpoint, such
-  as Ollama with an embedding model. Scope a text index to selected accounts;
-  document, image, and profile processing have separate configuration and consent.
-- **Attachments:** the embedded
-  [Docbank](https://github.com/kenn-io/docbank) document engine handles OCR
-  extraction, normalized chunks, lexical and semantic document search, and
-  visual search over images. Consent-gated and fail-closed.
+- **Hybrid search:** search with familiar filters such as sender, subject, and
+  date. Use semantic search to find related meanings, or hybrid search to
+  combine words and meaning. Ranking details explain each result.
+- **Local models:** an embedding service turns text into numbers used to compare
+  meaning. Choose a supported local or hosted service and select which accounts
+  to index.
+- **Attachments:** find text inside supported attachments or search images by
+  their content. The embedded [Docbank](https://github.com/kenn-io/docbank) engine
+  manages this processing. Review provider access and approve uploads before
+  sending attachment content.
 - **Agents:** an MCP server exposes search, people, files, and analytics
   tools to Claude Desktop and other agents; bundled agent skills install into
   Claude Code and Codex. Profile writes stay behind explicit flags.
 
 ## One archive across every surface
 
-The daemon coordinates archive access and background work. People, scripts, and
-agents work through the interface suited to the task, against the same record.
+One background service, the daemon, coordinates archive access and scheduled
+work. Use the browser, terminal, scripts, or an assistant to work with the same
+archive.
 
 - **CLI:** scriptable sync, search, and repair.
 - **Web:** analytical workspaces in the browser.
@@ -131,12 +133,13 @@ agents work through the interface suited to the task, against the same record.
 
 ## Archive everything. Then delete upstream.
 
-Once the archive is complete and verified, you can start deleting from the
-provider. Every step is explicit and reviewed, and nothing is irreversible
-until the last one.
+Back up your archive and check the messages you intend to remove before deleting
+from a provider. Review the selection, then run a separate command to move mail
+to Trash or permanently delete it.
 
-- **Verify:** integrity verification checks the archive against the mailbox
-  before you trust it with anything irreversible.
+- **Verify:** for Gmail, compare message counts and check a sample of stored
+  messages. This does not prove every message or attachment was captured.
+  Review the items you plan to delete and keep a backup.
 - **Stage:** create a deletion manifest from the CLI, Web UI, TUI, or MCP,
   then inspect it. Staging does not remove provider messages; execution is a
   separate CLI command.
@@ -147,20 +150,18 @@ until the last one.
 - **Restore:** append-only, verifiable backup snapshots cover the database and
   attachments, with restore paths that need no provider at all.
 
-## Not a mail client. Not a takeout file.
+## Keep a record beyond the provider.
 
-msgvault is a data warehouse for your communications: a system of record you
-operate, query, and extend. Not a viewport, and not cold storage.
+Choose how you use your communications history. msgvault keeps a searchable
+archive that you operate, query, and extend.
 
-- **Mail client:** the provider is the record. A client renders whatever the
-  server still holds; identity, search, and history live and die with the
-  account.
-- **Export archive:** the zip is a snapshot. A takeout captures one moment in
-  one format; it does not sync, resolve people, answer questions, or talk to
-  agents.
-- **msgvault:** the archive is the record. Providers become replaceable feeds
-  around a database you own — continuously synced, people-resolved, searchable
-  by meaning, and open to your tools.
+- **Mail client:** read, compose, and send mail. msgvault can prepare managed
+  IMAP drafts for review there; it does not send mail.
+- **Export archive:** keep a snapshot in a provider's format. Import supported
+  exports into msgvault to browse and search them alongside other sources.
+- **msgvault:** keep captured history available after it leaves the provider.
+  Sync supported accounts, connect identities, search across sources, and use
+  your own tools.
 
 ## Follow one archive through the system
 

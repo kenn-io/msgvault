@@ -1,9 +1,12 @@
 ---
+last_edited: "2026-09-22"
 title: Remote Deployment
 description: Run msgvault in Docker on a remote host and provision it from a machine with a browser.
 ---
 
-msgvault supports a remote-first workflow where you configure a remote instance using a local browser session, then deploy and sync on headless hardware. This works with any always-on host: a NAS (a good choice for RAID fault tolerance), a cloud VM, a Raspberry Pi, or any Linux server with Docker.
+Run your archive on an always-on server and use it from your own computer.
+Set up source credentials on a machine with a browser, then copy a deployment
+bundle to a Linux host with Docker, such as a NAS, cloud VM, or Raspberry Pi.
 
 The flow is built on three capabilities:
 
@@ -25,19 +28,15 @@ The flow is built on three capabilities:
 
 ## Docker Image
 
-The image is published to GitHub Container Registry:
+Choose a published image from the [container package](https://github.com/kenn-io/msgvault/pkgs/container/msgvault)
+and set its full name in your Compose file. Version tags omit the leading `v`:
+for example, release 0.19.3 uses `ghcr.io/kenn-io/msgvault:0.19.3`.
 
-```bash
-docker pull ghcr.io/kenn-io/msgvault:latest
-```
-
-| Tag | Description |
-|-----|-------------|
-| `latest` | Latest stable release from main branch |
-| `v1.2.3` | Specific version |
-| `1.2` | Latest patch of minor version |
-| `1` | Latest minor/patch of major version |
-| `sha-abc1234` | Specific commit (for debugging) |
+`latest` is not a stable-release guarantee and can refer to an older development
+snapshot. Repository-owned image publishing has been removed, so a new commit
+or release tag does not automatically update GHCR. Check that the image you
+choose contains the version you need. To deploy current source before a matching
+image is published, follow [Container builds](../development.md#container-builds).
 
 **Architectures:** `linux/amd64` (Intel/AMD NAS, standard servers) and `linux/arm64` (Raspberry Pi 4/5, newer NAS). Docker selects the correct one automatically.
 
@@ -115,6 +114,10 @@ services:
       retries: 3
       start_period: 10s
 ```
+
+The wizard currently writes `:latest` as shown above. Before deployment, change
+`image` to your chosen published version or digest. For an image built and
+loaded locally, use its local tag and remove `pull_policy: always`.
 
 ## 2) Deploy to Remote Host
 
@@ -327,10 +330,10 @@ docker exec -it msgvault msgvault tui  # Interactive TUI
 # Restart using the currently installed image
 docker-compose restart
 
-# Reconcile the service; generated bundles check for a newer latest image
+# Reconcile the service with the image configured in Compose
 docker-compose up -d
 
-# Explicitly update to the latest image
+# Pull the configured image after choosing the version to deploy
 docker-compose pull
 docker-compose up -d
 
@@ -339,9 +342,10 @@ docker-compose down
 ```
 
 `restart` does not check the registry or replace the image. Generated bundles
-set `pull_policy: always`, so `up -d` reconciles against GHCR. The explicit
-`pull` followed by `up -d` sequence remains the clearest update procedure
-across NAS Compose implementations.
+set `pull_policy: always`, so `up -d` checks the configured tag in GHCR. A
+version-pinned service stays on that version until you edit `image`. Back up
+before upgrading and keep the client and daemon versions compatible. Then use
+`pull` followed by `up -d` to deploy the selected image.
 
 Bundles generated before `pull_policy: always` was added are not rewritten
 automatically. Existing installations should either regenerate the bundle,

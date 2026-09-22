@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-22"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -12,14 +12,14 @@ in your installed binary. This reference follows current `main`; see
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings) |
+| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
-| Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments) |
+| Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
-| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## Global Flags
 
@@ -1329,6 +1329,9 @@ contain spaces. Repeating either alias requires every value to match.
 
 `--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/docs/usage/searching/) for the operator reference and [Vector Search](/docs/usage/vector-search/) for semantic setup.
 
+With `--json`, each result also includes `web_url` when the selected daemon can
+provide a browser link for that message.
+
 ---
 
 ## repair-list-ids
@@ -1464,6 +1467,30 @@ and validation contract.
 
 ---
 
+## export-discord
+
+Export a bounded interval from one Discord guild using the older
+`msgvault-discord-export/1` JSON envelope.
+
+```bash
+msgvault export-discord <guild-id-or-name> \
+  --start 2026-01-01T00:00:00Z \
+  --end 2026-02-01T00:00:00Z
+```
+
+| Flag | Description |
+|---|---|
+| `--start <RFC3339>` | Inclusive lower bound (required) |
+| `--end <RFC3339>` | Exclusive upper bound (required) |
+| `--format json` | Output format; `json` is the only supported value |
+
+This compatibility command reads only the archive and does not contact
+Discord. New integrations should use [`export-messages`](#export-messages),
+which emits the provider-neutral `msgvault-message-export/1` JSONL schema. See
+the [Discord export guide](usage/discord.md#export-a-bounded-history-window).
+
+---
+
 ## export-eml
 
 Export a message as a `.eml` file. Accepts either a numeric database ID or a Gmail message ID.
@@ -1511,6 +1538,32 @@ msgvault export-attachments <message-id> [flags]
 | `-o`, `--output <dir>` | Output directory (default: current directory) |
 
 Accepts internal numeric IDs or Gmail message IDs. See [Exporting Data](/docs/usage/exporting/) for usage examples.
+
+---
+
+## create-subset
+
+Create a new SQLite archive containing the requested number of most recent
+messages and the records they reference. The destination receives its own
+`msgvault.db` and can be opened as a separate msgvault home.
+
+```bash
+msgvault create-subset --output ./subset-vault --rows 1000
+MSGVAULT_HOME=./subset-vault msgvault tui
+```
+
+| Flag | Description |
+|---|---|
+| `-o`, `--output <directory>` | Destination directory (required) |
+| `--rows <count>` | Number of most recent messages to copy; must be positive (required) |
+| `--include-identity` | Copy complete identity clusters for included participants |
+| `--include-attributes` | Copy current and historical person and organization attribute values |
+| `--include-profiles` | Copy profiles, profile history and media, relationships, employment history, and referenced organizations |
+| `--include-vcard-resources` | Copy complete native vCards and retired UID aliases; requires `--include-profiles` |
+
+The command is SQLite-only. The optional identity, attribute, profile, and
+vCard flags can copy personal records that have no message in the subset; read
+the command's warning before sharing its output.
 
 ---
 
@@ -2155,6 +2208,21 @@ For automatic cache rebuilds after daemon-owned syncs, configure
 
 ---
 
+## activity
+
+Refresh contact activity and last-contact dates from archived messages.
+
+```bash
+msgvault activity build
+msgvault activity build --backstop
+```
+
+The normal build resumes from its watermark. `--backstop` rescans the complete
+archive. `msgvault serve` also runs this projection on the schedule configured
+under `[activity]`.
+
+---
+
 ## rebuild-fts
 
 Rebuild the SQLite FTS5 search index.
@@ -2182,6 +2250,7 @@ msgvault embeddings <subcommand> [flags]
 | `list` | List index generations with their state, model, dimension, and pending count. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
 | `retire <generation-id>` | Retire a generation. |
+| `prune` | Remove embeddings whose messages were hard-deleted. |
 
 ### embeddings build
 
@@ -2254,7 +2323,103 @@ Mark a generation as retired. Retiring the active generation requires `--force-a
 | `--yes` | Skip the confirmation prompt. |
 | `--force-active` | Allow retiring the generation that is currently active. |
 
+### embeddings prune
+
+```bash
+msgvault embeddings prune
+```
+
+Remove vector rows whose source messages no longer exist. The configured
+vector backend must support orphan pruning.
+
 `msgvault build-embeddings` remains as a deprecated alias for `msgvault embeddings build` (same `--full-rebuild` and `--yes` flags).
+
+---
+
+## multimodal
+
+Build, inspect, and search the optional visual attachment index. The workflow
+requires `[vector.multimodal]` configuration, a probed capability manifest,
+and explicit consent for hosted processing. See [Visual attachment
+search](usage/vector-search.md#visual-attachment-search).
+
+| Subcommand | Purpose |
+|---|---|
+| `probe --seeds <dir> --out <file> --yes` | Send synthetic fixtures to the configured provider and write a capability manifest. `--fixtures` keeps the generated fixtures instead of using a temporary directory. |
+| `build --yes` | Record consent for the configured capability profile and build the visual index. |
+| `resume` | Continue a consented build. |
+| `status [--json]` | Report generation state and coverage. |
+| `retry --message <id> --hash <sha256>` | Retry one attachment occurrence. |
+| `retire <generation-id> --yes` | Retire one generation and delete its vectors. Original attachments remain archived. |
+
+Search by text or by one local JPEG, PNG, or WebP image:
+
+```bash
+msgvault multimodal search "a whiteboard timeline"
+msgvault multimodal search --image ./reference.png
+```
+
+| Search flag | Default | Description |
+|---|---|---|
+| `--image <path>` | — | Use a local query image of at most 20 MiB instead of text |
+| `--limit <count>` | `20` | Results to return; must be 1–100 |
+| `--cursor <value>` | — | Continue from an opaque result cursor |
+| `--sender-person <id>` | — | Attachments sent by one durable person |
+| `--person <id>` | — | Attachments related to one durable person |
+| `--participant <id>` | — | Attachments related to one observed participant |
+| `--direction <value>` | — | `from_person`, `to_person`, or `group`; requires `--person` or `--participant` |
+| `--source <id>` | — | Restrict to one source |
+| `--message <id>` | — | Restrict to one owning message |
+| `--filename <text>` | — | Case-insensitive filename substring |
+| `--mime-prefix <text>` | — | Case-insensitive MIME prefix |
+| `--after`, `--before` | — | `YYYY-MM-DD` sent-date bounds |
+| `--json` | `false` | Emit JSON |
+
+Supply exactly one text query or `--image`. `--person` and `--participant` are
+mutually exclusive. `--sender-person` cannot be combined with either of those
+or with `--direction`.
+
+---
+
+## eval
+
+Compare how well search modes find messages you have rated. The command runs
+the same full-text, vector, and hybrid retrieval paths used by production
+search. It reports ranking quality, recall, latency, configuration, and input
+diagnostics.
+
+```text
+# topics.tsv: qid<TAB>query<TAB>optional-category
+q1	quarterly planning	pointed
+```
+
+```text
+# qrels.txt: qid iteration document-id relevance (1 or greater means relevant)
+# Replace example-message-001 with a real source_message_id, not a local numeric ID.
+q1 0 example-message-001 2
+```
+
+```bash
+msgvault eval \
+  --topics topics.tsv \
+  --qrels qrels.txt \
+  --modes fts,vector,hybrid \
+  --limit 100
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--topics <path>` | required | Tab-separated topics: `qid`, query, and optional category |
+| `--qrels <path>` | required | Whitespace-separated judgments: `qid iteration docid relevance`; relevance of 1 or greater means relevant |
+| `--modes <list>` | `fts,vector,hybrid` | Comma-separated modes to evaluate |
+| `--doc-key <kind>` | `message` | Match judgments to `message` source IDs or `conversation` source IDs |
+| `-n`, `--limit <count>` | `100` | Distinct documents retrieved per query |
+| `--json` | `false` | Emit the report as JSON |
+
+`eval` opens the archive selected by local configuration directly; it does not
+use `[remote]`. Vector and hybrid evaluation currently require a SQLite archive,
+an `sqlite_vec` build, enabled vector configuration, and a compatible active
+generation. On PostgreSQL, run `--modes fts`.
 
 ---
 
@@ -2509,6 +2674,9 @@ msgvault show-message <id> [flags]
 | Flag | Description |
 |---|---|
 | `--json` | Output as JSON |
+
+JSON output includes `web_url` when the selected daemon can provide a browser
+link for the message.
 
 ---
 

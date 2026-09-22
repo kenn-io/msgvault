@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-22"
 title: Vector Search
 description: Find messages by meaning and set up separate people, visual, and document search indexes.
 ---
@@ -305,6 +305,12 @@ messages, embed it:
 msgvault embeddings build --full-rebuild --yes
 ```
 
+For message embeddings, enabling `[vector]` is the opt-in. The command does not
+create a separate stored provider-consent record; `--yes` only skips the full
+rebuild confirmation. If the endpoint is hosted, both indexed message text and
+semantic query text leave the archive as described above. People, visual, and
+document vectors use separate consent gates.
+
 This creates a new **building generation**, scans every non-deleted
 message in the configured scope, embeds missing rows in batches through your
 configured embedder, and atomically activates the generation once
@@ -385,7 +391,7 @@ trigger).
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-calendar` / `sync-teams` / `sync-discord` | No. Run `msgvault embeddings build` afterward |
-| Manual `sync-slack` / `sync-beeper` / `sync-granola` / `sync-circleback` / `sync-notion` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-slack` / `sync-beeper` / `sync-granola` / `sync-circleback` / `sync-notion-meetings` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams, Discord) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
 | Scheduled calendar, Slack, Beeper, Granola, Circleback, and Notion syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | Local email imports (`import-pst`, `import-emlx`, `import-eml`, `import-mbox`) | No. Run `msgvault embeddings build` afterward |

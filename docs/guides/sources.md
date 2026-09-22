@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-22"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -72,4 +72,6 @@ review its conflict and consent workflow before enabling that direction.
 
 For records already stored, keyword search and analytics use the archive.
 Optional [semantic search and profile automation](../usage/recommended-configuration.md)
-have their own provider configuration and consent steps.
+have their own provider configuration. Message embeddings are enabled through
+configuration; people, visual, and document features also require their stated
+consent steps.

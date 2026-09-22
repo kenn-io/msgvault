@@ -77,7 +77,14 @@ On macOS and Linux this installs to `~/.local/bin` or `$GOPATH/bin`. For a
 debug build use `make build`, or `make build-release` for an optimized binary
 with stripped debug symbols.
 
-On Windows, use the native PowerShell helper:
+On Windows, first build the embedded Web UI from an MSYS2 shell with GNU Make,
+Bun, and Node available:
+
+```bash
+make web-embed
+```
+
+Then use the native PowerShell helper for the Go binary:
 
 ```powershell
 .\scripts\build.ps1          # Debug build
@@ -85,8 +92,9 @@ On Windows, use the native PowerShell helper:
 ```
 
 It detects AMD64 or ARM64 automatically and writes `msgvault.exe` in the
-repository root. See [Development](/docs/development/#windows) for the
-one-time MSYS2 compiler prerequisites.
+repository root. The PowerShell helper does not build the Web UI itself. See
+[Development](/docs/development/#windows) for the UI build step and one-time
+MSYS2 compiler prerequisites.
 
 Verify the installation:
 
@@ -211,7 +219,10 @@ To start with only part of a large account, see
     4. Use this password when `add-imap` prompts for your credentials
 
 !!! note
-    IMAP sync always performs a full scan of the mailbox. The `sync` (incremental) command falls back to a full sync for IMAP accounts because IMAP does not provide a change-tracking API like Gmail's History API. Messages already in the database are skipped efficiently.
+    After the first scan, `msgvault sync` uses QRESYNC when the server supports
+    it. Otherwise it uses CONDSTORE or a UID-based scan and skips unchanged
+    messages. See [IMAP Sync and Repair](usage/imap.md#how-later-syncs-find-changes)
+    for the fallback order and deletion limits.
 
 ## Sync Email
 
@@ -296,7 +307,10 @@ Reduce this value if you encounter rate limit errors during large syncs.
 
 ### Safety
 
-Sync operations are **read-only**. They use only `messages.list` and `messages.get` Gmail APIs. No write operations are performed. Your Gmail data remains untouched.
+Sync operations are **read-only**. They read the Gmail profile, labels,
+message lists, raw messages, and history as needed. They do not call Gmail
+write APIs or change provider data. Remote deletion is a separate,
+explicitly enabled workflow.
 
 ## Explore
 
@@ -329,12 +343,16 @@ the rest:
 export VOYAGE_API_KEY="..."     # text, people, and visual search
 export MISTRAL_API_KEY="..."    # document attachments
 export OPENAI_API_KEY="..."     # people sweep (and text search without a Voyage key)
-msgvault setup providers        # one consent per provider, then config.toml is written
+msgvault setup providers        # review provider disclosures and write opt-in config
 msgvault setup status           # what is on, what is off, and why
 ```
 
-The people sweep additionally requires `msgvault setup providers --allow-sensitive`
-to permit sensitive archive excerpts and sensitive personal inferences.
+Message embeddings are authorized by enabling their configuration and have no
+separate stored consent record. Semantic people search, visual processing,
+document extraction and vectors, and people sweeps have separate consent gates;
+`setup status` names any command still required. The people sweep additionally
+requires `msgvault setup providers --allow-sensitive` to permit sensitive
+archive excerpts and sensitive personal inferences.
 
 See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
 values it writes and the probe steps the hosted lanes still need.
@@ -355,14 +373,14 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Build the analytical cache and start the daemon:
+Start the daemon:
 
 ```bash
-msgvault build-cache
 msgvault serve
 ```
 
-Open the `API server` URL printed at startup. With the default loopback bind,
+The daemon builds a missing or stale analytical cache during startup. Open the
+`API server` URL it prints. With the default loopback bind,
 the browser is trusted locally. A daemon bound to another interface must use an
 API key; the browser presents a login screen and stores only an in-memory
 daemon session. The release binary contains the complete UI, so no frontend

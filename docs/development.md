@@ -28,15 +28,19 @@ make install
 
 ### Windows
 
-Use the PowerShell build helper from the repository root. It provides the same
-debug and release builds as the Make targets and selects the host architecture
-automatically:
+Use the PowerShell helper from the repository root to compile the Go binary.
+It selects the host architecture automatically and embeds assets already in
+`internal/web/dist`; it does not build the browser application.
+
+For a binary with the Web UI, first run `make web-embed` in an MSYS2 shell
+with GNU Make, Bun, and Node.js available. This builds and validates the browser
+assets. Then run the PowerShell helper:
 
 ```powershell
-# Debug build (equivalent to make build)
+# Debug Go build
 .\scripts\build.ps1
 
-# Optimized, stripped build (equivalent to make build-release)
+# Optimized, stripped Go build
 .\scripts\build.ps1 -Release
 ```
 
@@ -188,6 +192,13 @@ make lint
 # Check for issues
 go vet ./...
 ```
+
+## Evaluate search quality
+
+Use [`msgvault eval`](cli-reference.md#eval) to compare keyword, semantic, and
+hybrid results against queries and relevance ratings you supply. Keep the
+archive, topics, and ratings the same when comparing runs. The command reports
+ranking quality and query timings; it does not create the ratings for you.
 
 ## vCard registry maintenance
 

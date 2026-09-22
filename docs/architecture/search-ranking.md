@@ -43,11 +43,13 @@ weights with PostgreSQL `setweight` labels:
 |---|---|
 | Subject | `A` |
 | From address | `B` |
-| Body, To, Cc | `D` |
+| To, Cc | `C` |
+| Body | `D` |
 
-PostgreSQL's default weights are roughly `A=1.0`, `B=0.4`, and `D=0.1`, which
-matches SQLite's 10:4:1 field priority. Unlike BM25, default `ts_rank()` does
-not penalize long documents.
+msgvault passes rank weights of `A=1.0`, `B=0.4`, `C=0.1`, and `D=0.1`, which
+matches SQLite's 10:4:1 field priority while retaining distinct PostgreSQL
+weight classes for recipients and body text. Unlike BM25, `ts_rank()` without
+a normalization flag does not penalize long documents.
 
 ## Where Ordering Can Diverge
 

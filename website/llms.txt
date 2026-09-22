@@ -35,6 +35,7 @@ companions for machine reading.
 - [External enrichment](https://msgvault.io/docs/usage/people-enrichment/): provider policies and suppression
 - [CardDAV contacts](https://msgvault.io/docs/usage/people-carddav/): address-book import, publication, and conflicts
 - [Remote email images](https://msgvault.io/docs/usage/remote-images/): opt-in downloads and offline display
+- [IMAP mail and drafts](https://msgvault.io/docs/usage/imap/): sync folders and prepare, edit, recover, or delete managed reply drafts
 - [MCP server](https://msgvault.io/docs/usage/chat/): AI assistant integration
 - [Deleting email](https://msgvault.io/docs/usage/deletion/): staging and gated execution
 - [Backup](https://msgvault.io/docs/usage/backup/): snapshot repositories

@@ -13,11 +13,11 @@
 
 <p align="center">
   <a href="https://msgvault.io/docs/">Documentation</a> ·
-  <a href="https://msgvault.io/docs/guides/oauth-setup/">Setup Guide</a> ·
+  <a href="https://msgvault.io/docs/setup/">Setup Guide</a> ·
   <a href="https://msgvault.io/docs/usage/tui/">Interactive TUI</a>
 </p>
 
-**The system of record for your communications and relationships.**
+**Keep your communications and relationships in an archive you own.**
 
 msgvault is a local-first, open-source archive for email, chat, meetings,
 calendars, and contacts. Keep your history on your own hardware, find messages
@@ -55,7 +55,6 @@ servers are also supported. See [recommended configuration](docs/usage/recommend
 for the choices and consent steps.
 
 ## Installation
-
 
 **macOS / Linux:**
 ```bash
