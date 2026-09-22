@@ -721,6 +721,8 @@ base_url = "https://contacts.example/dav"
 username = "alice"
 schedule = "0 3 * * *"
 enabled = true
+trusted_origin = "https://contacts.example"
+trusted_addresses = ["10.1.2.3"]
 `)
 	st := testutil.NewTestStore(t)
 	account, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
@@ -750,6 +752,9 @@ enabled = true
 	}
 	assertions.Equal(&SecretSettingState{Configured: true}, byKey["carddav.password"].Secret)
 	assertions.NotContains(resp.Body.String(), "must-not-cross-api")
+	assertions.NotContains(resp.Body.String(), "10.1.2.3")
+	assertions.NotContains(byKey, "carddav.trusted_origin")
+	assertions.NotContains(byKey, "carddav.trusted_addresses")
 
 	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"carddav.enabled","value":{"boolean":false}}]}`),

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"net/mail"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,6 +20,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -271,12 +274,14 @@ type AccountSchedule struct {
 // CardDAVConfig contains non-secret connection settings for the external
 // address book. The password is stored separately in tokens/carddav.json.
 type CardDAVConfig struct {
-	Provider string `toml:"provider"`
-	OAuthApp string `toml:"oauth_app"`
-	BaseURL  string `toml:"base_url"`
-	Username string `toml:"username"`
-	Schedule string `toml:"schedule"`
-	Enabled  bool   `toml:"enabled"`
+	Provider         string   `toml:"provider"`
+	OAuthApp         string   `toml:"oauth_app"`
+	BaseURL          string   `toml:"base_url"`
+	Username         string   `toml:"username"`
+	Schedule         string   `toml:"schedule"`
+	Enabled          bool     `toml:"enabled"`
+	TrustedOrigin    string   `toml:"trusted_origin"`
+	TrustedAddresses []string `toml:"trusted_addresses"`
 }
 
 type SynctechSMSConfig struct {
@@ -934,6 +939,23 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if cfg.CardDAV.Provider != "" && cfg.CardDAV.Provider != "google" {
 		return nil, errors.New("carddav.provider must be empty or \"google\"")
+	}
+	if cfg.CardDAV.TrustedOrigin != "" || len(cfg.CardDAV.TrustedAddresses) != 0 {
+		origin, err := url.Parse(cfg.CardDAV.TrustedOrigin)
+		if err != nil {
+			return nil, fmt.Errorf("carddav.trusted_origin: invalid URL")
+		}
+		addresses := make([]netip.Addr, 0, len(cfg.CardDAV.TrustedAddresses))
+		for _, raw := range cfg.CardDAV.TrustedAddresses {
+			address, parseErr := netip.ParseAddr(raw)
+			if parseErr != nil {
+				return nil, errors.New("carddav.trusted_addresses: invalid address")
+			}
+			addresses = append(addresses, address)
+		}
+		if _, err := carddav.NewClient(carddav.ClientOptions{CredentialOrigin: origin, TrustedOrigin: origin, TrustedAddresses: addresses}); err != nil {
+			return nil, fmt.Errorf("carddav trusted destination: %w", err)
+		}
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {
