@@ -227,6 +227,19 @@ func TestClientDigestSelectsCombinedChallenge(t *testing.T) {
 	assert.Equal(t, 2, attempts)
 }
 
+func TestClientDigestChallengeAllowsWhitespaceAroundDirectiveEquals(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	header := http.Header{}
+	header.Add("WWW-Authenticate", `Basic realm="other", Digest realm = "fixture", nonce = "nonce-one", qop = "auth", stale = true`)
+	challenge, err := selectDigestChallenge(header)
+	require.NoError(err)
+	assert.Equal("fixture", challenge.Realm)
+	assert.Equal("nonce-one", challenge.Nonce)
+	assert.True(challenge.SupportsQOP("auth"))
+	assert.True(challenge.Stale)
+}
+
 func TestClientDigestRejectsDuplicateNonceWithoutReplay(t *testing.T) {
 	var attempts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
+	github.com/icholy/digest v1.1.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jhillyerd/enmime/v2 v2.4.1
 	github.com/mattn/go-isatty v0.0.22
@@ -106,7 +107,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hhrutter/tiff v1.0.6 // indirect
-	github.com/icholy/digest v1.1.0 // indirect
 	github.com/inbucket/html2text v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

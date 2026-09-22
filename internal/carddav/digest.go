@@ -26,13 +26,14 @@ func selectDigestChallenge(headers http.Header) (*digest.Challenge, error) {
 			seen := make(map[string]bool, len(parts))
 			for index, part := range parts {
 				key, parameter, hasValue := strings.Cut(strings.TrimSpace(part), "=")
+				key = strings.TrimSpace(key)
 				if !hasValue || !validDigestDirectiveKey(key) || seen[strings.ToLower(key)] {
 					parts = nil
 					break
 				}
 				key = strings.ToLower(key)
 				seen[key] = true
-				parts[index] = key + "=" + parameter
+				parts[index] = key + "=" + strings.TrimSpace(parameter)
 			}
 			if parts == nil || !seen["realm"] || !seen["nonce"] {
 				continue
@@ -80,8 +81,13 @@ func splitAuthChallenges(value string) []string {
 	start := 0
 	for _, comma := range unquotedCommaPositions(value) {
 		rest := strings.TrimLeft(value[comma+1:], " \t")
-		name, _, ok := strings.Cut(rest, " ")
-		if !ok || name == "" || strings.ContainsAny(name, "=,\t") {
+		separator := strings.IndexAny(rest, " \t=,")
+		if separator <= 0 || rest[separator] == '=' {
+			continue
+		}
+		name := rest[:separator]
+		afterName := strings.TrimLeft(rest[separator:], " \t")
+		if !validDigestDirectiveKey(name) || afterName == "" || afterName[0] == '=' {
 			continue
 		}
 		challenges = append(challenges, strings.TrimSpace(value[start:comma]))
