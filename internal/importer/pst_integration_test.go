@@ -41,6 +41,94 @@ func TestImportPst_SupportPST(t *testing.T) {
 	assert.Equal(int64(0), summary.MessagesSkipped, "MessagesSkipped on first import")
 	assert.False(summary.HardErrors, "HardErrors")
 	assert.Positive(summary.FoldersImported, "FoldersImported")
+	assert.Equal(int64(0), summary.Errors, "Errors")
+	assert.Equal(2, summary.FoldersTotal, "FoldersTotal")
+}
+
+func TestImportPst_SearchFolderResume(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	pstPath := filepath.Join(pstTestdataDir, "support.pst")
+	absPath, err := filepath.Abs(pstPath)
+	require.NoError(err, "abs PST path")
+	archiveID, err := pstArchiveFingerprint(absPath)
+	require.NoError(err, "PST fingerprint")
+
+	tests := []struct {
+		name          string
+		folderIndex   int
+		folderPath    string
+		messageIndex  int64
+		wantCalls     int
+		wantFolders   int
+		wantProcessed int64
+	}{
+		{
+			name:          "matching checkpoint resumes in the saved folder",
+			folderIndex:   1,
+			folderPath:    "ROOT_FOLDER/Top of Personal Folders/Sent Messages",
+			messageIndex:  3,
+			wantCalls:     8,
+			wantFolders:   1,
+			wantProcessed: 8,
+		},
+		{
+			name:          "shifted checkpoint restarts after path mismatch",
+			folderIndex:   0,
+			folderPath:    "ROOT_FOLDER/Top of Personal Folders/Sent Messages",
+			messageIndex:  3,
+			wantCalls:     17,
+			wantFolders:   2,
+			wantProcessed: 17,
+		},
+		{
+			name:          "out of range checkpoint restarts",
+			folderIndex:   99,
+			folderPath:    "ROOT_FOLDER/Top of Personal Folders/Sent Messages",
+			messageIndex:  3,
+			wantCalls:     17,
+			wantFolders:   2,
+			wantProcessed: 17,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openIntegrationStore(t)
+			src, err := st.GetOrCreateSource("pst", "resume@example.com")
+			require.NoError(err, "get/create source")
+			syncID, err := st.StartSync(src.ID, "import-pst")
+			require.NoError(err, "start sync")
+			cp := store.Checkpoint{
+				MessagesProcessed: 9,
+				MessagesAdded:     9,
+				ErrorsCount:       1,
+			}
+			require.NoError(savePstCheckpoint(
+				st, syncID, absPath, archiveID,
+				tc.folderIndex, tc.folderPath, tc.messageIndex, &cp,
+			), "save checkpoint")
+			require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
+
+			mock := &mockIngestFunc{}
+			summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+				Identifier:         "resume@example.com",
+				CheckpointInterval: 1,
+				IngestFunc:         mock.fn,
+			})
+			require.NoError(err, "ImportPst")
+			require.True(summary.WasResumed, "expected checkpoint resume")
+			assert.Len(mock.calls, tc.wantCalls, "ingest calls")
+			assert.Equal(tc.wantFolders, summary.FoldersImported, "FoldersImported")
+			assert.Equal(tc.wantProcessed, summary.MessagesProcessed, "MessagesProcessed")
+
+			var errorsCount int64
+			require.NoError(st.DB().QueryRow(
+				`SELECT errors_count FROM sync_runs ORDER BY id DESC LIMIT 1`,
+			).Scan(&errorsCount), "read resumed checkpoint")
+			assert.Equal(int64(1), errorsCount, "prior errors retained")
+		})
+	}
 }
 
 // TestImportPst_SupportPST_Idempotent verifies that re-importing the same PST

@@ -92,6 +92,31 @@ func TestWalkFolders_PathsAreSlashSeparated(t *testing.T) {
 	assert.True(t, depth2, "expected at least one folder path with depth >= 2 (slash-separated)")
 }
 
+// TestWalkFolders_SkipsSearchFolders_SupportPST verifies that real search
+// folders are skipped while ordinary folders remain visible.
+func TestWalkFolders_SkipsSearchFolders_SupportPST(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, err := pstreader.Open(supportPST(t))
+	require.NoError(err, "Open")
+	defer func() { _ = f.Close() }()
+
+	seen := make(map[string]pstlib.IdentifierType)
+	err = f.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
+		seen[entry.Path] = folder.Identifier.GetType()
+		return nil
+	})
+	require.NoError(err, "WalkFolders")
+
+	assert.NotContains(seen, "ROOT_FOLDER/SPAM Search Folder 2")
+	assert.Contains(seen, "ROOT_FOLDER/Search Root")
+	assert.Contains(seen, "ROOT_FOLDER/Top of Personal Folders/Drafts")
+	assert.Contains(seen, "ROOT_FOLDER/Top of Personal Folders/Sent Messages")
+	for _, typ := range seen {
+		assert.NotEqual(pstlib.IdentifierTypeSearchFolder, typ)
+	}
+}
+
 // TestExtractMessages_SupportPST verifies that email messages are extracted
 // with the expected properties from support.pst.
 func TestExtractMessages_SupportPST(t *testing.T) {

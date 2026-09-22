@@ -137,6 +137,12 @@ func (f *File) WalkFolders(fn WalkFolderFunc) error {
 }
 
 func walkFoldersRecursive(folder *pstlib.Folder, parentPath string, fn WalkFolderFunc) error {
+	// Search folders are saved queries over messages stored in real folders.
+	// go-pst refuses to iterate them even when their stored count is nonzero.
+	if folder.Identifier.GetType() == pstlib.IdentifierTypeSearchFolder {
+		return nil
+	}
+
 	path := folder.Name
 	if parentPath != "" {
 		path = parentPath + "/" + folder.Name
