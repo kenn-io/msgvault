@@ -2,7 +2,10 @@ package carddav
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/icholy/digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +62,165 @@ func TestClientNeverSendsBasicAuthAcrossOrigin(t *testing.T) {
 	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: source.URL})
 	require.ErrorIs(t, err, ErrUnsafeRedirect)
 	assert.Empty(t, redirectedAuth)
+}
+
+func TestClientDigestChallengeRetriesPROPFIND(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.Header.Get("Authorization") == "Basic YWxpY2U6YXBwLXBhc3N3b3Jk" {
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		assert.Equal(t, "PROPFIND", r.Method)
+		assert.Contains(t, r.Header.Get("Authorization"), `Digest username="alice"`)
+		assert.Contains(t, r.Header.Get("Authorization"), `uri="/dav"`)
+		w.WriteHeader(http.StatusMultiStatus)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	response, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusMultiStatus, response.StatusCode)
+	assert.Equal(t, 2, attempts)
+}
+
+func TestClientDigestStaleNoncePreservesConditionalPUT(t *testing.T) {
+	const card = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Example\r\nEND:VCARD\r\n"
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, card, string(body))
+		assert.Equal(t, `"prior"`, r.Header.Get("If-Match"))
+		assert.Equal(t, "text/vcard; charset=utf-8", r.Header.Get("Content-Type"))
+		if attempts == 1 {
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
+		require.NoError(t, err)
+		assert.Equal(t, "/dav/card.vcf", credentials.URI)
+		assert.Equal(t, digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, "PUT", credentials.URI), credentials.Response)
+		if attempts == 2 {
+			assert.Equal(t, "nonce-one", credentials.Nonce)
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-two", qop="auth", algorithm=MD5, stale=true`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		assert.Equal(t, "nonce-two", credentials.Nonce)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	response, err := client.Do(t.Context(), Request{Method: http.MethodPut, URL: server.URL + "/dav/card.vcf", Body: []byte(card), ETag: `"prior"`})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	assert.Equal(t, 3, attempts)
+}
+
+func TestClientDigestSelectsCombinedChallenge(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="other, realm", Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
+		require.NoError(t, err)
+		assert.Equal(t, "nonce-one", credentials.Nonce)
+		w.WriteHeader(http.StatusMultiStatus)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	response, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusMultiStatus, response.StatusCode)
+	assert.Equal(t, 2, attempts)
+}
+
+func TestClientDigestRejectsDuplicateNonceWithoutReplay(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="first", nonce="second", qop="auth"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, http.StatusUnauthorized, statusErr.StatusCode)
+	assert.Equal(t, 1, attempts)
+}
+
+func TestClientDigestRegeneratesConditionalDELETEOnRedirect(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, `"prior"`, r.Header.Get("If-Match"))
+		if attempts == 1 {
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
+		require.NoError(t, err)
+		if attempts == 2 {
+			assert.Equal(t, "/first%20card.vcf?view=one", credentials.URI)
+			assert.Equal(t, 1, credentials.Nc)
+			http.Redirect(w, r, "/next%20card.vcf?view=two", http.StatusTemporaryRedirect)
+			return
+		}
+		assert.Equal(t, "/next%20card.vcf?view=two", credentials.URI)
+		assert.Equal(t, 2, credentials.Nc)
+		assert.Equal(t, digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, "DELETE", credentials.URI), credentials.Response)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	response, err := client.Do(t.Context(), Request{Method: http.MethodDelete, URL: server.URL + "/first%20card.vcf?view=one", ETag: `"prior"`})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	assert.Equal(t, 3, attempts)
+}
+
+func TestClientDigestWrongPasswordStopsAfterOneReplay(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "wrong-password")
+	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, http.StatusUnauthorized, statusErr.StatusCode)
+	assert.Equal(t, 2, attempts)
+}
+
+func digestMD5Response(username, realm, password, nonce string, count int, cnonce, method, uri string) string {
+	hash := func(value string) string {
+		sum := md5.Sum([]byte(value))
+		return hex.EncodeToString(sum[:])
+	}
+	return hash(fmt.Sprintf("%s:%s:%08x:%s:auth:%s", hash(username+":"+realm+":"+password), nonce, count, cnonce, hash(method+":"+uri)))
 }
 
 func TestClientSetsDAVPreconditionsAndTypedStatusErrors(t *testing.T) {
