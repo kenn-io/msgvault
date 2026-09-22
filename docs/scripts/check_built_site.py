@@ -259,6 +259,7 @@ class LinkParser(html.parser.HTMLParser):
         super().__init__()
         self.ids: set[str] = set()
         self.links: list[str] = []
+        self.markdown_links: list[str] = []
         self.nav_links: list[str] = []
         self.assets: list[str] = []
         self.style_attrs: list[str] = []
@@ -284,6 +285,12 @@ class LinkParser(html.parser.HTMLParser):
                 self._nav_label_href = attr["href"]
                 self._nav_label_text = []
                 self._nav_label_depth = 1
+        if (
+            tag == "link"
+            and "alternate" in rel_tokens(attr.get("rel", ""))
+            and attr.get("type") == "text/markdown"
+        ):
+            self.markdown_links.append(attr.get("href", ""))
         if tag in {"img", "script", "source"} and "src" in attr:
             self.assets.append(attr["src"])
         if tag in {"img", "source"} and "srcset" in attr:
@@ -478,6 +485,26 @@ def main() -> None:
             fail(f"forbidden generated marker found: {pattern}")
 
     parsed_by_file = {path.resolve(): parse_html(path) for path in html_files}
+    llms_text = (SITE / "llms.txt").read_text(encoding="utf-8")
+    for current, parser in parsed_by_file.items():
+        if current.name != "index.html":
+            continue
+        route = "/" + current.relative_to(SITE.resolve()).as_posix().removesuffix("index.html")
+        markdown_route = (
+            route + "index.md" if route in {"/", "/docs/"} else route.rstrip("/") + ".md"
+        )
+        markdown_file = SITE / markdown_route.lstrip("/")
+        if not markdown_file.is_file():
+            fail(f"missing Markdown companion for {route}: {markdown_route}")
+        markdown_url = "https://msgvault.io" + markdown_route
+        if markdown_url not in parser.markdown_links:
+            fail(f"missing Markdown alternate link on {route}: {markdown_url}")
+        if f"]({markdown_url})" not in llms_text:
+            fail(f"llms.txt is missing Markdown page {markdown_url}")
+        if markdown_route.startswith("/docs/"):
+            source = ROOT / markdown_route.removeprefix("/docs/")
+            if markdown_file.read_bytes() != source.read_bytes():
+                fail(f"published Markdown differs from its source: {markdown_route}")
     docs_index = SITE / "docs" / "index.html"
     index_parser = parsed_by_file[docs_index.resolve()]
     web_ui_route = route_to_file("/docs/web-ui/").resolve()

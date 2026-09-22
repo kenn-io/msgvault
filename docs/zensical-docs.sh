@@ -143,6 +143,14 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
+    # Publish the same sanitized Markdown sources alongside the rendered pages.
+    site_output_dir="$(cd "$docs_root" && cd "$site_dir" && pwd)"
+    find "$tmp_docs" -type f -name '*.md' -print0 |
+      while IFS= read -r -d '' source; do
+        target="$site_output_dir/${source#"$tmp_docs/"}"
+        mkdir -p "$(dirname "$target")"
+        cp "$source" "$target"
+      done
     ;;
   serve)
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
