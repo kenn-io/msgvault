@@ -8,6 +8,8 @@ package emlx
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -22,6 +24,10 @@ type Message struct {
 	// Raw is the RFC 5322 MIME content.
 	Raw []byte
 
+	// SourceHash is the SHA-256 of the original MIME bytes, before restoring
+	// attachments. It remains stable when Apple Mail downloads attachments.
+	SourceHash string
+
 	// PlistDate is the date-sent value from the plist metadata.
 	// Zero if the plist is missing or the field is absent.
 	PlistDate time.Time
@@ -31,6 +37,15 @@ type Message struct {
 
 	// OrigMailbox is the original-mailbox value from the plist.
 	OrigMailbox string
+
+	// RestoredAttachments is the number of attachment parts whose
+	// placeholder body was replaced with content from Apple Mail's
+	// sibling Attachments/ directory (see ParseFile).
+	RestoredAttachments int
+
+	// RestorationError reports unreadable cached attachments. Raw still
+	// contains the message, with placeholders for parts that could not be read.
+	RestorationError error
 }
 
 // Parse parses an .emlx file from its raw bytes.
@@ -69,6 +84,8 @@ func Parse(data []byte) (*Message, error) {
 	msg := &Message{
 		Raw: data[mimeStart:mimeEnd],
 	}
+	sum := sha256.Sum256(msg.Raw)
+	msg.SourceHash = hex.EncodeToString(sum[:])
 
 	// Parse optional plist metadata (best-effort).
 	if mimeEnd < len(data) {
@@ -80,12 +97,26 @@ func Parse(data []byte) (*Message, error) {
 }
 
 // ParseFile reads and parses an .emlx file from disk.
-func ParseFile(path string) (*Message, error) {
+//
+// For a Messages/<num>.partial.emlx file, Apple Mail keeps attachment bytes
+// out of the MIME payload and stores them in a sibling Attachments/<num>/
+// directory instead, leaving an X-Apple-Content-Length placeholder in the
+// part header. ParseFile restores top-level attachment parts into Raw as
+// base64. Nested attachments keep their placeholders.
+// Attachments are only restored while the message, with the
+// restored parts base64-encoded, stays within maxBytes; a part that would
+// exceed the remaining budget keeps its placeholder.
+func ParseFile(path string, maxBytes int64) (*Message, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("emlx: read %q: %w", path, err)
 	}
-	return Parse(data)
+	msg, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	msg.Raw, msg.RestoredAttachments, msg.RestorationError = RestoreAttachments(msg.Raw, path, maxBytes)
+	return msg, nil
 }
 
 // parsePlist extracts metadata from the Apple Mail XML plist.

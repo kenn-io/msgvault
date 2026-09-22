@@ -1,18 +1,22 @@
 package importer
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -692,4 +696,144 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&total)
 	require.NoError(err, "count messages")
 	require.Equal(3, total, "total messages")
+}
+
+// Apple Mail keeps the attachment bytes of a .partial.emlx in a sibling
+// Attachments/<num>/<part>/ directory. The importer must inline them so the
+// message is stored with its attachment, and report how many it restored.
+func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, tmp := openTestStore(t)
+
+	root := filepath.Join(tmp, "Mail")
+	mboxDir := filepath.Join(root, "Mailboxes", "Test.mbox")
+	msgDir := filepath.Join(mboxDir, "Messages")
+	require.NoError(os.MkdirAll(msgDir, 0700), "mkdir")
+
+	pdf := []byte("%PDF-1.6\n%synthetic invoice\n")
+	raw := strings.Join([]string{
+		"From: Bob <bob@example.com>",
+		"Subject: Invoice with cached attachment",
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="=-b"`,
+		"",
+		"--=-b",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"see attached",
+		"",
+		"--=-b",
+		"Content-Transfer-Encoding: base64",
+		"Content-Disposition: attachment;",
+		"\tfilename=\"invoice.pdf\"",
+		"Content-Type: application/pdf;",
+		"\tname=\"invoice.pdf\"",
+		fmt.Sprintf("X-Apple-Content-Length: %d", len(pdf)*4/3),
+		"",
+		"",
+		"--=-b--",
+		"",
+	}, "\n")
+	raw = strings.Replace(raw, "--=-b--", "--=-b\nContent-Transfer-Encoding: base64\nContent-Disposition: attachment; filename=notes.txt\nContent-Type: text/plain\nX-Apple-Content-Length: 12\n\n\n--=-b--", 1)
+	mkEmlx(t, msgDir, "3.partial.emlx", []byte(raw))
+	// Import the placeholder first, as archives created before restoration did.
+	opts := EmlxImportOptions{
+		Identifier: "alice@example.com", AttachmentsDir: filepath.Join(tmp, "attachments"),
+		NoResume: true,
+	}
+	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	require.NoError(err)
+	require.Zero(summary.Errors)
+	require.Equal(int64(1), summary.MessagesAdded)
+	var originalID, conversationID int64
+	require.NoError(st.DB().QueryRow(`SELECT id, conversation_id FROM messages`).Scan(&originalID, &conversationID))
+	labelID, err := st.EnsureLabel(summary.SourceID, "Saved", "Saved", "user")
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(originalID, []int64{labelID}))
+
+	attDir := filepath.Join(mboxDir, "Attachments", "3", "2")
+	require.NoError(os.MkdirAll(attDir, 0700), "mkdir attachments")
+	require.NoError(os.WriteFile(filepath.Join(attDir, "invoice.pdf"), pdf, 0600), "write pdf")
+
+	// A duplicate without a cached attachment must not hide the restored copy
+	// later in the same batch.
+	mkEmlx(t, msgDir, "2.partial.emlx", []byte(raw))
+	notes := []byte("More notes.\n")
+	for run, restored := range []int64{1, 2, 1, 1} {
+		if run == 1 {
+			secondDir := filepath.Join(mboxDir, "Attachments", "2", "3")
+			require.NoError(os.MkdirAll(secondDir, 0700))
+			require.NoError(os.WriteFile(filepath.Join(secondDir, "notes.txt"), notes, 0600))
+		}
+		if run == 2 {
+			// Losing one cache file must not remove already archived bytes.
+			require.NoError(os.Remove(filepath.Join(attDir, "invoice.pdf")))
+		}
+		summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+		require.NoError(err)
+		require.Zero(summary.Errors)
+		assert.Zero(summary.MessagesAdded)
+		assert.Equal(int64(1), summary.MessagesUpdated)
+		assert.Equal(int64(2), summary.PartialFiles)
+		assert.Equal(restored, summary.AttachmentsRestored)
+		var count int
+		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+		assert.Equal(1, count)
+		var sourceMsgID string
+		require.NoError(st.DB().QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, originalID).Scan(&sourceMsgID))
+		assert.Equal(fmt.Sprintf("emlx-%x", sha256.Sum256([]byte(raw))), sourceMsgID)
+		var currentConversationID int64
+		require.NoError(st.DB().QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, originalID).Scan(&currentConversationID))
+		assert.Equal(conversationID, currentConversationID)
+		storedRaw, err := st.GetMessageRaw(originalID)
+		require.NoError(err)
+		parsed, err := mime.Parse(storedRaw)
+		require.NoError(err)
+		require.Len(parsed.Attachments, 2)
+		assert.Equal(pdf, parsed.Attachments[0].Content)
+		if run > 0 {
+			assert.Equal(notes, parsed.Attachments[1].Content)
+		}
+		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, originalID).Scan(&count))
+		assert.Equal(2, count, "restoration preserves existing labels")
+	}
+
+	var filename string
+	var size int64
+	err = st.DB().QueryRow(`SELECT filename, size FROM attachments WHERE filename = 'invoice.pdf'`).Scan(&filename, &size)
+	require.NoError(err, "query attachment")
+	assert.Equal("invoice.pdf", filename)
+	assert.Equal(int64(len(pdf)), size)
+}
+
+func TestImportEmlxDir_WarnsOnAttachmentReadFailure(t *testing.T) {
+	for _, deniedRel := range []string{"Attachments/3/2/invoice.pdf", "Attachments/3/2", "Attachments"} {
+		t.Run(deniedRel, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, tmp := openTestStore(t)
+			root := filepath.Join(tmp, "Test.mbox")
+			raw := []byte("From: a@example.com\nContent-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain\n\nbody\n--b\nContent-Disposition: attachment; filename=invoice.pdf\nX-Apple-Content-Length: 12\n\n\n--b--\n")
+			mkMailboxDir(t, root, map[string][]byte{"3.partial.emlx": raw})
+			file := filepath.Join(root, "Attachments", "3", "2", "invoice.pdf")
+			require.NoError(os.MkdirAll(filepath.Dir(file), 0700))
+			require.NoError(os.WriteFile(file, []byte("%PDF-test"), 0600))
+			denied := filepath.Join(root, filepath.FromSlash(deniedRel))
+			require.NoError(os.Chmod(denied, 0))
+			t.Cleanup(func() { require.NoError(os.Chmod(denied, 0700)) })
+			if _, err := os.ReadFile(file); err == nil {
+				t.Skip("requires a user subject to filesystem permissions")
+			}
+			var logs bytes.Buffer
+			summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+				Identifier: "a@example.com", Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+			})
+			require.NoError(err)
+			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Zero(summary.AttachmentsRestored)
+			assert.Contains(logs.String(), "level=WARN")
+			assert.Contains(logs.String(), "permission denied")
+		})
+	}
 }

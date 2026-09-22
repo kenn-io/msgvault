@@ -373,6 +373,7 @@ func importAutoAccounts(
 		grandTotal.MessagesUpdated += summary.MessagesUpdated
 		grandTotal.MessagesSkipped += summary.MessagesSkipped
 		grandTotal.PartialFiles += summary.PartialFiles
+		grandTotal.AttachmentsRestored += summary.AttachmentsRestored
 		grandTotal.Errors += summary.Errors
 		if summary.HardErrors {
 			grandTotal.HardErrors = true
@@ -449,8 +450,9 @@ func printImportStats(out io.Writer, summary importer.EmlxImportSummary) {
 	)
 	if summary.PartialFiles > 0 {
 		_, _ = fmt.Fprintf(out,
-			"  Partial files:  %d (body imported; attachments not cached by Apple Mail)\n",
+			"  Partial files:  %d (%d attachments restored from Apple Mail's Attachments/ directory)\n",
 			summary.PartialFiles,
+			summary.AttachmentsRestored,
 		)
 	}
 	_, _ = fmt.Fprintf(out,

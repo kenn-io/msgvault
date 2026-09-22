@@ -960,10 +960,18 @@ msgvault import-emlx <identifier> <mail-dir>
 
 The mail directory should be an Apple Mail mailbox tree containing `.mbox` or `.imapmbox` directories, each with a `Messages/` subdirectory of `.emlx` files. You can also point directly at a single `.mbox` directory. Labels are derived from directory names.
 
-Apple Mail's `N.partial.emlx` files are also imported: their message body is
-complete even when uncached attachment parts are absent. If both `N.emlx` and
+Apple Mail's `N.partial.emlx` files are also imported. Apple Mail keeps the
+attachments of these messages outside the MIME payload, in a sibling
+`Attachments/N/` directory. The importer restores cached attachments directly
+inside the message's outer multipart, within the message size limit.
+Attachments in nested parts, such as inside some forwarded messages, are not
+restored. An attachment without a cached file stays absent; unreadable files
+or directories produce a warning. Re-importing a partial message adds restored
+attachments to the existing message without creating another copy.
+If both `N.emlx` and
 `N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
-reports the number of partial files imported.
+reports the number of partial files imported and how many attachments were
+restored.
 
 | Flag | Default | Description |
 |---|---|---|

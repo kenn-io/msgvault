@@ -2,8 +2,6 @@ package importer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -72,8 +70,13 @@ type EmlxImportSummary struct {
 	MessagesSkipped   int64
 
 	// PartialFiles counts *.partial.emlx files parsed. Their bodies are
-	// complete; only attachment parts are uncached by Apple Mail.
+	// complete; attachment parts are either restored from Apple Mail's
+	// sibling Attachments/ directory or left uncached.
 	PartialFiles int64
+
+	// AttachmentsRestored counts attachment parts of partial files whose
+	// bytes were inlined from the Attachments/ directory.
+	AttachmentsRestored int64
 
 	Errors     int64
 	HardErrors bool
@@ -92,7 +95,8 @@ const defaultMaxEmlxBytes int64 = 128 << 20 // 128 MiB
 
 // ImportEmlxDir imports .emlx files from an Apple Mail directory tree.
 //
-// Messages are deduplicated by content hash (sha256 of raw MIME).
+// Messages are deduplicated by the hash of their original on-disk MIME.
+// Restoring attachments preserves that identity and updates existing messages.
 // When the same message appears in multiple mailboxes, the first
 // occurrence is fully ingested; subsequent occurrences add their
 // mailbox label to the existing message.
@@ -258,14 +262,15 @@ func ImportEmlxDir(
 	hardErrors := false
 
 	type pendingEmlxMsg struct {
-		Raw       []byte
-		RawHash   string
-		SourceMsg string
-		LabelIDs  []int64
-		Fallback  time.Time
-		MboxIdx   int
-		MboxPath  string
-		FileName  string
+		Raw          []byte
+		RestorePaths []string
+		RawHash      string
+		SourceMsg    string
+		LabelIDs     []int64
+		Fallback     time.Time
+		MboxIdx      int
+		MboxPath     string
+		FileName     string
 	}
 
 	const (
@@ -381,7 +386,7 @@ func ImportEmlxDir(
 				}
 			}
 
-			if exists {
+			if exists && len(p.RestorePaths) == 0 {
 				rfcID, inReplyTo := mime.ParseMessageIDs(p.Raw)
 				if err := st.RecordEmailHeadersContext(ctx, src.ID, existingID, rfcID, inReplyTo); err != nil {
 					cp.ErrorsCount++
@@ -404,9 +409,45 @@ func ImportEmlxDir(
 				continue
 			}
 
-			alreadyExists := false
+			alreadyExists := exists
 			if anyOK {
-				_, alreadyExists = existingAny[p.SourceMsg]
+				_, found := existingAny[p.SourceMsg]
+				alreadyExists = alreadyExists || found
+			}
+
+			if exists {
+				// Ingestion replaces labels, so retain labels from earlier
+				// imports as well as those just added for this mailbox.
+				labelIDs, err := st.MessageLabelIDsContext(ctx, existingID)
+				if err != nil {
+					cp.ErrorsCount++
+					summary.Errors++
+					hardErrors, checkpointBlocked = true, true
+					log.Warn("failed to read labels for attachment restoration", "message_id", existingID, "error", err)
+					continue
+				}
+				for _, id := range labelIDs {
+					if !slices.Contains(p.LabelIDs, id) {
+						p.LabelIDs = append(p.LabelIDs, id)
+					}
+				}
+				// Fill the stored placeholders so a smaller Apple Mail cache
+				// cannot remove attachment content archived on an earlier run.
+				p.Raw, err = st.GetMessageRawContext(ctx, existingID)
+				if err != nil {
+					cp.ErrorsCount++
+					summary.Errors++
+					hardErrors, checkpointBlocked = true, true
+					log.Warn("failed to read message for attachment restoration", "message_id", existingID, "error", err)
+					continue
+				}
+			}
+			for _, path := range p.RestorePaths {
+				var err error
+				p.Raw, _, err = emlx.RestoreAttachments(p.Raw, path, opts.MaxMessageBytes)
+				if err != nil {
+					log.Warn("could not restore cached attachments", "file", path, "error", err)
+				}
 			}
 
 			if err := ingestFn(
@@ -509,7 +550,7 @@ func ImportEmlxDir(
 				continue
 			}
 
-			msg, err := emlx.ParseFile(filePath)
+			msg, err := emlx.ParseFile(filePath, opts.MaxMessageBytes)
 			if err != nil {
 				cp.ErrorsCount++
 				summary.Errors++
@@ -519,12 +560,16 @@ func ImportEmlxDir(
 				continue
 			}
 
-			if emlx.IsPartial(filepath.Base(filePath)) {
-				summary.PartialFiles++
+			if msg.RestorationError != nil {
+				log.Warn("could not restore cached attachments", "file", filePath, "error", msg.RestorationError)
 			}
 
-			sum := sha256.Sum256(msg.Raw)
-			rawHash := hex.EncodeToString(sum[:])
+			if emlx.IsPartial(filepath.Base(filePath)) {
+				summary.PartialFiles++
+				summary.AttachmentsRestored += int64(msg.RestoredAttachments)
+			}
+
+			rawHash := msg.SourceHash
 			sourceMsgID := "emlx-" + rawHash
 
 			var fallbackDate time.Time
@@ -557,6 +602,10 @@ func ImportEmlxDir(
 					FileName:  filePath,
 				})
 				pendingBytes += int64(len(msg.Raw))
+			}
+			if msg.RestoredAttachments > 0 {
+				p := &pending[pendingIdx[sourceMsgID]]
+				p.RestorePaths = append(p.RestorePaths, filePath)
 			}
 
 			if len(pending) >= batchSize || pendingBytes >= batchBytes {

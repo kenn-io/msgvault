@@ -2635,6 +2635,24 @@ func ensureMessageLabelRefsWith(
 	return ids, nil
 }
 
+// MessageLabelIDsContext returns the labels currently assigned to a message.
+func (s *Store) MessageLabelIDsContext(ctx context.Context, messageID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT label_id FROM message_labels WHERE message_id = ?`), messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ReplaceMessageLabels replaces all labels for a message atomically.
 func (s *Store) ReplaceMessageLabels(messageID int64, labelIDs []int64) error {
 	return s.withTx(func(tx *loggedTx) error {
