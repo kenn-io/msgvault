@@ -439,10 +439,20 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	}
 	confirmed, err := c.currentCardDAVConfig()
 	if err != nil {
-		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
+		c.mu.Lock()
+		c.service = nil
+		c.mu.Unlock()
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, c.reconcileCurrentSchedule())
 	}
 	if !cardDAVConfigEqual(confirmed, next) {
-		return CardDAVAccountResponse{}, fmt.Errorf("%w: CardDAV settings changed after discovery", config.ErrConfigConflict)
+		c.publishCardDAVConfig(confirmed)
+		c.mu.Lock()
+		c.service = nil
+		c.mu.Unlock()
+		reconcileErr := c.reconcileCurrentSchedule()
+		return CardDAVAccountResponse{}, errors.Join(
+			fmt.Errorf("%w: CardDAV settings changed after discovery", config.ErrConfigConflict), reconcileErr,
+		)
 	}
 	c.mu.Lock()
 	c.service = service

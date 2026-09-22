@@ -258,6 +258,14 @@ func TestCardDAVTrustedPolicyChangeAfterPersistenceDoesNotPublishService(t *test
 	cfg, st, candidate := savedCardDAVFixture(t)
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
+	require.NotNil(t, controller.Current())
+	var reconciled CardDAVOperations
+	reconciledCalled := false
+	controller.SetScheduleReconciler(func(_ config.CardDAVConfig, service CardDAVOperations) error {
+		reconciledCalled = true
+		reconciled = service
+		return nil
+	})
 	controller.factory = func(*store.Store, config.CardDAVConfig, string) (cardDAVCandidate, error) { return candidate, nil }
 	controller.persistDiscovery = func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error {
 		before, readErr := config.ReadConfigFile(cfg.ConfigFilePath())
@@ -272,7 +280,10 @@ func TestCardDAVTrustedPolicyChangeAfterPersistenceDoesNotPublishService(t *test
 		BaseURL: "https://new.example/dav", Username: "new-user", Password: "new-password", Enabled: new(false),
 	})
 	require.ErrorIs(t, err, config.ErrConfigConflict)
-	assert.NotSame(t, candidate, controller.Current())
+	assert.Nil(t, controller.Current())
+	assert.True(t, reconciledCalled)
+	assert.Nil(t, reconciled)
+	assert.Equal(t, "https://new.example", controller.cardDAVConfigSnapshot().TrustedOrigin)
 }
 
 func TestCardDAVAccountSaveRollsBackPublishedFilesWhenDiscoveryStoreFails(t *testing.T) {
