@@ -6,17 +6,15 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
-## Unreleased
+## 0.20.0
+<small>2026-09-22</small>
 
-Since **0.19.3**, msgvault has added richer people profiles, document and image
-search, background operations, and more ways to import and maintain an archive.
-This is a working summary for the planned **0.20.0** release. Final release
-details will be added when it is cut. These changes are not included in 0.19.3;
-this is not a new release announcement.
+Manage people and relationships, search inside attachments, and bring more of
+your communications into the archive. Review the upgrade notes before updating
+an existing installation.
 
-macOS analytics cache builds use the existing CSV export without the unusable
-SQLite extension download and warning.
-
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.20.0) ·
+[All changes since 0.19.3](https://github.com/kenn-io/msgvault/compare/v0.19.3...v0.20.0)
 
 ### Upgrade and compatibility
 
@@ -68,218 +66,109 @@ SQLite extension download and warning.
 Keyword search and basic browsing do not require a model provider. Optional
 features can be enabled after the archive is usable.
 
-### People and relationships
+### New features
 
-- Maintain structured names, contact details, addresses, dates, categories,
-  private notes, organizations, employment, and relationships with start and end
-  dates. Merge or split duplicate profiles, inspect the history, and reverse
-  supported merges.
-- Browse saved people by last contact in Web Directory, `person directory`, and
-  MCP's `list_directory_people`. Filter by dates and contact details, choose an
-  order, and page through results. `person list` retains its existing use.
-- Find a person by remembered profile facts with semantic search. Find their
-  files across attachment metadata, document text, and the visual index.
-- Keep the evidence behind profile facts, pin corrections, and repair derived
-  values when their inputs change. Curated names now appear in analytics, search
-  results, and exported authors. `export-messages --person-id` selects messages
-  through the person's bound participants.
-- Maintain tracked profiles with consented provider sweeps. Profiles support
-  OpenAI Chat, OpenAI Responses, Anthropic Messages, and Gemini. Codex
-  app-server configuration exists, but no executable is approved by its release
-  gate. The CLI can add, update, check, select, and reverify profiles.
-- Configure separate Exa or SixtyFour enrichment with exact consent, request
-  limits, and suppression controls.
-- Generate a **“Last time we talked”** brief for an enrolled person and inspect
-  its cited sources and earlier versions. Briefs use supported chat and text
-  messages; email, meetings, documents, and your replies are excluded. CLI, TUI,
-  Web Directory, and API manage briefs; MCP reads saved versions.
-- Review Beeper identity candidates across sources. Strong provider or Beeper
-  identifiers can link automatically; same-service usernames require review, and
-  conflicting bindings remain separate.
-- Import CardDAV contacts and publish selected profiles with conflict review and
-  lossless vCard handling. Connect **Google Contacts** through OAuth from Web
-  Settings or the CLI. Contact sync now works with iCloud servers that reject
-  full URLs in requests for individual cards.
-- Record `how_we_met` and up to 280 characters in seeded text attributes.
-  Multiline Notes retain their separate behavior.
+- Manage people in the new Web Directory and TUI People browser. Profiles bring together contact details, custom fields, private Notes, messages, meetings, files, and change history.
+- Record organizations, current and past employment, and dated relationships between people. Review uncertain identity matches, merge duplicate profiles, and split mistaken merges while retaining history.
+- Browse people by last contact through `msgvault person directory` and MCP. Relationship calendars show contact activity over time.
+- Keep tracked profiles current with optional model-assisted updates from archived conversations. Provider setup requires explicit consent and budgets; saved evidence explains profile changes, and pinned facts preserve manual choices.
+- Enrich profiles through Exa or SixtyFour using explicitly permitted identity details. External enrichment stays off by default and does not send message bodies or private attributes.
+- Catch up with a "Last time we talked" brief that cites archived messages. Briefs require separate enrollment for each person and currently summarize their supported chat and text messages, excluding email, meetings, and your replies.
+- Find people by meaning with `msgvault person search`. This requires separate consent for profile embeddings and search queries.
+- Sync contacts bidirectionally with a CardDAV address book, including Google Contacts OAuth setup. Publication is explicit per person, conflicts remain reviewable, and profile edits preserve unrelated vCard properties.
+- Find a person's files across linked accounts and conversations through the Web Files view, `msgvault person files`, or MCP. Search attachment details, extracted text, or visual content, with links back to the original messages.
+- Search text extracted from PDF, CSV, and PPTX attachments. Extraction requires a successful provider capability check, explicit consent, and a manual build. CSV conversion is opt-in, and PPTX requires a verified slide limit.
+- Search indexed attachment text by meaning or combine keyword and semantic results. Document embeddings and query uploads require separate consent; default document searches remain local keyword searches.
+- Find images and supported MP4 attachments with text or image queries. Visual search requires provider capability checks and consent before archive uploads.
+- Preserve conversation context in chat and meeting search with optional Voyage contextual embeddings. The existing embedding method remains the default.
+- Filter messages with `list:`, `list-id:`, and `conversation_id:`. Mailing-list views are available in the Web UI and TUI; run `msgvault repair-list-ids --apply` and rebuild the cache to backfill existing mail.
+- Compare keyword, semantic, and hybrid search quality with `msgvault eval`, using your own queries and relevance ratings. Reports include ranking quality and query timings in table or JSON form.
+- Import EML mailbox trees and Maildir archives directly with `import-eml` and `import-maildir`. Both preserve folder labels and support repeat imports without duplicating archived messages.
+- Import Google Groups Takeout MBOX files and ZIPs with `import-mbox --source-type google-groups`. Imports retain group labels, threads, and attachments without treating the group address as your identity.
+- Import Slackdump Standard and Mattermost export directories or ZIPs without a live Slack token.
+- Import Apple WhatsApp `ChatStorage.sqlite` text conversations, including supported participant names. Media, reactions, and reply relationships remain outside this importer.
+- Sync Notion AI Meeting Notes into meeting views and search. Sync retains summaries, notes, and transcripts, retries pending transcripts, and reports Notion's partial 50-meeting discovery window.
+- Keep Google Voice Takeout voicemail recordings with their archived messages. Stored audio remains available after the Takeout files move.
+- Create, retrieve, edit, and delete plain-text IMAP reply drafts through the CLI. Enable drafts for each source and configure its mailbox first; sending remains in your mail client. `draft-recover` resumes identified interrupted edits or deletions from saved receipts without appending another copy.
+- Give an agent account-scoped permission to create reply drafts with `msgvault agent-token`. Delegation requires explicit server configuration and an owner API key. Tokens remain valid until revoked or the daemon restarts.
+- Archive remote email images for offline reading with `[sync] archive_remote_images = true`. The feature is off by default because downloads can activate tracking pixels. Backfill existing email separately with `msgvault archive-remote-images --allow-tracking`.
+- Authorize Gmail with read-only access using `msgvault add-account <email> --readonly`. Existing write grants require revocation and reauthorization; adding the flag does not narrow an existing grant.
+- Start bounded Gmail and IMAP historical imports through the API and retrieve persistent progress and completion status.
+- Stage Gmail deletions from search criteria or explicit IDs with `msgvault stage-delete`, including `--dry-run`. Mixed selections stage eligible Gmail messages and report skipped items; each batch remains tied to one source.
+- Inspect background work in the new Operations workspace. Filter run history and open outcomes, recovery guidance, and available actions.
+- Manage daemon, source, search, and attachment settings in the Web UI or press `,` in the TUI. Web settings include schedule presets, time zones, numeric limits, and masked API-key hints.
+- Configure optional search and people providers with `msgvault setup providers`. Use `msgvault setup status` to see missing credentials, checks, consent, and next steps.
+- Let MCP clients discover, run, and manage Saved Views, the saved queries created in the Web UI. New people tools expose profiles, recent contacts, saved briefs, and person-specific file search.
+- Discover running HTTP MCP listeners with `msgvault mcp status --json`, including their ports and token-file paths without printing tokens.
+- Reclaim SQLite space from messages deleted at their source with `msgvault gc`, which requires confirmation and creates a backup by default. Remove embeddings left by hard-deleted messages with `msgvault embeddings prune` without paying for a full embedding rebuild.
 
-See [people](usage/people.md), [profile automation](usage/people-automation.md),
-[enrichment](usage/people-enrichment.md), [briefs](usage/people-briefs.md),
-[Beeper identities](usage/beeper.md#review-identities-across-sources), and
-[CardDAV](usage/people-carddav.md).
+### Improvements
 
-### Search and attachments
+- Sync large IMAP accounts incrementally with or without QRESYNC. Unchanged folders avoid full scans, and full enumerations update only changed records. In one 96,000-message Microsoft 365 benchmark, syncing after one message moved drops from 1 hour 46 minutes to 24 seconds.
+- Scope embedding builds to selected accounts or named collections. Configure `document_prefix` and `query_prefix` for models that require task instructions; changing either requires `msgvault embeddings build --full-rebuild --yes`.
+- Control chat attachment downloads by account, conversation size, and file size. Beeper, Slack, Discord, and Teams now skip downloads in conversations with more than 20 participants by default; set `media_max_participants = 0` to remove that cap.
+- Retain larger individual attachments by default in Beeper, Slack, and Teams, with the limit rising to 250 MiB. Discord stays at 50 MiB. Existing files remain stored until you explicitly run `purge-excluded-media`.
+- Read HTML email with dark colors and a resizable right-side preview in Everything. A per-message "Use original colors" control restores the sender's presentation.
+- Share shorter Web UI links while preserving filters and selected items. Back and Forward retain the full session state, and shared links retain their search mode.
+- Open messages in the browser from CLI JSON and MCP results through the new `web_url` field.
+- Browse, download, and open individual attachments from the TUI with `e`. Press `s` in email detail to save an `.eml` file on the client machine without overwriting existing files.
+- Reuse TUI searches with Up and Down, navigate with `Ctrl+n` and `Ctrl+p`, and select named collections with `A`. Semantic search is available when vector search is enabled.
+- Stage the current TUI selection with `d`, or resolve every filter or search match with `D` before confirmation. Set `[data].export_dir` to choose the destination for attachment exports.
+- Use curated person names in search, relationship analytics, completion, and message exports. Existing analytics caches require one full rebuild; later name changes refresh derived data without rebuilding message shards.
+- Tune daemon query resources with `[analytics] query_memory_limit`, `query_threads`, and `query_temp_limit`. Cache builds now allow up to 32 GB of temporary disk use by default, and `min_rebuild_interval` limits automatic rebuild frequency.
+- Select an exact source with `--source-id` for sync, account maintenance, and staged deletion when account names are ambiguous.
+- Search retained source-deleted mail with `--deletion-scope deleted` or `any` in keyword searches. Message output includes deletion timestamps, and archived raw email remains exportable.
+- Enable remote deletion persistently in the invoking CLI's configuration with `[deletion] remote_enabled = true`. The daemon's own configuration does not grant consent to a remote caller.
+- Connect MCP clients using protocol 2026-07-28 with sessionless HTTP discovery. HTTP remains read-only unless explicitly enabled. Clients consuming `aggregate` or `search_by_domains` must read `structuredContent.data`.
+- Update API integrations to use `/api/v1/participants` for observed-contact analytics and `/api/v1/people` for saved profiles. The old people-analytics routes and `/api/v1/persons` routes are removed.
+- Install through the supported scripts, Homebrew, or release binaries instead of Nix, which is no longer supported. Source builds require Go 1.27.0.
 
-- Search Beeper chats and meeting transcripts with embeddings that include
-  nearby messages. Build embeddings for selected accounts or collections and
-  configure model-specific task prefixes. Changing scope requires a rebuild;
-  hybrid search can still find out-of-scope messages through keyword matching.
-- Extract attachment text with the shared Docbank engine and search it by
-  keyword, meaning, or both. CSV files can opt into local PDF conversion while
-  retaining their original file identity and extraction history.
-  PowerPoint PPTX attachments can be indexed from their original bytes after a
-  fresh capability probe proves Docbank's local slide bound.
-- Search image and video content through a separately configured visual
-  provider, after its capabilities have been checked.
-- Find mailing-list traffic with `list:` or `list-id:` and browse Lists
-  grouping. `repair-list-ids` previews an offline backfill; `--apply` writes it.
-  Use `conversation_id:` to select one local conversation.
-- Choose whether search includes, excludes, or shows only messages deleted from
-  their source. Their local content remains available until purged.
-- Preserve remote email images for offline reading after explicit opt-in, with a
-  separate backfill for existing mail. Stored MIME and HTML remain unchanged.
-  Fetching these images can activate tracking.
+### Bug fixes
 
-See [searching](usage/searching.md), [vector search](usage/vector-search.md),
-[document indexing](usage/document-indexing.md), and
-[remote images](usage/remote-images.md).
+- Preserve the local message, raw email, metadata, and attachments when permanently deleting mail from Gmail.
+- Reconcile Gmail source deletions after history expires without removing archived content. Incremental sync also retries failed fetches from the latest completed run recorded as incremental.
+- Reject cached Gmail credentials that belong to a different mailbox during `add-account`. Gmail and Google OAuth requests now have bounded waits, and authentication errors include complete recovery commands.
+- Audit and repair mismatched Gmail snapshots from archives written between February and May 2026 with `repair-message --audit` and `repair-message <id>`.
+- Pick up new Teams chat messages after the first sync and archive self-chats. Existing accounts need no migration or reauthorization.
+- Store readable Beeper message text instead of HTML markup and check daily for newly available older history. Existing archives repair derived text on the next sync or through `repair-derived --source-type beeper`.
+- Preserve Beeper transcript metadata and Discord voice-message flags and waveforms. Existing Discord records support repair with `repair-derived --source-type discord`.
+- Retry transient IMAP connection failures and reconnect after dropped connections during label collection. Confirmed mid-sync message removals no longer discard completed progress.
+- Refresh archived IMAP content when an edited outgoing message moves to a trusted Sent folder. Servers without advertised folder roles need an account-specific `sync.trusted_imap_sent_mailboxes` setting.
+- Recover cached top-level attachments from Apple Mail partial messages without duplicating messages on re-import. Nested attachment restoration remains unsupported.
+- Preserve Apple Mail Message-ID values and reply links. Re-import with the same source identifier and `--no-resume`, then run `build-cache --full-rebuild` to repair missing IDs and expose them in SQL and JSON.
+- Report unreadable Apple Mail directories instead of treating them as empty archives, including Full Disk Access guidance for macOS permission errors.
+- Import PST archives without counting search folders or empty attachment tables as errors.
+- Recover usable email text and attachments with malformed content types. When broken MIME structure prevents full parsing, intact headers still preserve identification and threading.
+- Prefer more complete duplicate copies when earlier source and eligibility rules tie. Deduplication previews no longer write derived metadata before confirmation.
+- Find recipient addresses in older archives through `message_recipients.email_address`. Use `envelope_address` when you need the original header address; the next cache rebuild adds both.
+- Recover Web views automatically after initial cache preparation and reduce memory use for ordinary Everything and Files listings. Query failures explain memory or disk limits, and Files offers Retry instead of displaying an unavailable count as zero.
+- Keep the daemon discoverable after VM clock changes, preventing a second daemon startup from failing on the existing archive lock.
+- Build macOS analytics caches without repeated DuckDB extension code-signature warnings. Account removal also completes unique-attachment cleanup before rebuilding the cache.
+- Preserve valid UTF-8 in calendar previews and repair affected historical snippets with `repair-encoding`.
+- Register calendars with service-account apps using domain-wide delegation. Missing Calendar permissions or a disabled API report errors without waiting through the full retry budget.
+- Import Android WhatsApp databases without the optional group-participant table and confirm the source identity after recoverable import errors. Contact matching requires explicit country codes.
+- Repair missing sender details, account-owner attribution, and IMAP labels with `repair-senders`, `repair-identity`, and `repair-labels`. Sender and label repairs preview changes by default.
 
-### Browser, terminal, and integrations
+### Acknowledgements
 
-- Share shorter Web UI links. Ordinary tabs use readable workspace and search
-  mode parameters. Links omit defaults, keyboard focus, scroll position, and
-  choices from other tabs; browser Back and Forward retain that session context.
-- Understand failed archive queries: memory and temporary-disk failures now
-  explain the relevant settings and recovery steps. Files offers a retry and
-  shows a file count only after the listing loads successfully.
-- Use Web Directory to edit profiles, relationships, and employment, review
-  identity matches and facts, merge or split profiles, publish CardDAV contacts,
-  and inspect curated networks and person attachment galleries.
-- Monitor sync, extraction, embeddings, enrichment, and CardDAV in Web
-  Operations. Filter run history, inspect failures, and run the actions the
-  daemon offers. CardDAV history survives daemon restarts.
-- Edit Web Settings in sections with visible numeric limits, switches for
-  settings that can be off, and schedule presets with time zones and validation.
-  Track unsaved changes, discard them, and see when a restart is needed.
-  Credentials can be replaced or removed without revealing the complete stored
-  value. Host-managed settings stay read-only in the browser.
-- Read messages beside the results or below them, resize the preview, and keep
-  the layout between visits. In dark mode, HTML email uses app colors; switch to
-  the sender's original colors for the open message when needed.
-- Browse People and attachments in the TUI, use semantic search and Emacs-style
-  navigation, and scope Email by named collections. Multi-source collections
-  offer Fast search only; empty collections match nothing. Email, Texts, and
-  Meetings keep independent source selectors.
-- Download, open, or export TUI attachments as a ZIP. Press `s` in email detail
-  to save the archived original as `.eml` in the client's current directory.
-  Existing files are preserved, and the original email must be archived.
-- Share Saved Views between the browser, API, and MCP assistants. Read tools can
-  list, inspect, and run views. Creation, editing, and deletion are write tools;
-  HTTP requires `--http-allow-writes`. Stored definitions are validated against
-  the version-1 vocabulary, and revision checks prevent stale edits.
-- Read person profiles, Notes, relationships, and files through MCP. General
-  profile reads exclude sensitive attributes and private Notes; Notes have a
-  separate explicit read tool. Profile writes require additional opt-in.
-- Discover running HTTP MCP endpoints with `mcp status --json`, including actual
-  ports, backend URLs, and private token-file paths. Status does not start a
-  daemon or print token contents. MCP also supports protocol `2026-07-28`,
-  publishes object-root output schemas, and accepts parameterless inbound
-  messages.
-- Use `setup providers` for consented provider defaults and `setup status` to
-  understand readiness. Sensitive profile inference requires a separate
-  `--allow-sensitive` opt-in.
-- Browse the new website's product overview, archive lifecycle guide, and
-  operating documentation under `/docs/`.
+Thanks to everyone who contributed to this release:
 
-See [Web UI](web-ui.md), [TUI](usage/tui.md),
-[recommended configuration](usage/recommended-configuration.md), and
-[MCP](usage/chat.md).
-
-### Sync, imports, and maintenance
-
-- Sync Notion AI Meeting Notes with available transcripts, verified attendees,
-  changed-note refresh, and bounded retries for late transcripts.
-- Import Slackdump directories or ZIPs, EML files and `.mailbox` trees, and
-  Maildir or Maildir++ archives. Maildir imports retain folder and flag labels
-  and recognize previously archived messages after filename changes.
-- Import Google Groups Takeout MBOX or ZIP exports. Apple Mail imports preserve
-  RFC Message-ID and link unambiguous replies within a source. Re-import and
-  rebuild the cache to fill missing IDs in existing Apple Mail archives; see
-  [message identifier recovery](usage/importing.md#message-identifiers-and-replies).
-- Import Apple WhatsApp ChatStorage text, including URL messages, with available
-  participant and push names. Contact-number matching requires country codes;
-  missing group-participant tables no longer block otherwise usable exports.
-- Preserve Google Voice voicemail audio supplied in Takeout exports. Missing or
-  unreadable recordings remain visible as failed attachment records. Discord
-  voice messages retain their duration and waveform metadata.
-- Run bounded historical Gmail or IMAP imports as background jobs through the
-  API, with durable status and checkpoint-based resumption.
-- Keep IMAP sync incremental with QRESYNC where available and avoid refetching
-  unchanged folders without it. Retry connection failures within bounds,
-  preserve valid mailbox state after incomplete responses, and treat messages
-  removed during a fetch as handled. `repair-labels` rebuilds labels from stored
-  folder membership without contacting the provider.
-- Create an IMAP reply draft with `draft-reply` after an operator grants access
-  to a specific source and Drafts folder. The server must support UIDPLUS.
-  Msgvault stores an archived copy; it never sends the email.
-- Add restricted agent grants. Owner-only `agent-token issue/list/revoke`
-  commands manage in-memory tokens with `draft.create`, `draft.edit`, and
-  `draft.delete` permissions for named sources. Agents use `--agent-url` and
-  `--agent-token-file` to run `draft-reply` or `draft-recover`; grants expire
-  when revoked or when the daemon restarts.
-  Enable `[server] agent_access = true` with a non-empty `api_key`; see
-  [agent-token](cli-reference.md#agent-token) and
-  [configuration](configuration.md#server).
-- Read, edit, and delete managed IMAP drafts with `draft-get`, `draft-edit`, and
-  `draft-delete`, plus `draft-recover` for interrupted operations. Reads use
-  retained archive content; edits, deletes, and recovery require the reported
-  revision and exact provider receipt. Recovery uses saved replacement bytes and
-  never replays APPEND. Uncertain provider results retain their evidence for a
-  later recovery attempt.
-- Refresh the archived body, recipients, and attachments when a trusted outgoing
-  IMAP copy is edited or moves from Drafts to Sent. Ordinary received-mail and
-  All Mail copies cannot replace that content. Historical rows that already lost
-  their old location are not repaired automatically. See [IMAP](usage/imap.md).
-- Authorize Gmail with read-only access using `add-account --readonly`. Existing
-  write grants require the documented revoke-and-reauthorize steps. Google
-  Calendar registration now also works directly with Workspace service accounts;
-  delegation and disabled-API errors stop without lengthy retries.
-- Archive Teams self-chat and avoid replaying the last message at each
-  incremental boundary. Preserve Beeper transcript metadata, resume backfilled
-  history, store plain text, distinguish link previews, and repair older
-  classifications from archived payloads. Calendar snippets retain valid UTF-8.
-- Select exact sources with `--source-id` where supported. Deletion manifests
-  preserve source type and identifier. Stage by query or explicit message IDs,
-  preview counts, and skip ineligible query matches. Eligible messages must
-  belong to one exact source; TUI and MCP reject cross-source staging.
-- Keep messages and attachments after permanent source deletion. Use the
-  separate SQLite `gc` command to purge source-deleted rows and unreferenced
-  blobs. Deduplication requires the reviewed plan to remain valid and prefers
-  attachment-complete survivors only under its documented equivalence rules.
-- Repair source identity, sender attribution, Gmail snapshots, and derived
-  metadata. Gmail sync reconciles expired history, retries failed fetches from
-  the previous completed run, verifies cached account identities, and bounds
-  request and OAuth refresh waits. Scheduler errors show copyable
-  reauthorization commands.
-- Recover more malformed MIME messages and report importer read errors. Bound
-  large analytical listings, rebuild caches less often, maintain SQLite planner
-  statistics, resolve cached recipient addresses, and prune orphan embeddings.
-  Tune DuckDB query memory, threads, and disk spill separately from cache-build
-  limits.
-
-See [sources](guides/sources.md), [imports](usage/importing.md),
-[text messages](usage/text-messages.md), [Calendar](usage/calendar.md),
-[OAuth](guides/oauth-setup.md), [deletion](usage/deletion.md),
-[deduplication](usage/deduplication.md), and
-[analytics configuration](configuration.md#analytics).
-
-### Building and maintaining msgvault
-
-- Build with Go 1.27 and the documented Bun, Node.js, and native SQLite
-  prerequisites. Nix flake packaging has been removed.
-- Use Docker Bake to export Linux AMD64 and ARM64 images as OCI archives. Image
-  builds check database initialization, DuckDB queries, and the embedded Web UI.
-  Repository release-publishing workflows and tag/changelog scripts have been
-  removed; local builds and installers remain available.
-- Generate the browser API client with Orval and pinned OpenAPI tools. Local
-  SQLite test scheduling scales to available CPU and memory; PostgreSQL
-  configurations remain separately covered.
-- Compare keyword, semantic, and hybrid search with `msgvault eval`, using
-  queries and relevance ratings you provide. See the [evaluation command](cli-reference.md#eval)
-  for input formats, metrics, and backend limits. Synthetic media examples do
-  not add audio transcription.
-
-See [Development](development.md) for build and check commands.
+- [@cpcloud](https://github.com/cpcloud) for making identity-index tests independent of platform memory limits.
+- [@css521](https://github.com/css521) for handling MCP messages without parameters.
+- [@danshapiro](https://github.com/danshapiro) for preserving UTF-8 calendar previews and repairing older snippets.
+- [@elviskahoro](https://github.com/elviskahoro) for adding account-scoped embedding builds.
+- [@exactmike](https://github.com/exactmike) for improving incremental IMAP and Teams sync, reconnecting IMAP sessions, and repairing labels.
+- [@fucx](https://github.com/fucx) for recovering cached attachments from Apple Mail partial messages.
+- [@hansn74](https://github.com/hansn74) for adding identity repair, configurable analytics resources, and Calendar service-account support.
+- [@jesserobbins](https://github.com/jesserobbins) for fixing CardDAV contact sync with iCloud.
+- [@mariusvniekerk](https://github.com/mariusvniekerk) for improving Web Settings and email previews, adding Google Contacts OAuth and browser message links, and maintaining build and API tooling.
+- [@mikemikimike](https://github.com/mikemikimike) for preserving the local archive during permanent Gmail deletion.
+- [@rodboev](https://github.com/rodboev) for adding managed IMAP drafts and delegated access, recent-contact browsing, CSV and PPTX indexing, and import and repair improvements.
+- [@salmonumbrella](https://github.com/salmonumbrella) for building people profiles, relationships, briefs, CardDAV sync, contextual search, and archive browsing and maintenance workflows.
+- [@shntnu](https://github.com/shntnu) for adding Apple WhatsApp text imports and updating contributor guidance.
+- [@sweenzor](https://github.com/sweenzor) for repairing Beeper message text, older-history sync, and link-preview handling.
+- [@ValentinViennot](https://github.com/ValentinViennot) for making Saved Views available to MCP clients.
+- [@wesm](https://github.com/wesm) for adding document and visual search, person file retrieval, search evaluation, and improvements to analytics, imports, and documentation.
 
 ---
 

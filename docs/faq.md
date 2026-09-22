@@ -44,10 +44,10 @@ features. See [recommended configuration](usage/recommended-configuration.md).
 
 <p class="faq-question">Why is a documented feature missing from my binary?</p>
 
-The documentation follows current `main`, including work after 0.19.3 that is
-not yet released. Check `msgvault version` and the installed command's `--help`,
-then consult [the changelog](changelog.md#unreleased). A configured remote daemon also
-needs a compatible version.
+The documentation follows current `main`; your installed binary may be older.
+Check `msgvault version` and the installed command's `--help`, then consult the
+[0.20.0 changelog](changelog.md#0200). Upgrade the CLI and a configured remote
+daemon together.
 
 <p class="faq-question">What is the web server for?</p>
 

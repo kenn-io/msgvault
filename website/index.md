@@ -10,8 +10,8 @@ behind it, and use your history from the terminal, browser, or an AI assistant.
 
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
-your data. This site describes current main, including unreleased work.
-[Read the changelog for new features and upgrade notes](/docs/changelog/#unreleased).
+your data.
+[See what changed in 0.20.0 and read the upgrade notes](/docs/changelog/#0200).
 
 ## Install
 

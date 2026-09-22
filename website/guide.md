@@ -4,8 +4,8 @@ Follow your archive from first capture to long-term ownership. Source access
 and media policies determine what is captured. Optional hosted processing
 sends selected data to the providers you configure.
 
-This guide describes current `main`, including unreleased work. See the
-[changelog](/docs/changelog/#unreleased) for release and upgrade details.
+See the [0.20.0 changelog](/docs/changelog/#0200) for new features and upgrade
+steps.
 
 1. [Capture](#capture)
 2. [Preserve](#preserve)

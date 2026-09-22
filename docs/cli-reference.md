@@ -6,7 +6,7 @@ description: Complete command reference for all msgvault commands.
 
 Find a command by task below, or use `msgvault COMMAND --help` for the flags
 in your installed binary. This reference follows current `main`; see
-[the changelog](changelog.md#unreleased) for the release boundary.
+[the 0.20.0 changelog](changelog.md#0200) for features and upgrade notes.
 
 | Task | Commands and guides |
 |---|---|

@@ -25,9 +25,8 @@ and files, and connect the addresses and handles that belong to the same person.
 Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
-> your data. This README describes current `main`; see
-> [the changelog](docs/changelog.md#unreleased) for unreleased features
-> and upgrade steps.
+> your data. This README follows current `main`; see the
+> [0.20.0 changelog](docs/changelog.md#0200) for features and upgrade steps.
 
 ## What you can do
 
@@ -120,7 +119,7 @@ first sync, and running on your own server.
 | I want to… | Read |
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
-| Catch up after 0.19 | [Changelog and upgrade notes](docs/changelog.md#unreleased) |
+| Catch up after 0.19 | [Changelog and upgrade notes](docs/changelog.md#0200) |
 | Search messages and attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |
