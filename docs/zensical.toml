@@ -15,6 +15,7 @@ nav = [
   {"Start Here" = [
     {"Documentation" = "index.md"},
     {"Setup" = "setup.md"},
+    {"Changelog" = "changelog.md"},
     {"Choose a Source" = "guides/sources.md"},
   ]},
   {"Explore Your Archive" = [
@@ -65,7 +66,6 @@ nav = [
     {"MCP Server" = "usage/chat.md"},
     {"Agent Skills" = "guides/agent-skills.md"},
     {"FAQ" = "faq.md"},
-    {"Changelog" = "changelog.md"},
   ]},
   {"Architecture" = [
     {"Overview" = "architecture/overview.md"},

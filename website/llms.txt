@@ -1,9 +1,8 @@
 # msgvault
 
-> msgvault is a local-first, open-source archive for a lifetime of email,
-> chat, meetings, calendars, and contacts — one database with a durable people
-> layer, keyword and semantic search, an MCP server, and agent skills, owned
-> and operated by you.
+> msgvault is open source and runs on your hardware. Save email, chats, meetings,
+> calendars, and contacts on your own computer or server. Search across accounts,
+> look up a person's history, and work from a browser, terminal, or AI assistant.
 
 The product and guide pages have Markdown companions with the same core
 information; documentation pages are served as HTML. Use the Markdown
@@ -11,11 +10,10 @@ companions for machine reading.
 
 ## Product
 
-- [Product overview](https://msgvault.io/index.md): what msgvault is, every
-  supported source, the people layer, search modes, interfaces, and the
-  deletion safety model
-- [Archive lifecycle guide](https://msgvault.io/guide.md): capture, preserve,
-  resolve, curate, understand, search, analyze, act, own
+- [Product overview](https://msgvault.io/index.md): supported sources, contact
+  profiles, search, interfaces, and how deletion works
+- [How msgvault works](https://msgvault.io/guide.md): sync and import messages,
+  manage contacts, search, review deletions, and back up your archive
 
 ## Docs
 

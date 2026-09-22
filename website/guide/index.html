@@ -3,20 +3,20 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>The archive lifecycle — msgvault</title>
-    <meta name="description" content="Follow one msgvault archive from capture and preservation through people resolution, AI understanding, search, analytics, deliberate deletion, and full ownership.">
+    <title>How msgvault works</title>
+    <meta name="description" content="Learn how to sync or import messages, manage contacts, search your history, review deletions, and back up your msgvault archive.">
     <link rel="canonical" href="https://msgvault.io/guide/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="The archive lifecycle">
-    <meta property="og:description" content="Follow one msgvault archive from capture and preservation through people resolution, AI understanding, search, analytics, deliberate deletion, and full ownership.">
+    <meta property="og:title" content="How msgvault works">
+    <meta property="og:description" content="Learn how to sync or import messages, manage contacts, search your history, review deletions, and back up your msgvault archive.">
     <meta property="og:url" content="https://msgvault.io/guide/">
     <meta property="og:site_name" content="msgvault">
     <meta property="og:image" content="https://msgvault.io/docs/assets/static/og-image.png">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="The archive lifecycle">
-    <meta name="twitter:description" content="Follow one msgvault archive from capture and preservation through people resolution, AI understanding, search, analytics, deliberate deletion, and full ownership.">
+    <meta name="twitter:title" content="How msgvault works">
+    <meta name="twitter:description" content="Learn how to sync or import messages, manage contacts, search your history, review deletions, and back up your msgvault archive.">
     <meta name="twitter:image" content="https://msgvault.io/docs/assets/static/og-image.png">
   </head>
   <body>
@@ -97,9 +97,9 @@
 
     <main id="main">
       <header class="hero compact">
-        <p class="eyebrow">Lifecycle guide</p>
-        <h1>The archive lifecycle</h1>
-        <p class="lede">Follow your archive from first capture to long-term ownership. Source access and media policies determine what is captured. Optional hosted processing sends selected data to the providers you configure.</p>
+        <p class="eyebrow">Guide</p>
+        <h1>How msgvault works</h1>
+        <p class="lede">Sync or import your messages, link them to people, search your history, and back up your archive. What gets saved depends on source access and your media settings. Optional hosted processing sends selected data to the providers you configure.</p>
         <p class="caption">See the <a href="/docs/changelog/#0200">0.20.0 changelog</a> for new features and upgrade steps.</p>
         <ol class="guide-nav" aria-label="Guide stops">
           <li><a href="#capture">01 Capture</a></li>
@@ -117,7 +117,7 @@
       <ol class="guide-stops">
         <li class="guide-stop" id="capture">
           <div class="guide-copy">
-            <h2>Capture every channel</h2>
+            <h2>Sync an account or import an export</h2>
             <p>Choose a connected source for recurring sync or import a local export. Supported sources include email, chat, calendars, meeting notes, and contacts. Each source guide explains setup, captured history, media limits, and how interrupted work resumes.</p>
             <a href="/docs/guides/sources/">Choose a source</a>
           </div>
@@ -136,7 +136,7 @@
           </div>
           <div class="guide-media">
             <ol class="ledger">
-              <li><strong>Preview</strong><span>Review duplicate groups and the proposed survivor.</span></li>
+              <li><strong>Preview</strong><span>Review duplicates and which copy will stay visible.</span></li>
               <li><strong>Hide</strong><span>Keep one visible copy; retain hidden copies and source evidence.</span></li>
               <li><strong>Undo</strong><span>Restore hidden copies while they remain in the archive.</span></li>
             </ol>
@@ -145,7 +145,7 @@
 
         <li class="guide-stop" id="resolve">
           <div class="guide-copy">
-            <h2>Resolve identities into people</h2>
+            <h2>Link addresses to people</h2>
             <p>Connect the addresses and handles that belong to the same person. msgvault groups identities using explicit links in the archive; matching display names alone do not merge people. Review suggested identity matches before accepting them.</p>
             <a href="/docs/usage/people/">People, profiles, and identities</a>
           </div>
@@ -174,7 +174,7 @@
 
         <li class="guide-stop" id="understand">
           <div class="guide-copy">
-            <h2>Understand with your models</h2>
+            <h2>Choose local or hosted models</h2>
             <p>Enable search by meaning with a local or hosted embedding service. Separately configure document and image processing, and approve uploads before sending attachment content to a provider. You can rebuild search indexes from the archive; stored evidence and saved profiles remain part of the record.</p>
             <a href="/docs/usage/vector-search/">Vector search</a>
           </div>
@@ -212,7 +212,7 @@
               <a href="/docs/assets/generated/tui-senders.svg" data-lightbox>
                 <img src="/docs/assets/generated/tui-senders.svg" alt="msgvault TUI showing sender aggregates with counts and sizes over the whole archive">
               </a>
-              <figcaption class="caption">The TUI's sender aggregates, backed by DuckDB over Parquet.</figcaption>
+              <figcaption class="caption">Message counts and storage by sender in the terminal.</figcaption>
             </figure>
           </div>
         </li>
@@ -225,7 +225,7 @@
           </div>
           <div class="guide-media">
             <ol class="ledger">
-              <li><strong>Stage</strong><span>Select one source and create a reviewable manifest.</span></li>
+              <li><strong>Stage</strong><span>Select messages from one source and save the list for review.</span></li>
               <li><strong>Review</strong><span>Inspect the count and contents. Cancel if needed.</span></li>
               <li><strong>Execute</strong><span>Grant client consent, then move to Trash or explicitly delete permanently.</span></li>
               <li><strong>Retain</strong><span>Keep the archived messages and attachments. Local purging is separate.</span></li>
@@ -235,7 +235,7 @@
 
         <li class="guide-stop" id="own">
           <div class="guide-copy">
-            <h2>Own the whole system</h2>
+            <h2>Run and back up your archive</h2>
             <p>Run msgvault on your laptop or your own server. One binary provides the browser interface, API, scheduled work, and tools for assistants. For SQLite archives, backup snapshots include the database and attachments and restore without contacting the original providers. PostgreSQL archives require separate database backups.</p>
             <a href="/docs/usage/backup/">Backup and restore</a>
           </div>
@@ -254,9 +254,9 @@
             <h2 id="operate-title">Build your archive.</h2>
           </div>
           <div>
-            <p>Move from the lifecycle model to installation, OAuth setup, exact command behavior, configuration, and architecture.</p>
+            <p>Install msgvault and connect your first account. The docs cover commands, configuration, and how msgvault stores your data.</p>
             <div class="actions">
-              <a class="button primary" href="/docs/setup/">Run the setup guide</a>
+              <a class="button primary" href="/docs/setup/">Set up msgvault</a>
               <a class="button" href="/docs/">Open all documentation</a>
             </div>
           </div>

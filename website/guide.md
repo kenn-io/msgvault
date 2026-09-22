@@ -1,8 +1,9 @@
-# The archive lifecycle
+# How msgvault works
 
-Follow your archive from first capture to long-term ownership. Source access
-and media policies determine what is captured. Optional hosted processing
-sends selected data to the providers you configure.
+Sync or import your messages, link them to people, search your history, and
+back up your archive. What gets saved depends on source access and your media
+settings. Optional hosted processing sends selected data to the providers you
+configure.
 
 See the [0.20.0 changelog](/docs/changelog/#0200) for new features and upgrade
 steps.
@@ -102,5 +103,5 @@ database backups.
 
 ## Next
 
-Move from the lifecycle model to [installation and setup](/docs/setup/) or
-[all documentation](/docs/).
+[Install msgvault and connect your first account](/docs/setup/). The
+[docs](/docs/) cover commands, configuration, and how msgvault stores your data.

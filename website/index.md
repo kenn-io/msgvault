@@ -1,10 +1,10 @@
 # msgvault
 
-**Your communications. Your relationships. One archive.**
+**Keep and search your message history.**
 
-msgvault is a local-first, open-source archive. Bring email, chat, meetings, and
-contacts together on your own hardware. Find what matters, connect the people
-behind it, and use your history from the terminal, browser, or an AI assistant.
+msgvault is open source and runs on your hardware. Save email, chats, meetings,
+calendars, and contacts on your own computer or server. Search across accounts,
+look up a person's history, and work from a browser, terminal, or AI assistant.
 
 ![People and communications flow into one msgvault archive, accessible through the TUI, Web UI, and MCP for AI assistants.](/assets/archive-flow.svg)
 
@@ -38,9 +38,9 @@ checksum. msgvault is also on
 [conda-forge](https://prefix.dev/channels/conda-forge/packages/msgvault), and
 the [setup documentation](/docs/setup/) covers building from source.
 
-Then [follow the archive lifecycle](/guide/).
+Then [read how msgvault works](/guide/).
 
-## Every channel. One archive.
+## Bring your accounts together
 
 Bring history from several providers into one searchable archive. Sync connected
 accounts or import local exports. Keep original message data and downloaded
@@ -53,49 +53,50 @@ attachments alongside the records you browse.
 - **Meetings** — Granola, Circleback, and Notion AI Meeting Notes in the same
   searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
-- **Contacts** — bidirectional CardDAV: pull address books, publish curated
-  people back.
+- **Contacts** — import contacts from a CardDAV address book and choose which
+  saved profiles to sync back.
 
-## Messages come from addresses. Relationships come from people.
+## Keep contact details and message history together
 
 Connect the addresses, handles, and phone numbers that belong to one person.
 Keep information found in the archive separate from the profile details you
 choose to save.
 
-### Identity evidence
+### Link addresses to the same person
 
 msgvault groups identities using explicit links in the archive. Matching display
 names alone do not merge two people.
 
-### Saved profiles
+### Save names, notes, and contact details
 
 Save a profile to keep names, notes, and contact details when linked identities
 change. Review profile history, merge duplicates, and reverse supported merges.
 
-### Profile history
+### See where a profile fact came from
 
 Maintain organizations, employment, relationships, and custom fields. Inspect
 the evidence behind a fact and pin a correction so automated updates keep your
 choice.
 
-### Activity
+### See when you were last in contact
 
 See when you exchanged messages or shared events and meetings. Activity
 calendars and relationship scores help you find frequent contacts and people you
 have not heard from recently.
 
-## Work the archive in the browser
+## Browse your archive
 
 Search messages, browse files, and maintain contacts in the browser. Save a
 useful view or share its URL with someone who has access to your archive.
-Browser Back and Forward restore your browsing context.
+Use Back and Forward to return to earlier views.
 
 Maintain profiles, review identities and merges, publish contacts through
 CardDAV, and catch up with a saved conversation brief in **Directory**.
-**Operations** tracks syncs and background work; **Settings** manages provider
-credentials and restart-pending changes. [Explore the workspaces](/docs/web-ui/).
+Check syncs and background jobs in **Operations**. Update provider credentials
+in **Settings**, which shows changes that take effect after a restart.
+[Explore the workspaces](/docs/web-ui/).
 
-## Semantic search and document understanding
+## Search messages and attachments
 
 Keyword search reads your archive offline. Optional search by meaning sends
 message and query text to the embedding service you configure, which can run
@@ -105,7 +106,7 @@ consent steps.
 - **Hybrid search:** search with familiar filters such as sender, subject, and
   date. Use semantic search to find related meanings, or hybrid search to
   combine words and meaning. Ranking details explain each result.
-- **Local models:** an embedding service turns text into numbers used to compare
+- **Search models:** an embedding service turns text into numbers used to compare
   meaning. Choose a supported local or hosted service and select which accounts
   to index.
 - **Attachments:** find text inside supported attachments or search images by
@@ -114,24 +115,25 @@ consent steps.
   sending attachment content.
 - **Agents:** an MCP server exposes search, people, files, and analytics
   tools to Claude Desktop and other agents; bundled agent skills install into
-  Claude Code and Codex. Profile writes stay behind explicit flags.
+  Claude Code and Codex. Allowing an agent to edit profiles requires explicit
+  flags.
 
-## One archive across every surface
+## Use the browser, terminal, or an assistant
 
 One background service, the daemon, coordinates archive access and scheduled
 work. Use the browser, terminal, scripts, or an assistant to work with the same
 archive.
 
 - **CLI:** scriptable sync, search, and repair.
-- **Web:** analytical workspaces in the browser.
-- **TUI:** keyboard drill-down analytics.
+- **Web:** search, browse, and manage contacts.
+- **TUI:** explore message counts and storage with the keyboard.
 - **HTTP:** an authenticated, versioned API.
 - **MCP:** archive tools for AI assistants.
 - **Skills:** workflows for Claude Code and Codex.
 
 [Connect an agent](/docs/usage/chat/) or [inspect the API](/docs/api-server/).
 
-## Archive everything. Then delete upstream.
+## Review mail before deleting provider copies
 
 Back up your archive and check the messages you intend to remove before deleting
 from a provider. Review the selection, then run a separate command to move mail
@@ -140,20 +142,22 @@ to Trash or permanently delete it.
 - **Verify:** for Gmail, compare message counts and check a sample of stored
   messages. This does not prove every message or attachment was captured.
   Review the items you plan to delete and keep a backup.
-- **Stage:** create a deletion manifest from the CLI, Web UI, TUI, or MCP,
-  then inspect it. Staging does not remove provider messages; execution is a
-  separate CLI command.
+- **Stage:** create a deletion manifest: a saved list of messages to review.
+  You can create it from the CLI, Web UI, TUI, or MCP. Staging does not remove
+  provider messages; execution is a separate CLI command.
 - **Execute:** the CLI requires explicit client consent. Gmail and IMAP default
   to moving messages to Trash; permanent deletion requires explicit opt-in.
   Archived messages and attachments remain available; msgvault records their
-  source-deletion state.
-- **Restore:** append-only, verifiable backup snapshots cover the database and
-  attachments, with restore paths that need no provider at all.
+  deletion from their source.
+- **Restore:** back up SQLite archives with snapshots of the database and
+  attachments. New snapshots leave earlier ones intact, and you can verify
+  them before restoring. Restoring does not require the original providers.
+  PostgreSQL databases need separate backups.
 
 ## Keep a record beyond the provider.
 
-Choose how you use your communications history. msgvault keeps a searchable
-archive that you operate, query, and extend.
+Use msgvault alongside your mail client and provider exports. Keep searching
+your saved history after messages leave the provider.
 
 - **Mail client:** read, compose, and send mail. msgvault can prepare managed
   IMAP drafts for review there; it does not send mail.
@@ -163,8 +167,8 @@ archive that you operate, query, and extend.
   Sync supported accounts, connect identities, search across sources, and use
   your own tools.
 
-## Follow one archive through the system
+## Set up your first archive
 
-The [lifecycle guide](/guide/) walks the archive from capture to ownership.
-The [documentation](/docs/) carries setup, exact command behavior,
-configuration, and architecture.
+Read the [guide](/guide/) for an overview, or go straight to
+[setup](/docs/setup/). The [docs](/docs/) cover commands, configuration, and how
+msgvault stores your data.
