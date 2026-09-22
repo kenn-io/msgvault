@@ -105,7 +105,7 @@ func splitUnquotedCommas(value string) []string {
 func unquotedCommaPositions(value string) []int {
 	positions := make([]int, 0, 4)
 	quoted, escaped := false, false
-	for index := 0; index < len(value); index++ {
+	for index := range len(value) {
 		switch {
 		case escaped:
 			escaped = false

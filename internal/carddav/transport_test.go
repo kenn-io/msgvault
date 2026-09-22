@@ -2,7 +2,7 @@ package carddav
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 -- RFC 7616 MD5 interoperability fixture.
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -47,21 +47,23 @@ func TestClientRejectsCredentialsOverHTTPByDefault(t *testing.T) {
 }
 
 func TestClientTrustedPrivateDestinationUsesExactPinWithoutDNS(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	origin, err := url.Parse("https://contacts.example:8443/dav")
-	require.NoError(t, err)
+	require.NoError(err)
 	trusted, err := url.Parse("https://contacts.example:8443")
-	require.NoError(t, err)
+	require.NoError(err)
 	resolver, queries := newFixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
 	client, err := NewClient(ClientOptions{
 		CredentialOrigin: origin, Username: "alice", Password: "app-password",
 		TrustedOrigin: trusted, TrustedAddresses: []netip.Addr{netip.MustParseAddr("100.80.0.8")},
 		Resolver: resolver,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	addresses, err := client.validateTarget(t.Context(), origin)
-	require.NoError(t, err)
-	assert.Equal(t, []netip.AddrPort{netip.MustParseAddrPort("100.80.0.8:8443")}, addresses)
-	assert.Zero(t, queries.Load())
+	require.NoError(err)
+	assert.Equal([]netip.AddrPort{netip.MustParseAddrPort("100.80.0.8:8443")}, addresses)
+	assert.Zero(queries.Load())
 }
 
 func TestClientTrustedDestinationRejectsUnsafePolicy(t *testing.T) {
@@ -93,10 +95,12 @@ func TestClientTrustedDestinationRejectsUnsafePolicy(t *testing.T) {
 }
 
 func TestClientTrustedPinFailureDoesNotFallBackToDNS(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	origin, err := url.Parse("https://contacts.example:8443/dav")
-	require.NoError(t, err)
+	require.NoError(err)
 	trusted, err := url.Parse("https://contacts.example:8443")
-	require.NoError(t, err)
+	require.NoError(err)
 	resolver, queries := newFixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
 	var dialed []string
 	client, err := NewClient(ClientOptions{
@@ -108,11 +112,11 @@ func TestClientTrustedPinFailureDoesNotFallBackToDNS(t *testing.T) {
 			return nil, errors.New("synthetic dial failure")
 		},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = client.Do(t.Context(), Request{Method: "PROPFIND", URL: origin.String()})
-	require.Error(t, err)
-	assert.Equal(t, []string{"100.80.0.8:8443"}, dialed)
-	assert.Zero(t, queries.Load())
+	require.Error(err)
+	assert.Equal([]string{"100.80.0.8:8443"}, dialed)
+	assert.Zero(queries.Load())
 }
 
 func TestClientNeverSendsBasicAuthAcrossOrigin(t *testing.T) {
@@ -162,7 +166,9 @@ func TestClientDigestStaleNoncePreservesConditionalPUT(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		assert.Equal(t, http.MethodPut, r.Method)
 		assert.Equal(t, card, string(body))
 		assert.Equal(t, `"prior"`, r.Header.Get("If-Match"))
@@ -173,7 +179,9 @@ func TestClientDigestStaleNoncePreservesConditionalPUT(t *testing.T) {
 			return
 		}
 		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		assert.Equal(t, "/dav/card.vcf", credentials.URI)
 		assert.Equal(t, digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, "PUT", credentials.URI), credentials.Response)
 		if attempts == 2 {
@@ -204,7 +212,9 @@ func TestClientDigestSelectsCombinedChallenge(t *testing.T) {
 			return
 		}
 		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		assert.Equal(t, "nonce-one", credentials.Nonce)
 		w.WriteHeader(http.StatusMultiStatus)
 	}))
@@ -246,7 +256,9 @@ func TestClientDigestRegeneratesConditionalDELETEOnRedirect(t *testing.T) {
 			return
 		}
 		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		if attempts == 2 {
 			assert.Equal(t, "/first%20card.vcf?view=one", credentials.URI)
 			assert.Equal(t, 1, credentials.Nc)
@@ -286,7 +298,7 @@ func TestClientDigestWrongPasswordStopsAfterOneReplay(t *testing.T) {
 
 func digestMD5Response(username, realm, password, nonce string, count int, cnonce, method, uri string) string {
 	hash := func(value string) string {
-		sum := md5.Sum([]byte(value))
+		sum := md5.Sum([]byte(value)) // #nosec G401 -- Verify RFC 7616 MD5 response independently.
 		return hex.EncodeToString(sum[:])
 	}
 	return hash(fmt.Sprintf("%s:%s:%08x:%s:auth:%s", hash(username+":"+realm+":"+password), nonce, count, cnonce, hash(method+":"+uri)))

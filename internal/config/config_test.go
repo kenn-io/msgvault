@@ -39,20 +39,22 @@ enabled = true
 }
 
 func TestCardDAVTrustedDestinationLoadsBeforeAccountSetup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(`[carddav]
+	require.NoError(os.WriteFile(path, []byte(`[carddav]
 trusted_origin = "https://contacts.example:8443"
 trusted_addresses = ["100.80.0.8", "10.1.2.3"]
 `), 0o600))
 	cfg, err := Load(path, "")
-	require.NoError(t, err)
-	assert.Empty(t, cfg.CardDAV.BaseURL)
-	assert.Equal(t, "https://contacts.example:8443", cfg.CardDAV.TrustedOrigin)
-	assert.Equal(t, []string{"100.80.0.8", "10.1.2.3"}, cfg.CardDAV.TrustedAddresses)
-	require.NoError(t, cfg.Save())
+	require.NoError(err)
+	assert.Empty(cfg.CardDAV.BaseURL)
+	assert.Equal("https://contacts.example:8443", cfg.CardDAV.TrustedOrigin)
+	assert.Equal([]string{"100.80.0.8", "10.1.2.3"}, cfg.CardDAV.TrustedAddresses)
+	require.NoError(cfg.Save())
 	reloaded, err := Load(path, "")
-	require.NoError(t, err)
-	assert.Equal(t, cfg.CardDAV.TrustedAddresses, reloaded.CardDAV.TrustedAddresses)
+	require.NoError(err)
+	assert.Equal(cfg.CardDAV.TrustedAddresses, reloaded.CardDAV.TrustedAddresses)
 }
 
 func TestCardDAVTrustedDestinationRejectsInvalidPolicy(t *testing.T) {

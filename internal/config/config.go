@@ -943,7 +943,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if cfg.CardDAV.TrustedOrigin != "" || len(cfg.CardDAV.TrustedAddresses) != 0 {
 		origin, err := url.Parse(cfg.CardDAV.TrustedOrigin)
 		if err != nil {
-			return nil, fmt.Errorf("carddav.trusted_origin: invalid URL")
+			return nil, errors.New("carddav.trusted_origin: invalid URL")
 		}
 		addresses := make([]netip.Addr, 0, len(cfg.CardDAV.TrustedAddresses))
 		for _, raw := range cfg.CardDAV.TrustedAddresses {

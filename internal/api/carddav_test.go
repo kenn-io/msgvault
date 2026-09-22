@@ -207,58 +207,64 @@ func TestCardDAVControllerConfigurationSnapshotsDoNotMixConcurrentPublications(t
 }
 
 func TestCardDAVTrustedPolicySurvivesAccountSave(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg, st, candidate := savedCardDAVFixture(t)
 	cfg.CardDAV.TrustedOrigin = "https://old.example"
 	cfg.CardDAV.TrustedAddresses = []string{"10.1.2.3"}
-	require.NoError(t, cfg.Save())
+	require.NoError(cfg.Save())
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
+	require.NoError(err)
 	controller.factory = func(_ *store.Store, configured config.CardDAVConfig, _ string) (cardDAVCandidate, error) {
-		assert.Equal(t, "https://old.example", configured.TrustedOrigin)
-		assert.Equal(t, []string{"10.1.2.3"}, configured.TrustedAddresses)
+		assert.Equal("https://old.example", configured.TrustedOrigin)
+		assert.Equal([]string{"10.1.2.3"}, configured.TrustedAddresses)
 		return candidate, nil
 	}
 	_, err = controller.Save(t.Context(), CardDAVAccountRequest{
 		BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username, Password: "new-password", Enabled: new(false),
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	persisted, err := config.Load(cfg.ConfigFilePath(), "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"10.1.2.3"}, persisted.CardDAV.TrustedAddresses)
-	assert.Equal(t, "https://old.example", persisted.CardDAV.TrustedOrigin)
+	require.NoError(err)
+	assert.Equal([]string{"10.1.2.3"}, persisted.CardDAV.TrustedAddresses)
+	assert.Equal("https://old.example", persisted.CardDAV.TrustedOrigin)
 }
 
 func TestCardDAVTrustedPolicyChangeDuringDiscoveryConflicts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg, st, candidate := savedCardDAVFixture(t)
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
+	require.NoError(err)
 	controller.factory = func(_ *store.Store, configured config.CardDAVConfig, _ string) (cardDAVCandidate, error) {
-		assert.Empty(t, configured.TrustedOrigin)
+		assert.Empty(configured.TrustedOrigin)
 		before, readErr := config.ReadConfigFile(cfg.ConfigFilePath())
-		require.NoError(t, readErr)
+		require.NoError(readErr)
 		_, editErr := config.EditConfigFile(cfg.ConfigFilePath(), before.ETag, []config.Edit{
 			{Key: "carddav.trusted_origin", Value: "https://old.example"},
 			{Key: "carddav.trusted_addresses", Value: []string{"10.1.2.3"}},
 		})
-		require.NoError(t, editErr)
+		require.NoError(editErr)
 		return candidate, nil
 	}
 	_, err = controller.Save(t.Context(), CardDAVAccountRequest{
 		BaseURL: "https://new.example/dav", Username: "new-user", Password: "new-password", Enabled: new(false),
 	})
-	require.ErrorIs(t, err, config.ErrConfigConflict)
-	assert.NotSame(t, candidate, controller.Current())
+	require.ErrorIs(err, config.ErrConfigConflict)
+	assert.NotSame(candidate, controller.Current())
 	persisted, loadErr := config.Load(cfg.ConfigFilePath(), "")
-	require.NoError(t, loadErr)
-	assert.Equal(t, "https://old.example", persisted.CardDAV.TrustedOrigin)
-	assert.Equal(t, []string{"10.1.2.3"}, persisted.CardDAV.TrustedAddresses)
+	require.NoError(loadErr)
+	assert.Equal("https://old.example", persisted.CardDAV.TrustedOrigin)
+	assert.Equal([]string{"10.1.2.3"}, persisted.CardDAV.TrustedAddresses)
 }
 
 func TestCardDAVTrustedPolicyChangeAfterPersistenceDoesNotPublishService(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg, st, candidate := savedCardDAVFixture(t)
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
-	require.NotNil(t, controller.Current())
+	require.NoError(err)
+	require.NotNil(controller.Current())
 	var reconciled CardDAVOperations
 	reconciledCalled := false
 	controller.SetScheduleReconciler(func(_ config.CardDAVConfig, service CardDAVOperations) error {
@@ -269,7 +275,7 @@ func TestCardDAVTrustedPolicyChangeAfterPersistenceDoesNotPublishService(t *test
 	controller.factory = func(*store.Store, config.CardDAVConfig, string) (cardDAVCandidate, error) { return candidate, nil }
 	controller.persistDiscovery = func(context.Context, cardDAVCandidate, string, string, carddav.Discovery, bool) error {
 		before, readErr := config.ReadConfigFile(cfg.ConfigFilePath())
-		require.NoError(t, readErr)
+		require.NoError(readErr)
 		_, editErr := config.EditConfigFile(cfg.ConfigFilePath(), before.ETag, []config.Edit{
 			{Key: "carddav.trusted_origin", Value: "https://new.example"},
 			{Key: "carddav.trusted_addresses", Value: []string{"10.1.2.3"}},
@@ -279,11 +285,11 @@ func TestCardDAVTrustedPolicyChangeAfterPersistenceDoesNotPublishService(t *test
 	_, err = controller.Save(t.Context(), CardDAVAccountRequest{
 		BaseURL: "https://new.example/dav", Username: "new-user", Password: "new-password", Enabled: new(false),
 	})
-	require.ErrorIs(t, err, config.ErrConfigConflict)
-	assert.Nil(t, controller.Current())
-	assert.True(t, reconciledCalled)
-	assert.Nil(t, reconciled)
-	assert.Equal(t, "https://new.example", controller.cardDAVConfigSnapshot().TrustedOrigin)
+	require.ErrorIs(err, config.ErrConfigConflict)
+	assert.Nil(controller.Current())
+	assert.True(reconciledCalled)
+	assert.Nil(reconciled)
+	assert.Equal("https://new.example", controller.cardDAVConfigSnapshot().TrustedOrigin)
 }
 
 func TestCardDAVAccountSaveRollsBackPublishedFilesWhenDiscoveryStoreFails(t *testing.T) {
