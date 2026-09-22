@@ -46,6 +46,75 @@ func TestClientRejectsCredentialsOverHTTPByDefault(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnsafeTarget)
 }
 
+func TestClientTrustedPrivateDestinationUsesExactPinWithoutDNS(t *testing.T) {
+	origin, err := url.Parse("https://contacts.example:8443/dav")
+	require.NoError(t, err)
+	trusted, err := url.Parse("https://contacts.example:8443")
+	require.NoError(t, err)
+	resolver, queries := newFixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
+	client, err := NewClient(ClientOptions{
+		CredentialOrigin: origin, Username: "alice", Password: "app-password",
+		TrustedOrigin: trusted, TrustedAddresses: []netip.Addr{netip.MustParseAddr("100.80.0.8")},
+		Resolver: resolver,
+	})
+	require.NoError(t, err)
+	addresses, err := client.validateTarget(t.Context(), origin)
+	require.NoError(t, err)
+	assert.Equal(t, []netip.AddrPort{netip.MustParseAddrPort("100.80.0.8:8443")}, addresses)
+	assert.Zero(t, queries.Load())
+}
+
+func TestClientTrustedDestinationRejectsUnsafePolicy(t *testing.T) {
+	origin, err := url.Parse("https://contacts.example:8443/dav")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		trusted string
+		pins    []netip.Addr
+	}{
+		{name: "wrong host", trusted: "https://other.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
+		{name: "wrong port", trusted: "https://contacts.example:8444", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
+		{name: "plain HTTP", trusted: "http://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
+		{name: "path", trusted: "https://contacts.example:8443/dav", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
+		{name: "no pins", trusted: "https://contacts.example:8443"},
+		{name: "public address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("203.0.113.9")}},
+		{name: "loopback", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("127.0.0.1")}},
+		{name: "metadata", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("169.254.169.254")}},
+		{name: "scoped IPv6", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("fc00::1%eth0")}},
+		{name: "duplicate mapped address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("::ffff:10.1.2.3")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trusted, err := url.Parse(tc.trusted)
+			require.NoError(t, err)
+			_, err = NewClient(ClientOptions{CredentialOrigin: origin, TrustedOrigin: trusted, TrustedAddresses: tc.pins})
+			require.ErrorIs(t, err, ErrUnsafeTarget)
+		})
+	}
+}
+
+func TestClientTrustedPinFailureDoesNotFallBackToDNS(t *testing.T) {
+	origin, err := url.Parse("https://contacts.example:8443/dav")
+	require.NoError(t, err)
+	trusted, err := url.Parse("https://contacts.example:8443")
+	require.NoError(t, err)
+	resolver, queries := newFixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
+	var dialed []string
+	client, err := NewClient(ClientOptions{
+		CredentialOrigin: origin, TrustedOrigin: trusted,
+		TrustedAddresses: []netip.Addr{netip.MustParseAddr("100.80.0.8")},
+		Resolver:         resolver,
+		DialContext: func(_ context.Context, _, address string) (net.Conn, error) {
+			dialed = append(dialed, address)
+			return nil, errors.New("synthetic dial failure")
+		},
+	})
+	require.NoError(t, err)
+	_, err = client.Do(t.Context(), Request{Method: "PROPFIND", URL: origin.String()})
+	require.Error(t, err)
+	assert.Equal(t, []string{"100.80.0.8:8443"}, dialed)
+	assert.Zero(t, queries.Load())
+}
+
 func TestClientNeverSendsBasicAuthAcrossOrigin(t *testing.T) {
 	var redirectedAuth string
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

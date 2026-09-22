@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ type Client struct {
 	resolver           *net.Resolver
 	dialContext        func(context.Context, string, string) (net.Conn, error)
 	allowPrivateOrigin bool // test seam for local httptest servers
+	trustedOrigin      *url.URL
+	trustedAddresses   []netip.Addr
 }
 
 // NewClient creates a client with the task-wide default time and byte limits
@@ -54,6 +57,10 @@ func NewClient(options ClientOptions) (*Client, error) {
 	origin.RawPath = ""
 	origin.RawQuery = ""
 	origin.Fragment = ""
+	trustedOrigin, trustedAddresses, err := validateTrustedDestination(&origin, options.TrustedOrigin, options.TrustedAddresses)
+	if err != nil {
+		return nil, err
+	}
 
 	if options.RequestTimeout <= 0 {
 		options.RequestTimeout = defaultRequestTimeout
@@ -79,6 +86,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		requestTimeout: options.RequestTimeout, operationTimeout: options.OperationTimeout,
 		responseBytes: options.ResponseBytes, operationBytes: options.OperationBytes,
 		resolver: options.Resolver, dialContext: options.DialContext,
+		trustedOrigin: trustedOrigin, trustedAddresses: trustedAddresses,
 	}, nil
 }
 
@@ -218,6 +226,13 @@ func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.A
 	if err != nil {
 		return nil, fmt.Errorf("DAV URL port: %w", ErrUnsafeTarget)
 	}
+	if c.trustedOrigin != nil && sameOrigin(c.trustedOrigin, target) {
+		pinned := make([]netip.AddrPort, 0, len(c.trustedAddresses))
+		for _, addr := range c.trustedAddresses {
+			pinned = append(pinned, netip.AddrPortFrom(addr, port))
+		}
+		return pinned, nil
+	}
 	host := target.Hostname()
 	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
 		if netguard.ProhibitedIP(literal) && !c.allowPrivateOrigin {
@@ -245,6 +260,42 @@ func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.A
 		}
 	}
 	return pinned, nil
+}
+
+var explicitPrivatePrefixes = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+func validateTrustedDestination(origin, trusted *url.URL, addresses []netip.Addr) (*url.URL, []netip.Addr, error) {
+	if trusted == nil && len(addresses) == 0 {
+		return nil, nil, nil
+	}
+	if trusted == nil || len(addresses) == 0 || !validHTTPURL(trusted) || trusted.Scheme != "https" ||
+		trusted.Path != "" || trusted.RawPath != "" || trusted.RawQuery != "" || trusted.Fragment != "" ||
+		!sameOrigin(origin, trusted) || netguard.ProhibitedHostname(trusted.Hostname()) {
+		return nil, nil, fmt.Errorf("trusted CardDAV destination: %w", ErrUnsafeTarget)
+	}
+	validated := make([]netip.Addr, 0, len(addresses))
+	for _, address := range addresses {
+		address = address.Unmap()
+		allowed := false
+		for _, prefix := range explicitPrivatePrefixes {
+			if prefix.Contains(address) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed || slices.Contains(validated, address) {
+			return nil, nil, fmt.Errorf("trusted CardDAV address: %w", ErrUnsafeTarget)
+		}
+		validated = append(validated, address)
+	}
+	copyOrigin := *trusted
+	return &copyOrigin, validated, nil
 }
 
 func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.AddrPort, davRequest Request, authorization string, operationBytes *int64) (*Response, int, error) {
