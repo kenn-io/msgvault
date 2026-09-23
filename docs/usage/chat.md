@@ -239,7 +239,24 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-`semantic_search_messages` is always registered so callers receive actionable discovery guidance. Without vector search it exposes a reduced schema and calls return `vector_not_enabled`; with vector search it advertises the full vector parameters. `search_message_bodies` and the deprecated `search_messages` compatibility wrapper are always available. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. `min_score` filters returned chunk excerpts only and does not remove ranked messages. For deeper pagination, adjust `[vector.search].max_page_size_hybrid`.
+`semantic_search_messages` is always registered so callers receive actionable
+discovery guidance. When vector search is not configured, it exposes a reduced
+schema and calls return `vector_not_enabled`. Daemon-backed MCP uses the existing
+health probe to detect this without requesting archive statistics. If health
+information is inconclusive, it keeps the full schema and vector tools available.
+Configured vector search checks readiness when each request runs, so a listed
+tool can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
+Health reports one combined vector state, so a text-only daemon can still list
+`search_visual_attachments`; calls then return `visual_search_not_ready`.
+
+`search_message_bodies` and the deprecated `search_messages` compatibility wrapper
+are always available. Vector and hybrid queries require at least one free-text
+term (operator-only queries return `missing_free_text`). They support
+`offset`/`limit` pagination inside the configured hybrid ranking window; when
+`[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that
+cap returns `pagination_limit`.
+`min_score` filters returned chunk excerpts only and does not remove ranked
+messages. For deeper pagination, adjust `[vector.search].max_page_size_hybrid`.
 
 In `semantic_search_messages` (vector/hybrid), the paginated response also includes
 top-level `mode`, `pool_saturated`, and `generation` fields. When

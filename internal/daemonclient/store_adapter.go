@@ -23,26 +23,6 @@ func (c *Client) GetStats() (*store.Stats, error) {
 	return storeStatsFromGenerated(*resp.JSON200), nil
 }
 
-// VectorSearchAvailable reports whether the daemon can serve vector search,
-// so callers (e.g. the MCP server) know whether to register vector-backed
-// tools. It reads the public stats endpoint.
-//
-// Vector init is asynchronous: a daemon can be serving while the subsystem is
-// still `initializing`, at which point vector stats are nil but the tools
-// should still be registered. The daemon reports its subsystem state in
-// `vector_status` (values from internal/api/vector_status.go:
-// disabled/initializing/ready/stale/error). Any non-disabled status is treated
-// as capable — including `error`, so a tool call surfaces the daemon's 503
-// detail rather than the tool silently going missing. Older daemons that omit
-// `vector_status` fall back to the `vector_search.enabled` flag.
-func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
-	stats, err := c.vectorSearchStats(ctx)
-	if err != nil {
-		return false, err
-	}
-	return vectorSearchAvailable(stats), nil
-}
-
 // VectorSearchAvailableForMessageType reports whether the daemon's text-vector
 // lane can serve searches for messageType. An empty advertised scope means the
 // text index covers every message type.
@@ -93,27 +73,6 @@ func vectorSearchAvailable(stats *generated.StatsResponse) bool {
 		return false
 	}
 	return stats.VectorSearch.Enabled
-}
-
-// VisualSearchAvailable reports whether the daemon's multimodal lane is
-// configured — including still-initializing — so the MCP catalog can register
-// the visual tool without a one-time readiness probe permanently omitting it
-// after a transient 503 during asynchronous vector init. Older daemons omit
-// the lane field; callers fall back to probing the visual status endpoint.
-func (c *Client) VisualSearchAvailable(ctx context.Context) (bool, bool, error) {
-	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetStatsResp, error) {
-		return client.GetStatsWithResponse(ctx)
-	})
-	if err != nil {
-		return false, false, err
-	}
-	if resp == nil || resp.JSON200 == nil {
-		return false, false, nil
-	}
-	if visualStatus := resp.JSON200.VectorVisualStatus; visualStatus != nil && *visualStatus != "" {
-		return *visualStatus != vectorStatusDisabled, true, nil
-	}
-	return false, false, nil
 }
 
 // vectorStatusDisabled mirrors api.VectorStatusDisabled. It is duplicated here

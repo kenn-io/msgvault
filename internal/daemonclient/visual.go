@@ -139,21 +139,7 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 	return &result, nil
 }
 
-func (c *Client) VisualStatus(ctx context.Context) (*visual.Status, error) {
-	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetVisualAttachmentStatusResp, error) {
-		return client.GetVisualAttachmentStatusWithResponse(ctx)
-	})
-	if err != nil {
-		return nil, err
-	}
-	var status visual.Status
-	if err := json.Unmarshal(response.Body, &status); err != nil {
-		return nil, err
-	}
-	return &status, nil
-}
-
-// VisualStatusWithCoverage additionally requests the per-format coverage
+// VisualStatusWithCoverage fetches visual status with the per-format coverage
 // scan, which re-reads every candidate blob; the daemon serializes it.
 func (c *Client) VisualStatusWithCoverage(ctx context.Context) (*visual.Status, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetVisualAttachmentStatusResp, error) {

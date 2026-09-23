@@ -463,18 +463,27 @@ func (c *Client) requireSourceIDSyncCapability(ctx context.Context) error {
 	return nil
 }
 
-// APISchemaVersion fetches the daemon API schema version, or an empty string
-// when the daemon does not report one.
-func (c *Client) APISchemaVersion(ctx context.Context) (string, error) {
+// Health fetches the daemon's health and capability information.
+func (c *Client) Health(ctx context.Context) (*generated.HealthResponse, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetHealthResp, error) {
 		return client.GetHealthWithResponse(ctx)
 	})
 	if err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}
+
+// APISchemaVersion fetches the daemon API schema version, or an empty string
+// when the daemon does not report one.
+func (c *Client) APISchemaVersion(ctx context.Context) (string, error) {
+	health, err := c.Health(ctx)
+	if err != nil {
 		return "", err
 	}
 	version := ""
-	if resp.JSON200 != nil && resp.JSON200.APISchemaVersion != nil {
-		version = *resp.JSON200.APISchemaVersion
+	if health != nil && health.APISchemaVersion != nil {
+		version = *health.APISchemaVersion
 	}
 	return version, nil
 }
