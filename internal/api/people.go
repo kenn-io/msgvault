@@ -263,6 +263,18 @@ func (s *Server) handleGetParticipant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.attachPersonCluster(person, id, members)
+	if identityStore, ok := s.store.(ParticipantIdentityContextStore); ok {
+		identityIDs := members
+		if len(identityIDs) == 0 {
+			identityIDs = []int64{id}
+		}
+		details, err := identityStore.GetParticipantIdentityContext(r.Context(), identityIDs)
+		if err != nil {
+			s.logger.Warn("participant identity context lookup failed", "error", err, "participant_id", id)
+		} else {
+			enrichIdentityContext(person, details)
+		}
+	}
 	s.attachPersonProfile(r.Context(), person, id, members)
 	writeJSON(w, http.StatusOK, person)
 }

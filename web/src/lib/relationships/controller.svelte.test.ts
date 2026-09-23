@@ -1123,14 +1123,18 @@ describe('RelationshipsController filtered header metrics', () => {
       file_count: 90,
       first_at: '2010-01-01T00:00:00Z',
       identifiers: [
-        { participant_id: id, type: 'email', value: `p${id}@example.com`, is_primary: true, provenance: 'message_headers' }
+        { participant_id: id, type: 'beeper', value: 'beeper:8:whatsapp:9:@user:x.y', is_primary: true, provenance: 'participant_identifiers',
+          service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'local-whatsapp_ba_example',
+          participant_display_name: 'Alias Example' }
       ],
       cluster: { canonical_id: id, member_ids: [id, id + 100], edges: [{ participant_a: id, participant_b: id + 100 }] }
     };
   }
 
   function filteredPersonSummary(id: number): PersonSummary {
-    return { ...person(id), activity_count: 7, file_count: 2, first_at: '2026-01-05T00:00:00Z', identifiers: [] };
+    return { ...person(id), activity_count: 7, file_count: 2, first_at: '2026-01-05T00:00:00Z', identifiers: [
+      { participant_id: id, type: 'beeper', value: 'beeper:8:whatsapp:9:@user:x.y', is_primary: true, provenance: 'participant_identifiers' }
+    ] };
   }
 
   it('shows the contextual person summary metrics, keeping cluster metadata from the unfiltered GET', async () => {

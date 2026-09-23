@@ -256,8 +256,8 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/42 items/)).toBeDefined();
     expect(screen.getByText(/3 files/)).toBeDefined();
     expect(screen.getByText('Alice')).toBeDefined();
-    expect(screen.getByText('alice@example.com')).toBeDefined();
-    expect(screen.getByText('+15550100001')).toBeDefined();
+    expect(screen.getByText(/alice@example\.com/)).toBeDefined();
+    expect(screen.getByText(/\+15550100001/)).toBeDefined();
     // Evidence detail lives in the tooltip, phrased in human words — never
     // internal field names like participant_identifiers.
     const emailChip = screen.getByLabelText('Identity Alice');
@@ -438,6 +438,125 @@ describe('RelationshipHeader', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 78));
+  });
+
+  it('names a linked member chip and its controls by its visible address', async () => {
+    const base = clusteredPersonWithBareMember();
+    render(RelationshipHeader, baseProps({ detail: {
+      ...base,
+      cluster: { ...base.cluster!, members: [{ participant_id: 78, email: 'bare@example.com' }] }
+    } }));
+
+    const chip = screen.getByLabelText('Linked profile bare@example.com');
+    expect(chip.textContent).toContain('bare@example.com');
+    expect(chip.textContent).not.toContain('no stored address');
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink profile bare@example.com' }));
+    expect(screen.getByRole('group', { name: 'Confirm unlinking profile bare@example.com' })).toBeDefined();
+  });
+
+  it('distinguishes member-only controls with identical display names', () => {
+    const base = clusteredPersonWithBareMember();
+    render(RelationshipHeader, baseProps({ detail: {
+      ...base,
+      identifiers: base.identifiers.filter((identifier) => identifier.participant_id !== 56),
+      cluster: { ...base.cluster!, members: [
+        { participant_id: 56, display_name: 'Shared Example' },
+        { participant_id: 78, display_name: 'Shared Example' }
+      ] }
+    } }));
+
+    expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (56)' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (78)' })).toBeDefined();
+  });
+
+  it('falls back to the member ID for a chip whose member has no stored name or address', () => {
+    render(RelationshipHeader, baseProps({ detail: clusteredPersonWithBareMember() }));
+
+    expect(screen.getByLabelText('Linked profile 78').textContent).toContain('no stored address');
+  });
+
+  it('hides an opaque key on the chip and copies the full value', async () => {
+    let copied = '';
+    const originalClipboard = navigator.clipboard;
+    const originalExecCommand = document.execCommand;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => {
+      copied = document.querySelector('textarea')?.value ?? '';
+      return true;
+    }) });
+    try {
+      const key = 'beeper:8:whatsapp:9:@user:x.y';
+      const base = person();
+      render(RelationshipHeader, baseProps({ detail: {
+        ...base,
+        identifiers: [...base.identifiers, {
+          type: 'beeper', value: key, display_value: key, is_primary: false,
+          participant_id: 12, provenance: 'participant_identifiers', service_label: 'WhatsApp',
+          participant_display_name: 'Alias Example', scope_kind: 'account', scope_value: 'local-whatsapp_ba_example'
+        }]
+      } }));
+
+      const copy = screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 12)' });
+      const chip = copy.closest('.chip');
+      expect(chip?.textContent).toContain('WhatsApp');
+      expect(chip?.textContent).not.toContain('local-whatsapp_ba_example');
+      expect(chip?.getAttribute('title')).toContain('account: local-whatsapp_ba_example');
+      expect(chip?.textContent).not.toContain(key);
+      expect(chip?.getAttribute('title')).toContain(key);
+      await fireEvent.click(copy);
+      await waitFor(() => expect(copied).toBe(key));
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+      Object.defineProperty(document, 'execCommand', { configurable: true, value: originalExecCommand });
+    }
+  });
+
+  it('shows every distinct origin incident to a linked member', () => {
+    const base = clusteredPerson();
+    render(RelationshipHeader, baseProps({ detail: {
+      ...base,
+      cluster: { ...base.cluster!, edges: [
+        { participant_a: 12, participant_b: 34, link_origin: { kind: 'manual' } },
+        { participant_a: 34, participant_b: 56,
+          link_origin: { kind: 'candidate', source: 'carddav_import', basis: 'email' } }
+      ] }
+    } }));
+
+    const chip = screen.getByLabelText('Identity +15550100002');
+    expect(chip.textContent).toContain('linked manually');
+    expect(chip.textContent).toContain('matched from CardDAV (email)');
+  });
+
+  it('does not describe other links on the viewed profile’s own identifier', () => {
+    const base = clusteredPerson();
+    render(RelationshipHeader, baseProps({ detail: {
+      ...base,
+      cluster: { ...base.cluster!, edges: [
+        { participant_a: 12, participant_b: 34, link_origin: { kind: 'manual' } }
+      ] }
+    } }));
+
+    expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
+    expect(screen.getByLabelText('Identity Alice').textContent).not.toContain('linked manually');
+    expect(screen.getByLabelText('Identity +15550100002').textContent).toContain('linked manually');
+  });
+
+  it('distinguishes opaque identity controls even when service and member names match', async () => {
+    const base = clusteredPerson();
+    render(RelationshipHeader, baseProps({ detail: {
+      ...base,
+      identifiers: [34, 56].map((id) => ({
+        type: 'beeper', value: `beeper-user-${id}`, participant_id: id,
+        is_primary: true, provenance: 'participant_identifiers',
+        service_label: 'WhatsApp', participant_display_name: 'Alias Example'
+      }))
+    } }));
+
+    expect(screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 34)' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 34)' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 56)' }));
+    expect(screen.getByRole('group', { name: 'Confirm unlinking WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
   });
 
   it('confirming a cut-vertex member\'s unlink removes every edge incident to it, not just one', async () => {

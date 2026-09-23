@@ -395,7 +395,10 @@ func TestGetPersonComposesClusterBlockFromStoreForLinkedParticipant(t *testing.T
 	lo, hi := min(primary, secondary), max(primary, secondary)
 	assertions.Equal(lo, body.Cluster.CanonicalID, "canonical ID is the cluster's smallest member")
 	assertions.ElementsMatch([]int64{primary, secondary}, body.Cluster.MemberIDs)
-	assertions.Equal([]query.PersonClusterEdge{{ParticipantA: lo, ParticipantB: hi}}, body.Cluster.Edges)
+	assertions.Equal([]query.PersonClusterEdge{{
+		ParticipantA: lo, ParticipantB: hi,
+		LinkOrigin: &query.PersonClusterLinkOrigin{Kind: "manual"},
+	}}, body.Cluster.Edges)
 	requirements.Len(body.Identifiers, 2, "identifiers must span every cluster member")
 	byParticipant := map[int64]string{}
 	for _, identifier := range body.Identifiers {

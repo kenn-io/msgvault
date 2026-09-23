@@ -1297,6 +1297,7 @@ var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
+var _ api.ParticipantIdentityContextStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ContactStateContext(
 	ctx context.Context, personID int64, now time.Time,
@@ -2991,6 +2992,12 @@ func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {
 
 func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
 	return a.store.ClusterEdges(id)
+}
+
+func (a *storeAPIAdapter) GetParticipantIdentityContext(
+	ctx context.Context, participantIDs []int64,
+) (*store.ParticipantIdentityContext, error) {
+	return a.store.GetParticipantIdentityContext(ctx, participantIDs)
 }
 
 // RefreshIdentityDatasets rebuilds identity-derived Parquet in a short-lived,

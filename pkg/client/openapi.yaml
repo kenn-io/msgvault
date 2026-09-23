@@ -7656,6 +7656,10 @@ components:
             format: int64
             type: integer
           type: array
+        members:
+          items:
+            $ref: "#/components/schemas/PersonClusterMember"
+          type: array
       required:
         - canonical_id
         - member_ids
@@ -7663,6 +7667,8 @@ components:
       type: object
     PersonClusterEdge:
       properties:
+        link_origin:
+          $ref: "#/components/schemas/PersonClusterLinkOrigin"
         participant_a:
           format: int64
           type: integer
@@ -7672,6 +7678,31 @@ components:
       required:
         - participant_a
         - participant_b
+      type: object
+    PersonClusterLinkOrigin:
+      properties:
+        basis:
+          type: string
+        kind:
+          type: string
+        source:
+          type: string
+      required:
+        - kind
+      type: object
+    PersonClusterMember:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        phone:
+          type: string
+      required:
+        - participant_id
       type: object
     PersonContactPoint:
       properties:
@@ -8518,10 +8549,20 @@ components:
           type: string
         is_primary:
           type: boolean
+        participant_display_name:
+          type: string
         participant_id:
           format: int64
           type: integer
         provenance:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_label:
+          type: string
+        service_slug:
           type: string
         type:
           type: string

@@ -932,15 +932,15 @@ function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
 function hasActiveFilters(context: ExplorePredicate): boolean {
   return (context.filters ?? []).length > 0;
 }
-/** Contextual summary metrics win; the unfiltered GET remains the fallback
- * source of cluster metadata (identifiers, member/edge graph) that the
- * link/unlink UI needs and the summary row may omit. */
+/** Contextual summary metrics win; the unfiltered GET remains the
+ * source of live cluster metadata (identifiers, member/edge graph) that
+ * analytical summaries do not enrich. */
 function mergePersonDetail(base: PersonSummary, summary: PersonSummary): PersonSummary {
   return {
     ...base,
     ...summary,
-    cluster: summary.cluster ?? base.cluster,
-    identifiers: summary.identifiers.length > 0 ? summary.identifiers : base.identifiers,
+    cluster: base.cluster,
+    identifiers: base.identifiers,
   };
 }
 // The generated summary types carry `[key: string]: unknown` index

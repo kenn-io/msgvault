@@ -531,6 +531,8 @@ export * from "./personCategoryInputRequest";
 export * from "./personCategoryPatchRequest";
 export * from "./personCluster";
 export * from "./personClusterEdge";
+export * from "./personClusterLinkOrigin";
+export * from "./personClusterMember";
 export * from "./personContactPoint";
 export * from "./personContactPointInputRequest";
 export * from "./personContactPointPatchRequest";

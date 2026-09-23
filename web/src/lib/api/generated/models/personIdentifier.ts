@@ -5,8 +5,13 @@
 export interface PersonIdentifier {
   display_value?: string;
   is_primary: boolean;
+  participant_display_name?: string;
   participant_id: number;
   provenance: string;
+  scope_kind?: string;
+  scope_value?: string;
+  service_label?: string;
+  service_slug?: string;
   type: string;
   value: string;
   [key: string]: unknown;

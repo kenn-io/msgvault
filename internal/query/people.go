@@ -25,20 +25,39 @@ const (
 // this is the only field that tells the caller which chip belongs to which
 // member (see PersonSummary.Cluster).
 type PersonIdentifier struct {
-	Type          string `json:"type"`
-	Value         string `json:"value"`
-	DisplayValue  string `json:"display_value,omitempty"`
-	IsPrimary     bool   `json:"is_primary"`
-	Provenance    string `json:"provenance"`
-	ParticipantID int64  `json:"participant_id"`
+	Type                   string `json:"type"`
+	Value                  string `json:"value"`
+	DisplayValue           string `json:"display_value,omitempty"`
+	IsPrimary              bool   `json:"is_primary"`
+	Provenance             string `json:"provenance"`
+	ParticipantID          int64  `json:"participant_id"`
+	ServiceSlug            string `json:"service_slug,omitempty"`
+	ServiceLabel           string `json:"service_label,omitempty"`
+	ScopeKind              string `json:"scope_kind,omitempty"`
+	ScopeValue             string `json:"scope_value,omitempty"`
+	ParticipantDisplayName string `json:"participant_display_name,omitempty"`
 }
 
 // PersonClusterEdge is one participant_links edge within a person's cluster,
 // as recorded by the store (the query layer has no edge data of its own —
 // see internal/store/participant_links.go's LinkEdge).
 type PersonClusterEdge struct {
-	ParticipantA int64 `json:"participant_a"`
-	ParticipantB int64 `json:"participant_b"`
+	ParticipantA int64                    `json:"participant_a"`
+	ParticipantB int64                    `json:"participant_b"`
+	LinkOrigin   *PersonClusterLinkOrigin `json:"link_origin,omitempty"`
+}
+
+type PersonClusterLinkOrigin struct {
+	Kind   string `json:"kind"`
+	Source string `json:"source,omitempty"`
+	Basis  string `json:"basis,omitempty"`
+}
+
+type PersonClusterMember struct {
+	ParticipantID int64  `json:"participant_id"`
+	DisplayName   string `json:"display_name,omitempty"`
+	Email         string `json:"email,omitempty"`
+	Phone         string `json:"phone,omitempty"`
 }
 
 // PersonCluster describes the identity-link cluster a person detail belongs
@@ -48,9 +67,10 @@ type PersonClusterEdge struct {
 // participant is linked to at least one other participant; a nil Cluster on
 // PersonSummary means the participant is unlinked.
 type PersonCluster struct {
-	CanonicalID int64               `json:"canonical_id"`
-	MemberIDs   []int64             `json:"member_ids"`
-	Edges       []PersonClusterEdge `json:"edges"`
+	CanonicalID int64                 `json:"canonical_id"`
+	MemberIDs   []int64               `json:"member_ids"`
+	Edges       []PersonClusterEdge   `json:"edges"`
+	Members     []PersonClusterMember `json:"members,omitempty"`
 }
 
 // PersonProfile references the durable curated person (see /api/v1/people)

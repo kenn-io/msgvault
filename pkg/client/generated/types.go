@@ -7138,9 +7138,10 @@ func (p PersonCategoryPatchRequest) Validate() error {
 }
 
 type PersonCluster struct {
-	CanonicalID int64               `json:"canonical_id"`
-	Edges       []PersonClusterEdge `json:"edges" validate:"required"`
-	MemberIds   []int64             `json:"member_ids" validate:"required"`
+	CanonicalID int64                 `json:"canonical_id"`
+	Edges       []PersonClusterEdge   `json:"edges" validate:"required"`
+	MemberIds   []int64               `json:"member_ids" validate:"required"`
+	Members     []PersonClusterMember `json:"members,omitempty"`
 }
 
 func (p PersonCluster) Validate() error {
@@ -7155,6 +7156,13 @@ func (p PersonCluster) Validate() error {
 	if err := typesValidator.Var(p.MemberIds, "required"); err != nil {
 		errors = errors.Append("MemberIds", err)
 	}
+	for i, item := range p.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
 	if len(errors) == 0 {
 		return nil
 	}
@@ -7162,8 +7170,41 @@ func (p PersonCluster) Validate() error {
 }
 
 type PersonClusterEdge struct {
-	ParticipantA int64 `json:"participant_a"`
-	ParticipantB int64 `json:"participant_b"`
+	LinkOrigin   *PersonClusterLinkOrigin `json:"link_origin,omitempty"`
+	ParticipantA int64                    `json:"participant_a"`
+	ParticipantB int64                    `json:"participant_b"`
+}
+
+func (p PersonClusterEdge) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.LinkOrigin != nil {
+		if v, ok := any(p.LinkOrigin).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LinkOrigin", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonClusterLinkOrigin struct {
+	Basis  *string `json:"basis,omitzero"`
+	Kind   string  `json:"kind" validate:"required"`
+	Source *string `json:"source,omitzero"`
+}
+
+func (p PersonClusterLinkOrigin) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonClusterMember struct {
+	DisplayName   *string `json:"display_name,omitzero"`
+	Email         *string `json:"email,omitzero"`
+	ParticipantID int64   `json:"participant_id"`
+	Phone         *string `json:"phone,omitzero"`
 }
 
 type PersonContactPoint struct {
@@ -8112,12 +8153,17 @@ func (p PersonFileSearchRow) Validate() error {
 }
 
 type PersonIdentifier struct {
-	DisplayValue  *string `json:"display_value,omitzero"`
-	IsPrimary     bool    `json:"is_primary"`
-	ParticipantID int64   `json:"participant_id"`
-	Provenance    string  `json:"provenance" validate:"required"`
-	Type          string  `json:"type" validate:"required"`
-	Value         string  `json:"value" validate:"required"`
+	DisplayValue           *string `json:"display_value,omitzero"`
+	IsPrimary              bool    `json:"is_primary"`
+	ParticipantDisplayName *string `json:"participant_display_name,omitzero"`
+	ParticipantID          int64   `json:"participant_id"`
+	Provenance             string  `json:"provenance" validate:"required"`
+	ScopeKind              *string `json:"scope_kind,omitzero"`
+	ScopeValue             *string `json:"scope_value,omitzero"`
+	ServiceLabel           *string `json:"service_label,omitzero"`
+	ServiceSlug            *string `json:"service_slug,omitzero"`
+	Type                   string  `json:"type" validate:"required"`
+	Value                  string  `json:"value" validate:"required"`
 }
 
 func (p PersonIdentifier) Validate() error {
