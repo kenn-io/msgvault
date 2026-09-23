@@ -112,7 +112,17 @@ func (w *WebConfig) Validate() error {
 
 // IntegrationsConfig groups optional, server-side integrations.
 type IntegrationsConfig struct {
-	Tasks TaskIntegrationConfig `toml:"tasks"`
+	Tasks   TaskIntegrationConfig    `toml:"tasks"`
+	Docbank DocbankIntegrationConfig `toml:"docbank"`
+}
+
+// DocbankIntegrationConfig configures the optional Beeper media destination.
+// The API key stays in the daemon environment and is read when a request runs.
+type DocbankIntegrationConfig struct {
+	Enabled       bool   `toml:"enabled"`
+	URL           string `toml:"url"`
+	APIKeyEnv     string `toml:"api_key_env"`
+	UploadConsent bool   `toml:"upload_consent"`
 }
 
 // TaskIntegrationConfig configures a provider-neutral compatible task daemon.

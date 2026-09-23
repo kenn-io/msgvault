@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -12,6 +12,15 @@ All notable changes to msgvault, grouped by release.
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
+
+- Send stored Beeper WAV and MP3 audio, with Beeper's own transcript, to a
+  separately running Docbank media service that has the media HTTP routes. The
+  daemon backfills in small scheduled batches after `upload_consent` is set,
+  and Docbank's own consent still controls processing. msgvault keeps each
+  live message mapped to its Docbank occurrence; search over processed audio is
+  not included yet.
+
+See [Beeper audio](usage/beeper.md#send-audio-to-docbank).
 
 ## 0.20.0
 <small>2026-09-22</small>

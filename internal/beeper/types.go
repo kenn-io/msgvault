@@ -106,6 +106,7 @@ type Reaction struct {
 // Transcription is an attachment transcription (voice notes).
 type Transcription struct {
 	Transcription string `json:"transcription"`
+	Language      string `json:"language"`
 }
 
 // Attachment is a media attachment on a message. The id is typically an

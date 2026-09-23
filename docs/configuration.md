@@ -834,6 +834,36 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
+#### Send Beeper audio to Docbank
+
+The daemon can send stored Beeper WAV and MP3 audio, with Beeper's own
+transcript, to a separately running Docbank media service. The service needs
+Docbank's media HTTP routes. See
+[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank) for what is
+sent and how progress is tracked.
+
+```toml
+[integrations.docbank]
+enabled = true
+url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
+api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
+upload_consent = true             # allow archive audio to leave msgvault
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Schedule the Beeper media job in `msgvault serve` |
+| `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
+| `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
+| `upload_consent` | `false` | Allow audio and transcripts to be sent to `url`. Without it the job only records local state |
+
+The daemon reads these settings at startup, so restart it after a change. A new
+`url` starts a separate delivery record; earlier rows stay. Disabling the route
+stops the job and keeps its rows. A failed setup, such as an invalid `url`,
+does the same and logs a warning. `upload_consent` covers transport only; the
+Docbank daemon's own processing consent still decides whether transcripts are
+processed.
+
 ### `[slack]`
 
 Archive [Slack workspaces](/docs/usage/slack/). A single block covers every
