@@ -213,9 +213,13 @@ test("production imports expose archived actions, duration evidence, and exact c
   await expect(reader).toBeVisible();
   // An action link inside the single-meeting reader opens its archived source
   // without losing the originating Everything state.
+  const historyLength = await page.evaluate(() => window.history.length);
   await reader
     .getByRole("link", { name: "Open archived meeting", exact: true })
     .click();
+  await expect
+    .poll(() => page.evaluate(() => window.history.length))
+    .toBe(historyLength + 1);
   await expect(reader).toBeVisible();
   await page.goBack();
   await expect(reader).toBeVisible();
