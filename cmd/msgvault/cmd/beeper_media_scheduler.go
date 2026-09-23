@@ -60,13 +60,14 @@ func configureBeeperMediaJob(
 	gate api.LabeledOperationGate,
 	st *store.Store,
 	blobs *attachmentstore.Store,
+	spoolDir string,
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
 	if !cfg.Enabled {
 		return removeBeeperMediaRoute(ctx, sched, gate, st)
 	}
-	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, cfg, logger)
+	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, spoolDir, cfg, logger)
 	if err != nil {
 		// An idle registered consumer would hold attachment change log cleanup for every provider.
 		return errors.Join(err, removeBeeperMediaRoute(ctx, sched, gate, st))
@@ -92,6 +93,7 @@ func addBeeperMediaRoute(
 	gate api.LabeledOperationGate,
 	st *store.Store,
 	blobs *attachmentstore.Store,
+	spoolDir string,
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
@@ -125,7 +127,7 @@ func addBeeperMediaRoute(
 			return err
 		}
 	}
-	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination).WithOperationGate(beeperMediaGate(gate))
+	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).WithOperationGate(beeperMediaGate(gate))
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,

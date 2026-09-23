@@ -466,7 +466,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("configure document reconciliation: %w", err)
 	}
-	if err := configureBeeperMediaJob(ctx, mediaSched, operationGate, s, blobStore, cfg.Integrations.Docbank, logger); err != nil {
+	if err := configureBeeperMediaJob(ctx, mediaSched, operationGate, s, blobStore,
+		filepath.Join(cfg.Data.DataDir, "tmp", "beeper-media"), cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Beeper media submission unavailable", "error", err)
 	}
 	if err := registerActivityProjectionJob(

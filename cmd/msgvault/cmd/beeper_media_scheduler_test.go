@@ -171,18 +171,18 @@ func TestBeeperMediaConfig(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 
 	// Absent configuration registers nothing.
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{}, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 	assert.False(consumerRegistered(t, st))
 
 	// Remote plaintext is refused before any job exists.
-	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
+	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: "http://docbank.example.com", APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 
 	// Without upload consent the job records local discovery only.
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv}, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending::"}, retentionRows(t, st))
@@ -191,7 +191,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 
 	// A missing credential sends nothing and records only a stable code.
 	t.Setenv(beeperMediaTestKeyEnv, "")
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending:credential_unavailable:"}, retentionRows(t, st))
@@ -207,7 +207,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 	assert.Equal(1, server.requestCount())
 
 	// Disabling removes the job and its journal consumer but keeps receipts.
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, config.DocbankIntegrationConfig{}, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{}, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 	assert.False(consumerRegistered(t, st))
 	assert.Len(retentionRows(t, st), 1)
@@ -225,7 +225,7 @@ func TestBeeperMediaInvalidConfigUnregisters(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
 		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	require.True(consumerRegistered(t, st))
 	require.Len(retentionRows(t, st), 1)
@@ -233,13 +233,13 @@ func TestBeeperMediaInvalidConfigUnregisters(t *testing.T) {
 	// An invalid endpoint removes the job and consumer but keeps receipts.
 	invalid := cfg
 	invalid.URL = "http://docbank.example.com"
-	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, invalid, nil))
+	require.Error(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), invalid, nil))
 	assert.False(sched.IsJobScheduled(beeperMediaSubmitJob))
 	assert.False(consumerRegistered(t, st))
 	assert.Len(retentionRows(t, st), 1)
 
 	// A valid restart registers the consumer again.
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.True(consumerRegistered(t, st))
 }
@@ -264,7 +264,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	sched := scheduler.New(nil).WithWorkTracker(tracker)
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
 		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
 	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
@@ -296,7 +296,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	// A new destination starts its own delivery scope.
 	otherServer, otherHTTP := newRetentionServer(t)
 	cfg.URL = otherHTTP.URL
-	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, cfg, nil))
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
 	otherDestination := beeperMediaDestinationKey(otherHTTP.URL, archiveUID)
 	otherServer.hang.Store(true)
 	stopped := make(chan error, 1)
@@ -333,7 +333,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 		Run: func(context.Context) error { return nil }}))
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
 		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
-	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, cfg, logger))
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), cfg, logger))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
 	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
@@ -382,7 +382,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 	// Daemon shutdown cancels an upload in flight and drains both schedulers.
 	otherServer, otherHTTP := newRetentionServer(t)
 	cfg.URL = otherHTTP.URL
-	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, cfg, logger))
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), cfg, logger))
 	otherServer.hang.Store(true)
 	stopped := make(chan error, 1)
 	go func() { stopped <- media.TriggerJob(beeperMediaSubmitJob) }()
@@ -418,7 +418,7 @@ func TestBeeperMediaJobStatus(t *testing.T) {
 	defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
 	require.NoError(sched.AddJob(scheduler.Job{Name: "test-gated-job", Schedule: "0 0 1 1 *",
 		Run: func(context.Context) error { return nil }}))
-	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, config.DocbankIntegrationConfig{
+	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv}, logger))
 	var adapter api.SyncScheduler = &schedulerAdapter{scheduler: sched, media: media}
 
@@ -449,7 +449,7 @@ func TestBeeperMediaDoesNotPreventIdleShutdown(t *testing.T) {
 		gate := api.NewSerialOperationGate()
 		sched, media := newServeSchedulers(nil, logger, idle, gate)
 		defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
-		require.NoError(t, configureBeeperMediaJob(t.Context(), media, gate, st, blobs,
+		require.NoError(t, configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(),
 			config.DocbankIntegrationConfig{Enabled: true, URL: "http://127.0.0.1"}, logger))
 		go idle.Run(t.Context())
 		media.Start()

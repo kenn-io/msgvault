@@ -393,21 +393,23 @@ func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
 }
 
 func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
+	requireOuter := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st, err := store.Open(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	requireOuter.NoError(err)
+	t.Cleanup(func() { requireOuter.NoError(st.Close()) })
+	requireOuter.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("beeper", "signal")
-	require.NoError(t, err)
+	requireOuter.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "default-thread", "Thread")
-	require.NoError(t, err)
+	requireOuter.NoError(err)
 	readOnly, err := store.OpenReadOnly(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, readOnly.Close()) })
+	requireOuter.NoError(err)
+	t.Cleanup(func() { requireOuter.NoError(readOnly.Close()) })
 
 	for _, state := range []string{"pending", "retained", "blocked"} {
 		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
 			audio := addBeeperAudio(t, st, source.ID, conversation, state, strings.Repeat("a", 64))
 			mapping := audio.mapping("unchanged", "r1", "shared-key")
 			if state == "blocked" {
@@ -416,9 +418,9 @@ func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
 			if state == "retained" {
 				retainAudio(t, st, mapping, "retained-occurrence")
 			} else {
-				require.NoError(t, st.ReconcileBeeperMediaMapping(t.Context(), mapping))
+				require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), mapping))
 			}
-			require.NoError(t, readOnly.ReconcileBeeperMediaMapping(t.Context(), mapping))
+			require.NoError(readOnly.ReconcileBeeperMediaMapping(t.Context(), mapping))
 		})
 	}
 }

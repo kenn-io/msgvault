@@ -97,7 +97,7 @@ func (w *mediaWorld) submitter(t *testing.T, server *httptest.Server, destinatio
 	t.Helper()
 	client, err := docbankmedia.NewClient(server.URL, func() (string, error) { return docbankTestKey, nil })
 	require.NoError(t, err)
-	return NewMediaSubmitter(w.st, w.blobs, client, destination)
+	return NewMediaSubmitter(w.st, w.blobs, client, destination, w.dir)
 }
 
 func runPasses(t *testing.T, submitter *MediaSubmitter, passes int) {
@@ -659,7 +659,7 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 		voiceSpec{id: "hidden", asset: "mxc://beeper.local/hidden", mime: "audio/wav", fileName: "voice.wav", data: hidden},
 		voiceSpec{id: "live", asset: "mxc://beeper.local/live", mime: "audio/wav", fileName: "voice.wav", data: live})
 	// Discovery without upload consent records both rows as pending.
-	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-hidden"), 1)
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-hidden", world.dir), 1)
 	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
 		assert.Equal("pending", row.State)
 	}
@@ -709,12 +709,16 @@ func TestBeeperMediaCASBoundary(t *testing.T) {
 		t.Run(storage, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			blobs := casStore(t, wav, storage)
-			file, format, err := prepareMediaUpload(t.Context(), blobs, descriptor)
+			spoolDir := t.TempDir()
+			file, format, err := prepareMediaUpload(t.Context(), blobs, descriptor, spoolDir)
 			require.NoError(err)
 			assert.Equal("wav", format)
+			assert.Equal(spoolDir, filepath.Dir(file.Name()))
 			got, err := io.ReadAll(file)
 			require.NoError(err)
 			closeAndRemove(file)
+			_, err = os.Stat(file.Name())
+			require.ErrorIs(err, os.ErrNotExist)
 			assert.Equal(wav, got)
 		})
 	}
@@ -743,9 +747,6 @@ func TestBeeperMediaCASBoundary(t *testing.T) {
 			assert.Equal(stored, data)
 		})
 	}
-	spools, err := filepath.Glob(filepath.Join(os.TempDir(), "msgvault-docbank-media-*"))
-	require.NoError(t, err)
-	assert.Empty(t, spools)
 }
 
 func TestBeeperMediaTranscriptBoundary(t *testing.T) {
@@ -976,7 +977,14 @@ func TestBeeperMediaGaps(t *testing.T) {
 	raw, err = json.Marshal(envelope)
 	require.NoError(err)
 	require.NoError(world.st.UpsertMessageRawWithFormat(opusMessage, raw, "beeper_json"))
-	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-gaps"), 1)
+	checkpoint, err := world.st.LoadBeeperMediaScan(t.Context(), "destination-gaps")
+	require.NoError(err)
+	due := checkpoint
+	due.NextFullScanAt = time.Now().Add(-time.Hour)
+	swapped, err := world.st.AdvanceBeeperMediaScan(t.Context(), "destination-gaps", checkpoint, due)
+	require.NoError(err)
+	require.True(swapped)
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-gaps", world.dir), 1)
 	phases := map[string]int{}
 	for _, delivery := range deliveryRows(t, world.st, "destination-gaps") {
 		phases[delivery.Phase+":"+delivery.ErrorCode]++
@@ -1036,12 +1044,11 @@ func TestBeeperMediaSpoolUnavailable(t *testing.T) {
 	server := httptest.NewServer(docbank)
 	defer server.Close()
 	submitter := world.submitter(t, server, "destination-spool")
-	missing := filepath.Join(t.TempDir(), "missing")
-	restore := map[string]string{}
-	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
-		restore[name] = os.Getenv(name)
-		t.Setenv(name, missing)
-	}
+	// A file in place of the spool directory makes the filesystem unavailable.
+	spoolDir := submitter.spoolDir
+	obstacle := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(obstacle, []byte("obstacle"), 0o600))
+	submitter.spoolDir = filepath.Join(obstacle, "spool")
 
 	// A cancelled pass writes nothing.
 	cancelled, cancel := context.WithCancel(t.Context())
@@ -1071,9 +1078,7 @@ func TestBeeperMediaSpoolUnavailable(t *testing.T) {
 	require.NoError(err)
 	require.True(ready)
 	assert.Equal(rows[0].OperationID, operation.OperationID)
-	for name, value := range restore {
-		t.Setenv(name, value)
-	}
+	submitter.spoolDir = spoolDir
 	_, err = world.st.DB().Exec(world.st.Rebind(`
 		UPDATE beeper_media_occurrences SET next_action_at = updated_at WHERE destination_key = ?`),
 		"destination-spool")
