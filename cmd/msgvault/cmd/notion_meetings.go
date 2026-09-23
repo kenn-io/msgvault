@@ -25,7 +25,7 @@ var (
 	newNotionMeetingsClient = func(baseURL, token string) notionmeetings.Source {
 		return notionmeetings.NewClient(baseURL, token)
 	}
-	rebuildNotionMeetingsCacheAfterWrite         = rebuildCacheAfterWrite
+	rebuildNotionMeetingsCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildNotionMeetingsCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
 
@@ -311,5 +311,5 @@ func init() {
 	syncNotionMeetingsCmd.Flags().BoolVar(&syncNotionMeetingsProbe, "probe", false,
 		"validate capabilities and result shape without printing meeting content")
 	rootCmd.AddCommand(addNotionMeetingsCmd)
-	rootCmd.AddCommand(syncNotionMeetingsCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncNotionMeetingsCmd))
 }

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -24,7 +24,7 @@ an existing installation.
   users need their own database backup; see
   [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.26.0**. Analytical
+  compatibility boundary; the current schema is **2.27.0**. Analytical
   `/api/v1/people/*` routes moved to `/api/v1/participants/*`. Durable profiles
   moved from `/api/v1/persons/*` to `/api/v1/people/*`. The old paths were
   removed. Clients reject incompatible daemons; authenticated `/api/v1/health`

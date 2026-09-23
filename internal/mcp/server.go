@@ -29,6 +29,7 @@ import (
 // Tool name constants.
 const (
 	ToolSearchMessages          = "search_messages"
+	ToolQuerySQL                = "query_sql"
 	ToolSearchMetadata          = "search_metadata"
 	ToolSearchMessageBodies     = "search_message_bodies"
 	ToolSemanticSearchMessages  = "semantic_search_messages"

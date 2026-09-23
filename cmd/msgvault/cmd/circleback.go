@@ -257,12 +257,12 @@ Examples:
 			accountEmail, err := src.EffectiveAccountEmail()
 			if err != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterWrite(dbPath)
+					return rebuildCacheAfterManualSync(dbPath)
 				})
 			}
 			if ctx.Err() != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, nil, func() error {
-					return rebuildCacheAfterWrite(dbPath)
+					return rebuildCacheAfterManualSync(dbPath)
 				})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Circleback for %s\n\n", src.Identifier)
@@ -271,7 +271,7 @@ Examples:
 			session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 			if err != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterWrite(dbPath)
+					return rebuildCacheAfterManualSync(dbPath)
 				})
 			}
 			imp := circleback.NewImporter(s, session)
@@ -289,7 +289,7 @@ Examples:
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-circleback to resume.")
 			}
 			if finishErr := finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-				return rebuildCacheAfterWrite(dbPath)
+				return rebuildCacheAfterManualSync(dbPath)
 			}); finishErr != nil {
 				return finishErr
 			}
@@ -299,10 +299,10 @@ Examples:
 
 		if ctx.Err() != nil {
 			return finishCirclebackImport(ctx, sources[len(sources)-1].Identifier, pendingCacheWrites, nil, func() error {
-				return rebuildCacheAfterWrite(dbPath)
+				return rebuildCacheAfterManualSync(dbPath)
 			})
 		}
-		return rebuildCacheAfterWrite(dbPath)
+		return rebuildCacheAfterManualSync(dbPath)
 	},
 }
 
@@ -466,5 +466,5 @@ func init() {
 	syncCirclebackCmd.Flags().BoolVar(&syncCirclebackFull, "full", false, "ignore the stored creation watermark and re-fetch every meeting (repairs existing rows in place)")
 	syncCirclebackCmd.Flags().BoolVar(&syncCirclebackProbe, "probe", false, "print the MCP tool inventory and a sample result instead of syncing")
 	rootCmd.AddCommand(newAddCirclebackCmd())
-	rootCmd.AddCommand(syncCirclebackCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncCirclebackCmd))
 }

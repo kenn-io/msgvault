@@ -155,8 +155,11 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	default:
 		return fmt.Errorf("unsupported synctech-sms backend %q", src.Backend)
 	}
-	refreshErr := rebuildCacheAfterScheduledSync(
-		context.WithoutCancel(ctx), "synctech-sms:"+src.Name)
+	var refreshErr error
+	if !isDaemonCLISubprocess() {
+		refreshErr = rebuildCacheAfterScheduledSync(
+			context.WithoutCancel(ctx), "synctech-sms:"+src.Name)
+	}
 	return errors.Join(err, refreshErr)
 }
 
@@ -381,5 +384,5 @@ func synctechImportOptions(src config.SynctechSMSSource) synctechsms.ImportOptio
 
 func init() {
 	rootCmd.AddCommand(newAddSynctechSMSDriveCmd())
-	rootCmd.AddCommand(newSyncSynctechSMSCmd())
+	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncSynctechSMSCmd()))
 }
