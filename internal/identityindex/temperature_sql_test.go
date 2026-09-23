@@ -128,11 +128,11 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 		time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC),
 	)
 
-	rows, err := db.Query(query + ` SELECT canonical_id,
-		CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR)
-		FROM annual_rollups ORDER BY canonical_id`)
-	require.NoError(err)
 	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id,
+			CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR)
+			FROM annual_rollups ORDER BY canonical_id`)
+		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
 		require.True(rows.Next())
 		var canonicalID int64
@@ -144,10 +144,10 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 		require.NoError(rows.Err())
 	}()
 
-	rows, err = db.Query(query + ` SELECT canonical_id, peak_year
-		FROM peaks ORDER BY canonical_id`)
-	require.NoError(err)
 	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id, peak_year
+			FROM peaks ORDER BY canonical_id`)
+		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
 		require.True(rows.Next())
 		var canonicalID, peakYear int64
@@ -158,10 +158,10 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 		require.NoError(rows.Err())
 	}()
 
-	rows, err = db.Query(query + ` SELECT canonical_id, population, raw_score
-		FROM current_ranked ORDER BY canonical_id`)
-	require.NoError(err)
 	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id, population, raw_score
+			FROM current_ranked ORDER BY canonical_id`)
+		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
 		require.True(rows.Next())
 		var canonicalID, population int64
