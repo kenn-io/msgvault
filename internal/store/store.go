@@ -519,12 +519,9 @@ func (s *Store) Close() error {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
-			if _, err := s.db.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
-				slog.Warn("SQLite planner statistics maintenance failed",
-					"trigger", "store close",
-					"error", err.Error(),
-				)
-			}
+			// Maintenance owns its diagnostic so an expected deadline does not also become a generic SQL warning.
+			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10002")
+			logSQLiteOptimizeError("store close", err)
 			cancel()
 		}
 
@@ -599,12 +596,24 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 }
 
 func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
-	if err := s.optimizeSQLite(ctx); err != nil {
-		slog.Warn("SQLite planner statistics maintenance failed",
+	logSQLiteOptimizeError(trigger, s.optimizeSQLite(ctx))
+}
+
+func logSQLiteOptimizeError(trigger string, err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		slog.Debug("SQLite planner statistics maintenance interrupted",
 			"trigger", trigger,
 			"error", err.Error(),
 		)
+		return
 	}
+	slog.Warn("SQLite planner statistics maintenance failed",
+		"trigger", trigger,
+		"error", err.Error(),
+	)
 }
 
 // DB returns the underlying *sql.DB for consumers that need to

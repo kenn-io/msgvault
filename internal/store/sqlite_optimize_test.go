@@ -1,17 +1,374 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func plannerMaintenanceRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for _, record := range decodeAll(t, buf) {
+		message, _ := record["msg"].(string)
+		if message == "SQLite planner statistics maintenance interrupted" ||
+			message == "SQLite planner statistics maintenance failed" {
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
+type plannerMaintenanceSignalHandler struct {
+	slog.Handler
+	interrupted chan struct{}
+	once        sync.Once
+}
+
+func (h *plannerMaintenanceSignalHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == "SQLite planner statistics maintenance interrupted" {
+		h.once.Do(func() { close(h.interrupted) })
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	require.NoError(s.InitSchema())
+	var sqliteVersion string
+	require.NoError(s.db.QueryRowContext(t.Context(), "SELECT sqlite_version()").Scan(&sqliteVersion))
+	t.Logf("SQLite version: %s", sqliteVersion)
+	s.db.SetMaxOpenConns(1)
+	s.db.SetMaxIdleConns(1)
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { _ = blocker.Close() })
+
+	buf := captureSlog(t)
+	s.optimizeSQLiteBestEffort(context.Background(), "cancellation proof")
+
+	records := plannerMaintenanceRecords(t, buf)
+	t.Logf("planner maintenance records: %#v", records)
+	require.Len(records, 1)
+	assert.Equal("DEBUG", records[0]["level"])
+	assert.Equal("SQLite planner statistics maintenance interrupted", records[0]["msg"])
+	assert.Equal("cancellation proof", records[0]["trigger"])
+	errorText, ok := records[0]["error"].(string)
+	require.True(ok)
+	assert.Contains(errorText, "context deadline exceeded")
+	for _, record := range records {
+		assert.NotEqual("WARN", record["level"])
+	}
+}
+
+func TestPlannerMaintenanceLogLevel(t *testing.T) {
+	contextDeadlineText := errors.New("context deadline exceeded")
+	cases := []struct {
+		name      string
+		err       error
+		wantCount int
+		wantLevel string
+		wantMsg   string
+	}{
+		{name: "nil", wantCount: 0},
+		{
+			name:      "canceled",
+			err:       context.Canceled,
+			wantCount: 1,
+			wantLevel: "DEBUG",
+			wantMsg:   "SQLite planner statistics maintenance interrupted",
+		},
+		{
+			name:      "deadline exceeded",
+			err:       context.DeadlineExceeded,
+			wantCount: 1,
+			wantLevel: "DEBUG",
+			wantMsg:   "SQLite planner statistics maintenance interrupted",
+		},
+		{
+			name:      "wrapped canceled",
+			err:       fmt.Errorf("reserve connection: %w", context.Canceled),
+			wantCount: 1,
+			wantLevel: "DEBUG",
+			wantMsg:   "SQLite planner statistics maintenance interrupted",
+		},
+		{
+			name:      "wrapped deadline exceeded",
+			err:       fmt.Errorf("reserve connection: %w", context.DeadlineExceeded),
+			wantCount: 1,
+			wantLevel: "DEBUG",
+			wantMsg:   "SQLite planner statistics maintenance interrupted",
+		},
+		{
+			name:      "same text unrelated error",
+			err:       contextDeadlineText,
+			wantCount: 1,
+			wantLevel: "WARN",
+			wantMsg:   "SQLite planner statistics maintenance failed",
+		},
+		{
+			name:      "wrapped unrelated error",
+			err:       fmt.Errorf("database failure: %w", errors.New("database is closed")),
+			wantCount: 1,
+			wantLevel: "WARN",
+			wantMsg:   "SQLite planner statistics maintenance failed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureSlog(t)
+			logSQLiteOptimizeError("classifier", tc.err)
+
+			records := plannerMaintenanceRecords(t, buf)
+			t.Logf("planner maintenance records: %#v", records)
+			require := require.New(t)
+			assert := assert.New(t)
+			require.Len(records, tc.wantCount)
+			for _, record := range records {
+				assert.Equal(tc.wantLevel, record["level"])
+				assert.Equal(tc.wantMsg, record["msg"])
+				assert.Equal("classifier", record["trigger"])
+				if tc.err != nil {
+					assert.Equal(tc.err.Error(), record["error"])
+				}
+			}
+		})
+	}
+}
+
+func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	require.NoError(s.db.DB.Close())
+	actualErr := s.optimizeSQLite(t.Context())
+	require.Error(actualErr)
+
+	buf := captureSlog(t)
+	s.optimizeSQLiteBestEffort(t.Context(), "closed database")
+
+	records := plannerMaintenanceRecords(t, buf)
+	t.Logf("planner maintenance records: %#v", records)
+	require.Len(records, 1)
+	assert.Equal("WARN", records[0]["level"])
+	assert.Equal("SQLite planner statistics maintenance failed", records[0]["msg"])
+	assert.Equal("closed database", records[0]["trigger"])
+	assert.Equal(actualErr.Error(), records[0]["error"])
+}
+
+func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	cleaned := false
+	s.closeCleanup = func() { cleaned = true }
+	require.NoError(s.db.DB.Close())
+	_, actualErr := s.db.DB.ExecContext(context.Background(), "PRAGMA optimize=0x10002")
+	require.Error(actualErr)
+
+	buf := captureSlog(t)
+	closeErr := s.Close()
+	require.NoError(closeErr)
+	assert.True(cleaned)
+
+	records := plannerMaintenanceRecords(t, buf)
+	t.Logf("store close maintenance records: %#v", records)
+	require.Len(records, 1)
+	assert.Equal("WARN", records[0]["level"])
+	assert.Equal("SQLite planner statistics maintenance failed", records[0]["msg"])
+	assert.Equal("store close", records[0]["trigger"])
+	assert.Equal(actualErr.Error(), records[0]["error"])
+}
+
+func TestStoreCloseCancellationLogsDebugAndRunsCleanup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	s.db.SetMaxOpenConns(1)
+	s.db.SetMaxIdleConns(1)
+	blocker, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { _ = blocker.Close() })
+
+	cleaned := false
+	s.closeCleanup = func() { cleaned = true }
+	var buf bytes.Buffer
+	previous := slog.Default()
+	signal := &plannerMaintenanceSignalHandler{
+		Handler:     slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		interrupted: make(chan struct{}),
+	}
+	slog.SetDefault(slog.New(signal))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- s.Close() }()
+
+	select {
+	case err := <-closeDone:
+		require.FailNow("Close returned before its maintenance deadline", err)
+	case <-signal.interrupted:
+	}
+	require.NoError(blocker.Close())
+	require.NoError(<-closeDone)
+
+	records := plannerMaintenanceRecords(t, &buf)
+	t.Logf("store close maintenance records: %#v", records)
+	require.Len(records, 1)
+	assert.Equal("DEBUG", records[0]["level"])
+	assert.Equal("SQLite planner statistics maintenance interrupted", records[0]["msg"])
+	assert.Equal("store close", records[0]["trigger"])
+	assert.True(cleaned)
+	for _, record := range decodeAll(t, &buf) {
+		assert.False(record["msg"] == "sql error" && record["level"] == "WARN")
+	}
+	for _, record := range records {
+		assert.NotEqual("WARN", record["level"])
+	}
+}
+
+func TestOptimizeSQLiteSkipsReadOnlyAndPostgreSQLStores(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+
+	writable, err := OpenForTest(dbPath)
+	require.NoError(err)
+	require.NoError(writable.InitSchema())
+	require.NoError(writable.Close())
+
+	readOnly, err := OpenReadOnly(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = readOnly.Close() })
+	require.NoError(readOnly.db.DB.Close())
+	assert.NoError(readOnly.optimizeSQLite(t.Context()))
+
+	postgres := &Store{dialect: &PostgreSQLDialect{}}
+	assert.NoError(postgres.optimizeSQLite(t.Context()))
+}
+
+func TestLoggedDBCanceledExecRemainsWarning(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ConfigureSQLLogging(SQLLogOptions{})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	buf := captureSlog(t)
+	db := openLoggedMem(t)
+	buf.Reset()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := db.ExecContext(ctx, "INSERT INTO t (val) VALUES (?)", "value")
+	require.Error(err)
+
+	var records []map[string]any
+	for _, record := range decodeAll(t, buf) {
+		if record["msg"] == "sql error" {
+			records = append(records, record)
+		}
+	}
+	require.Len(records, 1)
+	assert.Equal("WARN", records[0]["level"])
+	assert.Equal(err.Error(), records[0]["error"])
+}
+
+func TestCompletedSyncMethodsRefreshStatisticsAndPersistCursors(t *testing.T) {
+	cases := []struct {
+		name                  string
+		complete              func(*Store, int64, int64) error
+		wantSourceCursorValid bool
+		wantSourceCursor      string
+		wantCompletedCursor   string
+	}{
+		{
+			name: "complete sync",
+			complete: func(s *Store, syncID, _ int64) error {
+				return s.CompleteSync(syncID, "complete-cursor")
+			},
+			wantCompletedCursor: "complete-cursor",
+		},
+		{
+			name: "update source cursor",
+			complete: func(s *Store, syncID, sourceID int64) error {
+				return s.CompleteSyncAndUpdateSourceCursorContext(
+					context.Background(), syncID, sourceID, "update-cursor",
+				)
+			},
+			wantSourceCursorValid: true,
+			wantSourceCursor:      "update-cursor",
+			wantCompletedCursor:   "update-cursor",
+		},
+		{
+			name: "preserve source cursor through scoped store",
+			complete: func(s *Store, syncID, sourceID int64) error {
+				scoped := s.ScopedToSync(sourceID, syncID)
+				return scoped.CompleteSyncAndPreserveSourceCursorContext(
+					context.Background(), syncID, sourceID, "preserve-cursor",
+				)
+			},
+			wantCompletedCursor: "preserve-cursor",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+			require.NoError(err)
+			t.Cleanup(func() { _ = s.Close() })
+			require.NoError(s.InitSchema())
+			seedLiveMessages(t, s, 100)
+			assert.Zero(messagePlannerStatisticCount(t, s))
+
+			const sourceID = int64(1)
+			syncID, err := s.StartSync(sourceID, "full")
+			require.NoError(err)
+			require.NoError(tc.complete(s, syncID, sourceID))
+
+			var status, completedCursor string
+			require.NoError(s.db.QueryRowContext(t.Context(), `
+				SELECT status, cursor_after FROM sync_runs WHERE id = ?`, syncID).
+				Scan(&status, &completedCursor))
+			assert.Equal(SyncStatusCompleted, status)
+			assert.Equal(tc.wantCompletedCursor, completedCursor)
+
+			var sourceCursor sql.NullString
+			require.NoError(s.db.QueryRowContext(t.Context(), `
+				SELECT sync_cursor FROM sources WHERE id = ?`, sourceID).
+				Scan(&sourceCursor))
+			assert.Equal(tc.wantSourceCursorValid, sourceCursor.Valid)
+			if tc.wantSourceCursorValid {
+				assert.Equal(tc.wantSourceCursor, sourceCursor.String)
+			}
+			assert.Positive(messagePlannerStatisticCount(t, s))
+		})
+	}
+}
 
 func messagePlannerStatisticCount(t *testing.T, s *Store) int {
 	t.Helper()

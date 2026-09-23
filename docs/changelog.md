@@ -6,6 +6,10 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- Log canceled SQLite planner-statistics maintenance at debug level.
+
 ## 0.20.0
 <small>2026-09-22</small>
 
