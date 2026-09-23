@@ -48,7 +48,7 @@ func TestWindowsBackgroundProcessDoesNotRunBeforeJobAttachment(t *testing.T) {
 	require.Eventually(func() bool {
 		_, statErr := os.Stat(pidPath)
 		return statErr == nil
-	}, 10*time.Second, 25*time.Millisecond, "blocking child PID")
+	}, serveLifecycleTestTimeout, 25*time.Millisecond, "blocking child PID")
 }
 
 func TestStopBackgroundServeStartupTerminatesWindowsProcessTree(t *testing.T) {
@@ -78,7 +78,7 @@ func TestStopBackgroundServeStartupTerminatesWindowsProcessTree(t *testing.T) {
 		}
 		childPID, readErr = strconv.Atoi(strings.TrimSpace(string(contents)))
 		return readErr == nil && childPID > 0
-	}, 10*time.Second, 25*time.Millisecond, "blocking child PID")
+	}, serveLifecycleTestTimeout, 25*time.Millisecond, "blocking child PID")
 	child, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(childPID))
 	require.NoError(err, "open blocking child")
 	t.Cleanup(func() { _ = windows.CloseHandle(child) })
