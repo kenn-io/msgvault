@@ -3,10 +3,9 @@
  */
 import type { CacheFreshness } from "./cacheFreshness";
 
-export interface QueryResult {
+export interface CacheBuildAccepted {
   cache?: CacheFreshness;
-  columns: string[];
-  row_count: number;
-  rows: unknown[][];
+  job_id: string;
+  status: string;
   [key: string]: unknown;
 }

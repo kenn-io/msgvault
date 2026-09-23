@@ -109,7 +109,7 @@ Examples:
 		sum, err := imp.Import(ctx, opts)
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-teams to resume.")
-			return rebuildCacheAfterWrite(dbPath)
+			return rebuildCacheAfterManualSync(dbPath)
 		}
 		if err != nil {
 			return fmt.Errorf("teams sync failed: %w", err)
@@ -117,7 +117,7 @@ Examples:
 
 		writeTeamsSyncSummary(cmd.OutOrStdout(), sum)
 
-		return rebuildCacheAfterWrite(dbPath)
+		return rebuildCacheAfterManualSync(dbPath)
 	},
 }
 
@@ -141,5 +141,5 @@ func init() {
 	syncTeamsCmd.Flags().BoolVar(&syncTeamsNoChannels, "no-channels", false, "sync chats only (skip team channels)")
 	syncTeamsCmd.Flags().IntVar(&syncTeamsLimit, "limit", 0, "max messages per conversation (0 = no limit)")
 	syncTeamsCmd.Flags().BoolVar(&syncTeamsFull, "full", false, "ignore stored cursor and re-fetch every message (repairs/backfills existing rows in place)")
-	rootCmd.AddCommand(syncTeamsCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncTeamsCmd))
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -19,9 +20,11 @@ type cacheStaleness struct {
 	// must rebuild immediately. PublishedAt is valid only when this is true.
 	HasUsablePublication bool
 	PublishedAt          time.Time
-	HasNew               bool // new messages since last build
-	HasDeleted           bool // deletions since last build
-	HasUpdated           bool // updates or additions within the cached ID boundary require repair
+	Generation           string
+	PendingAdditions     int64 // positive cache addition counter delta, when known
+	HasNew               bool  // new messages since last build
+	HasDeleted           bool  // deletions since last build
+	HasUpdated           bool  // updates or additions within the cached ID boundary require repair
 	// HasIdentityDrift signals participant_links or account_identities
 	// changed since the last build. Also set whenever
 	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
@@ -122,12 +125,43 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	return cacheNeedsBuildLocked(dbPath, analyticsDir)
 }
 
+// cacheNeedsBuildForQuery inspects the committed publication without waiting
+// for a builder that is staging the next generation. The shared lock excludes
+// only the brief publication step and destructive cache maintenance.
+func cacheNeedsBuildForQuery(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
+	return inspectCacheForQuery(ctx, dbPath, analyticsDir, true)
+}
+
+// cacheNeedsBuildForServing omits the two archive-wide conversation hashes.
+// The scheduled background check runs the full inspection when the minimum
+// rebuild interval expires; requests still see indexed sync and revision
+// signals immediately, without scanning millions of membership rows.
+func cacheNeedsBuildForServing(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
+	return inspectCacheForQuery(ctx, dbPath, analyticsDir, false)
+}
+
+func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full bool) (cacheStaleness, error) {
+	if store.IsPostgresURL(dbPath) {
+		return cacheStaleness{}, nil
+	}
+	release, err := query.AcquireCacheReadLock(ctx, analyticsDir)
+	if err != nil {
+		return cacheStaleness{}, err
+	}
+	defer release()
+	return cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir, full), nil
+}
+
 // cacheNeedsBuildLocked performs readiness inspection while the caller holds
-// the exclusive cache builder lock (publications also run under it, so the
-// committed marker cannot change mid-inspection). Incomplete marker-last
+// either the builder lock or the publication read lock, so the committed
+// marker cannot change mid-inspection. Incomplete marker-last
 // publication is detected as drift and rebuilt; publication does not
 // maintain a recovery journal.
 func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
+	return cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir, true)
+}
+
+func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, full bool) cacheStaleness {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
 		return cacheStaleness{
@@ -205,11 +239,13 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	result := cacheStaleness{
 		HasUsablePublication: true,
 		PublishedAt:          state.PublishedAt,
+		Generation:           state.DatasetFingerprint,
 	}
 
 	if maxLiveID > state.LastMessageID {
 		newCount := maxLiveID - state.LastMessageID
 		result.HasNew = true
+		result.PendingAdditions = newCount
 		reasons = append(reasons,
 			fmt.Sprintf("%d new messages", newCount))
 	}
@@ -295,6 +331,9 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 				counters.failedRunCount, counters.failedRunIDSum))
 		}
 		if counters.additions != state.LastCacheAdditionCount {
+			if delta := counters.additions - state.LastCacheAdditionCount; delta > 0 {
+				result.PendingAdditions = delta
+			}
 			// A larger message ID gives the incremental exporter an exact lower
 			// boundary for ordinary append-only syncs. If the ID boundary did not
 			// move (or history moved backwards), the changed addition counter may
@@ -401,34 +440,36 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 		reasons = append(reasons, "person display names changed")
 	}
 
-	conversationFingerprint, err := sourceConversationParticipantsFingerprint(
-		db.DB(),
-		state.LastMessageID,
-	)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify conversation participants",
+	if full {
+		conversationFingerprint, err := sourceConversationParticipantsFingerprint(
+			db.DB(),
+			state.LastMessageID,
+		)
+		if err != nil {
+			return cacheStaleness{
+				NeedsBuild: true, FullRebuild: true,
+				Reason: "cannot verify conversation participants",
+			}
 		}
-	}
-	if conversationFingerprint != state.ConversationParticipantsFingerprint {
-		result.HasConversationParticipantDrift = true
-		reasons = append(reasons, "conversation participants changed")
-	}
+		if conversationFingerprint != state.ConversationParticipantsFingerprint {
+			result.HasConversationParticipantDrift = true
+			reasons = append(reasons, "conversation participants changed")
+		}
 
-	typesFingerprint, err := sourceConversationTypesFingerprint(
-		db.DB(),
-		state.LastMessageID,
-	)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify conversation metadata",
+		typesFingerprint, err := sourceConversationTypesFingerprint(
+			db.DB(),
+			state.LastMessageID,
+		)
+		if err != nil {
+			return cacheStaleness{
+				NeedsBuild: true, FullRebuild: true,
+				Reason: "cannot verify conversation metadata",
+			}
 		}
-	}
-	if typesFingerprint != state.ConversationTypesFingerprint {
-		result.HasConversationTypeDrift = true
-		reasons = append(reasons, "conversation metadata changed")
+		if typesFingerprint != state.ConversationTypesFingerprint {
+			result.HasConversationTypeDrift = true
+			reasons = append(reasons, "conversation metadata changed")
+		}
 	}
 
 	// An incremental build can append only new activity rows. If canonical

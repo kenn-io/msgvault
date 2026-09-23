@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
@@ -151,6 +152,42 @@ type handlers struct {
 	vectorCfg      vector.Config
 	backend        vector.Backend
 	visualSearcher VisualSearcher
+}
+
+func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, error) {
+	args := req.GetArguments()
+	sql, ok := args["sql"].(string)
+	if !ok || strings.TrimSpace(sql) == "" {
+		return toolErrorResult("sql is required"), nil
+	}
+	if err := query.EnsureReadOnly(sql); err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	fresh, _ := args["fresh"].(bool)
+	if engine, ok := h.engine.(interface {
+		QuerySQLWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
+	}); ok {
+		result, accepted, err := engine.QuerySQLWithFresh(ctx, sql, fresh)
+		if err != nil {
+			return nil, newInternalError("query SQL", err)
+		}
+		if accepted != nil {
+			return jsonResult(accepted)
+		}
+		return jsonResult(result)
+	}
+	if fresh {
+		return toolErrorResult("fresh SQL queries require a daemon-backed analytics engine"), nil
+	}
+	engine, ok := h.engine.(query.SQLQuerier)
+	if !ok {
+		return toolErrorResult("SQL queries are unavailable"), nil
+	}
+	result, err := engine.QuerySQL(ctx, sql)
+	if err != nil {
+		return nil, newInternalError("query SQL", err)
+	}
+	return jsonResult(result)
 }
 
 type VisualSearcher interface {

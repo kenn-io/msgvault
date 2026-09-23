@@ -991,6 +991,57 @@ func (c CLIVerifyEvent) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CacheBuildAccepted struct {
+	Cache  *CacheFreshness `json:"cache,omitempty"`
+	JobID  string          `json:"job_id" validate:"required"`
+	Status string          `json:"status" validate:"required"`
+}
+
+func (c CacheBuildAccepted) Validate() error {
+	var errors runtime.ValidationErrors
+	if c.Cache != nil {
+		if v, ok := any(c.Cache).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cache", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.JobID, "required"); err != nil {
+		errors = errors.Append("JobID", err)
+	}
+	if err := typesValidator.Var(c.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CacheBuildStatus struct {
+	AcceptedAt time.Time  `json:"accepted_at" validate:"required"`
+	ErrorData  *string    `json:"error,omitzero"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	JobID      string     `json:"job_id" validate:"required"`
+	Status     string     `json:"status" validate:"required"`
+}
+
+func (c CacheBuildStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CacheFreshness struct {
+	Building         *bool     `json:"building,omitempty"`
+	Generation       string    `json:"generation" validate:"required"`
+	PendingAdditions *int64    `json:"pending_additions,omitempty"`
+	PublishedAt      time.Time `json:"published_at" validate:"required"`
+	StaleReason      *string   `json:"stale_reason,omitzero"`
+}
+
+func (c CacheFreshness) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CacheStats struct {
 	AttachmentSizeBytes *int64     `json:"attachment_size_bytes,omitempty"`
 	LastMessageID       *int64     `json:"last_message_id,omitempty"`
@@ -9873,7 +9924,8 @@ type PutPersonTrackingRequest struct {
 }
 
 type QueryRequest struct {
-	SQL string `json:"sql" validate:"required"`
+	Fresh *bool  `json:"fresh,omitempty"`
+	SQL   string `json:"sql" validate:"required"`
 }
 
 func (q QueryRequest) Validate() error {
@@ -9881,13 +9933,31 @@ func (q QueryRequest) Validate() error {
 }
 
 type QueryResult struct {
-	Columns  []string `json:"columns" validate:"required"`
-	RowCount int64    `json:"row_count"`
-	Rows     [][]any  `json:"rows" validate:"required"`
+	Cache    *CacheFreshness `json:"cache,omitempty"`
+	Columns  []string        `json:"columns" validate:"required"`
+	RowCount int64           `json:"row_count"`
+	Rows     [][]any         `json:"rows" validate:"required"`
 }
 
 func (q QueryResult) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(q))
+	var errors runtime.ValidationErrors
+	if q.Cache != nil {
+		if v, ok := any(q.Cache).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cache", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(q.Columns, "required"); err != nil {
+		errors = errors.Append("Columns", err)
+	}
+	if err := typesValidator.Var(q.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type RejectPersonBriefRequest struct {

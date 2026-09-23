@@ -702,6 +702,50 @@ func (o *EndBackupFreezeRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetCacheBuildStatusRequestOptions is the options needed to make a request to GetCacheBuildStatus.
+type GetCacheBuildStatusRequestOptions struct {
+	PathParams *GetCacheBuildStatusPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetCacheBuildStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetCacheBuildStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetCacheBuildStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetCacheBuildStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetCacheBuildStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SaveCardDAVAccountRequestOptions is the options needed to make a request to SaveCardDAVAccount.
 type SaveCardDAVAccountRequestOptions struct {
 	Body *SaveCardDAVAccountBody
@@ -9150,13 +9194,22 @@ func (o *PatchPersonRelationshipRequestOptions) GetHeader() (map[string]string, 
 
 // RunQueryRequestOptions is the options needed to make a request to RunQuery.
 type RunQueryRequestOptions struct {
-	Body *RunQueryBody
+	Query *RunQueryQuery
+	Body  *RunQueryBody
 }
 
 // Validate validates all the fields in the options.
 // Use it if fields validation was not run.
 func (o *RunQueryRequestOptions) Validate() error {
 	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
 
 	if o.Body != nil {
 		if v, ok := any(o.Body).(runtime.Validator); ok {
@@ -9179,7 +9232,7 @@ func (o *RunQueryRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *RunQueryRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	return runtime.AsMap[any](o.Query)
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.

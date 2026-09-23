@@ -243,17 +243,19 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg            *config.Config
-	store          MessageStore
-	analyticsState atomic.Pointer[analyticsEngineState]
-	savedViewStore SavedViewStore
-	sqlQueryRunner SQLQueryRunner
-	shutdownToken  string
-	shutdownFunc   func()
-	scheduler      SyncScheduler
-	cardDAV        *CardDAVController
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	cfg                       *config.Config
+	store                     MessageStore
+	analyticsState            atomic.Pointer[analyticsEngineState]
+	savedViewStore            SavedViewStore
+	sqlQueryRunner            SQLQueryRunner
+	sqlQueryRunnerWithOptions SQLQueryRunnerWithOptions
+	cacheBuildStatusReader    CacheBuildStatusReader
+	shutdownToken             string
+	shutdownFunc              func()
+	scheduler                 SyncScheduler
+	cardDAV                   *CardDAVController
+	logger                    *slog.Logger
+	requestTimeout            time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -453,6 +455,8 @@ func (s *Server) clockNow() time.Time {
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
+type SQLQueryRunnerWithOptions func(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error)
+type CacheBuildStatusReader func(id string) (CacheBuildStatus, bool)
 
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
@@ -486,14 +490,16 @@ type ServerOptions struct {
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
-	SavedViewStore SavedViewStore
-	Engine         query.Engine // Optional: query engine for aggregates and TUI support
-	SQLQueryRunner SQLQueryRunner
-	ShutdownToken  string
-	ShutdownFunc   func()
-	HybridEngine   *hybrid.Engine
-	VectorCfg      vector.Config
-	Backend        vector.Backend
+	SavedViewStore            SavedViewStore
+	Engine                    query.Engine // Optional: query engine for aggregates and TUI support
+	SQLQueryRunner            SQLQueryRunner
+	SQLQueryRunnerWithOptions SQLQueryRunnerWithOptions
+	CacheBuildStatusReader    CacheBuildStatusReader
+	ShutdownToken             string
+	ShutdownFunc              func()
+	HybridEngine              *hybrid.Engine
+	VectorCfg                 vector.Config
+	Backend                   vector.Backend
 	// PersonSearchEngine is the optional semantic people service.
 	PersonSearchEngine PersonSearchEngine
 	// VectorStatus is the initial vector subsystem status. Zero value
@@ -576,35 +582,37 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:                    opts.Config,
-		store:                  opts.Store,
-		savedViewStore:         opts.SavedViewStore,
-		sqlQueryRunner:         opts.SQLQueryRunner,
-		shutdownToken:          opts.ShutdownToken,
-		shutdownFunc:           opts.ShutdownFunc,
-		hybridEngine:           opts.HybridEngine,
-		vectorCfg:              opts.VectorCfg,
-		backend:                opts.Backend,
-		personSearchEngine:     opts.PersonSearchEngine,
-		scheduler:              opts.Scheduler,
-		cardDAV:                opts.CardDAV,
-		logger:                 opts.Logger,
-		requestTimeout:         timeout,
-		readTimeout:            daemonReadTimeout,
-		queryTimeout:           QueryEndpointTimeout,
-		inProgressThreshold:    inProgressLogThreshold,
-		inProgressInterval:     inProgressLogInterval,
-		daemonVersion:          opts.DaemonVersion,
-		idleTracker:            opts.IdleTracker,
-		operationGate:          opts.OperationGate,
-		operationHistoryReader: opts.OperationHistoryReader,
-		importContext:          importContext,
-		cancelImports:          cancelImports,
-		blobStore:              opts.BlobStore,
-		remoteImages:           remoteimage.NewFetcher(),
-		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
-		spaHandler:             opts.SPAHandler,
-		sessions:               newSessionStore(defaultSessionTTL),
+		cfg:                       opts.Config,
+		store:                     opts.Store,
+		savedViewStore:            opts.SavedViewStore,
+		sqlQueryRunner:            opts.SQLQueryRunner,
+		sqlQueryRunnerWithOptions: opts.SQLQueryRunnerWithOptions,
+		cacheBuildStatusReader:    opts.CacheBuildStatusReader,
+		shutdownToken:             opts.ShutdownToken,
+		shutdownFunc:              opts.ShutdownFunc,
+		hybridEngine:              opts.HybridEngine,
+		vectorCfg:                 opts.VectorCfg,
+		backend:                   opts.Backend,
+		personSearchEngine:        opts.PersonSearchEngine,
+		scheduler:                 opts.Scheduler,
+		cardDAV:                   opts.CardDAV,
+		logger:                    opts.Logger,
+		requestTimeout:            timeout,
+		readTimeout:               daemonReadTimeout,
+		queryTimeout:              QueryEndpointTimeout,
+		inProgressThreshold:       inProgressLogThreshold,
+		inProgressInterval:        inProgressLogInterval,
+		daemonVersion:             opts.DaemonVersion,
+		idleTracker:               opts.IdleTracker,
+		operationGate:             opts.OperationGate,
+		operationHistoryReader:    opts.OperationHistoryReader,
+		importContext:             importContext,
+		cancelImports:             cancelImports,
+		blobStore:                 opts.BlobStore,
+		remoteImages:              remoteimage.NewFetcher(),
+		inlineCache:               newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
+		spaHandler:                opts.SPAHandler,
+		sessions:                  newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
 				return agentgrant.NewRegistry()

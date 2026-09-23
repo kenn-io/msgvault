@@ -6652,6 +6652,66 @@ func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T
 	assert.Equal(1, result.RowCount, "row_count")
 }
 
+func TestHandleQueryAcceptsFreshBuildAndReportsStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var gotFresh bool
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Engine: &querytest.MockEngine{}, Logger: testLogger(),
+		SQLQueryRunnerWithOptions: func(_ context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+			gotFresh = fresh
+			return nil, &CacheBuildAccepted{Status: CacheBuildQueued, JobID: "synthetic-job"}, nil
+		},
+		CacheBuildStatusReader: func(id string) (CacheBuildStatus, bool) {
+			if id != "synthetic-job" {
+				return CacheBuildStatus{}, false
+			}
+			return CacheBuildStatus{JobID: id, Status: CacheBuildRunning}, true
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query?fresh=true", strings.NewReader(`{"sql":"SELECT 1","fresh":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusAccepted, w.Code, w.Body.String())
+	assert.True(gotFresh)
+	var accepted CacheBuildAccepted
+	require.NoError(json.NewDecoder(w.Body).Decode(&accepted))
+	assert.Equal("synthetic-job", accepted.JobID)
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/cache-builds/synthetic-job", nil)
+	statusW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(statusW, statusReq)
+	require.Equal(http.StatusOK, statusW.Code, statusW.Body.String())
+	var status CacheBuildStatus
+	require.NoError(json.NewDecoder(statusW.Body).Decode(&status))
+	assert.Equal(CacheBuildRunning, status.Status)
+
+	conflict := httptest.NewRequest(http.MethodPost, "/api/v1/query?fresh=false", strings.NewReader(`{"sql":"SELECT 1","fresh":true}`))
+	conflict.Header.Set("Content-Type", "application/json")
+	conflictW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(conflictW, conflict)
+	assert.Equal(http.StatusBadRequest, conflictW.Code)
+}
+
+func TestParseCLISyncRequestCacheOverrides(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	request := httptest.NewRequest(http.MethodPost,
+		"/api/v1/cli/sync?build-cache=true&no-build-cache=false", nil)
+	parsed, apiErr := parseCLISyncRequest(request, false)
+	require.Nil(apiErr)
+	assert.True(parsed.BuildCache)
+	assert.False(parsed.NoBuildCache)
+
+	conflict := httptest.NewRequest(http.MethodPost,
+		"/api/v1/cli/sync-full?build-cache=true&no-build-cache=true", nil)
+	_, apiErr = parseCLISyncRequest(conflict, true)
+	require.NotNil(apiErr)
+	assert.Equal(http.StatusBadRequest, apiErr.status)
+}
+
 func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

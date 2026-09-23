@@ -326,7 +326,9 @@ import (
 // 2.30.0 adds Kata availability and person agenda reads, creation, linking,
 // list placement, and unlinking. Each task links to one person; reads expose
 // canonical person identity and whether the bounded open-task list is truncated.
-const APISchemaVersion = "2.30.0"
+// 2.31.0 adds analytics query freshness, accepted cache-build jobs, and a
+// cache-build status endpoint. Existing query requests remain valid.
+const APISchemaVersion = "2.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

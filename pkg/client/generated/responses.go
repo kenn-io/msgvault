@@ -119,6 +119,10 @@ type EndBackupFreezeResponse = BackupFreezeEndResponse
 
 type EndBackupFreezeErrorResponse = ErrorResponse
 
+type GetCacheBuildStatusResponse = CacheBuildStatus
+
+type GetCacheBuildStatusErrorResponse = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -2545,6 +2549,8 @@ type PatchPersonRelationshipErrorResponseJSON503 = ErrorResponse
 
 type RunQueryResponse = QueryResult
 
+type RunQueryResponseJSON = CacheBuildAccepted
+
 type RunQueryErrorResponse = ErrorResponse
 
 type ListRelationshipTypesResponse = RelationshipTypesResponse
@@ -3210,6 +3216,13 @@ type EndBackupFreezeResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *EndBackupFreezeResponse
+}
+
+type GetCacheBuildStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCacheBuildStatusResponse
 }
 
 type SaveCardDAVAccountResp503Headers struct {
@@ -5349,6 +5362,7 @@ type RunQueryResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *RunQueryResponse
+	JSON202      *RunQueryResponseJSON
 }
 
 type ListRelationshipTypesResp struct {

@@ -7,6 +7,39 @@ import (
 	"regexp"
 )
 
+// RewriteRunQueryClient preserves the simple generated RunQuery method's 200
+// response type when the endpoint also declares a 202 accepted-build body.
+// The WithResponse method still exposes both statuses to callers that need
+// asynchronous refresh handling.
+func RewriteRunQueryClient(source []byte) ([]byte, error) {
+	interfaceSignature := []byte("RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponseJSON, error)")
+	if !bytes.Contains(source, interfaceSignature) {
+		return nil, errors.New("generated RunQuery interface shape changed")
+	}
+	source = bytes.Replace(source, interfaceSignature,
+		[]byte("RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponse, error)"), 1)
+	start := bytes.Index(source, []byte("func (c *Client) RunQuery("))
+	if start < 0 {
+		return nil, errors.New("generated RunQuery method shape changed")
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n// ListRelationshipTypes "))
+	if endOffset < 0 {
+		return nil, errors.New("generated RunQuery method boundary changed")
+	}
+	end := start + endOffset
+	method := append([]byte(nil), source[start:end]...)
+	if !bytes.Contains(method, []byte("resp.StatusCode != 202")) ||
+		!bytes.Contains(method, []byte("RunQueryResponseJSON")) {
+		return nil, errors.New("generated RunQuery success response shape changed")
+	}
+	method = bytes.ReplaceAll(method, []byte("RunQueryResponseJSON"), []byte("RunQueryResponse"))
+	method = bytes.Replace(method, []byte("resp.StatusCode != 202"), []byte("resp.StatusCode != 200"), 1)
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	result = append(result, source[end:]...)
+	return result, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 

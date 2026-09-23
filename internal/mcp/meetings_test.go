@@ -222,7 +222,7 @@ func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[s
 func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 	assertions := assert.New(t)
 	backend := meetingBackendFixture{}
-	assertions.Len(stableOperationCatalogs, 1024)
+	assertions.Len(stableOperationCatalogs, 2048)
 	first := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, &handlers{})
 	second := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, &handlers{})
 	byName := make(map[string]toolDefinition, len(first))

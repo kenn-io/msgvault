@@ -84,7 +84,7 @@ Examples:
 
 			// Successful accounts' messages must reach the analytics cache
 			// regardless of interruptions or per-account failures.
-			cacheErr := rebuildCacheAfterWrite(dbPath)
+			cacheErr := rebuildCacheAfterManualSync(dbPath)
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-beeper to resume.")
 				return cacheErr
@@ -300,5 +300,5 @@ func runScheduledBeeperAttempts(ctx context.Context, accountIDs []string, attemp
 }
 
 func init() {
-	rootCmd.AddCommand(newSyncBeeperCmd())
+	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncBeeperCmd()))
 }

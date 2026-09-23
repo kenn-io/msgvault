@@ -199,7 +199,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rebuild analytics cache.
-	cacheErr := rebuildCacheAfterWrite(dbPath)
+	cacheErr := rebuildCacheAfterManualSync(dbPath)
 
 	if len(syncErrors) > 0 {
 		fmt.Println()
@@ -312,5 +312,5 @@ func init() {
 	syncIncrementalCmd.Flags().Int64("source-id", 0, "Exact source ID to sync")
 	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
 	syncIncrementalCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
-	rootCmd.AddCommand(syncIncrementalCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncIncrementalCmd))
 }

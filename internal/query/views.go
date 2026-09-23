@@ -6,13 +6,26 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // QueryResult holds raw SQL query results in a columnar format.
 type QueryResult struct {
-	Columns  []string `json:"columns"`
-	Rows     [][]any  `json:"rows"`
-	RowCount int      `json:"row_count"`
+	Columns  []string        `json:"columns"`
+	Rows     [][]any         `json:"rows"`
+	RowCount int             `json:"row_count"`
+	Cache    *CacheFreshness `json:"cache,omitempty"`
+}
+
+// CacheFreshness describes the committed analytics publication used by a SQL
+// result. The engine sets its generation while holding the cache read lock;
+// callers may add source-database drift details after the query completes.
+type CacheFreshness struct {
+	Generation       string    `json:"generation"`
+	PublishedAt      time.Time `json:"published_at"`
+	StaleReason      string    `json:"stale_reason,omitempty"`
+	PendingAdditions int64     `json:"pending_additions,omitempty"`
+	Building         bool      `json:"building,omitempty"`
 }
 
 // SQLQuerier is implemented by engines that support raw SQL queries.

@@ -1119,6 +1119,55 @@ components:
       required:
         - type
       type: object
+    CacheBuildAccepted:
+      properties:
+        cache:
+          $ref: "#/components/schemas/CacheFreshness"
+        job_id:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - job_id
+      type: object
+    CacheBuildStatus:
+      properties:
+        accepted_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+      required:
+        - job_id
+        - status
+        - accepted_at
+      type: object
+    CacheFreshness:
+      properties:
+        building:
+          type: boolean
+        generation:
+          type: string
+        pending_additions:
+          format: int64
+          type: integer
+        published_at:
+          format: date-time
+          type: string
+        stale_reason:
+          type: string
+      required:
+        - generation
+        - published_at
+      type: object
     CacheStats:
       properties:
         attachment_size_bytes:
@@ -10247,6 +10296,8 @@ components:
     QueryRequest:
       additionalProperties: false
       properties:
+        fresh:
+          type: boolean
         sql:
           type: string
       required:
@@ -10254,6 +10305,8 @@ components:
       type: object
     QueryResult:
       properties:
+        cache:
+          $ref: "#/components/schemas/CacheFreshness"
         columns:
           items:
             type: string
@@ -13724,6 +13777,34 @@ paths:
       summary: End a backup freeze window
       tags:
         - API
+  /api/v1/cache-builds/{job_id}:
+    get:
+      operationId: getCacheBuildStatus
+      parameters:
+        - description: Analytics cache build job ID
+          in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheBuildStatus"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get analytics cache build status
+      tags:
+        - API
   /api/v1/carddav/account:
     put:
       operationId: saveCardDAVAccount
@@ -15993,6 +16074,16 @@ paths:
     post:
       operationId: syncCLI
       parameters:
+        - description: Build the analytics cache after sync even inside the interval
+          in: query
+          name: build-cache
+          schema:
+            type: boolean
+        - description: Skip the analytics cache refresh after sync
+          in: query
+          name: no-build-cache
+          schema:
+            type: boolean
         - description: Account email or display name to sync
           in: query
           name: email
@@ -16040,6 +16131,16 @@ paths:
     post:
       operationId: syncFullCLI
       parameters:
+        - description: Build the analytics cache after sync even inside the interval
+          in: query
+          name: build-cache
+          schema:
+            type: boolean
+        - description: Skip the analytics cache refresh after sync
+          in: query
+          name: no-build-cache
+          schema:
+            type: boolean
         - description: Account email or display name to sync
           in: query
           name: email
@@ -24272,6 +24373,12 @@ paths:
   /api/v1/query:
     post:
       operationId: runQuery
+      parameters:
+        - description: Request a new cache publication before returning rows
+          in: query
+          name: fresh
+          schema:
+            type: boolean
       requestBody:
         content:
           application/json:
@@ -24285,6 +24392,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/QueryResult"
           description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheBuildAccepted"
+          description: Accepted
         default:
           content:
             application/json:

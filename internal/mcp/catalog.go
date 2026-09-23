@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -30,6 +31,7 @@ const (
 )
 
 type catalogCapabilities struct {
+	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
 	similarMessages bool
@@ -108,7 +110,14 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 }
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
+	_, sqlQuery := opts.Engine.(query.SQLQuerier)
+	if _, daemonSQL := opts.Engine.(interface {
+		QuerySQLWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
+	}); daemonSQL {
+		sqlQuery = true
+	}
 	return catalogCapabilities{
+		sqlQuery:        sqlQuery,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
@@ -125,16 +134,17 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 1024 possible capability keys, which also keeps
+// request. There are only 2048 possible capability keys, which also keeps
 // the shared SDK cache boundary fixed. Build each catalog only when used;
 // eagerly constructing every combination delays startup for all CLI commands.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities]func() []toolDefinition {
-	catalogs := make(map[catalogCapabilities]func() []toolDefinition, 1024)
-	for mask := range 1024 {
+	catalogs := make(map[catalogCapabilities]func() []toolDefinition, 2048)
+	for mask := range 2048 {
 		capabilities := catalogCapabilities{
 			personAgenda:    mask&0b1000000000 != 0,
+			sqlQuery:        mask&0b10000000000 != 0,
 			meetings:        mask&0b100000000 != 0,
 			directoryPeople: mask&0b010000000 != 0,
 			semanticSearch:  mask&0b001000000 != 0,
@@ -177,6 +187,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		listSavedViewsDefinition(nil),
+		querySQLDefinition(),
 		runSavedViewDefinition(nil),
 		searchByDomainsDefinition(nil),
 		searchDocumentsDefinition(nil),
@@ -204,6 +215,25 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		return available[i].name < available[j].name
 	})
 	return available
+}
+
+func querySQLDefinition() toolDefinition {
+	result := outputSchemaFor[query.QueryResult]()
+	result.Schema = ""
+	accepted := outputSchemaFor[daemonclient.CacheBuildAccepted]()
+	accepted.Schema = ""
+	definition := readDefinition(
+		ToolQuerySQL,
+		"Run read-only SQL against the analytics cache. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
+		closedObject(map[string]*jsonschema.Schema{
+			"sql":   stringSchema("One read-only SQL statement"),
+			"fresh": booleanSchema("Request a new cache publication before returning rows"),
+		}, "sql"),
+		&jsonschema.Schema{Schema: schema202012, OneOf: []*jsonschema.Schema{result, accepted}},
+		(*handlers).querySQL,
+	)
+	definition.availability = func(capabilities catalogCapabilities) bool { return capabilities.sqlQuery }
+	return definition
 }
 
 func readDefinition(

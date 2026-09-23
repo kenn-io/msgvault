@@ -53,6 +53,15 @@ func (u UploadTokenPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type GetCacheBuildStatusPath struct {
+	// JobID Analytics cache build job ID
+	JobID string `json:"job_id" validate:"required"`
+}
+
+func (g GetCacheBuildStatusPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type UpdateCardDAVBookRolesPath struct {
 	ID int64 `json:"id" validate:"gte=1"`
 }
