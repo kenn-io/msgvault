@@ -34,7 +34,7 @@ const (
 // meeting intelligence routes.
 type MeetingStore interface {
 	GetMeetingContextContext(
-		ctx context.Context, ids []int64, options meetingcontent.PacketOptions,
+		ctx context.Context, scope store.MeetingQueryScope, options meetingcontent.PacketOptions,
 	) (*meetingcontent.PacketResult, error)
 	ListMeetingActionsContext(
 		ctx context.Context, request store.MeetingActionsQuery,
@@ -165,12 +165,13 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 		maxBytes = meetingContextDefault
 	}
 
-	var ids []int64
+	var scope store.MeetingQueryScope
 	if messageIDsPresent {
 		if !validateOptionalMeetingIDs(w, "message_ids", request.MessageIDs, fields, false) {
 			return
 		}
-		ids = normalizedPublicMeetingIDs(*request.MessageIDs)
+		ids := normalizedPublicMeetingIDs(*request.MessageIDs)
+		scope.MessageIDs = &ids
 	} else {
 		if request.Selection == nil {
 			writeError(w, http.StatusBadRequest, "invalid_meeting_selection", "selection must be an object")
@@ -182,7 +183,7 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 		if !resolvedOK {
 			return
 		}
-		ids = *resolved.Scope.MessageIDs
+		scope = resolved.Scope
 	}
 	meetingStore, ok := s.store.(MeetingStore)
 	if !ok || meetingStore == nil {
@@ -190,7 +191,7 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 			"Meeting intelligence is unavailable")
 		return
 	}
-	result, err := meetingStore.GetMeetingContextContext(r.Context(), ids, meetingcontent.PacketOptions{
+	result, err := meetingStore.GetMeetingContextContext(r.Context(), scope, meetingcontent.PacketOptions{
 		Format: format, IncludeTranscript: request.IncludeTranscript, MaxBytes: maxBytes,
 	})
 	if err != nil {

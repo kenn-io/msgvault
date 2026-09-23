@@ -64,13 +64,16 @@ type meetingContextRow struct {
 }
 
 // GetMeetingContextContext atomically validates and loads the requested
-// archived meetings. Compact projections serve the normal path; transcript
-// opt-in performs one bounded raw primary-key read at a time in the same read
-// snapshot.
+// archived meetings, including their requested source-deletion state.
+// Compact projections serve the normal path; transcript opt-in performs one
+// bounded raw primary-key read at a time in the same read snapshot.
 func (s *Store) GetMeetingContextContext(
-	ctx context.Context, ids []int64, options meetingcontent.PacketOptions,
+	ctx context.Context, scope MeetingQueryScope, options meetingcontent.PacketOptions,
 ) (*meetingcontent.PacketResult, error) {
-	ids = normalizedSignedIDs(ids)
+	var ids []int64
+	if scope.MessageIDs != nil {
+		ids = normalizedSignedIDs(*scope.MessageIDs)
+	}
 	var archiveUID string
 	entries := make([]meetingcontent.Entry, 0, len(ids))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
@@ -79,7 +82,7 @@ func (s *Store) GetMeetingContextContext(
 		if err != nil {
 			return err
 		}
-		if err := s.validateMeetingContextIDs(ctx, tx, ids); err != nil {
+		if err := s.validateMeetingContextIDs(ctx, tx, ids, scope.Deletion); err != nil {
 			return err
 		}
 		for _, id := range ids {
@@ -103,7 +106,7 @@ func (s *Store) GetMeetingContextContext(
 	return meetingcontent.Render(archiveUID, entries, options)
 }
 
-func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids []int64) error {
+func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids []int64, deletion string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -112,7 +115,7 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 		return err
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT m.id, m.message_type, m.deleted_at, d.message_id IS NOT NULL
+		SELECT m.id, m.message_type, m.deleted_at, m.deleted_from_source_at, d.message_id IS NOT NULL
 		FROM messages m
 		LEFT JOIN meeting_details d ON d.message_id = m.id
 		WHERE `+clause, args...)
@@ -122,19 +125,23 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 	type state struct {
 		messageType   string
 		deleted       bool
+		sourceDeleted bool
 		hasProjection bool
 	}
 	found := make(map[int64]state, len(ids))
 	for rows.Next() {
 		var id int64
 		var messageType string
-		var deletedAt nullableTimestamp
+		var deletedAt, sourceDeletedAt nullableTimestamp
 		var hasProjection bool
-		if scanErr := rows.Scan(&id, &messageType, &deletedAt, &hasProjection); scanErr != nil {
+		if scanErr := rows.Scan(&id, &messageType, &deletedAt, &sourceDeletedAt, &hasProjection); scanErr != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan meeting context validation: %w", scanErr)
 		}
-		found[id] = state{messageType: messageType, deleted: deletedAt.Valid, hasProjection: hasProjection}
+		found[id] = state{
+			messageType: messageType, deleted: deletedAt.Valid,
+			sourceDeleted: sourceDeletedAt.Valid, hasProjection: hasProjection,
+		}
 	}
 	if iterationErr := rows.Err(); iterationErr != nil {
 		_ = rows.Close()
@@ -147,6 +154,7 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 	missing := make([]int64, 0)
 	notMeeting := make([]int64, 0)
 	unavailable := make([]int64, 0)
+	changed := make([]int64, 0)
 	for _, id := range ids {
 		item, ok := found[id]
 		switch {
@@ -154,6 +162,8 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 			missing = append(missing, id)
 		case item.messageType != "meeting_transcript":
 			notMeeting = append(notMeeting, id)
+		case deletion == "active" && item.sourceDeleted, deletion == "deleted" && !item.sourceDeleted:
+			changed = append(changed, id)
 		case !item.hasProjection:
 			unavailable = append(unavailable, id)
 		}
@@ -163,6 +173,9 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 	}
 	if len(notMeeting) > 0 {
 		return newMeetingSelectionError(ErrNotMeeting, notMeeting)
+	}
+	if len(changed) > 0 {
+		return newMeetingSelectionError(ErrMeetingScopeChanged, changed)
 	}
 	if len(unavailable) > 0 {
 		return newMeetingSelectionError(ErrMeetingProjectionUnavailable, unavailable)

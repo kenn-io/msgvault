@@ -23,7 +23,7 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 	requirements.NoError(err)
 
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
-		[]int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]},
+		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]})},
 		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
 	requirements.NoError(err)
 	assertions.Equal(len([]byte(result.Content)), result.ContentBytes)
@@ -72,7 +72,7 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
-		[]int64{fixture.meetingIDs[2]}, meetingcontent.PacketOptions{
+		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2]})}, meetingcontent.PacketOptions{
 			Format: meetingcontent.FormatJSON, IncludeTranscript: true, MaxBytes: 1 << 20,
 		})
 	requirements.NoError(err)
@@ -108,7 +108,7 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
-			result, err := fixture.store.GetMeetingContextContext(t.Context(), test.ids, options)
+			result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &test.ids}, options)
 			assertions.Nil(result)
 			require.ErrorIs(t, err, test.wantErr)
 			var selectionErr *MeetingSelectionError

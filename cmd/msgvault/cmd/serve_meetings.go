@@ -9,9 +9,9 @@ import (
 )
 
 func (a *storeAPIAdapter) GetMeetingContextContext(
-	ctx context.Context, ids []int64, options meetingcontent.PacketOptions,
+	ctx context.Context, scope store.MeetingQueryScope, options meetingcontent.PacketOptions,
 ) (*meetingcontent.PacketResult, error) {
-	return a.store.GetMeetingContextContext(ctx, ids, options)
+	return a.store.GetMeetingContextContext(ctx, scope, options)
 }
 
 func (a *storeAPIAdapter) ListMeetingActionsContext(

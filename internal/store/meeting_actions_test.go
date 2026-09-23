@@ -279,7 +279,7 @@ func TestMeetingActionsCursorPreservesFullSignedMessageIDs(t *testing.T) {
 		}
 	}
 
-	result, err := fixture.store.GetMeetingContextContext(t.Context(), ids,
+	result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids},
 		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
 	requirements.NoError(err)
 	var packet meetingcontent.Packet

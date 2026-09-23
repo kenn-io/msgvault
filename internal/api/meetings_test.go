@@ -44,10 +44,10 @@ type meetingRouteStore struct {
 }
 
 func (s *meetingRouteStore) GetMeetingContextContext(
-	_ context.Context, ids []int64, options meetingcontent.PacketOptions,
+	_ context.Context, scope store.MeetingQueryScope, options meetingcontent.PacketOptions,
 ) (*meetingcontent.PacketResult, error) {
 	s.contextCalls++
-	s.contextIDs = append([]int64(nil), ids...)
+	s.contextIDs = append([]int64(nil), (*scope.MessageIDs)...)
 	s.contextOptions = options
 	return s.contextResult, s.contextErr
 }
@@ -307,6 +307,85 @@ func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *tes
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &metrics))
 	assert.Zero(t, metrics.Totals.MeetingCount,
 		"the active cache selection must stay active-only in the current Store snapshot")
+}
+
+func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
+	for _, tc := range []struct {
+		deletion         string
+		initiallyDeleted bool
+		wantStatus       int
+	}{
+		{deletion: "active", wantStatus: http.StatusConflict},
+		{deletion: "deleted", initiallyDeleted: true, wantStatus: http.StatusConflict},
+		{deletion: "any", wantStatus: http.StatusOK},
+	} {
+		t.Run(tc.deletion, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := storetest.New(t)
+			meetingID, err := fixture.Store.PersistMessage(&store.MessagePersistData{
+				Message: &store.Message{
+					ConversationID: fixture.ConvID, SourceID: fixture.Source.ID,
+					SourceMessageID: "context-deletion-boundary", MessageType: "meeting_transcript",
+				},
+				RawMIME: []byte(`{"summary_text":"Archived meeting evidence"}`), RawFormat: "meeting_json",
+			})
+			requirements.NoError(err)
+			deletedAt := "NULL::TIMESTAMP"
+			if tc.initiallyDeleted {
+				requirements.NoError(fixture.Store.MarkMessageDeleted(fixture.Source.ID, "context-deletion-boundary"))
+				deletedAt = "TIMESTAMP '2026-07-19 10:00:00'"
+			}
+			messageValues := fmt.Sprintf(
+				`(%d::BIGINT, 1::BIGINT, 'context-deletion-boundary', 101::BIGINT, 'Meeting', '', TIMESTAMP '2026-07-18 10:00:00', 0::BIGINT, false, 0::INTEGER, %s, NULL::BIGINT, NULL::BIGINT, 'meeting_transcript', NULL::VARCHAR, false, 2026, 7)`,
+				meetingID, deletedAt,
+			)
+			engine, _ := newExploreDuckDBFixtureWithMessages(t, messageValues, meetingID)
+			deletion := query.DeletionAny
+			filters := "[]"
+			if tc.deletion != "any" {
+				deletion = query.DeletionFilter(tc.deletion)
+				filters = fmt.Sprintf(`[{"dimension":"deletion","values":[%q]}]`, tc.deletion)
+			}
+			selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{
+				Explore: query.ExploreRequest{Context: query.Context{Deletion: deletion}},
+			}, meetingContextMaxIDs)
+			requirements.NoError(err)
+			requirements.Equal([]int64{meetingID}, selection.MessageIDs)
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{}, Store: fixture.Store, Engine: engine, Logger: testLogger(),
+			})
+			body := fmt.Sprintf(`{"selection":{"mode":"all_matching",
+				"predicate":{"filters":%s},
+				"cache_revision":%q,"search_provenance":{}}}`, filters, selection.CacheRevision)
+			before := httptest.NewRecorder()
+			srv.Router().ServeHTTP(before, meetingRouteRequest("/api/v1/meetings/context", body))
+			requirements.Equal(http.StatusOK, before.Code, before.Body.String())
+
+			// Provider sync can change source deletion before the committed cache refreshes.
+			if tc.initiallyDeleted {
+				requirements.NoError(fixture.Store.ClearMessageDeletedFromSource(fixture.Source.ID, "context-deletion-boundary"))
+			} else {
+				requirements.NoError(fixture.Store.MarkMessageDeleted(fixture.Source.ID, "context-deletion-boundary"))
+			}
+			// Direct IDs intentionally retain archived evidence in either source state.
+			direct := httptest.NewRecorder()
+			srv.Router().ServeHTTP(direct, meetingRouteRequest("/api/v1/meetings/context",
+				fmt.Sprintf(`{"message_ids":[%d]}`, meetingID)))
+			requirements.Equal(http.StatusOK, direct.Code, direct.Body.String())
+
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/context", body))
+			requirements.Equal(tc.wantStatus, response.Code, response.Body.String())
+			if tc.wantStatus == http.StatusConflict {
+				var failure ErrorResponse
+				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+				assertions.Equal("meeting_scope_changed", failure.Error)
+			} else {
+				assertions.Equal(direct.Body.String(), response.Body.String())
+			}
+		})
+	}
 }
 
 func TestMeetingRoutesRejectMalformedAndOversizedBodiesBeforeStoreWork(t *testing.T) {
