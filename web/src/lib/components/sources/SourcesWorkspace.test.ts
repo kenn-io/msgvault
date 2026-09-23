@@ -17,8 +17,7 @@ function run(status: string, processed: number, overrides: Record<string, unknow
   return {
     id: 9, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null,
     status, messages_processed: processed, messages_added: processed,
-    messages_updated: 0, errors_count: 0, error_message: null,
-    cursor_before: null, cursor_after: null, ...overrides
+    messages_updated: 0, errors_count: 0, error_message: null, ...overrides
   };
 }
 
@@ -275,6 +274,33 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
+  it('releases Sync now buttons when a trigger request times out', async () => {
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST') {
+        return new Promise<Response>((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+        });
+      }
+      return Promise.resolve(Response.json({ sources: [
+        source(), source({ id: 2, identifier: 'other@example.com', display_name: 'Other' })
+      ] }));
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20
+    });
+
+    const archiveButton = await screen.findByRole<HTMLButtonElement>('button', { name: 'Sync now Archive' });
+    const otherButton = screen.getByRole<HTMLButtonElement>('button', { name: 'Sync now Other' });
+    await fireEvent.click(archiveButton);
+    expect(archiveButton.disabled).toBe(true);
+    expect(otherButton.disabled).toBe(true);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    expect(archiveButton.disabled).toBe(false);
+    expect(otherButton.disabled).toBe(false);
+    rendered.unmount();
+  });
+
   it('holds a first-load error until manual Retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
@@ -380,7 +406,7 @@ describe('SourcesWorkspace', () => {
       });
     });
     const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
@@ -391,7 +417,7 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('shows a paused state when mounted in a hidden tab and bounds the visible reload', async () => {
+  it('defers loading in a hidden tab and bounds the visible reload', async () => {
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -399,9 +425,8 @@ describe('SourcesWorkspace', () => {
         request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
       });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20 });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn), requestTimeoutMs: 20 });
 
-    expect(await screen.findByText('Paused while this tab is hidden')).toBeDefined();
     expect(screen.queryByText('Loading source status…')).toBeNull();
     expect(fetchFn).not.toHaveBeenCalled();
     hidden.mockReturnValue(false);
@@ -424,7 +449,7 @@ describe('SourcesWorkspace', () => {
       });
     });
     const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
     expect(await screen.findByText('1 processed')).toBeDefined();
@@ -454,7 +479,7 @@ describe('SourcesWorkspace', () => {
       })] }));
     });
     const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
     expect(await screen.findByText('1 processed')).toBeDefined();
@@ -573,7 +598,7 @@ describe('SourcesWorkspace', () => {
       });
     });
     const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20, maxLockHoldPolls: 3
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20, maxLockHoldPolls: 3
     });
 
     expect(await screen.findByText('sync_already_running')).toBeDefined();

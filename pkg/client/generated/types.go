@@ -11039,8 +11039,6 @@ func (s SyncRunItemStatus) Validate() error {
 
 type SyncRunStatus struct {
 	CompletedAt       *string             `json:"completed_at,omitzero" validate:"required"`
-	CursorAfter       *string             `json:"cursor_after,omitzero"`
-	CursorBefore      *string             `json:"cursor_before,omitzero"`
 	ErrorMessage      *string             `json:"error_message,omitzero" validate:"required"`
 	ErrorsCount       int64               `json:"errors_count"`
 	ID                int64               `json:"id"`

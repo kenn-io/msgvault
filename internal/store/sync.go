@@ -919,7 +919,7 @@ func (s *Store) ListSyncRunItems(syncRunID int64, status string, limit int) ([]S
 // ListSyncRunItemsContext lists sync items while honoring request cancellation.
 func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]SyncRunItem, error) {
 	if limit <= 0 {
-		return nil, ctx.Err()
+		return nil, nil
 	}
 
 	query := `

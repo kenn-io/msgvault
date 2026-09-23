@@ -270,17 +270,25 @@ marked `stale_last_result`.
 `Sync now` is available only when that source reports the capability. A `202
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded
-backoff to show the run and live progress; it opens no streaming connection, and
-every request is timeout-bounded. Polling pauses while the tab is hidden and
-resumes when it is visible again. A failed first load keeps its error on screen
+backoff to show the run and live progress; it opens no streaming connection.
+Status and `Sync now` requests time out after 20 seconds. If `Sync now` times
+out, check source status before trying again; the daemon may have accepted it.
+Polling pauses while the tab is hidden and resumes when it is visible again.
+A failed first load keeps its error on screen
 until you select `Retry`. When the scheduler holds the sync lock without an
-active run, the UI keeps polling for a bounded number of rounds; after that it
-stops automatic refresh, shows `Automatic refresh paused. Source status may be
+active run, the UI makes up to eight automatic refresh attempts, including
+failed or timed-out requests; after that it stops automatic refresh, shows
+`Automatic refresh paused. Source status may be
 stale.`, and you can select `Refresh` to poll again. If the accepted run never
 appears, the UI reports `sync_start_not_observed` rather than claiming success.
 Conflicting runs and unavailable capabilities retain their explicit errors or
 reasons. Full resync, pause/resume, schedule editing, and source add/remove are
 not available in Sources.
+
+Viewing Sources does not repair runs left marked as running after a crash.
+They remain active until the daemon restarts or another sync for that source
+acquires its lock and recovers them. Until then, `Sync now` stays unavailable
+and status polling continues while the tab is visible.
 
 ## Operations
 

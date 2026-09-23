@@ -6,8 +6,6 @@ import type { SyncRunItemStatus } from "./syncRunItemStatus";
 export interface SyncRunStatus {
   /** @nullable */
   completed_at: string | null;
-  cursor_after?: string;
-  cursor_before?: string;
   /** @nullable */
   error_message: string | null;
   errors_count: number;

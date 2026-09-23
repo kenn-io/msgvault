@@ -1428,12 +1428,6 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
 	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
 	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
-	// Source status omits sync cursors: withoutCursors strips them before the
-	// response is written, so they must be nil and absent from the JSON body.
-	assert.Nil(got.LastSuccessfulSync.CursorBefore, "LastSuccessfulSync.CursorBefore")
-	assert.Nil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
-	assert.NotContains(w.Body.String(), "cursor_before", "raw status body")
-	assert.NotContains(w.Body.String(), "cursor_after", "raw status body")
 }
 
 func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) {

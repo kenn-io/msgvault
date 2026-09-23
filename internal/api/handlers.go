@@ -130,8 +130,6 @@ type SyncRunStatus struct {
 	MessagesUpdated   int64               `json:"messages_updated"`
 	ErrorsCount       int64               `json:"errors_count"`
 	ErrorMessage      *string             `json:"error_message"`
-	CursorBefore      *string             `json:"cursor_before,omitempty"`
-	CursorAfter       *string             `json:"cursor_after,omitempty"`
 	SkippedCount      int64               `json:"skipped_count,omitzero"`
 	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
 }
@@ -1484,7 +1482,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get active sync: %w", err)
 	}
-	status.ActiveSync = withoutCursors(syncRunStatus(active))
+	status.ActiveSync = syncRunStatus(active)
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
@@ -1528,7 +1526,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
 	}
-	status.LatestSync = withoutCursors(syncRunStatus(latest))
+	status.LatestSync = syncRunStatus(latest)
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.LatestSync); err != nil {
 		return SourceStatus{}, err
 	}
@@ -1537,7 +1535,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get last successful sync: %w", err)
 	}
-	status.LastSuccessfulSync = withoutCursors(syncRunStatus(lastSuccessful))
+	status.LastSuccessfulSync = syncRunStatus(lastSuccessful)
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.LastSuccessfulSync); err != nil {
 		return SourceStatus{}, err
 	}
@@ -1585,14 +1583,6 @@ func (s *Server) hydrateSyncRunStatus(ctx context.Context, statusStore SourceSta
 	return nil
 }
 
-func withoutCursors(run *SyncRunStatus) *SyncRunStatus {
-	if run != nil {
-		run.CursorBefore = nil
-		run.CursorAfter = nil
-	}
-	return run
-}
-
 func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
 	if run == nil {
 		return nil
@@ -1613,12 +1603,6 @@ func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
 	}
 	if run.ErrorMessage.Valid {
 		status.ErrorMessage = new(run.ErrorMessage.String)
-	}
-	if run.CursorBefore.Valid {
-		status.CursorBefore = new(run.CursorBefore.String)
-	}
-	if run.CursorAfter.Valid {
-		status.CursorAfter = new(run.CursorAfter.String)
 	}
 	return status
 }

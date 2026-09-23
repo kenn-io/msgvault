@@ -11627,10 +11627,6 @@ components:
           type:
             - string
             - "null"
-        cursor_after:
-          type: string
-        cursor_before:
-          type: string
         error_message:
           type:
             - string

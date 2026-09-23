@@ -19,14 +19,14 @@
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
     client,
-    firstLoadTimeoutMs = 20_000,
+    requestTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
     maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
   }: {
     client: APIClient;
-    firstLoadTimeoutMs?: number;
+    requestTimeoutMs?: number;
     maxAwaitingPolls?: number;
     maxLockHoldPolls?: number;
     now?: () => Date;
@@ -34,7 +34,6 @@
   } = $props();
   let sources = $state<Source[]>([]);
   let loading = $state(true);
-  let paused = $state(false);
   let lockStatusStale = $state(false);
   let statusError = $state('');
   let triggerError = $state('');
@@ -55,7 +54,6 @@
     const visibilityChanged = (): void => {
       if (document.hidden) {
         stopPolling();
-        paused = true;
         loading = false;
       } else {
         pollDelay = MIN_POLL_MS;
@@ -114,17 +112,15 @@
   async function load(): Promise<void> {
     if (disposed) return;
     if (document.hidden) {
-      paused = true;
       loading = false;
       return;
     }
-    paused = false;
     if (sources.length === 0) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
     const requestController = new AbortController();
     controller = requestController;
-    const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(firstLoadTimeoutMs)]);
+    const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
       const { data, error: responseError } = await generatedListSourceStatus(undefined, {
         ...client,
@@ -231,12 +227,16 @@
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
     triggerError = '';
+    const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
       const {
         data,
         error: responseError,
         response,
-      } = await generatedTriggerSync({ account: source.identifier }, { source_type: source.source_type }, client);
+      } = await generatedTriggerSync({ account: source.identifier }, { source_type: source.source_type }, {
+        ...client,
+        signal,
+      });
       if (response.status !== 202 || !data) {
         throw new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`));
       }
@@ -248,7 +248,9 @@
       awaitingState = 'awaiting';
       await load();
     } catch (cause) {
-      triggerError = cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
+      triggerError = signal.aborted
+        ? 'Starting sync timed out. Check source status before trying again.'
+        : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;
@@ -314,7 +316,6 @@
       <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
     </div>{/if}
   {#if triggerError}<p class="notice notice--error" role="alert">{triggerError}</p>{/if}
-  {#if paused}<p class="notice" role="status">Paused while this tab is hidden</p>{/if}
   {#if lockStatusStale}<div class="notice" role="status">
       <span>Automatic refresh paused. Source status may be stale.</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
@@ -324,7 +325,7 @@
       sync_start_not_observed
     </p>{/if}
   {#if loading}<p role="status">Loading source status…</p>
-  {:else if sources.length === 0}{#if !statusError && !paused}<p class="notice" role="status">No archived sources are available.</p>{/if}
+  {:else if sources.length === 0}{#if !statusError}<p class="notice" role="status">No archived sources are available.</p>{/if}
   {:else}
     <Table ariaLabel="Source status" zebra={false} class="source-table">
       {#snippet header()}
