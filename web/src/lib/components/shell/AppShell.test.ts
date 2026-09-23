@@ -1127,6 +1127,62 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('starts a newly selected person on Messages and restores the prior Files view on Back', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'relationships', relationshipTarget: 'cluster:1'
+    }))}`);
+    const when = '2026-07-19T10:00:00Z';
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/api/v1/relationships') return Response.json({
+        rows: [1, 2].map((id) => ({
+          canonical_id: id, display_label: id === 1 ? 'Alice Example' : 'Bob Example',
+          last_at: when, member_ids: [id], score: 1,
+          signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0,
+            modalities: 1, received_from_them: 1, sent_count: 1, sent_to_them: 1 }
+        }))
+      });
+      if (path === '/api/v1/participants/1' || path === '/api/v1/participants/2') {
+        const id = Number(path.at(-1));
+        return Response.json({
+          id, display_label: id === 1 ? 'Alice Example' : 'Bob Example', partial_label: false,
+          identifiers: [], activity_count: 1, meeting_count: 0, file_count: 1,
+          source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
+        });
+      }
+      if (path.endsWith('/timeline')) return Response.json({
+        canonical_id: Number(path.split('/')[4]), identity_revision: 1,
+        cache_revision: 'cache-rel', rows: [], total_count: 0
+      });
+      if (path.endsWith('/files/search')) return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect(await screen.findByRole('heading', { name: 'Alice Example' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files 1' }));
+    expect(state.current.relationshipFiles).toBe(true);
+    await fireEvent.click((await screen.findByText('Bob Example')).closest('[role="row"]')!);
+    await waitFor(() => expect(state.current).toMatchObject({
+      relationshipTarget: 'cluster:2', relationshipFiles: false
+    }));
+    expect(await screen.findByRole('heading', { name: 'Bob Example' })).toBeDefined();
+    expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
+
+    window.history.back();
+    await waitFor(() => expect(state.current).toMatchObject({
+      relationshipTarget: 'cluster:1', relationshipFiles: true
+    }));
+    expect(await screen.findByRole('heading', { name: 'Alice Example' })).toBeDefined();
+    expect(screen.getByRole('radio', { name: 'Files 1' }).getAttribute('aria-checked')).toBe('true');
+
+    rendered.unmount();
+    state.destroy();
+  });
+
 
   it('restores a legacy workspace=people URL into the hub with the facet set', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({

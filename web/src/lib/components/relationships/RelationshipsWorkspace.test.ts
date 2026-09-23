@@ -136,6 +136,29 @@ describe('RelationshipsWorkspace relationship calendar', () => {
 });
 
 describe('RelationshipsWorkspace', () => {
+  it('loads a durable person\'s attributes through the generated API for the header', async () => {
+    const { fetchFn, requests } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json({
+        ...person(1, 'Alice Example'), profile: { id: 7, revision: 1 }
+      }),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+      }),
+      '/api/v1/people/7/attributes': async () => Response.json({ attributes: [{
+        definition: { universal_id: 'u-status', slug: 'status', label: 'Status', is_sensitive: false, display_order: 0 },
+        current: [{ value: { type: 'text', text: 'active' } }], history: []
+      }] })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+
+    expect((await screen.findByRole('region', { name: 'Attributes summary' })).textContent).toContain('active');
+    const attributeRequest = requests.find((request) => pathOf(request) === '/api/v1/people/7/attributes');
+    expect(attributeRequest).toBeDefined();
+    expect(new URL(attributeRequest!.url).searchParams.get('history')).toBe('false');
+  });
+
   it('renders the ranked list and the empty-state header with no reading pane open', async () => {
     const { fetchFn } = fetchHandler();
     render(RelationshipsWorkspace, { props: baseProps(fetchFn) });

@@ -1,12 +1,14 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton } from '@kenn-io/kit-ui';
+  import { Button, IconButton, SegmentedControl } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
+  import type { PersonAttributeGroup } from '../../api/generated/models';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
+  import AttributeSummary from '../directory/AttributeSummary.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
@@ -25,6 +27,7 @@
     capturePersonMergeContext?: () => RelationshipsMergeContext;
     onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
+    loadAttributes?: (personID: number) => Promise<PersonAttributeGroup[]>;
     onAnnounce?: (message: string) => void;
   }
 
@@ -40,6 +43,7 @@
     capturePersonMergeContext = undefined,
     onReconcilePersonMerge = undefined,
     onOpenDirectoryPerson = undefined,
+    loadAttributes = undefined,
     onAnnounce = undefined
   }: Props = $props();
 
@@ -55,6 +59,8 @@
   let confirmingParticipantID = $state<number | null>(null);
   let unlinking = $state(false);
   let unlinkError = $state<string | null>(null);
+  let identitiesOpen = $state(false);
+  let attributeGroups = $state<PersonAttributeGroup[]>([]);
 
   function isPersonDetail(value: PersonSummary | DomainSummary): value is PersonSummary {
     return 'identifiers' in value;
@@ -89,6 +95,19 @@
     const known = new Set((detail.identifiers ?? []).map((identifier) => identifier.participant_id));
     return (detail.cluster.member_ids ?? []).filter((id) => id !== detail.id && !known.has(id));
   });
+  const identityCount = $derived(
+    detail && isPersonDetail(detail) ? (detail.identifiers ?? []).length + unrepresentedMembers.length : 0
+  );
+  const forceIdentitiesOpen = $derived(confirmingParticipantID !== null || unlinkError !== null);
+
+  function handleIdentitiesToggle(event: Event): void {
+    const disclosure = event.currentTarget as HTMLDetailsElement;
+    if (forceIdentitiesOpen) {
+      disclosure.open = true;
+      return;
+    }
+    identitiesOpen = disclosure.open;
+  }
 
   /** A single identity with nothing linked has nothing to explain — the
    * identities section only appears once there are at least two identities,
@@ -127,6 +146,18 @@
     confirmingParticipantID = null;
     unlinkError = null;
     activeDialog = undefined;
+    identitiesOpen = false;
+  });
+
+  $effect(() => {
+    const profileID = detail && isPersonDetail(detail) ? detail.profile?.id : undefined;
+    attributeGroups = [];
+    if (!profileID || !loadAttributes) return;
+    let cancelled = false;
+    void loadAttributes(profileID)
+      .then((groups) => { if (!cancelled) attributeGroups = groups; })
+      .catch(() => {});
+    return () => { cancelled = true; };
   });
 
   // ok/ready clears any earlier stale banner; ok/stale (re)raises it and
@@ -258,20 +289,23 @@
       />
       <h2>{displayLabel(detail)}</h2>
       <div class="actions">
-        <Button
-          label={`Files ${detail.file_count}`}
-          ariaLabel={`Files ${detail.file_count}`}
-          surface={filesOpen ? 'solid' : 'outline'}
-          tone={filesOpen ? 'info' : 'neutral'}
-          ariaExpanded={filesOpen}
-          onclick={() => onFilesToggle(!filesOpen)}
+        <SegmentedControl
+          ariaLabel="Relationship view"
+          value={filesOpen ? 'files' : 'messages'}
+          options={[
+            { value: 'messages', label: 'Messages' },
+            { value: 'files', label: `Files ${detail.file_count.toLocaleString()}` }
+          ]}
+          onchange={(value) => onFilesToggle(value === 'files')}
         />
         {#if isPersonDetail(detail)}
-          {#if onOpenDirectory}
+          {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
             <Button
               label="Open in Directory"
               surface="outline"
-              onclick={() => onOpenDirectory?.(detail.id)}
+              onclick={() => detail.profile?.id
+                ? onOpenDirectoryPerson?.(detail.profile.id)
+                : onOpenDirectory?.(detail.id)}
             />
           {/if}
           <Button
@@ -296,9 +330,17 @@
         · {detail.person_count.toLocaleString()} people
       {/if}
     </p>
+    {#if isPersonDetail(detail) && detail.profile?.id}
+      <AttributeSummary
+        groups={attributeGroups}
+        onEdit={onOpenDirectoryPerson ? () => onOpenDirectoryPerson(detail.profile!.id) : undefined}
+      />
+    {/if}
     {#if isPersonDetail(detail) && showIdentities}
-      <span class="identity-label" data-section-label>Identities</span>
-      <div class="identifiers" aria-label="Linked identities">
+      {#key detail.id}
+      <details class="identities" open={identitiesOpen || forceIdentitiesOpen} ontoggle={handleIdentitiesToggle}>
+        <summary data-section-label>Identities ({identityCount})</summary>
+        <div class="identifiers" aria-label="Linked identities">
         {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
           {@const chipName = identifier.display_value?.trim() || identifier.value}
@@ -366,10 +408,12 @@
             {/if}
           </span>
         {/each}
-      </div>
-      {#if unlinkError}
-        <p class="unlink-error" role="alert">{unlinkError}</p>
-      {/if}
+        </div>
+        {#if unlinkError}
+          <p class="unlink-error" role="alert">{unlinkError}</p>
+        {/if}
+      </details>
+      {/key}
     {/if}
     {#if activeDialog?.kind === 'link' && isPersonDetail(detail)}
       <LinkIdentityDialog
@@ -406,7 +450,15 @@
     border-bottom: 1px solid var(--border-muted);
   }
 
-  .identity-label {
+  .identities {
+    margin-top: var(--space-2);
+  }
+
+  .identities summary {
+    cursor: pointer;
+  }
+
+  .identities .identifiers {
     margin-top: var(--space-2);
   }
 

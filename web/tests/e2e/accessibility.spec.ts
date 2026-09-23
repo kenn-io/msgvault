@@ -78,13 +78,13 @@ for (const theme of ['light', 'dark'] as const) {
       const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
       await expect(relationshipTimeline.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Relationships timeline ${theme}/${density}`);
-      await page.getByRole('button', { name: 'Files 1' }).click();
+      await page.getByRole('radio', { name: 'Files 1' }).click();
       await expect(page.getByRole('grid', { name: 'Files results' }).getByText('archive-notes.pdf')).toBeVisible();
       await assertNoViolations(page, `Person files ${theme}/${density}`);
       await page.getByRole('radio', { name: 'Media' }).click();
       await expect(page.getByRole('button', { name: 'Open archive-photo.png' })).toBeVisible();
       await assertNoViolations(page, `Person media ${theme}/${density}`);
-      await page.getByRole('button', { name: 'Files 1' }).click();
+      await page.getByRole('radio', { name: 'Messages' }).click();
       await expect(relationshipTimeline).toBeVisible();
       await relationshipTimeline.focus();
       await page.keyboard.press('Enter');
