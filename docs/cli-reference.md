@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1077,8 +1077,10 @@ msgvault import-imazing-csv ~/Downloads/messages-export \
 
 The importer accepts comma, tab, and semicolon CSV files with named iMazing
 headers. It is deterministic across reruns. Available referenced files are
-stored up to 100 MiB each; missing files remain visible as missing attachment
-occurrences, and a later rerun can fill them. Reply links are added only when
+stored up to 100 MiB each. Larger files are recorded as skipped; missing files
+and ambiguous filenames remain visible as missing attachment occurrences.
+These outcomes do not fail the import or prevent contact enrichment, and a
+later rerun can fill missing files. Reply links are added only when
 the exported reply text identifies exactly one earlier message.
 
 CSV exports do not share stable message IDs with `chat.db`. Importing the same

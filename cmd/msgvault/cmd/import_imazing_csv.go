@@ -124,6 +124,7 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Participants:        %d\n", summary.Participants)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments stored:  %d\n", summary.AttachmentsStored)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments missing: %d\n", summary.AttachmentsMissing)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments skipped: %d\n", summary.AttachmentsSkipped)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Replies linked:      %d\n", summary.RepliesLinked)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Replies unresolved:  %d\n", summary.RepliesUnresolved)
 	if summary.ContactsTotal > 0 {

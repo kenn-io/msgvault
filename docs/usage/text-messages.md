@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-23"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -161,6 +161,10 @@ discovery is non-recursive and accepts comma, tab, or semicolon delimiters.
 Files must contain named `Chat Session`, `Message Date`, `Service`, and `Type`
 columns. The other standard iMazing columns are imported when present.
 
+The importer uses observed senders to recognize groups. An `A & B & C` title
+can supply additional member names only after messages identify at least two
+other senders. A title alone does not create participants.
+
 ### Flags
 
 | Flag | Default | Description |
@@ -179,8 +183,10 @@ offset-free dates stable across machines and daylight-saving transitions.
 Running the command again converges on the same messages and attachment
 occurrences. New rows are added without moving existing message IDs. Referenced
 files under `attachments/` are copied into msgvault's content-addressed store,
-with a 100 MiB limit per file. Missing files are reported and can be supplied
-on a later rerun. If a previously stored source file disappears, its archived
+with a 100 MiB limit per file. Larger files are recorded as skipped. Missing
+files and filenames that match several files are reported as missing and can
+be resolved on a later rerun. These outcomes let the import finish, including
+contact enrichment. If a previously stored source file disappears, its archived
 bytes stay available. If its bytes change, the same attachment occurrence is
 updated to the new content.
 
@@ -193,6 +199,10 @@ unlinked.
     iMazing CSV rows have no IDs shared with Apple's `chat.db`. A rerun of the
     same CSV is deterministic, but importing overlapping history through both
     `import-imazing-csv` and `import-imessage` can create duplicates.
+
+    `Chat Session` titles identify conversations within one imported source.
+    Identical titles share a conversation. Renaming a title on a later export
+    creates another conversation and can duplicate its messages.
 
 ## import-gvoice
 

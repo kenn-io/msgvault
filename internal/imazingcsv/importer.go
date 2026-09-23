@@ -38,6 +38,7 @@ type Summary struct {
 	Participants       int
 	AttachmentsStored  int
 	AttachmentsMissing int
+	AttachmentsSkipped int
 	RepliesLinked      int
 	RepliesUnresolved  int
 	ContactsMatched    int
@@ -177,7 +178,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	if err != nil {
 		return Summary{}, err
 	}
-	attachmentsStored, attachmentsMissing, err := importAttachments(
+	attachmentsStored, attachmentsMissing, attachmentsSkipped, err := importAttachments(
 		ctx, syncStore, layout, importer.opts, plans,
 	)
 	if err != nil {
@@ -210,6 +211,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		Participants:       participantCount,
 		AttachmentsStored:  attachmentsStored,
 		AttachmentsMissing: attachmentsMissing,
+		AttachmentsSkipped: attachmentsSkipped,
 		RepliesLinked:      repliesLinked,
 		RepliesUnresolved:  repliesUnresolved,
 		ContactsMatched:    contactsMatched,
@@ -329,6 +331,11 @@ func addChatParticipant(chat *chatPlan, identity participantIdentity) {
 }
 
 func addTitleParticipants(chat *chatPlan, sourceIdentifier string) {
+	// Titles can name a group or contain an ampersand in a single contact's
+	// name. Only supplement a group already established by observed senders.
+	if len(chat.participants) <= 2 {
+		return
+	}
 	titleNames := make([]string, 0, 2)
 	for titlePart := range strings.SplitSeq(chat.title, " & ") {
 		name := strings.TrimSpace(titlePart)
@@ -336,10 +343,7 @@ func addTitleParticipants(chat *chatPlan, sourceIdentifier string) {
 			titleNames = append(titleNames, name)
 		}
 	}
-	// A single title beside one observed non-owner is normally that person's
-	// contact label. Adding it as another identity would turn a direct chat
-	// with an unnamed phone/email sender into a group with a phantom member.
-	if len(titleNames) == 1 && len(chat.participants) == 2 {
+	if len(titleNames) < 2 {
 		return
 	}
 	for _, name := range titleNames {
@@ -525,37 +529,36 @@ func reconcileDuplicateOccurrences(
 			break
 		}
 	}
-	// Phase 2 repeatedly claims forced edges in the remaining compatibility
-	// graph. Counts must be recomputed after every claim: a current row with
-	// omitted provider evidence can initially match several archived
-	// occurrences, then become the only possible match for the one left over.
+	// Phase 2 claims rows with one possible archived occurrence, unless another
+	// row also needs that occurrence exclusively. A wildcard row must not block
+	// a forced match: removing it can leave the wildcard with one match too.
 	for {
-		assigned := false
-		for index := range occurrenceNumbers {
-			if occurrenceRow[index] >= 0 {
+		soleRows := make(map[int]int)
+		for rowIndex := range plans {
+			if rowAssigned[rowIndex] {
 				continue
 			}
 			match, matches := -1, 0
-			for rowIndex := range plans {
-				if rowAssigned[rowIndex] || !currentEvidenceMatchesArchived(
+			for index := range occurrenceNumbers {
+				if occurrenceRow[index] >= 0 || !currentEvidenceMatchesArchived(
 					currentFingerprints[rowIndex], fingerprints[index],
 				) {
 					continue
 				}
-				match, matches = rowIndex, matches+1
+				match, matches = index, matches+1
 			}
-			compatibleOccurrences := 0
 			if matches == 1 {
-				for candidate := range occurrenceNumbers {
-					if occurrenceRow[candidate] < 0 && currentEvidenceMatchesArchived(
-						currentFingerprints[match], fingerprints[candidate],
-					) {
-						compatibleOccurrences++
-					}
+				if _, contested := soleRows[match]; contested {
+					soleRows[match] = -1
+				} else {
+					soleRows[match] = rowIndex
 				}
 			}
-			if matches == 1 && compatibleOccurrences == 1 {
-				occurrenceRow[index], rowAssigned[match] = match, true
+		}
+		assigned := false
+		for index := range occurrenceNumbers {
+			if row, ok := soleRows[index]; ok && row >= 0 {
+				occurrenceRow[index], rowAssigned[row] = row, true
 				assigned = true
 				break
 			}

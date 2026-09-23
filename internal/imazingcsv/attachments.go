@@ -118,7 +118,8 @@ func (index *attachmentIndex) resolve(reference string) (string, bool, error) {
 		}
 		return matches[0].path, true, nil
 	default:
-		return "", false, fmt.Errorf("ambiguous iMazing attachment reference %q", reference)
+		// No unique source file: retain a missing occurrence for a later export.
+		return "", false, nil
 	}
 }
 
@@ -128,10 +129,10 @@ func importAttachments(
 	layout Layout,
 	opts Options,
 	plans []*plannedMessage,
-) (stored, missing int, retErr error) {
+) (stored, missing, skipped int, retErr error) {
 	index, err := newAttachmentIndex(layout.AttachmentsDir)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	maxBytes := opts.MaxAttachmentBytes
 	if maxBytes <= 0 {
@@ -145,7 +146,7 @@ func importAttachments(
 	var rowErrs []error
 	for _, plan := range plans {
 		if err := ctx.Err(); err != nil {
-			return stored, missing, errors.Join(append(rowErrs, err)...)
+			return stored, missing, skipped, errors.Join(append(rowErrs, err)...)
 		}
 		reference := strings.TrimSpace(plan.row.Attachment)
 		keepSourcePartKey := ""
@@ -188,28 +189,36 @@ func importAttachments(
 			continue
 		}
 		if found {
-			if opts.AttachmentsDir == "" {
+			info, statErr := os.Lstat(sourcePath)
+			switch {
+			case statErr == nil && info.Mode().IsRegular() && info.Size() > maxBytes:
+				write.Size = info.Size()
+				write.State = attachmentpolicy.StateSkipped
+				write.SkipReason = attachmentpolicy.SkipSizeCap
+				skipped++
+			case opts.AttachmentsDir == "":
 				fail(fmt.Errorf(
 					"%s record %d: %w", plan.row.File, plan.row.Record,
 					errors.New("iMazing attachment storage directory is required")))
 				continue
-			}
-			relPath, contentHash, size, storeErr := export.StoreAttachmentFromPath(
-				opts.AttachmentsDir, sourcePath, maxBytes,
-			)
-			if storeErr == nil {
-				write.StoragePath = relPath
-				write.ContentHash = contentHash
-				write.Size = size
-				write.State = attachmentpolicy.StateStored
-				write.SkipReason = ""
-				stored++
-			} else if attachmentSourceUnavailable(sourcePath) {
-				found = false
-			} else {
-				fail(fmt.Errorf("%s record %d: store attachment %q: %w",
-					plan.row.File, plan.row.Record, reference, storeErr))
-				continue
+			default:
+				relPath, contentHash, size, storeErr := export.StoreAttachmentFromPath(
+					opts.AttachmentsDir, sourcePath, maxBytes,
+				)
+				if storeErr == nil {
+					write.StoragePath = relPath
+					write.ContentHash = contentHash
+					write.Size = size
+					write.State = attachmentpolicy.StateStored
+					write.SkipReason = ""
+					stored++
+				} else if attachmentSourceUnavailable(sourcePath) {
+					found = false
+				} else {
+					fail(fmt.Errorf("%s record %d: store attachment %q: %w",
+						plan.row.File, plan.row.Record, reference, storeErr))
+					continue
+				}
 			}
 		}
 		if !found {
@@ -224,7 +233,7 @@ func importAttachments(
 				plan.row.File, plan.row.Record, err))
 		}
 	}
-	return stored, missing, errors.Join(rowErrs...)
+	return stored, missing, skipped, errors.Join(rowErrs...)
 }
 
 // recordFailedAttachment persists a typed failed occurrence for one message

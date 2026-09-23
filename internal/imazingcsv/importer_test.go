@@ -147,6 +147,45 @@ func TestImporterDoesNotDuplicateSoleUnnamedParticipantFromTitle(t *testing.T) {
 	assert.Equal(2, participantCount)
 }
 
+func TestImporterTitleDoesNotInventParticipants(t *testing.T) {
+	for _, tc := range []struct {
+		title       string
+		senders     []string
+		wantMembers int
+		wantType    string
+	}{
+		{"Family", []string{"Alice", "Bob"}, 3, "group_chat"},
+		{"Example & Sample Pizza", []string{"Example & Sample Pizza"}, 2, "direct_chat"},
+		{"Family", nil, 1, "direct_chat"},
+		{"Alice & Bob & Carol", []string{"Alice", "Bob"}, 4, "group_chat"},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			rows := [][]string{
+				{tc.title, "2024-06-01 12:00:00", "", "", "SMS", "Outgoing", "", "", "", "", "", "hello", "", ""},
+			}
+			for i, name := range tc.senders {
+				rows = append(rows, []string{tc.title, "2024-06-01 12:01:00", "", "", "SMS", "Incoming",
+					[]string{"+15550000002", "+15550000003"}[i], name, "", "", "", "reply", "", ""})
+			}
+			exportDir := newTestExport(t, rows)
+			_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).ImportPath(t.Context(), exportDir)
+			require.NoError(err)
+			var members int
+			var kind string
+			require.NoError(st.DB().QueryRow(`SELECT conversation_type,
+				(SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = conversations.id)
+				FROM conversations`).Scan(&kind, &members))
+			assert.Equal(tc.wantMembers, members)
+			assert.Equal(tc.wantType, kind)
+			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants`).Scan(&members))
+			assert.Equal(tc.wantMembers, members, "no unused title identities reach People")
+		})
+	}
+}
+
 func TestImporterRerunAndRosterGrowthKeepStableRows(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -567,6 +606,43 @@ func TestImporterWildcardDuplicateDoesNotClaimAmbiguousArchivedOccurrence(t *tes
 	findArchivedEvidence(t, evidence, "", "")
 }
 
+func TestImporterWildcardDuplicatePreservesForcedMatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	delivered := []string{"Alice", "2024-06-01 12:00:00", "2024-06-01 12:00:05", "", "iMessage", "Outgoing", "", "", "Delivered", "", "", "ping", "", ""}
+	read := []string{"Alice", "2024-06-01 12:00:00", "", "2024-06-01 12:00:10", "iMessage", "Outgoing", "", "", "Read", "", "", "ping", "", ""}
+	exportDir := newTestExport(t, [][]string{delivered, read})
+	importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
+	_, err := importer.ImportPath(t.Context(), exportDir)
+	require.NoError(err)
+	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	require.NoError(err)
+	before := messageRowIDs(t, st, source.ID)
+	require.Len(before, 2)
+	archived := archivedDuplicateEvidence(t, st, source.ID)
+	deliveredID := findArchivedEvidence(t, archived, "Delivered", "2024-06-01 12:00:05").messageID
+	readID := findArchivedEvidence(t, archived, "Read", "").messageID
+	labelID, err := st.EnsureLabel(source.ID, "saved-message", "Saved message", "user")
+	require.NoError(err)
+	_, err = st.ReconcileMessageLabels(readID, []int64{labelID}, false)
+	require.NoError(err)
+
+	// Neither row is an exact match. The delivery time still identifies one
+	// archived row, leaving the other occurrence for the wildcard row.
+	delivered[8] = ""
+	read[3], read[8] = "", ""
+	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{delivered, read})
+	_, err = importer.ImportPath(t.Context(), exportDir)
+	require.NoError(err)
+	assert.Equal(before, messageRowIDs(t, st, source.ID), "receipt omission must reuse both archived messages")
+	updated := archivedDuplicateEvidence(t, st, source.ID)
+	assert.Equal(deliveredID, findArchivedEvidence(t, updated, "", "2024-06-01 12:00:05").messageID)
+	wildcardID := findArchivedEvidence(t, updated, "", "").messageID
+	assert.Equal(readID, wildcardID)
+	assert.Equal(1, messageLabelCount(t, st, wildcardID, labelID))
+}
+
 // One physical row re-exported with the same instant in iMazing's other
 // accepted timestamp spelling must keep its archived message and source ID:
 // the occurrence identity hashes the parsed instant, not the raw date text.
@@ -799,12 +875,13 @@ func TestImporterFailedAttachmentRunStillRecomputesConversationStats(t *testing.
 	require.NoError(os.Mkdir(filepath.Join(exportDir, "attachments"), 0o700))
 	require.NoError(os.WriteFile(filepath.Join(exportDir, "attachments", "huge.bin"), []byte("too large to store"), 0o600))
 
-	// The oversized attachment fails after both messages have already been
-	// committed, so the run aborts before its later stages.
+	// A storage write failure occurs after both messages have committed.
+	attachmentStore := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(attachmentStore, []byte("not a directory"), 0o600))
 	_, err := NewImporter(st, Options{
-		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: t.TempDir(), MaxAttachmentBytes: 4,
+		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: attachmentStore,
 	}).ImportPath(t.Context(), exportDir)
-	require.ErrorContains(err, "max 4")
+	require.Error(err)
 
 	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
 	require.NoError(err)
@@ -1117,10 +1194,12 @@ func TestImporterAttachmentFailureStillRecordsFailedOccurrence(t *testing.T) {
 
 	// Storing the resolved file fails after the message already committed and
 	// claims an attachment, so the failed occurrence must remain visible.
+	attachmentStore := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(attachmentStore, []byte("not a directory"), 0o600))
 	_, err := NewImporter(st, Options{
-		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: t.TempDir(), MaxAttachmentBytes: 4,
+		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: attachmentStore,
 	}).ImportPath(t.Context(), exportDir)
-	require.ErrorContains(err, "max 4")
+	require.Error(err)
 
 	occurrence := singleImportedAttachment(t, st)
 	assert.Equal("contract.pdf", occurrence.filename)
@@ -1141,7 +1220,7 @@ func TestImporterAttachmentFailureStillRecordsFailedOccurrence(t *testing.T) {
 	assert.Equal(1, attachmentCount)
 }
 
-func TestImporterAmbiguousAttachmentFailureStillRecordsFailedOccurrence(t *testing.T) {
+func TestImporterAmbiguousAttachmentRemainsMissing(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -1155,12 +1234,15 @@ func TestImporterAmbiguousAttachmentFailureStillRecordsFailedOccurrence(t *testi
 			[]byte("ambiguous basename"), 0o600))
 	}
 
-	// The reference resolves to two files with the same basename; the run
-	// must still record the occurrence before aborting.
-	_, err := NewImporter(st, Options{
+	// Ambiguity leaves a missing occurrence without blocking repeated imports.
+	importer := NewImporter(st, Options{
 		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: t.TempDir(),
-	}).ImportPath(t.Context(), exportDir)
-	require.ErrorContains(err, "ambiguous")
+	})
+	for range 2 {
+		summary, err := importer.ImportPath(t.Context(), exportDir)
+		require.NoError(err)
+		assert.Equal(1, summary.AttachmentsMissing)
+	}
 
 	occurrence := singleImportedAttachment(t, st)
 	assert.Equal("contract.pdf", occurrence.filename)
@@ -1174,19 +1256,38 @@ func TestImporterAmbiguousAttachmentFailureStillRecordsFailedOccurrence(t *testi
 	assert.Equal("fetch_failure", skipReason)
 }
 
-func TestImporterRejectsAttachmentOverConfiguredLimit(t *testing.T) {
+func TestImporterSkipsAttachmentOverConfiguredLimit(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	exportDir := newTestExport(t, [][]string{
-		{"Alice", "2024-06-01 12:00:00", "", "", "iMessage", "Outgoing", "", "", "", "", "", "large", "large.bin", ""},
+		{"Alice", "2024-06-01 12:00:00", "", "", "iMessage", "Incoming", "+15550000002", "", "", "", "", "large", "large.bin", ""},
 	})
 	require.NoError(os.Mkdir(filepath.Join(exportDir, "attachments"), 0o700))
 	require.NoError(os.WriteFile(filepath.Join(exportDir, "attachments", "large.bin"), []byte("too large"), 0o600))
+	contacts := filepath.Join(t.TempDir(), "contacts.vcf")
+	require.NoError(os.WriteFile(contacts, []byte("BEGIN:VCARD\nVERSION:3.0\nFN:Example Contact\nTEL:+15550000002\nEND:VCARD\n"), 0o600))
 
-	_, err := NewImporter(st, Options{
+	importer := NewImporter(st, Options{
 		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: t.TempDir(), MaxAttachmentBytes: 2,
-	}).ImportPath(t.Context(), exportDir)
-	require.ErrorContains(err, "max 2")
+		ContactsPath: contacts,
+	})
+	for range 2 {
+		summary, err := importer.ImportPath(t.Context(), exportDir)
+		require.NoError(err)
+		assert.Equal(1, summary.ContactsTotal, "contact enrichment runs after a skipped attachment")
+		assert.Equal(1, summary.AttachmentsSkipped)
+	}
+	occurrence := singleImportedAttachment(t, st)
+	assert.Equal("skipped", occurrence.state)
+	assert.Empty(occurrence.storagePath)
+	var skipReason, displayName, syncStatus string
+	require.NoError(st.DB().QueryRow(`SELECT attachment_skip_reason FROM attachments`).Scan(&skipReason))
+	assert.Equal("size_cap", skipReason)
+	require.NoError(st.DB().QueryRow(`SELECT display_name FROM participants WHERE phone_number = '+15550000002'`).Scan(&displayName))
+	assert.Equal("Example Contact", displayName)
+	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&syncStatus))
+	assert.Equal("completed", syncStatus)
 }
 
 func TestImporterDeduplicatesSharedAttachmentBytes(t *testing.T) {
@@ -1237,8 +1338,7 @@ func TestImporterAttachmentFailuresContinueToLaterRows(t *testing.T) {
 	}).ImportPath(t.Context(), exportDir)
 	require.Error(err)
 	assert.Contains(err.Error(), "messages.csv record 2: unsafe iMazing attachment reference")
-	assert.Contains(err.Error(), "messages.csv record 3: store attachment \"huge.bin\"")
-	assert.Contains(err.Error(), "max 4")
+	assert.NotContains(err.Error(), "record 3", "the oversized attachment is skipped")
 	assert.NotContains(err.Error(), "record 4", "the valid later row must not fail")
 
 	var messageCount int
@@ -1260,14 +1360,13 @@ func TestImporterAttachmentFailuresContinueToLaterRows(t *testing.T) {
 	require.NoError(rows.Err())
 	require.Len(occurrences, 3, "every referenced attachment has an occurrence")
 	assert.Equal([2]string{"failed", ""}, occurrences["secret.bin"], "the unsafe reference records a failed occurrence")
-	assert.Equal([2]string{"failed", ""}, occurrences["huge.bin"], "the oversized reference records a failed occurrence")
+	assert.Equal([2]string{"skipped", ""}, occurrences["huge.bin"], "the oversized reference records a skipped occurrence")
 	require.Equal("stored", occurrences["late.bin"][0], "the valid later attachment is stored")
 	assert.NotEmpty(occurrences["late.bin"][1], "the valid later attachment has archived bytes")
 }
 
-// A rerun whose rows now fail must keep the occurrences a previous run
-// already stored, while still storing rows that succeed in the failing run.
-func TestImporterAttachmentRerunFailurePreservesStoredOccurrences(t *testing.T) {
+// A lower size cap must not discard bytes stored by a previous run.
+func TestImporterSkippedAttachmentPreservesStoredOccurrences(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -1292,15 +1391,13 @@ func TestImporterAttachmentRerunFailurePreservesStoredOccurrences(t *testing.T) 
 	}
 	require.Len(attachmentByID, 3)
 
-	// The lowered cap makes the early and late rows fail while the tiny row
-	// still stores in the same run.
-	_, err = NewImporter(st, Options{
+	// The lowered cap skips the early and late rows while the tiny row stores.
+	second, err := NewImporter(st, Options{
 		Owner: "+15550000001", Timezone: "UTC", AttachmentsDir: attachmentStore, MaxAttachmentBytes: 4,
 	}).ImportPath(t.Context(), exportDir)
-	require.Error(err)
-	assert.Contains(err.Error(), "messages.csv record 2: store attachment \"early.bin\"")
-	assert.Contains(err.Error(), "messages.csv record 4: store attachment \"late.bin\"")
-	assert.NotContains(err.Error(), "record 3", "the still-valid middle row must not fail")
+	require.NoError(err)
+	assert.Equal(1, second.AttachmentsStored)
+	assert.Equal(2, second.AttachmentsSkipped)
 
 	after := importedAttachments(t, st)
 	require.Len(after, 3)
@@ -1341,16 +1438,17 @@ func TestImportAttachmentsContinuesIndependentRowsAndCounters(t *testing.T) {
 		{row: Row{File: "messages.csv", Record: 5, Attachment: "ok.bin"}, messageID: messageIDs[3]},
 	}
 
-	stored, missing, err := importAttachments(t.Context(), f.Store, Layout{AttachmentsDir: attachmentsDir},
+	stored, missing, skipped, err := importAttachments(t.Context(), f.Store, Layout{AttachmentsDir: attachmentsDir},
 		Options{AttachmentsDir: t.TempDir(), MaxAttachmentBytes: 2}, plans)
 
 	require.Error(err)
 	assert.Contains(err.Error(), "messages.csv record 2: unsafe iMazing attachment reference")
-	assert.Contains(err.Error(), "messages.csv record 4: store attachment \"huge.bin\"")
+	assert.NotContains(err.Error(), "record 4", "the oversized attachment is skipped")
 	assert.NotContains(err.Error(), "record 3", "a missing reference is not an error")
 	assert.NotContains(err.Error(), "record 5", "the valid row must not fail")
 	assert.Equal(1, stored, "only the valid row counts as stored")
 	assert.Equal(1, missing, "only the missing row counts as missing")
+	assert.Equal(1, skipped, "only the oversized row counts as skipped")
 
 	var occurrences int
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
@@ -1370,13 +1468,14 @@ func TestImportAttachmentsStopsPromptlyOnCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	stored, missing, err := importAttachments(ctx, f.Store, Layout{AttachmentsDir: attachmentsDir},
+	stored, missing, skipped, err := importAttachments(ctx, f.Store, Layout{AttachmentsDir: attachmentsDir},
 		Options{AttachmentsDir: t.TempDir()},
 		[]*plannedMessage{{row: Row{File: "messages.csv", Record: 2, Attachment: "ok.bin"}, messageID: messageID}})
 
 	require.ErrorIs(err, context.Canceled)
 	require.Zero(stored)
 	require.Zero(missing)
+	require.Zero(skipped)
 	var occurrences int
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
 	require.Zero(occurrences, "a canceled run must not store or record attachments")

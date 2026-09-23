@@ -78,7 +78,7 @@ func TestAttachmentIndexQualifiedReferencesRequireExactMatch(t *testing.T) {
 	assert.Equal(otherPath, got)
 }
 
-func TestAttachmentIndexRejectsUnsafeAndAmbiguousReferences(t *testing.T) {
+func TestAttachmentIndexRejectsUnsafeReferences(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	require.NoError(os.MkdirAll(filepath.Join(root, "one"), 0o700))
@@ -91,11 +91,15 @@ func TestAttachmentIndexRejectsUnsafeAndAmbiguousReferences(t *testing.T) {
 	require.NoError(err)
 
 	for _, reference := range []string{
-		"../same.txt", "/tmp/same.txt", `C:\same.txt`, "one", "link.txt", "linked-dir/other.txt", "same.txt",
+		"../same.txt", "/tmp/same.txt", `C:\same.txt`, "one", "link.txt", "linked-dir/other.txt",
 	} {
 		_, _, resolveErr := index.resolve(reference)
 		require.Error(resolveErr, reference)
 	}
+	resolved, found, err := index.resolve("same.txt")
+	require.NoError(err)
+	assert.False(t, found, "an ambiguous basename must not choose either file")
+	assert.Empty(t, resolved)
 }
 
 func TestAttachmentIndexAllowsMissingAttachmentsDirectory(t *testing.T) {
