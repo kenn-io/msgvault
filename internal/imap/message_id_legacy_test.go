@@ -22,25 +22,27 @@ func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			header := []byte("Message-ID: " + tt.header + "\r\n\r\n")
 			raw := append(append([]byte{}, header...), []byte("body")...)
-			assert.Equal(t, tt.want, rawMIMEMessageID(header))
-			assert.Equal(t, tt.want, rawMIMEMessageID(raw))
+			assert.Equal(tt.want, rawMIMEMessageID(header))
+			assert.Equal(tt.want, rawMIMEMessageID(raw))
 
 			client := Client{selectedUIDValidity: 1}
 			message := fetchMessageBufferWithoutEnvelope(header)
 			var unidentified []imapapi.UID
 			identities := make(map[string]bool)
 			client.recordMessageIDResults("INBOX", identities, &unidentified, []*imapclient.FetchMessageBuffer{message})
-			assert.Empty(t, unidentified)
-			assert.True(t, identities[tt.want])
-			require.Len(t, client.observedMemberships, 1)
-			assert.Equal(t, tt.want, client.observedMemberships[0].RFC822MessageID)
+			assert.Empty(unidentified)
+			assert.True(identities[tt.want])
+			require.Len(client.observedMemberships, 1)
+			assert.Equal(tt.want, client.observedMemberships[0].RFC822MessageID)
 
 			labels := newLabelBatchResults([]string{"INBOX|10"})
 			client.applyLabelFetchResults(labels, map[imapapi.UID]int{10: 0}, "INBOX", nil, []*imapclient.FetchMessageBuffer{message})
-			require.NoError(t, labels[0].Err)
-			assert.Equal(t, tt.want, labels[0].RFC822MessageID)
+			require.NoError(labels[0].Err)
+			assert.Equal(tt.want, labels[0].RFC822MessageID)
 		})
 	}
 }
