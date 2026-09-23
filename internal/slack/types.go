@@ -302,10 +302,16 @@ type ImportOptions struct {
 	MaxMediaBytes     int64
 	MediaPolicy       attachmentpolicy.Policy
 	MediaConversation attachmentpolicy.Conversation
-	// IncludeChannels/ExcludeChannels filter by channel name (no "#").
-	// Include empty = all memberships. DMs/group DMs are never filtered.
+	// IncludeChannels/ExcludeChannels filter channels by name (no "#").
+	// Include empty = all channel memberships. Name filters never apply to
+	// DMs or group DMs; ExcludeDMs/ExcludeGroupDMs select those.
 	IncludeChannels []string
 	ExcludeChannels []string
+	// ExcludeDMs skips one-to-one DMs and ExcludeGroupDMs skips group DMs.
+	// A skipped conversation keeps its resume state and thread debt until it
+	// is selected again. The zero value syncs both.
+	ExcludeDMs      bool
+	ExcludeGroupDMs bool
 	// Progress, if non-nil, is called after each conversation with a
 	// human-readable status line.
 	Progress func(msg string) `json:"-"`

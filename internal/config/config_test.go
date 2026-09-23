@@ -1022,6 +1022,31 @@ rate_limit_qps = 10
 	assert.Equal(10, cfg.Sync.RateLimitQPS)
 }
 
+func TestLoadSlackConversationSelection(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	requirements.NoError(os.WriteFile(path, []byte(`[slack]
+dms = false
+group_dms = true
+`), 0o600))
+
+	cfg, err := Load(path, "")
+	requirements.NoError(err)
+	requirements.NotNil(cfg.Slack.DMs)
+	requirements.NotNil(cfg.Slack.GroupDMs)
+	assertions.False(*cfg.Slack.DMs)
+	assertions.True(*cfg.Slack.GroupDMs)
+	assertions.False(cfg.Slack.DMsEnabled())
+	assertions.True(cfg.Slack.GroupDMsEnabled())
+
+	defaults := NewDefaultConfig().Slack
+	assertions.Nil(defaults.DMs)
+	assertions.Nil(defaults.GroupDMs)
+	assertions.True(defaults.DMsEnabled())
+	assertions.True(defaults.GroupDMsEnabled())
+}
+
 func TestLoadExplicitPathNotFound(t *testing.T) {
 	// When --config explicitly specifies a file that doesn't exist, Load should error
 	_, err := Load("/nonexistent/path/config.toml", "")

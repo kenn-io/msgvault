@@ -778,7 +778,8 @@ DMs — for registered workspaces. The first run backfills full history and is
 resumable; later runs are incremental and sweep for thread replies created
 since the last run (any thread age). Per-workspace failures do not stop the run: remaining workspaces
 still sync and the command exits non-zero listing the failures. The `[slack]`
-config `channels`/`exclude_channels` filters select which channels sync. See
+config `channels`/`exclude_channels` filters select which channels sync. The
+`dms`/`group_dms` settings select whether DMs and group DMs sync. See
 [Slack](/docs/usage/slack/).
 
 ```bash

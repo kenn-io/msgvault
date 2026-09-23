@@ -209,6 +209,8 @@ func slackImportOptions(teamID, userID string) slack.ImportOptions {
 		MediaPolicy:     policy,
 		IncludeChannels: cfg.Slack.Channels,
 		ExcludeChannels: cfg.Slack.ExcludeChannels,
+		ExcludeDMs:      !cfg.Slack.DMsEnabled(),
+		ExcludeGroupDMs: !cfg.Slack.GroupDMsEnabled(),
 	}
 }
 

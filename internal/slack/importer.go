@@ -338,12 +338,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	return sum, nil
 }
 
-// includeConversation applies the channel include/exclude name filters.
-// DMs and group DMs are never filtered (the filters exist to skip noisy
-// channels, not people).
+// includeConversation applies the conversation selection policy. DMs and
+// group DMs are selected only by ExcludeDMs/ExcludeGroupDMs (the name
+// filters exist to skip noisy channels, not people); channels only by the
+// include/exclude name filters.
 func includeConversation(c *Conversation, opts *ImportOptions) bool {
-	if c.IsIM || c.IsMpim {
-		return true
+	if c.IsIM {
+		return !opts.ExcludeDMs
+	}
+	if c.IsMpim {
+		return !opts.ExcludeGroupDMs
 	}
 	if slices.Contains(opts.ExcludeChannels, c.Name) {
 		return false

@@ -93,11 +93,15 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	media := false
+	dms := false
+	groupDMs := true
 	cfg = &config.Config{
 		HomeDir: t.TempDir(),
 		Slack: config.SlackConfig{
 			Channels:        []string{"eng"},
 			ExcludeChannels: []string{"noise"},
+			DMs:             &dms,
+			GroupDMs:        &groupDMs,
 			Media:           &media,
 			MaxMediaMB:      7,
 		},
@@ -111,6 +115,8 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	assert.Equal(int64(7)<<20, opts.MaxMediaBytes)
 	assert.Equal([]string{"eng"}, opts.IncludeChannels)
 	assert.Equal([]string{"noise"}, opts.ExcludeChannels)
+	assert.True(opts.ExcludeDMs)
+	assert.False(opts.ExcludeGroupDMs)
 }
 
 func TestWriteSlackProgressSanitizesProviderNames(t *testing.T) {

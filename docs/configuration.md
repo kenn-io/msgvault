@@ -846,6 +846,8 @@ enabled = true                    # gate for the daemon schedule
 schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
 channels = []                     # channel-name include filter (empty = all memberships)
 exclude_channels = []             # channel names to skip, e.g. ["noise"]
+dms = true                        # sync one-to-one direct messages
+group_dms = true                  # sync group direct messages
 media = true                      # download shared-file bytes
 media_scope = "all"               # all, direct, or none
 media_max_participants = 20       # skip files from larger channels; 0 = no cap
@@ -859,8 +861,10 @@ max_media_mb = 250                # per-file download cap (MiB)
 |---|---|---|
 | `enabled` | `false` | Whether the daemon schedules Slack sync |
 | `schedule` | — | Cron expression used by `msgvault serve` |
-| `channels` | all | Channel names to sync (include filter; DMs are never filtered) |
+| `channels` | all | Channel names to sync (include filter; never applies to DMs or group DMs) |
 | `exclude_channels` | — | Channel names to skip (wins over `channels`) |
+| `dms` | `true` | Sync one-to-one DMs; `false` pauses them without removing archived messages |
+| `group_dms` | `true` | Sync group DMs; `false` pauses them without removing archived messages |
 | `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
 | `media_scope` | `all` | `all`, `direct` (DMs and group DMs only), or `none`; see [Media policy](#media-policy) |
 | `media_max_participants` | `20` | Skip files from conversations above this many members; `0` = no cap |

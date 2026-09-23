@@ -1399,10 +1399,15 @@ type SlackConfig struct {
 	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
 	Schedule string `toml:"schedule"`
 	// Channels is a channel-name include filter (no "#"; empty = archive
-	// every membership). DMs and group DMs are never filtered.
+	// every channel membership). Name filters never apply to DMs or group
+	// DMs; DMs and GroupDMs select those.
 	Channels []string `toml:"channels"`
 	// ExcludeChannels skips specific channel names.
 	ExcludeChannels []string `toml:"exclude_channels"`
+	// DMs toggles one-to-one DM sync (nil/absent = enabled).
+	DMs *bool `toml:"dms"`
+	// GroupDMs toggles group DM sync (nil/absent = enabled).
+	GroupDMs *bool `toml:"group_dms"`
 	// Media toggles file download (nil/absent = enabled).
 	Media *bool `toml:"media"`
 	// MaxMediaMB caps individual file downloads in MiB (0 = 250).
@@ -1430,6 +1435,16 @@ type TeamsConfig struct {
 // MediaEnabled reports whether file download is on (default true).
 func (s SlackConfig) MediaEnabled() bool {
 	return s.Media == nil || *s.Media
+}
+
+// DMsEnabled reports whether one-to-one DMs sync (default true).
+func (s SlackConfig) DMsEnabled() bool {
+	return s.DMs == nil || *s.DMs
+}
+
+// GroupDMsEnabled reports whether group DMs sync (default true).
+func (s SlackConfig) GroupDMsEnabled() bool {
+	return s.GroupDMs == nil || *s.GroupDMs
 }
 
 // MaxMediaBytes returns the per-file download cap in bytes (0 = importer default).

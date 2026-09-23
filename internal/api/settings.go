@@ -308,6 +308,8 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("slack.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Slack.Schedule }),
 	stringArraySetting("slack.channels", settingsGroupSources, func(c *config.Config) []string { return c.Slack.Channels }),
 	stringArraySetting("slack.exclude_channels", settingsGroupSources, func(c *config.Config) []string { return c.Slack.ExcludeChannels }),
+	configuredBoolSetting("slack.dms", settingsGroupSources, func(c *config.Config) bool { return c.Slack.DMsEnabled() }, func(c *config.Config) bool { return c.Slack.DMs == nil }),
+	configuredBoolSetting("slack.group_dms", settingsGroupSources, func(c *config.Config) bool { return c.Slack.GroupDMsEnabled() }, func(c *config.Config) bool { return c.Slack.GroupDMs == nil }),
 	configuredBoolSetting("beeper.media", settingsGroupAttachments, func(c *config.Config) bool { return c.Beeper.MediaEnabled() }, func(c *config.Config) bool { return c.Beeper.Media == nil }),
 	stringSetting("beeper.media_scope", settingsGroupAttachments, []string{"all", "direct", "none"}, func(c *config.Config) string { return effectiveMediaScope(c.Beeper.MediaScope) }),
 	intSetting("beeper.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Beeper.MediaMaxParticipants }),

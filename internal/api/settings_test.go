@@ -120,6 +120,7 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		"beeper.accounts", "beeper.exclude_accounts", "beeper.rate_limit_qps",
 		"beeper.media", "beeper.media_scope", "beeper.media_max_participants", "beeper.max_media_mb",
 		"slack.enabled", "slack.schedule", "slack.channels", "slack.exclude_channels",
+		"slack.dms", "slack.group_dms",
 		"slack.media", "slack.media_scope", "slack.media_max_participants", "slack.max_media_mb",
 		"discord.media", "discord.media_scope", "discord.media_max_participants", "discord.max_media_mb",
 		"teams.media", "teams.media_scope", "teams.media_max_participants", "teams.max_media_mb",
@@ -145,6 +146,48 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		assertions.NotContains(byKey, key, "legacy chat settings have no production consumer")
 	}
 	assertions.Equal(map[string]any{"boolean": true}, byKey["server.daemon_auto_start"]["value"])
+}
+
+func TestSlackConversationSelectionSettings(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	srv, path := newSettingsTestServer(t, "")
+
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	var before SettingsResponse
+	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &before))
+	byKey := settingsByKey(before.Settings)
+	for _, key := range []string{"slack.dms", "slack.group_dms"} {
+		setting, ok := byKey[key]
+		requirements.True(ok, key)
+		requirements.NotNil(setting.Value, key)
+		requirements.NotNil(setting.Value.Boolean, key)
+		assertions.True(*setting.Value.Boolean, key)
+		assertions.True(setting.Inherited, key)
+	}
+
+	patched := patchSettings(t, srv, `{"updates":[`+
+		`{"key":"slack.dms","value":{"boolean":false}},`+
+		`{"key":"slack.group_dms","value":{"boolean":false}}]}`)
+	requirements.Equal(http.StatusOK, patched.Code, patched.Body.String())
+	loaded, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.False(loaded.Slack.DMsEnabled())
+	assertions.False(loaded.Slack.GroupDMsEnabled())
+
+	get = performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	requirements.Equal(http.StatusOK, get.Code, get.Body.String())
+	var after SettingsResponse
+	requirements.NoError(json.Unmarshal(get.Body.Bytes(), &after))
+	byKey = settingsByKey(after.Settings)
+	for _, key := range []string{"slack.dms", "slack.group_dms"} {
+		setting := byKey[key]
+		requirements.NotNil(setting.Value, key)
+		requirements.NotNil(setting.Value.Boolean, key)
+		assertions.False(*setting.Value.Boolean, key)
+		assertions.False(setting.Inherited, key)
+	}
 }
 
 func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T) {

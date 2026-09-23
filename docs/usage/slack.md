@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-23"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
@@ -151,6 +151,10 @@ Discovered replies and audits are archived canonically via
 A channel that was excluded (or unreadable) while sweeps advanced recovers
 automatically when it returns: the importer runs a channel-scoped catch-up
 sweep over the days it missed before rejoining the workspace-wide sweep.
+A DM or group DM turned back on resumes from its saved position, and a
+catch-up walk recovers thread replies posted while it was off.
+If a `--full` repair cleared that position while it was off, sync re-downloads
+its history without duplicating archived messages.
 One documented edge: a single day whose reply count exceeds search's
 ~10,000 reachable results per query cannot be fully swept — the run fails
 loudly (never silently skipping), records the unreachable remainder as
@@ -182,6 +186,10 @@ retries them (idempotent; already-downloaded files are never re-fetched).
 The command always downloads, even while `[slack].media = false` keeps the
 scheduled syncs deferring files — that setting's documented workflow (defer
 now, backfill later) depends on it.
+Conversation selection settings (`channels`, `exclude_channels`, `dms`, and
+`group_dms`) do not apply to this command: it can download pending files from
+excluded conversations already in the archive. Media scope, participant and
+size limits, and per-account opt-outs still apply.
 If Slack removes a file before it is downloaded, msgvault keeps the last
 captured filename, size, and permalink as terminal metadata rather than
 deleting the row or retrying an unreachable file forever.
@@ -197,7 +205,8 @@ media_max_participants = 20   # default; 0 = collect files from every channel
 
 The daemon then syncs every registered workspace on the schedule. See
 [Configuration](/docs/configuration/#slack) for the full option list
-(channel include/exclude filters, media scope, participant and size caps,
+(channel include/exclude filters, DM and group DM selection, media scope,
+participant and size caps,
 per-workspace `accounts_config` overrides).
 
 ## Identity unification
