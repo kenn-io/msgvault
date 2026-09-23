@@ -152,8 +152,8 @@ func TestInspectCacheReadiness(t *testing.T) {
 	}
 }
 
-func TestCacheSchemaVersionIncludesPersonDisplayNames(t *testing.T) {
-	assert.Equal(t, 28, CacheSchemaVersion)
+func TestCacheSchemaVersionIncludesRelationshipContributions(t *testing.T) {
+	assert.Equal(t, 30, CacheSchemaVersion)
 }
 
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {

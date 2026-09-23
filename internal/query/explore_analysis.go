@@ -148,8 +148,7 @@ func sqlActivityEntryEdges(activityGlob, selectExpr, messagePredicate, conversat
 	if conversationPredicate != "" {
 		conversationPredicate = " AND " + conversationPredicate
 	}
-	activityScan := `read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true)`
+	activityScan := sqlActivityRelation(activityGlob)
 	return `
 	SELECT le.entry_key, ` + selectExpr + `
 	FROM logical_entries le

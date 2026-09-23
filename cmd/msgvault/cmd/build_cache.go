@@ -1721,13 +1721,6 @@ func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
 		stats.FinalRows,
 		stats.ExpansionRatio,
 	)
-	if stats.ExpansionRatio > 4 {
-		fmt.Printf(
-			"  Warning: relationship membership fan-out is %.2fx; "+
-				"consider a normalized conversation-member index if this archive keeps growing\n",
-			stats.ExpansionRatio,
-		)
-	}
 }
 
 func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool) (int64, error) {

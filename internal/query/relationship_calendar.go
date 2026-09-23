@@ -222,13 +222,13 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	}
 	cutoff := effectiveAt.UTC()
 	activity := fmt.Sprintf(`(
-		SELECT * FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+		SELECT * FROM %s
 		WHERE occurred_year IN (%s)
 		  AND occurred_at >= TIMESTAMP '%s'
 		  AND occurred_at < TIMESTAMP '%s'
 		  AND (canonical_id = %d OR is_owner)
 	)`,
-		e.identityActivityPath(), strings.Join(years, ","),
+		sqlActivityRelation(e.identityActivityPath()), strings.Join(years, ","),
 		startUTC.Format("2006-01-02 15:04:05.999999999"),
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
 		request.CanonicalID,

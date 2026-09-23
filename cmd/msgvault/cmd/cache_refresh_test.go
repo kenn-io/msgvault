@@ -137,17 +137,16 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var membershipRows int64
 	requirementsForTest.NoError(duckDB.QueryRow(`
-		SELECT count(DISTINCT message_id)
-		FROM read_parquet(?, hive_partitioning = true)
-		WHERE conversation_id = 102
-		  AND canonical_id = 3
-		  AND is_conversation_member
+		SELECT count(DISTINCT a.message_id)
+		FROM read_parquet(?, hive_partitioning = true) a
+		JOIN read_parquet(?) cp ON cp.conversation_id = a.conversation_id
+		WHERE a.conversation_id = 102 AND cp.participant_id = 3
 	`, filepath.Join(
 		analyticsDir,
 		identityindex.DatasetActivity,
 		"**",
 		"*.parquet",
-	)).Scan(&membershipRows))
+	), filepath.Join(analyticsDir, "conversation_participants", "*.parquet")).Scan(&membershipRows))
 	assertionsForTest.Positive(membershipRows)
 }
 

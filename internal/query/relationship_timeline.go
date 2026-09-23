@@ -261,8 +261,7 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // or fail, leaving the flag true with a zero count, and the indicator must
 // match what the message list shows for the same message.
 func buildRelationshipTimelineSQL(conditions, activityGlob, messagesGlob, conversationsGlob string) string {
-	activityScan := `read_parquet('` + activityGlob + `',
-        hive_partitioning=true, union_by_name=true)`
+	activityScan := sqlActivityRelation(activityGlob)
 	// The membership IN-subquery is a semi-join whose build side is the
 	// subject's bare message IDs (compact even for archive-scale clusters);
 	// the outer scan then folds per-message facts and owner presence into

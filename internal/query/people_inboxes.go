@@ -56,7 +56,7 @@ func (e *DuckDBEngine) ListPersonInboxes(ctx context.Context, request PersonInbo
 WITH contact_chat AS (
 	SELECT DISTINCT message_id AS entry_key, source_id, source_type,
 	                conversation_id, occurred_at, is_from_me
-	FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+	FROM %s
 	WHERE canonical_id = ? AND is_chat
 )
 SELECT c.source_id, c.source_type, s.account_email,
@@ -70,7 +70,7 @@ FROM contact_chat c
 JOIN read_parquet('%s') s ON s.id = c.source_id
 GROUP BY c.source_id, c.source_type, s.account_email
 ORDER BY MAX(c.occurred_at) DESC, c.source_id`,
-		e.identityActivityPath(), quoteIdentitySQLPath(e.parquetPath(datasetSources)))
+		sqlActivityRelation(e.identityActivityPath()), quoteIdentitySQLPath(e.parquetPath(datasetSources)))
 	rows, err := e.db.QueryContext(ctx, queryText, request.CanonicalID)
 	if err != nil {
 		return nil, fmt.Errorf("query person inboxes: %w", err)

@@ -637,6 +637,8 @@ func derivedCachePublishPlan(
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
+		identityindex.DatasetLogicalContributions,
+		identityindex.DatasetTemperatureContributions,
 	} {
 		plan.Replace[dataset] = true
 	}

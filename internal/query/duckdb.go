@@ -272,6 +272,8 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 			log.Printf("[warn] failed to register SQL views: %v", err)
 			// Non-fatal: existing CTE-based queries still work.
 		}
+	} else if err := createRelationshipActivityView(db, analyticsDir); err != nil {
+		log.Printf("[warn] failed to register relationship activity view: %v", err)
 	}
 
 	return engine, nil
@@ -590,6 +592,8 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
 		if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
 			log.Printf("[warn] re-register views after analytics cache change: %v", err)
 		}
+	} else if err := createRelationshipActivityView(e.db, e.analyticsDir); err != nil {
+		log.Printf("[warn] re-register relationship activity view after analytics cache change: %v", err)
 	}
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 }
@@ -2529,6 +2533,8 @@ var RequiredParquetDirs = []string{
 	identityindex.DatasetPeople,
 	identityindex.DatasetDomains,
 	identityindex.DatasetRelationshipDaily,
+	identityindex.DatasetLogicalContributions,
+	identityindex.DatasetTemperatureContributions,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

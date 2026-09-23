@@ -34,9 +34,11 @@ import (
 // the resolved recipient address (envelope, else participant), never an empty
 // string. Version 27 adds curated person display names.
 // Version 28 projects RFC Message-ID into every messages cache shard.
+// Version 29 persists compact logical and temperature contributions so
+// incremental builds can update them without rescanning expanded activity.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 28
+const CacheSchemaVersion = 30
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
