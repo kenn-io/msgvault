@@ -201,6 +201,7 @@ type ServerConfig struct {
 	TrustedProxies    []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
 	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
+	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -208,6 +209,13 @@ func (s *ServerConfig) ApplyDefaults() {
 	if s.DaemonAutoRestart == "" {
 		s.DaemonAutoRestart = DaemonAutoRestartNewer
 	}
+}
+
+// DaemonAutoStartEnabled reports whether CLI commands may start a local
+// background daemon when none is running. An unset daemon_auto_start keeps
+// the default of true.
+func (s *ServerConfig) DaemonAutoStartEnabled() bool {
+	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
 }
 
 func (s *ServerConfig) Validate() error {

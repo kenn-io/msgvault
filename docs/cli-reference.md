@@ -46,7 +46,7 @@ in your installed binary. This reference follows current `main`; see
 Commands that access archive state keep their usual stdout/stderr output while using the same API path as remote access:
 
 1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
-2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
+2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. When `--agent-url` and `--agent-token-file` are both supplied, the CLI connects to that remote daemon as a restricted delegated caller using the token from the file. Only `draft-reply` and `draft-recover` are available in this mode. Owner configuration (`--config`, `--home`, `--local`) is rejected, and the token is never written to logs or argv. The token is transmitted in the `X-Msgvault-Agent-Token` request header; this header is not modeled in the generated OpenAPI clients — it is a transport detail that the CLI handles internally.
 

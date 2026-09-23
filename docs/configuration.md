@@ -600,10 +600,13 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+| `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 
 `daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
+
+`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
 
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser
@@ -1274,6 +1277,7 @@ bind_addr = "127.0.0.1"
 api_key = "your-secret-key"
 daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 daemon_auto_restart = "newer" # newer, never, or always
+daemon_auto_start = true # false when a supervisor runs msgvault serve
 
 [analytics]
 # Daemon-side analytics engine for Web UI, TUI, and aggregate HTTP views:

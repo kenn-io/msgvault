@@ -45,6 +45,30 @@ func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
 	assert.Equal(t, "http://daemonclient.example:8080", info.URL)
 }
 
+func TestOpenHTTPStoreDisabledAutoStartKeepsConfiguredRemote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{
+			URL:           "http://daemonclient.example:8080",
+			AllowInsecure: true,
+		},
+		Server: config.ServerConfig{DaemonAutoStart: new(false)},
+	})
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("configured remote must not start a local daemon")
+		return nil, errors.New("unreachable")
+	})
+
+	st, info, err := OpenHTTPStore(context.Background())
+	require.NoError(err, "OpenHTTPStore")
+	t.Cleanup(func() { _ = st.Close() })
+
+	assert.Equal(HTTPStoreConfiguredRemote, info.Kind)
+	assert.Equal("http://daemonclient.example:8080", info.URL)
+}
+
 func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -174,6 +198,195 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	assert.True(started, "local daemon should be started")
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal("http://127.0.0.1:9911", info.URL)
+}
+
+func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.DaemonAutoStart = new(false)
+	withStoreResolverConfig(t, c)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("disabled auto-start must not start a local daemon")
+		return nil, errors.New("unreachable")
+	})
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+		require.FailNow("disabled auto-start must not stop a daemon")
+		return errors.New("unreachable")
+	})
+
+	st, _, err := OpenHTTPStore(context.Background())
+	assert.Nil(st)
+	require.ErrorIs(err, errLocalDaemonAutoStartDisabled)
+	assert.Contains(err.Error(), dataDir)
+	assert.Contains(err.Error(), "msgvault daemon start")
+
+	held, err := daemonOwnerLockHeld(dataDir)
+	require.NoError(err, "check daemon ownership")
+	assert.False(held, "disabled auto-start must leave daemon ownership free")
+	owner, err := claimServeOwnership(context.Background(), c, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "supervised serve should claim ownership")
+	require.NoError(owner.Close(), "release supervised ownership")
+}
+
+func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	withTestVersion(t, "v1.1.0")
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.DaemonAutoStart = new(false)
+	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
+	withStoreResolverConfig(t, c)
+	ping := httptestPingDaemon(t)
+	portText := strconv.Itoa(ping.Port)
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(ping.Host, portText),
+		Service: daemonService,
+		Version: "v1.0.0",
+		Metadata: map[string]string{
+			runtimeHost:             ping.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+		require.FailNow("disabled auto-start must not stop an older daemon")
+		return errors.New("unreachable")
+	})
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("disabled auto-start must not start a replacement daemon")
+		return nil, errors.New("unreachable")
+	})
+
+	st, info, err := OpenHTTPStore(context.Background())
+	require.NoError(err, "OpenHTTPStore")
+	t.Cleanup(func() { _ = st.Close() })
+
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	assert.Equal("http://"+net.JoinHostPort(ping.Host, portText), info.URL)
+}
+
+func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	withTestVersion(t, "v1.1.0")
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.DaemonAutoStart = new(false)
+	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
+	withStoreResolverConfig(t, c)
+	ping := httptestPingDaemon(t)
+	portText := strconv.Itoa(ping.Port)
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(ping.Host, portText),
+		Service: daemonService,
+		Version: "v1.0.0",
+		Metadata: map[string]string{
+			runtimeHost:             ping.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion - 1),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+		require.FailNow("disabled auto-start must not stop an incompatible daemon")
+		return errors.New("unreachable")
+	})
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("disabled auto-start must not start over an incompatible daemon")
+		return nil, errors.New("unreachable")
+	})
+
+	st, info, err := OpenHTTPStore(context.Background())
+	assert.Nil(st)
+	require.Error(err, "OpenHTTPStore")
+	assert.Equal(HTTPStoreInfo{}, info)
+	assert.Contains(err.Error(), "incompatible daemon is already running")
+	assert.Contains(err.Error(), "daemon API version")
+}
+
+func TestOpenHTTPStoreDisabledAutoStartWaitsForStartingDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.DaemonAutoStart = new(false)
+	withStoreResolverConfig(t, c)
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:             "127.0.0.1",
+			runtimePort:             "1",
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("disabled auto-start must wait instead of starting a daemon")
+		return nil, errors.New("unreachable")
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	t.Cleanup(cancel)
+	var st *daemonclient.Client
+	var info HTTPStoreInfo
+	var openErr error
+	stderr := captureStderrDuring(t, func() {
+		st, info, openErr = OpenHTTPStore(ctx)
+	})
+	assert.Nil(st)
+	assert.Equal(HTTPStoreInfo{}, info)
+	require.ErrorIs(openErr, context.DeadlineExceeded)
+	assert.Contains(stderr, "Another msgvault daemon start is in progress")
+	launchLock, ok := acquireBackgroundLaunchLock(dataDir)
+	require.True(ok, "disabled auto-start must release the launch lock after waiting")
+	require.NoError(launchLock.Unlock())
+}
+
+func TestOpenHTTPStoreDisabledAutoStartLocalFlagStaysLocal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Remote.URL = "http://daemonclient.example:8080"
+	c.Remote.AllowInsecure = true
+	c.Server.DaemonAutoStart = new(false)
+	withStoreResolverConfig(t, c)
+	useLocal = true
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("--local must not start a daemon when auto-start is disabled")
+		return nil, errors.New("unreachable")
+	})
+
+	st, info, err := OpenHTTPStore(context.Background())
+	assert.Nil(st)
+	require.ErrorIs(err, errLocalDaemonAutoStartDisabled)
+	assert.Equal(HTTPStoreInfo{}, info)
 }
 
 func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {

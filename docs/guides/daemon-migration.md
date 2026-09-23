@@ -68,6 +68,7 @@ older and restarts it automatically before issuing your command. This is the
 `[server].daemon_auto_restart = "newer"` default; set `"never"` if a
 supervisor (systemd, Docker) owns the daemon lifecycle, or `"always"` to
 restart on any version difference.
+If a supervisor runs `msgvault serve`, also set `[server].daemon_auto_start = false` so a CLI command never starts a competing daemon before the supervisor does.
 
 ## One writer, visible waits
 

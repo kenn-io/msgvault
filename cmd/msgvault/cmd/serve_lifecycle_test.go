@@ -1107,6 +1107,67 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 	assert.Empty(stderr.String())
 }
 
+func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	withTestVersion(t, "v1.1.0")
+	dataDir := t.TempDir()
+	server := httptestPingDaemon(t)
+	portText := strconv.Itoa(server.Port)
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(server.Host, portText),
+		Service: daemonService,
+		Version: "v1.0.0",
+		Metadata: map[string]string{
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	var stoppedPID int
+	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
+		stoppedPID = rt.Record.PID
+		return nil
+	})
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     777,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 777},
+			Host:   "127.0.0.1",
+			Port:   9090,
+		}, true, nil
+	})
+	c := lifecycleTestConfig(dataDir)
+	c.Server.DaemonAutoStart = new(false)
+	cmd, stdout, stderr := lifecycleTestCommand()
+	require.NoError(runServeStart(cmd, c))
+	assert.Equal(os.Getpid(), stoppedPID, "explicit start still stops an older daemon")
+	assert.Equal(
+		"msgvault running at http://127.0.0.1:9090 (pid 777)\n"+
+			"Logs: /tmp/msgvault-serve.log\n",
+		stdout.String())
+	assert.Empty(stderr.String())
+}
+
 func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 	assert := assert.New(t)
 	require :=

@@ -495,6 +495,38 @@ func TestServerDaemonAutoRestartDefault(t *testing.T) {
 	assert.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
 }
 
+func TestLoadWithServerDaemonAutoStart(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "true", value: "true", want: true},
+		{name: "false", value: "false", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			content := "[server]\ndaemon_auto_start = " + tt.value + "\n"
+			require.NoError(os.WriteFile(configPath, []byte(content), 0o644), "WriteFile()")
+
+			cfg, err := Load(configPath, "")
+			require.NoError(err, "Load()")
+			require.NotNil(cfg.Server.DaemonAutoStart)
+			assert.Equal(tt.want, *cfg.Server.DaemonAutoStart)
+			assert.Equal(tt.want, cfg.Server.DaemonAutoStartEnabled())
+		})
+	}
+}
+
+func TestServerDaemonAutoStartDefault(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	assert.Nil(t, cfg.Server.DaemonAutoStart)
+	assert.True(t, cfg.Server.DaemonAutoStartEnabled())
+}
+
 func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -1339,6 +1371,36 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	assert.True(loaded.Remote.AllowInsecure)
 	require.Len(loaded.Accounts, 1)
 	assert.Equal("user@gmail.com", loaded.Accounts[0].Email)
+}
+
+func TestServerDaemonAutoStartSurvivesSave(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		autoStart *bool
+	}{
+		{name: "false", autoStart: new(false)},
+		{name: "unset", autoStart: nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Server.DaemonAutoStart = tt.autoStart
+			require.NoError(cfg.Save(), "Save()")
+
+			loaded, err := Load(cfg.ConfigFilePath(), "")
+			require.NoError(err, "Load()")
+			if tt.autoStart == nil {
+				assert.Nil(loaded.Server.DaemonAutoStart)
+				assert.True(loaded.Server.DaemonAutoStartEnabled())
+				return
+			}
+			require.NotNil(loaded.Server.DaemonAutoStart)
+			assert.False(*loaded.Server.DaemonAutoStart)
+			assert.False(loaded.Server.DaemonAutoStartEnabled())
+		})
+	}
 }
 
 func TestConfigFileModeOnSave(t *testing.T) {
