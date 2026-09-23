@@ -46,6 +46,10 @@ All notable changes to msgvault, grouped by release.
 - **Responses survive damaged text.** A stored subject, snippet, or name with
   invalid UTF-8 no longer produces an empty or cut-off API response; the bad
   bytes are returned as the replacement character (U+FFFD).
+- **Faster sender and recipient filters.** `from:`, `to:`, `cc:`, and `bcc:`
+  searches look up matching people first instead of scanning every message.
+  `%` and `_` in a `from:` domain now match literally, as they already did
+  for `to:`.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.
