@@ -284,6 +284,10 @@
         {#each levels as level}<span class="heat-cell level-{level}" aria-hidden="true"></span>{/each}
         <span>More</span>
       </div>
+      <div class="temperature-summary">
+        <span>Current {calendar.current.temperature}/100</span>
+        <span>Peak {calendar.peak_temperature}/100 - {calendar.peak_year}</span>
+      </div>
     </div>
   {:else}
     <p class="calendar-state">Relationship activity has not loaded.</p>
@@ -301,7 +305,8 @@
     min-width: 0;
   }
 
-  .calendar-heading {
+  .calendar-heading,
+  .temperature-summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -431,6 +436,12 @@
 
   .legend .heat-cell {
     --relationship-cell-size: 9px;
+  }
+
+  .temperature-summary {
+    flex-wrap: wrap;
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
   }
 
   .calendar-day-tooltip {

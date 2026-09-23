@@ -39,6 +39,8 @@ describe('RelationshipCalendar', () => {
 
     expect(screen.getByRole('heading', { name: 'Relationship' })).toBeTruthy();
     expect(screen.getByText('2026')).toBeTruthy();
+    expect(screen.getByText('Current 62/100')).toBeTruthy();
+    expect(screen.getByText('Peak 87/100 - 2018')).toBeTruthy();
     expect(screen.getByText('Less')).toBeTruthy();
     expect(screen.getByText('More')).toBeTruthy();
     expect(document.querySelectorAll('.legend .heat-cell')).toHaveLength(5);
