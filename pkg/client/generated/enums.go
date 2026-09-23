@@ -1753,6 +1753,24 @@ func (p ParticipantCompletionHTTPRowKind) Validate() error {
 	}
 }
 
+type PeopleInferencePresetCreateRequestPresetID string
+
+const (
+	Openai     PeopleInferencePresetCreateRequestPresetID = "openai"
+	Openrouter PeopleInferencePresetCreateRequestPresetID = "openrouter"
+	Venice     PeopleInferencePresetCreateRequestPresetID = "venice"
+)
+
+// Validate checks if the PeopleInferencePresetCreateRequestPresetID value is valid
+func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
+	switch p {
+	case Openai, Openrouter, Venice:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PeopleInferencePresetCreateRequestPresetID value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (

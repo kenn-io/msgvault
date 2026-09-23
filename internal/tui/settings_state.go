@@ -26,8 +26,9 @@ type SettingsBackend interface {
 type SettingsConflictScope string
 
 const (
-	SettingsConflictConfig      SettingsConflictScope = "config"
-	SettingsConflictCredentials SettingsConflictScope = "credentials"
+	SettingsConflictConfig            SettingsConflictScope = "config"
+	SettingsConflictCredentials       SettingsConflictScope = "credentials"
+	SettingsConflictPeopleCredentials SettingsConflictScope = "people_credentials"
 )
 
 // SettingsConflictError reports an optimistic-concurrency conflict. The TUI
@@ -178,11 +179,14 @@ type SettingsSaveRequest struct {
 }
 
 type settingsState struct {
-	active         bool
-	loading        bool
-	saving         bool
-	confirmDiscard bool
-	narrowFields   bool
+	active                bool
+	codex                 codexSettingsState
+	peopleControls        peopleInferenceControlState
+	peopleInferenceStatus *PeopleInferenceStatus
+	loading               bool
+	saving                bool
+	confirmDiscard        bool
+	narrowFields          bool
 
 	groups             []SettingsGroup
 	fields             []SettingField

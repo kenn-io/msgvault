@@ -35,18 +35,18 @@ func TestOpenAIChatFixturesEmitSavedCapabilitiesExactly(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			newAssert := assert.New
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			want, err := os.ReadFile("testdata/providers/" + test.fixture)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			want = bytes.TrimSpace(want)
 			var got []byte
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert := newAssert(t)
+				assertChecks := newAssert(t)
 				got, err = io.ReadAll(r.Body)
-				assert.NoError(err)
+				assertChecks.NoError(err)
 				_, err = io.WriteString(w, `{"model":"reported-build","choices":[{"message":{"content":"{\"ok\":true}"}}]}`)
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			defer server.Close()
 
@@ -59,13 +59,13 @@ func TestOpenAIChatFixturesEmitSavedCapabilitiesExactly(t *testing.T) {
 				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, SourceSince: "2025-01-01",
 			})
 			profile, err := config.Profile()
-			require.NoError(err)
+			requireChecks.NoError(err)
 			transport := peoplesweep.NewOpenAIChatDriver(server.Client())
 			prepared, err := transport.Prepare(profile, structuredTestRequest())
-			require.NoError(err)
+			requireChecks.NoError(err)
 			_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.NewCredential(peoplesweep.AuthBearer, "test-key"), prepared)
-			require.NoError(err)
-			assert.Equal(string(want), string(got))
+			requireChecks.NoError(err)
+			assertChecks.Equal(string(want), string(got))
 		})
 	}
 }
@@ -159,19 +159,19 @@ func generateOpenAIChatJSON(
 }
 
 func TestOpenAIChatDriverGeneratesStructuredJSON(t *testing.T) {
-	assert := assert.New(t)
+	assertChecks := assert.New(t)
 	var captured capturedChatRequest
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodPost, r.Method)
-		assert.Equal("/v1/chat/completions", r.URL.Path)
-		assert.Equal("application/json", r.Header.Get("Content-Type"))
-		assert.Equal("Bearer test-key", r.Header.Get("Authorization"))
-		assert.NoError(json.NewDecoder(r.Body).Decode(&captured))
+		assertChecks.Equal(http.MethodPost, r.Method)
+		assertChecks.Equal("/v1/chat/completions", r.URL.Path)
+		assertChecks.Equal("application/json", r.Header.Get("Content-Type"))
+		assertChecks.Equal("Bearer test-key", r.Header.Get("Authorization"))
+		assertChecks.NoError(json.NewDecoder(r.Body).Decode(&captured))
 		w.Header().Set("X-Request-ID", "req-1")
 		_, err := io.WriteString(w,
 			`{"model":"gpt-test","choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}],`+
 				`"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`)
-		assert.NoError(err)
+		assertChecks.NoError(err)
 	}))
 	defer server.Close()
 
@@ -181,24 +181,24 @@ func TestOpenAIChatDriverGeneratesStructuredJSON(t *testing.T) {
 		peoplesweep.NewOpenAIChatDriver(server.Client()), "test-key", request,
 	)
 	require.NoError(t, err)
-	assert.JSONEq(`{"ok":true}`, string(got.Output))
-	assert.Equal("req-1", got.ProviderRequestID)
-	assert.Equal(int64(7), got.Usage.InputTokens)
-	assert.Equal(int64(3), got.Usage.OutputTokens)
+	assertChecks.JSONEq(`{"ok":true}`, string(got.Output))
+	assertChecks.Equal("req-1", got.ProviderRequestID)
+	assertChecks.Equal(int64(7), got.Usage.InputTokens)
+	assertChecks.Equal(int64(3), got.Usage.OutputTokens)
 
-	assert.Equal("gpt-test", captured.Model)
-	assert.Equal(32, captured.MaxCompletionTokens)
-	assert.Nil(captured.MaxTokens, "deprecated max_tokens must not be sent")
+	assertChecks.Equal("gpt-test", captured.Model)
+	assertChecks.Equal(32, captured.MaxCompletionTokens)
+	assertChecks.Nil(captured.MaxTokens, "deprecated max_tokens must not be sent")
 	require.Len(t, captured.Messages, 2)
-	assert.Equal("system", captured.Messages[0].Role)
-	assert.Equal("Return one JSON value that strictly matches the supplied JSON Schema.",
+	assertChecks.Equal("system", captured.Messages[0].Role)
+	assertChecks.Equal("Return one JSON value that strictly matches the supplied JSON Schema.",
 		captured.Messages[0].Content)
-	assert.Equal("user", captured.Messages[1].Role)
-	assert.Equal(request.InputText, captured.Messages[1].Content)
-	assert.Equal("json_schema", captured.ResponseFormat.Type)
-	assert.Equal(request.SchemaName, captured.ResponseFormat.JSONSchema.Name)
-	assert.True(captured.ResponseFormat.JSONSchema.Strict)
-	assert.JSONEq(string(request.JSONSchema),
+	assertChecks.Equal("user", captured.Messages[1].Role)
+	assertChecks.Equal(request.InputText, captured.Messages[1].Content)
+	assertChecks.Equal("json_schema", captured.ResponseFormat.Type)
+	assertChecks.Equal(request.SchemaName, captured.ResponseFormat.JSONSchema.Name)
+	assertChecks.True(captured.ResponseFormat.JSONSchema.Strict)
+	assertChecks.JSONEq(string(request.JSONSchema),
 		string(captured.ResponseFormat.JSONSchema.Schema))
 }
 
@@ -213,30 +213,30 @@ func TestOpenAIChatDriverDistinguishesMissingUsageFromReportedZero(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			newAssert := assert.New
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				assert := newAssert(t)
+				assertChecks := newAssert(t)
 				_, err := io.WriteString(w, `{"model":"gpt-test","choices":[{"message":{"content":"{\"ok\":true}"}}]`+test.usage+`}`)
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			defer server.Close()
 			profile := providerTestProfile(t, server.URL+"/v1", false)
 			driver := peoplesweep.NewOpenAIChatDriver(server.Client())
 			prepared, err := driver.Prepare(profile, structuredTestRequest())
-			require.NoError(err)
+			requireChecks.NoError(err)
 			response, err := driver.GeneratePrepared(t.Context(), profile,
 				peoplesweep.NewCredential(peoplesweep.AuthBearer, "test-key"), prepared)
-			require.NoError(err)
-			assert.Equal(test.usageKnown, response.UsageKnown)
-			assert.Equal(peoplesweep.TokenUsage{}, response.Usage)
+			requireChecks.NoError(err)
+			assertChecks.Equal(test.usageKnown, response.UsageKnown)
+			assertChecks.Equal(peoplesweep.TokenUsage{}, response.Usage)
 		})
 	}
 }
 
 func TestOpenAIChatDriverRejectsMismatchedTypedCredentialWithoutNetwork(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	var requests atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requests.Add(1)
@@ -245,13 +245,13 @@ func TestOpenAIChatDriverRejectsMismatchedTypedCredentialWithoutNetwork(t *testi
 	profile := providerTestProfile(t, server.URL+"/v1", false)
 	driver := peoplesweep.NewOpenAIChatDriver(server.Client())
 	prepared, err := driver.Prepare(profile, structuredTestRequest())
-	require.NoError(err)
+	requireChecks.NoError(err)
 
 	_, err = driver.GeneratePrepared(t.Context(), profile,
 		peoplesweep.NewCredential(peoplesweep.AuthXAPIKey, "typed-secret-canary"), prepared)
-	require.ErrorContains(err, "scheme does not match")
-	assert.NotContains(err.Error(), "typed-secret-canary")
-	assert.Zero(requests.Load())
+	requireChecks.ErrorContains(err, "scheme does not match")
+	assertChecks.NotContains(err.Error(), "typed-secret-canary")
+	assertChecks.Zero(requests.Load())
 }
 
 func TestOpenAIChatDriverOmitsAuthorizationForAnonymousLoopback(t *testing.T) {
@@ -279,12 +279,12 @@ func TestOpenAIChatDriverSanitizesHTTPFailures(t *testing.T) {
 		http.StatusInternalServerError,
 	} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			assert := assert.New(t)
+			assertChecks := assert.New(t)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("X-Request-ID", "req-secret-safe")
 				w.WriteHeader(status)
 				_, err := io.WriteString(w, `{"error":{"message":"provider-secret-body"}}`)
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			defer server.Close()
 
@@ -295,10 +295,10 @@ func TestOpenAIChatDriverSanitizesHTTPFailures(t *testing.T) {
 			require.Error(t, err)
 			var providerErr *peoplesweep.ProviderError
 			require.ErrorAs(t, err, &providerErr)
-			assert.Equal(status, providerErr.StatusCode)
-			assert.Equal("req-secret-safe", providerErr.RequestID)
-			assert.NotContains(err.Error(), "provider-secret-body")
-			assert.NotContains(err.Error(), "test-key")
+			assertChecks.Equal(status, providerErr.StatusCode)
+			assertChecks.Equal("req-secret-safe", providerErr.RequestID)
+			assertChecks.NotContains(err.Error(), "provider-secret-body")
+			assertChecks.NotContains(err.Error(), "test-key")
 		})
 	}
 }
@@ -366,13 +366,13 @@ func TestOpenAIChatDriverRejectsInvalidTokenUsage(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+			requireChecks := require.New(t)
+			assertChecks := assert.New(t)
 			body := `{"model":"gpt-test","choices":[{"message":{"content":"{\"ok\":true}"}}],"usage":{` +
 				test.usage + `},"unsafe":"provider-secret-body"}`
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, err := io.WriteString(w, body)
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			defer server.Close()
 
@@ -380,23 +380,23 @@ func TestOpenAIChatDriverRejectsInvalidTokenUsage(t *testing.T) {
 				t.Context(), providerTestProfile(t, server.URL+"/v1", false),
 				peoplesweep.NewOpenAIChatDriver(server.Client()), "test-key", structuredTestRequest(),
 			)
-			require.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
-			assert.NotContains(err.Error(), "provider-secret-body")
-			assert.Equal(test.wantInput, response.Usage.InputTokens)
-			assert.Equal(test.wantOutput, response.Usage.OutputTokens)
+			requireChecks.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
+			assertChecks.NotContains(err.Error(), "provider-secret-body")
+			assertChecks.Equal(test.wantInput, response.Usage.InputTokens)
+			assertChecks.Equal(test.wantOutput, response.Usage.OutputTokens)
 		})
 	}
 }
 
 func TestOpenAIChatDriverDoesNotFollowRedirects(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requireChecks := require.New(t)
+	assertChecks := assert.New(t)
 	var redirectedRequests atomic.Int64
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		redirectedRequests.Add(1)
 		_, err := io.WriteString(w,
 			`{"model":"gpt-test","choices":[{"message":{"content":"{\"ok\":true}"}}],"usage":{}}`)
-		assert.NoError(err)
+		assertChecks.NoError(err)
 	}))
 	defer target.Close()
 
@@ -411,12 +411,12 @@ func TestOpenAIChatDriverDoesNotFollowRedirects(t *testing.T) {
 		t.Context(), providerTestProfile(t, origin.URL+"/v1", false),
 		peoplesweep.NewOpenAIChatDriver(origin.Client()), "test-key", structuredTestRequest(),
 	)
-	require.Error(err)
+	requireChecks.Error(err)
 	var providerErr *peoplesweep.ProviderError
-	require.ErrorAs(err, &providerErr)
-	assert.Equal(http.StatusTemporaryRedirect, providerErr.StatusCode)
-	assert.Equal("redirect-req", providerErr.RequestID)
-	assert.Zero(redirectedRequests.Load(), "redirect target must receive no provider request")
+	requireChecks.ErrorAs(err, &providerErr)
+	assertChecks.Equal(http.StatusTemporaryRedirect, providerErr.StatusCode)
+	assertChecks.Equal("redirect-req", providerErr.RequestID)
+	assertChecks.Zero(redirectedRequests.Load(), "redirect target must receive no provider request")
 }
 
 func TestOpenAIChatDriverRejectsMalformedResponsesWithoutEchoingThem(t *testing.T) {
@@ -465,8 +465,8 @@ func TestOpenAIChatDriverBoundsResponseBody(t *testing.T) {
 }
 
 func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requireChecks := require.New(t)
+	assertChecks := assert.New(t)
 	var requests atomic.Int64
 	release := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -488,8 +488,8 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 		cancelled, profile, peoplesweep.NewOpenAIChatDriver(server.Client()),
 		"test-key", structuredTestRequest(),
 	)
-	require.ErrorIs(err, context.Canceled)
-	assert.Zero(requests.Load())
+	requireChecks.ErrorIs(err, context.Canceled)
+	assertChecks.Zero(requests.Load())
 
 	timeoutClient := server.Client()
 	timeoutClient.Timeout = 100 * time.Millisecond
@@ -497,11 +497,11 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 		t.Context(), profile, peoplesweep.NewOpenAIChatDriver(timeoutClient),
 		"test-key", structuredTestRequest(),
 	)
-	require.Error(err)
-	assert.Truef(
+	requireChecks.Error(err)
+	assertChecks.Truef(
 		errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout"),
 		"timeout error = %T: %v", err, err)
-	assert.Equal(int64(1), requests.Load())
+	assertChecks.Equal(int64(1), requests.Load())
 }
 
 func TestOpenAIChatPreparedRequestUsesExactHTTPBody(t *testing.T) {
@@ -524,6 +524,34 @@ func TestOpenAIChatPreparedRequestUsesExactHTTPBody(t *testing.T) {
 	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.NewCredential(peoplesweep.AuthBearer, "test-key"), prepared)
 	require.NoError(t, err)
 	assert.Equal(t, want, received)
+}
+
+func TestProviderPresetOpenRouterStrictRequestRequiresParameters(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	config := validConfig()
+	provider := activeProvider(config)
+	provider.PresetID = "openrouter"
+	provider.Endpoint = "https://openrouter.ai/api/v1"
+	setActiveProvider(&config, provider)
+	profile, err := config.Profile()
+	requireChecks.NoError(err)
+
+	driver := peoplesweep.NewOpenAIChatDriver(nil)
+	prepared, err := driver.Prepare(profile, structuredTestRequest())
+	requireChecks.NoError(err)
+	var routed map[string]any
+	requireChecks.NoError(json.Unmarshal(prepared.WireRequest(), &routed))
+	assertChecks.Equal(map[string]any{"require_parameters": true}, routed["provider"])
+
+	generic := validConfig()
+	genericProfile, err := generic.Profile()
+	requireChecks.NoError(err)
+	prepared, err = driver.Prepare(genericProfile, structuredTestRequest())
+	requireChecks.NoError(err)
+	var ordinary map[string]any
+	requireChecks.NoError(json.Unmarshal(prepared.WireRequest(), &ordinary))
+	assertChecks.NotContains(ordinary, "provider")
 }
 
 func TestOpenAIChatDriverRejectsForgedPreparedWire(t *testing.T) {

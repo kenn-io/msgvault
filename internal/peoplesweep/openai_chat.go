@@ -54,6 +54,9 @@ func (d *OpenAIChatDriver) Prepare(
 				"name": request.SchemaName, "strict": true, "schema": request.JSONSchema,
 			},
 		}
+		if profile.PresetID == "openrouter" {
+			body["provider"] = map[string]any{"require_parameters": true}
+		}
 	case OutputModeJSONObject:
 		body["response_format"] = map[string]any{"type": "json_object"}
 	case OutputModePromptJSON:

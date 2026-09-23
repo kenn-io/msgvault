@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -16,6 +17,81 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProviderPresetNegotiationRoutesStrictAndFallsBackForVenice(t *testing.T) {
+	for _, test := range []struct {
+		name, preset, unsupportedSchemaBody string
+	}{
+		{name: "openrouter", preset: "openrouter"},
+		{name: "venice representation code", preset: "venice", unsupportedSchemaBody: `{"error":{"type":"invalid_request_error","code":"unsupported_json_schema"}}`},
+		{name: "venice parameter code", preset: "venice", unsupportedSchemaBody: `{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"response_format"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
+			var requests []map[string]any
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/chat/completions", r.URL.Path)
+				assert.Equal(t, "Bearer synthetic-key", r.Header.Get("Authorization"))
+				var body map[string]any
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				requests = append(requests, body)
+				format := responseFormatType(t, body)
+				if test.unsupportedSchemaBody != "" && format == "json_schema" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(test.unsupportedSchemaBody))
+					return
+				}
+				_, _ = w.Write([]byte(`{"model":"synthetic-model","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
+			}))
+			t.Cleanup(server.Close)
+			serverTransport, ok := server.Client().Transport.(*http.Transport)
+			requireChecks.True(ok)
+			transport := serverTransport.Clone()
+			transport.TLSClientConfig.ServerName = "127.0.0.1"
+			transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+			}
+			client := &http.Client{Transport: transport}
+
+			candidate, err := PresetProviderConfig(test.preset, "synthetic-model")
+			requireChecks.NoError(err)
+			candidate.RequestTimeout = time.Second
+			registry, err := NewDriverRegistry(client, nil, nil)
+			requireChecks.NoError(err)
+			got, err := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate, NewCredential(AuthBearer, "synthetic-key"))
+			requireChecks.NoError(err)
+			if test.preset == "venice" {
+				assertChecks.Equal(OutputModeJSONObject, got.OutputMode)
+			} else {
+				assertChecks.Equal(OutputModeNativeJSONSchema, got.OutputMode)
+				assertChecks.Equal(map[string]any{"require_parameters": true}, requests[0]["provider"])
+			}
+			candidate.OutputMode = got.OutputMode
+			candidate.TokenLimitParameter = got.TokenLimitParameter
+			candidate.RetentionPosture = "operator_asserted"
+			candidate.TrainingPosture = "operator_asserted"
+			candidate.AllowedSources = []SourceClass{SourceConversationText}
+			candidate.SourceSince = "2025-01-01"
+			config := Config{Enabled: true, Provider: ProviderSelection{Name: "provider"}, Providers: map[string]ProviderConfig{"provider": candidate}}
+			config.ApplyDefaults()
+			profile, err := config.Profile()
+			requireChecks.NoError(err)
+			driver := NewOpenAIChatDriver(client)
+			prepared, err := driver.Prepare(profile, capabilitySyntheticRequest())
+			requireChecks.NoError(err)
+			_, err = driver.GeneratePrepared(t.Context(), profile, NewCredential(AuthBearer, "synthetic-key"), prepared)
+			requireChecks.NoError(err)
+			assertChecks.Equal(requests[len(requests)-2], requests[len(requests)-1],
+				"negotiation and production must send the same selected representation")
+			assertChecks.Equal(requests[len(requests)-1], func() map[string]any {
+				var body map[string]any
+				require.NoError(t, json.Unmarshal(prepared.WireRequest(), &body))
+				return body
+			}())
+		})
+	}
+}
 
 const (
 	capabilityArchiveCanary   = "archive-message-canary-never-send"
@@ -38,21 +114,21 @@ type capabilityAttempt struct {
 
 func TestCapabilityNegotiationUsesFixedOutputAndTokenOrderWithoutArchiveContext(t *testing.T) {
 	newAssert := assert.New
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	var mu sync.Mutex
 	var attempts []capabilityAttempt
 	statuses := []int{http.StatusBadRequest, http.StatusUnprocessableEntity,
 		http.StatusNotFound, http.StatusOK}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert := newAssert(t)
+		assertChecks := newAssert(t)
 		var body map[string]any
-		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+		assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 		encoded, err := json.Marshal(body)
-		assert.NoError(err)
-		assert.NotContains(string(encoded), capabilityArchiveCanary)
-		assert.NotContains(string(encoded), capabilityCredentialValue)
-		assert.Equal("Bearer "+capabilityCredentialValue, r.Header.Get("Authorization"))
+		assertChecks.NoError(err)
+		assertChecks.NotContains(string(encoded), capabilityArchiveCanary)
+		assertChecks.NotContains(string(encoded), capabilityCredentialValue)
+		assertChecks.Equal("Bearer "+capabilityCredentialValue, r.Header.Get("Authorization"))
 
 		mu.Lock()
 		attempt := len(attempts)
@@ -69,7 +145,7 @@ func TestCapabilityNegotiationUsesFixedOutputAndTokenOrderWithoutArchiveContext(
 	t.Cleanup(server.Close)
 
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 	candidate.RetentionPosture = capabilityArchiveCanary
 	candidate.TrainingPosture = capabilityArchiveCanary
@@ -80,28 +156,28 @@ func TestCapabilityNegotiationUsesFixedOutputAndTokenOrderWithoutArchiveContext(
 
 	got, err := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 		NewCredential(AuthBearer, capabilityCredentialValue))
-	require.NoError(err)
-	assert.Equal(OutputModeJSONObject, got.OutputMode)
-	assert.Equal("max_tokens", got.TokenLimitParameter)
-	assert.Equal(defaultDriverVersion(ProtocolOpenAIChat), got.DriverVersion)
-	assert.JSONEq(`{"claims":[]}`, string(got.Response.Output))
+	requireChecks.NoError(err)
+	assertChecks.Equal(OutputModeJSONObject, got.OutputMode)
+	assertChecks.Equal("max_tokens", got.TokenLimitParameter)
+	assertChecks.Equal(defaultDriverVersion(ProtocolOpenAIChat), got.DriverVersion)
+	assertChecks.JSONEq(`{"claims":[]}`, string(got.Response.Output))
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(attempts, 4)
+	requireChecks.Len(attempts, 4)
 	for _, attempt := range attempts {
-		assert.Equal("/chat/completions", attempt.path)
-		assert.Equal("synthetic-model", attempt.body["model"])
-		assert.NotContains(attempt.body, "max_output_tokens")
+		assertChecks.Equal("/chat/completions", attempt.path)
+		assertChecks.Equal("synthetic-model", attempt.body["model"])
+		assertChecks.NotContains(attempt.body, "max_output_tokens")
 	}
-	assert.Equal("json_schema", responseFormatType(t, attempts[0].body))
-	assert.Contains(attempts[0].body, "max_completion_tokens")
-	assert.Equal("json_schema", responseFormatType(t, attempts[1].body))
-	assert.Contains(attempts[1].body, "max_tokens")
-	assert.Equal("json_object", responseFormatType(t, attempts[2].body))
-	assert.Contains(attempts[2].body, "max_completion_tokens")
-	assert.Equal("json_object", responseFormatType(t, attempts[3].body))
-	assert.Contains(attempts[3].body, "max_tokens")
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[0].body))
+	assertChecks.Contains(attempts[0].body, "max_completion_tokens")
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[1].body))
+	assertChecks.Contains(attempts[1].body, "max_tokens")
+	assertChecks.Equal("json_object", responseFormatType(t, attempts[2].body))
+	assertChecks.Contains(attempts[2].body, "max_completion_tokens")
+	assertChecks.Equal("json_object", responseFormatType(t, attempts[3].body))
+	assertChecks.Contains(attempts[3].body, "max_tokens")
 }
 
 func TestCapabilityNegotiationChecksRequestedReasoningSeparately(t *testing.T) {
@@ -115,22 +191,22 @@ func TestCapabilityNegotiationChecksRequestedReasoningSeparately(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			newAssert := assert.New
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert := newAssert(t)
+				assertChecks := newAssert(t)
 				call := calls.Add(1)
 				var body map[string]any
-				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+				assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 				if call == 1 {
-					assert.NotContains(body, "reasoning_effort")
-					assert.NotContains(body, "reasoning")
+					assertChecks.NotContains(body, "reasoning_effort")
+					assertChecks.NotContains(body, "reasoning")
 				} else {
-					assert.Equal("high", body["reasoning_effort"])
+					assertChecks.Equal("high", body["reasoning_effort"])
 					reasoning, ok := body["reasoning"].(map[string]any)
-					if assert.True(ok) {
-						assert.Equal(true, reasoning["enabled"])
+					if assertChecks.True(ok) {
+						assertChecks.Equal(true, reasoning["enabled"])
 					}
 				}
 				if call == 2 && test.reasonCode != http.StatusOK {
@@ -142,24 +218,24 @@ func TestCapabilityNegotiationChecksRequestedReasoningSeparately(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 			candidate.ReasoningEffort = "high"
 			candidate.ReasoningMode = "enabled"
 
 			got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 				NewCredential(AuthBearer, capabilityCredentialValue))
-			assert.Equal(int32(2), calls.Load())
+			assertChecks.Equal(int32(2), calls.Load())
 			if test.wantErr {
-				require.Error(negotiationErr)
-				assert.Empty(got)
-				assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
-				assert.NotContains(negotiationErr.Error(), capabilityCredentialValue)
+				requireChecks.Error(negotiationErr)
+				assertChecks.Empty(got)
+				assertChecks.NotContains(negotiationErr.Error(), capabilityResponseCanary)
+				assertChecks.NotContains(negotiationErr.Error(), capabilityCredentialValue)
 				return
 			}
-			require.NoError(negotiationErr)
-			assert.Equal("high", got.ReasoningEffort)
-			assert.Equal("enabled", got.ReasoningMode)
+			requireChecks.NoError(negotiationErr)
+			assertChecks.Equal("high", got.ReasoningEffort)
+			assertChecks.Equal("enabled", got.ReasoningMode)
 		})
 	}
 }
@@ -179,14 +255,14 @@ func TestCapabilityNegotiationRetriesClassifiedReasoningMiss(t *testing.T) {
 
 	t.Run("falls back to a later viable candidate", func(t *testing.T) {
 		newAssert := assert.New
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		var mu sync.Mutex
 		var attempts []capabilityAttempt
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert := newAssert(t)
+			assertChecks := newAssert(t)
 			var body map[string]any
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 			mu.Lock()
 			attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
 			mu.Unlock()
@@ -201,47 +277,47 @@ func TestCapabilityNegotiationRetriesClassifiedReasoningMiss(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 		candidate.ReasoningEffort = "high"
 
 		got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.NoError(negotiationErr)
-		assert.Equal(OutputModeJSONObject, got.OutputMode)
-		assert.Equal("max_completion_tokens", got.TokenLimitParameter)
-		assert.Equal("high", got.ReasoningEffort)
-		assert.JSONEq(`{"claims":[]}`, string(got.Response.Output))
+		requireChecks.NoError(negotiationErr)
+		assertChecks.Equal(OutputModeJSONObject, got.OutputMode)
+		assertChecks.Equal("max_completion_tokens", got.TokenLimitParameter)
+		assertChecks.Equal("high", got.ReasoningEffort)
+		assertChecks.JSONEq(`{"claims":[]}`, string(got.Response.Output))
 
 		mu.Lock()
 		defer mu.Unlock()
-		require.Len(attempts, 6)
+		requireChecks.Len(attempts, 6)
 		wantModes := []string{"json_schema", "json_schema", "json_schema", "json_schema", "json_object", "json_object"}
 		wantReasoning := []bool{false, true, false, true, false, true}
 		wantTokenParameters := []string{"max_completion_tokens", "max_completion_tokens", "max_tokens",
 			"max_tokens", "max_completion_tokens", "max_completion_tokens"}
 		for index, attempt := range attempts {
-			assert.Equal("/chat/completions", attempt.path)
+			assertChecks.Equal("/chat/completions", attempt.path)
 			format, ok := attempt.body["response_format"].(map[string]any)
-			require.True(ok)
-			assert.Equal(wantModes[index], format["type"])
+			requireChecks.True(ok)
+			assertChecks.Equal(wantModes[index], format["type"])
 			_, reasoning := attempt.body["reasoning_effort"]
-			assert.Equal(wantReasoning[index], reasoning)
+			assertChecks.Equal(wantReasoning[index], reasoning)
 			if wantReasoning[index] {
-				assert.Equal("high", attempt.body["reasoning_effort"])
+				assertChecks.Equal("high", attempt.body["reasoning_effort"])
 			}
-			assert.Contains(attempt.body, wantTokenParameters[index])
+			assertChecks.Contains(attempt.body, wantTokenParameters[index])
 			if wantTokenParameters[index] == "max_completion_tokens" {
-				assert.NotContains(attempt.body, "max_tokens")
+				assertChecks.NotContains(attempt.body, "max_tokens")
 			} else {
-				assert.NotContains(attempt.body, "max_completion_tokens")
+				assertChecks.NotContains(attempt.body, "max_completion_tokens")
 			}
 		}
 	})
 
 	t.Run("reports the reasoning-specific diagnosis after exhausting every candidate", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		var calls atomic.Int32
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
@@ -259,23 +335,23 @@ func TestCapabilityNegotiationRetriesClassifiedReasoningMiss(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 		candidate.ReasoningEffort = "high"
 
 		got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.Error(negotiationErr)
-		assert.Empty(got)
-		assert.Equal(int32(12), calls.Load())
-		assert.Contains(negotiationErr.Error(), "rejected requested reasoning settings")
-		assert.NotContains(negotiationErr.Error(), "no supported structured output mode")
-		assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
+		requireChecks.Error(negotiationErr)
+		assertChecks.Empty(got)
+		assertChecks.Equal(int32(12), calls.Load())
+		assertChecks.Contains(negotiationErr.Error(), "rejected requested reasoning settings")
+		assertChecks.NotContains(negotiationErr.Error(), "no supported structured output mode")
+		assertChecks.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 	})
 
 	t.Run("keeps the generic diagnosis when every base attempt misses before a reasoning probe", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		var calls atomic.Int32
 		var reasoningProbes atomic.Int32
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -301,19 +377,19 @@ func TestCapabilityNegotiationRetriesClassifiedReasoningMiss(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 		candidate.ReasoningEffort = "high"
 
 		got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.Error(negotiationErr)
-		assert.Empty(got)
-		assert.Equal(int32(6), calls.Load())
-		assert.Equal(int32(0), reasoningProbes.Load())
-		assert.Contains(negotiationErr.Error(), "no supported structured output mode")
-		assert.NotContains(negotiationErr.Error(), "rejected requested reasoning settings")
-		assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
+		requireChecks.Error(negotiationErr)
+		assertChecks.Empty(got)
+		assertChecks.Equal(int32(6), calls.Load())
+		assertChecks.Equal(int32(0), reasoningProbes.Load())
+		assertChecks.Contains(negotiationErr.Error(), "no supported structured output mode")
+		assertChecks.NotContains(negotiationErr.Error(), "rejected requested reasoning settings")
+		assertChecks.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 	})
 }
 
@@ -349,8 +425,8 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			credential: NewCredential(AuthXAPIKey, capabilityCredentialValue)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			release := make(chan struct{})
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -367,7 +443,7 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 			ctx := t.Context()
 			if test.wait {
@@ -380,15 +456,15 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			if test.wait {
 				close(release)
 			}
-			require.Error(negotiationErr)
-			assert.Empty(got)
-			assert.LessOrEqual(calls.Load(), int32(1))
+			requireChecks.Error(negotiationErr)
+			assertChecks.Empty(got)
+			assertChecks.LessOrEqual(calls.Load(), int32(1))
 			if test.wait {
-				require.ErrorIs(negotiationErr, context.DeadlineExceeded)
+				requireChecks.ErrorIs(negotiationErr, context.DeadlineExceeded)
 			}
-			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
-			assert.NotContains(negotiationErr.Error(), capabilityCredentialValue)
-			assert.NotContains(negotiationErr.Error(), capabilityArchiveCanary)
+			assertChecks.NotContains(negotiationErr.Error(), capabilityResponseCanary)
+			assertChecks.NotContains(negotiationErr.Error(), capabilityCredentialValue)
+			assertChecks.NotContains(negotiationErr.Error(), capabilityArchiveCanary)
 		})
 	}
 }
@@ -599,38 +675,38 @@ func TestCapabilityDriversRejectParameterizedRepresentationCodesForEveryActiveMo
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			newAssert := assert.New
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert := newAssert(t)
+				assertChecks := newAssert(t)
 				calls.Add(1)
-				assert.Equal(test.path, r.URL.Path)
+				assertChecks.Equal(test.path, r.URL.Path)
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(test.errorBody))
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(test.protocol, server.URL)
 			candidate.Auth = test.auth
 			profile, err := capabilityProfile(candidate, test.mode, test.tokenParameter, false)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			driver, err := registry.capabilityDriver(test.protocol)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			prepared, err := driver.Prepare(profile, capabilitySyntheticRequest())
-			require.NoError(err)
+			requireChecks.NoError(err)
 
 			_, callErr := driver.GeneratePrepared(t.Context(), profile,
 				NewCredential(test.auth, capabilityCredentialValue), prepared)
-			require.Error(callErr)
+			requireChecks.Error(callErr)
 			var providerErr *ProviderError
-			require.ErrorAs(callErr, &providerErr)
-			assert.Empty(providerErr.Capability)
-			assert.Equal(int32(1), calls.Load())
+			requireChecks.ErrorAs(callErr, &providerErr)
+			assertChecks.Empty(providerErr.Capability)
+			assertChecks.Equal(int32(1), calls.Load())
 			for _, fragment := range []string{test.code, test.parameter, capabilityMessageCanary,
 				capabilityCredentialValue, test.errorBody} {
-				assert.NotContains(callErr.Error(), fragment)
+				assertChecks.NotContains(callErr.Error(), fragment)
 			}
 		})
 	}
@@ -662,37 +738,37 @@ func TestCapabilityNegotiationStopsOnParameterizedRepresentationCodeForEveryProt
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			newAssert := assert.New
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert := newAssert(t)
+				assertChecks := newAssert(t)
 				calls.Add(1)
-				assert.Equal(test.path, r.URL.Path)
+				assertChecks.Equal(test.path, r.URL.Path)
 				var body map[string]any
-				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+				assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 				if test.protocol == ProtocolGoogleGenerateContent {
-					assert.NotContains(body, "model")
+					assertChecks.NotContains(body, "model")
 				} else {
-					assert.Equal("synthetic-model", body["model"])
+					assertChecks.Equal("synthetic-model", body["model"])
 				}
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(test.errorBody))
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(test.protocol, server.URL)
 			candidate.Auth = test.auth
 
 			got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 				NewCredential(test.auth, capabilityCredentialValue))
-			require.Error(negotiationErr)
-			assert.Empty(got)
-			assert.Equal(int32(1), calls.Load())
+			requireChecks.Error(negotiationErr)
+			assertChecks.Empty(got)
+			assertChecks.Equal(int32(1), calls.Load())
 			for _, fragment := range []string{test.code, test.parameter, capabilityMessageCanary,
 				capabilityCredentialValue, test.errorBody} {
-				assert.NotContains(negotiationErr.Error(), fragment)
+				assertChecks.NotContains(negotiationErr.Error(), fragment)
 			}
 		})
 	}
@@ -716,8 +792,8 @@ func TestCapabilityDriversRejectRepresentationCodesForPromptOnlyAttempts(t *test
 			errorBody: `{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"UNSUPPORTED_RESPONSE_FORMAT","domain":"generativelanguage.googleapis.com"}]}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			attempts := make(chan capabilityAttempt, 1)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -730,31 +806,31 @@ func TestCapabilityDriversRejectRepresentationCodesForPromptOnlyAttempts(t *test
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(test.protocol, server.URL)
 			candidate.Auth = test.auth
 			profile, err := capabilityProfile(candidate, OutputModePromptJSON,
 				map[bool]string{true: "max_tokens"}[test.protocol == ProtocolOpenAIChat], false)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			driver, err := registry.capabilityDriver(test.protocol)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			prepared, err := driver.Prepare(profile, capabilitySyntheticRequest())
-			require.NoError(err)
+			requireChecks.NoError(err)
 
 			_, callErr := driver.GeneratePrepared(t.Context(), profile,
 				NewCredential(test.auth, capabilityCredentialValue), prepared)
-			require.Error(callErr)
+			requireChecks.Error(callErr)
 			var providerErr *ProviderError
-			require.ErrorAs(callErr, &providerErr)
-			assert.Empty(providerErr.Capability)
-			assert.Equal(int32(1), calls.Load())
+			requireChecks.ErrorAs(callErr, &providerErr)
+			assertChecks.Empty(providerErr.Capability)
+			assertChecks.Equal(int32(1), calls.Load())
 			attempt := <-attempts
-			require.NoError(attempt.err)
-			assert.Equal(test.path, attempt.path)
+			requireChecks.NoError(attempt.err)
+			assertChecks.Equal(test.path, attempt.path)
 			if test.protocol == ProtocolGoogleGenerateContent {
-				assert.NotContains(attempt.body, "model")
+				assertChecks.NotContains(attempt.body, "model")
 			} else {
-				assert.Equal("synthetic-model", attempt.body["model"])
+				assertChecks.Equal("synthetic-model", attempt.body["model"])
 			}
 		})
 	}
@@ -787,8 +863,8 @@ func TestCapabilityNegotiationStopsAfterUnclassified400404And422(t *testing.T) {
 		{name: "malformed", status: http.StatusBadRequest, body: `{"error":`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
@@ -797,15 +873,15 @@ func TestCapabilityNegotiationStopsAfterUnclassified400404And422(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 
 			got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 				NewCredential(AuthBearer, capabilityCredentialValue))
-			require.Error(negotiationErr)
-			assert.Empty(got)
-			assert.Equal(int32(1), calls.Load())
-			assert.NotContains(negotiationErr.Error(), capabilityResponseCanary)
+			requireChecks.Error(negotiationErr)
+			assertChecks.Empty(got)
+			assertChecks.Equal(int32(1), calls.Load())
+			assertChecks.NotContains(negotiationErr.Error(), capabilityResponseCanary)
 		})
 	}
 }
@@ -826,63 +902,63 @@ func TestCapabilityNegotiationReportsDistinctProviderFailures(t *testing.T) {
 	var statuses []int
 	for _, response := range responses {
 		t.Run(response.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("X-Request-ID", "capability-repro-request")
 				w.WriteHeader(response.status)
 				_, err := w.Write([]byte(response.body))
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 				NewCredential(AuthBearer, capabilityCredentialValue))
-			require.Error(negotiationErr)
+			requireChecks.Error(negotiationErr)
 			messages = append(messages, negotiationErr.Error())
 			var typedErr *NegotiationError
-			require.ErrorAs(negotiationErr, &typedErr)
+			requireChecks.ErrorAs(negotiationErr, &typedErr)
 			diagnostics = append(diagnostics, typedErr.Diagnostics)
 			statuses = append(statuses, typedErr.StatusCode)
-			assert.Equal("capability-repro-request", typedErr.RequestID)
-			assert.NotContains(typedErr.Error(), "unsupported_parameter")
-			assert.NotContains(typedErr.Error(), "model_not_found")
+			assertChecks.Equal("capability-repro-request", typedErr.RequestID)
+			assertChecks.NotContains(typedErr.Error(), "unsupported_parameter")
+			assertChecks.NotContains(typedErr.Error(), "model_not_found")
 		})
 	}
-	assert := assert.New(t)
-	require := require.New(t)
-	require.Len(messages, len(responses))
-	assert.Equal([]int{http.StatusNotFound, http.StatusBadRequest}, statuses)
-	assert.Equal([]ProviderDiagnosticCode{
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	requireChecks.Len(messages, len(responses))
+	assertChecks.Equal([]int{http.StatusNotFound, http.StatusBadRequest}, statuses)
+	assertChecks.Equal([]ProviderDiagnosticCode{
 		ProviderDiagnosticCodeUnclassified, ProviderDiagnosticCodeRejectedField,
 	}, []ProviderDiagnosticCode{diagnostics[0].Code, diagnostics[1].Code})
-	assert.Equal(ProviderDiagnosticFieldForeign, diagnostics[1].Field)
-	assert.NotEqual(messages[0], messages[1])
+	assertChecks.Equal(ProviderDiagnosticFieldForeign, diagnostics[1].Field)
+	assertChecks.NotEqual(messages[0], messages[1])
 	t.Logf("boundary rejected_field=%q provider_code_absent=%t", ProviderDiagnosticCodeRejectedField,
 		!strings.Contains(messages[1], "unsupported_parameter"))
 }
 
 func TestCapabilityNegotiationPreservesGoogleForeignFieldDiagnostic(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"UNSUPPORTED_PARAMETER","domain":"generativelanguage.googleapis.com","metadata":{"parameter":"model"}}]}}`))
-		assert.NoError(err)
+		assertChecks.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 		capabilityTestCandidate(ProtocolGoogleGenerateContent, server.URL),
 		NewCredential(AuthGoogleAPIKey, capabilityCredentialValue))
-	require.Error(negotiationErr)
+	requireChecks.Error(negotiationErr)
 	var typedErr *NegotiationError
-	require.ErrorAs(negotiationErr, &typedErr)
-	assert.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
-	assert.Equal(ProviderDiagnosticFieldForeign, typedErr.Diagnostics.Field)
+	requireChecks.ErrorAs(negotiationErr, &typedErr)
+	assertChecks.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
+	assertChecks.Equal(ProviderDiagnosticFieldForeign, typedErr.Diagnostics.Field)
 }
 
 func TestAnthropicForeignRepresentationCodeIsUnclassified(t *testing.T) {
@@ -894,36 +970,36 @@ func TestAnthropicForeignRepresentationCodeIsUnclassified(t *testing.T) {
 }
 
 func TestCapabilityNegotiationKeepsClassifiedFallback(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	var attempts []capabilityAttempt
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+		assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 		attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
 		if len(attempts) == 1 {
 			w.WriteHeader(http.StatusBadRequest)
 			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"response_format"}}`))
-			assert.NoError(err)
+			assertChecks.NoError(err)
 			return
 		}
 		_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
-		assert.NoError(err)
+		assertChecks.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 		NewCredential(AuthBearer, capabilityCredentialValue))
-	require.NoError(negotiationErr)
-	assert.Equal(OutputModeNativeJSONSchema, got.OutputMode)
-	assert.Equal("max_tokens", got.TokenLimitParameter)
-	require.Len(attempts, 2)
-	assert.Equal("json_schema", responseFormatType(t, attempts[0].body))
-	assert.Contains(attempts[0].body, "max_completion_tokens")
-	assert.Equal("json_schema", responseFormatType(t, attempts[1].body))
-	assert.Contains(attempts[1].body, "max_tokens")
+	requireChecks.NoError(negotiationErr)
+	assertChecks.Equal(OutputModeNativeJSONSchema, got.OutputMode)
+	assertChecks.Equal("max_tokens", got.TokenLimitParameter)
+	requireChecks.Len(attempts, 2)
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[0].body))
+	assertChecks.Contains(attempts[0].body, "max_completion_tokens")
+	assertChecks.Equal("json_schema", responseFormatType(t, attempts[1].body))
+	assertChecks.Contains(attempts[1].body, "max_tokens")
 }
 
 func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
@@ -944,97 +1020,97 @@ func TestCapabilityNegotiationDiagnosticsUseSafeUnknownClasses(t *testing.T) {
 		{name: "oversized", body: strings.Repeat("x", (32<<10)+1), wantDiag: unreadableProviderDiagnostics()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("X-Request-ID", "safe-diagnostic-request")
 				w.WriteHeader(http.StatusBadRequest)
 				_, err := w.Write([]byte(test.body))
-				assert.NoError(err)
+				assertChecks.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 				capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 				NewCredential(AuthBearer, capabilityCredentialValue))
-			require.Error(negotiationErr)
+			requireChecks.Error(negotiationErr)
 			var typedErr *NegotiationError
-			require.ErrorAs(negotiationErr, &typedErr)
-			assert.Equal(test.wantDiag, typedErr.Diagnostics)
-			assert.Equal("safe-diagnostic-request", typedErr.RequestID)
-			assert.NotContains(typedErr.Error(), "message-fragment-canary-never-report")
-			assert.NotContains(typedErr.Error(), capabilityCredentialValue)
+			requireChecks.ErrorAs(negotiationErr, &typedErr)
+			assertChecks.Equal(test.wantDiag, typedErr.Diagnostics)
+			assertChecks.Equal("safe-diagnostic-request", typedErr.RequestID)
+			assertChecks.NotContains(typedErr.Error(), "message-fragment-canary-never-report")
+			assertChecks.NotContains(typedErr.Error(), capabilityCredentialValue)
 		})
 	}
 }
 
 func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 	t.Run("probe", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("X-Request-ID", "probe-request")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, err := w.Write([]byte(capabilityResponseCanary))
-			assert.NoError(err)
+			assertChecks.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 			capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.Error(negotiationErr)
+		requireChecks.Error(negotiationErr)
 		var typedErr *NegotiationError
-		require.ErrorAs(negotiationErr, &typedErr)
-		assert.Equal(NegotiationStageProbe, typedErr.Stage)
-		assert.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
-		assert.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
-		assert.Equal(http.StatusInternalServerError, typedErr.StatusCode)
-		assert.Equal("probe-request", typedErr.RequestID)
+		requireChecks.ErrorAs(negotiationErr, &typedErr)
+		assertChecks.Equal(NegotiationStageProbe, typedErr.Stage)
+		assertChecks.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
+		assertChecks.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
+		assertChecks.Equal(http.StatusInternalServerError, typedErr.StatusCode)
+		assertChecks.Equal("probe-request", typedErr.RequestID)
 	})
 
 	t.Run("reasoning probe", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		var calls atomic.Int32
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			if calls.Add(1) == 1 {
 				_, err := w.Write([]byte(`{"model":"synthetic-model-version","choices":[{"message":{"content":"{\"claims\":[]}"}}]}`))
-				assert.NoError(err)
+				assertChecks.NoError(err)
 				return
 			}
 			w.Header().Set("X-Request-ID", "reasoning-request")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, err := w.Write([]byte(capabilityResponseCanary))
-			assert.NoError(err)
+			assertChecks.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		candidate := capabilityTestCandidate(ProtocolOpenAIChat, server.URL)
 		candidate.ReasoningEffort = "high"
 		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.Error(negotiationErr)
+		requireChecks.Error(negotiationErr)
 		var typedErr *NegotiationError
-		require.ErrorAs(negotiationErr, &typedErr)
-		assert.Equal(NegotiationStageReasoningProbe, typedErr.Stage)
-		assert.True(typedErr.Reasoning)
-		assert.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
-		assert.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
-		assert.Equal(http.StatusInternalServerError, typedErr.StatusCode)
+		requireChecks.ErrorAs(negotiationErr, &typedErr)
+		assertChecks.Equal(NegotiationStageReasoningProbe, typedErr.Stage)
+		assertChecks.True(typedErr.Reasoning)
+		assertChecks.Equal(OutputModeNativeJSONSchema, typedErr.OutputMode)
+		assertChecks.Equal("max_completion_tokens", typedErr.TokenLimitParameter)
+		assertChecks.Equal(http.StatusInternalServerError, typedErr.StatusCode)
 	})
 
 	t.Run("exhausted", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		var calls atomic.Int32
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			var body map[string]any
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 			parameter := "max_completion_tokens"
 			if _, present := body["max_tokens"]; present {
 				parameter = "max_tokens"
@@ -1042,75 +1118,75 @@ func TestCapabilityNegotiationCarriesStageAndAttemptContext(t *testing.T) {
 			w.Header().Set("X-Request-ID", "last-attempt")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, err := w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"` + parameter + `"}}`))
-			assert.NoError(err)
+			assertChecks.NoError(err)
 		}))
 		t.Cleanup(server.Close)
 		registry, err := NewDriverRegistry(server.Client(), nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 			capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 			NewCredential(AuthBearer, capabilityCredentialValue))
-		require.Error(negotiationErr)
+		requireChecks.Error(negotiationErr)
 		var typedErr *NegotiationError
-		require.ErrorAs(negotiationErr, &typedErr)
-		assert.Equal(NegotiationStageExhausted, typedErr.Stage)
-		assert.Equal(OutputModePromptJSON, typedErr.OutputMode)
-		assert.Equal("max_tokens", typedErr.TokenLimitParameter)
-		assert.Equal(http.StatusUnprocessableEntity, typedErr.StatusCode)
-		assert.Equal("last-attempt", typedErr.RequestID)
-		assert.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
-		assert.Equal(ProviderDiagnosticFieldTokenLimit, typedErr.Diagnostics.Field)
-		assert.Equal(int32(6), calls.Load())
+		requireChecks.ErrorAs(negotiationErr, &typedErr)
+		assertChecks.Equal(NegotiationStageExhausted, typedErr.Stage)
+		assertChecks.Equal(OutputModePromptJSON, typedErr.OutputMode)
+		assertChecks.Equal("max_tokens", typedErr.TokenLimitParameter)
+		assertChecks.Equal(http.StatusUnprocessableEntity, typedErr.StatusCode)
+		assertChecks.Equal("last-attempt", typedErr.RequestID)
+		assertChecks.Equal(ProviderDiagnosticCodeRejectedField, typedErr.Diagnostics.Code)
+		assertChecks.Equal(ProviderDiagnosticFieldTokenLimit, typedErr.Diagnostics.Field)
+		assertChecks.Equal(int32(6), calls.Load())
 	})
 
 	t.Run("settings and driver stages", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
 		registry, err := NewDriverRegistry(nil, nil, nil)
-		require.NoError(err)
+		requireChecks.NoError(err)
 		invalid := capabilityTestCandidate(ProtocolAnthropicMessages, "https://example.test")
 		invalid.ReasoningEffort = "high"
 		_, settingsErr := NewCapabilityChecker(registry).Negotiate(t.Context(), invalid,
 			NewCredential(AuthXAPIKey, capabilityCredentialValue))
-		require.Error(settingsErr)
+		requireChecks.Error(settingsErr)
 		var settingsTyped *NegotiationError
-		require.ErrorAs(settingsErr, &settingsTyped)
-		assert.Equal(NegotiationStageSettingsInvalid, settingsTyped.Stage)
-		require.Error(settingsTyped.Unwrap())
-		assert.Equal("provider capability negotiation settings are invalid (stage=settings_invalid): "+
+		requireChecks.ErrorAs(settingsErr, &settingsTyped)
+		assertChecks.Equal(NegotiationStageSettingsInvalid, settingsTyped.Stage)
+		requireChecks.Error(settingsTyped.Unwrap())
+		assertChecks.Equal("provider capability negotiation settings are invalid (stage=settings_invalid): "+
 			settingsTyped.Unwrap().Error(), settingsErr.Error())
 
 		unsupported := capabilityTestCandidate(ProtocolCodexAppServer, "https://example.test")
 		_, driverErr := NewCapabilityChecker(registry).Negotiate(t.Context(), unsupported,
 			NewCredential(AuthNone, ""))
-		require.Error(driverErr)
+		requireChecks.Error(driverErr)
 		var driverTyped *NegotiationError
-		require.ErrorAs(driverErr, &driverTyped)
-		assert.Equal(NegotiationStageDriverUnavailable, driverTyped.Stage)
-		require.Error(driverTyped.Unwrap())
-		assert.Equal("provider capability negotiation is unavailable (stage=driver_unavailable): "+
+		requireChecks.ErrorAs(driverErr, &driverTyped)
+		assertChecks.Equal(NegotiationStageDriverUnavailable, driverTyped.Stage)
+		requireChecks.Error(driverTyped.Unwrap())
+		assertChecks.Equal("provider capability negotiation is unavailable (stage=driver_unavailable): "+
 			driverTyped.Unwrap().Error(), driverErr.Error())
 	})
 }
 
 func TestNegotiationErrorUnwrapsProviderHTTPFailures(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Request-ID", "unwrap-request")
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	_, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 		NewCredential(AuthBearer, capabilityCredentialValue))
-	require.Error(negotiationErr)
+	requireChecks.Error(negotiationErr)
 	var providerErr *ProviderError
-	require.ErrorAs(negotiationErr, &providerErr)
-	assert.Equal(http.StatusInternalServerError, providerErr.StatusCode)
-	assert.Equal("unwrap-request", providerErr.RequestID)
+	requireChecks.ErrorAs(negotiationErr, &providerErr)
+	assertChecks.Equal(http.StatusInternalServerError, providerErr.StatusCode)
+	assertChecks.Equal("unwrap-request", providerErr.RequestID)
 }
 
 func TestCapabilityNegotiationRetriesClassifiedErrorsForEachProtocolFamily(t *testing.T) {
@@ -1147,8 +1223,8 @@ func TestCapabilityNegotiationRetriesClassifiedErrorsForEachProtocolFamily(t *te
 			successBody: `{"candidates":[{"content":{"role":"model","parts":[{"text":"{\"claims\":[]}"}]},"finishReason":"STOP"}],"modelVersion":"synthetic-model-version"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
 			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if calls.Add(1) == 1 {
@@ -1160,15 +1236,15 @@ func TestCapabilityNegotiationRetriesClassifiedErrorsForEachProtocolFamily(t *te
 			}))
 			t.Cleanup(server.Close)
 			registry, err := NewDriverRegistry(server.Client(), nil, nil)
-			require.NoError(err)
+			requireChecks.NoError(err)
 			candidate := capabilityTestCandidate(test.protocol, server.URL)
 			candidate.Auth = test.auth
 
 			got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 				NewCredential(test.auth, capabilityCredentialValue))
-			require.NoError(negotiationErr)
-			assert.Equal(int32(2), calls.Load())
-			assert.JSONEq(`{"claims":[]}`, string(got.Response.Output))
+			requireChecks.NoError(negotiationErr)
+			assertChecks.Equal(int32(2), calls.Load())
+			assertChecks.JSONEq(`{"claims":[]}`, string(got.Response.Output))
 		})
 	}
 }
@@ -1264,6 +1340,8 @@ func TestCapabilityNegotiationStopsAfterUnclassifiedErrorForEveryProtocol(t *tes
 		t.Run(string(test.protocol), func(t *testing.T) {
 			for index, body := range test.bodies {
 				t.Run(fmt.Sprintf("case-%d", index), func(t *testing.T) {
+					assertChecks := assert.New(t)
+					requireChecks := require.New(t)
 					var calls atomic.Int32
 					attempts := make(chan capabilityAttempt, 1)
 					server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1276,21 +1354,21 @@ func TestCapabilityNegotiationStopsAfterUnclassifiedErrorForEveryProtocol(t *tes
 					}))
 					t.Cleanup(server.Close)
 					registry, err := NewDriverRegistry(server.Client(), nil, nil)
-					require.NoError(t, err)
+					requireChecks.NoError(err)
 					candidate := capabilityTestCandidate(test.protocol, server.URL)
 					candidate.Auth = test.auth
 					got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 						NewCredential(test.auth, capabilityCredentialValue))
-					require.Error(t, negotiationErr)
-					assert.Empty(t, got)
-					assert.Equal(t, int32(1), calls.Load())
+					requireChecks.Error(negotiationErr)
+					assertChecks.Empty(got)
+					assertChecks.Equal(int32(1), calls.Load())
 					attempt := <-attempts
-					require.NoError(t, attempt.err)
-					assert.Equal(t, test.path, attempt.path)
+					requireChecks.NoError(attempt.err)
+					assertChecks.Equal(test.path, attempt.path)
 					if test.protocol == ProtocolGoogleGenerateContent {
-						assert.NotContains(t, attempt.body, "model")
+						assertChecks.NotContains(attempt.body, "model")
 					} else {
-						assert.Equal(t, "synthetic-model", attempt.body["model"])
+						assertChecks.Equal("synthetic-model", attempt.body["model"])
 					}
 					for _, fragment := range []string{
 						"unsupported", "parameter", "model", "endpoint", "billing", "policy",
@@ -1298,7 +1376,7 @@ func TestCapabilityNegotiationStopsAfterUnclassifiedErrorForEveryProtocol(t *tes
 						capabilityParamCanary, capabilityCodeCanary, capabilityAuthCanary,
 						capabilityStatusCanary, capabilityDomainCanary, capabilityBodyCanary,
 					} {
-						assert.NotContains(t, negotiationErr.Error(), fragment)
+						assertChecks.NotContains(negotiationErr.Error(), fragment)
 					}
 				})
 			}
@@ -1307,8 +1385,8 @@ func TestCapabilityNegotiationStopsAfterUnclassifiedErrorForEveryProtocol(t *tes
 }
 
 func TestCapabilityNegotiationNeverSwitchesProtocolEndpointOrModel(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	attempts := make(chan capabilityAttempt, 6)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -1323,38 +1401,38 @@ func TestCapabilityNegotiationNeverSwitchesProtocolEndpointOrModel(t *testing.T)
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 
 	got, err := NewCapabilityChecker(registry).Negotiate(t.Context(),
 		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 		NewCredential(AuthBearer, capabilityCredentialValue))
-	require.Error(err)
-	assert.Empty(got)
+	requireChecks.Error(err)
+	assertChecks.Empty(got)
 	for range 6 {
 		attempt := <-attempts
-		require.NoError(attempt.err)
-		assert.Equal("/chat/completions", attempt.path)
-		assert.Equal("synthetic-model", attempt.body["model"])
+		requireChecks.NoError(attempt.err)
+		assertChecks.Equal("/chat/completions", attempt.path)
+		assertChecks.Equal("synthetic-model", attempt.body["model"])
 	}
 }
 
 func TestCapabilityNegotiationRejectsUnsupportedReasoningBeforeIO(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	var calls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	candidate := capabilityTestCandidate(ProtocolAnthropicMessages, server.URL)
 	candidate.Auth = AuthXAPIKey
 	candidate.ReasoningEffort = "high"
 
 	_, err = NewCapabilityChecker(registry).Negotiate(t.Context(), candidate,
 		NewCredential(AuthXAPIKey, capabilityCredentialValue))
-	require.Error(err)
-	assert.Equal(int32(0), calls.Load())
-	assert.NotContains(err.Error(), capabilityCredentialValue)
+	requireChecks.Error(err)
+	assertChecks.Equal(int32(0), calls.Load())
+	assertChecks.NotContains(err.Error(), capabilityCredentialValue)
 }
 
 func TestCapabilityNegotiationRejectsMissingRegistryWithoutPanic(t *testing.T) {
@@ -1389,24 +1467,24 @@ func capabilityTestCandidate(protocol Protocol, endpoint string) ProviderConfig 
 // use.
 func TestCapabilityNegotiationExercisesRealExtractionSchema(t *testing.T) {
 	newAssert := assert.New
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	extractionSchema := ExtractionJSONSchema()
 	var mu sync.Mutex
 	var attempts []capabilityAttempt
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert := newAssert(t)
+		assertChecks := newAssert(t)
 		var body map[string]any
-		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+		assertChecks.NoError(json.NewDecoder(r.Body).Decode(&body))
 		mu.Lock()
 		attempts = append(attempts, capabilityAttempt{path: r.URL.Path, body: body})
 		mu.Unlock()
 		format, native := body["response_format"].(map[string]any)
 		if native && format["type"] == "json_schema" {
 			jsonSchema, ok := format["json_schema"].(map[string]any)
-			assert.True(ok)
+			assertChecks.True(ok)
 			encoded, err := json.Marshal(jsonSchema["schema"])
-			assert.NoError(err)
+			assertChecks.NoError(err)
 			if capabilitySameJSON(extractionSchema, encoded) {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"unsupported_parameter","param":"response_format","message":"` + capabilityResponseCanary + `"}}`))
@@ -1419,44 +1497,44 @@ func TestCapabilityNegotiationExercisesRealExtractionSchema(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	registry, err := NewDriverRegistry(server.Client(), nil, nil)
-	require.NoError(err)
+	requireChecks.NoError(err)
 
 	got, negotiationErr := NewCapabilityChecker(registry).Negotiate(t.Context(),
 		capabilityTestCandidate(ProtocolOpenAIChat, server.URL),
 		NewCredential(AuthBearer, capabilityCredentialValue))
-	require.NoError(negotiationErr)
-	assert.Equal(OutputModeJSONObject, got.OutputMode)
-	assert.Equal("max_completion_tokens", got.TokenLimitParameter)
-	assert.JSONEq(`{"claims":[]}`, string(got.Response.Output))
+	requireChecks.NoError(negotiationErr)
+	assertChecks.Equal(OutputModeJSONObject, got.OutputMode)
+	assertChecks.Equal("max_completion_tokens", got.TokenLimitParameter)
+	assertChecks.JSONEq(`{"claims":[]}`, string(got.Response.Output))
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(attempts, 3)
+	requireChecks.Len(attempts, 3)
 	for _, attempt := range attempts[:2] {
-		assert.Equal("json_schema", responseFormatType(t, attempt.body))
+		assertChecks.Equal("json_schema", responseFormatType(t, attempt.body))
 		native, ok := attempt.body["response_format"].(map[string]any)["json_schema"].(map[string]any)
-		require.True(ok)
-		assert.Equal(ExtractionSchemaName, native["name"])
+		requireChecks.True(ok)
+		assertChecks.Equal(ExtractionSchemaName, native["name"])
 		encoded, marshalErr := json.Marshal(native["schema"])
-		require.NoError(marshalErr)
-		assert.JSONEq(string(extractionSchema), string(encoded))
+		requireChecks.NoError(marshalErr)
+		assertChecks.JSONEq(string(extractionSchema), string(encoded))
 	}
-	assert.Equal("json_object", responseFormatType(t, attempts[2].body))
+	assertChecks.Equal("json_object", responseFormatType(t, attempts[2].body))
 	messages, ok := attempts[2].body["messages"].([]any)
-	require.True(ok)
+	requireChecks.True(ok)
 	system, ok := messages[0].(map[string]any)
-	require.True(ok)
-	assert.Equal(jsonObjectInstruction+string(extractionSchema), system["content"])
+	requireChecks.True(ok)
+	assertChecks.Equal(jsonObjectInstruction+string(extractionSchema), system["content"])
 }
 
 func TestCapabilitySyntheticRequestUsesFrozenExtractionSchema(t *testing.T) {
-	assert := assert.New(t)
+	assertChecks := assert.New(t)
 	request := capabilitySyntheticRequest()
-	assert.Equal("provider-check", request.ProgramID)
-	assert.Equal(ExtractionSchemaName, request.SchemaName)
-	assert.JSONEq(string(ExtractionJSONSchema()), string(request.JSONSchema))
-	assert.Empty(request.Sources)
-	assert.False(request.ContainsSensitive)
+	assertChecks.Equal("provider-check", request.ProgramID)
+	assertChecks.Equal(ExtractionSchemaName, request.SchemaName)
+	assertChecks.JSONEq(string(ExtractionJSONSchema()), string(request.JSONSchema))
+	assertChecks.Empty(request.Sources)
+	assertChecks.False(request.ContainsSensitive)
 }
 
 func capabilitySameJSON(left, right []byte) bool {

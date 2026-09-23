@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -258,10 +259,11 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 			return nil, nil, errors.New("configuration is unavailable")
 		},
 		newChecker: func(config peoplesweep.Config, st personProviderStore, setup personProviderSetupDeps) (personProviderChecker, error) {
-			registry, err := peoplesweep.NewDriverRegistry(
+			registry, err := peoplesweep.NewDriverRegistryWithCodexAuthHome(
 				http.DefaultClient,
 				peoplesweep.NewCodexCommandStarter(),
 				peoplesweep.NewReleasedCodexIsolationGate(),
+				personProviderCodexAuthHome(),
 			)
 			if err != nil {
 				return nil, err
@@ -289,10 +291,11 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 			if err != nil {
 				return nil, err
 			}
-			registry, err := peoplesweep.NewDriverRegistry(
+			registry, err := peoplesweep.NewDriverRegistryWithCodexAuthHome(
 				http.DefaultClient,
 				peoplesweep.NewCodexCommandStarter(),
 				peoplesweep.NewReleasedCodexIsolationGate(),
+				personProviderCodexAuthHome(),
 			)
 			if err != nil {
 				return nil, err
@@ -366,6 +369,13 @@ func personProviderDepsForContext(ctx context.Context, deps personProviderComman
 	return deps.bind(deps, ctx)
 }
 
+func personProviderCodexAuthHome() string {
+	if cfg == nil {
+		return ""
+	}
+	return filepath.Join(cfg.TokensDir(), "people-codex")
+}
+
 func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 	provider := &cobra.Command{
 		Use:   personProviderCommandName,
@@ -373,6 +383,7 @@ func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
 	}
 	provider.AddCommand(
 		newPersonProviderAddCommand(deps),
+		newPersonProviderCodexEnrollCommand(defaultCodexEnrollDeps()),
 		newPersonProviderSetCommand(deps),
 		newPersonProviderRemoveCommand(deps),
 		newPersonProviderListCommand(deps),

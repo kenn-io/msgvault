@@ -326,6 +326,7 @@ func capabilityProfile(
 		credentialSource = CredentialNone
 	}
 	provider := ProviderConfig{
+		PresetID: candidate.PresetID,
 		Protocol: candidate.Protocol, Endpoint: candidate.Endpoint, Model: candidate.Model,
 		Auth: candidate.Auth, Credential: credentialSource,
 		OutputMode: mode, TokenLimitParameter: tokenParameter,

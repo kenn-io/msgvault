@@ -1257,6 +1257,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSettingsLoaded(msg)
 	case settingsSavedMsg:
 		return m.handleSettingsSaved(msg)
+	case peopleControlsLoadedMsg, peopleControlsActionMsg:
+		return m.handlePeopleInferenceControlMsg(msg)
+	case codexLoginStartedMsg, codexLoginPolledMsg, codexModelsLoadedMsg,
+		codexProfileSavedMsg, codexCheckedMsg, codexConsentedMsg,
+		codexSelectedMsg, codexStatusLoadedMsg, codexPollTickMsg:
+		return m.handleCodexSettingsMsg(msg)
 	// People messages are delegated before the shared Email handlers.
 	case peopleSearchDebounceMsg:
 		return m.handlePeopleSearchDebounce(msg)

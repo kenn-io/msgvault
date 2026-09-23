@@ -971,7 +971,7 @@ func registerCardDAVJSONRouteWithRequest[Req, Resp any](api huma.API, operationI
 func cardDAVIDOperation(operationID, method, path, parameter, summary string) huma.Operation {
 	op := rawAPIV1Operation(operationID, method, path, summary)
 	minimum := float64(1)
-	op.Parameters = append(op.Parameters, &huma.Param{Name: parameter, In: "path", Required: true,
+	op.Parameters = append(op.Parameters, &huma.Param{Name: parameter, In: pathKey, Required: true,
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64, Minimum: &minimum}})
 	return op
 }

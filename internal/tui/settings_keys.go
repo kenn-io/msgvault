@@ -15,6 +15,12 @@ func (m Model) settingsIsNarrow() bool {
 }
 
 func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.settings.peopleControls.active {
+		return m.handlePeopleInferenceControlKey(msg)
+	}
+	if m.settings.codex.active {
+		return m.handleCodexSettingsKey(msg)
+	}
 	if msg.String() == keyNameCtrlC {
 		m.quitting = true
 		return m, tea.Quit
@@ -42,6 +48,10 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	}
 
 	switch msg.String() {
+	case "p":
+		return m.openCodexSettings()
+	case "i":
+		return m.openPeopleInferenceControls()
 	case "ctrl+s":
 		return m.saveSettings()
 	case keyNameEsc:

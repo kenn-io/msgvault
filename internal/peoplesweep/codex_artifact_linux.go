@@ -17,7 +17,8 @@ func validateCodexLaunchArtifact(path string, artifact CodexLaunchArtifact) erro
 		return errors.New("read native Codex launch artifact")
 	}
 	defer func() { _ = file.Close() }()
-	if file.Type != elf.ET_EXEC || file.Machine != nativeCodexELFMachine() {
+	if (file.Type != elf.ET_EXEC && file.Type != elf.ET_DYN) ||
+		file.Machine != nativeCodexELFMachine() || file.Entry == 0 {
 		return errors.New("codex launch artifact is not a native executable")
 	}
 	for _, program := range file.Progs {
