@@ -978,13 +978,20 @@ describe('AttributeDefinitionDialog', () => {
         is_sensitive: false,
         options,
       });
+      const unrelated = definition({
+        id: 8,
+        universal_id: 'unrelated-empty',
+        slug: 'unrelated_empty',
+        label: 'Unrelated empty field',
+        is_sensitive: false,
+      });
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
         return request.method === 'POST'
           ? Response.json(created, { status: 201 })
-          : Response.json({ definitions: [created] });
+          : Response.json({ definitions: [unrelated, created] });
       });
-      render(AttributeSection, { controller: controller(fetchFn) });
+      render(AttributeSection, { controller: controller(fetchFn, [unrelated]) });
       await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
       await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Option field' } });
       await chooseSelectOption(screen.getByLabelText('Value type'), option);
@@ -992,6 +999,7 @@ describe('AttributeDefinitionDialog', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
       await screen.findByRole('status');
       await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      expect(screen.queryByRole('heading', { name: 'Unrelated empty field' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Add Option field value' }));
 
       expect(screen.getByRole('form', { name: 'Add Option field value' }).textContent).toContain(visible);
@@ -1018,6 +1026,7 @@ describe('AttributeDefinitionDialog', () => {
     });
     const profile = controller(fetchFn, [existing]);
     render(AttributeSection, { controller: profile });
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Existing field value' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Existing field' }), {
       target: { value: 'retained local draft' },

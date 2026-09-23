@@ -15,6 +15,23 @@ async function expectNoAxeViolations(page: Page, label: string): Promise<void> {
     .toEqual([]);
 }
 
+async function installTallDirectory(page: Page): Promise<void> {
+  await page.unroute('**/api/v1/people/directory*');
+  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({
+    json: {
+      people: Array.from({ length: 40 }, (_, index) => ({
+        id: index === 0 ? 42 : 100 + index,
+        revision: 1,
+        display_name: index === 0 ? 'Archive Person' : `Synthetic Person ${index}`,
+        primary_channel: 'email',
+        contact_state: 'active',
+        categories: [],
+        organizations: []
+      }))
+    }
+  }));
+}
+
 test('Directory lists durable people, opens split detail, and scopes Media & Files to the durable person', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', (request) => requests.push(new URL(request.url()).pathname));
@@ -43,6 +60,76 @@ test('Directory lists durable people, opens split detail, and scopes Media & Fil
   expect(requests).not.toContain('/api/v1/participants/42/files/search');
   expect(requests).not.toContain('/api/v1/files/search');
   await expectNoAxeViolations(page, 'Directory split media detail');
+});
+
+test('Directory person detail scrolls independently at desktop width', async ({ page }) => {
+  await installMixedArchive(page);
+  await installTallDirectory(page);
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto(directoryURL(42));
+  const pane = page.getByRole('complementary', { name: 'Person detail' });
+  await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  const metrics = await pane.evaluate((el) => ({
+    scroll: el.scrollHeight,
+    client: el.clientHeight,
+    overflow: getComputedStyle(el).overflowY
+  }));
+  expect(metrics.scroll).toBeGreaterThan(metrics.client);
+  expect(metrics.overflow).toBe('auto');
+  await pane.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(page.getByRole('region', { name: 'Person merge history' }).or(pane.locator('section').last())).toBeInViewport();
+
+  const directory = page.getByRole('main', { name: 'Directory' });
+  const list = directory.getByRole('region', { name: 'Directory results' });
+  const toolbar = directory.locator('.directory-toolbar');
+  const filters = directory.locator('.filters');
+  const before = { toolbar: await toolbar.boundingBox(), filters: await filters.boundingBox() };
+  const listMetrics = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflow: getComputedStyle(el).overflowY }));
+  expect(listMetrics.scroll).toBeGreaterThan(listMetrics.client);
+  expect(listMetrics.overflow).toBe('auto');
+  await list.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  expect((await toolbar.boundingBox())?.y).toBe(before.toolbar?.y);
+  expect((await filters.boundingBox())?.y).toBe(before.filters?.y);
+});
+
+test('Directory list stays in its flexible row when a promotion alert appears', async ({ page }) => {
+  await installMixedArchive(page);
+  await installTallDirectory(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
+  await page.getByRole('button', { name: 'Open in Directory' }).click();
+  const directory = page.getByRole('main', { name: 'Directory' });
+  await expect(directory.getByRole('button', { name: 'Promote to person' })).toBeVisible();
+
+  async function expectContentContained(): Promise<void> {
+    const metrics = await directory.evaluate((root) => {
+      const content = root.querySelector('.directory-content');
+      if (!(content instanceof HTMLElement)) throw new Error('Directory content missing');
+      return {
+        rootBottom: root.getBoundingClientRect().bottom,
+        contentBottom: content.getBoundingClientRect().bottom,
+        contentHeight: content.getBoundingClientRect().height
+      };
+    });
+    expect(metrics.contentHeight).toBeGreaterThan(0);
+    expect(metrics.contentBottom).toBeLessThanOrEqual(metrics.rootBottom + 1);
+    const list = directory.getByRole('region', { name: 'Directory results' });
+    const listMetrics = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflow: getComputedStyle(el).overflowY }));
+    expect(listMetrics.scroll).toBeGreaterThan(listMetrics.client);
+    expect(listMetrics.overflow).toBe('auto');
+  }
+
+  await expectContentContained();
+  await page.route('**/api/v1/people', (route) => route.fulfill({
+    status: 409,
+    json: { error: 'person_binding_conflict', message: 'Synthetic promotion conflict.' }
+  }));
+  await directory.getByRole('button', { name: 'Promote to person' }).click();
+  await expect(directory.getByRole('alert')).toContainText('Synthetic promotion conflict.');
+  await expectContentContained();
 });
 
 test('Directory opens selected detail in an accessible narrow drawer', async ({ page }) => {

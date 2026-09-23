@@ -4,17 +4,16 @@
 
   import type {
     AttributeDefinition as GeneratedAttributeDefinition,
-    AttributeValue as GeneratedAttributeValue,
     PersonAttributeGroup as GeneratedPersonAttributeGroup,
     PersonAttributeValue as GeneratedPersonAttributeValue,
   } from '../../api/generated/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
   import AttributeEditor from './AttributeEditor.svelte';
+  import { displayAttributeValue } from './attribute-value';
 
   type AttributeDefinition = GeneratedAttributeDefinition;
   type AttributeGroup = GeneratedPersonAttributeGroup;
-  type AttributeValue = GeneratedAttributeValue;
   type PersonAttributeValue = GeneratedPersonAttributeValue;
 
   interface Props {
@@ -41,9 +40,22 @@
     confirming = undefined;
     revealed = {};
     creatingDefinition = false;
+    showEmpty = false;
+    recentlyCreatedID = null;
   });
 
   const fields = $derived.by(() => joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []));
+  let showEmpty = $state(false);
+  let recentlyCreatedID = $state<string | null>(null);
+  const emptyCount = $derived(fields.filter((field) => field.current.length === 0).length);
+  const visibleFields = $derived(showEmpty ? fields : fields.filter((field) =>
+    field.current.length > 0 || editing?.universalID === field.definition.universal_id || recentlyCreatedID === field.definition.universal_id
+  ));
+
+  // Keep a newly created field actionable after its confirmation dialog closes.
+  $effect(() => {
+    if (controller.createdDefinition) recentlyCreatedID = controller.createdDefinition.universal_id;
+  });
 
   function joinDefinitions(definitions: AttributeDefinition[], groups: AttributeGroup[]): JoinedAttribute[] {
     const byUniversalID = new Map(groups.map((group) => [group.definition.universal_id, group]));
@@ -89,33 +101,6 @@
     controller.discardAttributeDraft(definition.slug);
     if (editing?.universalID === definition.universal_id) editing = undefined;
     if (confirming?.universalID === definition.universal_id) confirming = undefined;
-  }
-
-  function displayValue(definition: AttributeDefinition, value: AttributeValue): string {
-    const canonical = rawValue(value);
-    const choice = definition.options?.choices?.find((candidate) => candidate.value === canonical);
-    return choice?.label ?? canonical;
-  }
-
-  function rawValue(value: AttributeValue): string {
-    switch (value.type) {
-      case 'text':
-        return value.text ?? '—';
-      case 'integer':
-        return value.integer?.toString() ?? '—';
-      case 'real':
-        return value.real?.toString() ?? '—';
-      case 'boolean':
-        return value.boolean === undefined ? '—' : value.boolean ? 'Yes' : 'No';
-      case 'date':
-        return value.date ?? '—';
-      case 'timestamp':
-        return value.timestamp ?? '—';
-      case 'record_reference':
-        return value.record_type === 'person' && value.record_id ? `Person ${value.record_id}` : '—';
-      default:
-        return value.json === undefined ? '—' : JSON.stringify(value.json);
-    }
   }
 
   function provenance(value: PersonAttributeValue): string {
@@ -241,7 +226,7 @@
   }
 </script>
 
-<section class="attribute-section" aria-label="Attributes">
+<section id="person-attributes" class="attribute-section" aria-label="Attributes" tabindex="-1">
   <header class="section-header">
     <h3>Attributes</h3>
     <Button
@@ -263,7 +248,7 @@
     />
   {/if}
 
-  {#each fields as field (field.definition.universal_id)}
+  {#each visibleFields as field (field.definition.universal_id)}
     <section class="attribute-field" aria-labelledby={`attribute-title-${field.definition.id}`}>
       <header class="field-header">
         <div class="definition-copy">
@@ -300,7 +285,7 @@
           <li>
             <div class="value-copy">
               {#if isRevealed(field.definition)}
-                <strong>{displayValue(field.definition, value.value)}</strong>
+                <strong>{displayAttributeValue(field.definition, value.value)}</strong>
               {:else}
                 <strong>Sensitive value concealed.</strong>
               {/if}
@@ -380,7 +365,7 @@
             {#each field.history as value (value.id)}
               <li>
                 {#if isRevealed(field.definition)}
-                  <strong>{displayValue(field.definition, value.value)}</strong>
+                  <strong>{displayAttributeValue(field.definition, value.value)}</strong>
                 {:else}
                   <strong>Sensitive value concealed.</strong>
                 {/if}
@@ -410,8 +395,17 @@
       {/if}
     </section>
   {:else}
-    <p class="empty">No attribute definitions are available.</p>
+    {#if fields.length === 0}<p class="empty">No attribute definitions are available.</p>{/if}
   {/each}
+  {#if emptyCount > 0}
+    <Button
+      label={showEmpty ? 'Hide empty fields' : `Show empty fields (${emptyCount})`}
+      surface="soft"
+      size="sm"
+      ariaExpanded={showEmpty}
+      onclick={() => (showEmpty = !showEmpty)}
+    />
+  {/if}
 </section>
 
 <style>
