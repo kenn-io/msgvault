@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestClientTrustedPrivateDestinationUsesExactPinWithoutDNS(t *testing.T) {
 	require := require.New(t)
 	origin, err := url.Parse("https://contacts.example:8443/dav")
 	require.NoError(err)
-	trusted, err := url.Parse("https://contacts.example:8443")
+	trusted, err := url.Parse("https://contacts.example:8443/")
 	require.NoError(err)
 	resolver, queries := newFixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
 	client, err := NewClient(ClientOptions{
@@ -73,24 +74,61 @@ func TestClientTrustedDestinationRejectsUnsafePolicy(t *testing.T) {
 		name    string
 		trusted string
 		pins    []netip.Addr
+		message string
 	}{
-		{name: "wrong host", trusted: "https://other.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
-		{name: "wrong port", trusted: "https://contacts.example:8444", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
-		{name: "plain HTTP", trusted: "http://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
-		{name: "path", trusted: "https://contacts.example:8443/dav", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}},
-		{name: "no pins", trusted: "https://contacts.example:8443"},
-		{name: "public address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("203.0.113.9")}},
-		{name: "loopback", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("127.0.0.1")}},
-		{name: "metadata", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("169.254.169.254")}},
-		{name: "scoped IPv6", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("fc00::1%eth0")}},
-		{name: "duplicate mapped address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("::ffff:10.1.2.3")}},
+		{name: "plain HTTP", trusted: "http://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}, message: "trusted_origin must use HTTPS"},
+		{name: "path", trusted: "https://contacts.example:8443/dav", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}, message: "trusted_origin must not include a path"},
+		{name: "no pins", trusted: "https://contacts.example:8443", message: "trusted_addresses must contain at least one address"},
+		{name: "public address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, message: "address 203.0.113.9 is not in an allowed private range"},
+		{name: "loopback", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("127.0.0.1")}, message: "address 127.0.0.1 is not in an allowed private range"},
+		{name: "metadata", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("169.254.169.254")}, message: "address 169.254.169.254 is not in an allowed private range"},
+		{name: "scoped IPv6", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("fc00::1%eth0")}, message: "address fc00::1%eth0 must not include a zone"},
+		{name: "duplicate mapped address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("::ffff:10.1.2.3")}, message: "duplicate address 10.1.2.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			trusted, err := url.Parse(tc.trusted)
 			require.NoError(t, err)
 			_, err = NewClient(ClientOptions{CredentialOrigin: origin, TrustedOrigin: trusted, TrustedAddresses: tc.pins})
 			require.ErrorIs(t, err, ErrUnsafeTarget)
+			assert.Contains(t, err.Error(), tc.message)
 		})
+	}
+}
+
+func TestClientMismatchedTrustedOriginUsesNormalDestinationChecks(t *testing.T) {
+	for _, rawOrigin := range []string{"https://other.example:8443/dav", "https://contacts.example:8444/dav"} {
+		for _, resolved := range []string{"203.0.113.9", "10.1.2.3"} {
+			t.Run(rawOrigin+"/"+resolved, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				origin, err := url.Parse(rawOrigin)
+				require.NoError(err)
+				trusted, err := url.Parse("https://contacts.example:8443")
+				require.NoError(err)
+				resolver, queries := newFixtureResolver(t, netip.MustParseAddr(resolved))
+				var dialed []string
+				dialErr := errors.New("synthetic dial failure")
+				client, err := NewClient(ClientOptions{
+					CredentialOrigin: origin, TrustedOrigin: trusted,
+					TrustedAddresses: []netip.Addr{netip.MustParseAddr("100.80.0.8")},
+					Resolver:         resolver,
+					DialContext: func(_ context.Context, _, address string) (net.Conn, error) {
+						dialed = append(dialed, address)
+						return nil, dialErr
+					},
+				})
+				require.NoError(err)
+				_, err = client.Do(t.Context(), Request{Method: "PROPFIND", URL: rawOrigin})
+				assert.Positive(queries.Load())
+				if resolved == "10.1.2.3" {
+					require.ErrorIs(err, ErrUnsafeTarget)
+					assert.Empty(dialed)
+				} else {
+					require.ErrorIs(err, dialErr)
+					assert.Equal([]string{net.JoinHostPort(resolved, origin.Port())}, dialed)
+				}
+			})
+		}
 	}
 }
 
@@ -160,46 +198,98 @@ func TestClientDigestChallengeRetriesPROPFIND(t *testing.T) {
 	assert.Equal(t, 2, attempts)
 }
 
+func TestClientReusesDigestAcrossBudgetedAndConcurrentRequests(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var basicRequests atomic.Int32
+	var mu sync.Mutex
+	counts := make(map[int]bool)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Basic YWxpY2U6YXBwLXBhc3N3b3Jk" {
+			basicRequests.Add(1)
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
+		if !assert.NoError(err) {
+			return
+		}
+		assert.Equal(r.URL.RequestURI(), credentials.URI)
+		assert.Equal(digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, r.Method, credentials.URI), credentials.Response)
+		mu.Lock()
+		assert.False(counts[credentials.Nc], "nonce count %d was reused", credentials.Nc)
+		counts[credentials.Nc] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusMultiStatus)
+	}))
+	t.Cleanup(server.Close)
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	request := Request{Method: "PROPFIND", URL: server.URL + "/dav"}
+	_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+	require.NoError(err)
+	_, err = client.Do(t.Context(), request)
+	require.NoError(err)
+	var calls sync.WaitGroup
+	for range 4 {
+		calls.Go(func() {
+			_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+			assert.NoError(err)
+		})
+	}
+	calls.Wait()
+	assert.Equal(int32(1), basicRequests.Load())
+	mu.Lock()
+	assert.Len(counts, 6)
+	mu.Unlock()
+}
+
 func TestClientDigestStaleNoncePreservesConditionalPUT(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const card = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Example\r\nEND:VCARD\r\n"
 	var attempts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		body, err := io.ReadAll(r.Body)
-		if !assert.NoError(t, err) {
+		if !assert.NoError(err) {
 			return
 		}
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, card, string(body))
-		assert.Equal(t, `"prior"`, r.Header.Get("If-Match"))
-		assert.Equal(t, "text/vcard; charset=utf-8", r.Header.Get("Content-Type"))
+		assert.Equal(http.MethodPut, r.Method)
+		assert.Equal(card, string(body))
+		assert.Equal(`"prior"`, r.Header.Get("If-Match"))
+		assert.Equal("text/vcard; charset=utf-8", r.Header.Get("Content-Type"))
 		if attempts == 1 {
 			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth", algorithm=MD5`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
-		if !assert.NoError(t, err) {
+		if !assert.NoError(err) {
 			return
 		}
-		assert.Equal(t, "/dav/card.vcf", credentials.URI)
-		assert.Equal(t, digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, "PUT", credentials.URI), credentials.Response)
+		assert.Equal("/dav/card.vcf", credentials.URI)
+		assert.Equal(digestMD5Response("alice", "fixture", "app-password", credentials.Nonce, credentials.Nc, credentials.Cnonce, "PUT", credentials.URI), credentials.Response)
 		if attempts == 2 {
-			assert.Equal(t, "nonce-one", credentials.Nonce)
+			assert.Equal("nonce-one", credentials.Nonce)
 			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-two", qop="auth", algorithm=MD5, stale=true`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		assert.Equal(t, "nonce-two", credentials.Nonce)
+		assert.Equal("nonce-two", credentials.Nonce)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
 
 	client := newFixtureClient(t, server.URL, "alice", "app-password")
 	response, err := client.Do(t.Context(), Request{Method: http.MethodPut, URL: server.URL + "/dav/card.vcf", Body: []byte(card), ETag: `"prior"`})
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusNoContent, response.StatusCode)
-	assert.Equal(t, 3, attempts)
+	require.NoError(err)
+	assert.Equal(http.StatusNoContent, response.StatusCode)
+	assert.Equal(3, attempts)
+	response, err = client.Do(t.Context(), Request{Method: http.MethodPut, URL: server.URL + "/dav/card.vcf", Body: []byte(card), ETag: `"prior"`})
+	require.NoError(err)
+	assert.Equal(http.StatusNoContent, response.StatusCode)
+	assert.Equal(4, attempts)
 }
 
 func TestClientDigestSelectsCombinedChallenge(t *testing.T) {
@@ -293,6 +383,8 @@ func TestClientDigestRegeneratesConditionalDELETEOnRedirect(t *testing.T) {
 }
 
 func TestClientDigestWrongPasswordStopsAfterOneReplay(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var attempts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -304,9 +396,55 @@ func TestClientDigestWrongPasswordStopsAfterOneReplay(t *testing.T) {
 	client := newFixtureClient(t, server.URL, "alice", "wrong-password")
 	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
 	var statusErr *StatusError
-	require.ErrorAs(t, err, &statusErr)
-	assert.Equal(t, http.StatusUnauthorized, statusErr.StatusCode)
-	assert.Equal(t, 2, attempts)
+	require.ErrorAs(err, &statusErr)
+	assert.Equal(http.StatusUnauthorized, statusErr.StatusCode)
+	assert.Equal(2, attempts)
+	_, err = client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL + "/dav"})
+	require.ErrorAs(err, &statusErr)
+	assert.Equal(http.StatusUnauthorized, statusErr.StatusCode)
+	assert.Equal(3, attempts)
+}
+
+func TestClientCachedDigestRetriesStaleNonceOnlyOnce(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-one", qop="auth"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		credentials, err := digest.ParseCredentials(r.Header.Get("Authorization"))
+		if !assert.NoError(err) {
+			return
+		}
+		if attempts == 2 {
+			w.WriteHeader(http.StatusMultiStatus)
+			return
+		}
+		if attempts == 3 {
+			assert.Equal("nonce-one", credentials.Nonce)
+			assert.Equal(2, credentials.Nc)
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-two", qop="auth", stale=true`)
+		} else {
+			assert.Equal("nonce-two", credentials.Nonce)
+			assert.Equal(1, credentials.Nc)
+			w.Header().Set("WWW-Authenticate", `Digest realm="fixture", nonce="nonce-three", qop="auth", stale=true`)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	request := Request{Method: "PROPFIND", URL: server.URL + "/dav"}
+	_, err := client.Do(t.Context(), request)
+	require.NoError(err)
+	_, err = client.Do(t.Context(), request)
+	var statusErr *StatusError
+	require.ErrorAs(err, &statusErr)
+	assert.Equal(http.StatusUnauthorized, statusErr.StatusCode)
+	assert.Equal(4, attempts)
 }
 
 func digestMD5Response(username, realm, password, nonce string, count int, cnonce, method, uri string) string {

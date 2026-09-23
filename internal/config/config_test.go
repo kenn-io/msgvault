@@ -43,13 +43,13 @@ func TestCardDAVTrustedDestinationLoadsBeforeAccountSetup(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(os.WriteFile(path, []byte(`[carddav]
-trusted_origin = "https://contacts.example:8443"
+trusted_origin = "https://contacts.example:8443/"
 trusted_addresses = ["100.80.0.8", "10.1.2.3"]
 `), 0o600))
 	cfg, err := Load(path, "")
 	require.NoError(err)
 	assert.Empty(cfg.CardDAV.BaseURL)
-	assert.Equal("https://contacts.example:8443", cfg.CardDAV.TrustedOrigin)
+	assert.Equal("https://contacts.example:8443/", cfg.CardDAV.TrustedOrigin)
 	assert.Equal([]string{"100.80.0.8", "10.1.2.3"}, cfg.CardDAV.TrustedAddresses)
 	require.NoError(cfg.Save())
 	reloaded, err := Load(path, "")
@@ -58,20 +58,27 @@ trusted_addresses = ["100.80.0.8", "10.1.2.3"]
 }
 
 func TestCardDAVTrustedDestinationRejectsInvalidPolicy(t *testing.T) {
-	for name, policy := range map[string]string{
-		"missing origin":    "trusted_addresses = [\"10.1.2.3\"]",
-		"missing address":   "trusted_origin = \"https://contacts.example\"",
-		"http origin":       "trusted_origin = \"http://contacts.example\"\ntrusted_addresses = [\"10.1.2.3\"]",
-		"public address":    "trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"203.0.113.9\"]",
-		"loopback address":  "trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"127.0.0.1\"]",
-		"malformed address": "trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"invalid\"]",
+	for name, tc := range map[string]struct{ policy, message string }{
+		"missing origin":    {`trusted_addresses = ["10.1.2.3"]`, "trusted_origin must include a hostname"},
+		"missing address":   {`trusted_origin = "https://contacts.example"`, "trusted_addresses must contain at least one address"},
+		"http origin":       {"trusted_origin = \"http://contacts.example\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must use HTTPS"},
+		"public address":    {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"203.0.113.9\"]", "address 203.0.113.9 is not in an allowed private range"},
+		"loopback address":  {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"127.0.0.1\"]", "address 127.0.0.1 is not in an allowed private range"},
+		"malformed address": {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"invalid\"]", `invalid IP address "invalid"`},
+		"invalid port":      {"trusted_origin = \"https://contacts.example:65536\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin port must be between 1 and 65535"},
+		"path":              {"trusted_origin = \"https://contacts.example/dav\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include a path"},
+		"query":             {"trusted_origin = \"https://contacts.example?\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include a query"},
+		"credentials":       {"trusted_origin = \"https://user@contacts.example\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include credentials"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			path := filepath.Join(t.TempDir(), "config.toml")
-			require.NoError(t, os.WriteFile(path, []byte("[carddav]\n"+policy+"\n"), 0o600))
+			require.NoError(os.WriteFile(path, []byte("[carddav]\n"+tc.policy+"\n"), 0o600))
 			_, err := Load(path, "")
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "carddav")
+			require.Error(err)
+			assert.Contains(err.Error(), "carddav")
+			assert.Contains(err.Error(), tc.message)
 		})
 	}
 }

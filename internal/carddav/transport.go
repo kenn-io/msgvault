@@ -12,7 +12,6 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +27,7 @@ type Client struct {
 	username           string
 	password           string
 	bearerToken        func(context.Context) (string, error)
+	digest             *digestState
 	requestTimeout     time.Duration
 	operationTimeout   time.Duration
 	responseBytes      int64
@@ -57,9 +57,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 	origin.RawPath = ""
 	origin.RawQuery = ""
 	origin.Fragment = ""
-	trustedOrigin, trustedAddresses, err := validateTrustedDestination(&origin, options.TrustedOrigin, options.TrustedAddresses)
+	trustedOrigin, trustedAddresses, err := netguard.ValidateTrustedDestination(options.TrustedOrigin, options.TrustedAddresses)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", err, ErrUnsafeTarget)
 	}
 
 	if options.RequestTimeout <= 0 {
@@ -83,6 +83,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	}
 	return &Client{
 		origin: originURL(&origin), username: options.Username, password: options.Password, bearerToken: options.BearerToken,
+		digest:         new(digestState),
 		requestTimeout: options.RequestTimeout, operationTimeout: options.OperationTimeout,
 		responseBytes: options.ResponseBytes, operationBytes: options.OperationBytes,
 		resolver: options.Resolver, dialContext: options.DialContext,
@@ -102,8 +103,6 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 		return nil, fmt.Errorf("parsing DAV URL: %w", ErrUnsafeTarget)
 	}
 	var operationBytes int64
-	var challenge *digest.Challenge
-	var nonceCount int
 	for redirects := 0; ; redirects++ {
 		pinned, err := c.validateTarget(operationCtx, target)
 		if err != nil {
@@ -111,11 +110,10 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 		}
 		var response *Response
 		var status int
-		var staleRetried bool
 		for digestResponses := 0; ; {
+			challenge, nonceCount := c.digest.next()
 			authorization := ""
 			if challenge != nil {
-				nonceCount++
 				credentials, digestErr := digest.Digest(challenge, digest.Options{
 					Username: c.username, Password: c.password, Method: request.Method,
 					URI: target.RequestURI(), Count: nonceCount,
@@ -124,28 +122,18 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 					return nil, fmt.Errorf("CardDAV Digest authorization: %w", ErrUnsafeTarget)
 				}
 				authorization = credentials.String()
+				digestResponses++
 			}
 			response, status, err = c.doPinned(operationCtx, target, pinned, request, authorization, &operationBytes)
 			if err != nil || status != http.StatusUnauthorized || c.bearerToken != nil || (c.username == "" && c.password == "") {
 				break
 			}
 			next, challengeErr := selectDigestChallenge(response.Header)
-			if challengeErr != nil || next.Nonce == "" {
+			if challengeErr != nil {
 				break
 			}
-			if digestResponses == 0 {
-				if challenge == nil || next.Nonce != challenge.Nonce {
-					nonceCount = 0
-				}
-				challenge = next
-				digestResponses++
-				continue
-			}
-			if digestResponses == 1 && !staleRetried && next.Stale && next.Nonce != challenge.Nonce {
-				challenge = next
-				nonceCount = 0
-				staleRetried = true
-				digestResponses++
+			if digestResponses == 0 || (digestResponses == 1 && next.Stale && next.Nonce != challenge.Nonce) {
+				c.digest.remember(next)
 				continue
 			}
 			break
@@ -260,42 +248,6 @@ func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.A
 		}
 	}
 	return pinned, nil
-}
-
-var explicitPrivatePrefixes = []netip.Prefix{
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("fc00::/7"),
-}
-
-func validateTrustedDestination(origin, trusted *url.URL, addresses []netip.Addr) (*url.URL, []netip.Addr, error) {
-	if trusted == nil && len(addresses) == 0 {
-		return nil, nil, nil
-	}
-	if trusted == nil || len(addresses) == 0 || !validHTTPURL(trusted) || trusted.Scheme != "https" ||
-		trusted.Path != "" || trusted.RawPath != "" || trusted.RawQuery != "" || trusted.Fragment != "" ||
-		!sameOrigin(origin, trusted) || netguard.ProhibitedHostname(trusted.Hostname()) {
-		return nil, nil, fmt.Errorf("trusted CardDAV destination: %w", ErrUnsafeTarget)
-	}
-	validated := make([]netip.Addr, 0, len(addresses))
-	for _, address := range addresses {
-		address = address.Unmap()
-		allowed := false
-		for _, prefix := range explicitPrivatePrefixes {
-			if prefix.Contains(address) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed || slices.Contains(validated, address) {
-			return nil, nil, fmt.Errorf("trusted CardDAV address: %w", ErrUnsafeTarget)
-		}
-		validated = append(validated, address)
-	}
-	copyOrigin := *trusted
-	return &copyOrigin, validated, nil
 }
 
 func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.AddrPort, davRequest Request, authorization string, operationBytes *int64) (*Response, int, error) {

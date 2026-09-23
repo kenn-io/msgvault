@@ -129,6 +129,19 @@ func TestCardDAVUnsupportedProviderDoesNotReuseCredential(t *testing.T) {
 	required.ErrorIs(err, carddav.ErrCredentialNotBound)
 }
 
+func TestNewCardDAVControllerIgnoresUnrelatedTrustedOrigin(t *testing.T) {
+	require := require.New(t)
+	cfg, st, _ := savedCardDAVFixture(t)
+	cfg.CardDAV.TrustedOrigin = "https://contacts.example:8443"
+	cfg.CardDAV.TrustedAddresses = []string{"10.1.2.3"}
+	require.NoError(cfg.Save())
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	require.NoError(err)
+	controller, err := NewCardDAVController(loaded, st, slog.New(slog.DiscardHandler))
+	require.NoError(err)
+	assert.NotNil(t, controller.Current())
+}
+
 type controlledCardDAVCandidate struct {
 	cardDAVListFixture
 

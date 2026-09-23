@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-23"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -404,6 +404,12 @@ daemon validates discovery before saving these settings.
 | `username` | `""` | Server username or Google account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
+| `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |
+| `trusted_addresses` | `[]` | Private IP addresses to dial for `trusted_origin`, without DNS. Accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`; rejects duplicates, IPv6 zones, loopback, and link-local addresses. |
+
+Set both trusted-destination keys together. See the
+[private-server setup](usage/people-carddav.md#private-servers) for an example,
+restart requirements, and behavior when the origin does not match.
 
 Passwords and Google tokens stay in the configured token directory, outside
 `config.toml`. See [Google Contacts setup](usage/people-carddav.md#google-contacts)

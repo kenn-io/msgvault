@@ -48,6 +48,7 @@ type ClientOptions struct {
 	Resolver         *net.Resolver
 	DialContext      func(context.Context, string, string) (net.Conn, error)
 	// TrustedOrigin and TrustedAddresses are operator-supplied local policy.
+	// The pins apply only to requests whose origin matches TrustedOrigin.
 	// Exact private pins replace DNS only for this HTTPS credential origin.
 	TrustedOrigin    *url.URL
 	TrustedAddresses []netip.Addr

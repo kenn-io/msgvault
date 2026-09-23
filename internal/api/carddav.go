@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -187,18 +186,9 @@ func newCardDAVService(st *store.Store, configured config.CardDAVConfig, passwor
 		return nil, errors.New("CardDAV base URL must be an absolute HTTP(S) URL")
 	}
 	options := carddav.ClientOptions{CredentialOrigin: origin, Username: configured.Username, Password: password}
-	if configured.TrustedOrigin != "" || len(configured.TrustedAddresses) != 0 {
-		options.TrustedOrigin, err = url.Parse(configured.TrustedOrigin)
-		if err != nil {
-			return nil, errors.New("invalid trusted CardDAV origin")
-		}
-		for _, raw := range configured.TrustedAddresses {
-			address, parseErr := netip.ParseAddr(raw)
-			if parseErr != nil {
-				return nil, errors.New("invalid trusted CardDAV address")
-			}
-			options.TrustedAddresses = append(options.TrustedAddresses, address)
-		}
+	options.TrustedOrigin, options.TrustedAddresses, err = configured.TrustedDestination()
+	if err != nil {
+		return nil, err
 	}
 	client, err := carddav.NewClient(options)
 	if err != nil {

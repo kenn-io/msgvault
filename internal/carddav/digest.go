@@ -4,11 +4,37 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/icholy/digest"
 )
 
 var errUnsupportedDigestChallenge = errors.New("unsupported CardDAV Digest challenge")
+
+// digestState is shared by client copies with per-operation byte budgets.
+type digestState struct {
+	mu         sync.Mutex
+	challenge  *digest.Challenge
+	nonceCount int
+}
+
+func (s *digestState) next() (*digest.Challenge, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.challenge != nil {
+		s.nonceCount++
+	}
+	return s.challenge, s.nonceCount
+}
+
+func (s *digestState) remember(challenge *digest.Challenge) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.challenge == nil || s.challenge.Nonce != challenge.Nonce {
+		s.nonceCount = 0
+	}
+	s.challenge = challenge
+}
 
 // selectDigestChallenge never includes challenge bytes in its error. A server
 // controls those bytes, and they can contain identifying or secret material.
@@ -63,14 +89,10 @@ func validDigestDirectiveKey(key string) bool {
 		return false
 	}
 	for _, r := range key {
-		if r < 'A' || r > 'Z' {
-			if r < 'a' || r > 'z' {
-				if r < '0' || r > '9' {
-					if r != '-' && r != '_' {
-						return false
-					}
-				}
-			}
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
 		}
 	}
 	return true

@@ -20,11 +20,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/sqliteutil"
@@ -282,6 +282,31 @@ type CardDAVConfig struct {
 	Enabled          bool     `toml:"enabled"`
 	TrustedOrigin    string   `toml:"trusted_origin"`
 	TrustedAddresses []string `toml:"trusted_addresses"`
+}
+
+// TrustedDestination parses and validates the local private-destination policy.
+// It is independent of BaseURL so operators can approve a server before setup.
+func (c CardDAVConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
+	if c.TrustedOrigin == "" && len(c.TrustedAddresses) == 0 {
+		return nil, nil, nil
+	}
+	origin, err := url.Parse(c.TrustedOrigin)
+	if err != nil {
+		return nil, nil, errors.New("carddav.trusted_origin: invalid URL")
+	}
+	addresses := make([]netip.Addr, 0, len(c.TrustedAddresses))
+	for _, raw := range c.TrustedAddresses {
+		address, err := netip.ParseAddr(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("carddav.trusted_addresses: invalid IP address %q", raw)
+		}
+		addresses = append(addresses, address)
+	}
+	origin, addresses, err = netguard.ValidateTrustedDestination(origin, addresses)
+	if err != nil {
+		return nil, nil, fmt.Errorf("carddav: %w", err)
+	}
+	return origin, addresses, nil
 }
 
 type SynctechSMSConfig struct {
@@ -940,22 +965,8 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if cfg.CardDAV.Provider != "" && cfg.CardDAV.Provider != "google" {
 		return nil, errors.New("carddav.provider must be empty or \"google\"")
 	}
-	if cfg.CardDAV.TrustedOrigin != "" || len(cfg.CardDAV.TrustedAddresses) != 0 {
-		origin, err := url.Parse(cfg.CardDAV.TrustedOrigin)
-		if err != nil {
-			return nil, errors.New("carddav.trusted_origin: invalid URL")
-		}
-		addresses := make([]netip.Addr, 0, len(cfg.CardDAV.TrustedAddresses))
-		for _, raw := range cfg.CardDAV.TrustedAddresses {
-			address, parseErr := netip.ParseAddr(raw)
-			if parseErr != nil {
-				return nil, errors.New("carddav.trusted_addresses: invalid address")
-			}
-			addresses = append(addresses, address)
-		}
-		if _, err := carddav.NewClient(carddav.ClientOptions{CredentialOrigin: origin, TrustedOrigin: origin, TrustedAddresses: addresses}); err != nil {
-			return nil, fmt.Errorf("carddav trusted destination: %w", err)
-		}
+	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
+		return nil, err
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {
