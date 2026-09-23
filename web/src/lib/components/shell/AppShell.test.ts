@@ -1137,6 +1137,8 @@ describe('AppShell', () => {
     const when = '2026-07-19T10:00:00Z';
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
       if (path === '/api/v1/relationships') return Response.json({
         rows: [1, 2].map((id) => ({
           canonical_id: id, display_label: id === 1 ? 'Alice Example' : 'Bob Example',
