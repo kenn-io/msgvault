@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RelationshipCalendar as RelationshipCalendarModel } from '../../relationships/models';
@@ -31,7 +31,7 @@ function calendar(overrides: Partial<RelationshipCalendarModel> = {}): Relations
 }
 
 describe('RelationshipCalendar', () => {
-  it('renders the shared five-level calendar with accessible message counts and no temperature footer', () => {
+  it('renders the shared five-level calendar with accessible message counts', () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
       firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
@@ -39,7 +39,6 @@ describe('RelationshipCalendar', () => {
 
     expect(screen.getByRole('heading', { name: 'Relationship' })).toBeTruthy();
     expect(screen.getByText('2026')).toBeTruthy();
-    expect(document.querySelector('.temperature-summary')).toBeNull();
     expect(screen.getByText('Less')).toBeTruthy();
     expect(screen.getByText('More')).toBeTruthy();
     expect(document.querySelectorAll('.legend .heat-cell')).toHaveLength(5);
@@ -61,26 +60,15 @@ describe('RelationshipCalendar', () => {
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
     await fireEvent.pointerOver(cell);
-    const trigger = fullPanel.closest('.kit-tooltip-trigger')!;
-    await fireEvent.mouseEnter(trigger);
     expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
     expect(cell.getAttribute('title')).toBeNull();
     await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!);
-    await fireEvent.mouseLeave(trigger);
     expect(screen.queryByRole('tooltip')).toBeNull();
     await fireEvent.focusIn(cell);
     expect(screen.getByRole('tooltip').textContent).toBe('3 messages on Jan 2, 2026');
-  });
-
-  it('stops measuring a tooltip when the calendar unmounts during hover', async () => {
-    const { unmount } = render(RelationshipCalendar, {
-      calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
-    });
-    const cell = screen.getAllByRole('button', { name: '3 messages on Jan 2, 2026' })[0];
-    await fireEvent.pointerOver(cell);
-    unmount();
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(cell.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+    await fireEvent.focusOut(cell);
+    expect(cell.getAttribute('aria-describedby')).toBeNull();
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
@@ -91,12 +79,10 @@ describe('RelationshipCalendar', () => {
     });
     const cell = screen.getAllByRole('button', { name: '3 messages on Jan 2, 2026' })[0];
     await fireEvent.pointerOver(cell);
-    await fireEvent.mouseEnter(cell.closest('.kit-tooltip-trigger')!);
     const tooltip = await screen.findByRole('tooltip');
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(false));
     expect(tooltip.textContent).toBe('3 messages on Jan 2, 2026');
     await fireEvent.pointerOver(cell.parentElement!);
-    expect(tooltip.classList.contains('inactive')).toBe(true);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('does not resurrect the tooltip from stale pointer coordinates when scrolling after pointerleave', async () => {
@@ -107,21 +93,17 @@ describe('RelationshipCalendar', () => {
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
     await fireEvent.pointerOver(cell, { clientX: 40, clientY: 40 });
-    await fireEvent.mouseEnter(cell.closest('.kit-tooltip-trigger')!);
-    const tooltip = await screen.findByRole('tooltip');
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(false));
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
 
-    // Pointer leaves the grid (tooltip hides) but the trigger stays hovered,
-    // then the scroll strip is dragged: scroll fires without pointer events,
+    // Pointer leaves the grid, then the scroll strip is dragged without pointer events,
     // and whatever sits under the stale coordinates must not revive the tip.
     await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!);
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(true));
+    expect(screen.queryByRole('tooltip')).toBeNull();
     const originalFromPoint = document.elementFromPoint;
     document.elementFromPoint = () => cell;
     try {
       await fireEvent.scroll(document.querySelector('.calendar-graphs')!);
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      expect(tooltip.classList.contains('inactive')).toBe(true);
+      expect(screen.queryByRole('tooltip')).toBeNull();
     } finally {
       document.elementFromPoint = originalFromPoint;
     }
@@ -138,13 +120,11 @@ describe('RelationshipCalendar', () => {
     // Real taps move focus to the cell, which erases the coordinates but
     // must not erase the pointer type.
     await fireEvent.focusIn(cell);
-    await fireEvent.mouseEnter(cell.closest('.kit-tooltip-trigger')!);
-    const tooltip = await screen.findByRole('tooltip');
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(false));
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
     // Touch pointers fire pointerleave right after pointerup; the tapped
     // day's tooltip must stay up until the next tap elsewhere.
     await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!, { pointerType: 'touch' });
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(false));
+    expect(screen.getByRole('tooltip').textContent).toBe('3 messages on Jan 2, 2026');
   });
 
   it('hides a touch-activated tooltip when the strip scrolls afterwards', async () => {
@@ -156,9 +136,7 @@ describe('RelationshipCalendar', () => {
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
     await fireEvent.pointerOver(cell, { pointerType: 'touch' });
     await fireEvent.focusIn(cell);
-    await fireEvent.mouseEnter(cell.closest('.kit-tooltip-trigger')!);
-    const tooltip = await screen.findByRole('tooltip');
-    await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(false));
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
 
     // A touch tap leaves its pointer type behind even though the tap moves
     // focus; the next scroll of the strip must dismiss the tooltip instead
@@ -167,7 +145,7 @@ describe('RelationshipCalendar', () => {
     document.elementFromPoint = () => cell;
     try {
       await fireEvent.scroll(document.querySelector('.calendar-graphs')!);
-      await waitFor(() => expect(tooltip.classList.contains('inactive')).toBe(true));
+      expect(screen.queryByRole('tooltip')).toBeNull();
     } finally {
       document.elementFromPoint = originalFromPoint;
     }
@@ -180,10 +158,16 @@ describe('RelationshipCalendar', () => {
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    cell.focus();
     await fireEvent.focusIn(cell);
     expect(screen.getByRole('tooltip')).toBeTruthy();
-    await fireEvent.keyDown(fullPanel.closest('section')!, { key: 'Escape' });
+    await fireEvent.keyDown(cell, { key: 'Escape' });
     expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(document.activeElement).toBe(cell);
+    await fireEvent.pointerMove(cell);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await fireEvent.pointerOver(within(fullPanel).getByRole('button', { name: 'No messages on Jan 1, 2026' }));
+    expect(screen.getByRole('tooltip').textContent).toBe('No messages on Jan 1, 2026');
   });
 
   it('navigates within first/current year bounds with explicit accessible controls', async () => {

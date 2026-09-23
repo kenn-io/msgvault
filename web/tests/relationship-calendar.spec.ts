@@ -16,7 +16,7 @@ const baseDay = {
   modality_mask: 0, level: 'NONE'
 };
 
-async function openCalendar(page: Page, firstAt = person.first_at) {
+async function openCalendar(page: Page, firstAt: string | Promise<string> = person.first_at) {
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
@@ -26,8 +26,8 @@ async function openCalendar(page: Page, firstAt = person.first_at) {
         meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } }],
     total_count: 1, cache_revision: 'cache-calendar', identity_revision: 1
   } }));
-  await page.route('**/api/v1/participants/1', (route) => route.fulfill({
-    json: { ...person, first_at: firstAt }
+  await page.route('**/api/v1/participants/1', async (route) => route.fulfill({
+    json: { ...person, first_at: await firstAt }
   }));
   await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
     canonical_id: 1, identity_revision: 1, cache_revision: 'cache-calendar', rows: [], total_count: 0
@@ -56,6 +56,7 @@ test('calendar fills its card at medium and narrow widths without clipping edge 
     await calendar.evaluate((element, value) => {
       const card = element.parentElement!;
       card.style.width = `${value}px`;
+      // Add the card's padding so the calendar itself has the requested width.
       card.style.width = `${value + value - element.getBoundingClientRect().width}px`;
     }, width);
     expect((await calendar.boundingBox())!.width).toBe(width);
@@ -98,6 +99,36 @@ test('calendar fills its card at medium and narrow widths without clipping edge 
       expect(tipBox!.y + tipBox!.height).toBeLessThanOrEqual(cellBox!.y - 3);
     }
   }
+});
+
+test('Escape dismisses the current day but hovering another day reopens the tooltip', async ({ page }) => {
+  await openCalendar(page);
+  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+  const first = calendar.getByRole('button', { name: '3 messages on Jan 1, 2026' }).filter({ visible: true });
+  const last = calendar.getByRole('button', { name: '1 message on Dec 31, 2026' }).filter({ visible: true });
+  const tooltip = page.getByRole('tooltip');
+  await first.hover();
+  await expect(tooltip).toHaveText('3 messages on Jan 1, 2026');
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await last.hover();
+  await expect(tooltip).toHaveText('1 message on Dec 31, 2026');
+  await calendar.locator('.month-row:visible').first().hover();
+  await expect(tooltip).toHaveCount(0);
+});
+
+test('year controls keep the year in place while person details load', async ({ page }) => {
+  let resolvePerson!: (firstAt: string) => void;
+  const firstAt = new Promise<string>((resolve) => { resolvePerson = resolve; });
+  await openCalendar(page, firstAt);
+  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+  const year = calendar.getByText('2026', { exact: true });
+  const before = await year.boundingBox();
+  await expect(calendar.getByRole('button', { name: 'Previous relationship year' })).toBeDisabled();
+  await expect(calendar.getByRole('button', { name: 'Next relationship year' })).toBeDisabled();
+  resolvePerson(person.first_at);
+  await expect(calendar.getByRole('button', { name: 'Previous relationship year' })).toBeEnabled();
+  expect((await year.boundingBox())!.x).toBe(before!.x);
 });
 
 test('calendar remains accessible in a narrow viewport with edge tooltips on screen', async ({ page }) => {

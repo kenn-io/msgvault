@@ -115,7 +115,7 @@ describe('RelationshipsWorkspace relationship calendar', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     await waitFor(() => expect(years).toEqual([2026, 2025]));
-    expect(screen.queryByText('Peak 87/100 - 2018')).toBeNull();
+    expect(await within(calendarSection).findAllByRole('button', { name: '1 message on Jan 1, 2025' })).not.toHaveLength(0);
   });
 
   it('does not render or request a calendar for domain targets', async () => {
