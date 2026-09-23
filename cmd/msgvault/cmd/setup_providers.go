@@ -34,9 +34,11 @@ const (
 	planActionOnboard = "onboard"
 
 	// Consent gates: one explicit answer per hosted provider.
-	gateVoyage  = "voyage"
-	gateMistral = "mistral"
-	gateOpenAI  = "openai"
+	gateVoyage     = "voyage"
+	gateMistral    = "mistral"
+	gateOpenAI     = "openai"
+	gateOpenRouter = "openrouter"
+	gateVenice     = "venice"
 
 	ollamaProbeTimeout = 2 * time.Second
 	ollamaProbeMaxBody = 1 << 20
@@ -56,6 +58,10 @@ type setupProvidersOptions struct {
 	trainingPosture        string
 	personRetentionPosture string
 	personTrainingPosture  string
+	providerID             string
+	model                  string
+	credentialEnv          string
+	apiKeyStdin            bool
 }
 
 // ollamaProbeResult is what a local Ollama server reports about itself.
@@ -304,7 +310,7 @@ func (p *setupProvidersPlan) gates() []string {
 		}
 	}
 	ordered := []string{}
-	for _, gate := range []string{gateVoyage, gateMistral, gateOpenAI} {
+	for _, gate := range []string{gateVoyage, gateMistral, gateOpenAI, gateOpenRouter, gateVenice} {
 		if seen[gate] {
 			ordered = append(ordered, gate)
 		}
@@ -379,6 +385,20 @@ func (p *setupProvidersPlan) mergedEdits() []config.TableEdit {
 }
 
 func validateSetupProvidersOptions(options setupProvidersOptions) error {
+	if options.providerID == "" && (options.model != "" || options.credentialEnv != "" || options.apiKeyStdin) {
+		return errors.New("--model, --credential-env, and --api-key-stdin require --provider")
+	}
+	if options.providerID != "" {
+		if _, err := peoplesweep.PresetProviderConfig(options.providerID, "validation-model"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(options.model) == "" {
+			return errors.New("--model is required with --provider")
+		}
+		if options.apiKeyStdin && options.credentialEnv != "" {
+			return errors.New("--api-key-stdin and --credential-env are mutually exclusive")
+		}
+	}
 	if options.documentRetention != documentindex.RetentionStandard && options.documentRetention != documentindex.RetentionZDR {
 		return fmt.Errorf("--document-retention must be %q or %q", documentindex.RetentionStandard, documentindex.RetentionZDR)
 	}
@@ -683,8 +703,8 @@ func planPeopleInference(
 		lane.Reason = "already enabled"
 		return lane, nil
 	}
-	if !options.allowSensitive && (detection.openAIKey ||
-		(detection.ollama.Reachable && detection.ollamaLoopback && detection.ollama.hasModel(loaded.Chat.Model))) {
+	if options.providerID == "" && !options.allowSensitive &&
+		detection.ollama.Reachable && detection.ollamaLoopback && detection.ollama.hasModel(loaded.Chat.Model) {
 		lane.Action = planActionPending
 		lane.Reason = "people sweep requires --allow-sensitive: sensitive archive excerpts may be sent to the selected inference provider and used to infer sensitive personal attributes"
 		lane.next = []string{"msgvault setup providers --allow-sensitive"}
@@ -701,22 +721,35 @@ func planPeopleInference(
 		allowedSources: sources, sourceSince: since, allowSensitive: options.allowSensitive,
 		requestTimeout: time.Minute, confirmed: true,
 	}
-	switch {
-	case detection.openAIKey:
-		if _, exists := loaded.People.Sweep.Providers[setupInferenceProfile]; exists {
-			lane.Action = planActionSkip
-			lane.Provider = setupInferenceProfile
-			lane.Reason = "profile exists but the sweep is off; run `msgvault person provider consent " +
-				setupInferenceProfile + " --yes` and `msgvault person provider use " + setupInferenceProfile + "`"
+	if options.providerID != "" {
+		preset, err := peoplesweep.PresetProviderConfig(options.providerID, options.model)
+		if err != nil {
+			lane.Action, lane.Reason = planActionSkip, err.Error()
 			return lane, nil
 		}
-		base.endpoint, base.model, base.auth = setupOpenAIEndpoint, setupInferenceModel, string(peoplesweep.AuthBearer)
-		base.credentialEnv, base.reasoningEffort = setupOpenAIKeyEnv, setupInferenceReasoning
-		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionOnboard, setupInferenceProfile, setupInferenceModel, gateOpenAI
-		lane.Reason = fmt.Sprintf("openai_chat profile %q at %s reasoning; sensitive archive excerpts from %s since %s may be sent to OpenAI and used to infer sensitive personal attributes; extraction runs for tracked people only",
-			setupInferenceProfile, setupInferenceReasoning, strings.Join(sources, ", "), since)
+		base.custom = false
+		base.presetID = options.providerID
+		base.protocol, base.endpoint, base.auth = string(preset.Protocol), preset.Endpoint, string(preset.Auth)
+		base.model, base.credentialEnv, base.apiKeyStdin = options.model, options.credentialEnv, options.apiKeyStdin
+		gate := options.providerID
+		if _, exists := loaded.People.Sweep.Providers[gate]; exists {
+			lane.Action, lane.Provider = planActionSkip, gate
+			lane.Reason = "profile exists but the sweep is off; review and select it with `msgvault person provider use " + gate + "`"
+			return lane, nil
+		}
+		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionOnboard, gate, options.model, gate
+		lane.Reason = "selected " + gate + " people inference profile; synthetic check and separate disclosure consent are required"
 		lane.next = []string{"msgvault person track <person-id>"}
-		return lane, &setupInferencePlan{name: setupInferenceProfile, options: base, gate: gateOpenAI}
+		return lane, &setupInferencePlan{name: gate, options: base, gate: gate}
+	}
+	switch {
+	case detection.openAIKey:
+		lane.Action = planActionSkip
+		command := peopleInferencePresetSetupCommand("openai", setupOpenAIKeyEnv)
+		codexCommand := peopleInferenceCodexEnrollCommand()
+		lane.Reason = setupOpenAIKeyEnv + " is available for embeddings; select people inference explicitly with `" + command + "`, or enroll Codex with `" + codexCommand + "` (requires a terminal)"
+		lane.next = []string{command, codexCommand}
+		return lane, nil
 	case detection.ollama.Reachable && detection.ollamaLoopback && detection.ollama.hasModel(loaded.Chat.Model):
 		if _, exists := loaded.People.Sweep.Providers[setupOllamaProfile]; exists {
 			lane.Action = planActionSkip
@@ -743,7 +776,10 @@ func planPeopleInference(
 			"` or set [chat].model to an available chat model, then re-run setup"
 	default:
 		lane.Action = planActionSkip
-		lane.Reason = "needs " + setupOpenAIKeyEnv + " or a local Ollama server"
+		command := peopleInferencePresetSetupCommand("<openai|openrouter|venice>", "<KEY_ENV>")
+		codexCommand := peopleInferenceCodexEnrollCommand()
+		lane.Reason = "choose an HTTP people inference provider with `" + command + "`, enroll Codex with `" + codexCommand + "` (requires a terminal), or run local Ollama"
+		lane.next = []string{command, codexCommand}
 	}
 	return lane, nil
 }
@@ -786,10 +822,29 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 				"  - document search query text, after `msgvault documents vectors consent --purpose queries --yes`")
 		}
 		if plan.inference != nil && plan.inference.gate == gateOpenAI {
+			choice := plan.inference.options
 			lines = append(lines, "  - bounded evidence packets of "+
-				strings.Join(plan.inference.options.allowedSources, ", ")+
-				" for tracked people ("+setupInferenceModel+"); a synthetic check request is sent now",
-				"  - --allow-sensitive authorizes sending sensitive archive excerpts to OpenAI and inferring sensitive personal attributes")
+				strings.Join(choice.allowedSources, ", ")+
+				" for tracked people ("+choice.model+") since "+choice.sourceSince+"; a synthetic check request is sent now",
+				"  - recorded assertions: retention="+choice.retentionPosture+", training="+choice.trainingPosture)
+			if choice.allowSensitive {
+				lines = append(lines, "  - --allow-sensitive authorizes sending sensitive archive excerpts to OpenAI and inferring sensitive personal attributes")
+			} else {
+				lines = append(lines, "  - sensitive archive excerpts are excluded from provider packets")
+			}
+		}
+	case gateOpenRouter, gateVenice:
+		if plan.inference != nil && plan.inference.gate == gate {
+			choice := plan.inference.options
+			lines = append(lines, gate+" ("+choice.endpoint+") receives:",
+				"  - a synthetic check request now; after consent, bounded evidence packets of "+
+					strings.Join(choice.allowedSources, ", ")+" for tracked people ("+choice.model+") since "+choice.sourceSince,
+				"  - recorded assertions: retention="+choice.retentionPosture+", training="+choice.trainingPosture)
+			if choice.allowSensitive {
+				lines = append(lines, "  - sensitive archive excerpts and inferred personal attributes are allowed")
+			} else {
+				lines = append(lines, "  - sensitive archive excerpts are excluded from provider packets")
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -840,7 +895,7 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
 	var options setupProvidersOptions
 	command := &cobra.Command{
 		Use:   "providers",
-		Short: "Turn on the retrieval and people lanes the available API keys support, with recommended defaults",
+		Short: "Configure retrieval and people inference providers",
 		Long: `Read the environment and configure every lane that is still unset:
 
   ` + setupVoyageKeyEnv + `   text search with Voyage contextual embeddings (conversation
@@ -848,21 +903,28 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
                    people search, and the visual attachment lane once its probe
                    manifest exists
   ` + setupOpenAIKeyEnv + `   text search on the OpenAI-compatible path when no Voyage key
-                   is present, and the people sweep on ` + setupInferenceModel + `
+                   is present
   MISTRAL_API_KEY  document attachment extraction, plus document vectors when a
                    text lane is on
   (no keys)        a local Ollama server at [chat].server when it is reachable
 
-Hosted lanes never turn on from a key alone: setup asks once per provider,
-writes the recommended values to config.toml, runs the people-provider
-check and consent, and prints what is on, what is off, and why. Lanes that
-are already configured are left alone, so re-running after adding a key
-upgrades only that lane. Probe manifests are expected at
+Choose a hosted people inference provider with --provider openai, openrouter,
+or venice. Supply --model, a credential source, retention and training
+assertions, and --allow-sensitive=true or --allow-sensitive=false. Setup checks
+the named provider with a synthetic request before consent and selection.
+For a Codex subscription, run msgvault person provider enroll-codex with a
+profile name and explicit source scope and policy flags. Codex enrollment
+requires a terminal and uses daemon device login; setup never starts the login
+flow.
+
+Hosted lanes require confirmation. Setup prints the planned changes and asks
+before writing them. Configured lanes keep their existing settings. Probe
+manifests are expected at
 <home>/` + setupVoyageManifestName + ` and <home>/` + setupMistralManifestName + `.
 
-The people sweep also requires --allow-sensitive: archive excerpts may contain
-sensitive details and may be used to infer sensitive personal attributes.
---yes accepts provider prompts but does not grant this separate opt-in.`,
+The people sweep can send archive excerpts and infer personal attributes.
+--allow-sensitive controls whether sensitive excerpts may be included.
+--yes accepts provider prompts; it does not choose a provider or a model.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runSetupProviders(command, deps, options)
@@ -882,12 +944,26 @@ sensitive details and may be used to infer sensitive personal attributes.
 		"Retention assertion recorded for embedding and inference providers")
 	flags.StringVar(&options.trainingPosture, "training-posture", setupPostureDeclared,
 		"Training assertion recorded for embedding and inference providers")
+	flags.StringVar(&options.providerID, "provider", "", "People inference provider preset: openai, openrouter, or venice")
+	flags.StringVar(&options.model, "model", "", "Explicit people inference model ID")
+	flags.StringVar(&options.credentialEnv, "credential-env", "", "Read only this environment variable for people inference")
+	flags.BoolVar(&options.apiKeyStdin, "api-key-stdin", false, "Read the people inference API key from standard input")
 	return command
 }
 
 func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions) error {
 	if err := validateSetupProvidersOptions(options); err != nil {
 		return err
+	}
+	if options.providerID != "" {
+		if !command.Flags().Changed("retention-posture") || !command.Flags().Changed("training-posture") ||
+			!command.Flags().Changed("allow-sensitive") {
+			return errors.New("--provider requires explicit --retention-posture, --training-posture, and --allow-sensitive=true|false")
+		}
+		if options.credentialEnv == "" && !options.apiKeyStdin &&
+			(deps.isTerminal == nil || !deps.isTerminal(command)) {
+			return errors.New("--provider requires --credential-env or --api-key-stdin outside a terminal")
+		}
 	}
 	if deps.remoteConfigured != nil && deps.remoteConfigured() {
 		return errors.New("setup providers cannot run against a configured remote daemon: it edits this machine's config.toml, which the remote daemon never reads; run it on the daemon host, or pass --local to configure a daemon on this machine")

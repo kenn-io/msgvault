@@ -174,7 +174,7 @@ func reverifyReleasedCodexIsolation(
 }
 
 func snapshotCodexExecutable(sourcePath string) (_ *verifiedCodexExecutable, _ string, retErr error) {
-	source, err := os.Open(sourcePath)
+	source, err := os.Open(sourcePath) //nolint:gosec // The resolved, pinned executable path is intentionally opened for the snapshot.
 	if err != nil {
 		return nil, "", errors.New("open codex executable")
 	}
@@ -258,7 +258,7 @@ func resolveCodexExecutable(executable string) (string, error) {
 }
 
 func hashCodexExecutable(executable string) (string, error) {
-	file, err := os.Open(executable)
+	file, err := os.Open(executable) //nolint:gosec // The selected executable path is intentionally read to verify its digest.
 	if err != nil {
 		return "", errors.New("hash codex executable")
 	}

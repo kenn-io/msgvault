@@ -620,12 +620,23 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	lane.State = laneStateOff
 	if env.hasEnv(setupOpenAIKeyEnv) {
 		lane.State = laneStatePending
-		lane.Reason = setupOpenAIKeyEnv + " present; setup can onboard the " + setupInferenceModel + " profile"
-		lane.Next = []string{"msgvault setup providers"}
+		lane.Reason = setupOpenAIKeyEnv + " is available; select an HTTP people inference provider with --provider and --model, or enroll Codex through the daemon"
+		lane.Next = []string{peopleInferencePresetSetupCommand("openai", setupOpenAIKeyEnv), peopleInferenceCodexEnrollCommand()}
 		return lane
 	}
-	lane.Reason = "needs " + setupOpenAIKeyEnv + " or a reachable local Ollama server, then `msgvault setup providers`"
+	lane.Reason = "choose an HTTP people inference provider with --provider and --model, enroll Codex through the daemon, or use a reachable local Ollama server"
+	lane.Next = []string{peopleInferencePresetSetupCommand("<openai|openrouter|venice>", "<KEY_ENV>"), peopleInferenceCodexEnrollCommand()}
 	return lane
+}
+
+func peopleInferencePresetSetupCommand(provider, credentialEnv string) string {
+	return "msgvault setup providers --provider " + provider + " --model <model-id> --credential-env " + credentialEnv +
+		" --retention-posture <retention-posture> --training-posture <training-posture> --allow-sensitive=<true|false> --yes"
+}
+
+func peopleInferenceCodexEnrollCommand() string {
+	return "msgvault person provider enroll-codex <name> --source conversation_text --source-since <YYYY-MM-DD>" +
+		" --retention-posture <retention-posture> --training-posture <training-posture> --allow-sensitive=<true|false>"
 }
 
 func activityLane(cfg *config.Config) laneStatus {

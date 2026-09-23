@@ -9,6 +9,12 @@ import (
 )
 
 func (m Model) renderSettingsView() string {
+	if m.settings.peopleControls.active {
+		return m.renderPeopleInferenceControls()
+	}
+	if m.settings.codex.active {
+		return m.renderCodexSettings()
+	}
 	title := "Settings"
 	if m.settings.dirty() {
 		title += " *"
@@ -27,6 +33,23 @@ func (m Model) renderSettingsView() string {
 	}
 
 	lines := []string{header}
+	if status := m.settings.peopleInferenceStatus; status != nil {
+		configured := textutil.SanitizeTerminal(status.Configured)
+		running := textutil.SanitizeTerminal(status.Running)
+		if configured == "" {
+			configured = "none"
+		}
+		if running == "" {
+			running = "none"
+		}
+		lines = append(lines, strings.Join(wrapText("People inference: "+configured+" · Running: "+running, max(m.width, 20)), "\n"))
+		if status.ConfiguredFingerprint != "" {
+			lines = append(lines, strings.Join(wrapText("Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
+		}
+		if status.PendingRestart {
+			lines = append(lines, "Restart the daemon to apply the people inference selection.")
+		}
+	}
 	if m.settings.pendingRestart {
 		lines = append(lines, m.styles.flash.Render("Pending restart — saved changes take effect after the daemon restarts."))
 	}
@@ -211,6 +234,13 @@ func (m Model) settingsFieldValue(field SettingField) string {
 }
 
 func (m Model) settingsFooter() string {
+	peopleEntry := ""
+	if m.peopleInferenceBackend() != nil {
+		peopleEntry = "  [p] People inference"
+	}
+	if m.peopleInferenceControlBackend() != nil {
+		peopleEntry += "  [i] People inference controls"
+	}
 	if m.settings.saving {
 		return "Saving settings…"
 	}
@@ -221,11 +251,11 @@ func (m Model) settingsFooter() string {
 		return "[Enter] Use value  [Ctrl+S] Use & save  [Esc] Cancel"
 	}
 	if m.settingsIsNarrow() && !m.settings.narrowFields {
-		return "[j/k] Category  [Enter/l] Open  [Esc] Back"
+		return "[j/k] Category  [Enter/l] Open" + peopleEntry + "  [Esc] Back"
 	}
 	if field, ok := m.settings.selectedField(); ok &&
 		field.Kind == SettingKindSecret && !field.ReadOnly {
-		return "[j/k] Row  [h/l] Category  [Enter] Set secret  [x] Clear  [Ctrl+S] Save  [Esc] Back"
+		return "[j/k] Row  [h/l] Category  [Enter] Set secret  [x] Clear" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
 	}
-	return "[j/k] Row  [h/l] Category  [Enter] Edit  [Space] Toggle  [Ctrl+S] Save  [Esc] Back"
+	return "[j/k] Row  [h/l] Category  [Enter] Edit  [Space] Toggle" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
 }

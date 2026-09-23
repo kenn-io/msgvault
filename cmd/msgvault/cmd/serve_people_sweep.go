@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,9 +112,10 @@ func newProductionPersonSweepWorker(
 func newProductionStructuredRunner(
 	cfg *config.Config, st *store.Store,
 ) (*peoplesweep.Runner, error) {
-	registry, err := peoplesweep.NewDriverRegistry(
+	registry, err := peoplesweep.NewDriverRegistryWithCodexAuthHome(
 		http.DefaultClient,
 		peoplesweep.NewCodexCommandStarter(), peoplesweep.NewReleasedCodexIsolationGate(),
+		filepath.Join(cfg.TokensDir(), "people-codex"),
 	)
 	if err != nil {
 		return nil, err

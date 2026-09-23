@@ -379,6 +379,7 @@ func (s *Server) registerSettingsRoutes(api huma.API) {
 	registerRawHumaRoute(api, patch, s.handlePatchSettings)
 	s.registerProviderCredentialSettingsRoutes(api)
 	s.registerPersonEnrichmentSettingsRoute(api)
+	s.registerPeopleInferenceSettingsRoute(api)
 }
 
 func addSettingsETagHeader(response *huma.Response) {

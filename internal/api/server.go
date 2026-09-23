@@ -312,7 +312,10 @@ type Server struct {
 	ftsRebuildGen atomic.Uint64
 	// settingsPendingRestart remains set after the first successful browser
 	// config edit for the lifetime of this daemon process.
-	settingsPendingRestart atomic.Bool
+	settingsPendingRestart  atomic.Bool
+	peopleCodexLoginOnce    sync.Once
+	peopleCodexLoginInitErr error
+	peopleCodexLogins       *peopleCodexLogins
 	// settingsConfigEditor is the persisted config transaction boundary. Tests
 	// replace it to deterministically exercise post-publication error handling.
 	settingsConfigEditor func(string, string, []config.Edit) (config.ConfigFile, error)
@@ -410,6 +413,10 @@ type Server struct {
 	// worker, which makes POST /people/{id}/brief/generate report unavailable.
 	personBriefGeneratorMu sync.RWMutex
 	personBriefGenerator   PersonBriefGenerator
+	// peopleInferenceHTTPClient is the HTTP transport for synthetic provider
+	// checks. Nil uses the process default; tests route fixed vendor hosts to
+	// local HTTP fixtures without changing the configured egress policy.
+	peopleInferenceHTTPClient *http.Client
 	// listenerBound is set true once StartOnListener binds a real listener
 	// (the sole production serve path). It stays false for direct-handler unit
 	// tests that drive s.Router() without starting a listener, leaving the

@@ -2867,6 +2867,218 @@ type PatchSettingsErrorResponseJSON422 = ErrorResponse
 
 type PatchSettingsErrorResponseJSON428 = ErrorResponse
 
+type GetSettingsPeopleInferenceResponse = PeopleInferenceSettingsResponse
+
+type GetSettingsPeopleInferenceErrorResponse = ErrorResponse
+
+type StartSettingsPeopleCodexLoginResponse = PeopleCodexLoginResponse
+
+type StartSettingsPeopleCodexLoginErrorResponse = ErrorResponse
+
+type StartSettingsPeopleCodexLoginErrorResponseJSON = ErrorResponse
+
+type StartSettingsPeopleCodexLoginErrorResponseJSON409 = ErrorResponse
+
+type StartSettingsPeopleCodexLoginErrorResponseJSON502 = ErrorResponse
+
+type StartSettingsPeopleCodexLoginErrorResponseJSON503 = ErrorResponse
+
+type StartSettingsPeopleCodexLoginErrorResponseJSON504 = ErrorResponse
+
+type CancelSettingsPeopleCodexLoginResponse = PeopleCodexLoginStatusResponse
+
+type CancelSettingsPeopleCodexLoginErrorResponse = ErrorResponse
+
+type CancelSettingsPeopleCodexLoginErrorResponseJSON = ErrorResponse
+
+type CancelSettingsPeopleCodexLoginErrorResponseJSON409 = ErrorResponse
+
+type CancelSettingsPeopleCodexLoginErrorResponseJSON502 = ErrorResponse
+
+type CancelSettingsPeopleCodexLoginErrorResponseJSON503 = ErrorResponse
+
+type GetSettingsPeopleCodexLoginResponse = PeopleCodexLoginStatusResponse
+
+type GetSettingsPeopleCodexLoginErrorResponse = ErrorResponse
+
+type GetSettingsPeopleCodexLoginErrorResponseJSON = ErrorResponse
+
+type GetSettingsPeopleCodexLoginErrorResponseJSON409 = ErrorResponse
+
+type GetSettingsPeopleCodexLoginErrorResponseJSON502 = ErrorResponse
+
+type GetSettingsPeopleCodexLoginErrorResponseJSON503 = ErrorResponse
+
+type GetSettingsPeopleCodexModelsResponse = PeopleCodexModelsResponse
+
+type GetSettingsPeopleCodexModelsErrorResponse = ErrorResponse
+
+type GetSettingsPeopleCodexModelsErrorResponseJSON = ErrorResponse
+
+type GetSettingsPeopleCodexModelsErrorResponseJSON409 = ErrorResponse
+
+type GetSettingsPeopleCodexModelsErrorResponseJSON502 = ErrorResponse
+
+type GetSettingsPeopleCodexModelsErrorResponseJSON503 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileResponse = PeopleInferenceSettingsResponse
+
+type PutSettingsPeopleCodexProfileErrorResponse = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON404 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON409 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON412 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON422 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON428 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON500 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON502 = ErrorResponse
+
+type PutSettingsPeopleCodexProfileErrorResponseJSON503 = ErrorResponse
+
+type DisableSettingsPeopleInferenceResponse = PeopleInferenceSettingsResponse
+
+type DisableSettingsPeopleInferenceErrorResponse = ErrorResponse
+
+type DisableSettingsPeopleInferenceErrorResponseJSON = ErrorResponse
+
+type DisableSettingsPeopleInferenceErrorResponseJSON412 = ErrorResponse
+
+type DisableSettingsPeopleInferenceErrorResponseJSON428 = ErrorResponse
+
+type DisableSettingsPeopleInferenceErrorResponseJSON500 = ErrorResponse
+
+type DisableSettingsPeopleInferenceErrorResponseJSON503 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderResponse = PeopleInferenceSettingsResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON409 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON412 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON428 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON500 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceProviderErrorResponseJSON503 = ErrorResponse
+
+type PutSettingsPeopleInferencePresetResponse = PeopleInferenceSettingsResponse
+
+type PutSettingsPeopleInferencePresetErrorResponse = ErrorResponse
+
+type PutSettingsPeopleInferencePresetErrorResponseJSON = ErrorResponse
+
+type PutSettingsPeopleInferencePresetErrorResponseJSON412 = ErrorResponse
+
+type PutSettingsPeopleInferencePresetErrorResponseJSON422 = ErrorResponse
+
+type PutSettingsPeopleInferencePresetErrorResponseJSON428 = ErrorResponse
+
+type PutSettingsPeopleInferencePresetErrorResponseJSON500 = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderResponse = PeopleInferenceCheckResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON412 = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON428 = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON500 = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON502 = ErrorResponse
+
+type CheckSettingsPeopleInferenceProviderErrorResponseJSON503 = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderResponse = PeopleInferenceSettingsResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponseJSON = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponseJSON412 = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponseJSON428 = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponseJSON500 = ErrorResponse
+
+type ConsentSettingsPeopleInferenceProviderErrorResponseJSON503 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyResponse = PeopleInferenceSettingsResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponse = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON409 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON412 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON428 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON500 = ErrorResponse
+
+type DeleteSettingsPeopleInferenceKeyErrorResponseJSON503 = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyResponse = PeopleInferenceSettingsResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponse = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON409 = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON412 = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON428 = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON500 = ErrorResponse
+
+type PutSettingsPeopleInferenceKeyErrorResponseJSON503 = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderResponse = PeopleInferenceSettingsResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponseJSON = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponseJSON412 = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponseJSON428 = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponseJSON500 = ErrorResponse
+
+type RevokeSettingsPeopleInferenceProviderErrorResponseJSON503 = ErrorResponse
+
+type SelectSettingsPeopleInferenceResponse = PeopleInferenceSettingsResponse
+
+type SelectSettingsPeopleInferenceErrorResponse = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON412 = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON422 = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON428 = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON500 = ErrorResponse
+
+type SelectSettingsPeopleInferenceErrorResponseJSON503 = ErrorResponse
+
 type PutSettingsPersonEnrichmentProviderResponse = SettingsResponse
 
 type PutSettingsPersonEnrichmentProviderErrorResponse = ErrorResponse
@@ -5475,6 +5687,251 @@ type PatchSettingsResp struct {
 	JSON412      *PatchSettingsErrorResponseJSON412
 	JSON422      *PatchSettingsErrorResponseJSON422
 	JSON428      *PatchSettingsErrorResponseJSON428
+}
+
+type GetSettingsPeopleInferenceResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetSettingsPeopleInferenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSettingsPeopleInferenceResponse
+	Headers200   *GetSettingsPeopleInferenceResp200Headers
+}
+
+type StartSettingsPeopleCodexLoginResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *StartSettingsPeopleCodexLoginResponse
+	JSON400      *StartSettingsPeopleCodexLoginErrorResponse
+	JSON403      *StartSettingsPeopleCodexLoginErrorResponseJSON
+	JSON409      *StartSettingsPeopleCodexLoginErrorResponseJSON409
+	JSON502      *StartSettingsPeopleCodexLoginErrorResponseJSON502
+	JSON503      *StartSettingsPeopleCodexLoginErrorResponseJSON503
+	JSON504      *StartSettingsPeopleCodexLoginErrorResponseJSON504
+}
+
+type CancelSettingsPeopleCodexLoginResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CancelSettingsPeopleCodexLoginResponse
+	JSON403      *CancelSettingsPeopleCodexLoginErrorResponse
+	JSON404      *CancelSettingsPeopleCodexLoginErrorResponseJSON
+	JSON409      *CancelSettingsPeopleCodexLoginErrorResponseJSON409
+	JSON502      *CancelSettingsPeopleCodexLoginErrorResponseJSON502
+	JSON503      *CancelSettingsPeopleCodexLoginErrorResponseJSON503
+}
+
+type GetSettingsPeopleCodexLoginResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSettingsPeopleCodexLoginResponse
+	JSON403      *GetSettingsPeopleCodexLoginErrorResponse
+	JSON404      *GetSettingsPeopleCodexLoginErrorResponseJSON
+	JSON409      *GetSettingsPeopleCodexLoginErrorResponseJSON409
+	JSON502      *GetSettingsPeopleCodexLoginErrorResponseJSON502
+	JSON503      *GetSettingsPeopleCodexLoginErrorResponseJSON503
+}
+
+type GetSettingsPeopleCodexModelsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSettingsPeopleCodexModelsResponse
+	JSON403      *GetSettingsPeopleCodexModelsErrorResponse
+	JSON404      *GetSettingsPeopleCodexModelsErrorResponseJSON
+	JSON409      *GetSettingsPeopleCodexModelsErrorResponseJSON409
+	JSON502      *GetSettingsPeopleCodexModelsErrorResponseJSON502
+	JSON503      *GetSettingsPeopleCodexModelsErrorResponseJSON503
+}
+
+type PutSettingsPeopleCodexProfileResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PutSettingsPeopleCodexProfileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PutSettingsPeopleCodexProfileResponse
+	Headers200   *PutSettingsPeopleCodexProfileResp200Headers
+	JSON400      *PutSettingsPeopleCodexProfileErrorResponse
+	JSON403      *PutSettingsPeopleCodexProfileErrorResponseJSON
+	JSON404      *PutSettingsPeopleCodexProfileErrorResponseJSON404
+	JSON409      *PutSettingsPeopleCodexProfileErrorResponseJSON409
+	JSON412      *PutSettingsPeopleCodexProfileErrorResponseJSON412
+	JSON422      *PutSettingsPeopleCodexProfileErrorResponseJSON422
+	JSON428      *PutSettingsPeopleCodexProfileErrorResponseJSON428
+	JSON500      *PutSettingsPeopleCodexProfileErrorResponseJSON500
+	JSON502      *PutSettingsPeopleCodexProfileErrorResponseJSON502
+	JSON503      *PutSettingsPeopleCodexProfileErrorResponseJSON503
+}
+
+type DisableSettingsPeopleInferenceResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type DisableSettingsPeopleInferenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DisableSettingsPeopleInferenceResponse
+	Headers200   *DisableSettingsPeopleInferenceResp200Headers
+	JSON400      *DisableSettingsPeopleInferenceErrorResponse
+	JSON409      *DisableSettingsPeopleInferenceErrorResponseJSON
+	JSON412      *DisableSettingsPeopleInferenceErrorResponseJSON412
+	JSON428      *DisableSettingsPeopleInferenceErrorResponseJSON428
+	JSON500      *DisableSettingsPeopleInferenceErrorResponseJSON500
+	JSON503      *DisableSettingsPeopleInferenceErrorResponseJSON503
+}
+
+type DeleteSettingsPeopleInferenceProviderResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type DeleteSettingsPeopleInferenceProviderResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DeleteSettingsPeopleInferenceProviderResponse
+	Headers200   *DeleteSettingsPeopleInferenceProviderResp200Headers
+	JSON400      *DeleteSettingsPeopleInferenceProviderErrorResponse
+	JSON404      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON
+	JSON409      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON409
+	JSON412      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON412
+	JSON428      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON428
+	JSON500      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON500
+	JSON503      *DeleteSettingsPeopleInferenceProviderErrorResponseJSON503
+}
+
+type PutSettingsPeopleInferencePresetResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PutSettingsPeopleInferencePresetResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PutSettingsPeopleInferencePresetResponse
+	Headers200   *PutSettingsPeopleInferencePresetResp200Headers
+	JSON400      *PutSettingsPeopleInferencePresetErrorResponse
+	JSON409      *PutSettingsPeopleInferencePresetErrorResponseJSON
+	JSON412      *PutSettingsPeopleInferencePresetErrorResponseJSON412
+	JSON422      *PutSettingsPeopleInferencePresetErrorResponseJSON422
+	JSON428      *PutSettingsPeopleInferencePresetErrorResponseJSON428
+	JSON500      *PutSettingsPeopleInferencePresetErrorResponseJSON500
+}
+
+type CheckSettingsPeopleInferenceProviderResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CheckSettingsPeopleInferenceProviderResponse
+	JSON400      *CheckSettingsPeopleInferenceProviderErrorResponse
+	JSON409      *CheckSettingsPeopleInferenceProviderErrorResponseJSON
+	JSON412      *CheckSettingsPeopleInferenceProviderErrorResponseJSON412
+	JSON428      *CheckSettingsPeopleInferenceProviderErrorResponseJSON428
+	JSON500      *CheckSettingsPeopleInferenceProviderErrorResponseJSON500
+	JSON502      *CheckSettingsPeopleInferenceProviderErrorResponseJSON502
+	JSON503      *CheckSettingsPeopleInferenceProviderErrorResponseJSON503
+}
+
+type ConsentSettingsPeopleInferenceProviderResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type ConsentSettingsPeopleInferenceProviderResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ConsentSettingsPeopleInferenceProviderResponse
+	Headers200   *ConsentSettingsPeopleInferenceProviderResp200Headers
+	JSON400      *ConsentSettingsPeopleInferenceProviderErrorResponse
+	JSON409      *ConsentSettingsPeopleInferenceProviderErrorResponseJSON
+	JSON412      *ConsentSettingsPeopleInferenceProviderErrorResponseJSON412
+	JSON428      *ConsentSettingsPeopleInferenceProviderErrorResponseJSON428
+	JSON500      *ConsentSettingsPeopleInferenceProviderErrorResponseJSON500
+	JSON503      *ConsentSettingsPeopleInferenceProviderErrorResponseJSON503
+}
+
+type DeleteSettingsPeopleInferenceKeyResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type DeleteSettingsPeopleInferenceKeyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DeleteSettingsPeopleInferenceKeyResponse
+	Headers200   *DeleteSettingsPeopleInferenceKeyResp200Headers
+	JSON400      *DeleteSettingsPeopleInferenceKeyErrorResponse
+	JSON404      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON
+	JSON409      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON409
+	JSON412      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON412
+	JSON428      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON428
+	JSON500      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON500
+	JSON503      *DeleteSettingsPeopleInferenceKeyErrorResponseJSON503
+}
+
+type PutSettingsPeopleInferenceKeyResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PutSettingsPeopleInferenceKeyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PutSettingsPeopleInferenceKeyResponse
+	Headers200   *PutSettingsPeopleInferenceKeyResp200Headers
+	JSON400      *PutSettingsPeopleInferenceKeyErrorResponse
+	JSON404      *PutSettingsPeopleInferenceKeyErrorResponseJSON
+	JSON409      *PutSettingsPeopleInferenceKeyErrorResponseJSON409
+	JSON412      *PutSettingsPeopleInferenceKeyErrorResponseJSON412
+	JSON428      *PutSettingsPeopleInferenceKeyErrorResponseJSON428
+	JSON500      *PutSettingsPeopleInferenceKeyErrorResponseJSON500
+	JSON503      *PutSettingsPeopleInferenceKeyErrorResponseJSON503
+}
+
+type RevokeSettingsPeopleInferenceProviderResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type RevokeSettingsPeopleInferenceProviderResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RevokeSettingsPeopleInferenceProviderResponse
+	Headers200   *RevokeSettingsPeopleInferenceProviderResp200Headers
+	JSON400      *RevokeSettingsPeopleInferenceProviderErrorResponse
+	JSON409      *RevokeSettingsPeopleInferenceProviderErrorResponseJSON
+	JSON412      *RevokeSettingsPeopleInferenceProviderErrorResponseJSON412
+	JSON428      *RevokeSettingsPeopleInferenceProviderErrorResponseJSON428
+	JSON500      *RevokeSettingsPeopleInferenceProviderErrorResponseJSON500
+	JSON503      *RevokeSettingsPeopleInferenceProviderErrorResponseJSON503
+}
+
+type SelectSettingsPeopleInferenceResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type SelectSettingsPeopleInferenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SelectSettingsPeopleInferenceResponse
+	Headers200   *SelectSettingsPeopleInferenceResp200Headers
+	JSON400      *SelectSettingsPeopleInferenceErrorResponse
+	JSON409      *SelectSettingsPeopleInferenceErrorResponseJSON
+	JSON412      *SelectSettingsPeopleInferenceErrorResponseJSON412
+	JSON422      *SelectSettingsPeopleInferenceErrorResponseJSON422
+	JSON428      *SelectSettingsPeopleInferenceErrorResponseJSON428
+	JSON500      *SelectSettingsPeopleInferenceErrorResponseJSON500
+	JSON503      *SelectSettingsPeopleInferenceErrorResponseJSON503
 }
 
 type PutSettingsPersonEnrichmentProviderResp200Headers struct {

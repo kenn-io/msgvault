@@ -64,6 +64,7 @@ const (
 	ifMatchHeaderName   = "If-Match"
 	headerParamLocation = "header"
 	pathKey             = "path"
+	nameKey             = "name"
 
 	// formatInt64 is the OpenAPI schema format for 64-bit identifiers.
 	formatInt64 = "int64"

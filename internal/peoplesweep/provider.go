@@ -305,3 +305,10 @@ type CodexIsolationGate interface {
 	Verify(ctx context.Context, executable string, expectedBoundary string) (CodexAttestation, error)
 	ReverifyForLaunch(attestation CodexAttestation) error
 }
+
+// CodexLauncher is the app-server's attestation and process entry point.
+// Start rechecks the attestation immediately before launching the process.
+type CodexLauncher interface {
+	Verify(ctx context.Context, executable string) (CodexAttestation, error)
+	Start(ctx context.Context, attestation CodexAttestation, authHome string) (RPCProcess, error)
+}

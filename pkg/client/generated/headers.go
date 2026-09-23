@@ -237,6 +237,96 @@ func (p PatchSettingsHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PutSettingsPeopleCodexProfileHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PutSettingsPeopleCodexProfileHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type DisableSettingsPeopleInferenceHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DisableSettingsPeopleInferenceHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeleteSettingsPeopleInferenceProviderHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeleteSettingsPeopleInferenceProviderHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PutSettingsPeopleInferencePresetHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PutSettingsPeopleInferencePresetHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type CheckSettingsPeopleInferenceProviderHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (c CheckSettingsPeopleInferenceProviderHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type ConsentSettingsPeopleInferenceProviderHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (c ConsentSettingsPeopleInferenceProviderHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type DeleteSettingsPeopleInferenceKeyHeaders struct {
+	// IfMatch Opaque revision for this people provider credential
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeleteSettingsPeopleInferenceKeyHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PutSettingsPeopleInferenceKeyHeaders struct {
+	// IfMatch Opaque revision for this people provider credential
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PutSettingsPeopleInferenceKeyHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type RevokeSettingsPeopleInferenceProviderHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (r RevokeSettingsPeopleInferenceProviderHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type SelectSettingsPeopleInferenceHeaders struct {
+	// IfMatch Strong config ETag returned by the latest settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (s SelectSettingsPeopleInferenceHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type PutSettingsPersonEnrichmentProviderHeaders struct {
 	// IfMatch Strong config ETag returned by the latest settings read
 	IfMatch string `json:"If-Match" validate:"required"`

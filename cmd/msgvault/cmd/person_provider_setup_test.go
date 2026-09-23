@@ -276,6 +276,45 @@ func TestPersonProviderAddValidatesPolicyBeforeReadingCredentialOrNegotiating(t 
 	assert.NotContains(output, providerSetupSecretCanary)
 }
 
+func TestPersonProviderPresetRejectsEndpointSwapBeforeCredential(t *testing.T) {
+	path, loaded := providerSetupConfigFile(t)
+	deps := providerSetupCommandDeps(t, path, loaded, nil)
+	var lookups, negotiations int
+	deps.setup.lookupEnv = func(string) (string, bool) {
+		lookups++
+		return providerSetupSecretCanary, true
+	}
+	deps.setup.negotiate = func(context.Context, peoplesweep.ProviderConfig, peoplesweep.Credential) (peoplesweep.NegotiatedCapabilities, error) {
+		negotiations++
+		return peoplesweep.NegotiatedCapabilities{}, nil
+	}
+
+	_, err := executePersonProviderCommand(t, deps,
+		"add", "venice-bound", "--provider", "venice", "--model", "venice/model",
+		"--endpoint", "https://elsewhere.example.test/v1", "--credential-env", "VENICE_KEY",
+		"--retention-posture", "operator_asserted", "--training-posture", "operator_asserted",
+		"--source", "conversation_text", "--source-since", "2025-01-01", "--yes")
+	require.ErrorContains(t, err, "preset")
+	assert.Zero(t, lookups)
+	assert.Zero(t, negotiations)
+}
+
+func TestPersonProviderPresetCandidateKeepsAssertionsExplicit(t *testing.T) {
+	assert := assert.New(t)
+	candidate, err := personProviderCandidate(personProviderAddOptions{
+		presetID: "openrouter", model: "explicit/model", credentialEnv: "EXACT_ROUTER_KEY",
+		retentionPosture: "operator_asserted", trainingPosture: "operator_asserted",
+		allowedSources: []string{"conversation_text"}, sourceSince: "2025-01-01",
+	})
+	require.NoError(t, err)
+	assert.Equal("openrouter", candidate.PresetID)
+	assert.Equal("https://openrouter.ai/api/v1", candidate.Endpoint)
+	assert.Equal(peoplesweep.CredentialEnv, candidate.Credential)
+	assert.Equal("EXACT_ROUTER_KEY", candidate.CredentialEnv)
+	assert.Equal("operator_asserted", candidate.RetentionPosture)
+	assert.Equal("explicit/model", candidate.Model)
+}
+
 func TestPersonProviderAddRejectsLocalOptionConflictsBeforeCatalogOrState(t *testing.T) {
 	tests := []struct {
 		name  string

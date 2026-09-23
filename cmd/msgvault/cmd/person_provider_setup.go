@@ -42,6 +42,7 @@ type personProviderCreateCredentialStore interface {
 
 type personProviderAddOptions struct {
 	custom              bool
+	presetID            string
 	protocol            string
 	endpoint            string
 	model               string
@@ -92,7 +93,7 @@ func (o personProviderAddOptions) explicitTransport() bool {
 // needsCatalog reports whether add must fetch the models.dev catalog: only
 // when a transport field is missing or a catalog price hint was requested.
 func (o personProviderAddOptions) needsCatalog() bool {
-	return !o.custom && (!o.explicitTransport() || o.acceptCatalogPrices)
+	return o.presetID == "" && !o.custom && (!o.explicitTransport() || o.acceptCatalogPrices)
 }
 
 func defaultPersonProviderSetupDeps() personProviderSetupDeps {
@@ -150,6 +151,7 @@ func newPersonProviderAddCommand(deps personProviderCommandDeps) *cobra.Command 
 	}
 	flags := command.Flags()
 	flags.BoolVar(&options.custom, "custom", false, "Skip public catalog suggestions")
+	flags.StringVar(&options.presetID, "provider", "", "First-party provider preset: openai, openrouter, or venice")
 	flags.StringVar(&options.protocol, "protocol", "", "Explicit protocol identifier")
 	flags.StringVar(&options.endpoint, "endpoint", "", "Explicit provider endpoint")
 	flags.StringVar(&options.model, "model", "", "Explicit provider model identifier")
@@ -386,19 +388,37 @@ func runPersonProviderAdd(
 }
 
 func personProviderCandidate(options personProviderAddOptions) (peoplesweep.ProviderConfig, error) {
-	if options.protocol == "" || options.endpoint == "" || options.model == "" || options.auth == "" ||
+	if (options.presetID == "" && (options.protocol == "" || options.endpoint == "" || options.auth == "")) || options.model == "" ||
 		options.retentionPosture == "" || options.trainingPosture == "" ||
 		len(options.allowedSources) == 0 || options.sourceSince == "" {
-		return peoplesweep.ProviderConfig{}, errors.New("protocol, endpoint, model, auth, retention, training, source, and source-since are required")
+		return peoplesweep.ProviderConfig{}, errors.New("provider or protocol, endpoint, auth, model, retention, training, source, and source-since are required")
 	}
-	candidate := peoplesweep.ProviderConfig{
-		Protocol: peoplesweep.Protocol(options.protocol), Endpoint: options.endpoint,
-		Model: options.model, Auth: peoplesweep.AuthScheme(options.auth),
-		RetentionPosture: options.retentionPosture, TrainingPosture: options.trainingPosture,
-		SourceSince: options.sourceSince, SourceUntil: options.sourceUntil,
-		AllowSensitive: options.allowSensitive, ReasoningEffort: options.reasoningEffort,
-		ReasoningMode: options.reasoningMode, RequestTimeout: options.requestTimeout,
+	var candidate peoplesweep.ProviderConfig
+	if options.presetID != "" {
+		var err error
+		candidate, err = peoplesweep.PresetProviderConfig(options.presetID, options.model)
+		if err != nil {
+			return peoplesweep.ProviderConfig{}, err
+		}
+		if (options.protocol != "" && options.protocol != string(candidate.Protocol)) ||
+			(options.endpoint != "" && options.endpoint != candidate.Endpoint) ||
+			(options.auth != "" && options.auth != string(candidate.Auth)) {
+			return peoplesweep.ProviderConfig{}, fmt.Errorf("people provider preset %q cannot use a different protocol, endpoint, or auth", options.presetID)
+		}
+	} else {
+		candidate.Protocol = peoplesweep.Protocol(options.protocol)
+		candidate.Endpoint = options.endpoint
+		candidate.Model = options.model
+		candidate.Auth = peoplesweep.AuthScheme(options.auth)
 	}
+	candidate.RetentionPosture = options.retentionPosture
+	candidate.TrainingPosture = options.trainingPosture
+	candidate.SourceSince = options.sourceSince
+	candidate.SourceUntil = options.sourceUntil
+	candidate.AllowSensitive = options.allowSensitive
+	candidate.ReasoningEffort = options.reasoningEffort
+	candidate.ReasoningMode = options.reasoningMode
+	candidate.RequestTimeout = options.requestTimeout
 	for _, source := range options.allowedSources {
 		candidate.AllowedSources = append(candidate.AllowedSources, peoplesweep.SourceClass(source))
 	}
@@ -420,6 +440,9 @@ func personProviderCandidate(options personProviderAddOptions) (peoplesweep.Prov
 }
 
 func validatePersonProviderAddOptions(options personProviderAddOptions) error {
+	if options.presetID != "" && (options.custom || options.acceptCatalogPrices) {
+		return errors.New("--provider cannot be combined with --custom or --accept-catalog-prices")
+	}
 	if options.protocol == string(peoplesweep.ProtocolCodexAppServer) {
 		return errors.New("codex_app_server profiles are not created by person provider add: " +
 			"generic onboarding requires an HTTP endpoint that codex_app_server forbids, and capability negotiation " +
@@ -454,7 +477,7 @@ func resolvePersonProviderAddCandidate(
 	options personProviderAddOptions,
 	suggestions []peoplesweep.ProviderSuggestion,
 ) (peoplesweep.ProviderConfig, error) {
-	if options.custom || options.explicitTransport() {
+	if options.presetID != "" || options.custom || options.explicitTransport() {
 		return personProviderCandidate(options)
 	}
 	selection, err := selectPersonProviderCatalogSuggestion(options, suggestions)
