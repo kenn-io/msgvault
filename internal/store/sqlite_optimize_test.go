@@ -33,6 +33,7 @@ func plannerMaintenanceRecords(t *testing.T, buf *bytes.Buffer) []map[string]any
 
 type plannerMaintenanceSignalHandler struct {
 	slog.Handler
+
 	interrupted chan struct{}
 	once        sync.Once
 }
@@ -41,7 +42,10 @@ func (h *plannerMaintenanceSignalHandler) Handle(ctx context.Context, record slo
 	if record.Message == "SQLite planner statistics maintenance interrupted" {
 		h.once.Do(func() { close(h.interrupted) })
 	}
-	return h.Handler.Handle(ctx, record)
+	if err := h.Handler.Handle(ctx, record); err != nil {
+		return fmt.Errorf("handle planner maintenance log: %w", err)
+	}
+	return nil
 }
 
 func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
@@ -160,7 +164,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
-	require.NoError(s.db.DB.Close())
+	require.NoError(s.db.Close())
 	actualErr := s.optimizeSQLite(t.Context())
 	require.Error(actualErr)
 
@@ -184,7 +188,7 @@ func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
 	require.NoError(err)
 	cleaned := false
 	s.closeCleanup = func() { cleaned = true }
-	require.NoError(s.db.DB.Close())
+	require.NoError(s.db.Close())
 	_, actualErr := s.db.DB.ExecContext(context.Background(), "PRAGMA optimize=0x10002")
 	require.Error(actualErr)
 
@@ -264,7 +268,7 @@ func TestOptimizeSQLiteSkipsReadOnlyAndPostgreSQLStores(t *testing.T) {
 	readOnly, err := OpenReadOnly(dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = readOnly.Close() })
-	require.NoError(readOnly.db.DB.Close())
+	require.NoError(readOnly.db.Close())
 	assert.NoError(readOnly.optimizeSQLite(t.Context()))
 
 	postgres := &Store{dialect: &PostgreSQLDialect{}}
