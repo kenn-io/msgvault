@@ -497,6 +497,7 @@ func buildCacheDerivedOnly(
 		dbPath,
 		analyticsDir,
 		acquirePublishLock,
+		false,
 		builderOverrides...,
 	)
 }
@@ -514,6 +515,7 @@ func isDaemonBuildCacheChild() bool {
 
 type buildResult struct {
 	ExportedCount int64
+	StagedCount   int64
 	MaxMessageID  int64
 	OutputDir     string
 	Skipped       bool
@@ -706,6 +708,10 @@ func buildCacheScheduled(
 			builderOverrides...,
 		)
 	}
+	if relatedDriftOnly(staleness) {
+		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+			acquirePublishLock, true, builderOverrides...)
+	}
 	return buildCacheLocked(
 		dbPath,
 		analyticsDir,
@@ -831,7 +837,12 @@ func derivedDriftOnly(staleness cacheStaleness) bool {
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift &&
-		!staleness.HasDerivedDataDrift
+		!staleness.HasDerivedDataDrift && !staleness.HasRelatedRowDrift
+}
+
+func relatedDriftOnly(staleness cacheStaleness) bool {
+	return staleness.HasUsablePublication && staleness.HasRelatedRowDrift &&
+		staleness.Reason == "related rows changed"
 }
 
 // refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while
@@ -847,6 +858,7 @@ func refreshIdentityDatasetsOnly(
 		dbPath,
 		analyticsDir,
 		locking,
+		false,
 		builderOverrides...,
 	)
 }
@@ -878,6 +890,10 @@ func buildCacheLocked(
 		}
 		if derivedDriftOnly(staleness) {
 			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
+		}
+		if relatedDriftOnly(staleness) {
+			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+				locking, true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1000,6 +1016,7 @@ func buildCacheLocked(
 
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
+	var relatedChangeSeq int64
 	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
@@ -1028,6 +1045,21 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("get cache sync counters: %w", err)
 		}
 	}
+	var hasRelatedChangeJournal int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'cache_related_change_journal'
+	`).Scan(&hasRelatedChangeJournal); err != nil {
+		return nil, fmt.Errorf("check cache related-change journal: %w", err)
+	}
+	if hasRelatedChangeJournal > 0 {
+		if err := sourceSnapshot.QueryRow(`
+			SELECT COALESCE((SELECT seq FROM sqlite_sequence
+				WHERE name = 'cache_related_change_journal'), 0)
+		`).Scan(&relatedChangeSeq); err != nil {
+			return nil, fmt.Errorf("read cache related-change sequence: %w", err)
+		}
+	}
 	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
 		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
@@ -1041,6 +1073,34 @@ func buildCacheLocked(
 		}
 	}
 
+	var repairRelated bool
+	if hasPreviousState && !fullRebuild && relatedChangeSeq > previousState.LastRelatedChangeSeq {
+		var messageFactsChanged bool
+		if err := sourceSnapshot.QueryRow(`SELECT
+			EXISTS(SELECT 1 FROM cache_related_change_journal
+				WHERE seq > ? AND seq <= ? AND message_id <= ?),
+			EXISTS(SELECT 1 FROM cache_related_change_journal
+				WHERE seq > ? AND seq <= ? AND message_id <= ?
+				AND dataset = 'message_facts')
+		`, previousState.LastRelatedChangeSeq, relatedChangeSeq,
+			previousState.LastMessageID, previousState.LastRelatedChangeSeq,
+			relatedChangeSeq, previousState.LastMessageID).
+			Scan(&repairRelated, &messageFactsChanged); err != nil {
+			return nil, fmt.Errorf("inspect related rows for incremental repair: %w", err)
+		}
+		if messageFactsChanged {
+			fullRebuild = true
+			lastMessageID = 0
+			repairRelated = false
+		}
+	}
+	if hasPreviousState && maxID <= lastMessageID && !fullRebuild && repairRelated {
+		if err := sourceSnapshot.Close(); err != nil {
+			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
+		}
+		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+			locking, true, builderOverrides...)
+	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot after metadata check: %w", err)
@@ -1171,7 +1231,7 @@ func buildCacheLocked(
 	// qualified and the incremental predicate names mr.message_id rather
 	// than the bare column the shared junctionFilter helper produces.
 	recipientsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
+	if !replaceAll && !repairRelated && lastMessageID > 0 {
 		recipientsFilter = fmt.Sprintf(" WHERE mr.message_id > %d", lastMessageID)
 	}
 	recipientsFilter = junctionFilterFor("mr.message_id", recipientsFilter)
@@ -1211,7 +1271,7 @@ func buildCacheLocked(
 	messageLabelsDir := filepath.Join(staging.root, "message_labels")
 	escapedMessageLabelsDir := strings.ReplaceAll(messageLabelsDir, "'", "''")
 	messageLabelsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
+	if !replaceAll && !repairRelated && lastMessageID > 0 {
 		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	messageLabelsFilter = junctionFilter(messageLabelsFilter)
@@ -1233,7 +1293,7 @@ func buildCacheLocked(
 	attachmentsDir := filepath.Join(staging.root, tableAttachments)
 	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
 	attachmentsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
+	if !replaceAll && !repairRelated && lastMessageID > 0 {
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	attachmentsFilter = junctionFilter(attachmentsFilter)
@@ -1523,10 +1583,18 @@ func buildCacheLocked(
 	if replaceAll {
 		buildMode = identityindex.ModeFull
 	}
+	indexBaseRoot := staging.root
+	if repairRelated && !replaceAll {
+		indexBaseRoot, err = mergedRelatedIndexBase(analyticsDir, staging.root)
+		if err != nil {
+			return nil, err
+		}
+		buildMode = identityindex.ModeFull
+	}
 	derived, err := identityindex.Build(context.Background(), exportDB, identityindex.BuildOptions{
 		Mode:           buildMode,
 		CommittedRoot:  analyticsDir,
-		StagedBaseRoot: staging.root,
+		StagedBaseRoot: indexBaseRoot,
 		OutputRoot:     staging.root,
 		EffectiveAt:    cacheWatermark,
 		Progress:       reportIdentityBuildProgress,
@@ -1536,6 +1604,13 @@ func buildCacheLocked(
 	}
 	reportRelationshipActivityStats(derived.Activity)
 	publicationPlan := cachePublishPlanForMode(replaceAll)
+	if repairRelated && !replaceAll {
+		for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments,
+			identityindex.DatasetActivity} {
+			delete(publicationPlan.Append, dataset)
+			publicationPlan.Replace[dataset] = true
+		}
+	}
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
@@ -1600,6 +1675,7 @@ func buildCacheLocked(
 		LastCompletedSyncRunID:              lastCompletedSyncRunID,
 		LastCacheAdditionCount:              syncCounters.additions,
 		LastCacheUpdateCount:                syncCounters.updates,
+		LastRelatedChangeSeq:                relatedChangeSeq,
 		LastFailedSyncRunCount:              syncCounters.failedRunCount,
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
@@ -1619,9 +1695,13 @@ func buildCacheLocked(
 	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
 		return nil, err
 	}
+	if hasRelatedChangeJournal > 0 {
+		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+	}
 
 	return &buildResult{
 		ExportedCount: expectedTotalCount,
+		StagedCount:   stagedCount,
 		MaxMessageID:  maxID,
 		OutputDir:     analyticsDir,
 	}, nil

@@ -25,6 +25,7 @@ type cacheStaleness struct {
 	HasNew               bool  // new messages since last build
 	HasDeleted           bool  // deletions since last build
 	HasUpdated           bool  // updates or additions within the cached ID boundary require repair
+	HasRelatedRowDrift   bool  // journaled child rows changed within the committed message boundary
 	// HasIdentityDrift signals participant_links or account_identities
 	// changed since the last build. Also set whenever
 	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
@@ -349,6 +350,58 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		}
 	}
 
+	var hasRelatedChangeJournal int
+	err = db.DB().QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'cache_related_change_journal'
+	`).Scan(&hasRelatedChangeJournal)
+	if err != nil {
+		return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "cannot inspect related-change journal"}
+	}
+	if hasRelatedChangeJournal == 0 && state.LastRelatedChangeSeq != 0 {
+		return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "related-change journal is missing"}
+	}
+	if hasRelatedChangeJournal > 0 {
+		var latestSeq int64
+		err = db.DB().QueryRow(`
+			SELECT COALESCE((SELECT seq FROM sqlite_sequence
+				WHERE name = 'cache_related_change_journal'), 0)
+		`).Scan(&latestSeq)
+		if err != nil {
+			return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "cannot inspect related-change sequence"}
+		}
+		if latestSeq < state.LastRelatedChangeSeq {
+			result.FullRebuild = true
+			reasons = append(reasons, "related-change journal moved backwards")
+		} else if latestSeq > state.LastRelatedChangeSeq {
+			var coveredChanges bool
+			err = db.DB().QueryRow(`
+				SELECT EXISTS(SELECT 1 FROM cache_related_change_journal
+					WHERE seq > ? AND message_id <= ?)
+			`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&coveredChanges)
+			if err != nil {
+				return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "cannot inspect related-row changes"}
+			}
+			if coveredChanges {
+				result.HasRelatedRowDrift = true
+				reasons = append(reasons, "related rows changed")
+			}
+			var messageFactsChanged bool
+			err = db.DB().QueryRow(`
+				SELECT EXISTS(SELECT 1 FROM cache_related_change_journal
+					WHERE seq > ? AND message_id <= ? AND dataset = 'message_facts')
+			`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&messageFactsChanged)
+			if err != nil {
+				return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "cannot inspect message fact changes"}
+			}
+			if messageFactsChanged {
+				result.HasDerivedDataDrift = true
+				result.FullRebuild = true
+				reasons = append(reasons, "cached message facts changed")
+			}
+		}
+	}
+
 	derivedDataRevision, err := db.DerivedDataRevision()
 	if err != nil {
 		return cacheStaleness{
@@ -357,9 +410,17 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		}
 	}
 	if derivedDataRevision != state.DerivedDataRevision {
-		result.HasDerivedDataDrift = true
-		result.FullRebuild = true
-		reasons = append(reasons, "derived message data changed")
+		relatedOnly, relatedErr := db.RelatedDerivedRevisionsOnly(
+			state.DerivedDataRevision, derivedDataRevision)
+		if relatedErr != nil {
+			return cacheStaleness{NeedsBuild: true, FullRebuild: true,
+				Reason: "cannot classify derived-data revision"}
+		}
+		if !relatedOnly || !result.HasRelatedRowDrift {
+			result.HasDerivedDataDrift = true
+			result.FullRebuild = true
+			reasons = append(reasons, "derived message data changed")
+		}
 	}
 
 	// Account-identity drift covers identity mutations that invalidate baked

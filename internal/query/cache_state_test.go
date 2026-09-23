@@ -216,6 +216,9 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	changed.LastFailedSyncRunIDSum++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
+	changed.LastRelatedChangeSeq++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
 	changed.IdentityRevision++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
