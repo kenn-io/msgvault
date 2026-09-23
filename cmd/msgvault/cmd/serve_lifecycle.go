@@ -252,10 +252,11 @@ type backgroundServeStartOptions struct {
 
 func prepareBackgroundDaemonStart(
 	c *config.Config,
+	restartPolicy string,
 	incompatibleGuidance string,
 ) (backgroundDaemonStartPreparation, error) {
 	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil {
-		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, c.Server.DaemonAutoRestart) {
+		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{Reusable: rt}, nil
 		}
 		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
@@ -267,7 +268,7 @@ func prepareBackgroundDaemonStart(
 		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon runtimes: %w", compatErr)
 	}
 	if foundIncompatible {
-		if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt, Version, c.Server.DaemonAutoRestart) {
+		if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{}, incompatibleDaemonError(compatErr, incompatibleGuidance)
 		}
 		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
@@ -285,11 +286,11 @@ func prepareBackgroundDaemonStart(
 		}
 		if foundLegacy {
 			if legacyCompatErr == nil {
-				if !shouldUpgradeDaemonRuntimeWithPolicy(legacy, Version, c.Server.DaemonAutoRestart) {
+				if !shouldUpgradeDaemonRuntimeWithPolicy(legacy, Version, restartPolicy) {
 					return backgroundDaemonStartPreparation{Reusable: legacy}, nil
 				}
 			} else if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(
-				legacy, Version, c.Server.DaemonAutoRestart,
+				legacy, Version, restartPolicy,
 			) {
 				return backgroundDaemonStartPreparation{}, incompatibleDaemonError(
 					legacyCompatErr, incompatibleGuidance,
@@ -335,7 +336,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault daemon stop` before starting this version")
+	prep, err := prepareBackgroundDaemonStart(c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version")
 	if err != nil {
 		return err
 	}

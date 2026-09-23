@@ -17,23 +17,24 @@ TEMPORARY = {
 
 # Legacy root docs URLs permanently redirect into the /docs/ tier so links
 # published before the tiered site keep resolving.
+# Capture trailing slashes: Vercel adds them to directory URLs before redirects.
 PERMANENT = {
-    "/introduction/:path*": "/docs/introduction/:path*",
-    "/setup/:path*": "/docs/setup/:path*",
-    "/web-ui/:path*": "/docs/web-ui/:path*",
-    "/configuration/:path*": "/docs/configuration/:path*",
-    "/cli-reference/:path*": "/docs/cli-reference/:path*",
-    "/api-server/:path*": "/docs/api-server/:path*",
-    "/changelog/:path*": "/docs/changelog/:path*",
-    "/troubleshooting/:path*": "/docs/troubleshooting/:path*",
-    "/development/:path*": "/docs/development/:path*",
-    "/faq/:path*": "/docs/faq/:path*",
-    "/usage/:path*": "/docs/usage/:path*",
-    "/guides/:path*": "/docs/guides/:path*",
-    "/architecture/:path*": "/docs/architecture/:path*",
-    "/assets/static/:path*": "/docs/assets/static/:path*",
-    "/assets/generated/:path*": "/docs/assets/generated/:path*",
-    "/search/:path*": "/docs/search/:path*",
+    "/introduction/:path(.*)": "/docs/introduction/:path*",
+    "/setup/:path(.*)": "/docs/setup/:path*",
+    "/web-ui/:path(.*)": "/docs/web-ui/:path*",
+    "/configuration/:path(.*)": "/docs/configuration/:path*",
+    "/cli-reference/:path(.*)": "/docs/cli-reference/:path*",
+    "/api-server/:path(.*)": "/docs/api-server/:path*",
+    "/changelog/:path(.*)": "/docs/changelog/:path*",
+    "/troubleshooting/:path(.*)": "/docs/troubleshooting/:path*",
+    "/development/:path(.*)": "/docs/development/:path*",
+    "/faq/:path(.*)": "/docs/faq/:path*",
+    "/usage/:path(.*)": "/docs/usage/:path*",
+    "/guides/:path(.*)": "/docs/guides/:path*",
+    "/architecture/:path(.*)": "/docs/architecture/:path*",
+    "/assets/static/:path(.*)": "/docs/assets/static/:path*",
+    "/assets/generated/:path(.*)": "/docs/assets/generated/:path*",
+    "/search/:path(.*)": "/docs/search/:path*",
 }
 
 

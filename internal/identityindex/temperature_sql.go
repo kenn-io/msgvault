@@ -7,6 +7,12 @@ import (
 
 const temperatureBuildRelation = "relationship_build_temperature_daily"
 
+// relationshipTemperatureFirstYear is the first UTC calendar year that
+// receives an annual temperature, matching the relationship calendar's year
+// floor. Older qualifying activity still decays into the current score and
+// stays in the daily datasets.
+const relationshipTemperatureFirstYear = 1970
+
 // RelationshipTemperatureFactsSQL selects one qualifying row per stored
 // message and canonical person. activity is a trusted DuckDB relation rendered
 // by the cache/query packages; it is not user input. The shared SQL keeps cache
@@ -160,6 +166,7 @@ func relationshipTemperatureCTEs(effectiveAt time.Time) string {
 	       sum(meeting_count)::DOUBLE AS meeting_signal,
 	       bit_count(bit_or(modality_mask))::INTEGER AS modalities
 	FROM %[3]s
+	WHERE year(event_date) >= %[8]d
 	GROUP BY canonical_id, score_year
 ), annual_scored AS (
 	SELECT *,
@@ -213,5 +220,6 @@ func relationshipTemperatureCTEs(effectiveAt time.Time) string {
 		temperatureWeightReceived,
 		temperatureWeightMeetings,
 		temperatureBreadthStep,
+		relationshipTemperatureFirstYear,
 	)
 }

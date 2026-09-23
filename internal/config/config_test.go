@@ -38,6 +38,51 @@ enabled = true
 	assert.NotContains(encoded.String(), "password")
 }
 
+func TestCardDAVTrustedDestinationLoadsBeforeAccountSetup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[carddav]
+trusted_origin = "https://contacts.example:8443/"
+trusted_addresses = ["100.80.0.8", "10.1.2.3"]
+`), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.Empty(cfg.CardDAV.BaseURL)
+	assert.Equal("https://contacts.example:8443/", cfg.CardDAV.TrustedOrigin)
+	assert.Equal([]string{"100.80.0.8", "10.1.2.3"}, cfg.CardDAV.TrustedAddresses)
+	require.NoError(cfg.Save())
+	reloaded, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal(cfg.CardDAV.TrustedAddresses, reloaded.CardDAV.TrustedAddresses)
+}
+
+func TestCardDAVTrustedDestinationRejectsInvalidPolicy(t *testing.T) {
+	for name, tc := range map[string]struct{ policy, message string }{
+		"missing origin":    {`trusted_addresses = ["10.1.2.3"]`, "trusted_origin must include a hostname"},
+		"missing address":   {`trusted_origin = "https://contacts.example"`, "trusted_addresses must contain at least one address"},
+		"http origin":       {"trusted_origin = \"http://contacts.example\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must use HTTPS"},
+		"public address":    {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"203.0.113.9\"]", "address 203.0.113.9 is not in an allowed private range"},
+		"loopback address":  {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"127.0.0.1\"]", "address 127.0.0.1 is not in an allowed private range"},
+		"malformed address": {"trusted_origin = \"https://contacts.example\"\ntrusted_addresses = [\"invalid\"]", `invalid IP address "invalid"`},
+		"invalid port":      {"trusted_origin = \"https://contacts.example:65536\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin port must be between 1 and 65535"},
+		"path":              {"trusted_origin = \"https://contacts.example/dav\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include a path"},
+		"query":             {"trusted_origin = \"https://contacts.example?\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include a query"},
+		"credentials":       {"trusted_origin = \"https://user@contacts.example\"\ntrusted_addresses = [\"10.1.2.3\"]", "trusted_origin must not include credentials"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte("[carddav]\n"+tc.policy+"\n"), 0o600))
+			_, err := Load(path, "")
+			require.Error(err)
+			assert.Contains(err.Error(), "carddav")
+			assert.Contains(err.Error(), tc.message)
+		})
+	}
+}
+
 func TestCardDAVConfigProvider(t *testing.T) {
 	for _, provider := range []string{"", "google", "googl"} {
 		t.Run(provider, func(t *testing.T) {
@@ -493,6 +538,38 @@ func TestServerDaemonAutoRestartDefault(t *testing.T) {
 	cfg := NewDefaultConfig()
 
 	assert.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
+}
+
+func TestLoadWithServerDaemonAutoStart(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "true", value: "true", want: true},
+		{name: "false", value: "false", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			content := "[server]\ndaemon_auto_start = " + tt.value + "\n"
+			require.NoError(os.WriteFile(configPath, []byte(content), 0o644), "WriteFile()")
+
+			cfg, err := Load(configPath, "")
+			require.NoError(err, "Load()")
+			require.NotNil(cfg.Server.DaemonAutoStart)
+			assert.Equal(tt.want, *cfg.Server.DaemonAutoStart)
+			assert.Equal(tt.want, cfg.Server.DaemonAutoStartEnabled())
+		})
+	}
+}
+
+func TestServerDaemonAutoStartDefault(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	assert.Nil(t, cfg.Server.DaemonAutoStart)
+	assert.True(t, cfg.Server.DaemonAutoStartEnabled())
 }
 
 func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
@@ -1339,6 +1416,36 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	assert.True(loaded.Remote.AllowInsecure)
 	require.Len(loaded.Accounts, 1)
 	assert.Equal("user@gmail.com", loaded.Accounts[0].Email)
+}
+
+func TestServerDaemonAutoStartSurvivesSave(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		autoStart *bool
+	}{
+		{name: "false", autoStart: new(false)},
+		{name: "unset", autoStart: nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Server.DaemonAutoStart = tt.autoStart
+			require.NoError(cfg.Save(), "Save()")
+
+			loaded, err := Load(cfg.ConfigFilePath(), "")
+			require.NoError(err, "Load()")
+			if tt.autoStart == nil {
+				assert.Nil(loaded.Server.DaemonAutoStart)
+				assert.True(loaded.Server.DaemonAutoStartEnabled())
+				return
+			}
+			require.NotNil(loaded.Server.DaemonAutoStart)
+			assert.False(*loaded.Server.DaemonAutoStart)
+			assert.False(loaded.Server.DaemonAutoStartEnabled())
+		})
+	}
 }
 
 func TestConfigFileModeOnSave(t *testing.T) {

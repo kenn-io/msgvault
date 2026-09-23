@@ -138,7 +138,7 @@ export class RelationshipsController {
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
   relationshipCalendarYear = $state(new Date().getUTCFullYear());
   relationshipCalendarCurrentYear = $state(this.relationshipCalendarYear);
-  relationshipCalendarFirstYear = $state(this.relationshipCalendarYear);
+  relationshipCalendarFirstYear = $state<number | null>(null);
   relationshipCalendarLoading = $state(false);
   relationshipCalendarError = $state<string | null>(null);
   private readonly client: APIClient;
@@ -168,7 +168,6 @@ export class RelationshipsController {
     this.timezone = timezone;
     this.relationshipCalendarYear = currentYearInTimezone(this.timezone());
     this.relationshipCalendarCurrentYear = this.relationshipCalendarYear;
-    this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
   }
   personMergeContextSnapshot(): RelationshipsMergeContext {
     return {
@@ -550,6 +549,7 @@ export class RelationshipsController {
       clusterID === undefined ||
       !signal ||
       signal.aborted ||
+      this.relationshipCalendarFirstYear === null ||
       year < this.relationshipCalendarFirstYear ||
       year > currentYear
     )
@@ -828,7 +828,7 @@ export class RelationshipsController {
     this.relationshipCalendar = null;
     this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
     this.relationshipCalendarYear = selectedYear ?? this.relationshipCalendarCurrentYear;
-    this.relationshipCalendarFirstYear = this.relationshipCalendarYear;
+    this.relationshipCalendarFirstYear = null;
     this.relationshipCalendarLoading = false;
     this.relationshipCalendarError = null;
     this.relationshipCalendarCacheRevision = null;

@@ -383,6 +383,110 @@ func TestBuildPeoplePublishesMessageGrainRelationshipTemperatures(t *testing.T) 
 	assert.InDelta(1.0, receivedVolume, 0)
 }
 
+func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	root, db := writeRelationshipBaseFixture(t, false)
+	replaceRelationshipParquet(t, db, root, "messages", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
+			 'Sent'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 1::BIGINT, 1::BIGINT, 'email'::VARCHAR, true, 2026::INTEGER, 7::INTEGER),
+			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
+			 'Received'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-21 10:30:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 2::BIGINT, 1::BIGINT, 'email'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
+			(102::BIGINT, 1::BIGINT, 'm-102'::VARCHAR, 10::BIGINT,
+			 'Pre-epoch 1899'::VARCHAR, ''::VARCHAR, TIMESTAMP '1899-12-29 13:00:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 2::BIGINT, 1::BIGINT, 'email'::VARCHAR, false, 1899::INTEGER, 12::INTEGER),
+			(103::BIGINT, 1::BIGINT, 'm-103'::VARCHAR, 10::BIGINT,
+			 'Pre-epoch 1904'::VARCHAR, ''::VARCHAR, TIMESTAMP '1904-01-04 09:00:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 4::BIGINT, 1::BIGINT, 'email'::VARCHAR, false, 1904::INTEGER, 1::INTEGER)
+		) AS t(id, source_id, source_message_id, conversation_id, subject,
+			snippet, sent_at, size_estimate, has_attachments, attachment_count,
+			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Owner'::VARCHAR),
+			(100::BIGINT, 2::BIGINT, 'to'::VARCHAR, 'Bob'::VARCHAR),
+			(100::BIGINT, 3::BIGINT, 'cc'::VARCHAR, 'Bob Alias'::VARCHAR),
+			(101::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(101::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Owner'::VARCHAR),
+			(102::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(102::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Owner'::VARCHAR),
+			(103::BIGINT, 4::BIGINT, 'from'::VARCHAR, 'Member'::VARCHAR),
+			(103::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Owner'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+
+	effectiveAt := time.Date(2026, time.July, 22, 12, 34, 56, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+		EffectiveAt: effectiveAt,
+	})
+	require.NoError(err)
+
+	var annualYears string
+	var current, currentPopulation, peakYear int
+	require.NoError(db.QueryRow(`
+		SELECT CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR),
+		       current_temperature, current_temperature_population, peak_year
+		FROM read_parquet(?) WHERE canonical_id = 2
+	`, relationshipParquetGlob(root, DatasetPeople)).Scan(
+		&annualYears, &current, &currentPopulation, &peakYear,
+	))
+	assert.JSONEq(`[2026]`, annualYears)
+	assert.Equal(100, current)
+	assert.Equal(2, currentPopulation)
+	assert.Equal(2026, peakYear)
+
+	var annualTemperature int
+	var annualRank, annualPopulation int64
+	var annualRaw, sentSignal, receivedVolume float64
+	require.NoError(db.QueryRow(`
+		SELECT annual.item.temperature, annual.item.rank, annual.item.population,
+		       annual.item.raw_score, annual.item.sent_signal,
+		       annual.item.received_volume
+		FROM read_parquet(?) p,
+		     unnest(p.annual_temperatures) AS annual(item)
+		WHERE p.canonical_id = 2 AND annual.item.year = 2026
+	`, relationshipParquetGlob(root, DatasetPeople)).Scan(
+		&annualTemperature, &annualRank, &annualPopulation,
+		&annualRaw, &sentSignal, &receivedVolume,
+	))
+	assert.Equal(100, annualTemperature)
+	assert.Equal(int64(1), annualRank)
+	assert.Equal(int64(1), annualPopulation)
+	assert.InDelta(3*math.Log(2), annualRaw, 1e-9)
+	assert.InDelta(math.Log(2), sentSignal, 1e-9)
+	assert.InDelta(1.0, receivedVolume, 0)
+
+	var annualCount, canonical4Population, canonical4Peak, canonical4PeakYear, firstYear int
+	require.NoError(db.QueryRow(`
+		SELECT len(annual_temperatures), current_temperature_population,
+		       peak_temperature, peak_year, year(first_at)
+		FROM read_parquet(?) WHERE canonical_id = 4
+	`, relationshipParquetGlob(root, DatasetPeople)).Scan(
+		&annualCount, &canonical4Population, &canonical4Peak,
+		&canonical4PeakYear, &firstYear,
+	))
+	assert.Equal(0, annualCount)
+	assert.Equal(2, canonical4Population)
+	assert.Equal(0, canonical4Peak)
+	assert.Equal(0, canonical4PeakYear)
+	assert.Equal(1904, firstYear)
+
+	var dailyCount int
+	require.NoError(db.QueryRow(`
+		SELECT count(*)
+		FROM read_parquet(?)
+		WHERE canonical_id = 2 AND event_date = DATE '1899-12-29'
+	`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&dailyCount))
+	assert.Equal(1, dailyCount)
+}
+
 func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{
@@ -420,6 +524,47 @@ func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 	writeRelationshipParquet(t, db, root, DatasetPeople, `
 		SELECT * REPLACE (101::INTEGER AS current_temperature)
 		FROM read_parquet('`+source+`')`)
+
+	err = Validate(context.Background(), db, ValidationOptions{
+		OutputRoot:             root,
+		RequiredOutputDatasets: RequiredDatasets,
+	})
+	require.ErrorContains(t, err, "invalid relationship temperature summary")
+}
+
+func TestValidateRejectsPreEpochAnnualTemperature(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+	})
+	require.NoError(t, err)
+
+	oldRoot := moveRelationshipDatasetAside(t, root, DatasetPeople)
+	source := quoteSQLString(relationshipParquetGlob(oldRoot, DatasetPeople))
+	writeRelationshipParquet(t, db, root, DatasetPeople, `
+		SELECT * REPLACE ([struct_pack(
+			year := 1969,
+			temperature := 100,
+			rank := 1::BIGINT,
+			population := 1::BIGINT,
+			raw_score := 1.0::DOUBLE,
+			sent_signal := 0.0::DOUBLE,
+			received_volume := 1.0::DOUBLE,
+			meeting_signal := 0.0::DOUBLE,
+			modalities := 1
+		)]::STRUCT(
+			year INTEGER,
+			temperature INTEGER,
+			rank BIGINT,
+			population BIGINT,
+			raw_score DOUBLE,
+			sent_signal DOUBLE,
+			received_volume DOUBLE,
+			meeting_signal DOUBLE,
+			modalities INTEGER
+		)[] AS annual_temperatures)
+		FROM read_parquet('`+source+`')
+	`)
 
 	err = Validate(context.Background(), db, ValidationOptions{
 		OutputRoot:             root,

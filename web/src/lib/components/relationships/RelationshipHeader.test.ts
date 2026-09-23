@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import type { PersonAttributeGroup } from '../../api/generated/models';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
 import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -100,6 +102,13 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function attributeGroup(label: string, text: string): PersonAttributeGroup {
+  return {
+    definition: { universal_id: `u-${label}`, slug: label.toLowerCase(), label, is_sensitive: false, display_order: 0 },
+    current: [{ value: { type: 'text', text } }], history: []
+  } as unknown as PersonAttributeGroup;
+}
+
 /** Opens the "Same person…" dialog, searches for "Bob", selects the stubbed
  * search result (participant #99), and confirms. Exercises the real
  * LinkIdentityDialog end to end; its own search/select mechanics are
@@ -112,12 +121,134 @@ async function linkToSearchResult(): Promise<void> {
 }
 
 describe('RelationshipHeader', () => {
+  it('shows current attributes for a durable person and opens their editor in Directory', async () => {
+    const loadAttributes = vi.fn(async () => [attributeGroup('Pronouns', 'they/them')]);
+    const onOpenDirectoryPerson = vi.fn();
+    render(RelationshipHeader, baseProps({
+      detail: { ...person(), profile: { id: 7, revision: 1 } },
+      loadAttributes, onOpenDirectoryPerson
+    }));
+
+    const summary = await screen.findByRole('region', { name: 'Attributes summary' });
+    expect(summary.textContent).toContain('Pronouns');
+    expect(summary.textContent).toContain('they/them');
+    expect(loadAttributes).toHaveBeenCalledWith(7);
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit attributes' }));
+    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+  });
+
+  it('opens the durable Directory person without starting participant promotion', async () => {
+    const onOpenDirectory = vi.fn();
+    const onOpenDirectoryPerson = vi.fn();
+    render(RelationshipHeader, baseProps({
+      detail: { ...person(), profile: { id: 7, revision: 1 } },
+      onOpenDirectory, onOpenDirectoryPerson
+    }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+    expect(onOpenDirectory).not.toHaveBeenCalled();
+  });
+
+  it('ignores attributes that finish loading after selecting another person', async () => {
+    let finishFirst: ((groups: PersonAttributeGroup[]) => void) | undefined;
+    const loadAttributes = vi.fn((id: number) => id === 7
+      ? new Promise<PersonAttributeGroup[]>((resolve) => { finishFirst = resolve; })
+      : Promise.resolve([attributeGroup('Status', 'active')]));
+    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
+    const { rerender } = render(RelationshipHeader, props);
+
+    await rerender({ ...props, detail: { ...person(), id: 99, profile: { id: 9, revision: 1 } } });
+    expect((await screen.findByRole('region', { name: 'Attributes summary' })).textContent).toContain('active');
+    finishFirst?.([attributeGroup('Status', 'stale')]);
+    await Promise.resolve();
+    await tick();
+    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).not.toContain('stale');
+  });
+
+  it.each([false, true])('retains attributes when the same profile reloads (loading gap: %s)', async (loadingGap) => {
+    const loadAttributes = vi.fn(async () => [attributeGroup('Status', 'active')]);
+    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
+    const { rerender } = render(RelationshipHeader, props);
+    await screen.findByRole('region', { name: 'Attributes summary' });
+
+    if (loadingGap) await rerender({ ...props, detail: null, loading: true });
+    await rerender({ ...props, detail: { ...person(), profile: { id: 7, revision: 1 } } });
+
+    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).toContain('active');
+    expect(loadAttributes).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Messages and Files as explicit relationship views', async () => {
+    const onFilesToggle = vi.fn();
+    render(RelationshipHeader, baseProps({ onFilesToggle }));
+
+    expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files 3' }));
+    expect(onFilesToggle).toHaveBeenCalledWith(true);
+  });
+
+  it('selects Files when restoring a file view and switches back to Messages', async () => {
+    const onFilesToggle = vi.fn();
+    render(RelationshipHeader, baseProps({ filesOpen: true, onFilesToggle }));
+
+    expect(screen.getByRole('radio', { name: 'Files 3' }).getAttribute('aria-checked')).toBe('true');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    expect(onFilesToggle).toHaveBeenCalledWith(false);
+  });
+
+  it('collapses linked identities by default and opens them on request', async () => {
+    render(RelationshipHeader, baseProps());
+
+    const summary = screen.getByText('Identities (2)');
+    const disclosure = summary.closest('details');
+    expect(disclosure?.open).toBe(false);
+    await fireEvent.click(summary);
+    expect(disclosure?.open).toBe(true);
+    expect(screen.getByLabelText('Identity Alice')).toBeDefined();
+  });
+
+  it('collapses identities again when the selected person changes', async () => {
+    const props = baseProps();
+    const { rerender } = render(RelationshipHeader, props);
+    await fireEvent.click(screen.getByText('Identities (2)'));
+    expect(screen.getByText('Identities (2)').closest('details')?.open).toBe(true);
+
+    await rerender({ ...props, detail: { ...person(), id: 99 } });
+    expect(screen.getByText('Identities (2)').closest('details')?.open).toBe(false);
+  });
+
+  it('keeps identities open across a reload, then collapses them for another person', async () => {
+    const props = baseProps();
+    const { rerender } = render(RelationshipHeader, props);
+    await fireEvent.click(screen.getByText('Identities (2)'));
+    await fireEvent(screen.getByText('Identities (2)').closest('details')!, new Event('toggle'));
+
+    await rerender({ ...props, detail: null, loading: true });
+    await rerender({ ...props, detail: person() });
+    expect(screen.getByText('Identities (2)').closest('details')?.open).toBe(true);
+
+    await rerender({ ...props, detail: null, loading: true });
+    await rerender({ ...props, detail: { ...person(), id: 99 } });
+    expect(screen.getByText('Identities (2)').closest('details')?.open).toBe(false);
+  });
+
+  it('keeps identities visible during unlink confirmation', async () => {
+    render(RelationshipHeader, baseProps({ detail: clusteredPerson() }));
+    await fireEvent.click(screen.getByText('Identities (3)'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+
+    await fireEvent.click(screen.getByText('Identities (3)'));
+    await waitFor(() => expect(screen.getByText('Identities (3)').closest('details')?.open).toBe(true));
+    expect(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeDefined();
+  });
+
   it('shows a placeholder status when nothing is selected', () => {
     render(RelationshipHeader, baseProps({ detail: null }));
     expect(screen.getByRole('status').textContent).toContain('Select a person or domain');
   });
 
-  it('renders a person: display name, identity chips, item counts, and the Files toggle', async () => {
+  it('renders a person with identity details, item counts, and a file view', async () => {
     const onFilesToggle = vi.fn();
     render(RelationshipHeader, baseProps({ onFilesToggle }));
 
@@ -135,7 +266,7 @@ describe('RelationshipHeader', () => {
     expect(phoneChip.getAttribute('title')).toBe('phone · secondary · stored identifier');
     expect(document.body.textContent).not.toContain('participant_identifiers');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Files 3' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files 3' }));
     expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
@@ -143,6 +274,11 @@ describe('RelationshipHeader', () => {
     const onOpenDirectory = vi.fn();
     const { rerender } = render(RelationshipHeader, baseProps({ onOpenDirectory }));
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+    expect(onOpenDirectory).toHaveBeenCalledWith(12);
+
+    onOpenDirectory.mockClear();
+    await rerender(baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, onOpenDirectory }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     expect(onOpenDirectory).toHaveBeenCalledWith(12);
 
@@ -177,11 +313,11 @@ describe('RelationshipHeader', () => {
     expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
   });
 
-  it('toggles Files off when already open', async () => {
+  it('switches from Files back to Messages when Files are open', async () => {
     const onFilesToggle = vi.fn();
     render(RelationshipHeader, baseProps({ filesOpen: true, onFilesToggle }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Files 3' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     expect(onFilesToggle).toHaveBeenCalledWith(false);
   });
 
@@ -349,10 +485,13 @@ describe('RelationshipHeader', () => {
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
     render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
+    await fireEvent.click(screen.getByText('Identities (3)'));
     await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
+    await fireEvent.click(screen.getByText('Identities (3)'));
+    await waitFor(() => expect(screen.getByText('Identities (3)').closest('details')?.open).toBe(true));
     expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
   });
 

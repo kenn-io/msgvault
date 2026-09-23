@@ -191,7 +191,7 @@ test('person attachment gallery preserves directions and Media state across sour
 
   const list = page.getByRole('grid', { name: 'Relationship results' });
   await list.getByText('Alice Example').click();
-  await page.getByRole('button', { name: 'Files 1' }).click();
+  await page.getByRole('radio', { name: 'Files 1' }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeVisible();
   expect(personFileBodies[0]).toMatchObject({
     directions: ['from_person'],

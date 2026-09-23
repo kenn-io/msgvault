@@ -383,7 +383,7 @@ vuln-tools:
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
 
-# Enforce testify helper usage in assertion-heavy tests
+# Enforce testify helper usage and named sub-second polling budgets in tests
 testify-helper-check:
 	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
@@ -461,13 +461,18 @@ docs-assets-branch:
 docs-generated-assets-branch:
 	bash docs/screenshots/update-generated-assets-branch.sh
 
+# Build locally so the sibling website/ directory is available to both deploys.
 # Deploy docs to Vercel staging
 docs-deploy-staging:
-	cd docs && vercel
+	cd docs && vercel pull --yes --environment=preview
+	cd docs && vercel build
+	cd docs && vercel deploy --prebuilt
 
 # Deploy docs to Vercel production
 docs-deploy:
-	cd docs && vercel --prod
+	cd docs && vercel pull --yes --environment=production
+	cd docs && vercel build --prod
+	cd docs && vercel deploy --prebuilt --prod
 
 # Build the MIME shootout tool
 shootout:
@@ -493,7 +498,7 @@ help:
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
+	@echo "  testify-helper-check - Enforce testify helpers and polling budgets in tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"

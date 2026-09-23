@@ -116,14 +116,11 @@ func TestAnalyticsEngineSwapDoesNotBlockHealthWhileRequestRuns(t *testing.T) {
 		)
 		close(swapDone)
 	}()
-	require.Eventually(func() bool {
-		select {
-		case <-swapDone:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond, "engine swap waited for an in-flight request")
+	select {
+	case <-swapDone:
+	case <-time.After(time.Second):
+		require.FailNow("engine swap waited for an in-flight request")
+	}
 
 	health := httptest.NewRecorder()
 	srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))

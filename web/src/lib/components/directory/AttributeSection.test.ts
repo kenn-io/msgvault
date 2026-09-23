@@ -90,6 +90,20 @@ function renderSection(
 }
 
 describe('AttributeSection', () => {
+  it('hides empty definitions until Show empty fields is pressed', async () => {
+    const filled = definition({ id: 8, universal_id: 'filled', slug: 'nickname', label: 'Nickname', is_sensitive: false });
+    const empty = definition({ id: 9, universal_id: 'empty', slug: 'employer', label: 'Employer', is_sensitive: false });
+    const current = personValue(filled, 19, { type: 'text', text: 'Synthetic nickname' });
+    renderSection(vi.fn(), [{ definition: filled, current: [current], history: [] }], [filled, empty]);
+
+    expect(screen.getByRole('heading', { name: 'Nickname' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Employer' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
+    expect(screen.getByRole('heading', { name: 'Employer' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide empty fields' }));
+    expect(screen.queryByRole('heading', { name: 'Employer' })).toBeNull();
+  });
+
   it('keeps current and historical sensitive values out of display, editor, DOM, and accessible names until reveal', async () => {
     const sensitive = definition();
     const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' });
@@ -277,6 +291,7 @@ describe('AttributeSection', () => {
     });
     renderSection(fetchFn, [{ definition: sensitiveChoice, current: [], history: [] }]);
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
     expect(screen.getByRole('button', { name: 'Add Confidential level value' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal Confidential level values' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Confidential level value' }));
@@ -372,7 +387,9 @@ describe('AttributeSection', () => {
       ['expected_value_id', '41'],
       ['ordinal', '3'],
     ]);
-    await waitFor(() => expect(screen.getByText('No current value.')).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show empty fields (1)' })).toBeDefined());
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
+    expect(screen.getByText('No current value.')).toBeDefined();
     expect(screen.getByText('Databases')).toBeDefined();
     expect(screen.getByText('History (1)')).toBeDefined();
   });
@@ -425,6 +442,7 @@ describe('AttributeSection', () => {
       { definition: nickname, current: [], history: [] },
     ]);
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Alias value 1' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Alias' }), {
       target: { value: 'Retained local alias' },
@@ -479,6 +497,7 @@ describe('AttributeSection', () => {
       { definition: derived, current: [personValue(derived, 49, { type: 'timestamp', timestamp: when })], history: [] },
     ]);
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Topics value' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Topics' }), { target: { value: 'Search systems' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
@@ -522,6 +541,7 @@ describe('AttributeSection', () => {
       { definition: json, current: [], history: [] },
     ]);
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (2)' }));
     const timestampAdd = screen.getByRole('button', { name: 'Add Follow up at value' });
     expect(timestampAdd).toHaveProperty('disabled', false);
     await fireEvent.click(timestampAdd);

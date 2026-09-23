@@ -352,11 +352,19 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	if c == nil {
 		return nil, localDaemonStartupInfo{}, errors.New("nil config")
 	}
+	// With auto-start disabled a supervisor owns the daemon lifecycle, and
+	// replacing a daemon means starting its successor, so reuse any compatible
+	// daemon that is running instead of restarting it.
+	autoStart := c.Server.DaemonAutoStartEnabled()
+	restartPolicy := c.Server.DaemonAutoRestart
+	if !autoStart {
+		restartPolicy = config.DaemonAutoRestartNever
+	}
 	if err := os.MkdirAll(c.Data.DataDir, 0o700); err != nil {
 		return nil, localDaemonStartupInfo{}, fmt.Errorf("create data directory: %w", err)
 	}
 	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil &&
-		!shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, c.Server.DaemonAutoRestart) {
+		!shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 		if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
 			return nil, localDaemonStartupInfo{}, err
 		}
@@ -393,7 +401,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 			"Another msgvault daemon start is in progress; waiting up to %s for readiness.\n",
 			compactDuration(localDaemonAutoStartReadyTimeout))
 		rt, acquiredLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-			ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout,
+			ctx, c.Data.DataDir, restartPolicy, localDaemonAutoStartReadyTimeout,
 		)
 		if err != nil {
 			return nil, localDaemonStartupInfo{}, err
@@ -413,7 +421,11 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault daemon stop` or retry with --local")
+	incompatibleGuidance := "run `msgvault daemon stop` or retry with --local"
+	if !autoStart {
+		incompatibleGuidance = "restart or upgrade the supervised service"
+	}
+	prep, err := prepareBackgroundDaemonStart(c, restartPolicy, incompatibleGuidance)
 	if err != nil {
 		return nil, localDaemonStartupInfo{}, err
 	}
@@ -422,6 +434,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 			return nil, localDaemonStartupInfo{}, err
 		}
 		return rt, localDaemonStartupInfo{}, nil
+	}
+	if !autoStart {
+		return nil, localDaemonStartupInfo{}, localDaemonAutoStartDisabledError(c.Data.DataDir)
 	}
 
 	startedAt := time.Now()
@@ -486,6 +501,17 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		LogPath: proc.LogPath,
 		Outcome: startupCacheBuildOutcomeFromRuntime(rt),
 	}, nil
+}
+
+// errLocalDaemonAutoStartDisabled marks a local resolution that found no
+// usable daemon while [server].daemon_auto_start is false.
+var errLocalDaemonAutoStartDisabled = errors.New("local daemon auto-start is disabled")
+
+func localDaemonAutoStartDisabledError(dataDir string) error {
+	return fmt.Errorf(
+		"%w: no usable msgvault daemon is running for %s and [server] daemon_auto_start is false; "+
+			"start the supervised daemon or run `msgvault daemon start`, then retry",
+		errLocalDaemonAutoStartDisabled, dataDir)
 }
 
 // waitForStartupCacheBuildOutcome waits after HTTP readiness for a daemon

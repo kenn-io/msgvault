@@ -9,6 +9,10 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Log canceled SQLite planner-statistics maintenance at debug level.
+- **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
+  when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
+  commands then use the running daemon and fail instead of starting their own.
+  See [configuration](configuration.md).
 
 ## 0.20.0
 <small>2026-09-22</small>

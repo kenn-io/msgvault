@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,7 +52,7 @@ type cardDAVCandidate interface {
 	PersistDiscovery(ctx context.Context, baseURL, username string, discovery carddav.Discovery, credentialsChanged bool) error
 }
 
-type cardDAVServiceFactory func(*store.Store, string, string, string) (cardDAVCandidate, error)
+type cardDAVServiceFactory func(*store.Store, config.CardDAVConfig, string) (cardDAVCandidate, error)
 
 // CardDAVController owns the currently configured shared service and the
 // discovery-first account setup transaction.
@@ -167,7 +168,7 @@ func NewCardDAVController(cfg *config.Config, st *store.Store, logger *slog.Logg
 		credential.ConnectionGeneration != account.ConnectionGeneration || !cardDAVCredentialMatchesConfig(credential, configured) {
 		return c, nil
 	}
-	service, err := c.serviceForCredential(credential)
+	service, err := c.serviceForCredential(credential, configured)
 	if err != nil {
 		if !credential.Google {
 			return nil, err
@@ -179,12 +180,17 @@ func NewCardDAVController(cfg *config.Config, st *store.Store, logger *slog.Logg
 	return c, nil
 }
 
-func newCardDAVService(st *store.Store, baseURL, username, password string) (cardDAVCandidate, error) {
-	origin, err := url.Parse(strings.TrimSpace(baseURL))
+func newCardDAVService(st *store.Store, configured config.CardDAVConfig, password string) (cardDAVCandidate, error) {
+	origin, err := url.Parse(strings.TrimSpace(configured.BaseURL))
 	if err != nil || origin.Scheme == "" || origin.Host == "" {
 		return nil, errors.New("CardDAV base URL must be an absolute HTTP(S) URL")
 	}
-	client, err := carddav.NewClient(carddav.ClientOptions{CredentialOrigin: origin, Username: username, Password: password})
+	options := carddav.ClientOptions{CredentialOrigin: origin, Username: configured.Username, Password: password}
+	options.TrustedOrigin, options.TrustedAddresses, err = configured.TrustedDestination()
+	if err != nil {
+		return nil, err
+	}
+	client, err := carddav.NewClient(options)
 	if err != nil {
 		return nil, err
 	}
@@ -203,13 +209,32 @@ func (c *CardDAVController) cardDAVConfigSnapshot() config.CardDAVConfig {
 	if c.cfg == nil {
 		return config.CardDAVConfig{}
 	}
-	return c.cfg.CardDAV
+	configured := c.cfg.CardDAV
+	configured.TrustedAddresses = slices.Clone(configured.TrustedAddresses)
+	return configured
+}
+
+func (c *CardDAVController) currentCardDAVConfig() (config.CardDAVConfig, error) {
+	configured := c.cardDAVConfigSnapshot()
+	if c.cfg == nil {
+		return configured, nil
+	}
+	file, err := config.ReadConfigFile(c.cfg.ConfigFilePath())
+	if err != nil || !file.Exists {
+		return configured, err
+	}
+	latest, err := config.LoadConfigFile(file, "")
+	if err != nil {
+		return configured, err
+	}
+	return latest.CardDAV, nil
 }
 
 func (c *CardDAVController) publishCardDAVConfig(next config.CardDAVConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.cfg != nil {
+		next.TrustedAddresses = slices.Clone(next.TrustedAddresses)
 		c.cfg.CardDAV = next
 	}
 }
@@ -250,7 +275,7 @@ func (c *CardDAVController) saveCardDAVConfig(
 		return config.CardDAVConfig{}, err
 	}
 	previous := latest.CardDAV
-	if expected != nil && previous != *expected {
+	if expected != nil && !cardDAVConfigEqual(previous, *expected) {
 		return previous, fmt.Errorf("%w: CardDAV settings changed", config.ErrConfigConflict)
 	}
 	after, err := config.EditConfigFile(path, before.ETag, []config.Edit{
@@ -272,6 +297,12 @@ func (c *CardDAVController) saveCardDAVConfig(
 	return previous, nil
 }
 
+func cardDAVConfigEqual(a, b config.CardDAVConfig) bool {
+	return a.Provider == b.Provider && a.OAuthApp == b.OAuthApp && a.BaseURL == b.BaseURL &&
+		a.Username == b.Username && a.Schedule == b.Schedule && a.Enabled == b.Enabled &&
+		a.TrustedOrigin == b.TrustedOrigin && slices.Equal(a.TrustedAddresses, b.TrustedAddresses)
+}
+
 func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest) (CardDAVAccountResponse, error) {
 	c.ensureDependencies()
 	req.Schedule = scheduler.NormalizeCronExpr(req.Schedule)
@@ -283,7 +314,12 @@ func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
 	}
-	service, err := c.serviceForCredential(credential)
+	configured, err := c.currentCardDAVConfig()
+	if err != nil {
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
+	}
+	configured.BaseURL, configured.Username = req.BaseURL, req.Username
+	service, err := c.serviceForCredential(credential, configured)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVValidation, err)
 	}
@@ -304,16 +340,23 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	if err := validateCardDAVAccountRequest(req); err != nil {
 		return CardDAVAccountResponse{}, err
 	}
+	current, err := c.currentCardDAVConfig()
+	if err != nil {
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
+	}
 	next := config.CardDAVConfig{
 		Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,
+		TrustedOrigin: current.TrustedOrigin, TrustedAddresses: slices.Clone(current.TrustedAddresses),
 	}
-	current := c.cardDAVConfigSnapshot()
 	identityChanged := current.BaseURL != next.BaseURL || current.Username != next.Username || current.Provider != next.Provider || current.OAuthApp != next.OAuthApp
 	enabling := !current.Enabled && next.Enabled
+	previousSnapshot := c.cardDAVConfigSnapshot()
+	policyChanged := current.TrustedOrigin != previousSnapshot.TrustedOrigin ||
+		!slices.Equal(current.TrustedAddresses, previousSnapshot.TrustedAddresses)
 	// An unchanged Google save refreshes discovery; schedule edits stay offline.
-	if req.Password == "" && !identityChanged && !enabling &&
+	if req.Password == "" && !identityChanged && !enabling && !policyChanged &&
 		(req.Provider != "google" || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
-		return c.saveCardDAVConfigOnly(ctx, next)
+		return c.saveCardDAVConfigOnly(ctx, current, next)
 	}
 	credential, err := c.credentialForRequest(ctx, req)
 	if err != nil {
@@ -344,7 +387,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	service, err := c.serviceForCredential(credential)
+	service, err := c.serviceForCredential(credential, next)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVValidation, err)
 	}
@@ -372,7 +415,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	if err := c.saveCredential(tokenDir, credential); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	previous, err := c.saveConfig(nil, next)
+	previous, err := c.saveConfig(&current, next)
 	if err != nil {
 		var rollbackConfigErr error
 		if errors.Is(err, config.ErrConfigChanged) {
@@ -384,6 +427,23 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		_, rollbackConfigErr := c.saveConfig(&next, previous)
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, rollbackConfigErr, rollbackCredential())
 	}
+	confirmed, err := c.currentCardDAVConfig()
+	if err != nil {
+		c.mu.Lock()
+		c.service = nil
+		c.mu.Unlock()
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, c.reconcileCurrentSchedule())
+	}
+	if !cardDAVConfigEqual(confirmed, next) {
+		c.publishCardDAVConfig(confirmed)
+		c.mu.Lock()
+		c.service = nil
+		c.mu.Unlock()
+		reconcileErr := c.reconcileCurrentSchedule()
+		return CardDAVAccountResponse{}, errors.Join(
+			fmt.Errorf("%w: CardDAV settings changed after discovery", config.ErrConfigConflict), reconcileErr,
+		)
+	}
 	c.mu.Lock()
 	c.service = service
 	c.mu.Unlock()
@@ -394,13 +454,13 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 }
 
 func (c *CardDAVController) saveCardDAVConfigOnly(
-	ctx context.Context, next config.CardDAVConfig,
+	ctx context.Context, current, next config.CardDAVConfig,
 ) (CardDAVAccountResponse, error) {
 	books, err := c.store.ListCardDAVAddressBooksContext(ctx)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	previous, err := c.saveConfig(nil, next)
+	previous, err := c.saveConfig(&current, next)
 	if err != nil {
 		var rollbackConfigErr error
 		if errors.Is(err, config.ErrConfigChanged) {
@@ -1018,7 +1078,8 @@ func (s *Server) writeCardDAVAccountError(
 	case errors.Is(err, errCardDAVValidation):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, store.ErrCardDAVCredentialChangePending),
-		errors.Is(err, store.ErrCardDAVIdentityChangeOwned):
+		errors.Is(err, store.ErrCardDAVIdentityChangeOwned),
+		errors.Is(err, config.ErrConfigConflict):
 		writeError(w, http.StatusConflict, "conflict", message)
 	case errors.As(err, &statusErr) &&
 		(statusErr.StatusCode == http.StatusTooManyRequests || statusErr.RetryAfter > 0):

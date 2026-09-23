@@ -42,9 +42,9 @@ func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDA
 	return credential, err
 }
 
-func (c *CardDAVController) serviceForCredential(credential carddav.Credential) (cardDAVCandidate, error) {
+func (c *CardDAVController) serviceForCredential(credential carddav.Credential, configured config.CardDAVConfig) (cardDAVCandidate, error) {
 	if !credential.Google {
-		return c.factory(c.store, credential.BaseURL, credential.Username, credential.Password)
+		return c.factory(c.store, configured, credential.Password)
 	}
 	if credential.BaseURL != carddav.GoogleDiscoveryURL {
 		return nil, errors.New("use Google's discovery URL for Google Contacts")

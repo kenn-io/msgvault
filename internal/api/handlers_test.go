@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -54,6 +55,8 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
+
+const ordinaryQueryCeiling = 20 * time.Millisecond
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
 // engine never reaches the embed step (e.g. ResolveActiveForFingerprint
@@ -1221,36 +1224,39 @@ func TestHandleCLIRunAllowsLogsCommand(t *testing.T) {
 }
 
 func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	canceled := false
-	st := &mockStore{
-		runFunc: func(ctx context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
-			assert.Equal([]string{"deduplicate", "--dry-run"}, req.Args, "args")
-			time.Sleep(40 * time.Millisecond)
-			if err := ctx.Err(); err != nil {
-				canceled = true
-				return err
-			}
-			return emit(CLIRunEvent{Type: cliStreamEventTypeComplete})
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:          st,
-		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		canceled := false
+		st := &mockStore{
+			runFunc: func(ctx context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
+				assert.Equal([]string{"deduplicate", "--dry-run"}, req.Args, "args")
+				synctest.Sleep(40 * time.Millisecond)
+				if err := ctx.Err(); err != nil {
+					canceled = true
+					return err
+				}
+				return emit(CLIRunEvent{Type: cliStreamEventTypeComplete})
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:          st,
+			Logger:         testLogger(),
+			RequestTimeout: 5 * time.Millisecond,
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		body := strings.NewReader(`{"args":["deduplicate","--dry-run"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+
+		require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+		assert.False(canceled, "cli runner context should not use the standard request timeout")
+		assert.Contains(resp.Body.String(), `"type":"complete"`, "body")
 	})
-
-	body := strings.NewReader(`{"args":["deduplicate","--dry-run"]}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, req)
-
-	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
-	assert.False(canceled, "cli runner context should not use the standard request timeout")
-	assert.Contains(resp.Body.String(), `"type":"complete"`, "body")
 }
 
 func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
@@ -1267,7 +1273,7 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 		},
 	})
 	// Test seam: shrink the query ceiling so the timeout fires immediately.
-	srv.queryTimeout = 20 * time.Millisecond
+	srv.queryTimeout = ordinaryQueryCeiling
 
 	body := strings.NewReader(`{"sql":"SELECT 1"}`)
 	req := httptest.NewRequest(http.MethodPost, queryEndpointPath, body)
@@ -1322,7 +1328,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			return result, err
 		},
 	})
-	srv.queryTimeout = 20 * time.Millisecond
+	srv.queryTimeout = ordinaryQueryCeiling
 	httpServer := httptest.NewServer(srv.Router())
 	t.Cleanup(httpServer.Close)
 
@@ -1345,14 +1351,11 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 		requestDone <- err
 	}()
 
-	require.Eventually(func() bool {
-		select {
-		case <-queryStarted:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond, "DuckDB query starts")
+	select {
+	case <-queryStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow("DuckDB query did not start")
+	}
 	assert.False(<-queryHasDeadline, "marked query context must not have a server deadline")
 	assert.Never(func() bool {
 		select {
@@ -1361,7 +1364,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 		default:
 			return false
 		}
-	}, 60*time.Millisecond, 5*time.Millisecond,
+	}, 3*ordinaryQueryCeiling, 5*time.Millisecond,
 		"marked query survives the 20ms ordinary query ceiling")
 
 	cancel()
@@ -2146,74 +2149,70 @@ func TestHandleCLISearchCollectionScope(t *testing.T) {
 // completeness probe (a minute on a large archive) or a backfill is running,
 // reporting the background work's state instead of waiting on it.
 func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	probeRelease := make(chan struct{})
-	backfillEntered := make(chan struct{})
-	backfillRelease := make(chan struct{})
-	st := &mockStore{
-		needsFTSBackfillFunc: func() bool {
-			<-probeRelease // closed channel unblocks both probe calls
-			return true
-		},
-		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
-			close(backfillEntered)
-			<-backfillRelease
-			return 12, nil
-		},
-	}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(ctx context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:          st,
-		Engine:         engine,
-		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
-	})
-
-	searchIndexState := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
-		var resp struct {
-			Results []struct {
-				Subject string `json:"subject"`
-			} `json:"results"`
-			IndexBuilt bool   `json:"index_built"`
-			IndexState string `json:"index_state"`
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		probeRelease := make(chan struct{})
+		backfillEntered := make(chan struct{})
+		backfillRelease := make(chan struct{})
+		var probeReleaseOnce sync.Once
+		releaseProbe := func() { probeReleaseOnce.Do(func() { close(probeRelease) }) }
+		var backfillReleaseOnce sync.Once
+		releaseBackfill := func() { backfillReleaseOnce.Do(func() { close(backfillRelease) }) }
+		st := &mockStore{
+			needsFTSBackfillFunc: func() bool { <-probeRelease; return true },
+			backfillFTSFunc: func(func(done, total int64)) (int64, error) {
+				close(backfillEntered)
+				<-backfillRelease
+				return 12, nil
+			},
 		}
-		require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
-		require.Len(resp.Results, 1, "results")
-		assert.Equal("match", resp.Results[0].Subject, "subject")
-		assert.False(resp.IndexBuilt, "index_built is a pre-0.18 synchronous-build field")
-		return resp.IndexState
-	}
-
-	// The full probe is blocked and the quick tail-check found nothing, so
-	// the first search answers instantly and quietly.
-	assert.Equal("checking", searchIndexState(), "state while the probe runs")
-
-	close(probeRelease)
-	select {
-	case <-backfillEntered:
-	case <-time.After(time.Second):
-		require.FailNow("background worker never reached the backfill")
-	}
-	assert.Equal("building", searchIndexState(), "state while the backfill runs")
-
-	close(backfillRelease)
-	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
-		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
-	assert.Empty(searchIndexState(), "state once the index is complete")
+		engine := &querytest.MockEngine{
+			SearchFunc: func(ctx context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:  st, Engine: engine, Logger: testLogger(), RequestTimeout: 5 * time.Millisecond,
+		})
+		defer func() {
+			releaseProbe()
+			releaseBackfill()
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			synctest.Wait()
+		}()
+		searchIndexState := func() string {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+			var resp struct {
+				Results []struct {
+					Subject string `json:"subject"`
+				} `json:"results"`
+				IndexBuilt bool   `json:"index_built"`
+				IndexState string `json:"index_state"`
+			}
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+			require.Len(resp.Results, 1, "results")
+			assert.Equal("match", resp.Results[0].Subject, "subject")
+			assert.False(resp.IndexBuilt, "index_built is a pre-0.18 synchronous-build field")
+			return resp.IndexState
+		}
+		assert.Equal("checking", searchIndexState(), "state while the probe runs")
+		releaseProbe()
+		synctest.Wait()
+		<-backfillEntered
+		assert.Equal("building", searchIndexState(), "state while the backfill runs")
+		releaseBackfill()
+		synctest.Wait()
+		assert.True(srv.ftsIndexComplete.Load(), "backfill completion must set the memo flag")
+		assert.Empty(searchIndexState(), "state once the index is complete")
+	})
 }
 
 func TestHandleCLISearchDeletionScope(t *testing.T) {
@@ -2282,58 +2281,60 @@ func TestHandleCLISearchRejectsInvalidDeletionScope(t *testing.T) {
 // the rebuild fails, so re-memoizing complete=true would make later searches
 // trust an index the rebuild left partial.
 func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	probeEntered := make(chan struct{})
-	releaseProbe := make(chan struct{})
-	st := &mockStore{
-		needsFTSBackfillFunc: func() bool {
-			close(probeEntered)
-			<-releaseProbe
-			return false // observed the PRE-rebuild, complete index
-		},
-		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
-			return 0, errors.New("rebuild exploded mid-batch")
-		},
-	}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  st,
-		Engine: engine,
-		Logger: testLogger(),
+		probeEntered := make(chan struct{})
+		releaseProbe := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseProbe) }) }
+		st := &mockStore{
+			needsFTSBackfillFunc: func() bool {
+				close(probeEntered)
+				<-releaseProbe
+				return false // observed the PRE-rebuild, complete index
+			},
+			rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+				return 0, errors.New("rebuild exploded mid-batch")
+			},
+		}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:  st,
+			Engine: engine,
+			Logger: testLogger(),
+		})
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		// First search spawns the ensure worker, which blocks inside the probe.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+		synctest.Wait()
+		<-probeEntered
+
+		// A rebuild starts and fails while the probe is still scanning.
+		resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+		requireNDJSONResponse(t, resp)
+		_ = decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
+		require.False(srv.ftsIndexComplete.Load(),
+			"precondition: a failed rebuild leaves the completeness flag cleared")
+
+		// The probe finishes with its pre-rebuild observation; the worker must
+		// discard it rather than re-memoize complete=true over the failed rebuild.
+		release()
+		synctest.Wait()
+		require.False(srv.ftsEnsureRunning.Load(), "ensure worker must finish")
+		assert.False(srv.ftsIndexComplete.Load(),
+			"a probe result observed before a rebuild must not be memoized")
 	})
-
-	// First search spawns the ensure worker, which blocks inside the probe.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
-	select {
-	case <-probeEntered:
-	case <-time.After(time.Second):
-		require.FailNow("the search never spawned the FTS completeness probe")
-	}
-
-	// A rebuild starts and fails while the probe is still scanning.
-	resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
-	requireNDJSONResponse(t, resp)
-	_ = decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
-	require.False(srv.ftsIndexComplete.Load(),
-		"precondition: a failed rebuild leaves the completeness flag cleared")
-
-	// The probe finishes with its pre-rebuild observation; the worker must
-	// discard it rather than re-memoize complete=true over the failed rebuild.
-	close(releaseProbe)
-	require.Eventually(func() bool { return !srv.ftsEnsureRunning.Load() },
-		time.Second, 5*time.Millisecond, "ensure worker must finish")
-	assert.False(srv.ftsIndexComplete.Load(),
-		"a probe result observed before a rebuild must not be memoized")
 }
 
 // TestHandleCLISearchProbeRefusesMemoizeDuringRebuild covers the second
@@ -2343,58 +2344,57 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 // A "complete" observation under an odd generation must not be memoized —
 // here the rebuild is still running when the probe finishes, then fails.
 func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	rebuildEntered := make(chan struct{})
-	releaseRebuild := make(chan struct{})
-	st := &mockStore{
-		needsFTSBackfill: false, // probe sees the pre-clear "complete" index
-		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
-			close(rebuildEntered)
-			<-releaseRebuild
-			return 0, errors.New("rebuild exploded mid-batch")
-		},
-	}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, nil
-		},
-	}
-	srv := newCLIHandlerTestServer(st)
-	srv.SetAnalyticsEngine(engine, srv.AnalyticsMode())
+		rebuildEntered := make(chan struct{})
+		releaseRebuild := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseRebuild) }) }
+		st := &mockStore{
+			needsFTSBackfill: false, // probe sees the pre-clear "complete" index
+			rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+				close(rebuildEntered)
+				<-releaseRebuild
+				return 0, errors.New("rebuild exploded mid-batch")
+			},
+		}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := newCLIHandlerTestServer(st)
+		srv.SetAnalyticsEngine(engine, srv.AnalyticsMode())
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
-	rebuildDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		rebuildDone <- servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
-	}()
-	select {
-	case <-rebuildEntered:
-	case <-time.After(time.Second):
-		require.FailNow("rebuild never started")
-	}
+		rebuildDone := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			rebuildDone <- servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+		}()
+		synctest.Wait()
+		<-rebuildEntered
 
-	// A search arrives while the rebuild is mid-flight; its ensure worker
-	// probes the (snapshot-wise still complete) index.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
-	require.Eventually(func() bool { return !srv.ftsEnsureRunning.Load() },
-		time.Second, 5*time.Millisecond, "ensure worker must finish")
+		// A search arrives while the rebuild is mid-flight; its ensure worker
+		// probes the (snapshot-wise still complete) index.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+		synctest.Wait()
+		require.False(srv.ftsEnsureRunning.Load(), "ensure worker must finish")
 
-	assert.False(srv.ftsIndexComplete.Load(),
-		"a probe observation made while a rebuild is mid-flight must not be memoized")
+		assert.False(srv.ftsIndexComplete.Load(),
+			"a probe observation made while a rebuild is mid-flight must not be memoized")
 
-	close(releaseRebuild)
-	select {
-	case resp := <-rebuildDone:
+		release()
+		synctest.Wait()
+		resp := <-rebuildDone
 		requireNDJSONResponse(t, resp)
-	case <-time.After(time.Second):
-		require.FailNow("rebuild request did not finish")
-	}
-	assert.False(srv.ftsIndexComplete.Load(),
-		"the failed rebuild must leave the completeness flag cleared")
+		assert.False(srv.ftsIndexComplete.Load(),
+			"the failed rebuild must leave the completeness flag cleared")
+	})
 }
 
 // TestHandleCLISearchQuickCheckReportsBuildingImmediately verifies that when
@@ -2439,53 +2439,49 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 }
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	gate := NewSerialOperationGate()
-	releaseGate, ok := gate.BeginWork()
-	require.True(ok, "occupy operation gate")
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		gate := NewSerialOperationGate()
+		releaseGate, ok := gate.BeginWork()
+		require.True(ok, "occupy operation gate")
 
-	backfillStarted := make(chan struct{}, 1)
-	st := &mockStore{
-		needsFTSBackfill: true,
-		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
-			backfillStarted <- struct{}{}
-			return 1, nil
-		},
-	}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:         st,
-		Engine:        engine,
-		Logger:        testLogger(),
-		OperationGate: gate,
+		backfillStarted := make(chan struct{}, 1)
+		st := &mockStore{
+			needsFTSBackfill: true,
+			backfillFTSFunc: func(func(done, total int64)) (int64, error) {
+				backfillStarted <- struct{}{}
+				return 1, nil
+			},
+		}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:         st,
+			Engine:        engine,
+			Logger:        testLogger(),
+			OperationGate: gate,
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		// The search itself must not queue behind the held gate.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+
+		synctest.Wait()
+		assert.Empty(backfillStarted, "backfill started while operation gate was occupied")
+
+		releaseGate()
+		synctest.Wait()
+		assert.NotEmpty(backfillStarted, "backfill did not start after gate release")
+		assert.True(srv.ftsIndexComplete.Load(), "backfill completion must set the memo flag")
 	})
-
-	// The search itself must not queue behind the held gate.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
-	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, req)
-	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
-
-	select {
-	case <-backfillStarted:
-		assert.Fail("backfill started while operation gate was occupied")
-	case <-time.After(40 * time.Millisecond):
-	}
-
-	releaseGate()
-	select {
-	case <-backfillStarted:
-	case <-time.After(500 * time.Millisecond):
-		require.FailNow("backfill did not start after gate release")
-	}
-	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
-		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
 }
 
 // TestHandleCLISearchMemoizesFTSComplete verifies that once the FTS index is
@@ -2493,37 +2489,40 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 // NeedsFTSBackfill probe (an anti-join that scans every message on a healthy
 // index). This is the fix for the CLI-search-slow-vs-fast-search divergence.
 func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
-	assert := assert.New(t)
-	st := &mockStore{needsFTSBackfill: false}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  st,
-		Engine: engine,
-		Logger: testLogger(),
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		st := &mockStore{needsFTSBackfill: false}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:  st,
+			Engine: engine,
+			Logger: testLogger(),
+		})
+		defer func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		doSearch := func() {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+		}
+
+		doSearch()
+		// The probe runs in a background worker now; wait for it to confirm
+		// completeness before checking that later searches skip it.
+		synctest.Wait()
+		assert.True(srv.ftsIndexComplete.Load(), "probe must confirm the index complete")
+		doSearch()
+		doSearch()
+
+		assert.Equal(int32(1), st.needsFTSBackfillCalls.Load(),
+			"NeedsFTSBackfill should be probed once, then memoized")
 	})
-
-	doSearch := func() {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
-	}
-
-	doSearch()
-	// The probe runs in a background worker now; wait for it to confirm
-	// completeness before checking that later searches skip it.
-	require.Eventually(t, func() bool { return srv.ftsIndexComplete.Load() },
-		time.Second, 5*time.Millisecond, "probe must confirm the index complete")
-	doSearch()
-	doSearch()
-
-	assert.Equal(int32(1), st.needsFTSBackfillCalls.Load(),
-		"NeedsFTSBackfill should be probed once, then memoized")
 }
 
 // TestHandleCLISearchReportsProbeInAuthenticatedHealth verifies that while
@@ -2531,59 +2530,59 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 // completeness probe, authenticated /health tells clients what the daemon is
 // doing instead of reporting it idle.
 func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	probeEntered := make(chan struct{})
-	releaseProbe := make(chan struct{})
-	st := &mockStore{needsFTSBackfillFunc: func() bool {
-		close(probeEntered)
-		<-releaseProbe
-		return false
-	}}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080, APIKey: "secret-key"}},
-		Store:  st,
-		Engine: engine,
-		Logger: testLogger(),
-	})
+		probeEntered := make(chan struct{})
+		releaseProbe := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseProbe) }) }
+		st := &mockStore{needsFTSBackfillFunc: func() bool {
+			close(probeEntered)
+			<-releaseProbe
+			return false
+		}}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080, APIKey: "secret-key"}},
+			Store:  st,
+			Engine: engine,
+			Logger: testLogger(),
+		})
+		defer func() { release(); require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
-	// The first search spawns the probe worker and returns without waiting.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
-	req.Header.Set("X-Api-Key", "secret-key")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+		// The first search spawns the probe worker and returns without waiting.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		req.Header.Set("X-Api-Key", "secret-key")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
 
-	select {
-	case <-probeEntered:
-	case <-time.After(time.Second):
-		require.FailNow("the search never spawned the FTS completeness probe")
-	}
+		synctest.Wait()
 
-	healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthReq.Header.Set("X-Api-Key", "secret-key")
-	healthResp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(healthResp, healthReq)
-	require.Equal(http.StatusOK, healthResp.Code, "health status")
-	var health HealthResponse
-	require.NoError(json.Unmarshal(healthResp.Body.Bytes(), &health), "decode health body")
-	require.NotNil(health.Operation, "health must report the running probe")
-	assert.True(health.Operation.Busy, "probe must report busy")
-	assert.Equal("checking the search index", health.Operation.Label, "probe label")
-	assert.NotNil(health.Operation.StartedAt, "probe start time")
+		healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		healthReq.Header.Set("X-Api-Key", "secret-key")
+		healthResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(healthResp, healthReq)
+		require.Equal(http.StatusOK, healthResp.Code, "health status")
+		var health HealthResponse
+		require.NoError(json.Unmarshal(healthResp.Body.Bytes(), &health), "decode health body")
+		require.NotNil(health.Operation, "health must report the running probe")
+		assert.True(health.Operation.Busy, "probe must report busy")
+		assert.Equal("checking the search index", health.Operation.Label, "probe label")
+		assert.NotNil(health.Operation.StartedAt, "probe start time")
 
-	close(releaseProbe)
-	require.Eventually(func() bool {
+		release()
+		synctest.Wait()
 		_, _, active := srv.currentActivity()
-		return !active && srv.ftsIndexComplete.Load()
-	}, time.Second, 5*time.Millisecond,
-		"activity must clear and the memo flag must set once the probe finishes")
+		assert.False(active, "activity must clear once the probe finishes")
+		assert.True(srv.ftsIndexComplete.Load(), "probe must set the memo flag")
+	})
 }
 
 // TestHandleCLISearchBackfillProgressUpdatesActivityLabel verifies the
@@ -2591,40 +2590,43 @@ func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 // label, so clients polling /health see live counts rather than a static
 // gate label.
 func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 
-	st := &mockStore{needsFTSBackfill: true}
-	engine := &querytest.MockEngine{
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  st,
-		Engine: engine,
-		Logger: testLogger(),
+		st := &mockStore{needsFTSBackfill: true}
+		engine := &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:  st,
+			Engine: engine,
+			Logger: testLogger(),
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		var labelDuringBackfill string
+		st.backfillFTSFunc = func(progress func(done, total int64)) (int64, error) {
+			progress(2, 4)
+			labelDuringBackfill, _, _ = srv.currentActivity()
+			return 4, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+
+		synctest.Wait()
+		require.True(srv.ftsIndexComplete.Load(), "background backfill must complete")
+		assert.Equal("building the search index (2/4 messages)", labelDuringBackfill,
+			"activity label must carry backfill progress")
+		_, _, active := srv.currentActivity()
+		assert.False(active, "activity must be cleared once the backfill finishes")
 	})
-
-	var labelDuringBackfill string
-	st.backfillFTSFunc = func(progress func(done, total int64)) (int64, error) {
-		progress(2, 4)
-		labelDuringBackfill, _, _ = srv.currentActivity()
-		return 4, nil
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
-
-	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
-		time.Second, 5*time.Millisecond, "background backfill must complete")
-	assert.Equal("building the search index (2/4 messages)", labelDuringBackfill,
-		"activity label must carry backfill progress")
-	_, _, active := srv.currentActivity()
-	assert.False(active, "activity must be cleared once the backfill finishes")
 }
 
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
@@ -2791,43 +2793,44 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 }
 
 func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	gate := NewSerialOperationGate()
-	releaseGate, ok := gate.BeginWork()
-	require.True(ok, "occupy operation gate")
-	defer releaseGate()
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		gate := NewSerialOperationGate()
+		releaseGate, ok := gate.BeginWork()
+		require.True(ok, "occupy operation gate")
+		t.Cleanup(releaseGate)
 
-	st := &mockStore{
-		rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
-			progress(1, 1)
-			return 1, nil
-		},
-	}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:          st,
-		Logger:         testLogger(),
-		OperationGate:  gate,
-		RequestTimeout: 5 * time.Millisecond,
+		st := &mockStore{
+			rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
+				progress(1, 1)
+				return 1, nil
+			},
+		}
+		srv := NewServerWithOptions(ServerOptions{
+			Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:          st,
+			Logger:         testLogger(),
+			OperationGate:  gate,
+			RequestTimeout: 5 * time.Millisecond,
+		})
+		defer func() { require.NoError(srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
+		resp := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(resp, req)
+			close(done)
+		}()
+
+		synctest.Wait()
+		synctest.Sleep(6 * time.Millisecond)
+		releaseGate()
+		synctest.Wait()
+		<-done
+		assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 	})
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
-	resp := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
-
-	time.Sleep(40 * time.Millisecond)
-	releaseGate()
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		require.FailNow("rebuild-fts request did not complete after gate release")
-	}
-	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 }
 
 func TestHandleCLIAccountsReturnsSourceCounts(t *testing.T) {
@@ -7944,39 +7947,42 @@ func TestHandleMessageInline_ParseOnce(t *testing.T) {
 // concurrent first-fetches for the same message collapses to one parse via
 // singleflight, and every response is correct.
 func TestHandleMessageInline_ConcurrentSingleParse(t *testing.T) {
-	parts := inlineImageFixture(4)
-	engine := &countingRawEngine{raw: rawMIMEWithInlineImages(parts)}
-	// Block the first load until all goroutines are in flight so they contend
-	// on the same singleflight key rather than serializing behind a fast cache
-	// fill.
-	release := make(chan struct{})
-	var gate sync.Once
-	engine.GetMessageRawFunc = func(_ context.Context, _ int64) ([]byte, error) {
-		gate.Do(func() { <-release })
-		engine.loads.Add(1)
-		return append([]byte(nil), engine.raw...), nil
-	}
-	srv := newTestServerWithEngine(t, engine)
+	synctest.Test(t, func(t *testing.T) {
+		parts := inlineImageFixture(4)
+		engine := &countingRawEngine{raw: rawMIMEWithInlineImages(parts)}
+		// Block the first load until all goroutines are in flight so they contend
+		// on the same singleflight key rather than serializing behind a fast cache
+		// fill.
+		release := make(chan struct{})
+		var gate sync.Once
+		engine.GetMessageRawFunc = func(_ context.Context, _ int64) ([]byte, error) {
+			gate.Do(func() { <-release })
+			engine.loads.Add(1)
+			return append([]byte(nil), engine.raw...), nil
+		}
+		srv := newTestServerWithEngine(t, engine)
+		defer func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown"); synctest.Wait() }()
 
-	const n = 16
-	var wg sync.WaitGroup
-	codes := make([]int, n)
-	for i := range n {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			codes[idx] = requestInline(t, srv, parts[idx%len(parts)].cid).Code
-		}(i)
-	}
-	// Give goroutines a moment to enter singleflight, then release the load.
-	time.Sleep(20 * time.Millisecond)
-	close(release)
-	wg.Wait()
+		const n = 16
+		var wg sync.WaitGroup
+		codes := make([]int, n)
+		for i := range n {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				codes[idx] = requestInline(t, srv, parts[idx%len(parts)].cid).Code
+			}(i)
+		}
+		// Wait until all request goroutines are blocked on the first load.
+		synctest.Wait()
+		close(release)
+		wg.Wait()
 
-	for i, code := range codes {
-		assert.Equal(t, http.StatusOK, code, "status for request %d", i)
-	}
-	assert.Equal(t, int64(1), engine.loads.Load(), "raw loads (parses) under concurrent fan-out")
+		for i, code := range codes {
+			assert.Equal(t, http.StatusOK, code, "status for request %d", i)
+		}
+		assert.Equal(t, int64(1), engine.loads.Load(), "raw loads (parses) under concurrent fan-out")
+	})
 }
 
 // TestHandleMessageInline_RawTooLarge verifies that a raw message over the size

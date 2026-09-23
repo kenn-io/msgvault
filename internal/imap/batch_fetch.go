@@ -84,7 +84,11 @@ func rawMIMEMessageID(rawMIME []byte) string {
 	header := gomail.Header{Header: entity.Header}
 	msgID, err := header.MessageID()
 	if err != nil {
-		return ""
+		// Historical messages can carry bare IDs or other non-RFC syntax
+		// that the archive's MIME parser preserves. Use that same fallback
+		// for folder membership and deduplication, otherwise an archived
+		// message can become unidentifiable when its headers are refreshed.
+		msgID, _ = mime.ParseMessageIDs(rawMIME)
 	}
 	return msgID
 }

@@ -2,9 +2,43 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import type { AttributeDefinition as GeneratedAttributeDefinition } from '../../api/generated/models';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
+import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { DirectoryReadBundle } from '../../directory/models';
 import PersonDetail from './PersonDetail.svelte';
+
+const when = '2026-01-01T00:00:00Z';
+
+function nicknameDefinition(): GeneratedAttributeDefinition {
+  return {
+    id: 1, slug: 'nickname', label: 'Nickname', value_type: 'text', field_type: 'text',
+    api_mutable: true, cardinality: 'single', display_order: 0, history_exempt: false,
+    is_sensitive: false, is_active: true, is_audited: true, is_deletable: true, is_required: false,
+    is_searchable: false, object_type: 'person', ownership: 'user', revision: 1,
+    ui_creatable: true, ui_editable: true, universal_id: 'synthetic-nickname',
+    created_at: when, updated_at: when
+  };
+}
+
+function nicknameCurrent() {
+  return [{ id: 1, person_id: 7, definition_id: 1, definition_slug: 'nickname', ordinal: 0, source: 'user', active_from: when, created_at: when, value: { type: 'text', text: 'Synthetic nickname' } }];
+}
+
+// The Overview panel's self-loading cards must never decide one of these
+// tests; answer their mount reads quietly and deterministically.
+function quietOverviewFetch() {
+  return vi.fn<typeof fetch>(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    const overview = overviewCardResponse(request);
+    if (overview) return overview;
+    if (path === '/api/v1/carddav/publications/7') {
+      return Response.json({ error: 'carddav_unavailable', message: 'not rendered' }, { status: 503 });
+    }
+    return Response.json({ merges: [], limit: 100, offset: 0 });
+  });
+}
 
 // The Overview panel mounts three self-loading cards. This answers the reads
 // they make on mount so each test only has to state what it is actually about.
@@ -70,7 +104,7 @@ describe('PersonDetail', () => {
 
     expect(screen.getByText('Names')).toBeDefined();
     expect(screen.getByText('person@example.test')).toBeDefined();
-    expect(screen.getByText('Sensitive')).toBeDefined();
+    expect(document.querySelector('.attribute-summary .sensitive')?.textContent).toBe('concealed');
     expect(document.body.innerHTML).not.toContain('Synthetic value');
     expect(await screen.findByText(/Example Org/)).toBeDefined();
     expect(screen.getByText('Synthetic Child · child')).toBeDefined();
@@ -386,5 +420,44 @@ describe('PersonDetail', () => {
     expect(document.body.textContent).not.toContain('synthetic private setup detail');
     await fireEvent.click(screen.getByRole('button', { name: 'Open CardDAV settings' }));
     expect(onOpenCardDAVSettings).toHaveBeenCalledOnce();
+  });
+
+  it('renders read-only bundle attributes once through the summary without a duplicate legacy list', () => {
+    const definition = nicknameDefinition();
+    const client = createAPIClient(quietOverviewFetch());
+    const bundle = {
+      person: { id: 7, revision: 2, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: '', created_at: when, updated_at: when },
+      attributes: { person_id: 7, attributes: [{ definition, current: nicknameCurrent() }] },
+      etags: {}, errors: {}
+    } satisfies DirectoryReadBundle;
+
+    render(PersonDetail, { client, personID: 7, bundle });
+
+    expect(document.querySelector('.attribute-summary')).not.toBeNull();
+    expect(screen.getAllByText('Nickname')).toHaveLength(1);
+    expect(screen.getAllByText('Synthetic nickname')).toHaveLength(1);
+    expect(screen.queryByRole('heading', { name: 'Attributes' })).toBeNull();
+  });
+
+  it('moves focus to the attributes section when Edit attributes is pressed', async () => {
+    const definition = nicknameDefinition();
+    const client = createAPIClient(quietOverviewFetch());
+    const bundle = {
+      person: { id: 7, revision: 2, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: '', created_at: when, updated_at: when },
+      attributes: { person_id: 7, attributes: [{ definition, current: nicknameCurrent() }] },
+      definitions: { definitions: [definition] },
+      etags: {}, errors: {}
+    } satisfies DirectoryReadBundle;
+    const profileController = new DirectoryProfileController(client, 7, bundle);
+
+    render(PersonDetail, { client, personID: 7, bundle, profileController });
+
+    const button = await screen.findByRole('button', { name: 'Edit attributes' });
+    await fireEvent.click(button);
+
+    const section = document.getElementById('person-attributes');
+    expect(section).not.toBeNull();
+    expect(section!.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(section);
   });
 });

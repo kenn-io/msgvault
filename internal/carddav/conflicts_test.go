@@ -1321,6 +1321,9 @@ func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T)
 	fixture.timeoutPut = true
 	fixture.mu.Unlock()
 	require.Error(service.PublishPerson(t.Context(), personID))
+	// The short deadline above exercises an ambiguous write. Recovery reads a
+	// deliberately oversized response and needs the normal request deadline.
+	service.client.requestTimeout = 5 * time.Second
 	pending, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)
 	require.Equal(store.CardDAVMutationUpdate, pending.PendingOperation)

@@ -7,13 +7,14 @@
     RelationshipCalendar as RelationshipCalendarModel,
     RelationshipCalendarDay
   } from '../../relationships/models';
+  import { dayTooltipText } from '../../relationships/calendar-tooltip';
 
   interface Props {
     calendar: RelationshipCalendarModel | null;
     loading: boolean;
     error: string | null;
     year?: number;
-    firstYear: number;
+    firstYear: number | null;
     currentYear: number;
     onYearChange: (year: number) => void;
   }
@@ -47,6 +48,16 @@
     buildCalendarPanel(calendar, 6, 11, 'second-half')
   ] : []);
   const hasActivity = $derived(Boolean(calendar?.days?.some((day) => day.total > 0)));
+  const multiYear = $derived(firstYear === null || firstYear < currentYear);
+  let root = $state<HTMLElement>();
+  const tooltipID = $props.id();
+  let tooltip = $state<HTMLElement | null>(null);
+  let tooltipNode = $state<HTMLElement>();
+  let activeCell: HTMLElement | null = null;
+  let pointer: { x: number; y: number } | null = null;
+  // Survives the pointer being cleared (focus moves, hide) so scroll
+  // dismissal still knows what kind of pointer was last seen.
+  let lastPointerType: string | null = null;
 
   const weekdays = ['Sun', '', 'Tue', '', 'Thu', '', 'Sat'];
   const levels = ['none', 'first-quartile', 'second-quartile', 'third-quartile', 'fourth-quartile'];
@@ -93,9 +104,98 @@
     return date.toISOString().slice(0, 10);
   }
 
-  function dayLabel(day: RelationshipCalendarDay): string {
-    return `${day.date}: ${day.total} interactions; ${day.sent} sent, ${day.received} received, ` +
-      `${day.email} email, ${day.chat} chat, ${day.meetings} meetings`;
+  $effect(() => {
+    calendar;
+    hideTooltip();
+  });
+
+  $effect(() => {
+    const cell = tooltip;
+    if (!cell || !tooltipNode) return;
+    positionTooltip(cell);
+    cell.setAttribute('aria-describedby', tooltipID);
+    document.addEventListener('keydown', dismissTooltip, true);
+    return () => {
+      cell.removeAttribute('aria-describedby');
+      document.removeEventListener('keydown', dismissTooltip, true);
+    };
+  });
+
+  function positionTooltip(target: HTMLElement): void {
+    if (!root || !tooltipNode) return;
+    const cell = target.getBoundingClientRect();
+    const box = root.getBoundingClientRect();
+    const halfWidth = tooltipNode.getBoundingClientRect().width / 2;
+    const center = cell.left - box.left + cell.width / 2;
+    tooltipNode.style.left = `${Math.max(halfWidth + 4, Math.min(center, box.width - halfWidth - 4))}px`;
+    tooltipNode.style.top = `${cell.top - box.top}px`;
+  }
+
+  function activateTooltip(target: HTMLElement): void {
+    if (target === activeCell) return;
+    activeCell = target;
+    tooltip = target;
+  }
+
+  function dismissTooltip(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    tooltip = null;
+    pointer = null;
+    // Keep activeCell until the pointer leaves so movement within a dismissed
+    // day does not reopen it. A different day can open immediately.
+  }
+
+  function showTooltip(event: Event): void {
+    if (event.type.startsWith('pointer')) {
+      const movement = event as PointerEvent;
+      pointer = { x: movement.clientX, y: movement.clientY };
+      lastPointerType = movement.pointerType;
+    } else if (event.type === 'focusin') {
+      pointer = null;
+    }
+    const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('button.heat-cell');
+    if (target) activateTooltip(target);
+    else hideTooltip();
+  }
+
+  function hideTooltip(): void {
+    activeCell = null;
+    tooltip = null;
+    // Drop captured coordinates so a later scroll cannot resurrect the tip
+    // from wherever the pointer last was.
+    pointer = null;
+  }
+
+  function tooltipPointerLeave(event: PointerEvent): void {
+    // Touch pointers fire pointerleave right after pointerup; keep a tapped
+    // day's tooltip up until the next tap or scroll elsewhere.
+    if (event.pointerType === 'touch') return;
+    hideTooltip();
+  }
+
+  function scrollTooltip(): void {
+    if (!root || !tooltip) return;
+    // A touch drag leaves the tap behind (its coordinates may already be
+    // cleared by focus); scrolling must dismiss the tooltip rather than
+    // re-pin it to an unrelated cell.
+    if (lastPointerType === 'touch') {
+      hideTooltip();
+      return;
+    }
+    const pointedCell = pointer
+      ? document.elementFromPoint(pointer.x, pointer.y)?.closest<HTMLElement>('button.heat-cell')
+      : activeCell;
+    if (!pointedCell || !root.contains(pointedCell)) {
+      hideTooltip();
+      return;
+    }
+    if (pointedCell !== activeCell) {
+      activateTooltip(pointedCell);
+      return;
+    }
+    positionTooltip(pointedCell);
   }
 
   function levelClass(day: RelationshipCalendarDay | undefined): string {
@@ -104,25 +204,24 @@
 </script>
 
 {#snippet panel(panel: CalendarPanel, variant: 'full' | 'half')}
-  <div class="calendar-panel {variant}" data-panel={panel.key}>
-    <div class="month-row" style={`--weeks: ${panel.weeks}`} aria-hidden="true">
+  <div class="calendar-panel {variant}" data-panel={panel.key} style={`--weeks: ${panel.weeks}`}>
+    <div class="month-row" aria-hidden="true">
       {#each panel.months as month}
-        <span style={`grid-column: ${month.week + 1} / span 2`}>{month.label}</span>
+        <span style={`grid-column: ${month.week + 1}`}>{month.label}</span>
       {/each}
     </div>
     <div class="calendar-body">
       <div class="weekday-labels" aria-hidden="true">
         {#each weekdays as weekday}<span>{weekday}</span>{/each}
       </div>
-      <div class="weeks" style={`--weeks: ${panel.weeks}`}>
+      <div class="weeks" role="group" aria-label="Calendar days" onpointerover={showTooltip} onpointermove={showTooltip} onfocusin={showTooltip} onpointerleave={tooltipPointerLeave} onfocusout={hideTooltip}>
         {#each panel.cells as cell (cell.date)}
           <span class:future={!cell.day} class="day">
             {#if cell.day}
               <button
                 type="button"
                 class="heat-cell {levelClass(cell.day)}"
-                aria-label={dayLabel(cell.day)}
-                title={dayLabel(cell.day)}
+                aria-label={dayTooltipText(cell.day)}
               ></button>
             {/if}
           </span>
@@ -133,21 +232,26 @@
 {/snippet}
 
 <Card padding="sm">
-<section class="relationship-calendar" aria-label="Relationship activity calendar">
+<section class="relationship-calendar" aria-label="Relationship activity calendar" bind:this={root}>
   <div class="calendar-heading">
     <h2>Relationship</h2>
     <div class="year-navigation">
-      <IconButton
-        ariaLabel="Previous relationship year"
-        disabled={selectedYear <= firstYear || loading}
-        onclick={() => onYearChange(selectedYear - 1)}
-      ><ChevronLeftIcon size="14" aria-hidden="true" /></IconButton>
+      {#if multiYear}
+        <IconButton
+          ariaLabel="Previous relationship year"
+          disabled={firstYear === null || selectedYear <= firstYear || loading}
+          onclick={() => onYearChange(selectedYear - 1)}
+        ><ChevronLeftIcon size="14" aria-hidden="true" /></IconButton>
+      {/if}
       <span class="year">{selectedYear}</span>
-      <IconButton
-        ariaLabel="Next relationship year"
-        disabled={selectedYear >= currentYear || loading}
-        onclick={() => onYearChange(selectedYear + 1)}
-      ><ChevronRightIcon size="14" aria-hidden="true" /></IconButton>
+      {#if multiYear}
+        <IconButton
+          class="next-year"
+          ariaLabel="Next relationship year"
+          disabled={firstYear === null || selectedYear >= currentYear || loading}
+          onclick={() => onYearChange(selectedYear + 1)}
+        ><ChevronRightIcon size="14" aria-hidden="true" /></IconButton>
+      {/if}
     </div>
   </div>
 
@@ -159,7 +263,7 @@
       <Button label="Retry" onclick={() => onYearChange(selectedYear)} />
     </div>
   {:else if calendar}
-    <div class="calendar-graphs">
+    <div class="calendar-graphs" onscroll={scrollTooltip}>
       {@render panel(fullPanel!, 'full')}
       <div class="split-panels">
         {#each halfPanels as half (half.key)}
@@ -167,6 +271,12 @@
         {/each}
       </div>
     </div>
+    {#if tooltip}
+      <!-- kit-ui-check-ignore: One delegated tooltip follows individual days; kit Tooltip owns its trigger and open state. -->
+      <div id={tooltipID} class="calendar-day-tooltip kit-popover-card" role="tooltip" bind:this={tooltipNode}>
+        {tooltip.getAttribute('aria-label')}
+      </div>
+    {/if}
     {#if !hasActivity}<p class="empty-year">No interactions in {calendar.year}.</p>{/if}
     <div class="calendar-meta">
       <div class="legend" aria-label="Relationship activity intensity from less to more">
@@ -187,10 +297,12 @@
 
 <style>
   .relationship-calendar {
-    --relationship-cell-size: 10px;
     --relationship-cell-gap: 3px;
+    --relationship-label-gutter: calc(22px + var(--space-2));
     container-type: inline-size;
+    position: relative;
     flex: none;
+    min-width: 0;
   }
 
   .calendar-heading,
@@ -208,30 +320,19 @@
   }
 
   .year-navigation {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--kit-control-height, 28px) 4ch var(--kit-control-height, 28px);
     align-items: center;
     gap: var(--space-2);
   }
 
-  .year-navigation button {
-    display: grid;
-    width: 24px;
-    height: 24px;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .year-navigation button:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
+  .year-navigation :global(.next-year) {
+    grid-column: 3;
   }
 
   .year {
+    grid-column: 2;
+    grid-row: 1;
     min-width: 4ch;
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -241,19 +342,27 @@
     max-width: 100%;
     margin-top: var(--space-3);
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .calendar-panel {
-    width: max-content;
+    width: 100%;
+    min-width: calc(var(--relationship-label-gutter) + var(--weeks) * 8px + (var(--weeks) - 1) * var(--relationship-cell-gap));
+    --relationship-cell-size: max(8px, calc((100cqi - var(--relationship-label-gutter) - (var(--weeks) - 1) * var(--relationship-cell-gap)) / var(--weeks)));
   }
 
   .month-row {
     display: grid;
     grid-template-columns: repeat(var(--weeks), var(--relationship-cell-size));
     gap: var(--relationship-cell-gap);
-    margin-left: 30px;
+    margin-left: var(--relationship-label-gutter);
     color: var(--text-muted);
     font-size: var(--text-xs);
+  }
+
+  .month-row span {
+    white-space: nowrap;
+    overflow: visible;
   }
 
   .calendar-body {
@@ -330,8 +439,23 @@
   }
 
   .temperature-summary {
+    flex-wrap: wrap;
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
+  }
+
+  .calendar-day-tooltip {
+    position: absolute;
+    z-index: var(--z-tooltip);
+    width: max-content;
+    transform: translate(-50%, calc(-100% - 6px));
+    max-width: calc(100% - 8px);
+    box-sizing: border-box;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    line-height: 1.45;
+    pointer-events: none;
   }
 
   .calendar-state,

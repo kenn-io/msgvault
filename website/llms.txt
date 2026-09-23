@@ -4,9 +4,9 @@
 > calendars, and contacts on your own computer or server. Search across accounts,
 > look up a person's history, and work from a browser, terminal, or AI assistant.
 
-The product and guide pages have Markdown companions with the same core
-information; documentation pages are served as HTML. Use the Markdown
-companions for machine reading.
+Every public page has a Markdown companion for machine reading. Use the links
+below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
+`/docs/setup.md`. The documentation index is `/docs/index.md`.
 
 ## Product
 
@@ -15,29 +15,84 @@ companions for machine reading.
 - [How msgvault works](https://msgvault.io/guide.md): sync and import messages,
   manage contacts, search, review deletions, and back up your archive
 
-## Docs
+## Start Here
 
-- [Documentation index](https://msgvault.io/docs/): all operating documentation
-- [Changelog](https://msgvault.io/docs/changelog/): released and unreleased changes, with upgrade notes
-- [Choose a source](https://msgvault.io/docs/guides/sources/): sync and import routes by provider and format
-- [Setup guide](https://msgvault.io/docs/setup/): installation and first sync
-- [CLI reference](https://msgvault.io/docs/cli-reference/): every command and flag
-- [Configuration](https://msgvault.io/docs/configuration/): config.toml reference
-- [Web UI](https://msgvault.io/docs/web-ui/): the browser application
-- [Searching](https://msgvault.io/docs/usage/searching/): query syntax and modes
-- [Vector search](https://msgvault.io/docs/usage/vector-search/): semantic and hybrid setup
-- [Document attachment indexing](https://msgvault.io/docs/usage/document-indexing/): Docbank-backed extraction
-- [People, profiles, and identities](https://msgvault.io/docs/usage/people/): the people layer
-- [Profile automation](https://msgvault.io/docs/usage/people-automation/): tracking, fact resolution, and provider consent
-- [Conversation briefs](https://msgvault.io/docs/usage/people-briefs/): saved summaries, citations, and input limits
-- [External enrichment](https://msgvault.io/docs/usage/people-enrichment/): provider policies and suppression
-- [CardDAV contacts](https://msgvault.io/docs/usage/people-carddav/): address-book import, publication, and conflicts
-- [Remote email images](https://msgvault.io/docs/usage/remote-images/): opt-in downloads and offline display
-- [IMAP mail and drafts](https://msgvault.io/docs/usage/imap/): sync folders and prepare, edit, recover, or delete managed reply drafts
-- [MCP server](https://msgvault.io/docs/usage/chat/): AI assistant integration
-- [Deleting email](https://msgvault.io/docs/usage/deletion/): staging and gated execution
-- [Backup](https://msgvault.io/docs/usage/backup/): snapshot repositories
-- [Architecture overview](https://msgvault.io/docs/architecture/overview/): design decisions
+- [Documentation](https://msgvault.io/docs/index.md): all operating documentation
+- [Setup](https://msgvault.io/docs/setup.md): installation and first sync
+- [Choose a Source](https://msgvault.io/docs/guides/sources.md): sync and import routes by provider and format
+
+## Explore Your Archive
+
+- [Web UI](https://msgvault.io/docs/web-ui.md): the browser application
+- [Terminal UI](https://msgvault.io/docs/usage/tui.md)
+- [Searching](https://msgvault.io/docs/usage/searching.md): query syntax and modes
+- [Semantic and Visual Search](https://msgvault.io/docs/usage/vector-search.md): semantic and hybrid setup
+- [Document Attachment Indexing](https://msgvault.io/docs/usage/document-indexing.md): Docbank-backed extraction
+- [Recommended Configuration](https://msgvault.io/docs/usage/recommended-configuration.md)
+- [Analytics and Stats](https://msgvault.io/docs/usage/analytics.md)
+- [SQL Queries](https://msgvault.io/docs/usage/querying.md)
+- [Exporting](https://msgvault.io/docs/usage/exporting.md)
+
+## Sync and Import
+
+- [OAuth Setup](https://msgvault.io/docs/guides/oauth-setup.md)
+- [IMAP Mail](https://msgvault.io/docs/usage/imap.md): sync folders and prepare, edit, recover, or delete managed reply drafts
+- [Local Email](https://msgvault.io/docs/usage/importing.md)
+- [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
+- [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
+- [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
+- [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
+- [Discord](https://msgvault.io/docs/usage/discord.md)
+- [Beeper](https://msgvault.io/docs/usage/beeper.md)
+- [Slack](https://msgvault.io/docs/usage/slack.md)
+- [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
+
+## People and Accounts
+
+- [People and Profiles](https://msgvault.io/docs/usage/people.md): the people layer
+- [Conversation Briefs](https://msgvault.io/docs/usage/people-briefs.md): saved summaries, citations, and input limits
+- [Profile Automation](https://msgvault.io/docs/usage/people-automation.md): tracking, fact resolution, and provider consent
+- [External Enrichment](https://msgvault.io/docs/usage/people-enrichment.md): provider policies and suppression
+- [CardDAV Contacts](https://msgvault.io/docs/usage/people-carddav.md): address-book import, publication, and conflicts
+- [Accounts and Collections](https://msgvault.io/docs/usage/multi-account.md)
+
+## Maintain and Operate
+
+- [Backup and Restore](https://msgvault.io/docs/usage/backup.md): snapshot repositories
+- [Verify Integrity](https://msgvault.io/docs/guides/verification.md)
+- [Deduplication](https://msgvault.io/docs/usage/deduplication.md)
+- [Deleting Email](https://msgvault.io/docs/usage/deletion.md): staging and gated execution
+- [Remote Deployment](https://msgvault.io/docs/guides/remote-deployment.md)
+- [Daemon Lifecycle](https://msgvault.io/docs/guides/daemon-migration.md)
+- [Troubleshooting](https://msgvault.io/docs/troubleshooting.md)
+
+## Reference and Integrations
+
+- [CLI Reference](https://msgvault.io/docs/cli-reference.md): every command and flag
+- [Configuration](https://msgvault.io/docs/configuration.md): config.toml reference
+- [HTTP API](https://msgvault.io/docs/api-server.md)
+- [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
+- [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md)
+- [FAQ](https://msgvault.io/docs/faq.md)
+- [Changelog](https://msgvault.io/docs/changelog.md): released and unreleased changes, with upgrade notes
+
+## Architecture
+
+- [Overview](https://msgvault.io/docs/architecture/overview.md): design decisions
+- [Data Storage](https://msgvault.io/docs/architecture/storage.md)
+- [PostgreSQL Backend](https://msgvault.io/docs/architecture/postgresql.md)
+- [Search Ranking](https://msgvault.io/docs/architecture/search-ranking.md)
+- [Backup Repository Format](https://msgvault.io/docs/architecture/backup-format.md)
+
+## Project
+
+- [Development](https://msgvault.io/docs/development.md)
+- [Why msgvault?](https://msgvault.io/docs/introduction.md)
+
+## Optional
+
+- [Controlled web UI fixture](https://msgvault.io/docs/fixtures/README.template.md)
+- [Documentation fixture format](https://msgvault.io/docs/fixtures/fixture-format.md)
 
 ## Other
 

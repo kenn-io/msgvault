@@ -31,7 +31,7 @@ function calendar(overrides: Partial<RelationshipCalendarModel> = {}): Relations
 }
 
 describe('RelationshipCalendar', () => {
-  it('renders the shared five-level calendar, accessible day facts, and aligned summary', () => {
+  it('renders the shared five-level calendar with accessible message counts', () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
       firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
@@ -49,9 +49,127 @@ describe('RelationshipCalendar', () => {
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full');
     expect(fullPanel).not.toBeNull();
     expect(within(fullPanel!).getByRole('button', {
-      name: '2026-01-02: 3 interactions; 2 sent, 1 received, 1 email, 2 chat, 0 meetings'
+      name: '3 messages on Jan 2, 2026'
     }).classList.contains('level-fourth-quartile')).toBe(true);
     expect(document.querySelectorAll('.day.future button')).toHaveLength(0);
+  });
+
+  it('shows one shared tooltip on hover and keyboard focus', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
+    const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    await fireEvent.pointerOver(cell);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
+    expect(cell.getAttribute('title')).toBeNull();
+    await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await fireEvent.focusIn(cell);
+    expect(screen.getByRole('tooltip').textContent).toBe('3 messages on Jan 2, 2026');
+    expect(cell.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+    await fireEvent.focusOut(cell);
+    expect(cell.getAttribute('aria-describedby')).toBeNull();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('hides the tooltip when the pointer enters a gap between days', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const cell = screen.getAllByRole('button', { name: '3 messages on Jan 2, 2026' })[0];
+    await fireEvent.pointerOver(cell);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toBe('3 messages on Jan 2, 2026');
+    await fireEvent.pointerOver(cell.parentElement!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('does not resurrect the tooltip from stale pointer coordinates when scrolling after pointerleave', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
+    const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    await fireEvent.pointerOver(cell, { clientX: 40, clientY: 40 });
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
+
+    // Pointer leaves the grid, then the scroll strip is dragged without pointer events,
+    // and whatever sits under the stale coordinates must not revive the tip.
+    await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    const originalFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => cell;
+    try {
+      await fireEvent.scroll(document.querySelector('.calendar-graphs')!);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      document.elementFromPoint = originalFromPoint;
+    }
+  });
+
+  it('keeps the day tooltip visible after a touch tap despite the immediate pointerleave', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
+    const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    await fireEvent.pointerOver(cell, { pointerType: 'touch' });
+    // Real taps move focus to the cell, which erases the coordinates but
+    // must not erase the pointer type.
+    await fireEvent.focusIn(cell);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
+    // Touch pointers fire pointerleave right after pointerup; the tapped
+    // day's tooltip must stay up until the next tap elsewhere.
+    await fireEvent.pointerLeave(fullPanel.querySelector('.weeks')!, { pointerType: 'touch' });
+    expect(screen.getByRole('tooltip').textContent).toBe('3 messages on Jan 2, 2026');
+  });
+
+  it('hides a touch-activated tooltip when the strip scrolls afterwards', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
+    const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    await fireEvent.pointerOver(cell, { pointerType: 'touch' });
+    await fireEvent.focusIn(cell);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('3 messages on Jan 2, 2026');
+
+    // A touch tap leaves its pointer type behind even though the tap moves
+    // focus; the next scroll of the strip must dismiss the tooltip instead
+    // of re-pinning it to whatever cell sits under the stale coordinates.
+    const originalFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => cell;
+    try {
+      await fireEvent.scroll(document.querySelector('.calendar-graphs')!);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      document.elementFromPoint = originalFromPoint;
+    }
+  });
+
+  it('dismisses the tooltip with Escape without moving focus', async () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+    });
+    const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
+    const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
+    cell.focus();
+    await fireEvent.focusIn(cell);
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    await fireEvent.keyDown(cell, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(document.activeElement).toBe(cell);
+    await fireEvent.pointerMove(cell);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await fireEvent.pointerOver(within(fullPanel).getByRole('button', { name: 'No messages on Jan 1, 2026' }));
+    expect(screen.getByRole('tooltip').textContent).toBe('No messages on Jan 1, 2026');
   });
 
   it('navigates within first/current year bounds with explicit accessible controls', async () => {
@@ -64,6 +182,16 @@ describe('RelationshipCalendar', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     expect(onYearChange).toHaveBeenCalledWith(2025);
     expect((screen.getByRole('button', { name: 'Next relationship year' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows the year without chevrons when no other year is available', () => {
+    render(RelationshipCalendar, {
+      calendar: calendar(), loading: false, error: null,
+      firstYear: 2026, currentYear: 2026, onYearChange: vi.fn()
+    });
+    expect(screen.getByText('2026')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Previous relationship year' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next relationship year' })).toBeNull();
   });
 
   it('renders stable loading, failure, and no-interaction regions', async () => {

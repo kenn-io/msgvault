@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"net/mail"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/sqliteutil"
@@ -201,6 +204,7 @@ type ServerConfig struct {
 	TrustedProxies    []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
 	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
+	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -208,6 +212,13 @@ func (s *ServerConfig) ApplyDefaults() {
 	if s.DaemonAutoRestart == "" {
 		s.DaemonAutoRestart = DaemonAutoRestartNewer
 	}
+}
+
+// DaemonAutoStartEnabled reports whether CLI commands may start a local
+// background daemon when none is running. An unset daemon_auto_start keeps
+// the default of true.
+func (s *ServerConfig) DaemonAutoStartEnabled() bool {
+	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
 }
 
 func (s *ServerConfig) Validate() error {
@@ -271,12 +282,39 @@ type AccountSchedule struct {
 // CardDAVConfig contains non-secret connection settings for the external
 // address book. The password is stored separately in tokens/carddav.json.
 type CardDAVConfig struct {
-	Provider string `toml:"provider"`
-	OAuthApp string `toml:"oauth_app"`
-	BaseURL  string `toml:"base_url"`
-	Username string `toml:"username"`
-	Schedule string `toml:"schedule"`
-	Enabled  bool   `toml:"enabled"`
+	Provider         string   `toml:"provider"`
+	OAuthApp         string   `toml:"oauth_app"`
+	BaseURL          string   `toml:"base_url"`
+	Username         string   `toml:"username"`
+	Schedule         string   `toml:"schedule"`
+	Enabled          bool     `toml:"enabled"`
+	TrustedOrigin    string   `toml:"trusted_origin"`
+	TrustedAddresses []string `toml:"trusted_addresses"`
+}
+
+// TrustedDestination parses and validates the local private-destination policy.
+// It is independent of BaseURL so operators can approve a server before setup.
+func (c CardDAVConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
+	if c.TrustedOrigin == "" && len(c.TrustedAddresses) == 0 {
+		return nil, nil, nil
+	}
+	origin, err := url.Parse(c.TrustedOrigin)
+	if err != nil {
+		return nil, nil, errors.New("carddav.trusted_origin: invalid URL")
+	}
+	addresses := make([]netip.Addr, 0, len(c.TrustedAddresses))
+	for _, raw := range c.TrustedAddresses {
+		address, err := netip.ParseAddr(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("carddav.trusted_addresses: invalid IP address %q", raw)
+		}
+		addresses = append(addresses, address)
+	}
+	origin, addresses, err = netguard.ValidateTrustedDestination(origin, addresses)
+	if err != nil {
+		return nil, nil, fmt.Errorf("carddav: %w", err)
+	}
+	return origin, addresses, nil
 }
 
 type SynctechSMSConfig struct {
@@ -934,6 +972,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if cfg.CardDAV.Provider != "" && cfg.CardDAV.Provider != "google" {
 		return nil, errors.New("carddav.provider must be empty or \"google\"")
+	}
+	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
+		return nil, err
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {

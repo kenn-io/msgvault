@@ -17,6 +17,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const suspendedProcessObservationBudget = 500 * time.Millisecond
+
 func TestWindowsBackgroundProcessDoesNotRunBeforeJobAttachment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -39,7 +41,7 @@ func TestWindowsBackgroundProcessDoesNotRunBeforeJobAttachment(t *testing.T) {
 	assert.Never(func() bool {
 		_, statErr := os.Stat(pidPath)
 		return statErr == nil || !errors.Is(statErr, os.ErrNotExist)
-	}, 500*time.Millisecond, 10*time.Millisecond,
+	}, suspendedProcessObservationBudget, 10*time.Millisecond,
 		"daemon work must not begin before Job Object attachment")
 
 	require.NoError(tree.Attach(cmd.Process), "attach and resume parent helper")

@@ -16,6 +16,7 @@
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { listPersonAttributes } from '../../api/generated/api/api';
   import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
   import type { RelationshipFacet, RelationshipTimelineRow } from '../../relationships/models';
@@ -379,6 +380,7 @@
                 {client}
                 {onOpenDirectory}
                 {onOpenDirectoryPerson}
+                loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, { ...client })).data?.attributes ?? []}
                 {onAnnounce}
                 capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
                 onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}

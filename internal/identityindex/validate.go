@@ -154,7 +154,7 @@ func Validate(
 			    OR p.peak_year < 0
 			    OR EXISTS (
 			        SELECT 1 FROM unnest(p.annual_temperatures) AS annual(item)
-			        WHERE annual.item.year < 1970
+			        WHERE annual.item.year < ` + strconv.Itoa(relationshipTemperatureFirstYear) + `
 			           OR annual.item.temperature NOT BETWEEN 0 AND 100
 			           OR annual.item.rank < 1
 			           OR annual.item.population < annual.item.rank

@@ -5,6 +5,7 @@
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import AttributeSection from './AttributeSection.svelte';
+  import AttributeSummary from './AttributeSummary.svelte';
   import StructuredProfileSection from './StructuredProfileSection.svelte';
   import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
   import PersonNetwork from './PersonNetwork.svelte';
@@ -173,6 +174,14 @@
       {#if bundle.person || profile}
         <header><h2>{bundle.person?.display_name ?? profile?.person?.display_name ?? `Person ${personID}`}</h2></header>
       {/if}
+      <AttributeSummary
+        groups={profileController?.attributes?.attributes ?? bundle.attributes?.attributes ?? []}
+        onEdit={profileController ? () => {
+          const section = document.getElementById('person-attributes');
+          section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          section?.focus({ preventScroll: true });
+        } : undefined}
+      />
       <PersonTrackingControl {client} {personID} {onAnnounce} />
       <CardDAVPublicationControl
         {client}
@@ -200,8 +209,6 @@
       {/if}
       {#if profileController && profileController.attributes}
         <AttributeSection controller={profileController} />
-      {:else if bundle.attributes?.attributes?.length}
-        <section><h3>Attributes</h3><ul>{#each bundle.attributes.attributes as group}<li><strong>{group.definition.label}</strong>{#if group.definition.is_sensitive} <span class="sensitive">Sensitive</span>: concealed{:else}: {group.current?.map((value) => valueText(value.value)).join(', ')}{/if}</li>{/each}</ul></section>
       {/if}
       {#if entityController?.employments.length}
         <section><h3>Organizations and employment</h3><ul>{#each entityController.employments as employment}<li>{employment.title ?? employment.role ?? 'Employment'} · {employmentOrganization(employment.id) ?? `Organization ${employment.organization_id}`}{#if employment.is_current} <small>Current</small>{/if}</li>{/each}</ul></section>
@@ -232,5 +239,4 @@
   h3 { font-size: var(--font-size-md); } h4, small { color: var(--text-muted); font-size: var(--font-size-sm); }
   ul { padding-left: var(--space-5); }
   .section-error { margin: 0; padding: var(--space-2); background: var(--bg-inset); color: var(--text-secondary); }
-  .sensitive { display: inline-block; padding: 1px 5px; border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); font-size: var(--font-size-sm); }
 </style>

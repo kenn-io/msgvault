@@ -983,6 +983,7 @@
       query: '',
       relationshipFacet: 'people',
       relationshipTarget: `cluster:${participantID}`,
+      relationshipFiles: false,
       relationshipShowAll: false,
       analysisTarget: null,
       selectedIdentifier: null,
@@ -1164,7 +1165,7 @@
       personFilePresentation={exploreState.current.personFilePresentation}
       personFileDirections={exploreState.current.personFileDirections}
       onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-      onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget })}
+      onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
       onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
       onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
       onPersonFilePresentationChange={(personFilePresentation) =>

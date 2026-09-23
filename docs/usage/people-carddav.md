@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-09"
+last_edited: "2026-09-23"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -30,6 +30,38 @@ the credential separately from `config.toml`, in its token directory's
 `--disabled` saves the connection without enabling synchronization. Add
 `--schedule "*/30 * * * *"` for background sync every 30 minutes. You can also
 change connection settings and scheduling in the Web UI.
+
+Servers that challenge with HTTP Digest are supported. After the first
+challenge, the client sends Digest authentication on later requests without
+trying Basic again. Basic authentication continues to work for servers that
+use it. A 401 with an unsupported or malformed challenge fails as an
+authentication error.
+
+### Private servers
+
+For a CardDAV server reachable only at a private address, the operator can
+approve one exact HTTPS origin and pin its address in the daemon's local
+`config.toml` before adding the account:
+
+```toml
+[carddav]
+trusted_origin = "https://contacts.example:8443"
+trusted_addresses = ["10.1.2.3"]
+```
+
+Use the same origin in the account's base URL, including its port. The pin
+replaces DNS for that origin, so the container does not need to resolve the
+hostname. TLS still checks the certificate against the hostname. A failed pin
+does not fall back to DNS. A trailing `/` in `trusted_origin` is accepted.
+If the account uses a different hostname or port, msgvault ignores the pin for
+that account and uses normal DNS and destination checks. The mismatch does not
+stop daemon startup, and private destinations remain blocked for that account.
+
+Only private addresses from the [approved ranges](../configuration.md#carddav)
+are accepted; loopback and link-local addresses remain blocked. The Web UI and
+account API cannot grant private network access. After changing this local
+policy, restart the daemon or test and save the account again. Keep the config
+file readable only by the daemon's operator.
 
 ## Google Contacts
 

@@ -658,7 +658,7 @@ func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) 
 		},
 		{
 			name: "invalid message id value",
-			raw:  []byte("Message-ID: not a message id\r\n\r\nbody"),
+			raw:  []byte("Message-ID: <broken@example.test\r\n\r\nbody"),
 		},
 	}
 

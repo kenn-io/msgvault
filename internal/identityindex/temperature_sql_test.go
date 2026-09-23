@@ -105,3 +105,76 @@ func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *
 	assert.False(rows.Next())
 	require.NoError(rows.Err())
 }
+
+func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.Exec(`
+		CREATE TEMP TABLE ` + temperatureBuildRelation + ` (
+			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
+			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,
+			chat_count BIGINT, total_count BIGINT, modality_mask UTINYINT,
+			last_at TIMESTAMP
+		);
+		INSERT INTO ` + temperatureBuildRelation + ` VALUES
+			(2, DATE '1969-12-31', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1969-12-31 23:59:59'),
+			(2, DATE '1970-01-01', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1970-01-01 00:00:00'),
+			(3, DATE '1904-01-04', 0, 1, 0, 1, 0, 1, 1, TIMESTAMP '1904-01-04 09:00:00')
+	`)
+	require.NoError(err)
+
+	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(
+		time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC),
+	)
+
+	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id,
+			CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR)
+			FROM annual_rollups ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID int64
+		var years string
+		require.NoError(rows.Scan(&canonicalID, &years))
+		assert.Equal(int64(2), canonicalID)
+		assert.JSONEq(`[1970]`, years)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+
+	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id, peak_year
+			FROM peaks ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID, peakYear int64
+		require.NoError(rows.Scan(&canonicalID, &peakYear))
+		assert.Equal(int64(2), canonicalID)
+		assert.Equal(int64(1970), peakYear)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+
+	func() {
+		rows, err := db.Query(query + ` SELECT canonical_id, population, raw_score
+			FROM current_ranked ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID, population int64
+		var rawScore float64
+		require.NoError(rows.Scan(&canonicalID, &population, &rawScore))
+		assert.Equal(int64(2), canonicalID)
+		assert.Equal(int64(2), population)
+		assert.InDelta(2*(RelationshipDayWeight(2)+RelationshipDayWeight(1))*math.Log(2), rawScore, 1e-9)
+		require.True(rows.Next())
+		require.NoError(rows.Scan(&canonicalID, &population, &rawScore))
+		assert.Equal(int64(3), canonicalID)
+		assert.Equal(int64(2), population)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+}
