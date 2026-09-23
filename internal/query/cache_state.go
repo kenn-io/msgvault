@@ -34,9 +34,11 @@ import (
 // the resolved recipient address (envelope, else participant), never an empty
 // string. Version 27 adds curated person display names.
 // Version 28 projects RFC Message-ID into every messages cache shard.
+// Version 29 persists compact logical and temperature contributions so
+// incremental builds can update them without rescanning expanded activity.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 28
+const CacheSchemaVersion = 30
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -48,9 +50,13 @@ type CacheSyncState struct {
 	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitzero"`
 	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitzero"`
 	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitzero"`
-	LastFailedSyncRunCount int64     `json:"last_failed_sync_run_count,omitzero"`
-	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitzero"`
-	IdentityRevision       int64     `json:"identity_revision,omitzero"`
+	// LastRelatedChangeSeq is the highest child-row journal entry represented
+	// by this committed publication. The journal is written transactionally
+	// with SQLite mutations and advances only after marker-last publication.
+	LastRelatedChangeSeq   int64 `json:"last_related_change_seq,omitzero"`
+	LastFailedSyncRunCount int64 `json:"last_failed_sync_run_count,omitzero"`
+	LastFailedSyncRunIDSum int64 `json:"last_failed_sync_run_id_sum,omitzero"`
+	IdentityRevision       int64 `json:"identity_revision,omitzero"`
 	// DerivedDataRevision tracks offline repairs that rewrite existing
 	// message, snippet, search, or attachment facts. Those rows are already
 	// inside the committed message ID boundary, so drift requires a full cache
@@ -121,13 +127,14 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|derived_data=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|person_display_name=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|related=%d|fail_count=%d|fail_sum=%d|identity=%d|derived_data=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|person_display_name=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
 		s.LastCompletedSyncRunID,
 		s.LastCacheAdditionCount,
 		s.LastCacheUpdateCount,
+		s.LastRelatedChangeSeq,
 		s.LastFailedSyncRunCount,
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,

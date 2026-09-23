@@ -9,10 +9,12 @@ import (
 )
 
 const (
-	DatasetActivity          = "relationship_activity"
-	DatasetPeople            = "relationship_people"
-	DatasetDomains           = "relationship_domains"
-	DatasetRelationshipDaily = "relationship_daily"
+	DatasetActivity                 = "relationship_activity"
+	DatasetPeople                   = "relationship_people"
+	DatasetDomains                  = "relationship_domains"
+	DatasetRelationshipDaily        = "relationship_daily"
+	DatasetLogicalContributions     = "relationship_logical_contributions"
+	DatasetTemperatureContributions = "relationship_temperature_contributions"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -35,6 +37,8 @@ var (
 		DatasetPeople,
 		DatasetDomains,
 		DatasetRelationshipDaily,
+		DatasetLogicalContributions,
+		DatasetTemperatureContributions,
 	}
 )
 

@@ -17,6 +17,7 @@ type ValidationOptions struct {
 	OutputRoot             string
 	RequiredOutputDatasets []string
 	ActivityPath           string
+	ActivityRelation       string
 }
 
 // Validate rejects malformed or internally inconsistent relationship indexes
@@ -50,6 +51,15 @@ func Validate(
 			filepath.Join(opts.OutputRoot, DatasetRelationshipDaily, "*.parquet"),
 			false,
 		),
+		DatasetLogicalContributions: activityRelation(
+			filepath.Join(opts.OutputRoot, DatasetLogicalContributions, "*.parquet"), false,
+		),
+		DatasetTemperatureContributions: activityRelation(
+			filepath.Join(opts.OutputRoot, DatasetTemperatureContributions, "*.parquet"), false,
+		),
+	}
+	if opts.ActivityRelation != "" {
+		relations[DatasetActivity] = opts.ActivityRelation
 	}
 	for _, dataset := range opts.RequiredOutputDatasets {
 		relation, ok := relations[dataset]
@@ -65,11 +75,31 @@ func Validate(
 	people := relations[DatasetPeople]
 	domains := relations[DatasetDomains]
 	daily := relations[DatasetRelationshipDaily]
+	logicalContributions := relations[DatasetLogicalContributions]
+	temperatureContributions := relations[DatasetTemperatureContributions]
 	checks := []struct {
 		dataset   string
 		invariant string
 		query     string
 	}{
+		{
+			DatasetLogicalContributions,
+			"duplicate logical contribution keys",
+			`SELECT count(*) FROM (
+				SELECT relation_kind, entry_key, canonical_id, domain
+				FROM ` + logicalContributions + `
+				GROUP BY ALL HAVING count(*) > 1
+			)`,
+		},
+		{
+			DatasetTemperatureContributions,
+			"duplicate daily temperature contribution keys",
+			`SELECT count(*) FROM (
+				SELECT canonical_id, event_date
+				FROM ` + temperatureContributions + `
+				GROUP BY ALL HAVING count(*) > 1
+			)`,
+		},
 		{
 			DatasetActivity,
 			"duplicate message/canonical/domain keys",
@@ -230,24 +260,25 @@ type schemaColumn struct {
 
 const duckDBTypeBigInt = "BIGINT"
 const duckDBTypeBoolean = "BOOLEAN"
+const duckDBTypeVarchar = "VARCHAR"
 
 var datasetSchemas = map[string][]schemaColumn{
 	DatasetActivity: {
 		{"message_id", duckDBTypeBigInt},
 		{"conversation_id", duckDBTypeBigInt},
 		{"source_id", duckDBTypeBigInt},
-		{"source_type", "VARCHAR"},
+		{"source_type", duckDBTypeVarchar},
 		{"occurred_at", "TIMESTAMP"},
-		{"message_type", "VARCHAR"},
-		{"conversation_type", "VARCHAR"},
-		{"entry_kind", "VARCHAR"},
+		{"message_type", duckDBTypeVarchar},
+		{"conversation_type", duckDBTypeVarchar},
+		{"entry_kind", duckDBTypeVarchar},
 		{"is_chat", duckDBTypeBoolean},
 		{"is_from_me", duckDBTypeBoolean},
 		{"attachment_count", "INTEGER"},
 		{"has_attachments", duckDBTypeBoolean},
 		{"deleted_from_source", duckDBTypeBoolean},
 		{"canonical_id", duckDBTypeBigInt},
-		{"participant_domain", "VARCHAR"},
+		{"participant_domain", duckDBTypeVarchar},
 		{"is_direct", duckDBTypeBoolean},
 		{"is_conversation_member", duckDBTypeBoolean},
 		{"is_sender", duckDBTypeBoolean},
@@ -257,7 +288,7 @@ var datasetSchemas = map[string][]schemaColumn{
 	},
 	DatasetPeople: {
 		{"canonical_id", duckDBTypeBigInt},
-		{"display_label", "VARCHAR"},
+		{"display_label", duckDBTypeVarchar},
 		{"partial_label", duckDBTypeBoolean},
 		{"member_ids", "BIGINT[]"},
 		{"search_values", "VARCHAR[]"},
@@ -295,7 +326,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"peak_year", "INTEGER"},
 	},
 	DatasetDomains: {
-		{"domain", "VARCHAR"},
+		{"domain", duckDBTypeVarchar},
 		{"activity_count", duckDBTypeBigInt},
 		{"person_count", duckDBTypeBigInt},
 		{"file_count", duckDBTypeBigInt},
@@ -309,6 +340,36 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"sent_units", duckDBTypeBigInt},
 		{"received_units", duckDBTypeBigInt},
 		{"meeting_units", duckDBTypeBigInt},
+		{"modality_mask", "UTINYINT"},
+		{"last_at", "TIMESTAMP"},
+	},
+	DatasetLogicalContributions: {
+		{"relation_kind", "UTINYINT"},
+		{"entry_key", duckDBTypeVarchar},
+		{"anchor_message_id", duckDBTypeBigInt},
+		{"conversation_id", duckDBTypeBigInt},
+		{"source_id", duckDBTypeBigInt},
+		{"source_type", duckDBTypeVarchar},
+		{"occurred_at", "TIMESTAMP"},
+		{"message_type", duckDBTypeVarchar},
+		{"entry_kind", duckDBTypeVarchar},
+		{"is_from_me", duckDBTypeBoolean},
+		{"attachment_count", duckDBTypeBigInt},
+		{"canonical_id", duckDBTypeBigInt},
+		{"is_author", duckDBTypeBoolean},
+		{"is_owner", duckDBTypeBoolean},
+		{"with_owner", duckDBTypeBoolean},
+		{"domain", duckDBTypeVarchar},
+	},
+	DatasetTemperatureContributions: {
+		{"canonical_id", duckDBTypeBigInt},
+		{"event_date", "DATE"},
+		{"sent_count", duckDBTypeBigInt},
+		{"received_count", duckDBTypeBigInt},
+		{"meeting_count", duckDBTypeBigInt},
+		{"email_count", duckDBTypeBigInt},
+		{"chat_count", duckDBTypeBigInt},
+		{"total_count", duckDBTypeBigInt},
 		{"modality_mask", "UTINYINT"},
 		{"last_at", "TIMESTAMP"},
 	},

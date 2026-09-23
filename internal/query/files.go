@@ -582,8 +582,7 @@ func fileGroupExpressions(
 , participant_files AS (
 	SELECT DISTINCT f.attachment_id, a.canonical_id AS person_id, f.occurred_at, f.size
 	FROM file_population f
-	JOIN read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	JOIN ` + sqlActivityRelation(activityGlob) + ` a ON a.message_id = f.message_id
 	WHERE a.canonical_id IS NOT NULL
 	  AND (a.is_direct OR a.is_conversation_member)
 ), participant_file_labels AS (
@@ -603,8 +602,7 @@ func fileGroupExpressions(
 , domain_files AS (
 	SELECT DISTINCT f.attachment_id, a.participant_domain AS group_value, f.occurred_at, f.size
 	FROM file_population f
-	JOIN read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	JOIN ` + sqlActivityRelation(activityGlob) + ` a ON a.message_id = f.message_id
 	WHERE a.participant_domain <> ''
 )`,
 			source: "domain_files",

@@ -140,6 +140,8 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
+		identityindex.DatasetLogicalContributions,
+		identityindex.DatasetTemperatureContributions,
 	} {
 		plan.Replace[dataset] = true
 	}

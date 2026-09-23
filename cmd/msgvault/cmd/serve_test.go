@@ -690,8 +690,12 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 		strings.NewReader(`{"sql":"SELECT 1"}`),
 	)
 	require.NoError(err, "POST SQL query")
-	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode,
-		"initializing DuckDB must report SQL engine unavailable")
+	assert.Equal(http.StatusAccepted, resp.StatusCode,
+		"initializing DuckDB must accept recovery without waiting for the build")
+	var accepted api.CacheBuildAccepted
+	require.NoError(json.NewDecoder(resp.Body).Decode(&accepted))
+	assert.NotEmpty(accepted.JobID)
+	assert.Contains([]string{api.CacheBuildQueued, api.CacheBuildRunning}, accepted.Status)
 	_ = resp.Body.Close()
 
 	cancel()
@@ -957,6 +961,323 @@ func TestRunDaemonSQLQueryRebuildsStaleCacheOutOfProcess(t *testing.T) {
 	require.ErrorIs(err, sentinel, "error")
 	assert.True(called, "subprocess rebuild should be called")
 	assert.True(gotFullRebuild, "missing cache should request full rebuild")
+}
+
+func TestRunDaemonSQLQueryServesPublishedCacheWhileBuilderRuns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.MinRebuildInterval = 6 * time.Hour
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
+	`)
+	require.NoError(err)
+
+	builderLock, err := cacheBuilderFileLock(c.AnalyticsDir())
+	require.NoError(err)
+	locked, err := builderLock.TryLock()
+	require.NoError(err)
+	require.True(locked)
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-release:
+		}
+		_ = builderLock.Unlock()
+	}()
+
+	started := time.Now()
+	result, err := runDaemonSQLQuery(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages")
+	elapsed := time.Since(started)
+	require.NoError(err)
+	assert.Less(elapsed, time.Second, "query waited for the active cache builder")
+	assert.Equal(1, result.RowCount)
+	require.Len(result.Rows, 1)
+	require.Len(result.Rows[0], 1)
+	assert.EqualValues(1, result.Rows[0][0], "query must read the committed publication")
+	require.NotNil(result.Cache)
+	assert.NotEmpty(result.Cache.Generation)
+	assert.False(result.Cache.PublishedAt.IsZero())
+	assert.Contains(result.Cache.StaleReason, "new messages")
+	assert.Equal(int64(1), result.Cache.PendingAdditions)
+}
+
+func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.AutoBuildCache = true
+	c.Analytics.MinRebuildInterval = 6 * time.Hour
+	previousCfg := cfg
+	cfg = c
+	t.Cleanup(func() { cfg = previousCfg })
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
+	`)
+	require.NoError(err)
+	require.True(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
+	buildCacheBeforeMessagesExportHook = func() error { return errors.New("unexpected cache build") }
+	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+	builderLock, err := cacheBuilderFileLock(c.AnalyticsDir())
+	require.NoError(err)
+	locked, err := builderLock.TryLock()
+	require.NoError(err)
+	require.True(locked)
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-release:
+		}
+		_ = builderLock.Unlock()
+	}()
+	started := time.Now()
+	require.NoError(rebuildCacheAfterManualSync(c.DatabaseDSN()))
+	assert.Less(time.Since(started), time.Second, "manual sync waited for the active cache builder")
+	staleness, err := cacheNeedsBuildForQuery(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
+	require.NoError(err)
+	assert.True(staleness.NeedsBuild)
+}
+
+func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.MinRebuildInterval = 0
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
+	`)
+	require.NoError(err)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, mode buildCacheMode) error {
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	begin := time.Now()
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", false, jobs)
+	require.NoError(err)
+	assert.Nil(accepted)
+	assert.Less(time.Since(begin), time.Second)
+	require.NotNil(result.Cache)
+	assert.True(result.Cache.Building)
+	assert.EqualValues(1, result.Rows[0][0])
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("cache job did not start")
+	}
+	_, first, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	require.NoError(err)
+	require.NotNil(first)
+	_, second, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	require.NoError(err)
+	require.NotNil(second)
+	assert.Equal(first.JobID, second.JobID)
+}
+
+func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.AutoBuildCache = false
+	c.Analytics.MinRebuildInterval = 0
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
+	`)
+	require.NoError(err)
+	started := make(chan struct{}, 1)
+	jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error {
+		started <- struct{}{}
+		return nil
+	})
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", false, jobs)
+	require.NoError(err)
+	assert.Nil(accepted)
+	require.NotNil(result.Cache)
+	assert.NotEmpty(result.Cache.StaleReason)
+	assert.False(jobs.active())
+	select {
+	case <-started:
+		assert.Fail("automatic cache build started despite auto_build_cache=false")
+	default:
+	}
+	_, forced, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	require.NoError(err)
+	require.NotNil(forced)
+	assert.NotEmpty(forced.JobID)
+}
+
+func TestFreshQueryVerifiesCleanPublicationInBackground(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.MinRebuildInterval = 6 * time.Hour
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	started := make(chan buildCacheMode, 1)
+	jobs := newCacheBuildJobs(t.Context(), nil, func(_ context.Context, mode buildCacheMode) error {
+		started <- mode
+		return nil
+	})
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	require.NoError(err)
+	assert.Nil(result)
+	require.NotNil(accepted)
+	assert.NotEmpty(accepted.JobID)
+	select {
+	case mode := <-started:
+		assert.Equal(buildCacheModeAuto, mode)
+	case <-time.After(time.Second):
+		require.FailNow("fresh query did not start cache verification")
+	}
+}
+
+func TestSQLAnalyticsModeQueryQueuesMissingCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineSQL
+	engine := query.NewEngine(s.DB(), false)
+	t.Cleanup(func() { _ = engine.Close() })
+	started := make(chan buildCacheMode, 1)
+	jobs := newCacheBuildJobs(t.Context(), nil, func(_ context.Context, mode buildCacheMode) error {
+		started <- mode
+		return nil
+	})
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", false, jobs)
+	require.NoError(err)
+	assert.Nil(result)
+	require.NotNil(accepted)
+	assert.NotEmpty(accepted.JobID)
+	select {
+	case mode := <-started:
+		assert.Equal(buildCacheModeAuto, mode)
+	case <-time.After(time.Second):
+		require.FailNow("missing cache did not queue recovery")
+	}
+}
+
+func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.AutoBuildCache = true
+	c.Analytics.MinRebuildInterval = 6 * time.Hour
+	previousCfg := cfg
+	cfg = c
+	t.Cleanup(func() { cfg = previousCfg })
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
+	`)
+	require.NoError(err)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, mode buildCacheMode) error {
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	adapter := &storeAPIAdapter{store: s, cacheJobs: jobs}
+	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, false))
+	assert.False(jobs.active())
+	require.NoError(adapter.queueCacheRefreshAfterManualSync(true, false))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("forced cache job did not start")
+	}
+	assert.True(jobs.active())
+	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, true))
 }
 
 func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {

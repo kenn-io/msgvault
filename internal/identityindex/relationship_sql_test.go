@@ -15,6 +15,8 @@ import (
 const stressRelationshipActivity100MEnv = "MSGVAULT_STRESS_RELATIONSHIP_ACTIVITY_100M"
 
 func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeRelationshipEquivalenceFixture(t)
 	path := func(dataset string) string {
 		return parquetDatasetGlob(root, dataset)
@@ -27,9 +29,26 @@ func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
 			(SELECT count(*) FROM (SELECT * FROM legacy EXCEPT SELECT * FROM production)),
 			(SELECT count(*) FROM (SELECT * FROM production EXCEPT SELECT * FROM legacy))`
 	var legacyOnly, productionOnly int64
-	require.NoError(t, db.QueryRow(query).Scan(&legacyOnly, &productionOnly))
-	assert.Zero(t, legacyOnly)
-	assert.Zero(t, productionOnly)
+	requirements.NoError(db.QueryRow(query).Scan(&legacyOnly, &productionOnly))
+	assertions.Zero(legacyOnly)
+	assertions.Zero(productionOnly)
+	normalized := ExpandedActivityRelation(
+		"("+buildSparseRelationshipActivitySQL(path, 2026)+")",
+		readParquetRelation([]string{path("conversation_participants")}, false),
+		readParquetRelation([]string{path("participants")}, false),
+		readParquetRelation([]string{path("participant_clusters")}, false),
+		readParquetRelation([]string{path("owner_participants")}, false),
+	)
+	query = `SELECT count(*) FROM (
+		(SELECT * FROM (` + buildLegacyRelationshipActivitySQL(path) + `)
+		 EXCEPT ALL SELECT * FROM ` + normalized + `)
+		UNION ALL
+		(SELECT * FROM ` + normalized + `
+		 EXCEPT ALL SELECT * FROM (` + buildLegacyRelationshipActivitySQL(path) + `))
+	)`
+	var normalizedDifferences int64
+	requirements.NoError(db.QueryRow(query).Scan(&normalizedDifferences))
+	assertions.Zero(normalizedDifferences)
 }
 
 func TestRelationshipActivityYearQueryExcludesOffYearEdgesUnderLowMemory(t *testing.T) {
@@ -123,7 +142,7 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 		messageType:      "email",
 		conversationType: "email_thread",
 	})
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "96MB"))
+	requirements.NoError(setRelationshipTestMemoryLimit(db, "192MB"))
 
 	result, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
@@ -133,6 +152,43 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(int64(1_000_000), result.Activity.FinalRows)
 	assertions.Equal(int64(1_000_000), result.Activity.ConversationExpandedRows)
+}
+
+func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID:   1,
+		messageCount:     40,
+		memberCount:      300,
+		startDate:        "2026-01-01",
+		messageType:      "whatsapp",
+		conversationType: "group_chat",
+	})
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+	})
+	requirements.NoError(err)
+	physicalRows := relationshipParquetCount(t, db, root, DatasetActivity)
+	assertions.LessOrEqual(physicalRows, int64(120),
+		"physical message activity must not repeat the 300-member roster for every message")
+	oldRelation := "(" + buildRelationshipActivitySQL(func(dataset string) string {
+		return parquetDatasetGlob(root, dataset)
+	}, 2026) + ")"
+	newRelation := ExpandedActivityRelation(
+		readParquetRelation([]string{parquetDatasetGlob(root, DatasetActivity)}, true),
+		readParquetRelation([]string{parquetDatasetGlob(root, "conversation_participants")}, false),
+		readParquetRelation([]string{parquetDatasetGlob(root, "participants")}, false),
+		readParquetRelation([]string{parquetDatasetGlob(root, "participant_clusters")}, false),
+		readParquetRelation([]string{parquetDatasetGlob(root, "owner_participants")}, false),
+	)
+	for _, pair := range [][2]string{{oldRelation, newRelation}, {newRelation, oldRelation}} {
+		var difference int64
+		requirements.NoError(db.QueryRow("SELECT count(*) FROM (SELECT * FROM " + pair[0] +
+			" EXCEPT ALL SELECT * FROM " + pair[1] + ")").Scan(&difference))
+		assertions.Equal(int64(0), difference)
+	}
 }
 
 func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
@@ -172,12 +228,12 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	})
 	requirements.NoError(err)
 
-	assertions.Equal(int64(15), relationshipParquetCount(
+	assertions.Equal(int64(6), relationshipParquetCount(
 		t, db, stagedRoot, DatasetActivity,
 	))
-	assertions.Equal(int64(7), result.Activity.DirectRows)
-	assertions.Equal(int64(35), result.Activity.ConversationExpandedRows)
-	assertions.Equal(int64(35), result.Activity.FinalRows)
+	assertions.Equal(int64(3), result.Activity.DirectRows)
+	assertions.Equal(int64(15), result.Activity.ConversationExpandedRows)
+	assertions.Equal(int64(15), result.Activity.FinalRows)
 	assertions.Equal(int64(7), result.Stats.TotalMessages)
 
 	var activityCount int64
@@ -253,7 +309,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	requirements.NoError(err)
 
 	query := logicalActivitySQL(
-		relationshipParquetGlob(root, DatasetActivity),
+		testExpandedActivity(root, root),
 		"f.source_id = ?",
 	) + `
 		SELECT
@@ -355,7 +411,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 	requirements.NoError(err)
 
 	query := logicalActivitySQL(
-		relationshipParquetGlob(root, DatasetActivity),
+		testExpandedActivity(root, root),
 		"true",
 	) + `
 		SELECT

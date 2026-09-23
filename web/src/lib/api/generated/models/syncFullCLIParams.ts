@@ -4,6 +4,14 @@
 
 export type SyncFullCLIParams = {
   /**
+   * Build the analytics cache after sync even inside the interval
+   */
+  "build-cache"?: boolean;
+  /**
+   * Skip the analytics cache refresh after sync
+   */
+  "no-build-cache"?: boolean;
+  /**
    * Account email or display name to sync
    */
   email?: string;

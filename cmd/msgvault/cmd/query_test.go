@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -30,11 +32,13 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 	savedLogger := logger
 	savedUseLocal := useLocal
 	savedQueryFormat := queryFormat
+	savedQueryFresh := queryFresh
 	t.Cleanup(func() {
 		cfg = savedCfg
 		logger = savedLogger
 		useLocal = savedUseLocal
 		queryFormat = savedQueryFormat
+		queryFresh = savedQueryFresh
 	})
 
 	cfg = &config.Config{
@@ -44,6 +48,7 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 	logger = slog.New(slog.DiscardHandler)
 	useLocal = true
 	queryFormat = outputFormatJSON
+	queryFresh = false
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -66,6 +71,48 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 		"rows": [["Hello"]],
 		"row_count": 1
 	}`, stdout.String(), "stdout JSON")
+}
+
+func TestQueryCommandFreshReportsAcceptedBuild(t *testing.T) {
+	dataDir := t.TempDir()
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService, Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/query", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			SQL   string `json:"sql"`
+			Fresh bool   `json:"fresh"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.True(t, req.Fresh)
+		assert.Equal(t, "SELECT 1", req.SQL)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued","job_id":"synthetic-job"}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+	savedCfg, savedLogger, savedUseLocal := cfg, logger, useLocal
+	savedFormat, savedFresh := queryFormat, queryFresh
+	t.Cleanup(func() {
+		cfg, logger, useLocal = savedCfg, savedLogger, savedUseLocal
+		queryFormat, queryFresh = savedFormat, savedFresh
+	})
+	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	logger = slog.New(slog.DiscardHandler)
+	useLocal = true
+	queryFormat = outputFormatJSON
+	queryFresh = true
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{Use: "query", RunE: queryCmd.RunE}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	require.NoError(t, runHTTPQuery(cmd, "SELECT 1"))
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "synthetic-job")
 }
 
 func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
@@ -112,6 +159,23 @@ func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
 			assert.NotContains(got, "e+15", "%s output must not use scientific notation", tt.format)
 		})
 	}
+}
+
+func TestWriteQueryResultIncludesCacheFreshness(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	result := &query.QueryResult{
+		Columns: []string{"count"}, Rows: [][]any{{int64(1)}}, RowCount: 1,
+		Cache: &query.CacheFreshness{
+			Generation: "synthetic-generation", PublishedAt: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC),
+			StaleReason: "1 new message", PendingAdditions: 1,
+		},
+	}
+	var out bytes.Buffer
+	require.NoError(writeQueryResult(&out, result, "json"))
+	assert.Contains(out.String(), `"generation": "synthetic-generation"`)
+	assert.Contains(out.String(), `"stale_reason": "1 new message"`)
+	assert.Contains(out.String(), `"pending_additions": 1`)
 }
 
 func TestWriteQueryResult_FormatCaseInsensitive(t *testing.T) {

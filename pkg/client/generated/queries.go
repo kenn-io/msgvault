@@ -235,6 +235,12 @@ type GetCLIStatsQuery struct {
 }
 
 type SyncCLIQuery struct {
+	// BuildCache Build the analytics cache after sync even inside the interval
+	BuildCache *bool `json:"build-cache,omitempty"`
+
+	// NoBuildCache Skip the analytics cache refresh after sync
+	NoBuildCache *bool `json:"no-build-cache,omitempty"`
+
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
 
@@ -249,6 +255,12 @@ type SyncCLIQuery struct {
 }
 
 type SyncFullCLIQuery struct {
+	// BuildCache Build the analytics cache after sync even inside the interval
+	BuildCache *bool `json:"build-cache,omitempty"`
+
+	// NoBuildCache Skip the analytics cache refresh after sync
+	NoBuildCache *bool `json:"no-build-cache,omitempty"`
+
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
 
@@ -951,6 +963,11 @@ func (l ListPersonRelationshipReviewsQuery) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type RunQueryQuery struct {
+	// Fresh Request a new cache publication before returning rows
+	Fresh *bool `json:"fresh,omitempty"`
 }
 
 type SearchMessagesQuery struct {

@@ -9,12 +9,14 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
 )
 
 var queryFormat string
+var queryFresh bool
 
 var queryCmd = &cobra.Command{
 	Use:   "query [sql]",
@@ -54,9 +56,25 @@ func runHTTPQuery(cmd *cobra.Command, sqlStr string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	result, err := st.RunSQLQuery(cmd.Context(), sqlStr)
+	result, accepted, err := st.RunSQLQueryWithFresh(cmd.Context(), sqlStr, queryFresh)
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
+	}
+	if accepted != nil {
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache build %s: %s (GET /api/v1/cache-builds/%s)\n",
+			accepted.Status, accepted.JobID, accepted.JobID)
+		if err != nil {
+			return fmt.Errorf("write cache build status: %w", err)
+		}
+		return nil
+	}
+	if strings.ToLower(strings.TrimSpace(queryFormat)) != outputFormatJSON && result.Cache != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache published %s; generation %s",
+			result.Cache.PublishedAt.Format(time.RFC3339), result.Cache.Generation)
+		if result.Cache.StaleReason != "" {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "; stale: %s", result.Cache.StaleReason)
+		}
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 	}
 	return writeQueryResult(cmd.OutOrStdout(), result, queryFormat)
 }
@@ -68,7 +86,7 @@ func writeQueryResult(w io.Writer, result *query.QueryResult, format string) err
 	format = strings.ToLower(strings.TrimSpace(format))
 	switch format {
 	case outputFormatJSON:
-		return writeJSON(w, result.Columns, result.Rows)
+		return writeJSON(w, result)
 	case "csv":
 		return writeCSV(w, result.Columns, result.Rows)
 	case "table":
@@ -78,14 +96,7 @@ func writeQueryResult(w io.Writer, result *query.QueryResult, format string) err
 	}
 }
 
-func writeJSON(
-	w io.Writer, cols []string, rows [][]any,
-) error {
-	result := query.QueryResult{
-		Columns:  cols,
-		Rows:     rows,
-		RowCount: len(rows),
-	}
+func writeJSON(w io.Writer, result *query.QueryResult) error {
 	enc := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
 
 	return json.MarshalEncode(enc, result, json.Deterministic(true))
@@ -193,6 +204,7 @@ func writeTable(
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
+	queryCmd.Flags().BoolVar(&queryFresh, "fresh", false, "Request a new analytics cache publication before returning rows")
 	queryCmd.Flags().StringVar(
 		&queryFormat, "format", outputFormatJSON,
 		"Output format: json, csv, or table",

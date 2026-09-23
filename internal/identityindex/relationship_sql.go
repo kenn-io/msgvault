@@ -388,5 +388,18 @@ SELECT 3::UTINYINT AS relation_kind,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
        NULL::BOOLEAN AS with_owner, p.domain
 FROM logical_person_domains p
-WHERE p.domain <> ''`
+WHERE p.domain <> ''
+
+UNION ALL
+
+-- Keep the unit even when a conversation has no resolved participants yet.
+-- A later append can then inherit its previous attachment total and anchor.
+SELECT 4::UTINYINT AS relation_kind,
+       u.entry_key, u.anchor_message_id, u.conversation_id, u.source_id,
+       u.source_type, u.occurred_at, u.message_type, u.entry_kind, u.is_from_me,
+       u.attachment_count, NULL::BIGINT AS canonical_id,
+       NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
+       NULL::BOOLEAN AS with_owner, NULL::VARCHAR AS domain
+FROM logical_units u
+WHERE u.entry_kind = 'conversation'`
 }

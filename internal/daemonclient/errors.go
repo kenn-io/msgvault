@@ -141,6 +141,17 @@ func CLIResponseError(resp any, err error) error {
 	return responseError(resp, err, []int{http.StatusOK}, handleCLIErrorBody)
 }
 
+// CLIResponseWithStatuses keeps CLI error wording while allowing an endpoint
+// to return an accepted asynchronous operation alongside ordinary results.
+func CLIResponseWithStatuses[R any](
+	c *Client, successStatuses []int,
+	request func(*apiclient.Client) (R, error),
+) (R, error) {
+	return generatedResponse(c, request, func(resp any, err error) error {
+		return responseError(resp, err, successStatuses, handleCLIErrorBody)
+	})
+}
+
 // APIResponse executes a generated request and validates its response.
 func APIResponse[R any](
 	c *Client,

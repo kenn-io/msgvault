@@ -34,10 +34,16 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
-// identityActivityPath returns the relationship_activity glob escaped for
-// direct embedding in trusted SQL text.
+// identityActivityPath names the normalized activity view.
 func (e *DuckDBEngine) identityActivityPath() string {
-	return quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetActivity))
+	return "relationship_activity_expanded"
+}
+
+func sqlActivityRelation(activity string) string {
+	if activity == "relationship_activity_expanded" {
+		return activity
+	}
+	return "read_parquet('" + activity + "', hive_partitioning=true, union_by_name=true)"
 }
 
 // buildIdentityLogicalSQL renders the context-filtered logical-entry
@@ -66,8 +72,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
-	activityScan := `read_parquet('` + e.identityActivityPath() + `',
-		hive_partitioning=true, union_by_name=true)`
+	activityScan := sqlActivityRelation(e.identityActivityPath())
 	// entry_num is a numeric logical-entry key: the anchor message ID for
 	// message entries, the (globally unique, NOT NULL) conversation ID
 	// negated for chat conversation entries so the two spaces cannot
@@ -157,8 +162,7 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	}
 	conditions, args := buildExploreConditions(request)
 	activityGlob := e.identityActivityPath()
-	activityScan := `read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true)`
+	activityScan := sqlActivityRelation(activityGlob)
 	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
 	// dedup hash stays numeric-keyed so a broad filter fits the interactive
 	// memory budget.
@@ -218,7 +222,7 @@ func (e *DuckDBEngine) narrowIdentityFactCandidates(
 	conditions, args := buildIdentityFactConditions(request, facts)
 	queryText := `
 SELECT f.message_id
-FROM read_parquet('` + facts + `', hive_partitioning=true, union_by_name=true) f
+FROM ` + sqlActivityRelation(facts) + ` f
 WHERE ` + conditions + `
 GROUP BY f.message_id
 LIMIT ?`
@@ -280,15 +284,13 @@ func buildIdentityFactConditions(request ExploreRequest, activityPath string) (s
 	}
 	participantPredicate := `(EXISTS (
 		SELECT 1
-		FROM read_parquet('` + activityPath + `',
-			hive_partitioning=true, union_by_name=true) edge
+		FROM ` + sqlActivityRelation(activityPath) + ` edge
 		WHERE edge.message_id = f.message_id
 		  AND edge.canonical_id = ?
 	))`
 	domainPredicate := `(EXISTS (
 		SELECT 1
-		FROM read_parquet('` + activityPath + `',
-			hive_partitioning=true, union_by_name=true) edge
+		FROM ` + sqlActivityRelation(activityPath) + ` edge
 		WHERE edge.message_id = f.message_id
 		  AND lower(edge.participant_domain) = ?
 	))`

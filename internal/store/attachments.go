@@ -511,7 +511,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 			changed += n
 		}
 		if changed > 0 {
-			if err := s.bumpDerivedDataRevision(tx); err != nil {
+			if err := s.bumpDerivedDataRevision(tx, true); err != nil {
 				return fmt.Errorf("advance Discord attachment metadata revision: %w", err)
 			}
 		}
