@@ -221,6 +221,7 @@ var settingsCatalog = []settingDefinition{
 	readOnlyBoolSetting("server.allow_insecure", "server", func(c *config.Config) bool { return c.Server.AllowInsecure }),
 	readOnlyStringArraySetting("server.trusted_proxies", "server", func(c *config.Config) []string { return c.Server.TrustedProxies }),
 	stringSetting("server.daemon_idle_timeout", "server", nil, func(c *config.Config) string { return c.Server.DaemonIdleTimeout.String() }),
+	boolSetting("server.daemon_auto_start", "server", func(c *config.Config) bool { return c.Server.DaemonAutoStartEnabled() }),
 	stringSetting("server.daemon_auto_restart", "server", []string{config.DaemonAutoRestartNewer, config.DaemonAutoRestartNever, config.DaemonAutoRestartAlways}, func(c *config.Config) string { return c.Server.DaemonAutoRestart }),
 	stringSetting("analytics.engine", "archive", []string{"auto", "sql", "duckdb"}, func(c *config.Config) string { return c.Analytics.Engine }),
 	boolSetting("analytics.auto_build_cache", "archive", func(c *config.Config) bool { return c.Analytics.AutoBuildCache }),

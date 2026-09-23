@@ -114,7 +114,7 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		"log.enabled", "log.level", "log.sql_slow_ms", "log.sql_trace",
 		"analytics.min_rebuild_interval", "analytics.builder_memory_limit",
 		"analytics.builder_threads", "analytics.builder_temp_limit",
-		"server.daemon_idle_timeout", "server.daemon_auto_restart",
+		"server.daemon_idle_timeout", "server.daemon_auto_start", "server.daemon_auto_restart",
 		"activity.timezone", "activity.max_direct_counterparts", "activity.batch_size", "activity.schedule",
 		"backup.zstd_level",
 		"beeper.accounts", "beeper.exclude_accounts", "beeper.rate_limit_qps",
@@ -144,6 +144,7 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 	for _, key := range []string{"chat.server", "chat.model", "chat.max_results"} {
 		assertions.NotContains(byKey, key, "legacy chat settings have no production consumer")
 	}
+	assertions.Equal(map[string]any{"boolean": true}, byKey["server.daemon_auto_start"]["value"])
 }
 
 func TestGetSettingsPublishesValidationMetadataFromRegisteredRouter(t *testing.T) {
@@ -305,6 +306,7 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 		{"key": "analytics.min_rebuild_interval", "value": map[string]any{"string": "2h"}},
 		{"key": "analytics.builder_threads", "value": map[string]any{"integer": 3}},
 		{"key": "server.daemon_idle_timeout", "value": map[string]any{"string": "30m"}},
+		{"key": "server.daemon_auto_start", "value": map[string]any{"boolean": false}},
 		{"key": "server.daemon_auto_restart", "value": map[string]any{"string": "always"}},
 		{"key": "activity.timezone", "value": map[string]any{"string": "America/New_York"}},
 		{"key": "activity.max_direct_counterparts", "value": map[string]any{"integer": 50}},
@@ -340,8 +342,12 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 
 	resp := patchSettings(t, srv, string(body))
 	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	var updated SettingsResponse
+	requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &updated))
+	assertions.Equal(&SettingValue{Boolean: new(false)}, settingsByKey(updated.Settings)["server.daemon_auto_start"].Value)
 	loaded, err := config.Load(path, "")
 	requirements.NoError(err)
+	assertions.False(loaded.Server.DaemonAutoStartEnabled())
 	assertions.Equal(12, loaded.Sync.RateLimitQPS)
 	assertions.Equal("debug", loaded.Log.Level)
 	assertions.Equal(int64(250), loaded.Log.SQLSlowMs)

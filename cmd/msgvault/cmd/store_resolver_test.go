@@ -320,6 +320,9 @@ func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(
 	assert.Equal(HTTPStoreInfo{}, info)
 	assert.Contains(err.Error(), "incompatible daemon is already running")
 	assert.Contains(err.Error(), "daemon API version")
+	assert.Contains(err.Error(), "restart or upgrade the supervised service")
+	assert.NotContains(err.Error(), "msgvault daemon stop")
+	assert.NotContains(err.Error(), "--local")
 }
 
 func TestOpenHTTPStoreDisabledAutoStartWaitsForStartingDaemon(t *testing.T) {

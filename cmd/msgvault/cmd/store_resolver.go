@@ -421,7 +421,11 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, restartPolicy, "run `msgvault daemon stop` or retry with --local")
+	incompatibleGuidance := "run `msgvault daemon stop` or retry with --local"
+	if !autoStart {
+		incompatibleGuidance = "restart or upgrade the supervised service"
+	}
+	prep, err := prepareBackgroundDaemonStart(c, restartPolicy, incompatibleGuidance)
 	if err != nil {
 		return nil, localDaemonStartupInfo{}, err
 	}
