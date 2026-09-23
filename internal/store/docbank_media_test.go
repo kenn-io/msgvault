@@ -342,6 +342,87 @@ func TestBeeperMediaUnsupportedDelivery(t *testing.T) {
 	assert.Equal("pending-artifact::true", deliveries()["shared-key"])
 }
 
+func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	hash := strings.Repeat("a", 64)
+	first := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "first", hash)
+	second := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "second", hash)
+	mappings := []store.BeeperMediaMapping{
+		first.mapping("withdrawn", "r1", "shared-key"), second.mapping("withdrawn", "r1", "shared-key"),
+	}
+	for _, mapping := range mappings {
+		require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), mapping))
+	}
+	deliveryState := func() string {
+		t.Helper()
+		var phase, code string
+		var scheduled bool
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT phase, error_code, next_action_at IS NOT NULL
+			FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`),
+			"withdrawn", "shared-key").Scan(&phase, &code, &scheduled))
+		return fmt.Sprintf("%s:%s:%t", phase, code, scheduled)
+	}
+	for i, mapping := range mappings {
+		prepared, err := f.Store.PrepareBeeperMediaOperation(t.Context(), retainOperation(mapping))
+		require.NoError(err)
+		require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, mapping.SourceMessageID))
+		applied, err := f.Store.FinishBeeperMediaOperation(t.Context(), prepared, store.BeeperMediaResult{
+			ErrorCode: "no_live_occurrence", Revoked: true,
+		})
+		require.NoError(err)
+		require.True(applied)
+		if i == 0 {
+			assert.Equal("pending-artifact::true", deliveryState(), "the pending sibling still supplies audio")
+		}
+	}
+	assert.Equal("blocked:no_live_occurrence:false", deliveryState())
+	require.NoError(f.Store.ReconsiderBlockedBeeperMediaOperations(t.Context(), "withdrawn"))
+	assert.Equal("blocked:no_live_occurrence:false", deliveryState(), "a restart does not restore the source")
+
+	// Restoring the same revision resumes its delivery and preserves its receipt path.
+	require.NoError(f.Store.ClearMessageDeletedFromSource(f.Source.ID, first.sourceMessageID))
+	retainAudio(t, f.Store, mappings[0], "restored-occurrence")
+	assert.Equal("pending-artifact::true", deliveryState())
+	operation, ok, err := f.Store.NextBeeperMediaOperation(t.Context(), "withdrawn", time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+}
+
+func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st, err := store.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(source.ID, "default-thread", "Thread")
+	require.NoError(t, err)
+	readOnly, err := store.OpenReadOnly(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, readOnly.Close()) })
+
+	for _, state := range []string{"pending", "retained", "blocked"} {
+		t.Run(state, func(t *testing.T) {
+			audio := addBeeperAudio(t, st, source.ID, conversation, state, strings.Repeat("a", 64))
+			mapping := audio.mapping("unchanged", "r1", "shared-key")
+			if state == "blocked" {
+				mapping.RetentionState, mapping.ErrorCode = store.BeeperMediaRetentionBlocked, "source_raw_invalid"
+			}
+			if state == "retained" {
+				retainAudio(t, st, mapping, "retained-occurrence")
+			} else {
+				require.NoError(t, st.ReconcileBeeperMediaMapping(t.Context(), mapping))
+			}
+			require.NoError(t, readOnly.ReconcileBeeperMediaMapping(t.Context(), mapping))
+		})
+	}
+}
+
 func TestBeeperMediaLiveMappings(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -374,14 +455,9 @@ func TestBeeperMediaLiveMappings(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]string{"m1=occurrence-1"}, liveMessageIDs(t, f.Store))
 
-	// A changed raw archive withholds the mapping until reconciliation.
+	// A reaction-only update does not withdraw an unchanged audio occurrence.
 	require.NoError(f.Store.UpsertMessageRawWithFormat(first.messageID,
-		[]byte(`{"id":"m1","edited":true,"attachments":[{"id":"mxc://audio/m1"}]}`), "beeper_json"))
-	assert.Empty(liveMessageIDs(t, f.Store))
-	changed := firstMapping
-	digest := sha256.Sum256([]byte(`{"id":"m1","edited":true,"attachments":[{"id":"mxc://audio/m1"}]}`))
-	changed.RawHash = hex.EncodeToString(digest[:])
-	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), changed))
+		[]byte(`{"id":"m1","reactions":[{"reactionKey":"👍"}],"attachments":[{"id":"mxc://audio/m1"}]}`), "beeper_json"))
 	assert.Equal([]string{"m1=occurrence-1"}, liveMessageIDs(t, f.Store))
 
 	// Hard deletion removes the last live occurrence.

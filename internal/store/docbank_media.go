@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -193,10 +191,11 @@ type BeeperMediaResult struct {
 // BeeperMediaScan is a namespaced rolling scan checkpoint. BaselineSequence
 // ties a pass to the journal registration it can complete.
 type BeeperMediaScan struct {
-	DestinationKey    string `json:"destination_key"`
-	AfterAttachmentID int64  `json:"after_attachment_id"`
-	PassHighWater     int64  `json:"pass_high_water"`
-	BaselineSequence  int64  `json:"baseline_sequence"`
+	DestinationKey    string    `json:"destination_key"`
+	AfterAttachmentID int64     `json:"after_attachment_id"`
+	PassHighWater     int64     `json:"pass_high_water"`
+	BaselineSequence  int64     `json:"baseline_sequence"`
+	NextFullScanAt    time.Time `json:"next_full_scan_at,omitzero"`
 }
 
 const beeperMediaCandidateColumns = `
@@ -285,6 +284,15 @@ func (s *Store) BeeperMediaAttachmentHighWater(ctx context.Context) (int64, erro
 func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperMediaMapping) error {
 	if err := validateBeeperMediaMapping(mapping); err != nil {
 		return err
+	}
+	existing, err := s.readBeeperMediaOccurrence(boundQuerier{ctx: ctx, q: s.db},
+		mapping.DestinationKey, mapping.OccurrenceRef, mapping.Revision)
+	if err == nil && existing.RetentionState != BeeperMediaRetentionRevoked &&
+		sameBeeperMediaOccurrence(existing, reconciledBeeperMediaOccurrence(existing, mapping)) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read beeper media occurrence: %w", err)
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
@@ -415,7 +423,7 @@ func sameBeeperMediaOccurrence(a, b BeeperMediaMapping) bool {
 }
 
 // ListLiveBeeperMediaMappings returns retained mappings whose current source,
-// message, part, bytes and raw archive still agree with the saved occurrence.
+// message, part and bytes still agree with the saved occurrence.
 // Mappings that no longer agree enter the revoked state.
 func (s *Store) ListLiveBeeperMediaMappings(
 	ctx context.Context, destination, processingKey string, limit int,
@@ -488,7 +496,7 @@ func (s *Store) ListLiveBeeperMediaMappings(
 }
 
 // currentBeeperMediaMessage resolves the saved source tuple to its current
-// live message and compares the raw archive digest by primary-key lookup.
+// live message and attachment. Unrelated raw-message changes do not revoke it.
 func (s *Store) currentBeeperMediaMessage(ctx context.Context, mapping BeeperMediaMapping) (bool, error) {
 	var messageID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
@@ -501,15 +509,7 @@ func (s *Store) currentBeeperMediaMessage(ctx context.Context, mapping BeeperMed
 	if err != nil {
 		return false, fmt.Errorf("resolve beeper media occurrence: %w", err)
 	}
-	raw, err := s.GetMessageRawContext(ctx, messageID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read beeper media source evidence: %w", err)
-	}
-	digest := sha256.Sum256(raw)
-	return mapping.RawHash != "" && hex.EncodeToString(digest[:]) == mapping.RawHash, nil
+	return true, nil
 }
 
 // RevokeStaleBeeperMediaMappings moves retained mappings without a current
@@ -777,7 +777,7 @@ func (s *Store) FinishBeeperMediaOperation(
 					UPDATE beeper_media_occurrences
 					SET retention_state = ?, next_action_at = ?, error_code = ?, updated_at = `+s.dialect.Now()+`
 					`+where, append([]any{state, next, result.ErrorCode}, key...)...)
-				if state == BeeperMediaRetentionBlocked {
+				if state == BeeperMediaRetentionBlocked || state == BeeperMediaRetentionRevoked {
 					retireCode = result.ErrorCode
 				}
 				break
