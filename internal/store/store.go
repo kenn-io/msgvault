@@ -519,7 +519,7 @@ func (s *Store) Close() error {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
-			// Maintenance owns its diagnostic so an expected deadline does not also become a generic SQL warning.
+			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
 			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10002")
 			logSQLiteOptimizeError("store close", err)
 			cancel()
