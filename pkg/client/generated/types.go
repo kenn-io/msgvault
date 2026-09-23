@@ -11039,8 +11039,8 @@ func (s SyncRunItemStatus) Validate() error {
 
 type SyncRunStatus struct {
 	CompletedAt       *string             `json:"completed_at,omitzero" validate:"required"`
-	CursorAfter       *string             `json:"cursor_after,omitzero" validate:"required"`
-	CursorBefore      *string             `json:"cursor_before,omitzero" validate:"required"`
+	CursorAfter       *string             `json:"cursor_after,omitzero"`
+	CursorBefore      *string             `json:"cursor_before,omitzero"`
 	ErrorMessage      *string             `json:"error_message,omitzero" validate:"required"`
 	ErrorsCount       int64               `json:"errors_count"`
 	ID                int64               `json:"id"`
@@ -11059,16 +11059,6 @@ func (s SyncRunStatus) Validate() error {
 	if s.CompletedAt != nil {
 		if err := typesValidator.Var(s.CompletedAt, "required"); err != nil {
 			errors = errors.Append("CompletedAt", err)
-		}
-	}
-	if s.CursorAfter != nil {
-		if err := typesValidator.Var(s.CursorAfter, "required"); err != nil {
-			errors = errors.Append("CursorAfter", err)
-		}
-	}
-	if s.CursorBefore != nil {
-		if err := typesValidator.Var(s.CursorBefore, "required"); err != nil {
-			errors = errors.Append("CursorBefore", err)
 		}
 	}
 	if s.ErrorMessage != nil {

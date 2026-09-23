@@ -175,11 +175,12 @@ var _ ArchiveIdentifier = (*store.Store)(nil)
 // source status endpoint.
 type SourceStatusStore interface {
 	ListSources(sourceType string) ([]*store.Source, error)
-	GetActiveSync(sourceID int64) (*store.SyncRun, error)
-	GetLatestSync(sourceID int64) (*store.SyncRun, error)
-	GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error)
-	CountSyncRunItems(syncRunID int64, status string) (int64, error)
-	ListSyncRunItems(syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
+	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
+	GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLatestSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error)
+	ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
 }
 
 // StoreStats is an alias for store.Stats — single source of truth.

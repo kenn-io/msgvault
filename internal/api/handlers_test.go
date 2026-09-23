@@ -3559,6 +3559,7 @@ func TestHandleSourceStatus(t *testing.T) {
 
 	runningID, err := st.StartSync(gmail.ID, "incremental")
 	require.NoError(err, "StartSync running")
+	require.NoError(st.UpdateSyncCheckpoint(runningID, &store.Checkpoint{PageToken: "private-running-cursor"}))
 
 	_, err = st.GetOrCreateSource("imap", "imaps://mail.example.com/alice")
 	require.NoError(err, "GetOrCreateSource imap")
@@ -3568,6 +3569,7 @@ func TestHandleSourceStatus(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	assert.Equal(http.StatusOK, w.Code, "status")
+	responseBody := w.Body.String()
 
 	var resp SourceStatusResponse
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
@@ -3591,6 +3593,7 @@ func TestHandleSourceStatus(t *testing.T) {
 
 	require.NotNil(got.LatestSync, "LatestSync")
 	assert.Equal(runningID, got.LatestSync.ID, "LatestSync.ID")
+	assert.NotContains(w.Body.String(), "private-running-cursor")
 
 	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
 	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
@@ -3603,8 +3606,91 @@ func TestHandleSourceStatus(t *testing.T) {
 	assert.Equal("ingest_error", got.LastSuccessfulSync.ItemErrors[0].ErrorKind, "LastSuccessfulSync.ItemErrors[0].ErrorKind")
 	assert.Equal("parse MIME: malformed header", got.LastSuccessfulSync.ItemErrors[0].ErrorMessage, "LastSuccessfulSync.ItemErrors[0].ErrorMessage")
 	assert.NotEmpty(got.LastSuccessfulSync.ItemErrors[0].CreatedAt, "LastSuccessfulSync.ItemErrors[0].CreatedAt")
-	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
-	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+	assert.NotContains(responseBody, `"cursor_before"`, "status response omits cursor_before key")
+	assert.NotContains(responseBody, `"cursor_after"`, "status response omits cursor_after key")
+}
+
+func TestHandleSourceStatusDoesNotRecoverUnownedRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "status-read-only.db")
+	first, err := store.OpenForTest(dbPath)
+	require.NoError(err)
+	require.NoError(first.InitSchema())
+	source, err := first.GetOrCreateSource("gmail", "unowned@example.com")
+	require.NoError(err)
+	runID, err := first.StartSync(source.ID, "full")
+	require.NoError(err)
+	require.NoError(first.Close())
+
+	second, err := store.OpenForTest(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = second.Close() })
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, second, newMockScheduler(), testLogger())
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+	require.Equal(http.StatusOK, w.Code)
+
+	var status string
+	require.NoError(second.DB().QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, runID).Scan(&status))
+	assert.Equal(store.SyncStatusRunning, status)
+}
+
+func TestHandleSourceStatusOmitsCursors(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+	source, err := st.GetOrCreateSource("gmail", "cursor@example.com")
+	require.NoError(err)
+	runID, err := st.StartSync(source.ID, "full")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, "private-cursor-value"))
+
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+	require.Equal(http.StatusOK, w.Code)
+	require.NotContains(w.Body.String(), "private-cursor-value")
+}
+
+func TestHandleSourceStatusStopsWaitingForDatabaseAfterCancellation(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+	db := st.DB()
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { _ = conn.Close() })
+	initialWaits := db.Stats().WaitCount
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil).WithContext(ctx))
+	}()
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for db.Stats().WaitCount == initialWaits {
+		select {
+		case <-deadline.C:
+			_ = conn.Close()
+			require.FailNow("status request did not wait for the held database connection")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+		require.Empty(w.Body.String())
+	case <-time.After(2 * time.Second):
+		_ = conn.Close()
+		<-done
+		require.FailNow("cancelled status request remained blocked on the database connection")
+	}
 }
 
 func TestHandleSourceStatusExposesServerAuthorizedSyncCapability(t *testing.T) {

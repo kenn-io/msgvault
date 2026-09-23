@@ -22,7 +22,10 @@ function run(status: string, processed: number, overrides: Record<string, unknow
   };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('SourcesWorkspace', () => {
   it('opens normalized source-sync operation history through its shell callback', async () => {
@@ -272,7 +275,7 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('retries an idle status failure without an active sync or an awaited accepted run', async () => {
+  it('holds a first-load error until manual Retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
     const fetchFn = vi.fn<typeof fetch>(async () => {
@@ -285,12 +288,29 @@ describe('SourcesWorkspace', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
 
-    // No source is syncing and no accepted run is awaited, so this retry
-    // relies on the error path bypassing the active-sync gate.
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(reads).toBe(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(reads).toBe(2));
     expect(await screen.findByText('Archive')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
+    rendered.unmount();
+  });
+
+  it('holds a first-load response processing error until manual Retry', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      reads += 1;
+      return Response.json(reads === 1 ? { sources: {} } : { sources: [source()] });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    expect(await screen.findByRole('alert')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(reads).toBe(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Archive')).toBeDefined();
     rendered.unmount();
   });
 
@@ -347,5 +367,224 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
 
     expect(signals[1]!.aborted).toBe(true);
+  });
+
+  it('aborts a stalled first status load and offers Retry', async () => {
+    const signals: AbortSignal[] = [];
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      signals.push(request.signal);
+      if (signals.length > 1) return Promise.resolve(Response.json({ sources: [source()] }));
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+      });
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(screen.queryByText('Loading source status…')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Archive')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('shows a paused state when mounted in a hidden tab and bounds the visible reload', async () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+      });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20 });
+
+    expect(await screen.findByText('Paused while this tab is hidden')).toBeDefined();
+    expect(screen.queryByText('Loading source status…')).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    rendered.unmount();
+  });
+
+  it('bounds a later status poll after the first load succeeds', async () => {
+    let reads = 0;
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      reads += 1;
+      if (reads === 1) return Promise.resolve(Response.json({ sources: [source({
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 1)
+      })] }));
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+      });
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+    });
+
+    expect(await screen.findByText('1 processed')).toBeDefined();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    expect(reads).toBe(2);
+    rendered.unmount();
+  });
+
+  it('resumes bounded polling after an active-sync status timeout', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    let timedOutSignal: AbortSignal | undefined;
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      reads += 1;
+      if (reads === 2) {
+        timedOutSignal = request.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+        });
+      }
+      if (reads === 1) return Promise.resolve(Response.json({ sources: [source({
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 1)
+      })] }));
+      return Promise.resolve(Response.json({ sources: [source({
+        latest_sync: run('completed', 3, { completed_at: '2026-07-19T10:01:00Z' })
+      })] }));
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20
+    });
+
+    expect(await screen.findByText('1 processed')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await waitFor(() => expect(timedOutSignal?.aborted).toBe(true));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reads).toBe(3);
+    expect(screen.queryByRole('alert')).toBeNull();
+    rendered.unmount();
+  });
+
+  it('keeps a newer load pending when an obsolete request settles', async () => {
+    let resolveOld: ((value: Response) => void) | undefined;
+    let resolveNew: ((value: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => {
+      if (!resolveOld) resolveOld = resolve;
+      else resolveNew = resolve;
+    }));
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    resolveOld!(Response.json({ sources: [source({ display_name: 'Obsolete' })] }));
+    await Promise.resolve();
+    expect(screen.getByText('Loading source status…')).toBeDefined();
+    expect(screen.queryByText('Obsolete')).toBeNull();
+
+    resolveNew!(Response.json({ sources: [source()] }));
+    expect(await screen.findByText('Archive')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('caps lock-hold polling and offers a manual refresh', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      reads += 1;
+      return Response.json({ sources: [held] });
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), maxLockHoldPolls: 3
+    });
+
+    await screen.findByText('sync_already_running');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(4);
+    expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(4);
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(reads).toBe(5);
+    rendered.unmount();
+  });
+
+  it('resets the lock-hold poll budget after a real active sync appears', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      reads += 1;
+      if (reads === 3) return Response.json({ sources: [source({
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 1)
+      })] });
+      return Response.json({ sources: [held] });
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), maxLockHoldPolls: 2
+    });
+
+    await screen.findByText('sync_already_running');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(6);
+    expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('does not bypass the lock-poll cap after a status error', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      reads += 1;
+      if (reads === 1) return Response.json({ sources: [source({
+        can_sync: false, sync_unavailable_reason: 'sync_already_running'
+      })] });
+      throw new Error('status unavailable');
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), maxLockHoldPolls: 1
+    });
+
+    expect(await screen.findByText('sync_already_running')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(2);
+    expect(screen.getByRole('alert').textContent).toContain('status unavailable');
+    rendered.unmount();
+  });
+
+  it('counts timed-out lock-hold retries toward the poll cap', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const timedOutSignals: AbortSignal[] = [];
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      reads += 1;
+      if (reads === 1) return Promise.resolve(Response.json({ sources: [source({
+        can_sync: false, sync_unavailable_reason: 'sync_already_running'
+      })] }));
+      timedOutSignals.push(request.signal);
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+      });
+    });
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), firstLoadTimeoutMs: 20, maxLockHoldPolls: 3
+    });
+
+    expect(await screen.findByText('sync_already_running')).toBeDefined();
+    for (let expectedReads = 2; expectedReads <= 4; expectedReads += 1) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(reads).toBe(expectedReads);
+      await waitFor(() => expect(timedOutSignals[expectedReads - 2]?.aborted).toBe(true));
+    }
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reads).toBe(4);
+    expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
+    rendered.unmount();
   });
 });

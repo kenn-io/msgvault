@@ -3007,12 +3007,12 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 	return state.IdentityRevision, nil
 }
 
-func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetActiveSync(sourceID)
+func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) GetLatestSync(sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLatestSync(sourceID)
+func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLatestSyncContext(ctx, sourceID)
 }
 
 func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {
@@ -3023,16 +3023,16 @@ func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string
 	return a.store.CreateSyncOperation(sourceID, operationID)
 }
 
-func (a *storeAPIAdapter) GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLastSuccessfulSync(sourceID)
+func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) CountSyncRunItems(syncRunID int64, status string) (int64, error) {
-	return a.store.CountSyncRunItems(syncRunID, status)
+func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {
+	return a.store.CountSyncRunItemsContext(ctx, syncRunID, status)
 }
 
-func (a *storeAPIAdapter) ListSyncRunItems(syncRunID int64, status string, limit int) ([]store.SyncRunItem, error) {
-	return a.store.ListSyncRunItems(syncRunID, status, limit)
+func (a *storeAPIAdapter) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error) {
+	return a.store.ListSyncRunItemsContext(ctx, syncRunID, status, limit)
 }
 
 const personEnrichmentJob = "person-enrichment"

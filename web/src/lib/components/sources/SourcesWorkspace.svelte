@@ -19,17 +19,23 @@
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
     client,
+    firstLoadTimeoutMs = 20_000,
     maxAwaitingPolls = 6,
+    maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
   }: {
     client: APIClient;
+    firstLoadTimeoutMs?: number;
     maxAwaitingPolls?: number;
+    maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
   } = $props();
   let sources = $state<Source[]>([]);
   let loading = $state(true);
+  let paused = $state(false);
+  let lockStatusStale = $state(false);
   let statusError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
@@ -41,12 +47,16 @@
   let awaitingSourceID = $state<number>();
   let awaitingBaselineRunID: number | undefined;
   let awaitingAttempts = 0;
+  let lockHoldPolls = 0;
+  let hasLoadedStatus = false;
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let disposed = false;
   onMount(() => {
     const visibilityChanged = (): void => {
       if (document.hidden) {
         stopPolling();
+        paused = true;
+        loading = false;
       } else {
         pollDelay = MIN_POLL_MS;
         void load();
@@ -84,39 +94,47 @@
   function isOnDemandSource(source: Source): boolean {
     return source.source_type === 'meeting_import';
   }
-  // allowIdle bypasses the active-sync gate below for error-path retries:
-  // a status-load failure must be able to reschedule itself even when no
-  // source is actively syncing and no accepted run is being awaited, or an
-  // initial/inactive-source failure would be unrecoverable until remount.
-  function schedulePoll(delay: number, allowIdle = false): void {
+  // Later status failures may retry in the background. A failed first load
+  // waits for the user's Retry action so its error stays visible.
+  function schedulePoll(delay: number, allowIdle = false, lockHold = false): void {
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !sources.some((source) => source.active_sync || schedulerHoldsSyncLock(source)) &&
+      !sources.some((source) => source.active_sync || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
       return;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
+      if (lockHold) lockHoldPolls += 1;
       void load();
     }, delay);
   }
   async function load(): Promise<void> {
-    if (disposed || document.hidden) return;
+    if (disposed) return;
+    if (document.hidden) {
+      paused = true;
+      loading = false;
+      return;
+    }
+    paused = false;
+    if (sources.length === 0) loading = true;
     const requestGeneration = ++generation;
     controller?.abort();
     const requestController = new AbortController();
     controller = requestController;
+    const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(firstLoadTimeoutMs)]);
     try {
       const { data, error: responseError } = await generatedListSourceStatus(undefined, {
         ...client,
-        signal: requestController.signal,
+        signal,
       });
       if (requestGeneration !== generation || disposed) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load source status.'));
       const next = data.sources ?? [];
       let nextDelay: number | undefined;
+      let lockHoldPoll = false;
       let advanced = false;
       const nextProgress = new Map<number, number>();
       for (const source of next) {
@@ -148,19 +166,43 @@
           pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         }
       }
-      if (next.some((source) => source.active_sync)) {
+      const hasActiveSync = next.some((source) => source.active_sync);
+      const hasLockHold = next.some(schedulerHoldsSyncLock);
+      if (hasActiveSync) {
+        lockHoldPolls = 0;
+        lockStatusStale = false;
         pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, pollDelay * 2);
         nextDelay = pollDelay;
-      } else if (next.some(schedulerHoldsSyncLock)) {
+      } else if (hasLockHold && lockHoldPolls < maxLockHoldPolls) {
+        lockStatusStale = false;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         nextDelay = pollDelay;
+        lockHoldPoll = true;
+      } else if (hasLockHold) {
+        lockStatusStale = true;
+      } else {
+        lockHoldPolls = 0;
+        lockStatusStale = false;
       }
       sources = next;
       statusError = '';
-      if (nextDelay !== undefined) schedulePoll(nextDelay);
+      hasLoadedStatus = true;
+      if (nextDelay !== undefined) {
+        schedulePoll(nextDelay, false, lockHoldPoll);
+      }
     } catch (cause) {
-      if (requestController.signal.aborted || requestGeneration !== generation || disposed) return;
-      statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
+      if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
+      if (signal.aborted && signal.reason?.name === 'TimeoutError') {
+        statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
+      } else {
+        statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
+      }
+      if (!hasLoadedStatus) return;
+      if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
+        !sources.some((source) => source.active_sync) && awaitingSourceID === undefined) {
+        lockStatusStale = true;
+        return;
+      }
       if (awaitingSourceID !== undefined) {
         awaitingAttempts += 1;
         if (awaitingAttempts >= maxAwaitingPolls) {
@@ -175,7 +217,8 @@
       } else {
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
-        schedulePoll(nextDelay, true);
+        schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
+          !sources.some((source) => source.active_sync));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -245,6 +288,14 @@
       ? value.message
       : fallback;
   }
+  function refresh(): void {
+    stopPolling(false);
+    lockHoldPolls = 0;
+    lockStatusStale = false;
+    statusError = '';
+    pollDelay = MIN_POLL_MS;
+    void load();
+  }
 </script>
 
 <main class="sources" aria-label="Sources">
@@ -258,14 +309,22 @@
       <Button size="sm" surface="soft" label="View source operations" onclick={onOpenOperations} />
     </div>
   </header>
-  {#if statusError}<p class="notice notice--error" role="alert">{statusError}</p>{/if}
+  {#if statusError}<div class="notice notice--error" role="alert">
+      <span>{statusError}</span>
+      <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
+    </div>{/if}
   {#if triggerError}<p class="notice notice--error" role="alert">{triggerError}</p>{/if}
+  {#if paused}<p class="notice" role="status">Paused while this tab is hidden</p>{/if}
+  {#if lockStatusStale}<div class="notice" role="status">
+      <span>Automatic refresh paused. Source status may be stale.</span>
+      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
+    </div>{/if}
   {#if awaitingState === 'awaiting'}<p class="notice" role="status">Awaiting accepted sync run…</p>
   {:else if awaitingState === 'not_observed'}<p class="notice notice--error" role="status">
       sync_start_not_observed
     </p>{/if}
   {#if loading}<p role="status">Loading source status…</p>
-  {:else if sources.length === 0}<p class="notice" role="status">No archived sources are available.</p>
+  {:else if sources.length === 0}{#if !statusError && !paused}<p class="notice" role="status">No archived sources are available.</p>{/if}
   {:else}
     <Table ariaLabel="Source status" zebra={false} class="source-table">
       {#snippet header()}
