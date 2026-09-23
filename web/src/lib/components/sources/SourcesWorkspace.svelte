@@ -315,7 +315,10 @@
       <span>{statusError}</span>
       <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
     </div>{/if}
-  {#if triggerError}<p class="notice notice--error" role="alert">{triggerError}</p>{/if}
+  {#if triggerError}<div class="notice notice--error" role="alert">
+      <span>{triggerError}</span>
+      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
+    </div>{/if}
   {#if lockStatusStale}<div class="notice" role="status">
       <span>Automatic refresh paused. Source status may be stale.</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />

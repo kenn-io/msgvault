@@ -274,16 +274,23 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('releases Sync now buttons when a trigger request times out', async () => {
+  it('releases Sync now buttons after a timeout and refreshes status without retriggering', async () => {
+    let statusReads = 0;
+    let triggers = 0;
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'POST') {
+        triggers += 1;
         return new Promise<Response>((_resolve, reject) => {
           request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
         });
       }
+      statusReads += 1;
       return Promise.resolve(Response.json({ sources: [
-        source(), source({ id: 2, identifier: 'other@example.com', display_name: 'Other' })
+        source(statusReads === 1 ? {} : {
+          can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5)
+        }),
+        source({ id: 2, identifier: 'other@example.com', display_name: 'Other' })
       ] }));
     });
     const rendered = render(SourcesWorkspace, {
@@ -298,6 +305,10 @@ describe('SourcesWorkspace', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
     expect(archiveButton.disabled).toBe(false);
     expect(otherButton.disabled).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('5 processed')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
+    expect(triggers).toBe(1);
     rendered.unmount();
   });
 

@@ -271,8 +271,9 @@ marked `stale_last_result`.
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded
 backoff to show the run and live progress; it opens no streaming connection.
-Status and `Sync now` requests time out after 20 seconds. If `Sync now` times
-out, check source status before trying again; the daemon may have accepted it.
+Status and `Sync now` requests time out after 20 seconds. Sync errors offer
+`Refresh` to check source status without starting another sync. If `Sync now`
+times out, refresh before trying again; the daemon may have accepted it.
 Polling pauses while the tab is hidden and resumes when it is visible again.
 A failed first load keeps its error on screen
 until you select `Retry`. When the scheduler holds the sync lock without an
