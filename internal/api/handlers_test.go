@@ -1273,7 +1273,7 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 		},
 	})
 	// Test seam: shrink the query ceiling so the timeout fires immediately.
-	srv.queryTimeout = 20 * time.Millisecond
+	srv.queryTimeout = ordinaryQueryCeiling
 
 	body := strings.NewReader(`{"sql":"SELECT 1"}`)
 	req := httptest.NewRequest(http.MethodPost, queryEndpointPath, body)
@@ -1328,7 +1328,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			return result, err
 		},
 	})
-	srv.queryTimeout = 20 * time.Millisecond
+	srv.queryTimeout = ordinaryQueryCeiling
 	httpServer := httptest.NewServer(srv.Router())
 	t.Cleanup(httpServer.Close)
 
@@ -2206,6 +2206,7 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 		assert.Equal("checking", searchIndexState(), "state while the probe runs")
 		releaseProbe()
 		synctest.Wait()
+		<-backfillEntered
 		assert.Equal("building", searchIndexState(), "state while the backfill runs")
 		releaseBackfill()
 		synctest.Wait()
@@ -2317,7 +2318,7 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
 		synctest.Wait()
-		require.True(srv.ftsEnsureRunning.Load(), "the search never spawned the FTS completeness probe")
+		<-probeEntered
 
 		// A rebuild starts and fails while the probe is still scanning.
 		resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
@@ -2330,6 +2331,7 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 		// discard it rather than re-memoize complete=true over the failed rebuild.
 		release()
 		synctest.Wait()
+		require.False(srv.ftsEnsureRunning.Load(), "ensure worker must finish")
 		assert.False(srv.ftsIndexComplete.Load(),
 			"a probe result observed before a rebuild must not be memoized")
 	})
@@ -2372,6 +2374,7 @@ func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
 			rebuildDone <- servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
 		}()
 		synctest.Wait()
+		<-rebuildEntered
 
 		// A search arrives while the rebuild is mid-flight; its ensure worker
 		// probes the (snapshot-wise still complete) index.
@@ -2380,6 +2383,7 @@ func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
 		synctest.Wait()
+		require.False(srv.ftsEnsureRunning.Load(), "ensure worker must finish")
 
 		assert.False(srv.ftsIndexComplete.Load(),
 			"a probe observation made while a rebuild is mid-flight must not be memoized")
