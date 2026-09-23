@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
   import { Button, IconButton, SegmentedControl } from '@kenn-io/kit-ui';
 
@@ -137,8 +138,12 @@
   // a pending unlink confirm open on a chip that no longer belongs to the
   // now-open detail.
   let lastPersonID: number | null = null;
+  let profileID = $state<number>();
   $effect(() => {
-    const currentID = detail && isPersonDetail(detail) ? detail.id : null;
+    // Reloads briefly clear detail; keep the current person's UI state.
+    if (!detail) return;
+    profileID = isPersonDetail(detail) ? detail.profile?.id : undefined;
+    const currentID = isPersonDetail(detail) ? detail.id : null;
     if (currentID === lastPersonID) return;
     lastPersonID = currentID;
     staleBanner = null;
@@ -150,13 +155,15 @@
   });
 
   $effect(() => {
-    const profileID = detail && isPersonDetail(detail) ? detail.profile?.id : undefined;
+    const id = profileID;
     attributeGroups = [];
-    if (!profileID || !loadAttributes) return;
+    if (!id) return;
     let cancelled = false;
-    void loadAttributes(profileID)
-      .then((groups) => { if (!cancelled) attributeGroups = groups; })
-      .catch(() => {});
+    void untrack(() => loadAttributes?.(id))
+      ?.then((groups) => { if (!cancelled) attributeGroups = groups; })
+      .catch(() => {
+        // This summary is best-effort; failed requests leave it empty.
+      });
     return () => { cancelled = true; };
   });
 
@@ -303,8 +310,8 @@
             <Button
               label="Open in Directory"
               surface="outline"
-              onclick={() => detail.profile?.id
-                ? onOpenDirectoryPerson?.(detail.profile.id)
+              onclick={() => detail.profile?.id && onOpenDirectoryPerson
+                ? onOpenDirectoryPerson(detail.profile.id)
                 : onOpenDirectory?.(detail.id)}
             />
           {/if}
