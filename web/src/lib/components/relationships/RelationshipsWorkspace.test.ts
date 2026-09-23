@@ -108,14 +108,14 @@ describe('RelationshipsWorkspace relationship calendar', () => {
     render(RelationshipsWorkspace, { props });
 
     await props.controller.openTarget('cluster:1', props.predicate);
-    await screen.findByText('Current 62/100');
+    await screen.findByRole('region', { name: 'Relationship activity calendar' });
     const calendarSection = screen.getByRole('region', { name: 'Relationship activity calendar' });
     const timeline = screen.getByRole('grid', { name: 'Relationship activity' });
     expect(calendarSection.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     await waitFor(() => expect(years).toEqual([2026, 2025]));
-    expect(await screen.findByText('Peak 87/100 - 2018')).toBeTruthy();
+    expect(screen.queryByText('Peak 87/100 - 2018')).toBeNull();
   });
 
   it('does not render or request a calendar for domain targets', async () => {
