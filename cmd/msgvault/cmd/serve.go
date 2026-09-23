@@ -153,12 +153,13 @@ func (s serveSchedulers) Stop() context.Context {
 // newServeSchedulers returns the daemon scheduler, whose jobs hold the
 // operation gate, and one for Beeper media delivery. A media upload can run
 // for minutes, so that job takes the gate only around its Store writes.
+// Media passes do not count as activity; shutdown cancels and drains them.
 func newServeSchedulers(
 	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
 ) (*scheduler.Scheduler, *scheduler.Scheduler) {
 	sched := scheduler.New(syncFunc).WithLogger(logger).
 		WithWorkTracker(combineWorkTrackers(idle, labelWorkTracker(gate, "a scheduled sync")))
-	media := scheduler.New(nil).WithLogger(logger).WithWorkTracker(combineWorkTrackers(idle))
+	media := scheduler.New(nil).WithLogger(logger)
 	return sched, media
 }
 

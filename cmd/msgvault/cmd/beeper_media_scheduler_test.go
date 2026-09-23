@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -437,6 +438,31 @@ func TestBeeperMediaJobStatus(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(map[string]string{beeperMediaDestinationKey(httpServer.URL, archiveUID): "pending::"},
 		retentionRows(t, st))
+}
+
+func TestBeeperMediaDoesNotPreventIdleShutdown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		st, blobs := storedBeeperVoiceNote(t)
+		idleShutdown := make(chan struct{})
+		idle := api.NewIdleTracker(3*time.Minute, func() { close(idleShutdown) })
+		logger := slog.New(slog.DiscardHandler)
+		gate := api.NewSerialOperationGate()
+		sched, media := newServeSchedulers(nil, logger, idle, gate)
+		defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
+		require.NoError(t, configureBeeperMediaJob(t.Context(), media, gate, st, blobs,
+			config.DocbankIntegrationConfig{Enabled: true, URL: "http://127.0.0.1"}, logger))
+		go idle.Run(t.Context())
+		media.Start()
+
+		// Repeated discovery passes must leave an unused daemon free to stop.
+		synctest.Sleep(3*time.Minute + time.Second)
+		require.Len(t, retentionRows(t, st), 1, "scheduled discovery must have run")
+		select {
+		case <-idleShutdown:
+		default:
+			assert.Fail(t, "background media passes prevented idle shutdown")
+		}
+	})
 }
 
 func testWAV() []byte {
