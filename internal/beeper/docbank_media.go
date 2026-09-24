@@ -514,7 +514,7 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 	}
 	if len(mappings) == 0 {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{
-			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(), Retry: true,
+			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(),
 		})
 	}
 	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
@@ -527,6 +527,15 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 	var processing docbankmedia.Processing
 	if err := json.Unmarshal([]byte(prepared.FrozenRequestJSON), &processing); err != nil {
 		return fmt.Errorf("decode saved beeper processing request: %w", err)
+	}
+	mappings, err = w.liveMappings(ctx, operation.ProcessingKey, 1)
+	if err != nil {
+		return err
+	}
+	if len(mappings) == 0 {
+		return w.finishOperation(ctx, prepared, store.BeeperMediaResult{
+			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(),
+		})
 	}
 	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing.SuppliedInputID)
 	if err != nil {
@@ -548,15 +557,6 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 // status reads the exact processing job and this operation's own receipt. It
 // settles only when that receipt has failed or has succeeded with final coverage.
 func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.BeeperMediaOperation) error {
-	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 1)
-	if err != nil {
-		return err
-	}
-	if len(mappings) == 0 {
-		return w.finishOperation(ctx, operation, store.BeeperMediaResult{
-			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(), Retry: true,
-		})
-	}
 	job, err := w.client.JobStatus(actionCtx, operation.JobID)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, operation, err)
@@ -567,24 +567,29 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 			OperationState: job.State, ErrorCode: "operator_required",
 		})
 	}
+	if job.State == "failed" || job.State == "abandoned" {
+		return w.finishOperation(ctx, operation, store.BeeperMediaResult{
+			OperationState: "failed", CoverageState: "unavailable", Terminal: true,
+			ErrorCode: job.FailureCode,
+		})
+	}
 	source, err := w.client.Status(actionCtx, operation.DocbankSourceID)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, operation, err)
 	}
-	if source.VaultUID != mappings[0].VaultUID || source.SourceID != operation.DocbankSourceID {
+	if source.VaultUID != operation.VaultUID || source.SourceID != operation.DocbankSourceID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
 	own, err := w.ownProcessingReceipt(actionCtx, operation, source)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, operation, err)
 	}
-	if own.VaultUID != mappings[0].VaultUID || own.SourceID != operation.DocbankSourceID {
+	if own.VaultUID != operation.VaultUID || own.SourceID != operation.DocbankSourceID ||
+		own.OperationID != operation.OperationID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
 	result := store.BeeperMediaResult{OperationState: own.OperationState, CoverageState: own.CoverageState}
 	switch {
-	case job.State == "failed" || job.State == "abandoned":
-		result.OperationState, result.Terminal, result.ErrorCode = "failed", true, job.FailureCode
 	case own.OperationState == "failed" || own.OperationState == "cancelled":
 		result.OperationState, result.Terminal = "failed", true
 	case own.OperationState == "succeeded" && terminalMediaCoverage(own.CoverageState):

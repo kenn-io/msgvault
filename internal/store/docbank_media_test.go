@@ -392,6 +392,84 @@ func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
 	assert.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
 }
 
+func TestBeeperMediaRevocationLifecycle(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "superseded", strings.Repeat("a", 64))
+	old := audio.mapping("revocation", "old", "old-key")
+	newer := audio.mapping("revocation", "new", "new-key")
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), old))
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE beeper_media_deliveries
+		SET phase = 'pending-process', supplied_input_id = 'input-old',
+		    next_action_at = CURRENT_TIMESTAMP
+		WHERE destination_key = ? AND processing_key = ?`), old.DestinationKey, old.ProcessingKey)
+	require.NoError(err)
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), newer))
+	var state, phase, code string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT retention_state FROM beeper_media_occurrences
+		WHERE destination_key = ? AND revision = ?`), old.DestinationKey, old.Revision).Scan(&state))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), old.DestinationKey, old.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("revoked", state)
+	assert.Equal("blocked", phase)
+	assert.Equal("no_live_occurrence", code)
+
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), old))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), old.DestinationKey, old.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("pending-process", phase)
+	assert.Empty(code)
+
+	bulk := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "bulk", strings.Repeat("b", 64))
+	bulkMapping := bulk.mapping("revocation-bulk", "r1", "bulk-key")
+	retainAudio(t, f.Store, bulkMapping, "bulk-occurrence")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE beeper_media_deliveries
+		SET phase = 'pending-artifact', next_action_at = CURRENT_TIMESTAMP
+		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey)
+	require.NoError(err)
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, bulk.sourceMessageID))
+	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), bulkMapping.DestinationKey))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("blocked", phase)
+	assert.Equal("no_live_occurrence", code)
+	require.NoError(f.Store.ClearMessageDeletedFromSource(f.Source.ID, bulk.sourceMessageID))
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), bulkMapping))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("pending-artifact", phase)
+	assert.Empty(code)
+
+	observing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "observing", strings.Repeat("c", 64))
+	observingMapping := observing.mapping("revocation-observing", "r1", "observing-key")
+	retainAudio(t, f.Store, observingMapping, "observing-occurrence")
+	dueAt := time.Now().UTC().Add(-time.Minute)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE beeper_media_deliveries
+		SET phase = 'observing', processing_operation_id = '11111111-1111-4111-8111-111111111111',
+		    source_id = 'source-c', source_version_id = 'version-c',
+		    content_version_id = 'content-c', donor_occurrence_id = 'observing-occurrence',
+		    job_id = 'job-c', operation_state = 'queued', coverage_state = 'pending',
+		    next_action_at = ?
+		WHERE destination_key = ? AND processing_key = ?`), dueAt, observingMapping.DestinationKey, observingMapping.ProcessingKey)
+	require.NoError(err)
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, observing.sourceMessageID))
+	operation, ok, err := f.Store.NextBeeperMediaOperation(t.Context(), observingMapping.DestinationKey, time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal(store.BeeperMediaOperationStatus, operation.Kind)
+	assert.Equal("source-c", operation.DocbankSourceID)
+	assert.Equal("job-c", operation.JobID)
+}
+
 func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
 	requireOuter := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")

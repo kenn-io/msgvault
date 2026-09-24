@@ -699,6 +699,159 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 	}
 }
 
+func TestBeeperMediaProcessSupplierRace(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/race",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "race words", data: syntheticWAV(800, 24)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-race")
+	runPasses(t, submitter, 2)
+	operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-race", time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal(store.BeeperMediaOperationProcess, operation.Kind)
+	var sourceID int64
+	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+
+	var gateCalls int
+	submitter.WithOperationGate(func(context.Context) (func(), bool) {
+		gateCalls++
+		if gateCalls == 1 {
+			return func() {
+				require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
+			}, true
+		}
+		return func() {}, true
+	})
+	require.NoError(submitter.process(t.Context(), t.Context(), operation))
+	deliveries := deliveryRows(t, world.st, "destination-race")
+	require.Len(deliveries, 1)
+	assert.Equal("blocked", deliveries[0].Phase)
+	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
+	assert.Equal("input-1", deliveries[0].SuppliedInput)
+	docbank.mu.Lock()
+	assert.Empty(docbank.processOps)
+	docbank.mu.Unlock()
+
+	require.NoError(world.st.ClearMessageDeletedFromSource(sourceID, "voice1"))
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "destination-race", world.dir), 1)
+	deliveries = deliveryRows(t, world.st, "destination-race")
+	require.Len(deliveries, 1)
+	assert.Equal("pending-process", deliveries[0].Phase)
+	assert.Equal("input-1", deliveries[0].SuppliedInput)
+}
+
+func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/revoked-job",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "revoked job words", data: syntheticWAV(800, 25)})
+	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	submitter := world.submitter(t, server, "destination-revoked-job")
+	runPasses(t, submitter, 4)
+	deliveries := deliveryRows(t, world.st, "destination-revoked-job")
+	require.Len(deliveries, 1)
+	require.Equal("observing", deliveries[0].Phase)
+	jobID := deliveries[0].JobID
+	var sourceID int64
+	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+	require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	docbank.mu.Lock()
+	docbank.coverage = "transcribed"
+	docbank.mu.Unlock()
+	runPasses(t, submitter, 1)
+	deliveries = deliveryRows(t, world.st, "destination-revoked-job")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Equal(jobID, deliveries[0].JobID)
+	assert.Equal("succeeded", deliveries[0].OperationState)
+	assert.Equal("transcribed", deliveries[0].Coverage)
+}
+
+func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		sourceVault  string
+		processVault string
+		sourceOp     string
+	}{
+		{name: "source status", sourceVault: "foreign-vault"},
+		{name: "replayed processing receipt", processVault: "foreign-vault", sourceOp: "other-operation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/mismatch",
+				mime: "audio/wav", fileName: "voice.wav", transcript: "mismatch words", data: syntheticWAV(800, 26)})
+			docbank := newFakeDocbank(t)
+			docbank.coverage = "pending"
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			submitter := world.submitter(t, server, "destination-mismatch")
+			runPasses(t, submitter, 4)
+			deliveries := deliveryRows(t, world.st, "destination-mismatch")
+			require.Len(deliveries, 1)
+			require.Equal("observing", deliveries[0].Phase)
+			before := len(docbank.processOps)
+			var sourceID int64
+			require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+			require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
+			_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+			require.NoError(err)
+			docbank.mu.Lock()
+			docbank.sourceVaultUID = tc.sourceVault
+			docbank.processVaultUID = tc.processVault
+			docbank.sourceOperationID = tc.sourceOp
+			docbank.coverage = "transcribed"
+			docbank.mu.Unlock()
+			runPasses(t, submitter, 1)
+			deliveries = deliveryRows(t, world.st, "destination-mismatch")
+			require.Len(deliveries, 1)
+			assert.Equal("blocked", deliveries[0].Phase)
+			assert.Equal("destination_mismatch", deliveries[0].ErrorCode)
+			docbank.mu.Lock()
+			assert.Len(docbank.processOps, before)
+			docbank.mu.Unlock()
+		})
+	}
+}
+
+func TestBeeperMediaTerminalJobBeforeSourceStatus(t *testing.T) {
+	for _, state := range []string{"failed", "abandoned"} {
+		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/terminal-" + state,
+				mime: "audio/wav", fileName: "voice.wav", transcript: "terminal words", data: syntheticWAV(800, 27)})
+			docbank := newFakeDocbank(t)
+			docbank.jobState = state
+			docbank.jobFailureCode = "provider_" + state
+			docbank.sourceHTTPStatus = http.StatusBadGateway
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			runPasses(t, world.submitter(t, server, "destination-terminal-"+state), 4)
+			deliveries := deliveryRows(t, world.st, "destination-terminal-"+state)
+			require.Len(deliveries, 1)
+			assert.Equal("done", deliveries[0].Phase)
+			assert.Equal("failed", deliveries[0].OperationState)
+			assert.Equal("unavailable", deliveries[0].Coverage)
+			assert.Equal("provider_"+state, deliveries[0].ErrorCode)
+			docbank.mu.Lock()
+			assert.Equal(1, docbank.jobRequests)
+			assert.Zero(docbank.sourceRequests)
+			docbank.mu.Unlock()
+		})
+	}
+}
+
 func TestBeeperMediaCASBoundary(t *testing.T) {
 	wav := syntheticWAV(800, 4)
 	digest := sha256Hex(wav)
@@ -1117,12 +1270,20 @@ type fakeDocbank struct {
 	malformed         bool
 	hang              bool
 	jobHTTPStatus     int
+	sourceHTTPStatus  int
+	jobState          string
+	jobFailureCode    string
+	sourceVaultUID    string
+	processVaultUID   string
+	sourceOperationID string
 	coverage          string
 	failProcessing    bool
 	dropRetention     bool
 	submitDelay       time.Duration
 	holdIndex         map[int]bool
 	requests          int
+	jobRequests       int
+	sourceRequests    int
 	replays           int
 	next              int
 	sources           map[string]int
@@ -1165,9 +1326,17 @@ func (f *fakeDocbank) reject(w http.ResponseWriter, err error) {
 }
 
 func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
 	f.mu.Lock()
 	f.requests++
-	status, malformed, hang, jobHTTPStatus := f.status, f.malformed, f.hang, f.jobHTTPStatus
+	if strings.HasPrefix(path, "/api/v1/processing/jobs/") {
+		f.jobRequests++
+	}
+	if strings.HasPrefix(path, "/api/v1/media/sources/") && r.Method == http.MethodGet {
+		f.sourceRequests++
+	}
+	status, malformed, hang, jobHTTPStatus, sourceHTTPStatus := f.status, f.malformed, f.hang, f.jobHTTPStatus, f.sourceHTTPStatus
+	jobState, jobFailureCode := f.jobState, f.jobFailureCode
 	f.mu.Unlock()
 	switch {
 	case hang:
@@ -1186,7 +1355,6 @@ func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"vault_uid":`))
 		return
 	}
-	path := r.URL.Path
 	switch {
 	case r.Method == http.MethodPost && path == "/api/v1/media/sources":
 		f.submit(w, r)
@@ -1198,8 +1366,13 @@ func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "private response body", jobHTTPStatus)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/processing/jobs/"):
 		id := strings.TrimPrefix(path, "/api/v1/processing/jobs/")
-		writeDocbankJSON(w, map[string]any{"job_id": id, "state": "completed", "phase": "done",
-			"embedding_job_ids": []string{}, "completed_bindings": 1})
+		if jobState == "" {
+			jobState = "completed"
+		}
+		writeDocbankJSON(w, map[string]any{"job_id": id, "state": jobState, "phase": "done",
+			"failure_code": jobFailureCode, "embedding_job_ids": []string{}, "completed_bindings": 1})
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/") && sourceHTTPStatus != 0:
+		http.Error(w, "private response body", sourceHTTPStatus)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/"):
 		f.sourceStatus(w, strings.TrimPrefix(path, "/api/v1/media/sources/"))
 	default:
@@ -1318,7 +1491,11 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 	if _, replay := f.processReceipts[body.OperationID]; replay {
 		// Docbank replays a known operation ID with its saved receipt.
 		f.replays++
-		writeDocbankJSON(w, f.processingReceiptLocked(body.OperationID))
+		receipt := f.processingReceiptLocked(body.OperationID)
+		if f.processVaultUID != "" {
+			receipt.VaultUID = f.processVaultUID
+		}
+		writeDocbankJSON(w, receipt)
 		return
 	}
 	receipt := docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
@@ -1351,7 +1528,11 @@ func (f *fakeDocbank) processingReceiptLocked(operationID string) docbankmedia.R
 func (f *fakeDocbank) sourceStatus(w http.ResponseWriter, source string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	receipt := docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+	vaultUID := f.sourceVaultUID
+	if vaultUID == "" {
+		vaultUID = "vault-1"
+	}
+	receipt := docbankmedia.Receipt{VaultUID: vaultUID, SourceID: source,
 		OperationState: "succeeded", CoverageState: "unprocessed"}
 	operations := f.sourceOps[source]
 	if len(operations) > 0 {
@@ -1364,6 +1545,9 @@ func (f *fakeDocbank) sourceStatus(w http.ResponseWriter, source string) {
 				break
 			}
 		}
+	}
+	if f.sourceOperationID != "" {
+		receipt.OperationID = f.sourceOperationID
 	}
 	writeDocbankJSON(w, receipt)
 }
