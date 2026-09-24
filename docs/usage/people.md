@@ -14,6 +14,7 @@ save selected people in **Directory**. You can also use the
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
+| Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
 | Find files you exchanged | [Person files](#find-files-related-to-a-person) |
 | Keep profile facts current from messages | [Profile automation](/docs/usage/people-automation/) |
 | Look up public profile information | [External enrichment](/docs/usage/people-enrichment/) |

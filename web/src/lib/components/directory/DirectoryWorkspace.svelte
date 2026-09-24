@@ -2,6 +2,7 @@
   import { Button, DetailDrawer, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
+  import type { MeetingRef } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { DirectoryURLState } from '../../directory/models';
   import { DirectoryController } from '../../directory/controller.svelte';
@@ -18,6 +19,7 @@
     onOpenCardDAVConflict?: (conflictID: number) => void;
     onOpenCardDAVSettings?: () => void;
     onAnnounce?: (message: string) => void;
+    onOpenMeeting?: (meeting: MeetingRef) => void;
   }
 
   let {
@@ -27,7 +29,8 @@
     promotionParticipantID = undefined,
     onOpenCardDAVConflict = () => undefined,
     onOpenCardDAVSettings = () => undefined,
-    onAnnounce = () => undefined
+    onAnnounce = () => undefined,
+    onOpenMeeting = undefined
   }: Props = $props();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
@@ -171,13 +174,13 @@
     />
     {#if controller.selectedPersonID !== null && !narrow}
       <aside class="detail-pane" aria-label="Person detail">
-        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} />{/if}
+        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} />{/if}
       </aside>
     {/if}
   </div>
   {#if controller.selectedPersonID !== null && narrow}
     <DetailDrawer title="Person detail" ariaLabel="Person detail" onclose={() => void closeDetail()}>
-      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} />{/if}
+      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} />{/if}
     </DetailDrawer>
   {/if}
 </main>

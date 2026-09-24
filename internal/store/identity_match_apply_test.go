@@ -286,15 +286,11 @@ func TestSQLiteSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) 
 			ctx, candidate.ID, store.IdentityMatchStateRejected, "user", nil)
 		rejectionDone <- rejectErr
 	}()
-	requirements.Eventually(func() bool {
-		select {
-		case <-rejectionEntered:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond,
-		"user rejection did not acquire the identity lock before its state update")
+	select {
+	case <-rejectionEntered:
+	case <-time.After(2 * time.Second):
+		requirements.FailNow("user rejection did not acquire the identity lock before its state update")
+	}
 
 	systemStarted = true
 	go func() {

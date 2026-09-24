@@ -114,7 +114,8 @@ describe('generated response decoding', () => {
       );
 
       expectTypeOf(data).toEqualTypeOf<Blob | undefined>();
-      expect(data).toBeInstanceOf(Blob);
+      // Fetch and jsdom can expose Blob constructors from different realms.
+      expect(data).toMatchObject({ size: bytes.length, type: contentType });
       expect(new Uint8Array(await data!.arrayBuffer())).toEqual(bytes);
     }
   );

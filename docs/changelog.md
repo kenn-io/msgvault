@@ -13,10 +13,23 @@ All notable changes to msgvault, grouped by release.
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
 
+### Meeting context and follow-ups
+
+- Export selected archived meetings as JSON or Markdown from the Web UI, CLI,
+  HTTP API, or MCP. Transcripts are opt-in; packets report truncation and missing
+  evidence.
+- Read source action status and explicit assignees, and inspect meeting counts,
+  duration bases, unknown coverage, and monthly activity in people and domain
+  views. Generic meeting imports now accept structured `action_items`.
+- Existing raw archives gain these projections on upgrade without a provider
+  resync. Meeting reads retain source-deleted evidence by default and exclude
+  locally deleted records. Upgrade the daemon for API schema 2.28.0 support.
+  See the [meeting guide](usage/meetings.md).
+
 - MCP startup no longer waits for archive statistics or vector lane probes.
-  The existing health probe discovers text and visual vector search separately,
-  omitting tools for disabled lanes. Configured search still checks readiness
-  per request.
+  Authenticated health reports text and visual vector lanes separately, so
+  daemon-backed MCP advertises configured search tools only when their health
+  facts and routes are supported. Search still checks readiness per request.
 
 ## 0.20.0
 <small>2026-09-22</small>

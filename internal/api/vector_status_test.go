@@ -612,6 +612,84 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedHealthReportsVectorLanes(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        vector.Config
+		status     VectorStatus
+		wantText   bool
+		wantVisual bool
+		wantVector bool
+	}{
+		{
+			name:       "text only",
+			cfg:        vector.Config{Enabled: true},
+			status:     VectorStatusReady,
+			wantText:   true,
+			wantVisual: false,
+			wantVector: true,
+		},
+		{
+			name: "visual only",
+			cfg: vector.Config{Multimodal: vector.MultimodalConfig{
+				Enabled: true,
+			}},
+			status:     VectorStatusReady,
+			wantText:   false,
+			wantVisual: true,
+			wantVector: true,
+		},
+		{
+			name:       "both disabled",
+			cfg:        vector.Config{},
+			status:     VectorStatusDisabled,
+			wantVector: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			opts := testServerOptions(t, nil)
+			opts.Config.Server.APIKey = "secret-key"
+			opts.VectorCfg = tt.cfg
+			opts.VectorStatus = tt.status
+			srv := NewServerWithOptions(opts)
+
+			publicRec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(publicRec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			require.Equal(http.StatusOK, publicRec.Code)
+			var public map[string]any
+			require.NoError(json.Unmarshal(publicRec.Body.Bytes(), &public))
+			publicVector, ok := public["vector"].(map[string]any)
+			if tt.wantVector {
+				require.True(ok, "public health should include vector status")
+				assert.NotContains(publicVector, "text_enabled")
+				assert.NotContains(publicVector, "visual_enabled")
+			} else {
+				assert.False(ok, "disabled health should omit vector status")
+			}
+
+			authReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			authReq.Header.Set("X-Api-Key", "secret-key")
+			authRec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(authRec, authReq)
+			require.Equal(http.StatusOK, authRec.Code)
+			var authenticated HealthResponse
+			require.NoError(json.Unmarshal(authRec.Body.Bytes(), &authenticated))
+			if !tt.wantVector {
+				assert.Nil(authenticated.Vector, "disabled authenticated health should omit vector status")
+				return
+			}
+			require.NotNil(authenticated.Vector)
+			require.NotNil(authenticated.Vector.TextEnabled)
+			require.NotNil(authenticated.Vector.VisualEnabled)
+			assert.Equal(tt.wantText, *authenticated.Vector.TextEnabled)
+			assert.Equal(tt.wantVisual, *authenticated.Vector.VisualEnabled)
+		})
+	}
+}
+
 func TestStatsReportsVectorStatus(t *testing.T) {
 	tests := []struct {
 		name   string

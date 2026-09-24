@@ -160,8 +160,10 @@ type ErrorResponse struct {
 // VectorHealth reports the vector subsystem state in health responses so
 // daemon status is visible while background init runs (or after it fails).
 type VectorHealth struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+	TextEnabled   *bool  `json:"text_enabled,omitzero" nullable:"false"`
+	VisualEnabled *bool  `json:"visual_enabled,omitzero" nullable:"false"`
 }
 
 // OperationHealth reports the archive operation currently holding the
@@ -585,19 +587,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
-		// Per-lane statuses mirror the shared status only for lanes the
-		// configuration actually enables (the daemon passes cfg.Vector at
-		// construction, so this holds during initialization too). Blanket
-		// mirroring advertised visual tools on text-only deployments and
-		// vice versa.
 		_, _, vectorCfg := s.vectorComponents()
+		lanes := vectorLaneCapabilitiesForConfig(vectorCfg)
 		resp.VectorTextStatus = string(VectorStatusDisabled)
-		if vectorCfg.Enabled {
+		if lanes.TextEnabled {
 			resp.VectorTextStatus = string(status)
 			resp.VectorTextMessageTypes = slices.Clone(vectorCfg.Embed.Scope.BuildScope().MessageTypes)
 		}
 		resp.VectorVisualStatus = string(VectorStatusDisabled)
-		if vectorCfg.Multimodal.Enabled {
+		if lanes.VisualEnabled {
 			resp.VectorVisualStatus = string(status)
 			// Visual init can fail while text search stays healthy: the
 			// shared status settles ready with no visual runtime installed.

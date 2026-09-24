@@ -116,6 +116,22 @@ automatically. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
 
+### Timing waits
+
+Use `testing/synctest` bubbles for work owned by the test process, including
+goroutines, channels, timers, tickers, and fakes. Advance virtual time with
+`synctest.Sleep` and wait for durable state with `synctest.Wait`.
+
+Keep real budgets for PostgreSQL and SQLite locks, database clocks, network
+requests, subprocesses, DuckDB, and operating-system events. Name retained
+sub-second testify budgets so their event and owner are clear.
+
+The helper check rejects bare totals below one second in `Eventually`,
+`Eventuallyf`, `EventuallyWithT`, `EventuallyWithTf`, `Never`, and `Neverf`.
+Named budgets and variables stay outside this rule. Virtual sleeps are valid
+inside a bubble. CI runs this check on Ubuntu, so Windows-only test files still
+need Windows validation.
+
 ### PostgreSQL tests
 
 `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed

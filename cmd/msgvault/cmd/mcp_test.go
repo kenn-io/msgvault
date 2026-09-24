@@ -152,18 +152,22 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	tests := []struct {
 		name       string
 		health     string
-		wantVector bool
+		wantText   bool
+		wantVisual bool
 	}{
-		{name: "disabled", health: `{"status":"ok","api_schema_version":"2.26.0"}`},
-		{name: "first schema with versioned health", health: `{"status":"ok","api_schema_version":"2.1.0"}`},
-		{name: "ready", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"ready"}}`, wantVector: true},
-		{name: "initializing", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"initializing"}}`, wantVector: true},
-		{name: "failed", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"error"}}`, wantVector: true},
-		{name: "stale", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"stale"}}`, wantVector: true},
-		{name: "older schema", health: `{"status":"ok","api_schema_version":"2.0.0"}`, wantVector: true},
-		{name: "missing schema", health: `{"status":"ok"}`, wantVector: true},
-		{name: "malformed schema", health: `{"status":"ok","api_schema_version":"unknown"}`, wantVector: true},
-		{name: "health unavailable", wantVector: true},
+		{name: "both disabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"disabled","text_enabled":false,"visual_enabled":false}}`},
+		{name: "text only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":false}}`, wantText: true},
+		{name: "visual only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":false,"visual_enabled":true}}`, wantVisual: true},
+		{name: "both enabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "initializing lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"initializing","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "failed lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"error","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "stale lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"stale","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "legacy health without lane fields", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"ready"}}`},
+		{name: "visual route predecessor", health: `{"status":"ok","api_schema_version":"2.3.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "lane facts predecessor", health: `{"status":"ok","api_schema_version":"2.27.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "missing schema", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "malformed schema", health: `{"status":"ok","api_schema_version":"unknown","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "health unavailable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,9 +185,9 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			})
 
 			opts := daemonMCPServeOptions(t.Context(), client)
-			assert.Equal(tt.wantVector, opts.HybridSearcher != nil, "semantic search")
-			assert.Equal(tt.wantVector, opts.SimilarSearcher != nil, "similar messages")
-			assert.Equal(tt.wantVector, opts.VisualSearcher != nil, "visual search")
+			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
+			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
+			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
 			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
 		})
 	}
@@ -202,7 +206,11 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		if r.URL.Path == "/api/v1/health" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
-				"vector": map[string]any{"status": "initializing"},
+				"vector": map[string]any{
+					"status":         "initializing",
+					"text_enabled":   true,
+					"visual_enabled": false,
+				},
 			})
 			return
 		}
@@ -233,6 +241,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantPeople     bool
 		wantDirectory  bool
 		wantSavedViews bool
+		wantMeetings   bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -240,6 +249,10 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "newer schema", schemaVersion: "2.14.0", wantPeople: true, wantDirectory: true},
 		{name: "schema before the Saved View run endpoint", schemaVersion: "2.20.0", wantPeople: true, wantDirectory: true},
 		{name: "saved view run schema", schemaVersion: "2.21.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "schema before the meeting endpoints", schemaVersion: "2.24.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "meeting predecessor 2.25.x", schemaVersion: "2.25.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "meeting predecessor 2.26.x", schemaVersion: "2.26.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
+		{name: "meeting schema", schemaVersion: "2.27.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -272,6 +285,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 		})
 	}
 }
@@ -315,8 +329,12 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		case "/api/v1/health":
 			if healthRequests.Add(1) == 1 {
 				_ = json.NewEncoder(w).Encode(map[string]any{
-					"status": "ok", "api_schema_version": "2.21.0",
-					"vector": map[string]any{"status": "ready"},
+					"status": "ok", "api_schema_version": "2.28.0",
+					"vector": map[string]any{
+						"status":         "ready",
+						"text_enabled":   true,
+						"visual_enabled": true,
+					},
 				})
 				return
 			}

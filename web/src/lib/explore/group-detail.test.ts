@@ -64,7 +64,7 @@ describe('findGroupDetail', () => {
 
     const lookup = await findGroupDetail({ groups }, predicate, 'participant', '2');
 
-    expect(lookup).toEqual({ status: 'found', row: groupRow('2', { label: 'Bob', count: 5 }) });
+    expect(lookup).toMatchObject({ status: 'found', row: groupRow('2', { label: 'Bob', count: 5 }), authority: { cacheRevision: 'cache-1', searchProvenance: {} } });
     expect(groups).toHaveBeenCalledTimes(1);
     expect(vi.mocked(groups).mock.calls[0]![0]).toMatchObject({
       filters: [{ dimension: 'participant', values: ['2'] }],
@@ -81,7 +81,7 @@ describe('findGroupDetail', () => {
 
     const lookup = await findGroupDetail({ groups }, predicate, 'participant', '2');
 
-    expect(lookup).toEqual({ status: 'found', row: groupRow('2', { label: 'Bob', count: 1 }) });
+    expect(lookup).toMatchObject({ status: 'found', row: groupRow('2', { label: 'Bob', count: 1 }), authority: { cacheRevision: 'cache-1' } });
     expect(groups).toHaveBeenCalledTimes(1);
   });
 
@@ -126,3 +126,14 @@ describe('findGroupDetail', () => {
     expect(vi.mocked(groups).mock.calls[0]![2]).toBe(controller.signal);
   });
 });
+
+ it('retains the exact domain result authority when a more frequent co-domain precedes it', async () => {
+   const groups = vi.fn<ExploreAPI['groups']>(async () => ({ status: 'ready', result: {
+     rows: [groupRow('frequent.example', { count: 20 }), groupRow('exact.example', { count: 2 })],
+     totalCount: 2, cacheRevision: 'detail-cache', searchProvenance: { lexical_index_revision: 'detail-lex', vector_generation: 4 }, candidateSnapshotId: 'detail-snapshot'
+   } }));
+   const lookup = await findGroupDetail({ groups }, { query: 'planning', search_mode: 'hybrid' }, 'domain', 'exact.example');
+   expect(lookup).toMatchObject({ status: 'found', row: { key: 'exact.example' }, authority: {
+     cacheRevision: 'detail-cache', searchProvenance: { lexical_index_revision: 'detail-lex', vector_generation: 4 }, candidateSnapshotId: 'detail-snapshot'
+   } });
+ });

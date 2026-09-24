@@ -70,7 +70,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./scripts/contextual-retrieval-eval
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -309,13 +309,15 @@ web-check: web-install
 web-test:
 	cd web && bun run test
 
-web-test-browser:
+# test:browser runs everything under web/tests, including tests/e2e specs
+# whose fixtures spawn the repo-root msgvault daemon, so the binary must
+# exist before Playwright starts. Same invariant as web-e2e below.
+web-test-browser: build
 	cd web && bun run test:browser
 
-# Task 20 browser gates use the same digest-pinned Playwright environment as
-# web-test-browser in CI. Traces, screenshots, and video are retained only for
-# failures by web/playwright.config.ts.
-web-e2e:
+# Browser gates use the same digest-pinned Playwright environment as CI.
+# Build the real daemon and embedded UI before Playwright test timeouts start.
+web-e2e: build
 	cd web && bun run test:e2e
 
 web-build: web-generate
@@ -383,7 +385,7 @@ vuln-tools:
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
 
-# Enforce testify helper usage in assertion-heavy tests
+# Enforce testify helper usage and named sub-second polling budgets in tests
 testify-helper-check:
 	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
@@ -498,7 +500,7 @@ help:
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
+	@echo "  testify-helper-check - Enforce testify helpers and polling budgets in tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"

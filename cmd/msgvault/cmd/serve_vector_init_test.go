@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -107,21 +109,6 @@ func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.S
 	t.Cleanup(func() { setupVectorFeaturesForRun = prev })
 }
 
-func waitForVectorStatus(t *testing.T, srv *api.Server, want api.VectorStatus) string {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		status, msg := srv.VectorStatus()
-		if status == want {
-			return msg
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	status, _ := srv.VectorStatus()
-	require.Equal(t, want, status, "vector status never reached %s", want)
-	return ""
-}
-
 func TestVectorInitHandleWaitContextReturnsTrueWhenFinished(t *testing.T) {
 	h := &vectorInitHandle{done: make(chan struct{})}
 	close(h.done)
@@ -209,7 +196,8 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, sched)
 
 	requirements.True(h.WaitTimeout(5 * time.Second))
-	waitForVectorStatus(t, srv, api.VectorStatusReady)
+	status, _ := srv.VectorStatus()
+	requirements.Equal(api.VectorStatusReady, status)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/people/search",
 		strings.NewReader(`{"query":"synthetic"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -393,7 +381,8 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
 
 	require.True(t, h.WaitTimeout(5*time.Second))
-	detail := waitForVectorStatus(t, srv, api.VectorStatusStale)
+	status, detail := srv.VectorStatus()
+	require.Equal(t, api.VectorStatusStale, status)
 	assert := assert.New(t)
 	assert.Contains(detail, "old-model:384:c6000:e1", "detail names the stored fingerprint")
 	assert.Contains(detail, c.Vector.GenerationFingerprint(), "detail names the configured fingerprint")
@@ -413,42 +402,59 @@ func TestStartVectorInitReportsError(t *testing.T) {
 	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
 
 	require.True(t, h.WaitTimeout(5*time.Second))
-	msg := waitForVectorStatus(t, srv, api.VectorStatusError)
+	status, msg := srv.VectorStatus()
+	require.Equal(t, api.VectorStatusError, status)
 	assert.Contains(t, msg, "migration exploded")
 }
 
 func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
-	c := config.NewDefaultConfig()
-	c.Vector.Enabled = true
-	withTestConfig(t, c)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		c := config.NewDefaultConfig()
+		c.Vector.Enabled = true
+		withTestConfig(t, c)
 
-	gate := api.NewSerialOperationGate()
-	release := make(chan struct{})
-	overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
-		<-release
-		return nil, ctx.Err()
-	})
+		gate := api.NewSerialOperationGate()
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
+		overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
+			<-release
+			return nil, ctx.Err()
+		})
 
-	srv := newVectorInitTestServer(t)
-	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
+		srv := newVectorInitTestServer(t)
+		h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
+		t.Cleanup(func() {
+			releaseWork()
+			require.True(h.WaitTimeout(5 * time.Second))
+			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			synctest.Wait()
+		})
 
-	// While init runs, the gate must be held: BeginWorkContext with an
-	// already-cancelled context must fail rather than acquire.
-	assert.Eventually(t, func() bool {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		synctest.Wait()
+		_, _, held := gate.Holder()
+		require.True(held, "gate should be held during init")
+		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 		defer cancel()
-		done, ok := gate.BeginWorkContext(ctx)
-		if ok {
-			done()
-		}
-		return !ok
-	}, 2*time.Second, 10*time.Millisecond, "gate should be held during init")
+		probeDone := make(chan bool, 1)
+		go func() {
+			done, ok := gate.BeginWorkContext(probeCtx)
+			if ok {
+				done()
+			}
+			probeDone <- ok
+		}()
+		synctest.Sleep(6 * time.Millisecond)
+		synctest.Wait()
+		assert.False(t, <-probeDone, "live gate probe must time out while init holds the gate")
 
-	close(release)
-	require.True(t, h.WaitTimeout(5*time.Second))
-	done, ok := gate.BeginWork()
-	require.True(t, ok, "gate must be released after init")
-	done()
+		releaseWork()
+		require.True(h.WaitTimeout(5 * time.Second))
+		done, ok := gate.BeginWork()
+		require.True(ok, "gate must be released after init")
+		done()
+	})
 }
 
 func TestStartVectorInitAbortsQuietlyOnCancel(t *testing.T) {

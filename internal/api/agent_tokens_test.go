@@ -45,8 +45,8 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 
 // TestDelegatedHealthUsesPublicProjection tests proof matrix row 17.
 // Delegated callers receive the public projection (operationBusyHealth) plus
-// schema and vector capabilities. Owner callers receive the full projection
-// (operationHealth), which includes the operation label. When the gate is held, the two bodies
+// APISchemaVersion. Owner callers receive the full projection (operationHealth)
+// which includes the operation label. When the gate is held, the two bodies
 // differ on Operation.Label: delegated sees none, owner sees the label.
 func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	assert := assert.New(t)
@@ -68,7 +68,7 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 		Scheduler:     newMockScheduler(),
 		OperationGate: gate,
 		VectorCfg:     vector.Config{Enabled: true},
-		VectorStatus:  VectorStatusInitializing,
+		VectorStatus:  VectorStatusReady,
 	})
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
@@ -92,8 +92,6 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 
 	var delegatedResp HealthResponse
 	require.NoError(json.NewDecoder(wD.Body).Decode(&delegatedResp))
-	assert.Equal(new(true), delegatedResp.VectorTextEnabled, "configured text search remains discoverable during initialization")
-	assert.Equal(new(false), delegatedResp.VectorVisualEnabled, "disabled visual search is explicitly reported")
 
 	// Owner caller.
 	reqO := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -120,6 +118,17 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	// Full projection: Operation.Label names the holder.
 	require.NotNil(ownerResp.Operation, "owner health must report operation busy when gate is held")
 	assert.Equal("test-operation", ownerResp.Operation.Label, "owner operation must expose label (full projection)")
+
+	// Lane facts are owner-only. Delegated callers keep the public VectorHealth
+	// status but receive neither configured capability.
+	require.NotNil(ownerResp.Vector, "owner health must report vector status")
+	require.NotNil(ownerResp.Vector.TextEnabled, "owner health must report text capability")
+	require.NotNil(ownerResp.Vector.VisualEnabled, "owner health must report visual capability")
+	assert.True(*ownerResp.Vector.TextEnabled, "owner health must report the configured text lane")
+	assert.False(*ownerResp.Vector.VisualEnabled, "owner health must report the disabled visual lane")
+	require.NotNil(delegatedResp.Vector, "delegated health must retain vector status")
+	assert.Nil(delegatedResp.Vector.TextEnabled, "delegated health must omit text capability")
+	assert.Nil(delegatedResp.Vector.VisualEnabled, "delegated health must omit visual capability")
 }
 
 const agentTokenTestAPIKey = "owner-api-key-for-agent-tests"

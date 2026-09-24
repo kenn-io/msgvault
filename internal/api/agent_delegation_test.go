@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -371,30 +372,55 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) {
 	})
 
 	t.Run("delegated draft-reply registers as gate waiter with label msgvault draft-reply", func(t *testing.T) {
-		done, ok := gate.BeginWork()
-		require.True(t, ok, "must acquire the gate to hold it for this subtest")
+		synctest.Test(t, func(t *testing.T) {
+			gate := NewSerialOperationGate()
+			srv := NewServerWithOptions(ServerOptions{
+				Config:        &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}},
+				Store:         &stubSourceStore{},
+				Logger:        testLogger(),
+				Scheduler:     newMockScheduler(),
+				OperationGate: gate,
+			})
+			defer func() {
+				synctest.Wait()
+				require.NoError(t, srv.Shutdown(context.Background()), "shutdown")
+			}()
 
-		body := `{"args":["draft-reply","--from","alice@example.com"]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		w := httptest.NewRecorder()
+			reg := agentgrant.NewRegistry()
+			srv.agentGrants = reg
+			src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
+			_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+			require.NoError(t, err)
 
-		reqDone := make(chan struct{})
-		go func() {
-			defer close(reqDone)
-			srv.Router().ServeHTTP(w, req)
-		}()
+			hold, ok := gate.BeginWork()
+			require.True(t, ok, "must acquire the gate to hold it for this subtest")
+			releaseHold := func() {
+				if hold != nil {
+					hold()
+					hold = nil
+				}
+			}
+			defer releaseHold()
 
-		// requestGateEligible returns true for delegated, so the request enters
-		// the gate, inspects the body, and registers as a waiter.
-		// Gate label observed: "msgvault draft-reply".
-		require.Eventually(t, func() bool { return gate.HasRequestWaiters() },
-			time.Second, time.Millisecond,
-			"delegated draft-reply must register as gate waiter (label: msgvault draft-reply)")
+			body := `{"args":["draft-reply","--from","alice@example.com"]}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+			w := httptest.NewRecorder()
+			reqDone := make(chan struct{})
+			go func() {
+				defer close(reqDone)
+				srv.Router().ServeHTTP(w, req)
+			}()
 
-		done()
-		<-reqDone
+			synctest.Wait()
+			assert.True(t, gate.HasRequestWaiters(),
+				"delegated draft-reply must register as gate waiter (label: msgvault draft-reply)")
+
+			releaseHold()
+			synctest.Wait()
+			<-reqDone
+		})
 	})
 
 	t.Run("unauthenticated draft-reply does not register as gate waiter", func(t *testing.T) {

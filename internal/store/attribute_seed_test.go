@@ -594,7 +594,11 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentMissingSeed(t *testing
 		if slug != store.AttributeSlugLocation {
 			return
 		}
-		ready <- struct{}{}
+		select {
+		case <-release:
+			return
+		case ready <- struct{}{}:
+		}
 		<-release
 	}
 	defer st.SetAttributeSeedReadHookForTest(hook)()
@@ -644,7 +648,11 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentFallbackSeed(t *testin
 		if slug != store.AttributeSlugLocation {
 			return
 		}
-		ready <- struct{}{}
+		select {
+		case <-release:
+			return
+		case ready <- struct{}{}:
+		}
 		<-release
 	}
 	defer st.SetAttributeSeedReadHookForTest(hook)()

@@ -2110,9 +2110,7 @@ func newPersonFactEmploymentSQLiteGateStore(
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-		return conn.RegisterFunc(sqliteutil.UnicodeLowerFunction, strings.ToLower, true)
-	}}
+	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: sqliteutil.RegisterFunctions}
 	base := &personFactEmploymentSQLiteConnector{
 		driver: sqliteDriver,
 		dsn:    filepath.Join(t.TempDir(), "employment-lock-order.db") + testSQLiteParams,

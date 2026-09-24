@@ -31,6 +31,18 @@ const (
 	VectorStatusStale VectorStatus = "stale"
 )
 
+type vectorLaneCapabilities struct {
+	TextEnabled   bool
+	VisualEnabled bool
+}
+
+func vectorLaneCapabilitiesForConfig(cfg vector.Config) vectorLaneCapabilities {
+	return vectorLaneCapabilities{
+		TextEnabled:   cfg.Enabled,
+		VisualEnabled: cfg.Multimodal.Enabled,
+	}
+}
+
 // SetVectorFeatures atomically installs every vector search component before
 // publishing ready. The daemon uses this path so a request can never observe
 // ready vector status before semantic person search exists.
@@ -294,7 +306,14 @@ func (s *Server) vectorHealth() *VectorHealth {
 	if status == VectorStatusDisabled {
 		return nil
 	}
-	return &VectorHealth{Status: string(status), Error: errMsg}
+	_, _, cfg := s.vectorComponents()
+	lanes := vectorLaneCapabilitiesForConfig(cfg)
+	return &VectorHealth{
+		Status:        string(status),
+		Error:         errMsg,
+		TextEnabled:   &lanes.TextEnabled,
+		VisualEnabled: &lanes.VisualEnabled,
+	}
 }
 
 // vectorHealthPublic is the unauthenticated /health view: it reports the

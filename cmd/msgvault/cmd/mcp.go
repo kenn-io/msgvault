@@ -85,9 +85,12 @@ Add to Claude Desktop config:
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
 
-// Schema 2.1.0 reports its version in authenticated health, whose vector
-// field is omitted when vector search is disabled.
-const vectorHealthMinAPISchemaVersion = "2.1.0"
+// Schema 2.28.0 adds independent configured-lane facts to authenticated
+// health. Older health responses cannot distinguish text from visual search.
+const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
+
+// Schema 2.4.0 added the visual attachment search route.
+const visualSearchMinAPISchemaVersion = "2.4.0"
 
 func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserver.ServeOptions {
 	engine := daemonclient.NewEngineAdapter(st)
@@ -105,24 +108,16 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
-	// Only omit searchers when health confirms that vector search is disabled.
-	// Configured lanes still enforce readiness when each operation is called.
-	vectorAvailable := capabilityErr != nil || !daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorHealthMinAPISchemaVersion) || health.Vector != nil
-	textAvailable, visualAvailable := vectorAvailable, vectorAvailable
-	if health != nil {
-		if health.VectorTextEnabled != nil {
-			textAvailable = *health.VectorTextEnabled
+	if capabilityErr == nil && health != nil && health.Vector != nil &&
+		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
+		if health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
+			opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
+			opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 		}
-		if health.VectorVisualEnabled != nil {
-			visualAvailable = *health.VectorVisualEnabled
+		if health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled &&
+			daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
+			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 		}
-	}
-	if textAvailable {
-		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
-		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
-	}
-	if visualAvailable {
-		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 	}
 	if capabilityErr != nil {
 		logger.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
@@ -139,6 +134,11 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 		logger.Warn("Saved View tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, savedViewsMinAPISchemaVersion) {
 		opts.SavedViews = st
+	}
+	if capabilityErr != nil {
+		logger.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
+	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
+		opts.Meetings = st
 	}
 
 	return opts
