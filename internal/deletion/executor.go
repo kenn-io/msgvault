@@ -157,7 +157,7 @@ func (e *Executor) manifestSourceID(manifest *Manifest) (int64, error) {
 	if manifest.Version == 1 {
 		return e.sourceID, nil
 	}
-	source, err := e.store.GetSourceByTypeAndIdentifier(manifest.Source.Type, manifest.Source.Identifier)
+	source, err := ResolveSourceReference(e.store, *manifest.Source)
 	if err != nil {
 		return 0, fmt.Errorf("resolve manifest source: %w", err)
 	}

@@ -2372,6 +2372,100 @@ func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	}
 }
 
+func TestSQLiteDeletionTargetsIncludeLegacyGmailSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	aliceID := env.MustLookupParticipant("alice@example.com")
+	bobID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("bob@example.org"),
+		DisplayName: new("Bob"),
+		Domain:      "example.org",
+	})
+
+	explicitSourceID := env.AddSource(dbtest.SourceOpts{
+		Type:       "gmail",
+		Identifier: "explicit@example.invalid",
+	})
+	legacySourceID := env.AddSource(dbtest.SourceOpts{
+		Type:       "gmail",
+		Identifier: "legacy@example.invalid",
+	})
+	_, err := env.DB.Exec(`UPDATE sources SET source_type = '' WHERE id = ?`, legacySourceID)
+	require.NoError(err, "make legacy source")
+	nonGmailSourceID := env.AddSource(dbtest.SourceOpts{
+		Type:       "imap",
+		Identifier: "other@example.invalid",
+	})
+
+	addMessage := func(sourceID int64, subject string) int64 {
+		conversationID := env.AddConversation(dbtest.ConversationOpts{SourceID: sourceID, Title: subject})
+		return env.AddMessage(dbtest.MessageOpts{
+			SourceID:       sourceID,
+			ConversationID: conversationID,
+			Subject:        subject,
+			SentAt:         "2024-04-01 10:00:00",
+			FromID:         aliceID,
+			ToIDs:          []int64{bobID},
+		})
+	}
+
+	const subject = "Legacy Gmail deletion"
+	explicitMessageID := addMessage(explicitSourceID, subject)
+	legacyMessageID := addMessage(legacySourceID, subject)
+	nonGmailMessageID := addMessage(nonGmailSourceID, subject)
+	filter := MessageFilter{
+		Sender:      "alice@example.com",
+		MessageType: messageTypeEmail,
+		SourceIDs:   []int64{explicitSourceID, legacySourceID, nonGmailSourceID},
+	}
+
+	assertTargets := func(name string, targets []DeletionTarget) {
+		t.Helper()
+		require.Len(targets, 2, name)
+		assert.ElementsMatch([]int64{explicitMessageID, legacyMessageID},
+			[]int64{targets[0].MessageID, targets[1].MessageID}, name)
+		for _, target := range targets {
+			switch target.MessageID {
+			case explicitMessageID:
+				assert.Equal(explicitSourceID, target.SourceID, name)
+				assert.Equal("explicit@example.invalid", target.SourceIdentifier, name)
+			case legacyMessageID:
+				assert.Equal(legacySourceID, target.SourceID, name)
+				assert.Equal("legacy@example.invalid", target.SourceIdentifier, name)
+			default:
+				assert.Failf(name, "unexpected message %d", target.MessageID)
+			}
+			assert.Equal("gmail", target.SourceType, name)
+			assert.Equal(fmt.Sprintf("msg%d", target.MessageID), target.SourceMessageID, name)
+		}
+		assert.NotContains([]int64{targets[0].MessageID, targets[1].MessageID}, nonGmailMessageID, name)
+	}
+
+	targets, err := env.Engine.GetDeletionTargetsByFilter(env.Ctx, filter)
+	require.NoError(err, "filter")
+	assertTargets("filter", targets)
+
+	env.EnableFTS()
+	for _, mode := range []DeletionSearchMode{DeletionSearchFast, DeletionSearchDeep} {
+		targets, err = env.Engine.GetDeletionTargetsBySearch(env.Ctx, search.Parse(subject), filter, mode)
+		require.NoError(err, "search %s", mode)
+		assertTargets("search "+string(mode), targets)
+	}
+
+	targets, err = env.Engine.GetDeletionTargetsByAggregateSearch(
+		env.Ctx, subject, filter, ViewSenders, "alice@example.com",
+	)
+	require.NoError(err, "aggregate search")
+	assertTargets("aggregate search", targets)
+
+	targets, err = env.Engine.GetDeletionTargetsByMessageIDs(
+		env.Ctx, []int64{explicitMessageID, legacyMessageID, nonGmailMessageID},
+	)
+	require.NoError(err, "message IDs")
+	assertTargets("message IDs", targets)
+}
+
 func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

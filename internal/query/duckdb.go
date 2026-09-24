@@ -752,6 +752,12 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		src AS (
 			%s
 		),
+		deletion_src AS (
+			SELECT * REPLACE (
+				CASE WHEN source_type = '' THEN 'gmail' ELSE source_type END AS source_type
+			)
+			FROM src
+		),
 		conv AS (
 			%s
 		),
@@ -2403,12 +2409,12 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	filter.HideDeletedFromSource = true
 	where, args := e.buildFilterConditions(filter)
 
-	// Build query — JOIN src to scope to Gmail sources authoritatively.
+	// Build query for deletion staging with legacy Gmail normalization.
 	query := fmt.Sprintf(`
 		WITH %s
-		SELECT msg.id, msg.source_id, COALESCE(src.source_type, 'gmail'), src.account_email, msg.source_message_id
+		SELECT msg.id, msg.source_id, deletion_src.source_type, deletion_src.account_email, msg.source_message_id
 		FROM msg
-		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		JOIN deletion_src ON deletion_src.id = msg.source_id AND deletion_src.source_type = 'gmail'
 		WHERE %s
 		ORDER BY msg.sent_at DESC, msg.id DESC
 	`, e.parquetCTEs(), where)
@@ -2484,10 +2490,10 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 	}
 	q := fmt.Sprintf(`
 		WITH %s
-		SELECT msg.id, msg.source_id, COALESCE(src.source_type, 'gmail'), src.account_email,
+		SELECT msg.id, msg.source_id, deletion_src.source_type, deletion_src.account_email,
 		       msg.source_message_id, msg.sent_at
 		FROM msg
-		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		JOIN deletion_src ON deletion_src.id = msg.source_id AND deletion_src.source_type = 'gmail'
 		       WHERE %s AND %s AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
 	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)

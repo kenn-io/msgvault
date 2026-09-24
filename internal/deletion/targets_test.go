@@ -6,6 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestSourceReferenceForTargets(t *testing.T) {
@@ -61,4 +63,65 @@ func TestSourceMessageIDs(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"remote-2", "remote-1"}, SourceMessageIDs(targets))
+}
+
+func TestResolveSourceReferenceUsesEffectiveTypeAndExactIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	legacy, err := st.GetOrCreateSource("", "legacy@example.invalid")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource("gmail", "legacy@example.invalid")
+	require.NoError(err)
+
+	got, err := ResolveSourceReference(st, SourceReference{
+		ID: legacy.ID, Type: "gmail", Identifier: legacy.Identifier,
+	})
+	require.NoError(err)
+	assert.Equal(legacy.ID, got.ID)
+	assert.Empty(got.SourceType)
+}
+
+func TestResolveSourceReferenceFallsBackToUniqueEffectiveType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	legacy, err := st.GetOrCreateSource("", "legacy@example.invalid")
+	require.NoError(err)
+
+	got, err := ResolveSourceReference(st, SourceReference{
+		ID: legacy.ID + 1000, Type: "gmail", Identifier: legacy.Identifier,
+	})
+	require.NoError(err)
+	assert.Equal(legacy.ID, got.ID)
+	assert.Empty(got.SourceType)
+}
+
+func TestResolveSourceReferenceRejectsAmbiguousEffectiveTypeFallback(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	legacy, err := st.GetOrCreateSource("", "shared@example.invalid")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource("gmail", "shared@example.invalid")
+	require.NoError(err)
+
+	_, err = ResolveSourceReference(st, SourceReference{
+		ID: legacy.ID + 1000, Type: "gmail", Identifier: legacy.Identifier,
+	})
+	require.Error(err)
+	require.ErrorContains(err, "ambiguous")
+}
+
+func TestResolveSourceReferenceReturnsNotFoundForOtherProvider(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("imap", "imap@example.invalid")
+	require.NoError(err)
+
+	_, err = ResolveSourceReference(st, SourceReference{
+		ID: 9999, Type: "gmail", Identifier: "imap@example.invalid",
+	})
+	require.Error(err)
+	assert.ErrorIs(err, store.ErrSourceNotFound)
 }

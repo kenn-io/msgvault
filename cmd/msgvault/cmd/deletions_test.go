@@ -437,6 +437,37 @@ func TestResolveDeleteStagedTargetRejectsSnapshotIDThatNowNamesAnotherSource(t *
 	require.ErrorContains(t, err, "does not match manifest source")
 }
 
+func TestResolveDeleteStagedTargetResolvesLegacyGmailManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("", "legacy@example.invalid")
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("legacy source", []string{"gm-1"}, deletion.SourceReference{
+		ID: source.ID, Type: "gmail", Identifier: source.Identifier,
+	})
+
+	target, err := resolveDeleteStagedTarget(st, []*deletion.Manifest{manifest}, "")
+	require.NoError(err)
+	assert.Equal(source.ID, target.Source.ID)
+	assert.Empty(target.Source.SourceType)
+}
+
+func TestResolveDeleteStagedTargetRejectsAmbiguousLegacyGmailFallback(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	legacy, err := st.GetOrCreateSource("", "shared@example.invalid")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource(sourceTypeGmail, legacy.Identifier)
+	require.NoError(err)
+	manifest := deletion.NewManifestForSource("ambiguous source", []string{"gm-1"}, deletion.SourceReference{
+		ID: legacy.ID + 1000, Type: sourceTypeGmail, Identifier: legacy.Identifier,
+	})
+
+	_, err = resolveDeleteStagedTarget(st, []*deletion.Manifest{manifest}, "")
+	require.ErrorContains(err, "ambiguous")
+}
+
 func TestResolveDeleteStagedTargetRejectsRequestedAccountOutsideDurableTuple(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "source@example.invalid")

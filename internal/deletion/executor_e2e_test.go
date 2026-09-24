@@ -2,6 +2,7 @@ package deletion
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -239,6 +240,66 @@ func TestExecutor_E2E_MissingVersionTwoSourceMakesNoRemoteCall(t *testing.T) {
 	assert.Empty(tc.MockAPI.TrashCalls)
 	assert.Empty(tc.MockAPI.DeleteCalls)
 	assert.Empty(tc.MockAPI.BatchDeleteCalls)
+}
+
+func TestExecutor_E2E_LegacyGmailSourceReferenceScopesExecution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("", "legacy@example.invalid")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "legacy-thread", "Legacy thread")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "legacy-message",
+		MessageType:     "email",
+	})
+	require.NoError(err)
+
+	tmpDir := t.TempDir()
+	mgr, err := NewManager(tmpDir)
+	require.NoError(err)
+	mockAPI := gmail.NewDeletionMockAPI()
+	exec := NewExecutor(mgr, st, mockAPI)
+	manifest := NewManifestForSource("legacy source", []string{"legacy-message"}, SourceReference{
+		ID: source.ID, Type: "gmail", Identifier: source.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	require.NoError(exec.Execute(context.Background(), manifest.ID, DefaultExecuteOptions()))
+	assert.Equal([]string{"legacy-message"}, mockAPI.TrashCalls)
+	var live int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_from_source_at IS NULL`,
+	), source.ID).Scan(&live))
+	assert.Zero(live)
+}
+
+func TestExecutor_E2E_AmbiguousLegacyGmailFallbackMakesNoRemoteCall(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	legacy, err := st.GetOrCreateSource("", "shared@example.invalid")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource("gmail", legacy.Identifier)
+	require.NoError(err)
+
+	tmpDir := t.TempDir()
+	mgr, err := NewManager(tmpDir)
+	require.NoError(err)
+	mockAPI := gmail.NewDeletionMockAPI()
+	exec := NewExecutor(mgr, st, mockAPI)
+	manifest := NewManifestForSource("ambiguous source", []string{"shared-message"}, SourceReference{
+		ID: legacy.ID + 1000, Type: "gmail", Identifier: legacy.Identifier,
+	})
+	require.NoError(mgr.SaveManifest(manifest))
+
+	err = exec.Execute(context.Background(), manifest.ID, DefaultExecuteOptions())
+	require.ErrorContains(err, "ambiguous")
+	assert.Empty(t, mockAPI.TrashCalls)
+	assert.Empty(t, mockAPI.DeleteCalls)
+	assert.FileExists(t, filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
 }
 
 // TestExecutor_E2E_PermanentDeletePreservesArchive verifies that permanent

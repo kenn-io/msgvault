@@ -698,11 +698,11 @@ func resolveDeleteStagedTargetWithSourceID(
 	}
 
 	if durable != nil {
-		source, err := st.GetSourceByTypeAndIdentifier(durable.Type, durable.Identifier)
+		source, err := deletion.ResolveSourceReference(st, *durable)
 		if err != nil {
 			return deleteStagedTarget{}, err
 		}
-		if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
+		if effectiveType := store.EffectiveSourceType(source.SourceType); effectiveType != sourceTypeGmail && effectiveType != sourceTypeIMAP {
 			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
 		}
 		if requestedSourceIDSet {
@@ -712,7 +712,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
-			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
+			if store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) || selected.Identifier != durable.Identifier {
 				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
 					"requested source ID resolves to %s/%s, which does not match manifest source %s/%s",
 					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
@@ -723,7 +723,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
-			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
+			if store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) || selected.Identifier != durable.Identifier {
 				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
 					"requested account resolves to %s/%s, which does not match manifest source %s/%s",
 					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
@@ -758,7 +758,7 @@ func resolveDeleteStagedTargetWithSourceID(
 	if err != nil {
 		return deleteStagedTarget{}, err
 	}
-	if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
+	if effectiveType := store.EffectiveSourceType(source.SourceType); effectiveType != sourceTypeGmail && effectiveType != sourceTypeIMAP {
 		return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
 	}
 	for _, manifest := range manifests {
@@ -786,7 +786,7 @@ func deleteStagedScopeEscalationForSource(
 	permanent bool,
 	clientSecretsPath string,
 ) (deleteStagedScopeEscalation, error) {
-	if src == nil || src.SourceType != sourceTypeGmail {
+	if src == nil || store.EffectiveSourceType(src.SourceType) != sourceTypeGmail {
 		return deleteStagedScopeEscalation{}, nil
 	}
 	requiredScopes := oauth.Scopes
@@ -994,7 +994,7 @@ Examples:
 		// Service-account flows get scopes via the JWT assertion (no stored
 		// token), so the scope-escalation prompt only applies to browser OAuth.
 		var clientSecretsPath string
-		if src.SourceType == sourceTypeGmail {
+		if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return errOAuthNotConfigured()
 			}
@@ -1118,7 +1118,7 @@ Examples:
 					}
 
 					// Check if this is a scope error - offer to re-authorize (Gmail only)
-					if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
+					if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail && isInsufficientScopeError(execErr) {
 						if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
 							return fmt.Errorf(
 								"service account lacks required Gmail deletion scope for %s: "+
@@ -1359,7 +1359,7 @@ func planCLIDeleteStaged(
 	resolvedSourceIdentifier := ""
 	if resolvedSource != nil {
 		resolvedSourceID = resolvedSource.ID
-		resolvedSourceType = resolvedSource.SourceType
+		resolvedSourceType = store.EffectiveSourceType(resolvedSource.SourceType)
 		resolvedSourceIdentifier = resolvedSource.Identifier
 	}
 	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
@@ -1384,7 +1384,7 @@ func planCLIDeleteStaged(
 		if err != nil {
 			return api.CLIDeleteStagedPlanResponse{}, err
 		}
-		if target.Source.SourceType == sourceTypeGmail {
+		if store.EffectiveSourceType(target.Source.SourceType) == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return api.CLIDeleteStagedPlanResponse{}, errOAuthNotConfigured()
 			}
