@@ -89,7 +89,8 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "", cfg.OAuth.ClientSecrets != "")
+	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "",
+		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "")
 	return nil
 }
 
@@ -112,9 +113,9 @@ func setupAddAccountCommand(o *config.OAuthConfig) string {
 }
 
 // printSetupNextSteps prints the closing steps. bundleHasSecrets reports
-// whether the NAS bundle carries the credential add-account uses; the
-// bundle copies only the default [oauth] client_secrets, so a token from
-// a named app or a service account cannot be refreshed there.
+// whether the NAS bundle carries the credential add-account uses. The
+// bundle copies only the default [oauth] client_secrets, and add-account
+// prefers a service account key, which leaves no token to export.
 func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHasSecrets bool) {
 	var b strings.Builder
 	b.WriteString("\nSetup complete! Next steps:\n\n")
@@ -128,14 +129,19 @@ func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHas
 			b.WriteString("  3. Export token to your NAS (after add-account):\n")
 			b.WriteString("     msgvault export-token you@gmail.com\n\n")
 		case hasRemote:
-			b.WriteString("  The NAS bundle carries only the default [oauth] client_secrets,\n")
-			b.WriteString("  so this account cannot be exported to the NAS.\n\n")
+			b.WriteString("  This account cannot be exported to the NAS: export-token needs a\n")
+			b.WriteString("  token from the default [oauth] client_secrets, the only credential\n")
+			b.WriteString("  the NAS bundle carries.\n\n")
 		}
 	} else {
 		b.WriteString("  Add a source, for example:\n")
 		b.WriteString("     msgvault add-imap --host imap.example.com --username you@example.com\n")
 		b.WriteString("     msgvault add-o365 you@example.com\n")
-		b.WriteString("     msgvault import-mbox you@example.com /path/to/export.mbox\n\n")
+		// A configured remote would receive this local file path.
+		if !hasRemote {
+			b.WriteString("     msgvault import-mbox you@example.com /path/to/export.mbox\n")
+		}
+		b.WriteString("\n")
 		b.WriteString("  Gmail needs a Google OAuth credential: run msgvault setup again when you have one.\n")
 		b.WriteString("  Setup guide: https://msgvault.io/docs/setup/\n\n")
 	}
@@ -315,12 +321,15 @@ rate_limit_qps = 5
 		return fmt.Errorf("write config.toml: %w", err)
 	}
 
-	// Copy client_secret.json if available
+	// Copy client_secret.json if available. Otherwise remove a copy left
+	// by an earlier run, so the bundle ships no credential it does not use.
+	destPath := filepath.Join(bundleDir, "client_secret.json")
 	if oauthSecretsPath != "" {
-		destPath := filepath.Join(bundleDir, "client_secret.json")
 		if err := copyFile(oauthSecretsPath, destPath); err != nil {
 			return fmt.Errorf("copy client_secret.json: %w", err)
 		}
+	} else if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale client_secret.json: %w", err)
 	}
 
 	// Create docker-compose.yml

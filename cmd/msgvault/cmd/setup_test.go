@@ -214,10 +214,32 @@ func TestPrintSetupNextStepsExportNeedsBundledSecrets(t *testing.T) {
 
 	var withSecrets bytes.Buffer
 	printSetupNextSteps(&withSecrets, "msgvault add-account you@gmail.com", true, true)
-	assert.Contains(withSecrets.String(), "export-token")
+	assert.Contains(withSecrets.String(), "msgvault export-token")
 
 	var namedOnly bytes.Buffer
 	printSetupNextSteps(&namedOnly, named, true, false)
-	assert.NotContains(namedOnly.String(), "export-token")
+	assert.NotContains(namedOnly.String(), "msgvault export-token")
 	assert.Contains(namedOnly.String(), "cannot be exported to the NAS")
+}
+
+func TestCreateNASBundle_RebuildWithoutSecretsRemovesOldCopy(t *testing.T) {
+	require := require.New(t)
+	secretsPath := filepath.Join(t.TempDir(), "client_secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600))
+	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
+
+	require.NoError(createNASBundle(bundleDir, "key", secretsPath, 8080))
+	require.NoError(createNASBundle(bundleDir, "key", "", 8080))
+
+	_, err := os.Stat(filepath.Join(bundleDir, "client_secret.json"))
+	assert.True(t, os.IsNotExist(err), "rebuild without secrets should remove the old copy")
+}
+
+func TestPrintSetupNextStepsOmitsLocalImportForRemote(t *testing.T) {
+	var local, remote bytes.Buffer
+	printSetupNextSteps(&local, "", false, false)
+	printSetupNextSteps(&remote, "", true, false)
+
+	assert.Contains(t, local.String(), "import-mbox")
+	assert.NotContains(t, remote.String(), "import-mbox")
 }
