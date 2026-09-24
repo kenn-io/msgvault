@@ -33,7 +33,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.27.0"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.28.0"}`))
 	})
 	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -141,7 +141,7 @@ func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.26.0"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.27.0"}`))
 	})
 	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
 		postCount++
@@ -154,6 +154,6 @@ func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
 	requirements.NoError(err)
 	_, err = client.IssueAgentToken(t.Context(), "old-daemon", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}})
 	requirements.Error(err)
-	assertions.Contains(err.Error(), "requires daemon API schema 2.27.0")
+	assertions.Contains(err.Error(), "requires daemon API schema 2.28.0")
 	assertions.Zero(postCount)
 }

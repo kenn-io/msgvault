@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const agentTokenSenderMinAPISchemaVersion = "2.27.0"
+const agentTokenSenderMinAPISchemaVersion = "2.28.0"
 
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
 func (c *Client) IssueAgentToken(
