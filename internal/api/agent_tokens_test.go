@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // TestAgentTokensDoNotSurviveRestart tests proof matrix row 13 (second half).
@@ -44,8 +45,8 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 
 // TestDelegatedHealthUsesPublicProjection tests proof matrix row 17.
 // Delegated callers receive the public projection (operationBusyHealth) plus
-// APISchemaVersion. Owner callers receive the full projection (operationHealth)
-// which includes the operation label. When the gate is held, the two bodies
+// schema and vector capabilities. Owner callers receive the full projection
+// (operationHealth), which includes the operation label. When the gate is held, the two bodies
 // differ on Operation.Label: delegated sees none, owner sees the label.
 func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	assert := assert.New(t)
@@ -66,6 +67,8 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 		Logger:        testLogger(),
 		Scheduler:     newMockScheduler(),
 		OperationGate: gate,
+		VectorCfg:     vector.Config{Enabled: true},
+		VectorStatus:  VectorStatusInitializing,
 	})
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
@@ -89,6 +92,8 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 
 	var delegatedResp HealthResponse
 	require.NoError(json.NewDecoder(wD.Body).Decode(&delegatedResp))
+	assert.Equal(new(true), delegatedResp.VectorTextEnabled, "configured text search remains discoverable during initialization")
+	assert.Equal(new(false), delegatedResp.VectorVisualEnabled, "disabled visual search is explicitly reported")
 
 	// Owner caller.
 	reqO := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)

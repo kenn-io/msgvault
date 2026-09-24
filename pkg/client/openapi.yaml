@@ -4768,6 +4768,10 @@ components:
           type: string
         vector:
           $ref: "#/components/schemas/VectorHealth"
+        vector_text_enabled:
+          type: boolean
+        vector_visual_enabled:
+          type: boolean
       required:
         - status
       type: object
@@ -12165,7 +12169,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.26.0
+  version: 2.27.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

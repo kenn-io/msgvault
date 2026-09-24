@@ -29,9 +29,13 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.26.0**.
+it is separate from the binary release version. The current schema is **2.27.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.27.0 adds separate text and visual vector capabilities to authenticated
+[health responses](#get-health). Clients can discover configured search tools
+without requesting archive statistics.
 
 Schema 2.26.0 adds optional `web_url` metadata to message result schemas. The
 URL opens that message in the selected daemon's browser interface.
@@ -491,6 +495,12 @@ build/open, `sql` for deliberate live SQL, `postgres` for PostgreSQL, and
 `initializing` while required DuckDB analytics are being prepared. Health stays
 available during initialization; analytics routes return `503` until the
 required engine is ready.
+
+Authenticated `GET /api/v1/health` also reports `api_schema_version`,
+`vector_text_enabled`, and `vector_visual_enabled`. The two booleans indicate
+whether message vector search and visual attachment search are configured.
+They remain true during initialization or failure; individual search requests
+report readiness. These fields are omitted from public `GET /health` responses.
 
 ---
 

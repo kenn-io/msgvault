@@ -240,14 +240,17 @@ All `group_by` values return a JSON array of objects with these fields:
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
 `semantic_search_messages` is always registered so callers receive actionable
-discovery guidance. When vector search is not configured, it exposes a reduced
-schema and calls return `vector_not_enabled`. Daemon-backed MCP uses the existing
-health probe to detect this without requesting archive statistics. If health
-information is inconclusive, it keeps the full schema and vector tools available.
-Configured vector search checks readiness when each request runs, so a listed
-tool can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
-Health reports one combined vector state, so a text-only daemon can still list
-`search_visual_attachments`; calls then return `visual_search_not_ready`.
+discovery guidance. When message vector search is not configured, it exposes a
+reduced schema and calls return `vector_not_enabled`. Daemon-backed MCP uses the
+existing health probe to check text and visual search independently, without
+requesting archive statistics. Configured tools remain discoverable during
+initialization. The daemon checks readiness per request, so a listed tool can
+return `vector_initializing`, `vector_init_failed`, or `index_stale`.
+
+Daemons before API schema 2.27 report only a combined vector state, so they can
+still advertise tools for an individually disabled search lane. If health
+information is inconclusive, MCP keeps the vector tools available and reports
+readiness errors when called.
 
 `search_message_bodies` and the deprecated `search_messages` compatibility wrapper
 are always available. Vector and hybrid queries require at least one free-text

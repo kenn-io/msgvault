@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 const (
@@ -30,8 +32,40 @@ const (
 // TestMCPInitializeWithoutStats exercises the real mcp command in a child
 // process so stdio startup and the daemon request boundary stay in the test.
 func TestMCPInitializeWithoutStats(t *testing.T) {
+	for _, tt := range []struct {
+		name                       string
+		textEnabled, visualEnabled bool
+	}{
+		{name: "disabled"},
+		{name: "text only", textEnabled: true},
+		{name: "visual only", visualEnabled: true},
+		{name: "both", textEnabled: true, visualEnabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			testMCPInitializeWithoutStats(t, tt.textEnabled, tt.visualEnabled)
+		})
+	}
+}
+
+func testMCPInitializeWithoutStats(t *testing.T, textEnabled, visualEnabled bool) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
+
+	vectorStatus := api.VectorStatusDisabled
+	if textEnabled || visualEnabled {
+		vectorStatus = api.VectorStatusInitializing
+	}
+	apiServer := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Logger: slog.New(slog.DiscardHandler),
+		VectorCfg: vector.Config{
+			Enabled:    textEnabled,
+			Multimodal: vector.MultimodalConfig{Enabled: visualEnabled},
+		},
+		VectorStatus: vectorStatus,
+	})
+	t.Cleanup(func() { require.NoError(apiServer.Shutdown(context.Background())) })
 
 	releaseStats := make(chan struct{})
 	var releaseStatsOnce sync.Once
@@ -39,8 +73,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, api.APISchemaVersion)
+			apiServer.Router().ServeHTTP(w, r)
 		case "/api/v1/stats":
 			statsSeen <- struct{}{}
 			<-releaseStats
@@ -129,21 +162,27 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 			Tools []struct {
 				Name        string `json:"name"`
 				Description string `json:"description"`
+				InputSchema struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"inputSchema"`
 			} `json:"tools"`
 		} `json:"result"`
 	}
 	require.NoError(json.Unmarshal(response, &catalog))
 	require.NotEmpty(catalog.Result.Tools)
-	var names []string
+	names := make(map[string]bool)
 	for _, tool := range catalog.Result.Tools {
-		names = append(names, tool.Name)
+		names[tool.Name] = true
 		if tool.Name == "semantic_search_messages" {
-			assert.Contains(tool.Description, "unavailable: vector search is not configured")
+			assert.Equal(textEnabled, tool.InputSchema.Properties["mode"] != nil, "semantic search schema")
+			if !textEnabled {
+				assert.Contains(tool.Description, "unavailable: vector search is not configured")
+			}
 		}
 	}
 	assert.Contains(names, "semantic_search_messages")
-	assert.NotContains(names, "find_similar_messages")
-	assert.NotContains(names, "search_visual_attachments")
+	assert.Equal(textEnabled, names["find_similar_messages"])
+	assert.Equal(visualEnabled, names["search_visual_attachments"])
 	assert.Empty(statsSeen, "tool discovery must not request /api/v1/stats")
 
 	_ = stdin.Close()

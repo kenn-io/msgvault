@@ -107,9 +107,21 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 	}
 	// Only omit searchers when health confirms that vector search is disabled.
 	// Configured lanes still enforce readiness when each operation is called.
-	if capabilityErr != nil || !daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorHealthMinAPISchemaVersion) || health.Vector != nil {
+	vectorAvailable := capabilityErr != nil || !daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorHealthMinAPISchemaVersion) || health.Vector != nil
+	textAvailable, visualAvailable := vectorAvailable, vectorAvailable
+	if health != nil {
+		if health.VectorTextEnabled != nil {
+			textAvailable = *health.VectorTextEnabled
+		}
+		if health.VectorVisualEnabled != nil {
+			visualAvailable = *health.VectorVisualEnabled
+		}
+	}
+	if textAvailable {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
 		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
+	}
+	if visualAvailable {
 		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 	}
 	if capabilityErr != nil {

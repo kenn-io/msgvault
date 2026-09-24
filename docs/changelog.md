@@ -14,8 +14,9 @@ All notable changes to msgvault, grouped by release.
   See [configuration](configuration.md).
 
 - MCP startup no longer waits for archive statistics or vector lane probes.
-  The existing health probe omits disabled vector tools; configured vector
-  search still checks readiness per request.
+  The existing health probe discovers text and visual vector search separately,
+  omitting tools for disabled lanes. Configured search still checks readiness
+  per request.
 
 ## 0.20.0
 <small>2026-09-22</small>

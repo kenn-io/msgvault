@@ -1446,27 +1446,32 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleAuthenticatedHealth returns health details that are safe behind the
 // API-key boundary. Delegated callers receive the public projection plus
-// APISchemaVersion only, so they can verify version compatibility without
+// schema and capability information, so they can verify compatibility without
 // seeing internal operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
+	_, _, vectorCfg := s.vectorComponents()
 	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
 		writeJSON(w, http.StatusOK, HealthResponse{
-			Status:           "ok",
-			Vector:           s.vectorHealthPublic(),
-			Operation:        s.operationBusyHealth(),
-			AnalyticsEngine:  s.analyticsModeForContext(r.Context()),
-			APISchemaVersion: APISchemaVersion,
+			Status:              "ok",
+			Vector:              s.vectorHealthPublic(),
+			Operation:           s.operationBusyHealth(),
+			AnalyticsEngine:     s.analyticsModeForContext(r.Context()),
+			APISchemaVersion:    APISchemaVersion,
+			VectorTextEnabled:   new(vectorCfg.Enabled),
+			VectorVisualEnabled: new(vectorCfg.Multimodal.Enabled),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, HealthResponse{
-		Status:           "ok",
-		Vector:           s.vectorHealth(),
-		Operation:        s.operationHealth(),
-		AnalyticsEngine:  s.analyticsModeForContext(r.Context()),
-		APISchemaVersion: APISchemaVersion,
+		Status:              "ok",
+		Vector:              s.vectorHealth(),
+		Operation:           s.operationHealth(),
+		AnalyticsEngine:     s.analyticsModeForContext(r.Context()),
+		APISchemaVersion:    APISchemaVersion,
+		VectorTextEnabled:   new(vectorCfg.Enabled),
+		VectorVisualEnabled: new(vectorCfg.Multimodal.Enabled),
 	})
 }
 
