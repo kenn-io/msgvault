@@ -1953,7 +1953,7 @@ func isLowerSHA256(value string) bool {
 func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := jsontext.NewEncoder(w)
+	enc := jsontext.NewEncoder(w, jsontext.AllowInvalidUTF8(true))
 	flusher, _ := w.(http.Flusher)
 	return func(event T) error {
 		if err := json.MarshalEncode(enc, event, json.Deterministic(true)); err != nil {

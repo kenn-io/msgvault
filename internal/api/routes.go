@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -31,16 +33,32 @@ const (
 
 var configureHumaOnce sync.Once
 
-// marshalAPIJSON writes nil slices as empty arrays to match the OpenAPI schema.
-func marshalAPIJSON(w io.Writer, value any) error {
-	err := jsonv2.MarshalWrite(
-		w, value,
+// marshalAPIJSONBytes encodes an API response with the wire options every
+// JSON route shares: nil slices encode as empty arrays to match the OpenAPI
+// schema, and invalid UTF-8 bytes are replaced with U+FFFD.
+func marshalAPIJSONBytes(value any) ([]byte, error) {
+	data, err := jsonv2.Marshal(value,
 		jsonv2.FormatNilSliceAsNull(false),
+		// Replace each invalid UTF-8 byte with U+FFFD, as encoding/json v1
+		// did, so one damaged stored value cannot fail a whole response.
+		jsontext.AllowInvalidUTF8(true),
 	)
 	if err != nil {
-		return fmt.Errorf("marshal API JSON: %w", err)
+		return nil, fmt.Errorf("marshal API JSON: %w", err)
 	}
-	return nil
+	return data, nil
+}
+
+// marshalAPIJSON writes the complete encoded value in one Write, or nothing.
+// Streaming straight to w would flush finished top-level members before a
+// later member failed, leaving the client a truncated body.
+func marshalAPIJSON(w io.Writer, value any) error {
+	data, err := marshalAPIJSONBytes(value)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
 }
 
 type apiHTTPError struct {
@@ -129,7 +147,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
 	jsonFormat := huma.Format{
-		Marshal: marshalAPIJSON,
+		Marshal: marshalHumaJSON,
 		Unmarshal: func(data []byte, value any) error {
 			return jsonv2.Unmarshal(data, value)
 		},
@@ -168,7 +186,78 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 		},
 	}
 
-	return humago.New(mux, config)
+	return humago.New(humaResponseMux{Mux: mux}, config)
+}
+
+// humaResponseMux delays only the status line for Huma-registered handlers.
+// Huma sets status before asking its JSON formatter to encode the body.
+type humaResponseMux struct{ humago.Mux }
+
+func (m humaResponseMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.Mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		delayed := &humaResponseWriter{ResponseWriter: w}
+		handler(delayed, r)
+		delayed.commit()
+	})
+}
+
+type humaResponseWriter struct {
+	http.ResponseWriter
+
+	status    int
+	committed bool
+}
+
+func (w *humaResponseWriter) WriteHeader(status int) {
+	if w.status == 0 && !w.committed {
+		w.status = status
+	}
+}
+
+func (w *humaResponseWriter) Write(p []byte) (int, error) {
+	w.commit()
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *humaResponseWriter) Flush() {
+	w.commit()
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *humaResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *humaResponseWriter) commit() {
+	if w.committed {
+		return
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.committed = true
+	w.ResponseWriter.WriteHeader(w.status)
+}
+
+func marshalHumaJSON(w io.Writer, value any) error {
+	if err := marshalAPIJSON(w, value); err != nil {
+		if delayed, ok := w.(*humaResponseWriter); ok && !delayed.committed {
+			slog.Error("encode API response", "status", delayed.status, "error", err)
+			delayed.status = http.StatusInternalServerError
+			headers := delayed.Header()
+			// The success body was never written. Its length, encoding, download
+			// disposition, and ETag cannot describe the replacement error body.
+			headers.Del("Content-Length")
+			headers.Del("Content-Encoding")
+			headers.Del("Content-Disposition")
+			headers.Del("ETag")
+			headers.Set("Content-Type", applicationJSONMediaType)
+			_, writeErr := io.WriteString(delayed, encodeFailureBody)
+			return writeErr
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) setupAPIV1Group(api huma.API) huma.API {
