@@ -583,6 +583,285 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 	})
 }
 
+func TestBeeperMediaArtifactReactionRefresh(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/reaction-refresh",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "reaction transcript", data: syntheticWAV(800, 40)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "reaction-refresh")
+	_, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "reaction-refresh", time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+	before, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "reaction-refresh", operation.ProcessingKey, 100)
+	require.NoError(err)
+	require.Len(before, 1)
+
+	raw, err := world.st.GetMessageRawContext(t.Context(), before[0].MessageID)
+	require.NoError(err)
+	updated := strings.Replace(string(raw), `"attachments":[`, `"reactions":[{"reactionKey":"reaction-1"}],"attachments":[`, 1)
+	require.NotEqual(string(raw), updated)
+	require.NoError(world.st.UpsertMessageRawWithFormat(before[0].MessageID, []byte(updated), "beeper_json"))
+	newRawHash := hashBytes([]byte(updated))
+	require.NotEqual(before[0].RawHash, newRawHash)
+
+	_, err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	docbank.mu.Lock()
+	require.Len(docbank.artifactOps, 1)
+	assert.NotEmpty(docbank.artifactOps[0])
+	require.Len(docbank.artifactReceipts, 1)
+	assert.Equal(docbank.artifactOps[0], docbank.artifactReceipts[0].OperationID)
+	docbank.mu.Unlock()
+
+	after, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "reaction-refresh", operation.ProcessingKey, 100)
+	require.NoError(err)
+	require.Len(after, 1)
+	assert.Equal(before[0].OccurrenceRef, after[0].OccurrenceRef)
+	assert.Equal(before[0].Revision, after[0].Revision)
+	assert.Equal(before[0].SourceSHA256, after[0].SourceSHA256)
+	assert.Equal(before[0].ProcessingKey, after[0].ProcessingKey)
+	assert.Equal(before[0].DocbankOccurrenceID, after[0].DocbankOccurrenceID)
+	assert.Equal(newRawHash, after[0].RawHash)
+	deliveries := deliveryRows(t, world.st, "reaction-refresh")
+	require.Len(deliveries, 1)
+	assert.Equal("pending-process", deliveries[0].Phase)
+	assert.NotEmpty(deliveries[0].SuppliedInput)
+}
+
+func TestBeeperMediaArtifactRevisionChangeDoesNotReuseReceipt(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/revision-change",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "revision transcript", data: syntheticWAV(800, 43)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	destination := "revision-change"
+	worker := world.submitter(t, server, destination)
+	_, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+	mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), destination, operation.ProcessingKey, 100)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	old := mappings[0]
+	raw, err := world.st.GetMessageRawContext(t.Context(), old.MessageID)
+	require.NoError(err)
+	updated := strings.Replace(string(raw), "voice.wav", "revision.wav", 1)
+	require.NotEqual(string(raw), updated)
+	require.NoError(world.st.UpsertMessageRawWithFormat(old.MessageID, []byte(updated), "beeper_json"))
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	descriptor, transcript, err := describeMedia([]byte(updated), mappingCandidate(old), archiveUID)
+	require.NoError(err)
+	assert.Equal("revision transcript", transcript)
+	assert.Equal(old.ProcessingKey, descriptor.ProcessingKey)
+	assert.Equal(old.TranscriptSHA256, descriptor.TranscriptSHA256)
+	assert.NotEqual(old.Revision, descriptor.Occurrence.Revision)
+	docbank.mu.Lock()
+	beforeRequests := docbank.requests
+	docbank.mu.Unlock()
+	require.NoError(worker.artifact(t.Context(), t.Context(), archiveUID, operation))
+	docbank.mu.Lock()
+	assert.Equal(beforeRequests, docbank.requests)
+	assert.Empty(docbank.artifactOps)
+	docbank.mu.Unlock()
+	rows := occurrenceRows(t, world.st, destination)
+	require.Len(rows, 1)
+	assert.Equal(old.Revision, rows[0].Revision)
+	assert.Equal(old.DocbankOccurrenceID, rows[0].OccurrenceID)
+	deliveries := deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+
+	checkpoint, err := world.st.LoadBeeperMediaScan(t.Context(), destination)
+	require.NoError(err)
+	due := checkpoint
+	due.NextFullScanAt = time.Now().UTC().Add(-time.Hour)
+	swapped, err := world.st.AdvanceBeeperMediaScan(t.Context(), destination, checkpoint, due)
+	require.NoError(err)
+	require.True(swapped)
+	discovery := NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir)
+	result, err := discovery.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, result.Examined)
+	rows = occurrenceRows(t, world.st, destination)
+	require.Len(rows, 2)
+	var oldRow, currentRow *occurrenceRow
+	for i := range rows {
+		if rows[i].Revision == old.Revision {
+			oldRow = &rows[i]
+		} else {
+			currentRow = &rows[i]
+		}
+	}
+	require.NotNil(oldRow)
+	require.NotNil(currentRow)
+	assert.Equal("revoked", oldRow.State)
+	assert.Equal(old.DocbankOccurrenceID, oldRow.OccurrenceID)
+	assert.Equal(old.OccurrenceRef, currentRow.Ref)
+	assert.Equal(old.ProcessingKey, currentRow.ProcessingKey)
+	assert.Equal("pending", currentRow.State)
+	assert.Empty(currentRow.OccurrenceID)
+	deliveries = deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+	docbank.mu.Lock()
+	assert.Equal(beforeRequests, docbank.requests)
+	docbank.mu.Unlock()
+}
+
+func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/final-read-change",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "final read transcript", data: syntheticWAV(800, 41)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "final-read-change")
+	_, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "final-read-change", time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+	mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "final-read-change", operation.ProcessingKey, 100)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	raw, err := world.st.GetMessageRawContext(t.Context(), mappings[0].MessageID)
+	require.NoError(err)
+	updated := strings.Replace(string(raw), `"attachments":[`, `"reactions":[{"reactionKey":"reaction-2"}],"attachments":[`, 1)
+	require.NotEqual(string(raw), updated)
+	newRawHash := hashBytes([]byte(updated))
+
+	calls := 0
+	worker.WithOperationGate(func(context.Context) (func(), bool) {
+		calls++
+		if calls == 2 {
+			require.NoError(world.st.UpsertMessageRawWithFormat(mappings[0].MessageID, []byte(updated), "beeper_json"))
+		}
+		return func() {}, true
+	})
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	require.NoError(worker.artifact(t.Context(), t.Context(), archiveUID, operation))
+	assert.Equal(2, calls)
+	docbank.mu.Lock()
+	assert.Empty(docbank.artifactOps)
+	docbank.mu.Unlock()
+	deliveries := deliveryRows(t, world.st, "final-read-change")
+	require.Len(deliveries, 1)
+	savedOperationID := deliveries[0].PendingOperationID
+	require.NotEmpty(savedOperationID)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+	assert.Equal("source_changed", deliveries[0].ErrorCode)
+	var nextActionAt time.Time
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+		SELECT next_action_at FROM beeper_media_deliveries WHERE destination_key = ?`),
+		"final-read-change").Scan(&nextActionAt))
+	assert.True(nextActionAt.After(time.Now().UTC()))
+
+	_, err = world.st.DB().Exec(world.st.Rebind(`
+		UPDATE beeper_media_deliveries SET next_action_at = ? WHERE destination_key = ?`),
+		time.Now().UTC().Add(-time.Minute), "final-read-change")
+	require.NoError(err)
+	_, err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	docbank.mu.Lock()
+	require.Len(docbank.artifactOps, 1)
+	assert.Equal(savedOperationID, docbank.artifactOps[0])
+	docbank.mu.Unlock()
+	after, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "final-read-change", operation.ProcessingKey, 100)
+	require.NoError(err)
+	require.Len(after, 1)
+	assert.Equal(newRawHash, after[0].RawHash)
+	deliveries = deliveryRows(t, world.st, "final-read-change")
+	require.Len(deliveries, 1)
+	assert.Equal("pending-process", deliveries[0].Phase)
+}
+
+func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t,
+		voiceSpec{id: "voice1", asset: "mxc://beeper.example/reregister-one", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 42)},
+		voiceSpec{id: "voice2", asset: "mxc://beeper.example/reregister-two", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 42)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	destination := "reregister"
+	runPasses(t, world.submitter(t, server, destination), 3)
+	rows := occurrenceRows(t, world.st, destination)
+	require.Len(rows, 2)
+	assert.Equal(rows[0].ProcessingKey, rows[1].ProcessingKey)
+	for _, row := range rows {
+		assert.Equal("retained", row.State)
+	}
+	deliveries := deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	_, err := world.st.DB().Exec(world.st.Rebind(`
+		UPDATE beeper_media_deliveries
+		SET phase = 'pending-artifact', pending_operation_id = NULL,
+		    frozen_request_json = NULL, supplied_input_id = '', next_action_at = ?, error_code = ''
+		WHERE destination_key = ?`), time.Now().UTC().Add(-time.Minute), destination)
+	require.NoError(err)
+	deliveries = deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+
+	source, err := world.st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+	require.NoError(world.st.MarkMessageDeleted(source.ID, "voice1"))
+	worker := NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir)
+	result, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, result.Examined)
+	rows = occurrenceRows(t, world.st, destination)
+	require.Len(rows, 2)
+	for _, row := range rows {
+		if row.MessageID == "voice1" {
+			assert.Equal("revoked", row.State)
+		} else {
+			assert.Equal("voice2", row.MessageID)
+			assert.Equal("retained", row.State)
+		}
+	}
+	deliveries = deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+	changes, err := world.st.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 100)
+	require.NoError(err)
+	assert.Empty(changes)
+
+	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+	require.NoError(world.st.MarkMessageDeleted(source.ID, "voice2"))
+	worker = NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir)
+	result, err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Zero(result.Examined)
+	rows = occurrenceRows(t, world.st, destination)
+	require.Len(rows, 2)
+	for _, row := range rows {
+		assert.Equal("revoked", row.State)
+	}
+	deliveries = deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("blocked", deliveries[0].Phase)
+	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
+	changes, err = world.st.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 100)
+	require.NoError(err)
+	assert.Empty(changes)
+}
+
 func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite authorizer injects a message_raw query failure")

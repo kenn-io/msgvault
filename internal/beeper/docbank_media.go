@@ -235,6 +235,11 @@ func (w *MediaSubmitter) discover(ctx context.Context, archiveUID string) (Media
 		}
 		var swapped bool
 		err = w.gated(ctx, func() (err error) {
+			if fullPass {
+				if err := w.store.RevokeStaleBeeperMediaMappings(ctx, w.destination); err != nil {
+					return err
+				}
+			}
 			swapped, err = w.store.AdvanceBeeperMediaScan(ctx, w.destination, before, scan)
 			if err == nil && swapped && fullPass && !consumer.ReconciliationComplete && scan.BaselineSequence == consumer.BaselineSequence {
 				err = w.store.CompleteAttachmentChangeReconciliation(ctx,
@@ -607,6 +612,7 @@ func (w *MediaSubmitter) artifact(
 	var donor store.BeeperMediaMapping
 	var transcript string
 	var prepared store.BeeperMediaOperation
+	var retryScheduled bool
 	err = w.gated(ctx, func() error {
 		current, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 100)
 		if err != nil {
@@ -614,6 +620,7 @@ func (w *MediaSubmitter) artifact(
 		}
 		var gaps []store.BeeperMediaMapping
 		var surviving *beeperMediaEvidence
+		var sourceChanged *beeperMediaEvidence
 		for _, mapping := range current {
 			var snapshot *beeperMediaEvidence
 			for i := range evidence {
@@ -621,8 +628,12 @@ func (w *MediaSubmitter) artifact(
 				if !sameBeeperMediaMapping(mapping, *candidate) {
 					continue
 				}
-				if candidate.gapCode == "" && (mapping.RawHash != candidate.rawHash ||
-					mapping.TranscriptSHA256 != candidate.descriptor.TranscriptSHA256) {
+				if candidate.gapCode == "" &&
+					(candidate.descriptor.Occurrence.Ref != mapping.OccurrenceRef ||
+						candidate.descriptor.Occurrence.Revision != mapping.Revision) {
+					continue
+				}
+				if candidate.gapCode == "" && mapping.TranscriptSHA256 != candidate.descriptor.TranscriptSHA256 {
 					continue
 				}
 				if candidate.gapCode != "" || (candidate.descriptor.ProcessingKey == operation.ProcessingKey && candidate.transcript != "") {
@@ -650,8 +661,14 @@ func (w *MediaSubmitter) artifact(
 				}
 				continue
 			}
-			if currentRawHash != snapshot.rawHash || mapping.RawHash != snapshot.rawHash ||
-				snapshot.descriptor.ProcessingKey != operation.ProcessingKey || snapshot.transcript == "" {
+			if currentRawHash != snapshot.rawHash {
+				if sourceChanged == nil {
+					copyOf := *snapshot
+					sourceChanged = &copyOf
+				}
+				continue
+			}
+			if snapshot.descriptor.ProcessingKey != operation.ProcessingKey || snapshot.transcript == "" {
 				continue
 			}
 			if surviving == nil {
@@ -665,9 +682,34 @@ func (w *MediaSubmitter) artifact(
 			}
 		}
 		if surviving == nil {
+			if sourceChanged != nil {
+				transcriptSHA := sourceChanged.descriptor.TranscriptSHA256
+				operation.FrozenRequestJSON = mustJSON(docbankmedia.ArtifactMetadata{
+					OccurrenceID: sourceChanged.mapping.DocbankOccurrenceID, Kind: "transcript", Origin: "provider",
+					Provider: "beeper", Language: operation.Language, Filename: "transcript.txt",
+					MediaType: "text/plain", SHA256: transcriptSHA, ByteLength: int64(len(sourceChanged.transcript)),
+				})
+				operation.DocbankSourceID, operation.SourceVersionID = sourceChanged.mapping.DocbankSourceID, sourceChanged.mapping.SourceVersionID
+				operation.ContentVersionID, operation.DocbankOccurrenceID = sourceChanged.mapping.ContentVersionID, sourceChanged.mapping.DocbankOccurrenceID
+				prepared, err = w.store.PrepareBeeperMediaOperation(ctx, operation)
+				if err != nil {
+					return err
+				}
+				if _, err := w.store.FinishBeeperMediaOperation(ctx, prepared, store.BeeperMediaResult{
+					ErrorCode: errBeeperMediaSourceChanged.Error(), Retry: true,
+				}); err != nil {
+					return err
+				}
+				retryScheduled = true
+			}
 			return nil
 		}
 		donor, transcript = surviving.mapping, surviving.transcript
+		refreshed := descriptorMapping(w.destination, surviving.candidate, surviving.descriptor)
+		refreshed.RawHash = surviving.rawHash
+		if err := w.store.ReconcileBeeperMediaMapping(ctx, refreshed); err != nil {
+			return err
+		}
 		transcriptSHA := surviving.descriptor.TranscriptSHA256
 		operation.FrozenRequestJSON = mustJSON(docbankmedia.ArtifactMetadata{
 			OccurrenceID: donor.DocbankOccurrenceID, Kind: "transcript", Origin: "provider",
@@ -681,6 +723,9 @@ func (w *MediaSubmitter) artifact(
 	})
 	if err != nil {
 		return err
+	}
+	if retryScheduled {
+		return nil
 	}
 	if prepared.OperationID == "" {
 		return nil
