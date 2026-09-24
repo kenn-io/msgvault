@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,6 +27,10 @@ const (
 	toolSecurityRead toolSecurityClass = iota
 	toolSecurityWrite
 	toolSecurityProfileWrite
+	toolSecurityIdentityDecision
+	toolSecurityIdentityScoring
+	toolSecurityPersonMerge
+	toolSecurityCardDAVWrite
 )
 
 type catalogCapabilities struct {
@@ -38,6 +43,8 @@ type catalogCapabilities struct {
 	visualSearch    bool
 	savedViews      bool
 	meetings        bool
+	identityReview  bool
+	personCardDAV   bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -116,37 +123,42 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		visualSearch:    opts.VisualSearcher != nil,
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
+		identityReview:  opts.IdentityReview != nil,
+		personCardDAV:   opts.PersonCardDAV != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
-// The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
-// stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 512 possible capability keys, which also keeps
-// the shared SDK cache boundary fixed.
-var stableOperationCatalogs = buildOperationCatalogs()
+// The SDK schema cache keys explicit schemas by pointer identity, so reuse the
+// catalog roots for capabilities that are actually served. Building all 2048
+// possible combinations at startup retains several gigabytes in test binaries.
+var stableOperationCatalogs operationCatalogCache
 
-func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 512)
-	for mask := range 512 {
-		capabilities := catalogCapabilities{
-			meetings:        mask&0b100000000 != 0,
-			directoryPeople: mask&0b010000000 != 0,
-			semanticSearch:  mask&0b001000000 != 0,
-			vectorInMessage: mask&0b000100000 != 0,
-			similarMessages: mask&0b000010000 != 0,
-			documentSearch:  mask&0b000001000 != 0,
-			people:          mask&0b000000100 != 0,
-			visualSearch:    mask&0b000000010 != 0,
-			savedViews:      mask&0b000000001 != 0,
+type operationCatalogCache struct {
+	catalogs sync.Map // map[catalogCapabilities][]toolDefinition
+}
+
+func (c *operationCatalogCache) get(capabilities catalogCapabilities) []toolDefinition {
+	if definitions, ok := c.catalogs.Load(capabilities); ok {
+		if cached, ok := definitions.([]toolDefinition); ok {
+			return cached
 		}
-		catalogs[capabilities] = buildOperationCatalog(capabilities)
 	}
-	return catalogs
+	definitions := buildOperationCatalog(capabilities)
+	actual, _ := c.catalogs.LoadOrStore(capabilities, definitions)
+	if cached, ok := actual.([]toolDefinition); ok {
+		return cached
+	}
+	return definitions
 }
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
-	return slices.Clone(stableOperationCatalogs[capabilitiesFor(opts)])
+	definitions := slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
+	if opts.IdentityScoring != nil {
+		definitions = append(definitions, stableIdentityScoringDefinitions...)
+		sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
+	}
+	return definitions
 }
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
@@ -158,6 +170,11 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		getIdentityMatchDefinition(),
+		getPersonMergeContextDefinition(),
+		getCardDAVPublicationDefinition(),
+		previewCardDAVPublicationDefinition(),
+		getCardDAVSyncStatusDefinition(),
 		getMeetingContextDefinition(nil),
 		getMeetingMetricsDefinition(nil),
 		getPersonNotesDefinition(nil),
@@ -166,6 +183,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
+		listIdentityMatchesDefinition(),
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		listSavedViewsDefinition(nil),
@@ -182,6 +200,11 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
+		acceptIdentityMatchDefinition(),
+		mergePersonDefinition(),
+		approveCardDAVPublicationDefinition(),
+		syncCardDAVDefinition(),
+		rejectIdentityMatchDefinition(),
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
@@ -250,6 +273,17 @@ func destructiveWriteDefinition(
 	definition := writeDefinition(name, description, inputSchema, outputSchema, handler)
 	trueValue := true
 	definition.annotations.DestructiveHint = &trueValue
+	return definition
+}
+
+func explicitlyConfirmedWriteDefinition(
+	name, description string,
+	inputSchema, outputSchema *jsonschema.Schema,
+	handler catalogToolHandler,
+	security toolSecurityClass,
+) toolDefinition {
+	definition := destructiveWriteDefinition(name, description, inputSchema, outputSchema, handler)
+	definition.security = security
 	return definition
 }
 

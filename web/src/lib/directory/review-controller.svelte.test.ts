@@ -17,6 +17,9 @@ function candidate(id: number, state = 'candidate') {
     basis: 'stable_provider_id',
     source: 'synthetic',
     state,
+    review_token: `token-${id}-${state}`,
+    actionable: state === 'candidate',
+    application_pending: false,
     evidence: [],
     created_at: '2026-08-01T00:00:00Z',
     updated_at: '2026-08-01T00:00:00Z'
@@ -298,7 +301,7 @@ describe('DirectoryReviewController', () => {
     const post = requests.find((request) => request.method === 'POST')!;
     expect(post.headers.has('If-Match')).toBe(false);
     expect(post.headers.has('Idempotency-Key')).toBe(false);
-    await expect(post.clone().json()).resolves.toEqual({ notes: 'Confirmed by user' });
+    await expect(post.clone().json()).resolves.toEqual({ review_token: 'token-17-candidate', notes: 'Confirmed by user' });
 
     reconcile.resolve(page([accepted]));
     await expect(decision).resolves.toEqual({ ok: true, candidate: accepted, cacheState: 'ready' });
@@ -353,9 +356,34 @@ describe('DirectoryReviewController', () => {
     });
 
     const post = requests.find((request) => request.method === 'POST')!;
-    expect(new URL(post.url).pathname).toBe('/api/v1/identity/match-candidates/17/reject');
-    await expect(post.clone().json()).resolves.toEqual({});
+    expect(new URL(post.url).pathname).toBe('/api/v1/identity/match-candidates/17/review/reject');
+    await expect(post.clone().json()).resolves.toEqual({ review_token: 'token-17-candidate' });
     expect(controller.rows).toEqual([rejected]);
+  });
+
+  it('refreshes the queue after a stale review token without retrying the decision', async () => {
+    const requests: Request[] = [];
+    let reads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      requests.push(request);
+      if (request.method === 'POST') {
+        return Response.json({ error: 'identity_match_review_stale', message: 'Changed' }, { status: 409 });
+      }
+      reads += 1;
+      const row = candidate(17);
+      if (reads > 1) row.review_token = 'fresh-token';
+      return page([row]);
+    });
+    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
+    await controller.loadIdentityPage();
+
+    await expect(controller.acceptIdentity(17)).resolves.toMatchObject({
+      ok: false, kind: 'error', status: 409
+    });
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+    expect(controller.rows[0]?.review_token).toBe('fresh-token');
+    expect(controller.decisionError).toContain('Review the refreshed evidence');
   });
 
   it('reports a committed decision as successful when page reconciliation fails', async () => {
@@ -413,19 +441,24 @@ describe('DirectoryReviewController', () => {
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
-  it('keeps malformed merge-required payloads on the ordinary error path', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+  it('refreshes after a malformed merge-required conflict without showing a merge offer', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if (requestOf(input).method === 'GET') return page([candidate(17)]);
+      return Response.json({
       error: 'person_merge_required',
       message: 'Malformed conflict',
       profiles: [
         { etag: 'W/"person-7-r4"', person: { id: 7, revision: 4 } },
         { etag: '"person-7-r4"', person: { id: 7, revision: 4 } }
       ]
-    }, { status: 409 }));
+      }, { status: 409 });
+    });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
+	await controller.loadIdentityPage();
 
     await expect(controller.acceptIdentity(17)).resolves.toEqual({
-      ok: false, kind: 'error', status: 409, message: 'Malformed conflict'
+      ok: false, kind: 'error', status: 409,
+      message: 'The match changed. Review the refreshed evidence before deciding.'
     });
     expect(controller.mergeRequired).toBeNull();
   });
@@ -588,7 +621,7 @@ describe('DirectoryReviewController', () => {
         reads += 1;
         return page(reads === 1 ? [candidate(17), candidate(18)] : [candidate(17), accepted]);
       }
-      return new URL(request.url).pathname.endsWith('/17/reject') ? failed.promise : succeeded.promise;
+      return new URL(request.url).pathname.endsWith('/17/review/reject') ? failed.promise : succeeded.promise;
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();

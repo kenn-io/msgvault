@@ -54,6 +54,22 @@ test('review cards expose the complete server-supplied synthetic evidence', asyn
     .toContainText('Both synthetic endpoints expose the same provider identifier.');
 });
 
+test('identity decisions submit the review token returned with the candidate', async ({ page }) => {
+  const fixture = await installDirectoryReviewArchive(page);
+  await page.goto(reviewURL());
+
+  const card = page.getByRole('article', { name: 'Identity match 17' });
+  await card.getByRole('button', { name: 'Link identities' }).click();
+  const decision = page.getByRole('dialog', { name: 'Link identities' });
+  const request = page.waitForRequest((candidate) =>
+    candidate.method() === 'POST' && new URL(candidate.url()).pathname.endsWith('/17/review/accept'));
+  await decision.getByRole('button', { name: 'Link identities' }).click();
+
+  expect((await request).postDataJSON()).toMatchObject({ review_token: 'review-17-candidate' });
+  await expect(card).toBeHidden();
+  expect(fixture.requests.filter((item) => item.path.endsWith('/17/review/accept'))).toHaveLength(1);
+});
+
 test('ordinary accept and reject keep keyboard focus connected as rows leave the queue', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   await page.goto(reviewURL());
@@ -70,12 +86,14 @@ test('ordinary accept and reject keep keyboard focus connected as rows leave the
   const acceptDialog = page.getByRole('dialog', { name: 'Link identities' });
   await acceptDialog.getByLabel('Decision notes').fill('Synthetic provider IDs match.');
   const acceptedRequest = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/17/accept'));
+    request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/17/review/accept'));
   const acceptSubmit = acceptDialog.getByRole('button', { name: 'Link identities' });
   await acceptSubmit.focus();
   await expect(acceptSubmit).toBeFocused();
   await page.keyboard.press('Enter');
-  expect((await acceptedRequest).postDataJSON()).toEqual({ notes: 'Synthetic provider IDs match.' });
+  expect((await acceptedRequest).postDataJSON()).toEqual({
+    review_token: 'review-17-candidate', notes: 'Synthetic provider IDs match.'
+  });
   await expect(acceptCard).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Identity matches' })).toBeFocused();
 
@@ -87,12 +105,14 @@ test('ordinary accept and reject keep keyboard focus connected as rows leave the
   const rejectDialog = page.getByRole('dialog', { name: 'Keep separate' });
   await rejectDialog.getByLabel('Decision notes').fill('Synthetic endpoints belong to different people.');
   const rejectedRequest = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/18/reject'));
+    request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/18/review/reject'));
   const rejectSubmit = rejectDialog.getByRole('button', { name: 'Keep separate' });
   await rejectSubmit.focus();
   await expect(rejectSubmit).toBeFocused();
   await page.keyboard.press('Enter');
-  expect((await rejectedRequest).postDataJSON()).toEqual({ notes: 'Synthetic endpoints belong to different people.' });
+  expect((await rejectedRequest).postDataJSON()).toEqual({
+    review_token: 'review-18-candidate', notes: 'Synthetic endpoints belong to different people.'
+  });
   await expect(rejectCard).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Identity matches' })).toBeFocused();
 
@@ -133,7 +153,7 @@ test('pending decisions block Escape and global shortcuts, while failure retains
   await expect(acceptSubmit).toBeFocused();
   await page.keyboard.press('Enter');
   await expect.poll(() => fixture.requests.filter((request) =>
-    request.method === 'POST' && request.path.endsWith('/17/accept')).length).toBe(1);
+    request.method === 'POST' && request.path.endsWith('/17/review/accept')).length).toBe(1);
   await expect(acceptDialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
   await expect(acceptDialog.getByRole('button', { name: 'Close identity decision' })).toHaveCount(0);
 
@@ -162,14 +182,14 @@ test('pending decisions block Escape and global shortcuts, while failure retains
   await expect(rejectDialog.getByRole('alert')).toContainText('Synthetic decision service unavailable.');
   await expect(notes).toHaveValue('Retain this synthetic review note.');
   expect(fixture.requests.filter((request) =>
-    request.method === 'POST' && request.path.endsWith('/18/reject'))).toHaveLength(1);
+    request.method === 'POST' && request.path.endsWith('/18/review/reject'))).toHaveLength(1);
 
   await rejectSubmit.focus();
   await expect(rejectSubmit).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(rejectCard).toBeHidden();
   expect(fixture.requests.filter((request) =>
-    request.method === 'POST' && request.path.endsWith('/18/reject'))).toHaveLength(2);
+    request.method === 'POST' && request.path.endsWith('/18/review/reject'))).toHaveLength(2);
 });
 
 for (const profile of [
@@ -189,7 +209,7 @@ for (const profile of [
     await expect(page.getByText('No merge history on this page.')).toBeVisible();
     await expect(page.getByRole('table', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
-    expect(fixture.requests.filter((request) => request.path.endsWith('/19/accept'))).toHaveLength(1);
+    expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
   });
 }
 
@@ -227,7 +247,7 @@ for (const completionTarget of [
   expect(mergeRequests[0]!.headers['if-match']).toBe('"person-7-r4", "person-9-r2"');
   expect(mergeRequests[0]!.headers['idempotency-key'])
     .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  expect(fixture.requests.filter((request) => request.path.endsWith('/19/accept'))).toHaveLength(1);
+  expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
 
   const history = page.getByRole('table', { name: 'Person merge history' });
   await expect(history).toBeVisible();

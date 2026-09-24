@@ -318,7 +318,10 @@ import (
 // 2.27.0 adds deterministic meeting context, archived action-item listing,
 // and duration metrics with exact direct or Explore scope. Additive (minor
 // bump): meeting import and every existing route retain their behavior.
-const APISchemaVersion = "2.27.0"
+// 2.28.0 adds token-guarded identity-match review reads and decisions while
+// retaining the earlier accept/reject routes for existing clients.
+// 2.29.0 adds consented dry-run identity scoring and redacted judgment history.
+const APISchemaVersion = "2.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

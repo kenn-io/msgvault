@@ -106,6 +106,46 @@ func rawCallTool(t *testing.T, opts ServeOptions, name string, arguments map[str
 	return response.Result
 }
 
+func confirmedCallTool(t *testing.T, opts ServeOptions, name string, arguments map[string]any, confirmed bool) map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(opts, true).Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "msgvault-confirmation-test", Version: "1.0"}, &sdkmcp.ClientOptions{
+		MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true},
+	})
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, clientSession.Close()) })
+	result, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: name, Arguments: arguments})
+	require.NoError(t, err)
+	if result.NeedsInput() {
+		require.NotEmpty(t, result.RequestState)
+		response := &sdkmcp.ElicitResult{Action: "decline"}
+		if confirmed {
+			response = &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}
+		}
+		result, err = clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name: name, Arguments: arguments, RequestState: result.RequestState,
+			InputResponses: sdkmcp.InputResponseMap{"confirm": response},
+		})
+		require.NoError(t, err)
+	}
+	wire := map[string]any{"isError": result.IsError}
+	if structured, ok := result.StructuredContent.(map[string]any); ok {
+		wire["structuredContent"] = structured
+	}
+	if len(result.Content) > 0 {
+		if textContent, ok := result.Content[0].(*sdkmcp.TextContent); ok {
+			wire["content"] = []any{map[string]any{"text": textContent.Text}}
+		}
+	}
+	return wire
+}
+
 func toolsByName(t *testing.T, tools []map[string]any) map[string]map[string]any {
 	t.Helper()
 	byName := make(map[string]map[string]any, len(tools))
@@ -189,7 +229,6 @@ func TestMCPModernDiscovery(t *testing.T) {
 }
 
 func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
-	assert.Len(t, stableOperationCatalogs, 512)
 	backend := &fakeBackend{}
 	localHybrid := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
 	remoteHybrid := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
@@ -236,6 +275,26 @@ func TestCatalogSchemaPointersStableAcrossServerConstruction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOperationCatalogCacheBuildsOnlyRequestedCapabilities(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	var cache operationCatalogCache
+	firstCapabilities := catalogCapabilities{identityReview: true}
+	first := cache.get(firstCapabilities)
+	again := cache.get(firstCapabilities)
+	second := cache.get(catalogCapabilities{personCardDAV: true})
+
+	must.NotEmpty(first)
+	must.NotEmpty(second)
+	checks.Same(first[0].inputSchema, again[0].inputSchema)
+	count := 0
+	cache.catalogs.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	checks.Equal(2, count)
 }
 
 func TestCatalogSchemas(t *testing.T) {

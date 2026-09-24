@@ -20,6 +20,9 @@ function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
     source: 'synthetic_import',
     source_ref: 'fixture-17',
     state,
+    review_token: `token-17-${state}`,
+    actionable: state === 'candidate',
+    application_pending: false,
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z',
     decided_at: '2026-08-03T12:00:00Z',
@@ -120,5 +123,46 @@ describe('IdentityCandidateCard', () => {
     await view.rerender({ candidate: completeCandidate(), pending: true, onAccept, onReject });
     expect(screen.getByRole('button', { name: 'Link identities' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Keep separate' })).toHaveProperty('disabled', true);
+  });
+
+  it('offers both explicit decisions for an actionable conflict row', async () => {
+    const onAccept = vi.fn();
+    const onReject = vi.fn();
+    render(IdentityCandidateCard, {
+      candidate: { ...completeCandidate('conflict'), actionable: true },
+      pending: false,
+      onAccept,
+      onReject
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Link identities' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
+    expect(onAccept).toHaveBeenCalledOnce();
+    expect(onReject).toHaveBeenCalledOnce();
+  });
+
+  it('keeps nonactionable conflict rows free of decision controls', () => {
+    render(IdentityCandidateCard, {
+      candidate: { ...completeCandidate('conflict'), actionable: false, blocker: 'endpoint_unsupported' },
+      pending: false,
+      onAccept: vi.fn(),
+      onReject: vi.fn()
+    });
+
+    expect(screen.queryByRole('button', { name: 'Link identities' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
+  });
+
+  it('keeps the accept handoff available when a candidate requires an explicit person merge', () => {
+    const onAccept = vi.fn();
+    render(IdentityCandidateCard, {
+      candidate: { ...completeCandidate(), actionable: false, blocker: 'person_merge_required' },
+      pending: false,
+      onAccept,
+      onReject: vi.fn()
+    });
+
+    expect(screen.getByRole('button', { name: 'Link identities' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Keep separate' })).toBeDefined();
   });
 });

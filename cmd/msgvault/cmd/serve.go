@@ -34,6 +34,7 @@ import (
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -1249,6 +1250,38 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+func (a *storeAPIAdapter) GrantPersonMatchConsentContext(ctx context.Context, disclosure personmatch.Disclosure, actor string) (*store.PersonMatchConsent, bool, error) {
+	return a.store.GrantPersonMatchConsentContext(ctx, disclosure, actor)
+}
+
+func (a *storeAPIAdapter) RevokePersonMatchConsentContext(ctx context.Context, fingerprint, actor string) (bool, error) {
+	return a.store.RevokePersonMatchConsentContext(ctx, fingerprint, actor)
+}
+
+func (a *storeAPIAdapter) HasPersonMatchConsentContext(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasPersonMatchConsentContext(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) PersonMatchPairSummariesContext(ctx context.Context, leftID, rightID int64) (store.PersonMatchPairSummaries, error) {
+	return a.store.PersonMatchPairSummariesContext(ctx, leftID, rightID)
+}
+
+func (a *storeAPIAdapter) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error) {
+	return a.store.EnsurePersonMatchScoringCandidatesContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {
+	return a.store.ClaimNextIdentityMatchJudgmentContext(ctx, owner, leaseDuration, scoringVersion...)
+}
+
+func (a *storeAPIAdapter) RecordIdentityMatchJudgmentContext(ctx context.Context, lease store.IdentityMatchJudgmentLease, input store.IdentityMatchJudgmentInput) (*store.IdentityMatchJudgment, error) {
+	return a.store.RecordIdentityMatchJudgmentContext(ctx, lease, input)
+}
+
+func (a *storeAPIAdapter) ListIdentityMatchJudgmentsContext(ctx context.Context, candidateID int64, limit int, beforeID ...int64) ([]store.IdentityMatchJudgment, error) {
+	return a.store.ListIdentityMatchJudgmentsContext(ctx, candidateID, limit, beforeID...)
+}
+
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
@@ -2330,6 +2363,25 @@ func (a *storeAPIAdapter) ListIdentityMatchCandidatesContext(
 	ctx context.Context, states []store.IdentityMatchState, limit, offset int,
 ) ([]store.IdentityMatchCandidate, error) {
 	return a.store.ListIdentityMatchCandidatesContext(ctx, states, limit, offset)
+}
+
+func (a *storeAPIAdapter) ListIdentityMatchReviewsContext(
+	ctx context.Context, states []store.IdentityMatchState, limit, offset int,
+) ([]store.IdentityMatchCandidate, error) {
+	return a.store.ListIdentityMatchReviewsContext(ctx, states, limit, offset)
+}
+
+func (a *storeAPIAdapter) GetIdentityMatchReviewContext(
+	ctx context.Context, candidateID int64,
+) (*store.IdentityMatchCandidate, error) {
+	return a.store.GetIdentityMatchReviewContext(ctx, candidateID)
+}
+
+func (a *storeAPIAdapter) DecideIdentityMatchReviewedContext(
+	ctx context.Context, candidateID int64, token string,
+	decision store.IdentityMatchState, notes *string,
+) (*store.IdentityMatchCandidate, int64, error) {
+	return a.store.DecideIdentityMatchReviewedContext(ctx, candidateID, token, decision, notes)
 }
 
 func (a *storeAPIAdapter) GetIdentityMatchCandidateContext(

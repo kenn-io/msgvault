@@ -15,6 +15,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPersonMatchConfigLoadsWithoutCredentialValue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[people.identity_merge]
+enabled = true
+model_id = "jev-1.13.0"
+minimum_probability = 0.8
+credential_env = "JEV_SCORER_KEY"
+batch_size = 12
+retention_declaration = "operator-confirmed-retention-v1"
+`), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.True(cfg.People.IdentityMerge.Enabled)
+	assert.Equal("JEV_SCORER_KEY", cfg.People.IdentityMerge.CredentialEnv)
+	assert.Equal(12, cfg.People.IdentityMerge.BatchSize)
+
+	var encoded bytes.Buffer
+	require.NoError(toml.NewEncoder(&encoded).Encode(cfg))
+	assert.Contains(encoded.String(), `credential_env = "JEV_SCORER_KEY"`)
+}
+
+func TestPersonMatchConfigRejectsInvalidEnabledSettings(t *testing.T) {
+	for name, setting := range map[string]string{
+		"model alias":       `model_id = "jev-latest"`,
+		"threshold":         `minimum_probability = 0.79`,
+		"zero threshold":    `minimum_probability = 0`,
+		"zero batch":        `batch_size = 0`,
+		"key name":          `credential_env = "BAD-NAME"`,
+		"missing key name":  `credential_env = ""`,
+		"missing retention": `retention_declaration = ""`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := "[people.identity_merge]\nenabled = true\n" + setting + "\n"
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			_, err := Load(path, "")
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestPersonMatchConfigRejectsUnrecognizedCredentialFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[people.identity_merge]
+api_key = ""
+`), 0o600))
+	_, err := Load(path, "")
+	assert.ErrorContains(t, err, "unknown people.identity_merge config key")
+}
+
 func TestCardDAVConfigLoadsWithoutSerializingAPassword(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

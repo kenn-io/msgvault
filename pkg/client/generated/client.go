@@ -487,6 +487,10 @@ type ClientInterface interface {
 	ListIdentityMatchCandidates(ctx context.Context, options *ListIdentityMatchCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListIdentityMatchCandidatesResponse, error)
 	ListIdentityMatchCandidatesWithResponse(ctx context.Context, options *ListIdentityMatchCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListIdentityMatchCandidatesResp, error)
 
+	// GetIdentityMatchCandidate Get an identity match candidate for review
+	GetIdentityMatchCandidate(ctx context.Context, options *GetIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIdentityMatchCandidateResponse, error)
+	GetIdentityMatchCandidateWithResponse(ctx context.Context, options *GetIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIdentityMatchCandidateResp, error)
+
 	// AcceptIdentityMatchCandidate Accept an identity match candidate
 	AcceptIdentityMatchCandidate(ctx context.Context, options *AcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AcceptIdentityMatchCandidateResponse, error)
 	AcceptIdentityMatchCandidateWithResponse(ctx context.Context, options *AcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AcceptIdentityMatchCandidateResp, error)
@@ -494,6 +498,34 @@ type ClientInterface interface {
 	// RejectIdentityMatchCandidate Reject an identity match candidate
 	RejectIdentityMatchCandidate(ctx context.Context, options *RejectIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RejectIdentityMatchCandidateResponse, error)
 	RejectIdentityMatchCandidateWithResponse(ctx context.Context, options *RejectIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RejectIdentityMatchCandidateResp, error)
+
+	// ReviewAcceptIdentityMatchCandidate Review and accept an identity match candidate
+	ReviewAcceptIdentityMatchCandidate(ctx context.Context, options *ReviewAcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewAcceptIdentityMatchCandidateResponse, error)
+	ReviewAcceptIdentityMatchCandidateWithResponse(ctx context.Context, options *ReviewAcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewAcceptIdentityMatchCandidateResp, error)
+
+	// ReviewRejectIdentityMatchCandidate Review and reject an identity match candidate
+	ReviewRejectIdentityMatchCandidate(ctx context.Context, options *ReviewRejectIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewRejectIdentityMatchCandidateResponse, error)
+	ReviewRejectIdentityMatchCandidateWithResponse(ctx context.Context, options *ReviewRejectIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewRejectIdentityMatchCandidateResp, error)
+
+	// PersonMatchScoringConsent Record an exact identity scoring consent decision
+	PersonMatchScoringConsent(ctx context.Context, options *PersonMatchScoringConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringConsentResponse, error)
+	PersonMatchScoringConsentWithResponse(ctx context.Context, options *PersonMatchScoringConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringConsentResp, error)
+
+	// ListPersonMatchJudgments List redacted identity scoring judgments
+	ListPersonMatchJudgments(ctx context.Context, options *ListPersonMatchJudgmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonMatchJudgmentsResponse, error)
+	ListPersonMatchJudgmentsWithResponse(ctx context.Context, options *ListPersonMatchJudgmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonMatchJudgmentsResp, error)
+
+	// PersonMatchScoringRevoke Record an exact identity scoring consent decision
+	PersonMatchScoringRevoke(ctx context.Context, options *PersonMatchScoringRevokeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringRevokeResponse, error)
+	PersonMatchScoringRevokeWithResponse(ctx context.Context, options *PersonMatchScoringRevokeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringRevokeResp, error)
+
+	// RunPersonMatchScoring Run a bounded dry scoring batch
+	RunPersonMatchScoring(ctx context.Context, options *RunPersonMatchScoringRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunPersonMatchScoringResponse, error)
+	RunPersonMatchScoringWithResponse(ctx context.Context, options *RunPersonMatchScoringRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunPersonMatchScoringResp, error)
+
+	// GetPersonMatchScoringStatus Get identity scoring configuration and consent status
+	GetPersonMatchScoringStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPersonMatchScoringStatusResponse, error)
+	GetPersonMatchScoringStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPersonMatchScoringStatusResp, error)
 
 	// UnlinkIdentityParticipants Remove a link edge between two participants
 	UnlinkIdentityParticipants(ctx context.Context, options *UnlinkIdentityParticipantsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlinkIdentityParticipantsResponse, error)
@@ -7930,6 +7962,69 @@ func (c *Client) ListIdentityMatchCandidates(ctx context.Context, options *ListI
 	return responseParser(ctx, resp)
 }
 
+// GetIdentityMatchCandidate Get an identity match candidate for review
+func (c *Client) GetIdentityMatchCandidate(ctx context.Context, options *GetIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIdentityMatchCandidateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/identity/match-candidates/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetIdentityMatchCandidateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetIdentityMatchCandidateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetIdentityMatchCandidateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetIdentityMatchCandidateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetIdentityMatchCandidateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/match-candidates/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // AcceptIdentityMatchCandidate Accept an identity match candidate
 func (c *Client) AcceptIdentityMatchCandidate(ctx context.Context, options *AcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AcceptIdentityMatchCandidateResponse, error) {
 	var err error
@@ -8052,6 +8147,451 @@ func (c *Client) RejectIdentityMatchCandidate(ctx context.Context, options *Reje
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/match-candidates/{id}/reject")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReviewAcceptIdentityMatchCandidate Review and accept an identity match candidate
+func (c *Client) ReviewAcceptIdentityMatchCandidate(ctx context.Context, options *ReviewAcceptIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewAcceptIdentityMatchCandidateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/identity/match-candidates/{id}/review/accept",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReviewAcceptIdentityMatchCandidateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ReviewAcceptIdentityMatchCandidateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ReviewAcceptIdentityMatchCandidateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ReviewAcceptIdentityMatchCandidateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ReviewAcceptIdentityMatchCandidateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/match-candidates/{id}/review/accept")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReviewRejectIdentityMatchCandidate Review and reject an identity match candidate
+func (c *Client) ReviewRejectIdentityMatchCandidate(ctx context.Context, options *ReviewRejectIdentityMatchCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewRejectIdentityMatchCandidateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/identity/match-candidates/{id}/review/reject",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReviewRejectIdentityMatchCandidateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ReviewRejectIdentityMatchCandidateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ReviewRejectIdentityMatchCandidateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ReviewRejectIdentityMatchCandidateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ReviewRejectIdentityMatchCandidateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/match-candidates/{id}/review/reject")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PersonMatchScoringConsent Record an exact identity scoring consent decision
+func (c *Client) PersonMatchScoringConsent(ctx context.Context, options *PersonMatchScoringConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringConsentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/identity/scoring/consent",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PersonMatchScoringConsentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PersonMatchScoringConsentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PersonMatchScoringConsentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PersonMatchScoringConsentResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PersonMatchScoringConsentResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/scoring/consent")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonMatchJudgments List redacted identity scoring judgments
+func (c *Client) ListPersonMatchJudgments(ctx context.Context, options *ListPersonMatchJudgmentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonMatchJudgmentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/identity/scoring/history",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListPersonMatchJudgmentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListPersonMatchJudgmentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListPersonMatchJudgmentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListPersonMatchJudgmentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListPersonMatchJudgmentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/scoring/history")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PersonMatchScoringRevoke Record an exact identity scoring consent decision
+func (c *Client) PersonMatchScoringRevoke(ctx context.Context, options *PersonMatchScoringRevokeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PersonMatchScoringRevokeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/identity/scoring/revoke",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PersonMatchScoringRevokeResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PersonMatchScoringRevokeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PersonMatchScoringRevokeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PersonMatchScoringRevokeResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PersonMatchScoringRevokeResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/scoring/revoke")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RunPersonMatchScoring Run a bounded dry scoring batch
+func (c *Client) RunPersonMatchScoring(ctx context.Context, options *RunPersonMatchScoringRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunPersonMatchScoringResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/identity/scoring/run",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunPersonMatchScoringResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RunPersonMatchScoringErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RunPersonMatchScoringErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RunPersonMatchScoringResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RunPersonMatchScoringResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/scoring/run")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonMatchScoringStatus Get identity scoring configuration and consent status
+func (c *Client) GetPersonMatchScoringStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPersonMatchScoringStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/identity/scoring/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonMatchScoringStatusResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonMatchScoringStatusErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonMatchScoringStatusErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonMatchScoringStatusResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonMatchScoringStatusResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/identity/scoring/status")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

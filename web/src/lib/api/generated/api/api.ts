@@ -87,6 +87,7 @@ import type {
   DailyNoteEntry,
   DayPage,
   DecideIdentityMatchRequest,
+  DecideIdentityMatchReviewedRequest,
   DecidePersonMergeCandidatePathParameters,
   DecidePersonMergeCandidateRequest,
   DeepSearchParams,
@@ -142,6 +143,7 @@ import type {
   GetFileContentPathParameters,
   GetFilePathParameters,
   GetGmailIDsByFilterParams,
+  GetIdentityMatchCandidatePathParameters,
   GetImportJobPathParameters,
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
@@ -178,6 +180,7 @@ import type {
   IdentityLinkRequest,
   IdentityLinkResponse,
   IdentityMatchAcceptResponse,
+  IdentityMatchCandidate,
   IdentityMatchCandidatesResponse,
   IdentityMatchRejectResponse,
   ImportJobRequest,
@@ -219,6 +222,7 @@ import type {
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
+  ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
   ListPersonRelationshipReviewsParams,
@@ -282,6 +286,12 @@ import type {
   PersonFactPinWrite,
   PersonFactPinsResponse,
   PersonInboxResponse,
+  PersonMatchConsentDecisionRequest,
+  PersonMatchConsentDecisionResponse,
+  PersonMatchDryRunRequest,
+  PersonMatchDryRunResponse,
+  PersonMatchJudgmentHistoryResponse,
+  PersonMatchScoringStatus,
   PersonMergeDetail,
   PersonMergeResult,
   PersonMergeReviewCandidate,
@@ -316,6 +326,8 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
+  ReviewAcceptIdentityMatchCandidatePathParameters,
+  ReviewRejectIdentityMatchCandidatePathParameters,
   RevokeAgentTokenPathParameters,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
@@ -1636,6 +1648,21 @@ export const listIdentityMatchCandidates = (
   );
 };
 /**
+ * @summary Get an identity match candidate for review
+ */
+export const getIdentityMatchCandidate = (
+  { id }: GetIdentityMatchCandidatePathParameters,
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchCandidate>>,
+) => {
+  return orvalFetch<IdentityMatchCandidate>(
+    {
+      url: `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
  * Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
  * @summary Accept an identity match candidate
  */
@@ -1670,6 +1697,124 @@ export const rejectIdentityMatchCandidate = (
       headers: { "Content-Type": "application/json" },
       data: decideIdentityMatchRequest,
     },
+    options,
+  );
+};
+/**
+ * Requires the exact review token from a fresh list or get response. Changed evidence returns a conflict without making a new decision.
+ * @summary Review and accept an identity match candidate
+ */
+export const reviewAcceptIdentityMatchCandidate = (
+  { id }: ReviewAcceptIdentityMatchCandidatePathParameters,
+  decideIdentityMatchReviewedRequest: DecideIdentityMatchReviewedRequest,
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchAcceptResponse>>,
+) => {
+  return orvalFetch<IdentityMatchAcceptResponse>(
+    {
+      url: `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/review/accept`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: decideIdentityMatchReviewedRequest,
+    },
+    options,
+  );
+};
+/**
+ * Requires the exact review token from a fresh list or get response. Changed evidence returns a conflict without making a new decision.
+ * @summary Review and reject an identity match candidate
+ */
+export const reviewRejectIdentityMatchCandidate = (
+  { id }: ReviewRejectIdentityMatchCandidatePathParameters,
+  decideIdentityMatchReviewedRequest: DecideIdentityMatchReviewedRequest,
+  options?: SecondParameter<typeof orvalFetch<IdentityMatchRejectResponse>>,
+) => {
+  return orvalFetch<IdentityMatchRejectResponse>(
+    {
+      url: `/api/v1/identity/match-candidates/${encodeURIComponent(String(id))}/review/reject`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: decideIdentityMatchReviewedRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Record an exact identity scoring consent decision
+ */
+export const personMatchScoringConsent = (
+  personMatchConsentDecisionRequest: PersonMatchConsentDecisionRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<PersonMatchConsentDecisionResponse>
+  >,
+) => {
+  return orvalFetch<PersonMatchConsentDecisionResponse>(
+    {
+      url: `/api/v1/identity/scoring/consent`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personMatchConsentDecisionRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List redacted identity scoring judgments
+ */
+export const listPersonMatchJudgments = (
+  params?: ListPersonMatchJudgmentsParams,
+  options?: SecondParameter<
+    typeof orvalFetch<PersonMatchJudgmentHistoryResponse>
+  >,
+) => {
+  return orvalFetch<PersonMatchJudgmentHistoryResponse>(
+    { url: `/api/v1/identity/scoring/history`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Record an exact identity scoring consent decision
+ */
+export const personMatchScoringRevoke = (
+  personMatchConsentDecisionRequest: PersonMatchConsentDecisionRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<PersonMatchConsentDecisionResponse>
+  >,
+) => {
+  return orvalFetch<PersonMatchConsentDecisionResponse>(
+    {
+      url: `/api/v1/identity/scoring/revoke`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personMatchConsentDecisionRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Run a bounded dry scoring batch
+ */
+export const runPersonMatchScoring = (
+  personMatchDryRunRequest: PersonMatchDryRunRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonMatchDryRunResponse>>,
+) => {
+  return orvalFetch<PersonMatchDryRunResponse>(
+    {
+      url: `/api/v1/identity/scoring/run`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personMatchDryRunRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get identity scoring configuration and consent status
+ */
+export const getPersonMatchScoringStatus = (
+  options?: SecondParameter<typeof orvalFetch<PersonMatchScoringStatus>>,
+) => {
+  return orvalFetch<PersonMatchScoringStatus>(
+    { url: `/api/v1/identity/scoring/status`, method: "GET" },
     options,
   );
 };

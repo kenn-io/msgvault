@@ -96,6 +96,7 @@ type Store struct {
 	cardDAVCollisionIdentityLockHook      func()
 	cardDAVPublicationStateReadHook       func()
 	identityMatchAcceptBeforeDecisionHook func()
+	identityMatchReviewAfterDecisionHook  func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
 	personMergeAfterSnapshotHook          func()

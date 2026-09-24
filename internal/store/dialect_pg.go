@@ -621,6 +621,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE person_match_consents ADD COLUMN IF NOT EXISTS question_version TEXT NOT NULL DEFAULT ''`, "person_match_consents.question_version"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_inference_revision BIGINT`, "carddav_publications.approved_inference_revision"},

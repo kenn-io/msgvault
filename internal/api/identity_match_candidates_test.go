@@ -45,6 +45,91 @@ func rejectPath(id int64) string {
 	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/reject", id)
 }
 
+func reviewAcceptPath(id int64) string {
+	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/review/accept", id)
+}
+
+func TestIdentityMatchReviewHTTPRequiresFreshToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, left, right := seedMatchCandidate(t, st, store.IdentityMatchEmail)
+	list := personRequest(t, srv, http.MethodGet,
+		"/api/v1/identity/match-candidates?state=candidate&limit=1", nil, "")
+	require.Equal(http.StatusOK, list.Code, list.Body.String())
+	var page IdentityMatchCandidatesResponse
+	require.NoError(json.Unmarshal(list.Body.Bytes(), &page))
+	require.Len(page.Candidates, 1)
+	token := page.Candidates[0].ReviewToken
+	require.NotEmpty(token)
+
+	missing := personRequest(t, srv, http.MethodPost, reviewAcceptPath(candidate.ID),
+		[]byte(`{}`), "")
+	assert.Equal(http.StatusBadRequest, missing.Code, missing.Body.String())
+
+	_, err := st.AddIdentityMatchEvidenceContext(t.Context(), candidate.ID,
+		store.IdentityMatchEvidenceInput{EvidenceKind: "email", Source: store.ProvenanceArchiveObservation})
+	require.NoError(err)
+	stale := personRequest(t, srv, http.MethodPost, reviewAcceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, token)), "")
+	assert.Equal(http.StatusConflict, stale.Code, stale.Body.String())
+	assert.False(linkedParticipants(t, st, left, right))
+
+	show := personRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("/api/v1/identity/match-candidates/%d", candidate.ID), nil, "")
+	require.Equal(http.StatusOK, show.Code, show.Body.String())
+	var current store.IdentityMatchCandidate
+	require.NoError(json.Unmarshal(show.Body.Bytes(), &current))
+	assert.NotEqual(token, current.ReviewToken)
+	accepted := personRequest(t, srv, http.MethodPost, reviewAcceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, current.ReviewToken)), "")
+	require.Equal(http.StatusOK, accepted.Code, accepted.Body.String())
+	assert.True(linkedParticipants(t, st, left, right))
+}
+
+func TestIdentityMatchReviewHTTPReportsMergeAndUnsupportedBlockers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, leftID, rightID := seedMatchCandidate(t, st, store.IdentityMatchEmail)
+	left, _, err := st.CreatePersonFromParticipantContext(t.Context(), leftID)
+	require.NoError(err)
+	right, _, err := st.CreatePersonFromParticipantContext(t.Context(), rightID)
+	require.NoError(err)
+	getPath := fmt.Sprintf("/api/v1/identity/match-candidates/%d", candidate.ID)
+	get := personRequest(t, srv, http.MethodGet, getPath, nil, "")
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	var review store.IdentityMatchCandidate
+	require.NoError(json.Unmarshal(get.Body.Bytes(), &review))
+	assert.False(review.Actionable)
+	assert.Equal("person_merge_required", review.Blocker)
+	require.NotNil(review.LeftPerson)
+	require.NotNil(review.RightPerson)
+	assert.Equal(left.ID, review.LeftPerson.PersonID)
+	assert.Equal(left.Revision, review.LeftPerson.Revision)
+	assert.Equal(right.ID, review.RightPerson.PersonID)
+	assert.Equal(right.Revision, review.RightPerson.Revision)
+	merge := personRequest(t, srv, http.MethodPost, reviewAcceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, review.ReviewToken)), "")
+	assert.Equal(http.StatusConflict, merge.Code, merge.Body.String())
+	assertPersonMergeRequiredResponse(t, merge, *left, *right)
+
+	unsupported, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(),
+		store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: leftID,
+			RightKind: store.IdentityMatchPerson, RightID: right.ID,
+			Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate,
+			Source: store.ProvenanceArchiveObservation,
+		})
+	require.NoError(err)
+	get = personRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("/api/v1/identity/match-candidates/%d", unsupported.ID), nil, "")
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	require.NoError(json.Unmarshal(get.Body.Bytes(), &review))
+	assert.False(review.Actionable)
+	assert.Equal("endpoint_unsupported", review.Blocker)
+}
+
 func TestListIdentityMatchCandidatesFiltersByState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
