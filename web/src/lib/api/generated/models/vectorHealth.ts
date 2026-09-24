@@ -5,5 +5,7 @@
 export interface VectorHealth {
   error?: string;
   status: string;
+  text_enabled?: boolean;
+  visual_enabled?: boolean;
   [key: string]: unknown;
 }

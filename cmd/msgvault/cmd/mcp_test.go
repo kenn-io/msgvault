@@ -42,6 +42,7 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	assert := assert.New(t)
 
 	withStoreResolverConfig(t, &config.Config{
+		HomeDir: t.TempDir(),
 		Data: config.DataConfig{
 			DataDir: filepath.Join(t.TempDir(), "missing-parent", "data"),
 		},
@@ -87,17 +88,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
 			return
 		}
-		assert.Equal("/api/v1/stats", r.URL.Path)
-		assert.Equal("daemon-key", r.Header.Get("X-Api-Key"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"total_messages": 0,
-			"total_threads": 0,
-			"total_accounts": 0,
-			"total_labels": 0,
-			"total_attachments": 0,
-			"database_size_bytes": 0
-		}`))
+		http.NotFound(w, r)
 	}))
 	t.Cleanup(daemon.Close)
 
@@ -154,30 +145,90 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *testing.T) {
-	assert := assert.New(t)
-
+func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
-	client := newMCPStatsDaemonClient(t, `{
-		"total_messages": 0,
-		"total_threads": 0,
-		"total_accounts": 0,
-		"total_labels": 0,
-		"total_attachments": 0,
-		"database_size_bytes": 0
-	}`)
+	tests := []struct {
+		name       string
+		health     string
+		wantText   bool
+		wantVisual bool
+	}{
+		{name: "both disabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"disabled","text_enabled":false,"visual_enabled":false}}`},
+		{name: "text only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":false}}`, wantText: true},
+		{name: "visual only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":false,"visual_enabled":true}}`, wantVisual: true},
+		{name: "both enabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "initializing lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"initializing","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "failed lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"error","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "stale lanes stay registered", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"stale","text_enabled":true,"visual_enabled":true}}`, wantText: true, wantVisual: true},
+		{name: "legacy health without lane fields", health: `{"status":"ok","api_schema_version":"2.26.0","vector":{"status":"ready"}}`},
+		{name: "visual route predecessor", health: `{"status":"ok","api_schema_version":"2.3.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "lane facts predecessor", health: `{"status":"ok","api_schema_version":"2.27.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "missing schema", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "malformed schema", health: `{"status":"ok","api_schema_version":"unknown","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
+		{name: "health unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			var healthRequests atomic.Int32
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
+				healthRequests.Add(1)
+				if tt.health == "" {
+					http.Error(w, `{"error":"temporarily_unavailable"}`, http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.health))
+			})
 
-	opts, err := daemonMCPServeOptions(context.Background(), client)
-	require.NoError(t, err)
-	assert.NotNil(opts.Engine, "engine")
-	assert.NotNil(opts.AttachmentReader, "attachment reader")
-	assert.NotNil(opts.ManifestSaver, "manifest saver")
-	assert.NotNil(opts.DocumentSearcher, "document searcher")
-	assert.NotNil(opts.PersonFileSearcher, "person file searcher")
-	assert.Nil(opts.HybridSearcher, "hybrid searcher")
-	assert.Nil(opts.SimilarSearcher, "similar searcher")
+			opts := daemonMCPServeOptions(t.Context(), client)
+			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
+			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
+			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
+			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+		})
+	}
+}
+
+func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	withStoreResolverConfig(t, &config.Config{
+		Data: config.DataConfig{DataDir: t.TempDir()},
+	})
+
+	requests := make(chan string, 8)
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.URL.Path
+		if r.URL.Path == "/api/v1/health" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "api_schema_version": api.APISchemaVersion,
+				"vector": map[string]any{
+					"status":         "initializing",
+					"text_enabled":   true,
+					"visual_enabled": false,
+				},
+			})
+			return
+		}
+		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
+	})
+
+	opts := daemonMCPServeOptions(context.Background(), client)
+	_, err := opts.HybridSearcher.SearchHybrid(context.Background(), mcpserver.HybridSearchRequest{
+		Query: "term",
+		Mode:  "hybrid",
+	})
+	var coded interface{ APIErrorCode() string }
+	require.ErrorAs(err, &coded)
+	assert.Equal("vector_initializing", coded.APIErrorCode())
+	path := <-requests
+	assert.Equal("/api/v1/health", path, "startup should only probe health")
+	path = <-requests
+	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
 func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
@@ -217,17 +268,12 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 						body["api_schema_version"] = tt.schemaVersion
 					}
 					_ = json.NewEncoder(w).Encode(body)
-				case "/api/v1/stats":
-					_, _ = w.Write([]byte(`{"total_messages":0}`))
-				case "/api/v1/multimodal/status":
-					http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
 				default:
-					assert.Failf("unexpected request", "%s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
 				}
 			})
 
-			opts, err := daemonMCPServeOptions(t.Context(), client)
-			require.NoError(t, err)
+			opts := daemonMCPServeOptions(t.Context(), client)
 			if tt.wantPeople {
 				assert.NotNil(opts.PeopleBackend)
 			} else {
@@ -255,20 +301,14 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	t.Cleanup(func() { logger = previousLogger })
 
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/health":
+		if r.URL.Path == "/api/v1/health" {
 			http.Error(w, `{"error":"temporarily_unavailable"}`, http.StatusServiceUnavailable)
-		case "/api/v1/stats":
-			_, _ = w.Write([]byte(`{"total_messages":0}`))
-		case "/api/v1/multimodal/status":
-			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
-		default:
-			assert.Failf("unexpected request", "%s %s", r.Method, r.URL.Path)
+			return
 		}
+		http.NotFound(w, r)
 	})
 
-	opts, err := daemonMCPServeOptions(t.Context(), client)
-	require.NoError(t, err)
+	opts := daemonMCPServeOptions(t.Context(), client)
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
 	assert.Contains(logs.String(), "people tools disabled")
@@ -289,25 +329,28 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		case "/api/v1/health":
 			if healthRequests.Add(1) == 1 {
 				_ = json.NewEncoder(w).Encode(map[string]any{
-					"status": "ok", "api_schema_version": "2.21.0",
+					"status": "ok", "api_schema_version": "2.28.0",
+					"vector": map[string]any{
+						"status":         "ready",
+						"text_enabled":   true,
+						"visual_enabled": true,
+					},
 				})
 				return
 			}
 			http.Error(w, `{"error":"temporarily_unavailable"}`, http.StatusServiceUnavailable)
-		case "/api/v1/stats":
-			_, _ = w.Write([]byte(`{"total_messages":0}`))
-		case "/api/v1/multimodal/status":
-			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
 		default:
-			assert.Failf("unexpected request", "%s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
 		}
 	})
 
-	opts, err := daemonMCPServeOptions(t.Context(), client)
-	require.NoError(t, err)
+	opts := daemonMCPServeOptions(t.Context(), client)
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
 	assert.NotNil(opts.SavedViews)
+	assert.NotNil(opts.HybridSearcher)
+	assert.NotNil(opts.SimilarSearcher)
+	assert.NotNil(opts.VisualSearcher)
 	assert.Equal(int32(1), healthRequests.Load())
 	assert.Empty(logs.String())
 }
@@ -326,92 +369,23 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
 			})
-		case "/api/v1/multimodal/status":
-			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
-			return
-		case "/api/v1/stats":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{
-				"total_messages": 0,
-				"total_threads": 0,
-				"total_accounts": 0,
-				"total_labels": 0,
-				"total_attachments": 0,
-				"database_size_bytes": 0
-			}`))
 		case "/api/v1/cli/deletion-manifests":
 			manifestRequests.Add(1)
 			assert.Equal(t, http.MethodPost, r.Method, "method")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"batch-1","message_count":1}`))
 		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
 		}
 	})
 
-	opts, err := daemonMCPServeOptions(context.Background(), client)
-	require.NoError(err)
+	opts := daemonMCPServeOptions(context.Background(), client)
 	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
-	err = opts.ManifestSaver.SaveManifest(context.Background(), manifest)
+	err := opts.ManifestSaver.SaveManifest(context.Background(), manifest)
 	require.NoError(err)
 	assert.Equal(t, int32(1), manifestRequests.Load(), "manifest requests")
-}
-
-func TestDaemonMCPServeOptionsEnablesVectorToolsWhenDaemonVectorAvailable(t *testing.T) {
-	withStoreResolverConfig(t, &config.Config{
-		Data: config.DataConfig{DataDir: t.TempDir()},
-	})
-	client := newMCPStatsDaemonClient(t, `{
-		"total_messages": 0,
-		"total_threads": 0,
-		"total_accounts": 0,
-		"total_labels": 0,
-		"total_attachments": 0,
-		"database_size_bytes": 0,
-		"vector_search": {
-			"enabled": true,
-			"active_generation": {
-				"id": 1,
-				"model": "text-embedding-3-small",
-				"dimension": 1536,
-				"fingerprint": "text-embedding-3-small:1536",
-				"state": "active",
-				"message_count": 10
-			},
-			"missing_embeddings_total": 0
-		}
-	}`)
-
-	opts, err := daemonMCPServeOptions(context.Background(), client)
-	require.NoError(t, err)
-
-	assert.NotNil(t, opts.HybridSearcher, "hybrid searcher")
-	assert.NotNil(t, opts.SimilarSearcher, "similar searcher")
-}
-
-func newMCPStatsDaemonClient(t *testing.T, statsJSON string) *daemonclient.Client {
-	t.Helper()
-
-	return newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		// Registration also probes the daemon's multimodal status; these
-		// fixtures model a daemon without the visual lane.
-		if r.URL.Path == "/api/v1/health" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "ok", "api_schema_version": api.APISchemaVersion,
-			})
-			return
-		}
-		if r.URL.Path == "/api/v1/multimodal/status" {
-			http.Error(w, `{"error":"visual_search_not_ready"}`, http.StatusServiceUnavailable)
-			return
-		}
-		assert.Equal(t, "/api/v1/stats", r.URL.Path, "path")
-		assert.Equal(t, "key", r.Header.Get("X-Api-Key"), "api key")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(statsJSON))
-	})
 }
 
 func newMCPDaemonClient(t *testing.T, handler http.HandlerFunc) *daemonclient.Client {

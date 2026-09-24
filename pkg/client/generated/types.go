@@ -12100,8 +12100,10 @@ func (v ValueEnvelopeInput) Validate() error {
 }
 
 type VectorHealth struct {
-	ErrorData *string `json:"error,omitzero"`
-	Status    string  `json:"status" validate:"required"`
+	ErrorData     *string `json:"error,omitzero"`
+	Status        string  `json:"status" validate:"required"`
+	TextEnabled   *bool   `json:"text_enabled,omitempty"`
+	VisualEnabled *bool   `json:"visual_enabled,omitempty"`
 }
 
 func (v VectorHealth) Validate() error {

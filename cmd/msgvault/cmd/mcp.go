@@ -57,10 +57,7 @@ Add to Claude Desktop config:
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		opts, err := daemonMCPServeOptions(ctx, st)
-		if err != nil {
-			return err
-		}
+		opts := daemonMCPServeOptions(ctx, st)
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 
 		if mcpHTTPAddr != "" {
@@ -88,7 +85,14 @@ Add to Claude Desktop config:
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
 
-func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
+// Schema 2.28.0 adds independent configured-lane facts to authenticated
+// health. Older health responses cannot distinguish text from visual search.
+const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
+
+// Schema 2.4.0 added the visual attachment search route.
+const visualSearchMinAPISchemaVersion = "2.4.0"
+
+func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserver.ServeOptions {
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
 		Engine:             engine,
@@ -99,7 +103,22 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
 		DataDir:            cfg.Data.DataDir,
 	}
-	schemaVersion, capabilityErr := st.APISchemaVersion(ctx)
+	health, capabilityErr := st.Health(ctx)
+	var schemaVersion string
+	if health != nil && health.APISchemaVersion != nil {
+		schemaVersion = *health.APISchemaVersion
+	}
+	if capabilityErr == nil && health != nil && health.Vector != nil &&
+		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
+		if health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
+			opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
+			opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
+		}
+		if health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled &&
+			daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
+			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
+		}
+	}
 	if capabilityErr != nil {
 		logger.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, peopleMinAPISchemaVersion) {
@@ -122,30 +141,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpser
 		opts.Meetings = st
 	}
 
-	vectorAvailable, err := st.VectorSearchAvailable(ctx)
-	if err != nil {
-		return mcpserver.ServeOptions{}, fmt.Errorf("check daemon vector search: %w", err)
-	}
-	if vectorAvailable {
-		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
-		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
-	}
-	// The daemon owns the multimodal lane; a remote-only MCP client's local
-	// config says nothing about it, so availability is probed, not assumed.
-	// The stats lane field distinguishes configured (including still
-	// initializing) from disabled, so a transient 503 during asynchronous
-	// vector init cannot permanently omit the tool — per-request errors
-	// report readiness instead. Older daemons lack the field; fall back to
-	// the visual status endpoint answering at all.
-	visualAvailable, laneReported, visualErr := st.VisualSearchAvailable(ctx)
-	if visualErr == nil && !laneReported {
-		_, statusErr := st.VisualStatus(ctx)
-		visualAvailable = statusErr == nil
-	}
-	if visualErr == nil && visualAvailable {
-		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
-	}
-	return opts, nil
+	return opts
 }
 
 type daemonMCPPersonFileSearcher struct{ client *daemonclient.Client }

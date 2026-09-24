@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -462,6 +463,23 @@ func (s task4DaemonSimilarErrorSearcher) FindSimilar(
 	return nil, err
 }
 
+type task4DaemonVisualErrorSearcher struct {
+	client *daemonclient.Client
+}
+
+func (s task4DaemonVisualErrorSearcher) SearchVisualAttachments(
+	ctx context.Context,
+	req VisualSearchRequest,
+) (*visual.SearchResponse, error) {
+	_, err := s.client.SearchVisualAttachmentsFiltered(ctx, daemonclient.VisualSearchOptions{
+		Text: req.Text, Image: req.Image, Limit: req.Limit, Cursor: req.Cursor,
+		SenderPersonID: req.SenderPersonID, PersonID: req.PersonID, ParticipantID: req.ParticipantID,
+		Directions: req.Directions, SourceID: req.SourceID, MessageID: req.MessageID,
+		Filename: req.Filename, MIMEPrefix: req.MIMEPrefix, After: req.After, Before: req.Before,
+	})
+	return nil, err
+}
+
 func task4DaemonErrorClient(t *testing.T, path, code, message string, status int) *daemonclient.Client {
 	t.Helper()
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -622,6 +640,24 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			},
 		},
 		{
+			name: "hybrid vector initializing", path: "/api/v1/search", code: "vector_initializing",
+			status: http.StatusServiceUnavailable, tool: ToolSemanticSearchMessages,
+			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
+			want: "vector_initializing: vector search is still initializing",
+			opts: func(client *daemonclient.Client) ServeOptions {
+				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
+			},
+		},
+		{
+			name: "hybrid vector initialization failed", path: "/api/v1/search", code: "vector_init_failed",
+			status: http.StatusServiceUnavailable, tool: ToolSemanticSearchMessages,
+			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
+			want: "vector_init_failed: vector search failed to initialize",
+			opts: func(client *daemonclient.Client) ServeOptions {
+				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
+			},
+		},
+		{
 			name: "hybrid account not found", path: "/api/v1/search", code: "account_not_found",
 			status: http.StatusNotFound, tool: ToolSemanticSearchMessages,
 			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
@@ -662,6 +698,15 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			args: map[string]any{"message_id": 1}, want: "invalid_limit: result limit is invalid",
 			opts: func(client *daemonclient.Client) ServeOptions {
 				return ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: task4DaemonSimilarErrorSearcher{client}}
+			},
+		},
+		{
+			name: "visual search not ready", path: "/api/v1/search/attachments/visual", code: "visual_search_not_ready",
+			status: http.StatusServiceUnavailable, tool: ToolSearchVisualAttachments,
+			args: map[string]any{"text": "needle"},
+			want: "visual_search_not_ready: visual attachment search is unavailable",
+			opts: func(client *daemonclient.Client) ServeOptions {
+				return ServeOptions{Engine: &querytest.MockEngine{}, VisualSearcher: task4DaemonVisualErrorSearcher{client}}
 			},
 		},
 	}

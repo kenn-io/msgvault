@@ -318,7 +318,9 @@ import (
 // 2.27.0 adds deterministic meeting context, archived action-item listing,
 // and duration metrics with exact direct or Explore scope. Additive (minor
 // bump): meeting import and every existing route retain their behavior.
-const APISchemaVersion = "2.27.0"
+// 2.28.0 adds optional text_enabled and visual_enabled facts to authenticated
+// vector health. Existing health and search routes keep their behavior.
+const APISchemaVersion = "2.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

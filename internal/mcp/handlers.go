@@ -274,7 +274,10 @@ func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest)
 		After: after, Before: before,
 	})
 	if err != nil {
-		return toolErrorResult("visual_search_failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		if result := translateDaemonRequestError(err); result != nil {
+			return result, nil
+		}
+		return toolErrorResult("visual_search_failed: " + err.Error()), nil
 	}
 	return jsonResult(response)
 }
@@ -466,6 +469,12 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
+	case "visual_search_not_ready":
+		message = "visual_search_not_ready: visual attachment search is unavailable"
+	case "vector_initializing":
+		message = "vector_initializing: vector search is still initializing"
+	case "vector_init_failed":
+		message = "vector_init_failed: vector search failed to initialize"
 	case "invalid_query":
 		message = "invalid_query: search query is invalid"
 	case "invalid_account":

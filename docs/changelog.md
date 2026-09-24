@@ -23,8 +23,13 @@ All notable changes to msgvault, grouped by release.
   views. Generic meeting imports now accept structured `action_items`.
 - Existing raw archives gain these projections on upgrade without a provider
   resync. Meeting reads retain source-deleted evidence by default and exclude
-  locally deleted records. Upgrade the daemon for API schema 2.27.0 support.
+  locally deleted records. Upgrade the daemon for API schema 2.28.0 support.
   See the [meeting guide](usage/meetings.md).
+
+- MCP startup no longer waits for archive statistics or vector lane probes.
+  Authenticated health reports text and visual vector lanes separately, so
+  daemon-backed MCP advertises configured search tools only when their health
+  facts and routes are supported. Search still checks readiness per request.
 
 ## 0.20.0
 <small>2026-09-22</small>

@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // TestAgentTokensDoNotSurviveRestart tests proof matrix row 13 (second half).
@@ -66,6 +67,8 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 		Logger:        testLogger(),
 		Scheduler:     newMockScheduler(),
 		OperationGate: gate,
+		VectorCfg:     vector.Config{Enabled: true},
+		VectorStatus:  VectorStatusReady,
 	})
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
@@ -115,6 +118,17 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	// Full projection: Operation.Label names the holder.
 	require.NotNil(ownerResp.Operation, "owner health must report operation busy when gate is held")
 	assert.Equal("test-operation", ownerResp.Operation.Label, "owner operation must expose label (full projection)")
+
+	// Lane facts are owner-only. Delegated callers keep the public VectorHealth
+	// status but receive neither configured capability.
+	require.NotNil(ownerResp.Vector, "owner health must report vector status")
+	require.NotNil(ownerResp.Vector.TextEnabled, "owner health must report text capability")
+	require.NotNil(ownerResp.Vector.VisualEnabled, "owner health must report visual capability")
+	assert.True(*ownerResp.Vector.TextEnabled, "owner health must report the configured text lane")
+	assert.False(*ownerResp.Vector.VisualEnabled, "owner health must report the disabled visual lane")
+	require.NotNil(delegatedResp.Vector, "delegated health must retain vector status")
+	assert.Nil(delegatedResp.Vector.TextEnabled, "delegated health must omit text capability")
+	assert.Nil(delegatedResp.Vector.VisualEnabled, "delegated health must omit visual capability")
 }
 
 const agentTokenTestAPIKey = "owner-api-key-for-agent-tests"
