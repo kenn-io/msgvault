@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
@@ -340,6 +341,59 @@ func TestGmailDraftLifecyclePublishesEditAndDelete(t *testing.T) {
 	deleted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
 	assert.NotNil(deleted.DiscardedAt)
+}
+
+func TestGmailDraftRecoverIsNotSupported(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+
+	events, err := fixture.lifecycle(t, api.CLIRunDraftRecoverCommand, draft, "")
+	require.Error(err)
+	assert.Equal("not_supported", err.Error())
+	assert.Empty(events)
+	assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(draft.Revision, latest.Revision)
+	assert.Nil(latest.DiscardedAt)
+}
+
+func TestGmailDraftLifecycleRefusesDelegatedGrant(t *testing.T) {
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	grant := &agentgrant.Grant{
+		ID:          "gmail-grant",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete},
+		Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}},
+	}
+	for _, operation := range []string{api.CLIRunDraftGetCommand, api.CLIRunDraftEditCommand, api.CLIRunDraftDeleteCommand, api.CLIRunDraftRecoverCommand} {
+		t.Run(operation, func(t *testing.T) {
+			args := []string{operation, draft.DraftID}
+			if operation != api.CLIRunDraftGetCommand {
+				args = append(args, "--revision", strconv.FormatInt(draft.Revision, 10))
+			}
+			if operation == api.CLIRunDraftEditCommand {
+				args = append(args, "--body", "delegated")
+			}
+			var events []api.CLIRunEvent
+			err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			require.Error(t, err)
+			assert.Equal(t, "not_permitted", err.Error())
+			assert.Empty(t, events)
+		})
+	}
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	assertions.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(draft.Revision, latest.Revision)
+	assertions.Nil(latest.DiscardedAt)
 }
 
 func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *testing.T) {
