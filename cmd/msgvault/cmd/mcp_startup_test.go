@@ -112,7 +112,6 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow("MCP initialize did not return or request stats within the watchdog")
 	}
-	releaseStatsOnce.Do(func() { close(releaseStats) })
 	require.NotEmpty(response, "MCP initialize returned no response")
 	var envelope map[string]any
 	require.NoError(json.Unmarshal(response, &envelope))
