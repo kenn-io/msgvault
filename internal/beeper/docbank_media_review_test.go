@@ -102,7 +102,7 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 	cancel()
 	mapping, err := worker.mappingForCandidate(ctx, "archive", candidates[0])
 	require.ErrorIs(err, context.Canceled)
-	assert.Empty(mapping.Revision, "read failures must not produce a gap revision")
+	assert.Empty(mapping.Revision, "read failures must leave the gap revision absent")
 
 	_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidates[0].MessageID)
 	require.NoError(err)

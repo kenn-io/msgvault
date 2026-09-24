@@ -33,7 +33,7 @@ import (
 const beeperMediaTestKeyEnv = "MSGVAULT_TEST_BEEPER_MEDIA_KEY"
 
 // storedBeeperVoiceNote writes the message, raw JSON, attachment row and
-// loose CAS blob that Beeper capture produces for one WAV voice note.
+// loose CAS blob for one captured WAV voice note.
 func storedBeeperVoiceNote(t *testing.T) (*store.Store, *attachmentstore.Store) {
 	t.Helper()
 	f := storetest.New(t)

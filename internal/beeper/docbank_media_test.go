@@ -50,7 +50,7 @@ type mediaWorld struct {
 	beeper *fakeBeeper
 }
 
-// importVoiceChat runs the production Beeper importer against a fake Beeper
+// importVoiceChat runs the Beeper importer against a fake Beeper
 // API so every test starts from rows, raw JSON and CAS written by capture.
 func importVoiceChat(t *testing.T, specs ...voiceSpec) *mediaWorld {
 	t.Helper()
@@ -1941,7 +1941,7 @@ func writeDocbankJSON(w http.ResponseWriter, value any) {
 	_, _ = w.Write(data)
 }
 
-// casStore places content in loose or packed CAS behind the production reader.
+// casStore places content in loose or packed CAS behind the shared media reader.
 func casStore(t *testing.T, content []byte, storage string) *attachmentstore.Store {
 	t.Helper()
 	root := t.TempDir()

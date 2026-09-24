@@ -33,8 +33,8 @@ func newBeeperMediaFixture(t *testing.T) *storetest.Fixture {
 	return f
 }
 
-// addBeeperAudio writes the message, raw JSON and stored audio row that a
-// Beeper capture produces for one voice note.
+// addBeeperAudio writes the message, raw JSON, and CAS entry for a Beeper
+// voice note.
 func addBeeperAudio(t *testing.T, st *store.Store, sourceID, conversationID int64, sourceMessageID, hash string) beeperAudio {
 	t.Helper()
 	messageID, err := st.UpsertMessage(&store.Message{ConversationID: conversationID, SourceID: sourceID,

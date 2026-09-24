@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -209,8 +210,13 @@ func TestClientMediaWire(t *testing.T) {
 func TestClientMediaTrust(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	credentialURL := (&url.URL{
+		Scheme: "https",
+		User:   url.UserPassword("user", "pass"),
+		Host:   "docbank.example.com",
+	}).String()
 	for _, endpoint := range []string{
-		"http://docbank.example.com", "ftp://127.0.0.1", "https://user:pass@docbank.example.com",
+		"http://docbank.example.com", "ftp://127.0.0.1", credentialURL,
 		"https://docbank.example.com/path?secret=value", "https://docbank.example.com/path#fragment", "127.0.0.1:8080",
 	} {
 		_, err := docbankmedia.NewClient(endpoint, nil)
