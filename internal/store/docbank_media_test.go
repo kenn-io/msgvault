@@ -448,6 +448,36 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	assert.Equal("pending-artifact", phase)
 	assert.Empty(code)
 
+	gapAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "gap-revision", strings.Repeat("d", 64))
+	retainedGap := gapAudio.mapping("revocation-gap", "r1", "gap-key")
+	retainAudio(t, f.Store, retainedGap, "gap-occurrence")
+	gapMapping := retainedGap
+	gapMapping.Revision = "r-gap"
+	gapMapping.RetentionOperationID = ""
+	gapMapping.RetentionState = store.BeeperMediaRetentionBlocked
+	gapMapping.ErrorCode = "source_raw_invalid"
+	gapMapping.NextActionAt = time.Time{}
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), gapMapping))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), gapMapping.DestinationKey, gapMapping.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("blocked", phase)
+	assert.Equal("source_raw_invalid", code)
+	var receiptSourceID, receiptOccurrenceID string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT retention_state, source_id, occurrence_id FROM beeper_media_occurrences
+		WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`), retainedGap.DestinationKey,
+		retainedGap.OccurrenceRef, retainedGap.Revision).Scan(&state, &receiptSourceID, &receiptOccurrenceID))
+	assert.Equal("revoked", state)
+	assert.Equal("source-"+retainedGap.SourceSHA256[:4], receiptSourceID)
+	assert.Equal("gap-occurrence", receiptOccurrenceID)
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), retainedGap))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), gapMapping.DestinationKey, gapMapping.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("pending-artifact", phase)
+	assert.Empty(code)
+
 	observing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "observing", strings.Repeat("c", 64))
 	observingMapping := observing.mapping("revocation-observing", "r1", "observing-key")
 	retainAudio(t, f.Store, observingMapping, "observing-occurrence")

@@ -358,12 +358,12 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 				}
 			}
 		}
-		if err := s.retireBeeperMediaDeliveries(q, mapping.DestinationKey, mapping.OccurrenceRef,
-			errBeeperMediaNoLiveOccurrenceCode); err != nil {
-			return err
-		}
+		retireCode := errBeeperMediaNoLiveOccurrenceCode
 		if mapping.RetentionState == BeeperMediaRetentionBlocked {
-			return s.retireBeeperMediaDeliveries(q, mapping.DestinationKey, mapping.OccurrenceRef, mapping.ErrorCode)
+			retireCode = mapping.ErrorCode
+		}
+		if err := s.retireBeeperMediaDeliveries(q, mapping.DestinationKey, mapping.OccurrenceRef, retireCode); err != nil {
+			return err
 		}
 		return nil
 	})

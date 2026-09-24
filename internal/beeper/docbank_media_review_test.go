@@ -119,6 +119,93 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 	assert.Equal("source_raw_invalid", mapping.ErrorCode)
 }
 
+func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
+	t.Run("retain-source-gap", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/retain-gap",
+			mime: "audio/wav", fileName: "voice.wav", transcript: "retain gap", data: syntheticWAV(800, 32)})
+		runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "retain-gap", world.dir), 1)
+		operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "retain-gap", time.Now().UTC())
+		require.NoError(err)
+		require.True(ok)
+		require.Equal(store.BeeperMediaOperationRetain, operation.Kind)
+		_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), operation.MessageID)
+		require.NoError(err)
+		docbank := newFakeDocbank(t)
+		server := httptest.NewServer(docbank)
+		defer server.Close()
+		worker := world.submitter(t, server, "retain-gap")
+		archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+		require.NoError(err)
+		_, err = worker.retain(t.Context(), t.Context(), archiveUID, operation)
+		require.NoError(err)
+		row := occurrenceRows(t, world.st, "retain-gap")[0]
+		assert.Equal("source_unavailable", row.State)
+		assert.Equal("source_raw_invalid", row.ErrorCode)
+		assert.Zero(docbank.requests)
+	})
+
+	t.Run("artifact-source-gap", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/artifact-gap",
+			mime: "audio/wav", fileName: "voice.wav", transcript: "artifact gap", data: syntheticWAV(800, 33)})
+		docbank := newFakeDocbank(t)
+		server := httptest.NewServer(docbank)
+		defer server.Close()
+		worker := world.submitter(t, server, "artifact-gap")
+		_, err := worker.RunBatch(t.Context())
+		require.NoError(err)
+		docbank.mu.Lock()
+		beforeRequests := docbank.requests
+		docbank.mu.Unlock()
+		operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "artifact-gap", time.Now().UTC())
+		require.NoError(err)
+		require.True(ok)
+		require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+		mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "artifact-gap", operation.ProcessingKey, 100)
+		require.NoError(err)
+		require.Len(mappings, 1)
+		_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), mappings[0].MessageID)
+		require.NoError(err)
+		archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+		require.NoError(err)
+		require.NoError(worker.artifact(t.Context(), t.Context(), archiveUID, operation))
+		delivery := deliveryRows(t, world.st, "artifact-gap")
+		require.Len(delivery, 1)
+		assert.Equal("blocked", delivery[0].Phase)
+		assert.Equal("source_raw_invalid", delivery[0].ErrorCode)
+		docbank.mu.Lock()
+		assert.Equal(beforeRequests, docbank.requests)
+		docbank.mu.Unlock()
+	})
+
+	t.Run("database-error-does-not-create-gap", func(t *testing.T) {
+		testutil.SkipIfPostgres(t, "SQLite authorizer injects a real message_raw query failure")
+		require, assert := require.New(t), assert.New(t)
+		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/query-failure",
+			mime: "audio/wav", fileName: "voice.wav", transcript: "query failure", data: syntheticWAV(800, 34)})
+		world.st.DB().SetMaxOpenConns(1)
+		conn, err := world.st.DB().Conn(t.Context())
+		require.NoError(err)
+		require.NoError(conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			require.True(ok)
+			sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+				if action == sqlite3.SQLITE_READ && table == "message_raw" {
+					return sqlite3.SQLITE_DENY
+				}
+				return sqlite3.SQLITE_OK
+			})
+			return nil
+		}))
+		require.NoError(conn.Close())
+		worker := NewMediaSubmitter(world.st, world.blobs, nil, "query-failure", world.dir)
+		_, err = worker.RunBatch(t.Context())
+		require.Error(err)
+		assert.Empty(occurrenceRows(t, world.st, "query-failure"))
+	})
+}
+
 func TestBeeperMediaOperatorRequired(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",

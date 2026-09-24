@@ -231,6 +231,7 @@ func TestBeeperMediaGatedWrites(t *testing.T) {
 	acquired := 0
 	submitter := world.submitter(t, server, "destination-gated").WithOperationGate(
 		func(context.Context) (func(), bool) {
+			assert.False(held.Load(), "operation gate was acquired recursively")
 			assert.Equal(released, mediaArchiveState(t, world.st), "the archive changed while the gate was free")
 			held.Store(true)
 			acquired++
@@ -696,6 +697,180 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 	runPasses(t, submitter, 2)
 	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
 		assert.Equal("retained", row.State, row.MessageID)
+	}
+}
+
+func TestBeeperMediaRetainActionFence(t *testing.T) {
+	for _, mutation := range []struct {
+		name  string
+		apply func(*testing.T, *mediaWorld, store.BeeperMediaOperation)
+		code  string
+	}{
+		{name: "dedup-hide", code: "no_live_occurrence", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
+			t.Helper()
+			var survivor int64
+			require.NoError(t, world.st.DB().QueryRow(
+				`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`, operation.MessageID).Scan(&survivor))
+			_, err := world.st.MergeDuplicates(survivor, []int64{operation.MessageID}, "retain-hide")
+			require.NoError(t, err)
+		}},
+		{name: "source-delete", code: "no_live_occurrence", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
+			t.Helper()
+			var sourceID int64
+			var sourceMessageID string
+			require.NoError(t, world.st.DB().QueryRow(`SELECT source_id, source_message_id FROM messages WHERE id = ?`, operation.MessageID).
+				Scan(&sourceID, &sourceMessageID))
+			require.NoError(t, world.st.MarkMessageDeleted(sourceID, sourceMessageID))
+		}},
+		{name: "attachment-replacement", code: "source_changed", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
+			t.Helper()
+			_, err := world.st.DB().Exec(world.st.Rebind(
+				`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("f", 64), operation.AttachmentID)
+			require.NoError(t, err)
+		}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			world := importVoiceChat(t,
+				voiceSpec{id: "selected", asset: "mxc://beeper.local/selected", mime: "audio/wav",
+					fileName: "selected.wav", transcript: "selected words", data: syntheticWAV(800, 28)},
+				voiceSpec{id: "survivor", asset: "mxc://beeper.local/survivor", mime: "audio/wav",
+					fileName: "survivor.wav", transcript: "survivor words", data: syntheticWAV(800, 29)})
+			runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "retain-fence", world.dir), 1)
+			operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "retain-fence", time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			require.Equal(store.BeeperMediaOperationRetain, operation.Kind)
+			docbank := newFakeDocbank(t)
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			worker := world.submitter(t, server, "retain-fence")
+			worker.WithOperationGate(func(context.Context) (func(), bool) {
+				mutation.apply(t, world, operation)
+				return func() {}, true
+			})
+			archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+			_, err = worker.retain(t.Context(), t.Context(), archiveUID, operation)
+			require.NoError(err)
+			assert.Equal(0, docbank.requests)
+			rows := occurrenceRows(t, world.st, "retain-fence")
+			var selected occurrenceRow
+			for _, row := range rows {
+				if row.OperationID == operation.OperationID {
+					selected = row
+					break
+				}
+			}
+			assert.Equal(mutation.code, selected.ErrorCode)
+			if mutation.name == "attachment-replacement" {
+				assert.Equal("source_unavailable", selected.State)
+			} else {
+				assert.Equal("revoked", selected.State)
+			}
+		})
+	}
+}
+
+func TestBeeperMediaArtifactActionFence(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		for _, mutation := range []string{"dedup-hide", "source-delete", "attachment-replacement"} {
+			name := "single-" + mutation
+			if shared {
+				name = "shared-" + mutation
+			}
+			t.Run(name, func(t *testing.T) {
+				require, assert := require.New(t), assert.New(t)
+				transcript := "selected words"
+				if shared {
+					transcript = "shared words"
+				}
+				selectedData := syntheticWAV(800, 30)
+				otherData := syntheticWAV(800, 31)
+				if shared {
+					otherData = selectedData
+				}
+				world := importVoiceChat(t,
+					voiceSpec{id: "selected", asset: "mxc://beeper.local/artifact-selected", mime: "audio/wav",
+						fileName: "selected.wav", transcript: transcript, data: selectedData},
+					voiceSpec{id: "other", asset: "mxc://beeper.local/artifact-other", mime: "audio/wav",
+						fileName: "other.wav", transcript: func() string {
+							if shared {
+								return transcript
+							}
+							return "other words"
+						}(), data: otherData})
+				docbank := newFakeDocbank(t)
+				server := httptest.NewServer(docbank)
+				defer server.Close()
+				worker := world.submitter(t, server, "artifact-fence")
+				_, err := worker.RunBatch(t.Context())
+				require.NoError(err)
+				if shared {
+					_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
+					require.NoError(err)
+					_, err = worker.RunBatch(t.Context())
+					require.NoError(err)
+					_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+					require.NoError(err)
+				}
+				for range 4 {
+					op, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "artifact-fence", time.Now().UTC())
+					require.NoError(err)
+					if ok && op.Kind == store.BeeperMediaOperationArtifact {
+						break
+					}
+					_, err = worker.RunBatch(t.Context())
+					require.NoError(err)
+				}
+				operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "artifact-fence", time.Now().UTC())
+				require.NoError(err)
+				require.True(ok)
+				require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+				mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "artifact-fence", operation.ProcessingKey, 100)
+				require.NoError(err)
+				require.NotEmpty(mappings)
+				donor := mappings[0]
+				var otherMessage int64
+				require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`, donor.MessageID).Scan(&otherMessage))
+				apply := func() {
+					switch mutation {
+					case "dedup-hide":
+						_, err := world.st.MergeDuplicates(otherMessage, []int64{donor.MessageID}, "artifact-hide")
+						require.NoError(err)
+					case "source-delete":
+						var sourceID int64
+						var sourceMessageID string
+						require.NoError(world.st.DB().QueryRow(`SELECT source_id, source_message_id FROM messages WHERE id = ?`, donor.MessageID).
+							Scan(&sourceID, &sourceMessageID))
+						require.NoError(world.st.MarkMessageDeleted(sourceID, sourceMessageID))
+					case "attachment-replacement":
+						_, err := world.st.DB().Exec(world.st.Rebind(
+							`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("e", 64), donor.AttachmentID)
+						require.NoError(err)
+					}
+				}
+				calls := 0
+				worker.WithOperationGate(func(context.Context) (func(), bool) {
+					calls++
+					if calls == 2 {
+						apply()
+					}
+					return func() {}, true
+				})
+				archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+				require.NoError(err)
+				require.NoError(worker.artifact(t.Context(), t.Context(), archiveUID, operation))
+				docbank.mu.Lock()
+				artifactRequests := len(docbank.artifactOps)
+				docbank.mu.Unlock()
+				if shared {
+					assert.Equal(1, artifactRequests)
+				} else {
+					assert.Zero(artifactRequests)
+				}
+			})
+		}
 	}
 }
 
