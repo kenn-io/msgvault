@@ -268,6 +268,7 @@ func TestClientMediaTrust(t *testing.T) {
 	require.ErrorIs(err, docbankmedia.ErrCredentialUnavailable)
 	assert.NotContains(err.Error(), testKey)
 	assert.Equal("credential_unavailable", docbankmedia.ErrorCode(err))
+	assert.False(docbankmedia.Retryable(err))
 
 	mu.Lock()
 	defer mu.Unlock()

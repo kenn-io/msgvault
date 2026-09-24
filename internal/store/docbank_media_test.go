@@ -448,6 +448,42 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	assert.Equal("pending-artifact", phase)
 	assert.Empty(code)
 
+	// The full sweep revokes pending and source-unavailable suppliers together.
+	// The shared delivery waits until the last supplier disappears.
+	pendingAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "sweep-pending", strings.Repeat("e", 64))
+	sourceAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "sweep-source", strings.Repeat("e", 64))
+	pendingMapping := pendingAudio.mapping("revocation-sweep", "r1", "sweep-key")
+	sourceMapping := sourceAudio.mapping("revocation-sweep", "r1", "sweep-key")
+	for _, mapping := range []store.BeeperMediaMapping{pendingMapping, sourceMapping} {
+		require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), mapping))
+	}
+	prepared, err := f.Store.PrepareBeeperMediaOperation(t.Context(), retainOperation(sourceMapping))
+	require.NoError(err)
+	applied, err := f.Store.FinishBeeperMediaOperation(t.Context(), prepared, store.BeeperMediaResult{
+		ErrorCode: "source_unavailable", SourceUnavailable: true})
+	require.NoError(err)
+	require.True(applied)
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, pendingAudio.sourceMessageID))
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceAudio.sourceMessageID))
+	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), pendingMapping.DestinationKey))
+	var pendingState, sourceState string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT retention_state FROM beeper_media_occurrences
+		WHERE destination_key = ? AND source_message_id = ?`), pendingMapping.DestinationKey,
+		pendingMapping.SourceMessageID).Scan(&pendingState))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT retention_state FROM beeper_media_occurrences
+		WHERE destination_key = ? AND source_message_id = ?`), sourceMapping.DestinationKey,
+		sourceMapping.SourceMessageID).Scan(&sourceState))
+	assert.Equal("revoked", pendingState)
+	assert.Equal("revoked", sourceState)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT phase, error_code FROM beeper_media_deliveries
+		WHERE destination_key = ? AND processing_key = ?`), pendingMapping.DestinationKey,
+		pendingMapping.ProcessingKey).Scan(&phase, &code))
+	assert.Equal("blocked", phase)
+	assert.Equal("no_live_occurrence", code)
+
 	gapAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "gap-revision", strings.Repeat("d", 64))
 	retainedGap := gapAudio.mapping("revocation-gap", "r1", "gap-key")
 	retainAudio(t, f.Store, retainedGap, "gap-occurrence")

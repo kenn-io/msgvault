@@ -518,7 +518,7 @@ func (s *Store) currentBeeperMediaMessage(ctx context.Context, mapping BeeperMed
 	return true, nil
 }
 
-// RevokeStaleBeeperMediaMappings moves retained mappings without a current
+// RevokeStaleBeeperMediaMappings moves non-revoked mappings without a current
 // live source attachment into the revoked state.
 func (s *Store) RevokeStaleBeeperMediaMappings(ctx context.Context, destination string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -526,7 +526,7 @@ func (s *Store) RevokeStaleBeeperMediaMappings(ctx context.Context, destination 
 		rows, err := tx.QueryContext(ctx, `
 			SELECT occurrence_ref
 			FROM beeper_media_occurrences
-			WHERE destination_key = ? AND retention_state = 'retained'
+			WHERE destination_key = ? AND retention_state <> 'revoked'
 			  AND NOT EXISTS (SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 				AND o.destination_key = beeper_media_occurrences.destination_key
 				AND o.occurrence_ref = beeper_media_occurrences.occurrence_ref
@@ -552,8 +552,8 @@ func (s *Store) RevokeStaleBeeperMediaMappings(ctx context.Context, destination 
 		}
 		if _, err := q.Exec(`
 			UPDATE beeper_media_occurrences
-			SET retention_state = 'revoked', next_action_at = NULL, updated_at = `+s.dialect.Now()+`
-			WHERE destination_key = ? AND retention_state = 'retained'
+			SET retention_state = 'revoked', error_code = 'no_live_occurrence', next_action_at = NULL, updated_at = `+s.dialect.Now()+`
+			WHERE destination_key = ? AND retention_state <> 'revoked'
 			  AND NOT EXISTS (SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 				AND o.destination_key = beeper_media_occurrences.destination_key
 				AND o.occurrence_ref = beeper_media_occurrences.occurrence_ref

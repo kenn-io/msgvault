@@ -1079,11 +1079,34 @@ func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 	deliveries := deliveryRows(t, world.st, "destination-revoked-job")
 	require.Len(deliveries, 1)
 	require.Equal("observing", deliveries[0].Phase)
-	jobID := deliveries[0].JobID
+	started := deliveries[0]
+	jobID := started.JobID
+	docbank.mu.Lock()
+	requests := docbank.requests
+	docbank.mu.Unlock()
 	var sourceID int64
 	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
 	require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+	result, err := NewMediaSubmitter(world.st, world.blobs, nil, "destination-revoked-job", world.dir).RunBatch(t.Context())
+	require.NoError(err)
+	assert.Zero(result.Examined)
+	rows := occurrenceRows(t, world.st, "destination-revoked-job")
+	require.Len(rows, 1)
+	assert.Equal("revoked", rows[0].State)
+	deliveries = deliveryRows(t, world.st, "destination-revoked-job")
+	require.Len(deliveries, 1)
+	assert.Equal("observing", deliveries[0].Phase)
+	assert.Equal(started.SourceID, deliveries[0].SourceID)
+	assert.Equal(started.SourceVersionID, deliveries[0].SourceVersionID)
+	assert.Equal(started.ContentVersionID, deliveries[0].ContentVersionID)
+	assert.Equal(started.Donor, deliveries[0].Donor)
+	assert.Equal(started.ProcessingOperationID, deliveries[0].ProcessingOperationID)
+	assert.Equal(jobID, deliveries[0].JobID)
+	docbank.mu.Lock()
+	assert.Equal(requests, docbank.requests)
+	docbank.mu.Unlock()
+	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	docbank.mu.Lock()
 	docbank.coverage = "transcribed"

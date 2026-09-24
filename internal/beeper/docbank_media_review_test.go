@@ -862,6 +862,75 @@ func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
 	assert.Empty(changes)
 }
 
+func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t,
+		voiceSpec{id: "pending", asset: "mxc://beeper.example/full-scan-pending", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 43)},
+		voiceSpec{id: "source-gap", asset: "mxc://beeper.example/full-scan-source-gap", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 43)},
+		voiceSpec{id: "blocked", asset: "mxc://beeper.example/full-scan-blocked", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 43)},
+		voiceSpec{id: "live", asset: "mxc://beeper.example/full-scan-live", mime: "audio/wav",
+			fileName: "voice.wav", transcript: "shared transcript", data: syntheticWAV(800, 43)})
+	destination := "full-scan-states"
+	worker := NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir)
+	result, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(4, result.Examined)
+	for _, row := range occurrenceRows(t, world.st, destination) {
+		assert.Equal("pending", row.State)
+	}
+
+	_, err = world.st.DB().Exec(world.st.Rebind(`
+		UPDATE beeper_media_occurrences
+		SET retention_state = ?, error_code = ?, next_action_at = ?
+		WHERE destination_key = ? AND source_message_id = ?`),
+		store.BeeperMediaRetentionSourceUnavailable, "source_unavailable", time.Now().UTC().Add(-time.Minute),
+		destination, "source-gap")
+	require.NoError(err)
+	_, err = world.st.DB().Exec(world.st.Rebind(`
+		UPDATE beeper_media_occurrences
+		SET retention_state = ?, error_code = ?, next_action_at = NULL
+		WHERE destination_key = ? AND source_message_id = ?`),
+		store.BeeperMediaRetentionBlocked, "credential_unavailable", destination, "blocked")
+	require.NoError(err)
+
+	source, err := world.st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+	for _, messageID := range []string{"pending", "source-gap", "blocked"} {
+		require.NoError(world.st.MarkMessageDeleted(source.ID, messageID))
+	}
+	result, err = NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir).RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, result.Examined)
+	rows := occurrenceRows(t, world.st, destination)
+	for _, row := range rows {
+		if row.MessageID == "live" {
+			assert.Equal("pending", row.State)
+		} else {
+			assert.Equal("revoked", row.State)
+		}
+	}
+	deliveries := deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("pending-artifact", deliveries[0].Phase)
+
+	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+	require.NoError(world.st.MarkMessageDeleted(source.ID, "live"))
+	result, err = NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir).RunBatch(t.Context())
+	require.NoError(err)
+	assert.Zero(result.Examined)
+	for _, row := range occurrenceRows(t, world.st, destination) {
+		assert.Equal("revoked", row.State)
+	}
+	deliveries = deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("blocked", deliveries[0].Phase)
+	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
+}
+
 func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite authorizer injects a message_raw query failure")

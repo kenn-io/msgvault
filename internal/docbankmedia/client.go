@@ -53,7 +53,8 @@ func Retryable(err error) bool {
 		return httpErr.Retryable()
 	}
 	// Replays reuse the saved operation ID, so only local request faults block.
-	return err != nil && !errors.Is(err, ErrInvalidRequest) && !errors.Is(err, ErrContentTooLarge)
+	return err != nil && !errors.Is(err, ErrCredentialUnavailable) &&
+		!errors.Is(err, ErrInvalidRequest) && !errors.Is(err, ErrContentTooLarge)
 }
 
 // ErrorCode returns a stable, bounded code suitable for a local job row.

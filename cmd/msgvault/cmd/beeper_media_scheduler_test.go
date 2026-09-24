@@ -189,21 +189,46 @@ func TestBeeperMediaConfig(t *testing.T) {
 	assert.Zero(server.requestCount())
 	assert.True(consumerRegistered(t, st))
 
-	// A missing credential sends nothing and records only a stable code.
+	// A missing credential blocks the operation without scheduling a retry.
 	t.Setenv(beeperMediaTestKeyEnv, "")
 	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
-	assert.Equal(map[string]string{destination: "pending:credential_unavailable:"}, retentionRows(t, st))
+	var state, code, operationID string
+	var scheduled bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT retention_state, error_code, retention_operation_id, next_action_at IS NOT NULL
+		FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
+		Scan(&state, &code, &operationID, &scheduled))
+	assert.Equal("blocked", state)
+	assert.Equal("credential_unavailable", code)
+	assert.False(scheduled)
 	assert.Zero(server.requestCount())
+	blockedOperationID := operationID
 
-	// A failing peer's body never reaches the stored error.
+	// Startup reconsideration reopens the same operation. A failing peer still retries.
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), config.DocbankIntegrationConfig{
+		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}, nil))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT retention_state, error_code, retention_operation_id, next_action_at IS NOT NULL
+		FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
+		Scan(&state, &code, &operationID, &scheduled))
+	assert.Equal("pending", state)
+	assert.Equal("credential_unavailable", code)
+	assert.Equal(blockedOperationID, operationID)
+	assert.True(scheduled)
+
 	server.failStatus.Store(http.StatusServiceUnavailable)
 	_, err = st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending:server_error:"}, retentionRows(t, st))
+	var retryScheduled bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT next_action_at IS NOT NULL FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
+		Scan(&retryScheduled))
+	assert.True(retryScheduled)
 	assert.Equal(1, server.requestCount())
 
 	// Disabling removes the job and its journal consumer but keeps receipts.
