@@ -74,7 +74,7 @@ func defaultGmailDraftClientFactory(ctx context.Context, source *store.Source) (
 	draftClient, ok := client.(gmail.DraftAPI)
 	if !ok {
 		_ = client.Close()
-		return nil, fmt.Errorf("source %d did not produce a Gmail draft client", source.ID)
+		return nil, fmt.Errorf("source %d did not return a Gmail draft client", source.ID)
 	}
 	return draftClient, nil
 }
@@ -480,7 +480,7 @@ func gmailDraftLifecycleOutputWithoutMessage(
 	providerObservation *gmailDraftLifecycleObservation,
 	observation *gmailDraftLifecycleObservation,
 ) gmailDraftLifecycleOutput {
-	lifecycle := "active"
+	lifecycle := draftLifecycleActive
 	if draft.DiscardedAt != nil {
 		lifecycle = "discarded"
 	}
