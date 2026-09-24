@@ -1901,9 +1901,8 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 // Search performs a Gmail-style search query.
 // buildSearchQueryParts builds the WHERE conditions, args, and FTS join
 // for a search query. This is shared between Search and SearchFastCount.
-// Every structured filter resolves through an EXISTS / NOT EXISTS
-// correlated subquery, so the only join this ever emits is the optional
-// FTS join (ftsJoin); there is no separate non-EXISTS join slot.
+// Structured filters use subqueries rather than outer joins, so the only
+// optional outer join here is the FTS join (ftsJoin).
 func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
 	return e.buildSearchQueryPartsWithVisibility(ctx, q,
 		searchMessageVisibilityWhere("m", q))
@@ -1915,33 +1914,10 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, q *search.Query, visibility string) (conditions []string, args []any, ftsJoin string) {
 	conditions = append(conditions, visibility)
 
-	// From filter - uses EXISTS to avoid join multiplication in aggregates.
-	// Handles both exact addresses and @domain patterns.
-	if len(q.FromAddrs) > 0 {
-		var fromParts []string
-		for _, addr := range q.FromAddrs {
-			if strings.HasPrefix(addr, "@") {
-				fromParts = append(fromParts,
-					"LOWER(p_from.email_address) LIKE ?")
-				args = append(args, "%"+addr)
-			} else {
-				fromParts = append(fromParts,
-					"LOWER(p_from.email_address) = LOWER(?)")
-				args = append(args, addr)
-			}
-		}
-		conditions = append(conditions, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM message_recipients mr_from
-			JOIN participants p_from ON p_from.id = mr_from.participant_id
-			WHERE mr_from.message_id = m.id
-			  AND mr_from.recipient_type = 'from'
-			  AND (%s)
-		)`, strings.Join(fromParts, " OR ")))
-	}
-
-	conditions, args = appendSQLiteRecipientSearchCondition(conditions, args, q.ToAddrs, "to")
-	conditions, args = appendSQLiteRecipientSearchCondition(conditions, args, q.CcAddrs, "cc")
-	conditions, args = appendSQLiteRecipientSearchCondition(conditions, args, q.BccAddrs, "bcc")
+	conditions, args = appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
+	conditions, args = appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
+	conditions, args = appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
+	conditions, args = appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
 
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
@@ -2044,7 +2020,10 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 	return conditions, args, ftsJoin
 }
 
-func appendSQLiteRecipientSearchCondition(
+// appendSQLiteAddressCondition resolves matching participants first and looks
+// messages up by rowid. A correlated EXISTS scans every message for a rare
+// address; this semi-join also avoids multiplying result rows.
+func appendSQLiteAddressCondition(
 	conditions []string,
 	args []any,
 	addresses []string,
@@ -2053,28 +2032,31 @@ func appendSQLiteRecipientSearchCondition(
 	if len(addresses) == 0 {
 		return conditions, args
 	}
-
-	addressParts := make([]string, 0, len(addresses))
-	recipientArgs := []any{recipientType}
+	parts := make([]string, 0, len(addresses))
+	matchArgs := make([]any, 0, len(addresses)*2)
 	for _, address := range addresses {
-		address = strings.ToLower(address)
-		if strings.HasPrefix(address, "@") {
-			addressParts = append(addressParts, `LOWER(p_recipient.email_address) LIKE ? ESCAPE '\'`)
-			recipientArgs = append(recipientArgs, "%"+escapeSQLiteLike(address))
-		} else {
-			addressParts = append(addressParts,
-				"(LOWER(p_recipient.email_address) = ? OR p_recipient.phone_number = ?)")
-			recipientArgs = append(recipientArgs, address, address)
+		switch {
+		case strings.HasPrefix(address, "@"):
+			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
+			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
+		case recipientType == "from":
+			parts = append(parts, "LOWER(p_addr.email_address) = LOWER(?)")
+			matchArgs = append(matchArgs, address)
+		default:
+			lower := strings.ToLower(address)
+			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
+			matchArgs = append(matchArgs, lower, lower)
 		}
 	}
-	conditions = append(conditions, fmt.Sprintf(`EXISTS (
-		SELECT 1 FROM message_recipients mr_recipient
-		JOIN participants p_recipient ON p_recipient.id = mr_recipient.participant_id
-		WHERE mr_recipient.message_id = m.id
-		  AND mr_recipient.recipient_type = ?
-		  AND (%s)
-	)`, strings.Join(addressParts, " OR ")))
-	args = append(args, recipientArgs...)
+	conditions = append(conditions, fmt.Sprintf(`m.id IN (
+		SELECT mr_addr.message_id FROM message_recipients mr_addr
+		WHERE mr_addr.recipient_type = ?
+		  AND mr_addr.participant_id IN (
+			SELECT p_addr.id FROM participants p_addr WHERE %s
+		  )
+	)`, strings.Join(parts, " OR ")))
+	args = append(args, recipientType)
+	args = append(args, matchArgs...)
 	return conditions, args
 }
 
@@ -2266,38 +2248,9 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 		whereClause = "1=1"
 	}
 
-	// All filter conditions in buildSearchQueryParts use EXISTS subqueries,
-	// never plain JOINs, so no row multiplication occurs from filter conditions.
-	// The sender is hydrated via a correlated scalar subquery (LIMIT 1) so that
-	// messages with multiple 'from' recipients do not produce multiple result rows.
-	query := fmt.Sprintf(`
-		SELECT
-			m.id,
-			m.source_id,
-			m.source_message_id,
-			m.conversation_id,
-			COALESCE(conv.source_conversation_id, ''),
-			COALESCE(m.subject, ''),
-			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
-			%s,
-			COALESCE(p_sender.phone_number, ''),
-			m.sent_at,
-			COALESCE(m.size_estimate, 0),
-			m.has_attachments,
-			m.attachment_count,
-			m.deleted_from_source_at,
-			COALESCE(m.message_type, ''),
-			COALESCE(conv.title, '')
-		FROM messages m
-		%s
-		LEFT JOIN conversations conv ON conv.id = m.conversation_id
-		%s
-		WHERE %s
-		ORDER BY m.sent_at DESC, m.id DESC
-		LIMIT ? OFFSET ?
-	`, sqliteSenderNameExpr, sqliteSenderJoin, ftsJoin, whereClause)
-
+	// Filter conditions do not add outer joins, so they cannot multiply result
+	// rows. The sender join selects one row per message.
+	query := searchResultsSQL(ftsJoin, whereClause)
 	args = append(args, limit, offset)
 
 	rows, err := e.queryContext(ctx, query, args...)
@@ -2353,6 +2306,38 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 	}
 
 	return results, nil
+}
+
+// searchResultsSQL is the statement executeSearchQuery runs; tests EXPLAIN
+// it to pin the plan.
+func searchResultsSQL(ftsJoin, whereClause string) string {
+	return fmt.Sprintf(`
+		SELECT
+			m.id,
+			m.source_id,
+			m.source_message_id,
+			m.conversation_id,
+			COALESCE(conv.source_conversation_id, ''),
+			COALESCE(m.subject, ''),
+			COALESCE(m.snippet, ''),
+			COALESCE(p_sender.email_address, ''),
+			%s,
+			COALESCE(p_sender.phone_number, ''),
+			m.sent_at,
+			COALESCE(m.size_estimate, 0),
+			m.has_attachments,
+			m.attachment_count,
+			m.deleted_from_source_at,
+			COALESCE(m.message_type, ''),
+			COALESCE(conv.title, '')
+		FROM messages m
+		%s
+		LEFT JOIN conversations conv ON conv.id = m.conversation_id
+		%s
+		WHERE %s
+		ORDER BY m.sent_at DESC, m.id DESC
+		LIMIT ? OFFSET ?
+	`, sqliteSenderNameExpr, sqliteSenderJoin, ftsJoin, whereClause)
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.
