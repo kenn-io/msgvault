@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -515,6 +516,49 @@ func TestDeleteStagedRejectsUnsupportedSourceBeforeClaim(t *testing.T) {
 	require.ErrorContains(err, "not a gmail or imap source")
 	assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
 	assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
+}
+
+func TestDeleteStagedPreflightsEverySourceReferenceBeforeClaim(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	t.Setenv(remoteDeleteEnvVar, "1")
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	resetDeleteStagedRoutingGlobals(t)
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	legacy, err := st.GetOrCreateSource("", "shared@example.invalid")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource(sourceTypeGmail, legacy.Identifier)
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	valid := deletion.NewManifestForSource("valid first batch", []string{"remote-1"}, deletion.SourceReference{
+		ID: legacy.ID, Type: sourceTypeGmail, Identifier: legacy.Identifier,
+	})
+	valid.CreatedAt = time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(mgr.SaveManifest(valid))
+	stale := deletion.NewManifestForSource("stale later batch", []string{"remote-2"}, deletion.SourceReference{
+		ID: legacy.ID + 1000, Type: sourceTypeGmail, Identifier: legacy.Identifier,
+	})
+	stale.CreatedAt = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(mgr.SaveManifest(stale))
+
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--yes"})
+	err = cmd.Execute()
+	require.ErrorContains(err, "ambiguous")
+	for _, manifest := range []*deletion.Manifest{valid, stale} {
+		assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
+		assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
+	}
 }
 
 func TestDeleteStagedOAuthSetupFailureLeavesManifestPending(t *testing.T) {

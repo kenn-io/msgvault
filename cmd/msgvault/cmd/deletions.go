@@ -687,6 +687,7 @@ func resolveDeleteStagedTargetWithSourceID(
 	requestedSourceIDSet bool,
 ) (deleteStagedTarget, error) {
 	var durable *deletion.SourceReference
+	var source *store.Source
 	for _, manifest := range manifests {
 		if err := manifest.ValidateVersion(); err != nil {
 			return deleteStagedTarget{}, fmt.Errorf("batch %s: %w", manifest.ID, err)
@@ -694,22 +695,28 @@ func resolveDeleteStagedTargetWithSourceID(
 		if manifest.Version != 2 {
 			continue
 		}
+		if durable != nil &&
+			(durable.Type != manifest.Source.Type || durable.Identifier != manifest.Source.Identifier) {
+			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
+				"pending batches target multiple sources; select one batch or use --source-id"))
+		}
+		resolved, err := deletion.ResolveSourceReference(st, *manifest.Source)
+		if err != nil {
+			return deleteStagedTarget{}, fmt.Errorf("resolve batch %s source: %w", manifest.ID, err)
+		}
 		if durable == nil {
 			copyRef := *manifest.Source
 			durable = &copyRef
+			source = resolved
 			continue
 		}
-		if durable.Type != manifest.Source.Type || durable.Identifier != manifest.Source.Identifier {
+		if source.ID != resolved.ID {
 			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
 				"pending batches target multiple sources; select one batch or use --source-id"))
 		}
 	}
 
 	if durable != nil {
-		source, err := deletion.ResolveSourceReference(st, *durable)
-		if err != nil {
-			return deleteStagedTarget{}, err
-		}
 		if effectiveType := store.EffectiveSourceType(source.SourceType); effectiveType != sourceTypeGmail && effectiveType != sourceTypeIMAP {
 			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
 		}
