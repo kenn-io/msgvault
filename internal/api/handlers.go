@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -397,14 +398,27 @@ type scoreBreakdown struct {
 	SubjectBoosted bool     `json:"subject_boosted,omitzero"`
 }
 
-// writeJSON writes a JSON response.
+// encodeFailureBody is written when a response value cannot be encoded. It
+// is a literal so it cannot fail the same way.
+const encodeFailureBody = `{"error":"internal_error","message":"Failed to encode response"}`
+
+// writeJSON writes a JSON response. The body is encoded before the status
+// line so an encoding failure becomes a 500 with an error body instead of a
+// success status followed by a truncated or empty body.
 func writeJSON(w http.ResponseWriter, status int, data any) {
+	body, err := marshalAPIJSONBytes(data)
 	w.Header().Set("Content-Type", applicationJSONMediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err != nil {
+		slog.Error("encode API response", "status", status, "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, encodeFailureBody)
+		return
+	}
 	w.WriteHeader(status)
-	// Headers already sent; if Encode fails mid-stream (broken pipe,
-	// non-serializable value) there's no meaningful recovery beyond
-	// truncating the response body.
-	_ = marshalAPIJSON(w, data)
+	// A write error here means the client went away; nothing to recover.
+	// #nosec G705 -- The body is JSON-encoded, served as application/json, and marked nosniff.
+	_, _ = w.Write(body)
 }
 
 // writeError writes an error response.

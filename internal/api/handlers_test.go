@@ -3088,6 +3088,56 @@ func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
 	assert.Equal("Body text", resp.BodyText, "BodyText")
 }
 
+func TestHandleCLIMessageInvalidUTF8SnippetReturnsCompleteJSON(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("PostgreSQL rejects invalid UTF-8")
+	}
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err)
+	convID, err := st.EnsureConversation(src.ID, "thread-utf8", "")
+	require.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: src.ID, ConversationID: convID, SourceMessageID: "gmail-utf8",
+			MessageType: "email",
+			Subject:     sql.NullString{String: "Lunch", Valid: true},
+			SentAt:      sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		},
+		BodyText: sql.NullString{String: "Body text", Valid: true},
+	})
+	require.NoError(err)
+	// "Calendar: lunch " followed by the first two bytes of a four-byte emoji.
+	_, err = st.DB().Exec(
+		`UPDATE messages SET snippet = CAST(X'43616c656e6461723a206c756e636820f09f' AS TEXT) WHERE source_message_id = ?`,
+		"gmail-utf8")
+	require.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message?id=gmail-utf8", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code)
+	var resp struct {
+		Snippet  string `json:"snippet"`
+		BodyText string `json:"body_text"`
+	}
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &resp), "body: %q", w.Body.String())
+	assert.Equal("Calendar: lunch ��", resp.Snippet)
+	assert.Equal("Body text", resp.BodyText)
+}
+
 func TestHandleCLIMessageRawResolvesSourceMessageID(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
