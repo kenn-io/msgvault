@@ -17,6 +17,7 @@ enabled = true
 url = "http://127.0.0.1:8080"
 api_key_env = "DOCBANK_TEST_KEY"
 upload_consent = true
+asr_profile = "voice-asr"
 `
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
@@ -24,7 +25,7 @@ upload_consent = true
 	require.NoError(t, err)
 	assert.Equal(t, DocbankIntegrationConfig{
 		Enabled: true, URL: "http://127.0.0.1:8080",
-		APIKeyEnv: "DOCBANK_TEST_KEY", UploadConsent: true,
+		APIKeyEnv: "DOCBANK_TEST_KEY", UploadConsent: true, ASRProfile: "voice-asr",
 	}, cfg.Integrations.Docbank)
 }
 

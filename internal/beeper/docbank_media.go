@@ -49,7 +49,7 @@ var (
 	errBeeperMediaGateBusy           = errors.New("operation gate busy")
 )
 
-// MediaDescriptor contains immutable claims for one verified Beeper media
+// MediaDescriptor contains immutable claims for one verified stored-media
 // version. It intentionally carries no transcript text or credentials.
 type MediaDescriptor struct {
 	Occurrence           docbankmedia.Occurrence
@@ -67,6 +67,8 @@ type MediaDescriptor struct {
 	Filename             string
 	MIMEType             string
 	ProcessingKey        string
+	ProcessingProvider   string
+	ProcessingProfile    string
 }
 
 // MediaBatchResult counts one bounded pass. Retained counts a retention
@@ -79,7 +81,7 @@ type MediaBatchResult struct {
 	Journaled int
 }
 
-// MediaSubmitter discovers current Beeper media, persists source mappings and
+// MediaSubmitter discovers current stored media, persists source mappings and
 // performs at most one Docbank action per bounded pass.
 type MediaSubmitter struct {
 	store         *store.Store
@@ -89,7 +91,17 @@ type MediaSubmitter struct {
 	spoolDir      string
 	actionTimeout time.Duration
 	uploadRate    int64
+	asrProfile    string
 	gate          func(context.Context) (func(), bool)
+}
+
+// WithASRProfile enables a configured Docbank processing profile for stored
+// audio that has no usable source transcript.
+func (w *MediaSubmitter) WithASRProfile(profile string) *MediaSubmitter {
+	if w != nil {
+		w.asrProfile = strings.TrimSpace(profile)
+	}
+	return w
 }
 
 // NewMediaSubmitter returns a worker for one destination. A nil client keeps
@@ -306,15 +318,11 @@ func (w *MediaSubmitter) replayJournal(ctx context.Context, archiveUID string) (
 func (w *MediaSubmitter) mappingForCandidate(
 	ctx context.Context, archiveUID string, candidate store.BeeperMediaCandidate,
 ) (store.BeeperMediaMapping, error) {
-	raw, err := w.store.GetMessageRawContext(ctx, candidate.MessageID)
-	if beeperMediaRawGap(err) {
-		return fallbackMediaMapping(w.destination, candidate, archiveUID, errBeeperMediaRawInvalid), nil
-	}
+	descriptor, _, err := w.describeCandidate(ctx, archiveUID, candidate)
 	if err != nil {
-		return store.BeeperMediaMapping{}, err
-	}
-	descriptor, _, err := describeMedia(raw, candidate, archiveUID)
-	if err != nil {
+		if !isBeeperMediaGap(err) {
+			return store.BeeperMediaMapping{}, err
+		}
 		return fallbackMediaMapping(w.destination, candidate, archiveUID, err), nil
 	}
 	return descriptorMapping(w.destination, candidate, descriptor), nil
@@ -322,6 +330,145 @@ func (w *MediaSubmitter) mappingForCandidate(
 
 func beeperMediaRawGap(err error) bool {
 	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrInvalidMessageRaw)
+}
+
+func (w *MediaSubmitter) describeCandidate(
+	ctx context.Context, archiveUID string, candidate store.BeeperMediaCandidate,
+) (MediaDescriptor, string, error) {
+	if candidate.SourceType == "beeper" {
+		raw, err := w.store.GetMessageRawContext(ctx, candidate.MessageID)
+		if beeperMediaRawGap(err) {
+			return MediaDescriptor{}, "", errBeeperMediaRawInvalid
+		}
+		if err != nil {
+			return MediaDescriptor{}, "", err
+		}
+		descriptor, transcript, err := describeMedia(raw, candidate, archiveUID)
+		if err != nil {
+			return MediaDescriptor{RawHash: hashBytes(raw)}, "", err
+		}
+		descriptor.RawHash = hashBytes(raw)
+		return configureMediaProcessing(descriptor, transcript, w.asrProfile), transcript, nil
+	}
+
+	var raw []byte
+	raw, rawErr := w.store.GetMessageRawContext(ctx, candidate.MessageID)
+	if rawErr != nil && !beeperMediaRawGap(rawErr) {
+		return MediaDescriptor{}, "", rawErr
+	}
+	descriptor, transcript, err := describeStoredMedia(candidate, archiveUID, raw)
+	rawHash := hashBytes(raw)
+	if rawErr != nil {
+		rawHash = hashBytes(nil)
+	}
+	if err != nil {
+		return MediaDescriptor{RawHash: rawHash}, "", err
+	}
+	descriptor.RawHash = rawHash
+	return configureMediaProcessing(descriptor, transcript, w.asrProfile), transcript, nil
+}
+
+type storedTranscriptMetadata struct {
+	Provider  string `json:"provider"`
+	Text      string `json:"text"`
+	Language  string `json:"language"`
+	Truncated bool   `json:"truncated"`
+}
+
+type storedAttachmentMetadata struct {
+	SourceTranscript *storedTranscriptMetadata `json:"source_transcript"`
+}
+
+func describeStoredMedia(
+	candidate store.BeeperMediaCandidate, archiveUID string, raw []byte,
+) (MediaDescriptor, string, error) {
+	part := candidate.SourcePartKey
+	if part == "" {
+		part = candidate.SourceAttachmentID
+	}
+	if part == "" {
+		return MediaDescriptor{}, "", errBeeperMediaPartMissing
+	}
+	filename, requestMIME := selectedMediaMetadata(candidate.Filename, candidate.MIMEType)
+	transcript, language, err := storedSourceTranscript(candidate.AttachmentMetadata, candidate.SourceType)
+	if err != nil {
+		return MediaDescriptor{}, "", err
+	}
+	var message docbankmedia.Timestamp
+	if len(raw) > 0 {
+		var envelope struct {
+			Timestamp jsontext.Value `json:"timestamp"`
+		}
+		if json.Unmarshal(raw, &envelope) == nil {
+			message = mediaTimestamp(envelope.Timestamp)
+		}
+	}
+	descriptor := MediaDescriptor{
+		Occurrence: docbankmedia.Occurrence{
+			Ref: mediaOccurrenceRef(archiveUID, candidate.SourceType, candidate.SourceIdentifier,
+				candidate.SourceConversationID, candidate.SourceMessageID, part),
+			Filename: filename, Message: message,
+		},
+		SourceType: candidate.SourceType, SourceIdentifier: candidate.SourceIdentifier,
+		SourceConversationID: candidate.SourceConversationID, SourceMessageID: candidate.SourceMessageID,
+		SourceAttachmentID: candidate.SourceAttachmentID, SourcePartKey: part,
+		SourceSHA256: candidate.ContentHash, ByteLength: candidate.ByteLength,
+		TranscriptSHA256: transcriptHash(transcript), Language: language,
+		Filename: filename, MIMEType: requestMIME,
+	}
+	descriptor.Occurrence.Revision = mediaRevision(descriptor)
+	return descriptor, transcript, nil
+}
+
+func storedSourceTranscript(rawMetadata, sourceType string) (string, string, error) {
+	if strings.TrimSpace(rawMetadata) == "" {
+		return "", "", nil
+	}
+	var metadata storedAttachmentMetadata
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+		if strings.Contains(rawMetadata, `"source_transcript"`) {
+			return "", "", errBeeperMediaTranscriptInvalid
+		}
+		return "", "", nil
+	}
+	if metadata.SourceTranscript == nil {
+		return "", "", nil
+	}
+	transcript := metadata.SourceTranscript
+	if !strings.EqualFold(strings.TrimSpace(transcript.Provider), strings.TrimSpace(sourceType)) {
+		return "", "", nil
+	}
+	if transcript.Truncated || !utf8.ValidString(transcript.Text) {
+		return "", "", errBeeperMediaTranscriptInvalid
+	}
+	if len(transcript.Text) > beeperMediaTranscriptLimit {
+		return "", "", errBeeperMediaTranscriptTooLarge
+	}
+	return transcript.Text, strings.TrimSpace(transcript.Language), nil
+}
+
+func transcriptHash(transcript string) string {
+	if transcript == "" {
+		return ""
+	}
+	return hashBytes([]byte(transcript))
+}
+
+func configureMediaProcessing(descriptor MediaDescriptor, transcript, asrProfile string) MediaDescriptor {
+	descriptor.ProcessingKey = ""
+	descriptor.ProcessingProfile = ""
+	descriptor.ProcessingProvider = descriptor.SourceType
+	if descriptor.TranscriptSHA256 != "" && transcript != "" {
+		descriptor.ProcessingKey = mediaProcessingKey(descriptor)
+		descriptor.ProcessingProfile = "supplied-transcript"
+		return descriptor
+	}
+	asrProfile = strings.TrimSpace(asrProfile)
+	if asrProfile != "" {
+		descriptor.ProcessingKey = mediaASRProcessingKey(descriptor, asrProfile)
+		descriptor.ProcessingProfile = asrProfile
+	}
+	return descriptor
 }
 
 type beeperMediaEvidence struct {
@@ -345,17 +492,12 @@ func (w *MediaSubmitter) candidateEvidence(
 		return beeperMediaEvidence{}, err
 	}
 	evidence := beeperMediaEvidence{candidate: candidate}
-	raw, err := w.store.GetMessageRawContext(ctx, candidate.MessageID)
-	if beeperMediaRawGap(err) {
-		evidence.gapCode = errBeeperMediaRawInvalid.Error()
-		return evidence, nil
-	}
+	descriptor, transcript, err := w.describeCandidate(ctx, archiveUID, candidate)
+	evidence.rawHash = descriptor.RawHash
 	if err != nil {
-		return beeperMediaEvidence{}, err
-	}
-	evidence.rawHash = hashBytes(raw)
-	descriptor, transcript, err := describeMedia(raw, candidate, archiveUID)
-	if err != nil {
+		if !isBeeperMediaGap(err) {
+			return beeperMediaEvidence{}, err
+		}
 		evidence.gapCode = mediaGapCode(err)
 		return evidence, nil
 	}
@@ -366,18 +508,22 @@ func (w *MediaSubmitter) candidateEvidence(
 func (w *MediaSubmitter) mappingEvidence(
 	ctx context.Context, archiveUID string, mapping store.BeeperMediaMapping,
 ) (beeperMediaEvidence, error) {
-	evidence := beeperMediaEvidence{candidate: mappingCandidate(mapping), mapping: mapping}
-	raw, err := w.store.GetMessageRawContext(ctx, mapping.MessageID)
-	if beeperMediaRawGap(err) {
-		evidence.gapCode = errBeeperMediaRawInvalid.Error()
-		return evidence, nil
+	candidate := mappingCandidate(mapping)
+	if mapping.AttachmentID > 0 {
+		current, currentErr := w.store.GetBeeperMediaCandidate(ctx, mapping.AttachmentID)
+		if currentErr == nil {
+			candidate = current
+		} else if !errors.Is(currentErr, sql.ErrNoRows) {
+			return beeperMediaEvidence{}, currentErr
+		}
 	}
+	evidence := beeperMediaEvidence{candidate: candidate, mapping: mapping}
+	descriptor, transcript, err := w.describeCandidate(ctx, archiveUID, candidate)
+	evidence.rawHash = descriptor.RawHash
 	if err != nil {
-		return beeperMediaEvidence{}, err
-	}
-	evidence.rawHash = hashBytes(raw)
-	descriptor, transcript, err := describeMedia(raw, evidence.candidate, archiveUID)
-	if err != nil {
+		if !isBeeperMediaGap(err) {
+			return beeperMediaEvidence{}, err
+		}
 		evidence.gapCode = mediaGapCode(err)
 		return evidence, nil
 	}
@@ -398,7 +544,7 @@ func sameBeeperMediaCandidate(a, b store.BeeperMediaCandidate) bool {
 		a.SourceAttachmentID == b.SourceAttachmentID && a.SourcePartKey == b.SourcePartKey &&
 		a.Filename == b.Filename && a.MIMEType == b.MIMEType && a.MediaType == b.MediaType &&
 		a.Role == b.Role && a.ContentHash == b.ContentHash && a.ByteLength == b.ByteLength &&
-		a.AttachmentState == b.AttachmentState
+		a.AttachmentState == b.AttachmentState && a.AttachmentMetadata == b.AttachmentMetadata
 }
 
 func sameBeeperMediaMapping(a store.BeeperMediaMapping, b beeperMediaEvidence) bool {
@@ -421,6 +567,7 @@ func descriptorMapping(
 		Language: descriptor.Language, OccurrenceJSON: mustJSON(descriptor.Occurrence),
 		Filename: descriptor.Filename, MIMEType: descriptor.MIMEType,
 		RetentionState: store.BeeperMediaRetentionPending, ProcessingKey: descriptor.ProcessingKey,
+		ProcessingProvider: descriptor.ProcessingProvider, ProcessingProfile: descriptor.ProcessingProfile,
 	}
 }
 
@@ -440,7 +587,7 @@ func fallbackMediaMappingCode(
 		part = candidate.SourceAttachmentID
 	}
 	if part == "" {
-		part = "beeper:unknown"
+		part = candidate.SourceType + ":unknown"
 	}
 	filename, mediaType := selectedMediaMetadata(candidate.Filename, candidate.MIMEType)
 	descriptor := MediaDescriptor{
@@ -537,20 +684,25 @@ func (w *MediaSubmitter) retain(
 		if err != nil {
 			return err
 		}
-		raw, err := w.store.GetMessageRawContext(ctx, candidate.MessageID)
-		if beeperMediaRawGap(err) {
+		raw, rawErr := w.store.GetMessageRawContext(ctx, candidate.MessageID)
+		if candidate.SourceType == "beeper" && beeperMediaRawGap(rawErr) {
 			_, err = w.store.FinishBeeperMediaOperation(ctx, operation, store.BeeperMediaResult{
 				ErrorCode: errBeeperMediaRawInvalid.Error(), SourceUnavailable: true,
 			})
 			return err
 		}
-		if err != nil {
-			return err
+		if rawErr != nil && !beeperMediaRawGap(rawErr) {
+			return rawErr
 		}
 		currentRawHash := hashBytes(raw)
+		if rawErr != nil {
+			currentRawHash = hashBytes(nil)
+		}
+		rawMustMatch := candidate.SourceType == "beeper" &&
+			(fresh.rawHash == "" || currentRawHash != fresh.rawHash)
 		if fresh.missing || fresh.gapCode != "" ||
 			!sameBeeperMediaCandidate(candidate, fresh.candidate) ||
-			fresh.rawHash == "" || currentRawHash != fresh.rawHash ||
+			rawMustMatch ||
 			fresh.rawHash != evidence.rawHash ||
 			fresh.descriptor.Occurrence.Ref != operation.OccurrenceRef ||
 			fresh.descriptor.Occurrence.Revision != operation.Revision ||
@@ -644,24 +796,28 @@ func (w *MediaSubmitter) artifact(
 			if snapshot == nil {
 				continue
 			}
-			raw, err := w.store.GetMessageRawContext(ctx, mapping.MessageID)
-			if beeperMediaRawGap(err) {
+			raw, rawErr := w.store.GetMessageRawContext(ctx, mapping.MessageID)
+			if mapping.SourceType == "beeper" && beeperMediaRawGap(rawErr) {
 				gaps = append(gaps, fallbackMediaMapping(w.destination, mappingCandidate(mapping), archiveUID,
 					errBeeperMediaRawInvalid))
 				continue
 			}
-			if err != nil {
-				return err
+			if rawErr != nil && !beeperMediaRawGap(rawErr) {
+				return rawErr
 			}
 			currentRawHash := hashBytes(raw)
+			if rawErr != nil {
+				currentRawHash = hashBytes(nil)
+			}
 			if snapshot.gapCode != "" {
-				if snapshot.rawHash != "" && currentRawHash == snapshot.rawHash {
+				if (snapshot.rawHash == "" && rawErr != nil) ||
+					(snapshot.rawHash != "" && currentRawHash == snapshot.rawHash) {
 					gaps = append(gaps, fallbackMediaMappingCode(w.destination,
 						mappingCandidate(mapping), archiveUID, snapshot.gapCode))
 				}
 				continue
 			}
-			if currentRawHash != snapshot.rawHash {
+			if snapshot.rawHash != "" && currentRawHash != snapshot.rawHash {
 				if sourceChanged == nil {
 					copyOf := *snapshot
 					sourceChanged = &copyOf
@@ -686,7 +842,7 @@ func (w *MediaSubmitter) artifact(
 				transcriptSHA := sourceChanged.descriptor.TranscriptSHA256
 				operation.FrozenRequestJSON = mustJSON(docbankmedia.ArtifactMetadata{
 					OccurrenceID: sourceChanged.mapping.DocbankOccurrenceID, Kind: "transcript", Origin: "provider",
-					Provider: "beeper", Language: operation.Language, Filename: "transcript.txt",
+					Provider: sourceChanged.mapping.SourceType, Language: operation.Language, Filename: "transcript.txt",
 					MediaType: "text/plain", SHA256: transcriptSHA, ByteLength: int64(len(sourceChanged.transcript)),
 				})
 				operation.DocbankSourceID, operation.SourceVersionID = sourceChanged.mapping.DocbankSourceID, sourceChanged.mapping.SourceVersionID
@@ -713,7 +869,7 @@ func (w *MediaSubmitter) artifact(
 		transcriptSHA := surviving.descriptor.TranscriptSHA256
 		operation.FrozenRequestJSON = mustJSON(docbankmedia.ArtifactMetadata{
 			OccurrenceID: donor.DocbankOccurrenceID, Kind: "transcript", Origin: "provider",
-			Provider: "beeper", Language: operation.Language, Filename: "transcript.txt",
+			Provider: donor.SourceType, Language: operation.Language, Filename: "transcript.txt",
 			MediaType: "text/plain", SHA256: transcriptSHA, ByteLength: int64(len(transcript)),
 		})
 		operation.DocbankSourceID, operation.SourceVersionID = donor.DocbankSourceID, donor.SourceVersionID
@@ -748,7 +904,7 @@ func (w *MediaSubmitter) artifact(
 	return w.finishOperation(ctx, prepared, store.BeeperMediaResult{SuppliedInputID: receipt.SuppliedInputID})
 }
 
-// process explicitly queues the supplied-transcript profile once per key.
+// process explicitly queues the saved processing profile once per key.
 func (w *MediaSubmitter) process(
 	ctx, actionCtx context.Context, archiveUID string, operation store.BeeperMediaOperation,
 ) error {
@@ -763,9 +919,14 @@ func (w *MediaSubmitter) process(
 	if err != nil {
 		return err
 	}
-	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
-		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
-	})
+	profile := strings.TrimSpace(operation.ProcessingProfile)
+	if profile == "" {
+		profile = "supplied-transcript"
+	}
+	processingRequest := docbankmedia.Processing{
+		Profile: profile, SuppliedInputID: operation.SuppliedInputID,
+	}
+	operation.FrozenRequestJSON = mustJSON(processingRequest)
 	var prepared store.BeeperMediaOperation
 	var vaultUID string
 	var retryScheduled bool
@@ -785,17 +946,24 @@ func (w *MediaSubmitter) process(
 			return nil
 		}
 		vaultUID = selected.VaultUID
-		raw, err := w.store.GetMessageRawContext(ctx, selected.MessageID)
-		if beeperMediaRawGap(err) {
+		operation.DocbankSourceID = selected.DocbankSourceID
+		operation.SourceVersionID = selected.SourceVersionID
+		operation.ContentVersionID = selected.ContentVersionID
+		operation.DocbankOccurrenceID = selected.DocbankOccurrenceID
+		raw, rawErr := w.store.GetMessageRawContext(ctx, selected.MessageID)
+		if selected.SourceType == "beeper" && beeperMediaRawGap(rawErr) {
 			gap := fallbackMediaMapping(w.destination, mappingCandidate(*selected), archiveUID,
 				errBeeperMediaRawInvalid)
 			return w.store.ReconcileBeeperMediaMapping(ctx, gap)
 		}
-		if err != nil {
-			return err
+		if rawErr != nil && !beeperMediaRawGap(rawErr) {
+			return rawErr
 		}
 		currentRawHash := hashBytes(raw)
-		if currentRawHash != evidence.rawHash {
+		if rawErr != nil {
+			currentRawHash = hashBytes(nil)
+		}
+		if evidence.rawHash != "" && currentRawHash != evidence.rawHash {
 			prepared, err = w.store.PrepareBeeperMediaOperation(ctx, operation)
 			if err != nil {
 				return err
@@ -830,7 +998,7 @@ func (w *MediaSubmitter) process(
 	if err := json.Unmarshal([]byte(prepared.FrozenRequestJSON), &processing); err != nil {
 		return fmt.Errorf("decode saved beeper processing request: %w", err)
 	}
-	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing.SuppliedInputID)
+	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, prepared, err)
 	}
@@ -870,7 +1038,8 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, operation, err)
 	}
-	if source.VaultUID != operation.VaultUID || source.SourceID != operation.DocbankSourceID {
+	if source.VaultUID != operation.VaultUID || source.SourceID != operation.DocbankSourceID ||
+		source.SourceVersionID != operation.SourceVersionID || source.ContentVersionID != operation.ContentVersionID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
 	own, err := w.ownProcessingReceipt(actionCtx, operation, source)
@@ -878,9 +1047,19 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 		return w.finishClientError(ctx, actionCtx, operation, err)
 	}
 	if own.VaultUID != operation.VaultUID || own.SourceID != operation.DocbankSourceID ||
+		own.SourceVersionID != operation.SourceVersionID || own.ContentVersionID != operation.ContentVersionID ||
 		own.OperationID != operation.OperationID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
+	if operation.OccurrenceRef == "" || operation.Revision == "" {
+		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
+	}
+	live, err := w.store.IsBeeperMediaOccurrenceLive(ctx, operation.DestinationKey,
+		operation.OccurrenceRef, operation.Revision)
+	if err != nil {
+		return err
+	}
+	_ = live
 	result := store.BeeperMediaResult{OperationState: own.OperationState, CoverageState: own.CoverageState}
 	switch {
 	case own.OperationState == "failed" || own.OperationState == "cancelled":
@@ -901,7 +1080,13 @@ func (w *MediaSubmitter) ownProcessingReceipt(
 	ctx context.Context, operation store.BeeperMediaOperation, source docbankmedia.Receipt,
 ) (docbankmedia.Receipt, error) {
 	if source.OperationID != operation.OperationID {
-		return w.client.Process(ctx, operation.DocbankSourceID, operation.OperationID, operation.SuppliedInputID)
+		profile := strings.TrimSpace(operation.ProcessingProfile)
+		if profile == "" {
+			profile = "supplied-transcript"
+		}
+		return w.client.Process(ctx, operation.DocbankSourceID, operation.OperationID, docbankmedia.Processing{
+			Profile: profile, SuppliedInputID: operation.SuppliedInputID,
+		})
 	}
 	if source.OperationState != "succeeded" {
 		// Until this operation succeeds, source coverage belongs to an earlier one.
@@ -957,7 +1142,9 @@ func mappingCandidate(mapping store.BeeperMediaMapping) store.BeeperMediaCandida
 		SourceType: mapping.SourceType, SourceIdentifier: mapping.SourceIdentifier,
 		SourceConversationID: mapping.SourceConversationID, SourceMessageID: mapping.SourceMessageID,
 		SourceAttachmentID: mapping.SourceAttachmentID, SourcePartKey: mapping.SourcePartKey,
+		Filename: mapping.Filename, MIMEType: mapping.MIMEType,
 		ContentHash: mapping.SourceSHA256, ByteLength: mapping.ByteLength,
+		AttachmentState: "stored", Role: "standalone",
 	}
 }
 
@@ -1062,8 +1249,16 @@ func mediaProcessingKey(descriptor MediaDescriptor) string {
 	if descriptor.TranscriptSHA256 == "" {
 		return ""
 	}
-	return hashDelimited("beeper", "supplied-transcript", descriptor.SourceSHA256,
+	provider := descriptor.SourceType
+	if provider == "" {
+		provider = "beeper"
+	}
+	return hashDelimited(provider, "supplied-transcript", descriptor.SourceSHA256,
 		descriptor.TranscriptSHA256, descriptor.Language)
+}
+
+func mediaASRProcessingKey(descriptor MediaDescriptor, profile string) string {
+	return hashDelimited("msgvault-media/v1", "asr", descriptor.SourceSHA256, profile)
 }
 
 func mediaOccurrenceRef(
@@ -1291,4 +1486,17 @@ func mediaGapCode(err error) string {
 	default:
 		return docbankmedia.ErrorCode(err)
 	}
+}
+
+func isBeeperMediaGap(err error) bool {
+	for _, candidate := range []error{
+		errBeeperMediaRawInvalid, errBeeperMediaPartMissing, errBeeperMediaPartAmbiguous,
+		errBeeperMediaUnsupported, errBeeperMediaTranscriptInvalid, errBeeperMediaTranscriptTooLarge,
+		errBeeperMediaSourceChanged, errBeeperMediaSourceUnavailable, errBeeperMediaNoLiveOccurrence,
+	} {
+		if errors.Is(err, candidate) {
+			return true
+		}
+	}
+	return false
 }

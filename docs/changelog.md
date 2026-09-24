@@ -14,12 +14,13 @@ All notable changes to msgvault, grouped by release.
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
 
-- Send stored Beeper WAV and MP3 audio, with Beeper's own transcript, to a
-  separately running Docbank media service that has the media HTTP routes. The
-  daemon backfills in small scheduled batches after `upload_consent` is set,
-  and Docbank's own consent still controls processing. msgvault keeps each
-  live message mapped to its Docbank occurrence; search over processed audio is
-  not included yet.
+- Send stored WAV and MP3 audio from captured messaging sources to a separately
+  running Docbank media service that has the media HTTP routes. The daemon
+  backfills in small scheduled batches after `upload_consent` is set and can
+  use an optional `asr_profile` when no usable source transcript exists.
+  Docbank's own consent still controls processing. msgvault keeps each live
+  message mapped to its Docbank occurrence; search over processed audio is not
+  included yet.
 
 See [Beeper audio](usage/beeper.md#send-audio-to-docbank).
 

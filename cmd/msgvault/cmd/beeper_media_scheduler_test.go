@@ -279,7 +279,7 @@ func (y *yieldTracker) BeginWorkContext(context.Context) (func(), bool) { return
 
 func (y *yieldTracker) ShouldYield() bool { return y.yield.Load() }
 
-func TestBeeperMediaScheduledRoute(t *testing.T) {
+func TestStoredMediaScheduledRoute(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, blobs := storedBeeperVoiceNote(t)

@@ -183,7 +183,9 @@ func TestClientMediaWire(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("input", artifact.SuppliedInputID)
 	processID := uuid.NewString()
-	processed, err := client.Process(t.Context(), "source", processID, artifact.SuppliedInputID)
+	processed, err := client.Process(t.Context(), "source", processID, docbankmedia.Processing{
+		Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID,
+	})
 	require.NoError(err)
 	status, err := client.JobStatus(t.Context(), processed.JobID)
 	require.NoError(err)
@@ -300,14 +302,18 @@ func TestClientMediaProcessReceipts(t *testing.T) {
 	require.NoError(err)
 
 	operationID := uuid.NewString()
-	receipt, err := client.Process(t.Context(), "failed", operationID, "input")
+	receipt, err := client.Process(t.Context(), "failed", operationID, docbankmedia.Processing{
+		Profile: "supplied-transcript", SuppliedInputID: "input",
+	})
 	require.NoError(err)
 	assert.Equal("failed", receipt.OperationState)
 	assert.Equal("unavailable", receipt.CoverageState)
 	assert.Empty(receipt.JobID)
 	assert.Equal(operationID, receipt.OperationID)
 
-	_, err = client.Process(t.Context(), "queued", uuid.NewString(), "input")
+	_, err = client.Process(t.Context(), "queued", uuid.NewString(), docbankmedia.Processing{
+		Profile: "supplied-transcript", SuppliedInputID: "input",
+	})
 	require.ErrorIs(err, docbankmedia.ErrInvalidReceipt)
 }
 
@@ -354,7 +360,9 @@ func TestDocbankMediaLiveContract(t *testing.T) {
 		require.NoError(err, sample.name)
 		require.NotEmpty(artifact.SuppliedInputID)
 
-		processed, err := client.Process(t.Context(), first.SourceID, uuid.NewString(), artifact.SuppliedInputID)
+		processed, err := client.Process(t.Context(), first.SourceID, uuid.NewString(), docbankmedia.Processing{
+			Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID,
+		})
 		if err != nil {
 			t.Logf("%s processing refused with %s", sample.name, docbankmedia.ErrorCode(err))
 			continue

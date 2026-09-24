@@ -181,12 +181,13 @@ GROUP BY is_share;
 
 ## Send audio to Docbank
 
-The daemon can copy stored Beeper audio to a separately running Docbank media
-service. Docbank keeps the recording, imports Beeper's own transcript, and
-processes it with its `supplied-transcript` profile. msgvault records which
-Docbank source and occurrence belong to each live message. Configure the
-destination in
-[`[integrations.docbank]`](/docs/configuration/#send-beeper-audio-to-docbank).
+The daemon can copy stored audio from captured messaging sources to a
+separately running Docbank media service. Docbank keeps the recording and
+msgvault records which Docbank source and occurrence belong to each live
+message. Beeper's complete attachment transcript is imported as supplied
+evidence. Other source transcripts are used only when the attachment metadata
+explicitly identifies the source and text. Configure the destination in
+[`[integrations.docbank]`](/docs/configuration/#send-stored-audio-to-docbank).
 
 What you need:
 
@@ -194,20 +195,33 @@ What you need:
   ([docbank#346](https://github.com/kenn-io/docbank/pull/346)). The Docbank
   library built into msgvault does not provide them.
 - `upload_consent = true`. It allows transport to that URL only. Docbank's own
-  processing consent decides whether the transcript is processed.
+  processing consent decides whether a supplied transcript or configured ASR
+  profile is processed.
+- An optional `asr_profile = "asr"` requests that Docbank process stored audio
+  without usable source text. Leave it empty to retain the audio without a
+  processing request.
 - WAV or MP3 audio. msgvault checks the bytes and sends them as `audio/wav` or
   `audio/mpeg`, whatever type the provider reported. Docbank accepts no other
   codec, so OGG/Opus, M4A and other formats stay local with the
   `unsupported_media` code. msgvault never converts audio or runs speech
   recognition.
+- The route consumes stored attachment rows from Beeper, WhatsApp, Messenger,
+  SyncTech MMS, Slack, Discord, Google Voice and future importers. An importer
+  must have captured the bytes and a stable part identity first; this route
+  never downloads missing media or invents a placeholder hash.
 
 What happens:
 
-- Voice notes and ordinary audio both qualify when they are stored, standalone
-  Beeper attachments. Previews, stickers and other sources are skipped.
-- msgvault reads the complete transcript for that attachment from the archived
-  raw message, not the 32 KiB metadata copy. Audio without a transcript is
-  still kept by Docbank and reported as `unprocessed`.
+- Voice notes and ordinary audio qualify when they are stored, standalone
+  Beeper attachments. Other captured sources qualify when their stored row has
+  a stable source part and standalone or unknown role. Previews, stickers and
+  other known inline roles are skipped.
+- msgvault reads Beeper's complete transcript from the archived raw message,
+  not the 32 KiB metadata copy. For other sources it accepts only explicit,
+  complete `source_transcript` attachment metadata from the same provider. It
+  never turns authored message text or a caption URL into transcript evidence.
+- Audio without source text is retained and uses the configured ASR profile
+  when one is set. With an empty profile it remains `unprocessed`.
 - The job backfills existing audio in pages of up to 100 attachments. After
   that first scan, it checks up to 100 attachment changes each minute. It
   starts another full scan a day after the previous scan finishes, to catch
@@ -227,6 +241,8 @@ What happens:
   inspection and allocation overhead. These file limits are not RAM limits.
 - The same recording in several messages gets one occurrence per message.
   Docbank stores the bytes once, and each exact transcript is processed once.
+  Shared bytes can reuse one processing delivery across providers when the same
+  ASR profile is selected.
 - A hidden, source-deleted, removed or replaced message loses its mapping
   (`revoked`), including audio still waiting to be sent. Other messages
   sharing the audio keep theirs. Reaction changes leave the mapping live.

@@ -22,7 +22,7 @@ import (
 const (
 	beeperMediaSubmitJob  = "beeper-media-submit"
 	beeperMediaSubmitCron = "* * * * *"
-	beeperMediaGateLabel  = "Beeper media submission"
+	beeperMediaGateLabel  = "Stored media submission"
 )
 
 // beeperMediaGateWait bounds each wait for the operation gate; a busy gate ends
@@ -127,7 +127,8 @@ func addBeeperMediaRoute(
 			return err
 		}
 	}
-	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).WithOperationGate(beeperMediaGate(gate))
+	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).
+		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate))
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,
@@ -137,7 +138,7 @@ func addBeeperMediaRoute(
 				return err
 			}
 			if logger != nil && (result.Examined > 0 || result.Journaled > 0) {
-				logger.Debug("Beeper media submission pass", "examined", result.Examined,
+				logger.Debug("Stored media submission pass", "examined", result.Examined,
 					"journaled", result.Journaled, "pending", result.Pending,
 					"retained", result.Retained, "blocked", result.Blocked)
 			}

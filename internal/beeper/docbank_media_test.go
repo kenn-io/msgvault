@@ -1126,13 +1126,19 @@ func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 
 func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		sourceVault  string
-		processVault string
-		sourceOp     string
+		name           string
+		sourceVault    string
+		sourceVersion  string
+		sourceContent  string
+		processVault   string
+		processVersion string
+		processContent string
+		sourceOp       string
 	}{
 		{name: "source status", sourceVault: "foreign-vault"},
+		{name: "source identity", sourceVersion: "foreign-version", sourceContent: "foreign-content"},
 		{name: "replayed processing receipt", processVault: "foreign-vault", sourceOp: "other-operation"},
+		{name: "replayed processing identity", processVersion: "foreign-version", processContent: "foreign-content", sourceOp: "other-operation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -1156,7 +1162,11 @@ func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 			require.NoError(err)
 			docbank.mu.Lock()
 			docbank.sourceVaultUID = tc.sourceVault
+			docbank.sourceVersionID = tc.sourceVersion
+			docbank.sourceContentVersionID = tc.sourceContent
 			docbank.processVaultUID = tc.processVault
+			docbank.processVersionID = tc.processVersion
+			docbank.processContentVersionID = tc.processContent
 			docbank.sourceOperationID = tc.sourceOp
 			docbank.coverage = "transcribed"
 			docbank.mu.Unlock()
@@ -1314,7 +1324,7 @@ func TestBeeperMediaReceiptIdentity(t *testing.T) {
 	assert.NotEqual(rows[0].ContentVersionID, docbank.artifactReceipts[0].ContentVersionID)
 }
 
-func TestBeeperMediaSharedContent(t *testing.T) {
+func TestStoredMediaSharedLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 7)
@@ -1395,7 +1405,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 	runPasses(t, world.submitter(t, server, "destination-eligible"), 4)
 
 	docbank.mu.Lock()
-	assert.ElementsMatch([][]byte{voice, ordinary}, docbank.uploads)
+	assert.ElementsMatch([][]byte{voice, ordinary, voice}, docbank.uploads)
 	docbank.mu.Unlock()
 	states := map[string]string{}
 	for _, row := range occurrenceRows(t, world.st, "destination-eligible") {
@@ -1403,13 +1413,14 @@ func TestBeeperMediaEligibility(t *testing.T) {
 	}
 	assert.Equal(map[string]string{
 		"voice1": "retained:", "audio1": "retained:", "fake1": "blocked:unsupported_media",
+		"beeper-message": "retained:",
 	}, states)
 	var messageType string
 	require.NoError(world.st.DB().QueryRow(`SELECT message_type FROM messages WHERE source_message_id = 'audio1'`).Scan(&messageType))
 	assert.Equal("beeper", messageType)
 }
 
-func TestBeeperMediaGaps(t *testing.T) {
+func TestStoredMediaAdmissionGaps(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t,
@@ -1612,43 +1623,48 @@ func deliveryNextActions(t *testing.T, st *store.Store, destination string) []st
 // metadata-then-file multipart, X-Api-Key, UUIDv4 replay and top-level
 // HTTP 200 receipts. It never returns an inline transcript field.
 type fakeDocbank struct {
-	t                 *testing.T
-	mu                sync.Mutex
-	status            int
-	malformed         bool
-	hang              bool
-	jobHTTPStatus     int
-	sourceHTTPStatus  int
-	jobState          string
-	jobFailureCode    string
-	sourceVaultUID    string
-	processVaultUID   string
-	sourceOperationID string
-	coverage          string
-	failProcessing    bool
-	dropRetention     bool
-	submitDelay       time.Duration
-	holdIndex         map[int]bool
-	requests          int
-	jobRequests       int
-	sourceRequests    int
-	replays           int
-	next              int
-	sources           map[string]int
-	occurrenceIDs     map[string]string
-	replies           map[string]docbankmedia.Receipt
-	firstMetadata     map[string]string
-	uploads           [][]byte
-	occurrences       []docbankmedia.Occurrence
-	retentionOps      []string
-	retentionMetadata []string
-	artifactOps       []string
-	artifactReceipts  []docbankmedia.Receipt
-	transcripts       []string
-	processOps        []string
-	sourceOps         map[string][]string
-	processReceipts   map[string]docbankmedia.Receipt
-	rejected          []string
+	t                       *testing.T
+	mu                      sync.Mutex
+	status                  int
+	malformed               bool
+	hang                    bool
+	jobHTTPStatus           int
+	sourceHTTPStatus        int
+	jobState                string
+	jobFailureCode          string
+	sourceVaultUID          string
+	sourceVersionID         string
+	sourceContentVersionID  string
+	processVaultUID         string
+	processVersionID        string
+	processContentVersionID string
+	sourceOperationID       string
+	coverage                string
+	failProcessing          bool
+	dropRetention           bool
+	submitDelay             time.Duration
+	holdIndex               map[int]bool
+	requests                int
+	jobRequests             int
+	sourceRequests          int
+	replays                 int
+	next                    int
+	sources                 map[string]int
+	occurrenceIDs           map[string]string
+	replies                 map[string]docbankmedia.Receipt
+	firstMetadata           map[string]string
+	uploads                 [][]byte
+	occurrences             []docbankmedia.Occurrence
+	retentionOps            []string
+	retentionMetadata       []string
+	artifactOps             []string
+	artifactReceipts        []docbankmedia.Receipt
+	transcripts             []string
+	processOps              []string
+	processRequests         []docbankmedia.Processing
+	sourceOps               map[string][]string
+	processReceipts         map[string]docbankmedia.Receipt
+	rejected                []string
 }
 
 func newFakeDocbank(t *testing.T) *fakeDocbank {
@@ -1800,7 +1816,7 @@ func (f *fakeDocbank) artifact(w http.ResponseWriter, r *http.Request, source st
 	}
 	assert.Equal(f.t, "transcript", metadata.Kind)
 	assert.Equal(f.t, "provider", metadata.Origin)
-	assert.Equal(f.t, "beeper", metadata.Provider)
+	assert.NotEmpty(f.t, metadata.Provider)
 	assert.Equal(f.t, "text/plain", metadata.MediaType)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1832,21 +1848,33 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 		f.reject(w, err)
 		return
 	}
-	assert.Equal(f.t, "supplied-transcript", body.Processing.Profile)
-	assert.NotEmpty(f.t, body.Processing.SuppliedInputID)
+	if body.Processing.Profile == "supplied-transcript" {
+		assert.NotEmpty(f.t, body.Processing.SuppliedInputID)
+	} else {
+		assert.Empty(f.t, body.Processing.SuppliedInputID)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, replay := f.processReceipts[body.OperationID]; replay {
 		// Docbank replays a known operation ID with its saved receipt.
 		f.replays++
+		f.processRequests = append(f.processRequests, body.Processing)
 		receipt := f.processingReceiptLocked(body.OperationID)
 		if f.processVaultUID != "" {
 			receipt.VaultUID = f.processVaultUID
 		}
+		if f.processVersionID != "" {
+			receipt.SourceVersionID = f.processVersionID
+		}
+		if f.processContentVersionID != "" {
+			receipt.ContentVersionID = f.processContentVersionID
+		}
 		writeDocbankJSON(w, receipt)
 		return
 	}
+	sourceVersionID, sourceContentVersionID, occurrenceID := f.sourceIdentityLocked(source)
 	receipt := docbankmedia.Receipt{VaultUID: "vault-1", SourceID: source,
+		SourceVersionID: sourceVersionID, ContentVersionID: sourceContentVersionID, OccurrenceID: occurrenceID,
 		OperationID: body.OperationID, JobID: sha256Hex([]byte(body.OperationID)),
 		OperationState: "queued", CoverageState: "pending", SuppliedInputID: body.Processing.SuppliedInputID}
 	if f.failProcessing {
@@ -1854,6 +1882,7 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 		receipt.JobID, receipt.OperationState, receipt.CoverageState = "", "failed", "unavailable"
 	}
 	f.processOps = append(f.processOps, body.OperationID)
+	f.processRequests = append(f.processRequests, body.Processing)
 	f.sourceOps[source] = append(f.sourceOps[source], body.OperationID)
 	f.processReceipts[body.OperationID] = receipt
 	writeDocbankJSON(w, receipt)
@@ -1870,6 +1899,15 @@ func (f *fakeDocbank) processingReceiptLocked(operationID string) docbankmedia.R
 	return receipt
 }
 
+func (f *fakeDocbank) sourceIdentityLocked(source string) (string, string, string) {
+	for _, receipt := range f.replies {
+		if receipt.SourceID == source && receipt.Outcome == "content_available" {
+			return receipt.SourceVersionID, receipt.ContentVersionID, receipt.OccurrenceID
+		}
+	}
+	return "", "", ""
+}
+
 // sourceStatus follows Docbank e33d77e4: the newest processing operation
 // supplies the operation fields, while coverage comes from the newest
 // succeeded operation on the same source.
@@ -1880,7 +1918,15 @@ func (f *fakeDocbank) sourceStatus(w http.ResponseWriter, source string) {
 	if vaultUID == "" {
 		vaultUID = "vault-1"
 	}
+	sourceVersionID, sourceContentVersionID, occurrenceID := f.sourceIdentityLocked(source)
+	if f.sourceVersionID != "" {
+		sourceVersionID = f.sourceVersionID
+	}
+	if f.sourceContentVersionID != "" {
+		sourceContentVersionID = f.sourceContentVersionID
+	}
 	receipt := docbankmedia.Receipt{VaultUID: vaultUID, SourceID: source,
+		SourceVersionID: sourceVersionID, ContentVersionID: sourceContentVersionID, OccurrenceID: occurrenceID,
 		OperationState: "succeeded", CoverageState: "unprocessed"}
 	operations := f.sourceOps[source]
 	if len(operations) > 0 {

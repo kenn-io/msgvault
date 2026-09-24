@@ -834,13 +834,12 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
-#### Send Beeper audio to Docbank
+#### Send stored audio to Docbank
 
-The daemon can send stored Beeper WAV and MP3 audio, with Beeper's own
-transcript, to a separately running Docbank media service. The service needs
-Docbank's media HTTP routes. See
-[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank) for what is
-sent and how progress is tracked.
+The daemon can send stored WAV and MP3 audio from captured messaging sources
+to a separately running Docbank media service. The service needs Docbank's
+media HTTP routes. See [Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank)
+for the capture and processing rules.
 
 ```toml
 [integrations.docbank]
@@ -848,21 +847,25 @@ enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
 upload_consent = true             # allow archive audio to leave msgvault
+# asr_profile = "asr"             # optional Docbank profile for audio without source text
 ```
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Schedule the Beeper media job in `msgvault serve` |
+| `enabled` | `false` | Schedule the stored-media job in `msgvault serve` |
 | `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
-| `upload_consent` | `false` | Allow audio and transcripts to be sent to `url`. Without it the job only records local state |
+| `upload_consent` | `false` | Allow stored audio and explicit source transcripts to be sent to `url`. Without it the job only records local state |
+| `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing |
 
 The daemon reads these settings at startup, so restart it after a change. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route
 stops the job and keeps its rows. A failed setup, such as an invalid `url`,
 does the same and logs a warning. `upload_consent` covers transport only; the
-Docbank daemon's own processing consent still decides whether transcripts are
-processed.
+Docbank daemon's processing consent still decides whether a configured profile
+may run. The route inspects stored CAS bytes, so MIME claims do not expand
+Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
+typed local states.
 
 ### `[slack]`
 

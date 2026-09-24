@@ -20,7 +20,8 @@ var beeperMediaLocalGapCodes = []any{"source_raw_invalid", "source_part_missing"
 
 // beeperMediaResumedPhase is the step a reopened delivery resumes from.
 const beeperMediaResumedPhase = `CASE WHEN job_id <> '' THEN 'observing'
-	WHEN supplied_input_id = '' THEN 'pending-artifact' ELSE 'pending-process' END`
+	WHEN profile = 'supplied-transcript' AND supplied_input_id = '' THEN 'pending-artifact'
+	ELSE 'pending-process' END`
 
 // beeperMediaLocalGapFilter matches error_code against beeperMediaLocalGapCodes.
 func beeperMediaLocalGapFilter() string {
@@ -54,12 +55,21 @@ const (
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes the aliases a (attachments), m (messages) and src (sources).
-const beeperMediaEligible = `src.source_type = 'beeper'
-	  AND length(COALESCE(a.content_hash, '')) = 64
+const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(a.storage_path, '') <> ''
 	  AND COALESCE(a.attachment_state, '') = 'stored'
-	  AND COALESCE(a.media_type, '') IN ('audio', 'voice_note')
-	  AND COALESCE(a.attachment_role, 'unknown') = 'standalone'`
+	  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') <> ''
+	  AND COALESCE(src.source_type, '') <> ''
+	  AND COALESCE(src.identifier, '') <> ''
+	  AND COALESCE(m.source_message_id, '') <> ''
+	  AND COALESCE(c.source_conversation_id, '') <> ''
+	  AND (
+		(src.source_type = 'beeper'
+		  AND COALESCE(a.media_type, '') IN ('audio', 'voice_note')
+		  AND COALESCE(a.attachment_role, 'unknown') = 'standalone')
+		OR (src.source_type <> 'beeper'
+		  AND COALESCE(a.attachment_role, 'unknown') IN ('standalone', 'unknown'))
+	  )`
 
 // beeperMediaCurrentJoin follows occurrence row o to its live source
 // attachment by stable source tuple, never by attachment row ID.
@@ -95,6 +105,7 @@ type BeeperMediaCandidate struct {
 	ContentHash          string
 	ByteLength           int64
 	AttachmentState      string
+	AttachmentMetadata   string
 }
 
 // BeeperMediaMapping is one occurrence row together with the optional shared
@@ -140,6 +151,8 @@ type BeeperMediaMapping struct {
 	JobID                 string
 	OperationState        string
 	ProcessingCoverage    string
+	ProcessingProvider    string
+	ProcessingProfile     string
 }
 
 // BeeperMediaOperation is the one remote action selected by a bounded pass.
@@ -150,6 +163,8 @@ type BeeperMediaOperation struct {
 	OccurrenceRef       string
 	Revision            string
 	ProcessingKey       string
+	ProcessingProvider  string
+	ProcessingProfile   string
 	OperationID         string
 	FrozenRequestJSON   string
 	SourceSHA256        string
@@ -207,7 +222,8 @@ const beeperMediaCandidateColumns = `
 	       COALESCE(a.filename, ''), COALESCE(a.mime_type, ''),
 	       COALESCE(a.media_type, ''), COALESCE(a.attachment_role, 'unknown'),
 	       COALESCE(a.content_hash, ''), COALESCE(a.size, 0),
-	       COALESCE(a.attachment_state, '')
+	       COALESCE(a.attachment_state, ''),
+	       COALESCE(CAST(a.attachment_metadata AS TEXT), '')
 	FROM attachments a
 	JOIN messages m ON m.id = a.message_id
 	JOIN conversations c ON c.id = m.conversation_id
@@ -258,7 +274,7 @@ func (s *Store) queryBeeperMediaCandidates(
 			&candidate.SourceAttachmentID, &candidate.SourcePartKey,
 			&candidate.Filename, &candidate.MIMEType, &candidate.MediaType,
 			&candidate.Role, &candidate.ContentHash, &candidate.ByteLength,
-			&candidate.AttachmentState,
+			&candidate.AttachmentState, &candidate.AttachmentMetadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan beeper media candidate: %w", err)
 		}
@@ -324,10 +340,22 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 		} else if err != nil {
 			return fmt.Errorf("read beeper media occurrence: %w", err)
 		} else {
+			previousProcessingKey := existing.ProcessingKey
 			next := reconciledBeeperMediaOccurrence(existing, mapping)
 			if !sameBeeperMediaOccurrence(existing, next) {
 				if err := s.updateBeeperMediaOccurrence(q, next); err != nil {
 					return err
+				}
+			}
+			if previousProcessingKey != "" && previousProcessingKey != next.ProcessingKey {
+				if _, err := q.Exec(`
+				UPDATE beeper_media_deliveries
+				SET phase = 'blocked', next_action_at = NULL, error_code = 'processing_key_changed',
+				    updated_at = `+s.dialect.Now()+`
+				WHERE destination_key = ? AND processing_key = ?
+				  AND phase IN ('pending-artifact', 'pending-process') AND COALESCE(job_id, '') = ''`,
+					mapping.DestinationKey, previousProcessingKey); err != nil {
+					return fmt.Errorf("retire changed beeper media processing state: %w", err)
 				}
 			}
 			reopened = existing.RetentionState != next.RetentionState
@@ -335,14 +363,19 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 		}
 
 		if mapping.ProcessingKey != "" {
+			provider, profile := beeperMediaDeliveryProfile(mapping)
+			phase := beeperMediaPhasePendingProcess
+			if profile == beeperMediaProcessingProfile {
+				phase = beeperMediaPhasePendingArtifact
+			}
 			if _, err := q.Exec(`
 			INSERT INTO beeper_media_deliveries
 				(destination_key, processing_key, source_sha256, byte_length, transcript_sha256,
 				language, provider, profile, phase, next_action_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, 'beeper', ?, 'pending-artifact', ?, `+s.dialect.Now()+`, `+s.dialect.Now()+`)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.Now()+`, `+s.dialect.Now()+`)
 			ON CONFLICT (destination_key, processing_key) DO NOTHING`,
 				mapping.DestinationKey, mapping.ProcessingKey, mapping.SourceSHA256, mapping.ByteLength,
-				mapping.TranscriptSHA256, mapping.Language, beeperMediaProcessingProfile,
+				mapping.TranscriptSHA256, mapping.Language, provider, profile, phase,
 				s.timestampValue(time.Now().UTC())); err != nil {
 				return fmt.Errorf("create beeper media processing state: %w", err)
 			}
@@ -404,6 +437,8 @@ func reconciledBeeperMediaOccurrence(existing, current BeeperMediaMapping) Beepe
 	next.SourceMessageID, next.SourceAttachmentID = current.SourceMessageID, current.SourceAttachmentID
 	next.SourcePartKey, next.LocalSourceID = current.SourcePartKey, current.LocalSourceID
 	next.MessageID, next.AttachmentID, next.RawHash = current.MessageID, current.AttachmentID, current.RawHash
+	next.ProcessingKey = current.ProcessingKey
+	next.ProcessingProvider, next.ProcessingProfile = current.ProcessingProvider, current.ProcessingProfile
 	switch {
 	case existing.DocbankSourceID != "":
 		next.RetentionState = BeeperMediaRetentionRetained
@@ -425,7 +460,7 @@ func sameBeeperMediaOccurrence(a, b BeeperMediaMapping) bool {
 		a.SourcePartKey == b.SourcePartKey && a.LocalSourceID == b.LocalSourceID &&
 		a.MessageID == b.MessageID && a.AttachmentID == b.AttachmentID && a.RawHash == b.RawHash &&
 		a.RetentionState == b.RetentionState && a.RetentionOperationID == b.RetentionOperationID &&
-		a.ErrorCode == b.ErrorCode && a.NextActionAt.Equal(b.NextActionAt)
+		a.ErrorCode == b.ErrorCode && a.ProcessingKey == b.ProcessingKey && a.NextActionAt.Equal(b.NextActionAt)
 }
 
 // ListLiveBeeperMediaMappings returns retained mappings whose current source,
@@ -451,7 +486,8 @@ func (s *Store) ListLiveBeeperMediaMappings(
 		SELECT `+beeperMediaOccurrenceColumns("o")+`,
 		       COALESCE(d.phase, ''), COALESCE(d.processing_operation_id, ''),
 		       COALESCE(d.donor_occurrence_id, ''), COALESCE(d.supplied_input_id, ''),
-		       COALESCE(d.job_id, ''), COALESCE(d.operation_state, ''), COALESCE(d.coverage_state, '')
+		       COALESCE(d.job_id, ''), COALESCE(d.operation_state, ''), COALESCE(d.coverage_state, ''),
+		       COALESCE(d.provider, ''), COALESCE(d.profile, '')
 		FROM beeper_media_occurrences o
 		LEFT JOIN beeper_media_deliveries d
 		  ON d.destination_key = o.destination_key AND d.processing_key = o.processing_key
@@ -467,7 +503,8 @@ func (s *Store) ListLiveBeeperMediaMappings(
 		dest := beeperMediaOccurrenceScanTargets(&mapping)
 		dest = append(dest, &mapping.ProcessingPhase, &mapping.ProcessingOperationID,
 			&mapping.DonorOccurrenceID, &mapping.SuppliedInputID, &mapping.JobID,
-			&mapping.OperationState, &mapping.ProcessingCoverage)
+			&mapping.OperationState, &mapping.ProcessingCoverage,
+			&mapping.ProcessingProvider, &mapping.ProcessingProfile)
 		var next sql.NullTime
 		dest[beeperMediaNextActionIndex] = &next
 		if err := rows.Scan(dest...); err != nil {
@@ -516,6 +553,22 @@ func (s *Store) currentBeeperMediaMessage(ctx context.Context, mapping BeeperMed
 		return false, fmt.Errorf("resolve beeper media occurrence: %w", err)
 	}
 	return true, nil
+}
+
+// IsBeeperMediaOccurrenceLive checks the saved source tuple against the
+// current message and attachment. It is used when an observing delivery has
+// moved to a newer processing profile but still owns a remote receipt.
+func (s *Store) IsBeeperMediaOccurrenceLive(
+	ctx context.Context, destination, occurrenceRef, revision string,
+) (bool, error) {
+	mapping, err := s.readBeeperMediaOccurrence(boundQuerier{ctx: ctx, q: s.db}, destination, occurrenceRef, revision)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read beeper media occurrence: %w", err)
+	}
+	return s.currentBeeperMediaMessage(ctx, mapping)
 }
 
 // RevokeStaleBeeperMediaMappings moves non-revoked mappings without a current
@@ -617,7 +670,7 @@ func (s *Store) NextBeeperMediaOperation(
 	retain.NextActionAt = nullTimeValue(retainNext)
 
 	var delivery BeeperMediaOperation
-	var phase, pendingID, processingID, frozen string
+	var phase, pendingID, processingID, frozen, provider, profile string
 	var deliveryNext sql.NullTime
 	deliveryErr := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT d.phase, d.destination_key, d.processing_key, COALESCE(d.pending_operation_id, ''),
@@ -625,9 +678,35 @@ func (s *Store) NextBeeperMediaOperation(
 		       d.language, d.source_id, d.source_version_id, d.content_version_id,
 		       d.donor_occurrence_id, d.supplied_input_id, d.job_id,
 		       COALESCE(d.frozen_request_json, ''),
+		       COALESCE(d.provider, ''), COALESCE(d.profile, ''),
 		       COALESCE((SELECT o.vault_uid FROM beeper_media_occurrences o
-			WHERE o.destination_key = d.destination_key AND o.processing_key = d.processing_key
-			  AND o.vault_uid <> '' LIMIT 1), ''), d.next_action_at
+			WHERE o.destination_key = d.destination_key
+			  AND ((d.donor_occurrence_id <> '' AND o.occurrence_id = d.donor_occurrence_id)
+			       OR (d.donor_occurrence_id = '' AND o.processing_key = d.processing_key))
+			  AND (d.donor_occurrence_id = '' OR (o.source_id = d.source_id
+			       AND o.source_version_id = d.source_version_id
+			       AND o.content_version_id = d.content_version_id))
+			  AND o.vault_uid <> ''
+			ORDER BY CASE WHEN o.occurrence_id = d.donor_occurrence_id THEN 0 ELSE 1 END
+			LIMIT 1), ''),
+		       COALESCE((SELECT o.occurrence_ref FROM beeper_media_occurrences o
+			WHERE o.destination_key = d.destination_key
+			  AND ((d.donor_occurrence_id <> '' AND o.occurrence_id = d.donor_occurrence_id)
+			       OR (d.donor_occurrence_id = '' AND o.processing_key = d.processing_key))
+			  AND (d.donor_occurrence_id = '' OR (o.source_id = d.source_id
+			       AND o.source_version_id = d.source_version_id
+			       AND o.content_version_id = d.content_version_id))
+			ORDER BY CASE WHEN o.occurrence_id = d.donor_occurrence_id THEN 0 ELSE 1 END
+			LIMIT 1), ''),
+		       COALESCE((SELECT o.revision FROM beeper_media_occurrences o
+			WHERE o.destination_key = d.destination_key
+			  AND ((d.donor_occurrence_id <> '' AND o.occurrence_id = d.donor_occurrence_id)
+			       OR (d.donor_occurrence_id = '' AND o.processing_key = d.processing_key))
+			  AND (d.donor_occurrence_id = '' OR (o.source_id = d.source_id
+			       AND o.source_version_id = d.source_version_id
+			       AND o.content_version_id = d.content_version_id))
+			ORDER BY CASE WHEN o.occurrence_id = d.donor_occurrence_id THEN 0 ELSE 1 END
+			LIMIT 1), ''), d.next_action_at
 		FROM beeper_media_deliveries d
 		WHERE d.destination_key = ?
 		  AND d.phase IN ('pending-artifact', 'pending-process', 'observing')
@@ -637,9 +716,12 @@ func (s *Store) NextBeeperMediaOperation(
 				SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 				  AND o.destination_key = d.destination_key AND o.processing_key = d.processing_key
 				  AND o.retention_state = 'retained'))
-			OR (d.phase = 'observing' AND d.job_id <> '' AND EXISTS (
+			OR (d.phase = 'observing' AND d.job_id <> '' AND d.donor_occurrence_id <> '' AND EXISTS (
 				SELECT 1 FROM beeper_media_occurrences o
-				WHERE o.destination_key = d.destination_key AND o.processing_key = d.processing_key
+				WHERE o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id
+				  AND o.source_id = d.source_id
+				  AND o.source_version_id = d.source_version_id
+				  AND o.content_version_id = d.content_version_id
 				  AND o.vault_uid <> ''))
 		  )
 		ORDER BY d.next_action_at, d.processing_key
@@ -647,12 +729,14 @@ func (s *Store) NextBeeperMediaOperation(
 		&phase, &delivery.DestinationKey, &delivery.ProcessingKey, &pendingID, &processingID,
 		&delivery.SourceSHA256, &delivery.ByteLength, &delivery.TranscriptSHA256, &delivery.Language,
 		&delivery.DocbankSourceID, &delivery.SourceVersionID, &delivery.ContentVersionID,
-		&delivery.DocbankOccurrenceID, &delivery.SuppliedInputID, &delivery.JobID, &frozen, &delivery.VaultUID, &deliveryNext)
+		&delivery.DocbankOccurrenceID, &delivery.SuppliedInputID, &delivery.JobID, &frozen,
+		&provider, &profile, &delivery.VaultUID, &delivery.OccurrenceRef, &delivery.Revision, &deliveryNext)
 	if deliveryErr != nil && !errors.Is(deliveryErr, sql.ErrNoRows) {
 		return BeeperMediaOperation{}, false, fmt.Errorf("select beeper media processing operation: %w", deliveryErr)
 	}
 	delivery.NextActionAt = nullTimeValue(deliveryNext)
 	delivery.FrozenRequestJSON = frozen
+	delivery.ProcessingProvider, delivery.ProcessingProfile = provider, profile
 	switch phase {
 	case beeperMediaPhasePendingArtifact:
 		delivery.Kind, delivery.OperationID = BeeperMediaOperationArtifact, pendingID
@@ -751,8 +835,20 @@ func (s *Store) PrepareBeeperMediaOperation(
 		}
 		operation.OperationID = storedID
 		if operation.Kind == BeeperMediaOperationProcess {
-			operation.DocbankSourceID, operation.SourceVersionID = sourceID, sourceVersion
-			operation.ContentVersionID, operation.DocbankOccurrenceID = contentVersion, donor
+			// A first ASR request supplies the retained donor identity. Once
+			// saved, the delivery identity wins on every replay.
+			if sourceID != "" || operation.DocbankSourceID == "" {
+				operation.DocbankSourceID = sourceID
+			}
+			if sourceVersion != "" || operation.SourceVersionID == "" {
+				operation.SourceVersionID = sourceVersion
+			}
+			if contentVersion != "" || operation.ContentVersionID == "" {
+				operation.ContentVersionID = contentVersion
+			}
+			if donor != "" || operation.DocbankOccurrenceID == "" {
+				operation.DocbankOccurrenceID = donor
+			}
 			operation.SuppliedInputID = supplied
 		}
 		if _, err := q.Exec(`
@@ -1028,7 +1124,7 @@ func validateBeeperMediaMapping(mapping BeeperMediaMapping) error {
 			return fmt.Errorf("beeper media %s is required", field.name)
 		}
 	}
-	if mapping.SourceType != "beeper" {
+	if strings.TrimSpace(mapping.SourceType) == "" {
 		return errors.New("beeper media source type is invalid")
 	}
 	if mapping.ByteLength < 1 || !isBeeperMediaSHA256(mapping.SourceSHA256) {
@@ -1082,6 +1178,23 @@ func beeperMediaOccurrenceColumns(alias string) string {
 		columns[i] = alias + "." + columns[i]
 	}
 	return strings.Join(columns, ", ")
+}
+
+func beeperMediaDeliveryProfile(mapping BeeperMediaMapping) (string, string) {
+	provider := strings.TrimSpace(mapping.ProcessingProvider)
+	if provider == "" {
+		provider = strings.TrimSpace(mapping.SourceType)
+	}
+	if provider == "" {
+		provider = "beeper"
+	}
+	profile := strings.TrimSpace(mapping.ProcessingProfile)
+	if profile == "" {
+		if mapping.TranscriptSHA256 != "" {
+			profile = beeperMediaProcessingProfile
+		}
+	}
+	return provider, profile
 }
 
 // beeperMediaNextActionIndex is next_action_at's position in the column list.
@@ -1141,11 +1254,12 @@ func (s *Store) updateBeeperMediaOccurrence(q boundQuerier, m BeeperMediaMapping
 		SET source_identifier = ?, source_conversation_id = ?, source_message_id = ?,
 		    source_attachment_id = ?, source_part_key = ?, source_row_id = ?, message_id = ?,
 		    attachment_id = ?, raw_hash = ?, retention_operation_id = ?, retention_state = ?,
-		    next_action_at = ?, error_code = ?, updated_at = `+s.dialect.Now()+`
+		    next_action_at = ?, error_code = ?, processing_key = ?, updated_at = `+s.dialect.Now()+`
 		WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`,
 		m.SourceIdentifier, m.SourceConversationID, m.SourceMessageID, m.SourceAttachmentID,
 		m.SourcePartKey, m.LocalSourceID, m.MessageID, m.AttachmentID, m.RawHash,
 		m.RetentionOperationID, m.RetentionState, s.timestampValue(m.NextActionAt), m.ErrorCode,
+		m.ProcessingKey,
 		m.DestinationKey, m.OccurrenceRef, m.Revision)
 	if err != nil {
 		return fmt.Errorf("update beeper media occurrence: %w", err)

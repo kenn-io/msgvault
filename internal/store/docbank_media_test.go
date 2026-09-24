@@ -166,6 +166,8 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 	assert.Equal("input", process.SuppliedInputID)
 	assert.NotEqual(replayed.OperationID, process.OperationID)
 	process.FrozenRequestJSON = `{"profile":"supplied-transcript","supplied_input_id":"input"}`
+	process.SourceVersionID, process.ContentVersionID = "version", "content"
+	process.DocbankOccurrenceID = "occurrence"
 	process, err = f.Store.PrepareBeeperMediaOperation(t.Context(), process)
 	require.NoError(err)
 	assert.Equal("source", process.DocbankSourceID)
@@ -521,8 +523,8 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'observing', processing_operation_id = '11111111-1111-4111-8111-111111111111',
-		    source_id = 'source-c', source_version_id = 'version-c',
-		    content_version_id = 'content-c', donor_occurrence_id = 'observing-occurrence',
+		    source_id = 'source-cccc', source_version_id = 'version',
+		    content_version_id = 'content', donor_occurrence_id = 'observing-occurrence',
 		    job_id = 'job-c', operation_state = 'queued', coverage_state = 'pending',
 		    next_action_at = ?
 		WHERE destination_key = ? AND processing_key = ?`), dueAt, observingMapping.DestinationKey, observingMapping.ProcessingKey)
@@ -532,7 +534,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	require.NoError(err)
 	require.True(ok)
 	assert.Equal(store.BeeperMediaOperationStatus, operation.Kind)
-	assert.Equal("source-c", operation.DocbankSourceID)
+	assert.Equal("source-cccc", operation.DocbankSourceID)
 	assert.Equal("job-c", operation.JobID)
 }
 
@@ -640,7 +642,9 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	assert.Equal(audios[1].attachmentID, page[0].AttachmentID)
 	rest, err := f.Store.ListBeeperMediaCandidates(t.Context(), page[99].AttachmentID, 100)
 	require.NoError(err)
-	assert.Empty(rest)
+	require.Len(rest, 1)
+	assert.Equal("gmail", rest[0].SourceType)
+	assert.Equal("gmail-audio", rest[0].SourceMessageID)
 	_, err = f.Store.ListBeeperMediaCandidates(t.Context(), 0, 1001)
 	require.Error(err)
 
