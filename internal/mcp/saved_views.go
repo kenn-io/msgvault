@@ -20,7 +20,7 @@ type savedViewDefinition struct {
 	ID                    int64     `json:"id"`
 	Name                  string    `json:"name"`
 	Description           *string   `json:"description,omitzero"`
-	CanonicalState        any       `json:"canonical_state"`
+	CanonicalState        any       `json:"canonical_state" jsonschema:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
 	SchemaVersion         int       `json:"schema_version"`
 	Revision              int64     `json:"revision"`
 	CreatedAt             time.Time `json:"created_at"`

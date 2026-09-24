@@ -364,6 +364,12 @@ func TestCatalogSchemas(t *testing.T) {
 					must.True(ok, "%s outputSchema", tool["name"])
 					checks.Equal("https://json-schema.org/draft/2020-12/schema", outputSchema["$schema"], "%s output dialect", tool["name"])
 					checks.Equal("object", outputSchema["type"], "%s output type", tool["name"])
+					if properties, ok := outputSchema["properties"].(map[string]any); ok {
+						for propertyName, propertySchema := range properties {
+							_, ok := propertySchema.(map[string]any)
+							must.True(ok, "%s outputSchema.properties.%s", tool["name"], propertyName)
+						}
+					}
 
 					readOnly := tool["name"] != ToolCreateSavedView && tool["name"] != ToolDeleteSavedView &&
 						tool["name"] != ToolExportAttachment && tool["name"] != ToolStageDeletion &&

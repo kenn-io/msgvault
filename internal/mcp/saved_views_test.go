@@ -92,6 +92,46 @@ func (f *savedViewServiceFixture) DeleteSavedView(context.Context, int64, int64)
 	return errors.ErrUnsupported
 }
 
+func TestSavedViewOutputSchemasPublishCanonicalStateAsSchemaObject(t *testing.T) {
+	assertions := assert.New(t)
+	const canonicalStateDescription = "Stored definition, including incompatible values; check incompatibility_reason before execution"
+	view := store.SavedView{
+		ID: 7, Name: "Invoices", CanonicalState: json.RawMessage(`{"query":"invoice"}`),
+		SchemaVersion: 1, Revision: 1,
+	}
+	opts := ServeOptions{
+		Engine:     &querytest.MockEngine{},
+		SavedViews: &savedViewServiceFixture{views: []store.SavedView{view}},
+	}
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	cases := []struct {
+		name string
+		tool string
+		path []string
+	}{
+		{name: "create", tool: ToolCreateSavedView, path: []string{"properties", "canonical_state"}},
+		{name: "get", tool: ToolGetSavedView, path: []string{"properties", "canonical_state"}},
+		{name: "update", tool: ToolUpdateSavedView, path: []string{"properties", "canonical_state"}},
+		{name: "list", tool: ToolListSavedViews, path: []string{"properties", "saved_views", "items", "properties", "canonical_state"}},
+		{name: "run", tool: ToolRunSavedView, path: []string{"properties", "saved_view", "properties", "canonical_state"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			value := tools[tc.tool]["outputSchema"]
+			for _, segment := range tc.path {
+				schema, ok := value.(map[string]any)
+				requirements.True(ok, "%s schema node: %#v", segment, value)
+				value, ok = schema[segment]
+				requirements.True(ok, "%s schema node in %#v", segment, schema)
+			}
+			schema, ok := value.(map[string]any)
+			requirements.True(ok, "canonical_state schema: %#v", value)
+			assertions.Equal(map[string]any{"description": canonicalStateDescription}, schema)
+		})
+	}
+}
+
 func TestSavedViewReadToolsUseTypedDefinitions(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -126,6 +166,33 @@ func TestSavedViewReadToolsUseTypedDefinitions(t *testing.T) {
 	assertions.InDelta(float64(17), definition["id"], 0)
 	assertions.InDelta(float64(4), definition["revision"], 0)
 	assertions.Equal([]any{"domain"}, savedViewTestMap(t, definition["canonical_state"])["grouping"])
+}
+
+func TestSavedViewReadToolsReturnNonObjectCanonicalStateVerbatim(t *testing.T) {
+	legacyState := []any{"legacy", map[string]any{"query": "invoice"}}
+	reader := &savedViewServiceFixture{views: []store.SavedView{{
+		ID: 17, Name: "Legacy", CanonicalState: json.RawMessage(`["legacy",{"query":"invoice"}]`),
+		SchemaVersion: 0, Revision: 1,
+	}}}
+	opts := ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: reader}
+
+	for _, tool := range []string{ToolGetSavedView, ToolListSavedViews} {
+		t.Run(tool, func(t *testing.T) {
+			arguments := map[string]any{}
+			if tool == ToolGetSavedView {
+				arguments["id"] = 17
+			}
+			result := rawCallTool(t, opts, tool, arguments)
+			require.NotEqual(t, true, result["isError"], "result: %#v", result)
+			definition := savedViewTestMap(t, result["structuredContent"])
+			if tool == ToolListSavedViews {
+				views := savedViewTestSlice(t, definition["saved_views"])
+				require.Len(t, views, 1)
+				definition = savedViewTestMap(t, views[0])
+			}
+			assert.Equal(t, legacyState, definition["canonical_state"])
+		})
+	}
 }
 
 func TestRunSavedViewReturnsTypedExplorePage(t *testing.T) {
@@ -207,6 +274,11 @@ func TestSavedViewWriteToolsRejectInvalidInputBeforeCallingTheService(t *testing
 			name: "empty patch", tool: ToolUpdateSavedView,
 			args: map[string]any{"id": 7, "revision": 1},
 			want: "at least one mutable",
+		},
+		{
+			name: "non-object canonical state", tool: ToolUpdateSavedView,
+			args: map[string]any{"id": 7, "revision": 1, "canonical_state": "table"},
+			want: "object",
 		},
 	}
 	for _, tc := range cases {
