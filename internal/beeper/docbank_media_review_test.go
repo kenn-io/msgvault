@@ -448,6 +448,69 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		}
 	}
 
+	t.Run("artifact-source-changed", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/source-changed",
+			mime: "audio/wav", fileName: "voice.wav", transcript: "changed source", data: syntheticWAV(800, 39)})
+		docbank := newFakeDocbank(t)
+		server := httptest.NewServer(docbank)
+		defer server.Close()
+		worker := world.submitter(t, server, "source-changed")
+		_, err := worker.RunBatch(t.Context())
+		require.NoError(err)
+		operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "source-changed", time.Now().UTC())
+		require.NoError(err)
+		require.True(ok)
+		require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+		mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "source-changed", operation.ProcessingKey, 100)
+		require.NoError(err)
+		require.Len(mappings, 1)
+		donor := mappings[0]
+		beforeRequests := func() int {
+			docbank.mu.Lock()
+			defer docbank.mu.Unlock()
+			return docbank.requests
+		}()
+
+		require.NoError(world.st.UpsertMessageRawWithFormat(donor.MessageID,
+			[]byte(`{"id":"different-message"}`), "beeper_json"))
+		archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+		require.NoError(err)
+		require.NoError(worker.artifact(t.Context(), t.Context(), archiveUID, operation))
+
+		rows := occurrenceRows(t, world.st, "source-changed")
+		var old, replacement *occurrenceRow
+		for i := range rows {
+			row := &rows[i]
+			if row.Ref != donor.OccurrenceRef {
+				continue
+			}
+			if row.Revision == donor.Revision {
+				old = row
+			} else if row.ErrorCode == "source_changed" {
+				replacement = row
+			}
+		}
+		require.NotNil(old)
+		assert.Equal("revoked", old.State)
+		require.NotNil(replacement)
+		assert.NotEqual(donor.Revision, replacement.Revision)
+		assert.Equal("blocked", replacement.State)
+		assert.Equal("source_changed", replacement.ErrorCode)
+
+		deliveries := deliveryRows(t, world.st, "source-changed")
+		require.Len(deliveries, 1)
+		assert.Equal("blocked", deliveries[0].Phase)
+		assert.Equal("source_changed", deliveries[0].ErrorCode)
+		docbank.mu.Lock()
+		assert.Equal(beforeRequests, docbank.requests)
+		assert.Empty(docbank.artifactOps)
+		docbank.mu.Unlock()
+		_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "source-changed", time.Now().UTC())
+		require.NoError(err)
+		assert.False(ready)
+	})
+
 	t.Run("artifact-corrupt-shared-donor-uses-sibling", func(t *testing.T) {
 		require, assert := require.New(t), assert.New(t)
 		world := importVoiceChat(t,

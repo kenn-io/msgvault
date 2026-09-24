@@ -712,8 +712,8 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 		{name: "dedup-hide", code: "no_live_occurrence", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
 			t.Helper()
 			var survivor int64
-			require.NoError(t, world.st.DB().QueryRow(
-				`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`, operation.MessageID).Scan(&survivor))
+			require.NoError(t, world.st.DB().QueryRow(world.st.Rebind(
+				`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`), operation.MessageID).Scan(&survivor))
 			_, err := world.st.MergeDuplicates(survivor, []int64{operation.MessageID}, "retain-hide")
 			require.NoError(t, err)
 		}},
@@ -721,7 +721,7 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 			t.Helper()
 			var sourceID int64
 			var sourceMessageID string
-			require.NoError(t, world.st.DB().QueryRow(`SELECT source_id, source_message_id FROM messages WHERE id = ?`, operation.MessageID).
+			require.NoError(t, world.st.DB().QueryRow(world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), operation.MessageID).
 				Scan(&sourceID, &sourceMessageID))
 			require.NoError(t, world.st.MarkMessageDeleted(sourceID, sourceMessageID))
 		}},
@@ -863,7 +863,7 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 					surviving = mappings[1]
 				}
 				var otherMessage int64
-				require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`, donor.MessageID).Scan(&otherMessage))
+				require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`), donor.MessageID).Scan(&otherMessage))
 				apply := func() {
 					switch mutation {
 					case "dedup-hide":
@@ -872,7 +872,7 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 					case "source-delete":
 						var sourceID int64
 						var sourceMessageID string
-						require.NoError(world.st.DB().QueryRow(`SELECT source_id, source_message_id FROM messages WHERE id = ?`, donor.MessageID).
+						require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), donor.MessageID).
 							Scan(&sourceID, &sourceMessageID))
 						require.NoError(world.st.MarkMessageDeleted(sourceID, sourceMessageID))
 					case "attachment-replacement":

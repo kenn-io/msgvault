@@ -1180,6 +1180,8 @@ func mediaGapCode(err error) string {
 		return errBeeperMediaTranscriptInvalid.Error()
 	case errors.Is(err, errBeeperMediaTranscriptTooLarge):
 		return errBeeperMediaTranscriptTooLarge.Error()
+	case errors.Is(err, errBeeperMediaSourceChanged):
+		return errBeeperMediaSourceChanged.Error()
 	case errors.Is(err, errBeeperMediaUnsupported):
 		return errBeeperMediaUnsupported.Error()
 	case errors.Is(err, errBeeperMediaNoLiveOccurrence):
