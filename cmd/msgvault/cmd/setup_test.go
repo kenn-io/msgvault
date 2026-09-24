@@ -182,3 +182,28 @@ func TestGenerateAPIKey(t *testing.T) {
 	require.NoError(err, "generateAPIKey")
 	assert.NotEqual(key1, key2, "generateAPIKey should return unique keys")
 }
+
+func TestSetupAddAccountCommand(t *testing.T) {
+	tests := []struct {
+		name  string
+		oauth config.OAuthConfig
+		want  string
+	}{
+		{"none", config.OAuthConfig{}, ""},
+		{"default secrets", config.OAuthConfig{ClientSecrets: "/c.json"}, "msgvault add-account you@gmail.com"},
+		{"service account", config.OAuthConfig{ServiceAccountKey: "/sa.json"}, "msgvault add-account you@gmail.com"},
+		{
+			"named apps only",
+			config.OAuthConfig{Apps: map[string]config.OAuthApp{
+				"work":  {ClientSecrets: "/w.json"},
+				"empty": {},
+			}},
+			"msgvault add-account you@gmail.com --oauth-app 'work'",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, setupAddAccountCommand(&tt.oauth))
+		})
+	}
+}

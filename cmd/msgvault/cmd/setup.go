@@ -6,13 +6,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 var setupCmd = &cobra.Command{
@@ -85,16 +89,34 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	printSetupNextSteps(cmd.OutOrStdout(), cfg.OAuth.HasAnyConfig(), remoteURL != "")
+	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "")
 	return nil
 }
 
-func printSetupNextSteps(w io.Writer, hasGoogle, hasRemote bool) {
+// setupAddAccountCommand returns the add-account invocation that works
+// with the configured Google credentials, or "" when there are none.
+// Without a default credential, add-account needs --oauth-app to pick a
+// named app.
+func setupAddAccountCommand(o *config.OAuthConfig) string {
+	const base = "msgvault add-account you@gmail.com"
+	if o.ClientSecrets != "" || o.ServiceAccountKey != "" {
+		return base
+	}
+	names := slices.Sorted(maps.Keys(o.Apps))
+	for _, name := range names {
+		if app := o.Apps[name]; app.ClientSecrets != "" || app.ServiceAccountKey != "" {
+			return base + " --oauth-app " + oauth.ShellQuote(name)
+		}
+	}
+	return ""
+}
+
+func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote bool) {
 	var b strings.Builder
 	b.WriteString("\nSetup complete! Next steps:\n\n")
-	if hasGoogle {
+	if addAccountCmd != "" {
 		b.WriteString("  1. Add a Gmail account:\n")
-		b.WriteString("     msgvault add-account you@gmail.com\n\n")
+		b.WriteString("     " + addAccountCmd + "\n\n")
 		b.WriteString("  2. Sync your emails:\n")
 		b.WriteString("     msgvault sync-full you@gmail.com\n\n")
 		if hasRemote {
