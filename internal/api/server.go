@@ -233,17 +233,19 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg            *config.Config
-	store          MessageStore
-	analyticsState atomic.Pointer[analyticsEngineState]
-	savedViewStore SavedViewStore
-	sqlQueryRunner SQLQueryRunner
-	shutdownToken  string
-	shutdownFunc   func()
-	scheduler      SyncScheduler
-	cardDAV        *CardDAVController
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	cfg *config.Config
+	// Empty in production; API tests use a local Jev fixture.
+	personMatchScoringEndpoint string
+	store                      MessageStore
+	analyticsState             atomic.Pointer[analyticsEngineState]
+	savedViewStore             SavedViewStore
+	sqlQueryRunner             SQLQueryRunner
+	shutdownToken              string
+	shutdownFunc               func()
+	scheduler                  SyncScheduler
+	cardDAV                    *CardDAVController
+	logger                     *slog.Logger
+	requestTimeout             time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -1076,7 +1078,8 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
 		}
-		if cardDAVRequestNeedsProtectiveCeiling(r) {
+		if cardDAVRequestNeedsProtectiveCeiling(r) ||
+			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}

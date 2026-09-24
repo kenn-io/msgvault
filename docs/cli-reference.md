@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-25"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1691,6 +1691,45 @@ msgvault stats [flags]
 Use the [people guide](/docs/usage/people/) for the workflow. Observed contacts
 use participant IDs; saved profiles use person IDs. Each command below takes
 the ID named in its arguments.
+
+### identity matches
+
+Review archive-derived identity suggestions with a token from the current
+review snapshot:
+
+| Command | Purpose |
+|---|---|
+| `identity matches list [--state candidate] [--limit 100] [--offset 0] [--json]` | List candidate, accepted, rejected, conflict, or all match records |
+| `identity matches show <id> [--json]` | Inspect evidence, blockers, and the current review token |
+| `identity matches accept <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Accept the reviewed suggestion and apply its participant link |
+| `identity matches reject <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Reject the reviewed suggestion while retaining its record |
+
+Always inspect the match before deciding. Evidence or endpoint changes make a
+review token stale; fetch the match again and decide with its new token. A
+successful acceptance records the decision and applies the link. Review notes
+are private data. See [people and profiles](/docs/usage/people/#review-identity-matches)
+for how to review candidates safely.
+
+### person match-auto
+
+Optional scoring proposes review priorities; it never accepts identity matches.
+Configure the disabled-by-default `[people.identity_merge]` policy first. Read
+`person match-auto status` to inspect the exact provider disclosure, credential
+availability, and blockers. Grant consent to the displayed disclosure
+fingerprint, then run a dry batch:
+
+```bash
+msgvault person match-auto status
+msgvault person match-auto consent <disclosure-fingerprint>
+msgvault person match-auto run --dry-run --limit 20
+msgvault person match-auto history --limit 20
+```
+
+`revoke <disclosure-fingerprint>` removes consent for that exact disclosure.
+Each result includes a review token for the corresponding suggestion. Scoring
+requires local policy gates and records only redacted judgment metadata. See
+[identity scoring](/docs/usage/people/#optional-identity-scoring) for consent
+and provider boundaries.
 
 ### person notes
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-25"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -20,6 +20,7 @@ save selected people in **Directory**. You can also use the
 | Look up public profile information | [External enrichment](/docs/usage/people-enrichment/) |
 | Sync contacts with an address book | [CardDAV contacts](/docs/usage/people-carddav/) |
 | Tell msgvault which accounts and aliases are mine | [Source identities](#discover-source-identities) |
+| Review suggested identity links | [Identity match review](#review-identity-matches) |
 
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
@@ -39,6 +40,63 @@ Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
 Commands name the ID they require; the two are not interchangeable. Promotion
 creates a profile from an observed person. Subscribed CardDAV contacts can also
 create profiles when imported.
+
+## Review identity matches
+
+Msgvault can retain uncertain identity suggestions for a person to review.
+Inspect the endpoints, archive evidence, and blockers before deciding.
+
+The archive-observation seeder skips email addresses seen on more than 20
+participants because they create too many low-value pairs.
+
+```bash
+msgvault identity matches list
+msgvault identity matches show <candidate-id>
+msgvault identity matches accept <candidate-id> --review-token <token>
+# or
+msgvault identity matches reject <candidate-id> --review-token <token>
+```
+
+The token belongs to the evidence and endpoint snapshot you inspected. If
+evidence changes, the decision is rejected as stale; run `show` again and use
+its current token. Acceptance applies the participant link in the same guarded
+operation. A link into one saved profile extends its participant bindings. A
+candidate that spans two different saved profiles needs a separate person
+merge review.
+
+Review notes are private profile data. Avoid putting unnecessary personal
+details in them. The matching CLI and token-guarded API are documented in the
+[CLI reference](/docs/cli-reference/#identity-matches) and
+[API reference](/docs/api-server/#identity-match-review-and-scoring).
+
+## Optional identity scoring
+
+Scoring is disabled by default and requires a provider key, a retention
+declaration, and consent to the exact current disclosure. It sends a minimized
+packet of identity evidence to the configured Typesafe Jev endpoint. It does
+not send message bodies or automatically change identity links. Local policy
+can only produce a proposal; a person still reviews the candidate and token.
+
+Start by inspecting readiness and the disclosed endpoint, model, packet schema,
+and retention declaration:
+
+```bash
+msgvault person match-auto status
+msgvault person match-auto consent <disclosure-fingerprint>
+msgvault person match-auto run --dry-run --limit 20
+msgvault person match-auto history --limit 20
+```
+
+Consent applies only while that disclosure fingerprint remains current. Use
+`msgvault person match-auto revoke <disclosure-fingerprint>` to withdraw it.
+Each provider attempt has a 15-second timeout. On SQLite, the daemon holds the
+database write lock for that attempt so a revocation cannot complete before an
+already-authorized request finishes. Other writes can wait up to 15 seconds;
+retries release the lock between requests.
+Scoring records redacted judgments; provider payloads and responses are not
+stored in the judgment history. See [identity scoring configuration](/docs/configuration/#people-identity-scoring)
+and the [API reference](/docs/api-server/#identity-match-review-and-scoring)
+for exact settings and routes.
 
 ## Promote a durable person
 

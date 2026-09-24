@@ -85,7 +85,8 @@
     {#if controller.history.length === 0}
       <p>No merge history on this page.</p>
     {:else}
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable Person merge history" tabindex="0">
         <table aria-label="Person merge history">
           <thead><tr><th scope="col">Merge</th><th scope="col">Created</th><th scope="col">Survivor</th><th scope="col">Absorbed</th><th scope="col">Current</th><th scope="col">Participants</th><th scope="col">Rows</th><th scope="col">Row actions</th><th scope="col">Review</th><th scope="col">Splits</th><th scope="col">Action</th></tr></thead>
           <tbody>
@@ -123,22 +124,26 @@
       </div>
       {#if controller.detailError}<p class="error" role="alert">{controller.detailError}</p>{/if}
 
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable merge participants" tabindex="0">
         <table aria-label="Merge participants"><thead><tr><th scope="col">Participant</th><th scope="col">Origin</th><th scope="col">Disposition</th></tr></thead>
           <tbody>{#each controller.detail.participants ?? [] as participant}<tr><th scope="row">{participant.participant_id}</th><td>{participant.origin_side}</td><td>{disposition(participant.split_id)}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable merge row dispositions" tabindex="0">
         <table aria-label="Merge row dispositions"><thead><tr><th scope="col">Table</th><th scope="col">Action</th><th scope="col">Origin</th><th scope="col">Provenance</th><th scope="col">Participant</th><th scope="col">Disposition</th></tr></thead>
           <tbody>{#each controller.detail.rows ?? [] as row}<tr><th scope="row">{row.table_name}</th><td>{row.action}</td><td>{row.origin_side}</td><td>{row.provenance_kind}</td><td>{row.participant_id ?? 'None'}</td><td>{disposition(row.split_id)}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable prior splits" tabindex="0">
         <table aria-label="Prior splits"><thead><tr><th scope="col">Split</th><th scope="col">Source</th><th scope="col">Created person</th><th scope="col">Revision change</th><th scope="col">Restoration</th><th scope="col">Actor</th><th scope="col">Created</th></tr></thead>
           <tbody>{#each controller.detail.splits ?? [] as split}<tr><th scope="row">{split.id}</th><td>Person {split.source_person_id}</td><td>Person {split.new_person_id}</td><td>{split.source_revision_before} → {split.source_revision_after}</td><td>{split.exact_reversal ? 'Exact' : 'Partial'}</td><td>{split.actor}</td><td>{split.created_at}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable merge review candidates" tabindex="0">
         <table aria-label="Merge review candidates"><thead><tr><th scope="col">Candidate</th><th scope="col">Person</th><th scope="col">Definition</th><th scope="col">Survivor value</th><th scope="col">Absorbed value</th><th scope="col">Resolution</th><th scope="col">State</th><th scope="col">Reviewed</th><th scope="col">Reviewer</th><th scope="col">Created</th></tr></thead>
           <tbody>{#each controller.detail.review_candidates ?? [] as candidate}<tr><th scope="row">{candidate.id}</th><td>{candidate.person_id}</td><td>{candidate.definition_id}</td><td>{candidate.survivor_value_id}</td><td>{candidate.absorbed_value_id}</td><td>{candidate.resolution_value_id ?? 'None'}</td><td>{candidate.state}</td><td>{candidate.reviewed_at ?? 'Not reviewed'}</td><td>{candidate.reviewed_by ?? 'None'}</td><td>{candidate.created_at}</td></tr>{/each}</tbody>
         </table>
@@ -169,6 +174,7 @@
   h3, h4, p, pre { margin: 0; }
   .section-heading p, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); }
   .table-scroll, .snapshot { max-width: 100%; overflow: auto; }
+  .table-scroll:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
   th, td { padding: var(--space-2); border-bottom: var(--border-width) solid var(--border-default); text-align: left; vertical-align: top; }
   thead th { color: var(--text-muted); white-space: nowrap; }

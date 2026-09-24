@@ -760,7 +760,8 @@ describe('AppShell', () => {
     }))}`);
     const candidate = {
       id: 17, left_id: 170, left_kind: 'beeper_user', right_id: 171, right_kind: 'participant',
-      basis: 'stable_provider_id', source: 'synthetic', state: 'candidate', evidence: [],
+      basis: 'stable_provider_id', source: 'synthetic', state: 'candidate', actionable: true,
+      review_token: 'token-17', evidence: [],
       created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
     };
     const person = (id: number, revision: number, name: string) => ({

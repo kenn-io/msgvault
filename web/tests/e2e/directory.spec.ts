@@ -179,6 +179,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await expect(toggle).toBeFocused();
 
   const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  await expect(reveal).toBeEnabled();
   await reveal.focus();
   await page.keyboard.press('Enter');
   await expect(maintenance.getByText('Private note')).toBeVisible();
@@ -197,7 +198,9 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(maintenance.getByText('Time zone')).toBeVisible();
-  await maintenance.getByRole('button', { name: 'Show sensitive eligible fields' }).focus();
+  const narrowReveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  await expect(narrowReveal).toBeEnabled();
+  await narrowReveal.focus();
   await page.keyboard.press('Enter');
   await expect(maintenance.getByText('Private note')).toBeVisible();
   const targetCards = maintenance.locator('li');

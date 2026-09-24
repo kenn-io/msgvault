@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-25"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,12 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.27.0**.
+it is separate from the binary release version. The current schema is **2.29.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.29.0 adds token-guarded identity match review and consented,
+dry-run identity scoring. See [identity match review and scoring](#identity-match-review-and-scoring).
 
 Schema 2.27.0 adds deterministic meeting context export, archived action-item
 listing, and duration metrics with exact direct or Explore scope.
@@ -93,6 +96,28 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Identity match review and scoring
+
+Review identity suggestions through `GET /api/v1/identity/match-candidates`
+and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
+evidence, blockers, and a `review_token` for that exact snapshot. Accept or
+reject with `POST /api/v1/identity/match-candidates/{id}/review/accept` or
+`.../review/reject`, passing the token in the request body. If the evidence or
+endpoints changed, the API returns `409 identity_match_review_stale`; fetch the
+candidate again and make a fresh decision.
+
+Identity scoring is opt-in and only runs a dry batch. Read
+`GET /api/v1/identity/scoring/status` to inspect readiness and the exact
+provider disclosure. `POST /api/v1/identity/scoring/consent` grants consent to
+its disclosure fingerprint; `POST /api/v1/identity/scoring/revoke` withdraws
+that fingerprint's consent. `POST /api/v1/identity/scoring/run` requires
+current consent and returns proposals with review tokens. It does not accept
+matches. Read redacted journal entries from
+`GET /api/v1/identity/scoring/history`. The request and response contracts are
+in `/openapi.json` from a running daemon or printed by `msgvault openapi`;
+configuration and the CLI flow are in [identity scoring configuration](/docs/configuration/#people-identity-scoring)
+and the [people guide](/docs/usage/people/#optional-identity-scoring).
 
 ### Archive and processing boundaries
 

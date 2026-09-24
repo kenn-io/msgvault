@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-17"
+last_edited: "2026-09-25"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -436,9 +436,24 @@ msgvault mcp --http 8080
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment exports, and deletion staging over HTTP; profile writes still need their separate flag. |
+| `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs fresh user confirmation. HTTP also requires `--http-allow-writes`. |
+| `--allow-identity-scoring` | `false` | Expose consented dry-run identity scoring, which sends minimized evidence to the configured provider. Each run needs fresh user confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs fresh user confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs fresh user confirmation; HTTP also requires `--http-allow-writes`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
+
+Identity tools include `list_identity_matches`, `get_identity_match`,
+`accept_identity_match`, `reject_identity_match`,
+`get_identity_scoring_status`, `score_identity_matches`, and
+`list_identity_judgments`. Review and scoring tools remain hidden unless their
+matching opt-in flag is set. Each accept, reject, merge, CardDAV write, and
+provider scoring call requires a fresh MCP confirmation; the model's request
+alone cannot authorize it. Grant or revoke provider consent through the CLI
+or API. The [people guide](/docs/usage/people/#review-identity-matches)
+covers review tokens, and the [API reference](/docs/api-server/#identity-match-review-and-scoring)
+covers the scoring consent contract.
 
 Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to daemon configuration. Use `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` so local and remote daemon behavior stays consistent.
 

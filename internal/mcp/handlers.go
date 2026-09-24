@@ -140,6 +140,9 @@ type handlers struct {
 	directoryBackend   peoplebrowser.DirectoryLister
 	savedViews         savedview.Service
 	meetings           MeetingBackend
+	identityReview     IdentityReviewBackend
+	personCardDAV      PersonCardDAVBackend
+	identityScoring    IdentityScoringBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -2089,6 +2092,19 @@ func positiveInt64Arg(args map[string]any, key string) (int64, error) {
 	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 ||
 		value >= float64(math.MaxInt64) || math.Trunc(value) != value {
 		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return int64(value), nil
+}
+
+func nonnegativeInt64Arg(args map[string]any, key string) (int64, error) {
+	raw, found := args[key]
+	if !found {
+		return 0, nil
+	}
+	value, ok := raw.(float64)
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 ||
+		value >= float64(math.MaxInt64) || value > maxJSONSafeInteger || math.Trunc(value) != value {
+		return 0, fmt.Errorf("%s must be a nonnegative safe integer", key)
 	}
 	return int64(value), nil
 }

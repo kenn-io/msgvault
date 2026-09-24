@@ -218,6 +218,11 @@ func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func(
 	return func() { s.identityMatchAcceptBeforeDecisionHook = nil }
 }
 
+func (s *Store) SetIdentityMatchReviewAfterDecisionHookForTest(fn func()) func() {
+	s.identityMatchReviewAfterDecisionHook = fn
+	return func() { s.identityMatchReviewAfterDecisionHook = nil }
+}
+
 // SetPersonOperationBeforeIdentityLockHookForTest installs a per-Store barrier
 // immediately before merge and split transactions acquire the identity lock.
 // Concurrency tests use it to prove every competing transaction is open and at

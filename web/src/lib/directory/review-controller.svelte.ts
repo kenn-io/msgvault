@@ -1,7 +1,7 @@
 import {
-  acceptIdentityMatchCandidate as generatedAcceptIdentityMatchCandidate,
+  reviewAcceptIdentityMatchCandidate as generatedAcceptIdentityMatchCandidate,
   listIdentityMatchCandidates as generatedListIdentityMatchCandidates,
-  rejectIdentityMatchCandidate as generatedRejectIdentityMatchCandidate,
+  reviewRejectIdentityMatchCandidate as generatedRejectIdentityMatchCandidate,
 } from '../api/generated/api/api';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
@@ -218,15 +218,17 @@ export class DirectoryReviewController {
     candidateID: number,
     notes?: string,
     context = this.reviewContextSnapshot(),
+    reviewToken?: string,
   ): Promise<IdentityDecisionResult> {
-    return this.decideIdentity(candidateID, 'accept', notes, context);
+    return this.decideIdentity(candidateID, 'accept', notes, context, reviewToken);
   }
   async rejectIdentity(
     candidateID: number,
     notes?: string,
     context = this.reviewContextSnapshot(),
+    reviewToken?: string,
   ): Promise<IdentityDecisionResult> {
-    return this.decideIdentity(candidateID, 'reject', notes, context);
+    return this.decideIdentity(candidateID, 'reject', notes, context, reviewToken);
   }
   async completePersonMerge(
     candidateID: number,
@@ -258,6 +260,7 @@ export class DirectoryReviewController {
     decision: 'accept' | 'reject',
     notes: string | undefined,
     context: DirectoryReviewContextSnapshot,
+    displayedToken?: string,
   ): Promise<IdentityDecisionResult> {
     if (!this.isReviewContextCurrent(context)) {
       return { ok: false, kind: 'error', status: 0, message: 'The review context changed.' };
@@ -273,7 +276,15 @@ export class DirectoryReviewController {
     this.decisionRequests.set(candidateID, abort);
     this.pendingDecisions.add(candidateID);
     const trimmedNotes = this.getDecisionDraft(candidateID).trim();
-    const body = trimmedNotes ? { notes: trimmedNotes } : {};
+    const reviewToken = displayedToken ?? this.rows.find((row) => row.id === candidateID)?.review_token;
+    if (!reviewToken) {
+      this.decisionRequests.delete(candidateID);
+      this.pendingDecisions.delete(candidateID);
+      const message = 'Refresh the review before deciding.';
+      this.decisionError = message;
+      return { ok: false, kind: 'error', status: 0, message };
+    }
+    const body = trimmedNotes ? { review_token: reviewToken, notes: trimmedNotes } : { review_token: reviewToken };
     try {
       const response =
         decision === 'accept'
@@ -304,6 +315,12 @@ export class DirectoryReviewController {
       if (mergeConflict) {
         if (this.ownsDecisionContext(context)) this.mergeRequired = { candidateID, conflict: mergeConflict };
         return { ok: false, kind: 'merge_required', conflict: mergeConflict };
+      }
+      if (response.response.status === 409) {
+        if (this.ownsDecisionContext(context)) await this.loadIdentityPage(context.offset, context.identityState);
+        const message = 'The match changed. Review the refreshed evidence before deciding.';
+        if (this.ownsDecisionContext(context)) this.decisionError = message;
+        return { ok: false, kind: 'error', status: 409, message };
       }
       const message = failureMessage(response.error, response.response.status);
       if (this.ownsDecisionContext(context)) this.decisionError = message;

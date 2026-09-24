@@ -81,38 +81,61 @@ type identityMatchConflictState struct {
 }
 
 type IdentityMatchCandidate struct {
-	ID                 int64                     `json:"id"`
-	LeftKind           IdentityMatchEndpointKind `json:"left_kind"`
-	LeftID             int64                     `json:"left_id"`
-	RightKind          IdentityMatchEndpointKind `json:"right_kind"`
-	RightID            int64                     `json:"right_id"`
-	Basis              IdentityMatchBasis        `json:"basis"`
-	ServiceSlug        *string                   `json:"service_slug,omitzero" nullable:"false"`
-	ScopeKind          *string                   `json:"scope_kind,omitzero" nullable:"false"`
-	ScopeValue         *string                   `json:"scope_value,omitzero" nullable:"false"`
-	NormalizedValue    *string                   `json:"normalized_value,omitzero" nullable:"false"`
-	State              IdentityMatchState        `json:"state"`
-	Confidence         *float64                  `json:"confidence,omitzero" nullable:"false"`
-	Source             Provenance                `json:"source"`
-	SourceRef          *string                   `json:"source_ref,omitzero" nullable:"false"`
-	DecidedBy          *string                   `json:"decided_by,omitzero" nullable:"false"`
-	DecidedAt          *time.Time                `json:"decided_at,omitempty"`
-	Notes              *string                   `json:"notes,omitzero" nullable:"false"`
-	Evidence           []IdentityMatchEvidence   `json:"evidence"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	UpdatedAt          time.Time                 `json:"updated_at"`
-	applicationPending bool
-	conflictState      identityMatchConflictState
+	ID                         int64                        `json:"id"`
+	LeftKind                   IdentityMatchEndpointKind    `json:"left_kind"`
+	LeftID                     int64                        `json:"left_id"`
+	RightKind                  IdentityMatchEndpointKind    `json:"right_kind"`
+	RightID                    int64                        `json:"right_id"`
+	Basis                      IdentityMatchBasis           `json:"basis"`
+	ServiceSlug                *string                      `json:"service_slug,omitzero" nullable:"false"`
+	ScopeKind                  *string                      `json:"scope_kind,omitzero" nullable:"false"`
+	ScopeValue                 *string                      `json:"scope_value,omitzero" nullable:"false"`
+	NormalizedValue            *string                      `json:"normalized_value,omitzero" nullable:"false"`
+	State                      IdentityMatchState           `json:"state"`
+	Confidence                 *float64                     `json:"confidence,omitzero" nullable:"false"`
+	Source                     Provenance                   `json:"source"`
+	SourceRef                  *string                      `json:"source_ref,omitzero" nullable:"false"`
+	DecidedBy                  *string                      `json:"decided_by,omitzero" nullable:"false"`
+	DecidedAt                  *time.Time                   `json:"decided_at,omitempty"`
+	Notes                      *string                      `json:"notes,omitzero" nullable:"false"`
+	Evidence                   []IdentityMatchEvidence      `json:"evidence"`
+	SourceSupport              []IdentityMatchSourceSupport `json:"source_support,omitempty"`
+	ReviewToken                string                       `json:"review_token,omitempty"`
+	Actionable                 bool                         `json:"actionable"`
+	Blocker                    string                       `json:"blocker,omitempty"`
+	LeftPerson                 *IdentityMatchPersonBinding  `json:"left_person,omitempty"`
+	RightPerson                *IdentityMatchPersonBinding  `json:"right_person,omitempty"`
+	ApplicationPending         bool                         `json:"application_pending"`
+	ScoringEvidenceIncomplete  bool                         `json:"-"`
+	CreatedAt                  time.Time                    `json:"created_at"`
+	UpdatedAt                  time.Time                    `json:"updated_at"`
+	applicationPending         bool
+	conflictState              identityMatchConflictState
+	scoringSnapshotFingerprint string
+}
+
+// IdentityMatchPersonBinding identifies a curated person covering an endpoint
+// cluster. Its revision helps an agent locate the exact profiles to read next.
+type IdentityMatchPersonBinding struct {
+	PersonID                 int64 `json:"person_id"`
+	Revision                 int64 `json:"revision"`
+	ActiveCardDAVPublication bool  `json:"-"`
 }
 
 type IdentityMatchEvidence struct {
-	ID           int64      `json:"id"`
-	CandidateID  int64      `json:"candidate_id"`
-	EvidenceKind string     `json:"evidence_kind"`
-	EvidenceRef  *string    `json:"evidence_ref,omitzero" nullable:"false"`
-	Detail       *string    `json:"detail,omitzero" nullable:"false"`
-	Source       Provenance `json:"source"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID            int64                        `json:"id"`
+	CandidateID   int64                        `json:"candidate_id"`
+	EvidenceKind  string                       `json:"evidence_kind"`
+	EvidenceRef   *string                      `json:"evidence_ref,omitzero" nullable:"false"`
+	Detail        *string                      `json:"detail,omitzero" nullable:"false"`
+	Source        Provenance                   `json:"source"`
+	SourceSupport []IdentityMatchSourceSupport `json:"source_support,omitempty"`
+	CreatedAt     time.Time                    `json:"created_at"`
+}
+
+type IdentityMatchSourceSupport struct {
+	SourceID       int64 `json:"source_id"`
+	IsConservative bool  `json:"is_conservative"`
 }
 
 type IdentityMatchCandidateInput struct {
@@ -612,7 +635,7 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 	notes *string,
 ) (*IdentityMatchCandidate, error) {
 	candidate, _, err := s.decideIdentityMatchCandidateContext(
-		ctx, candidateID, state, decidedBy, notes)
+		ctx, candidateID, state, decidedBy, notes, nil)
 	return candidate, err
 }
 
@@ -622,6 +645,7 @@ func (s *Store) decideIdentityMatchCandidateContext(
 	state IdentityMatchState,
 	decidedBy string,
 	notes *string,
+	reviewToken *string,
 ) (*IdentityMatchCandidate, *IdentityMatchCandidate, error) {
 	if !state.valid() {
 		return nil, nil, ErrInvalidIdentityMatchState
@@ -637,6 +661,32 @@ func (s *Store) decideIdentityMatchCandidateContext(
 			return err
 		}
 		before = current
+		if reviewToken != nil {
+			actual, fingerprintErr := identityMatchFingerprintContext(ctx, tx, current, true)
+			if fingerprintErr != nil {
+				return fingerprintErr
+			}
+			if actual != *reviewToken {
+				if current.State == state && current.DecidedBy != nil &&
+					*current.DecidedBy == string(ProvenanceUser) {
+					matches, receiptErr := identityMatchReviewReceiptMatchesTxContext(
+						ctx, tx, current, state, *reviewToken)
+					if receiptErr != nil {
+						return receiptErr
+					}
+					if matches {
+						candidate = current
+						return nil
+					}
+				}
+				return ErrIdentityMatchReviewStale
+			}
+			if current.State == state && current.DecidedBy != nil &&
+				*current.DecidedBy == string(ProvenanceUser) {
+				candidate = current
+				return nil
+			}
+		}
 		if current.State == IdentityMatchStateAccepted && state == IdentityMatchStateRejected {
 			if current.DecidedBy != nil && *current.DecidedBy == string(ProvenanceUser) {
 				return ErrIdentityMatchAlreadyAccepted
@@ -697,6 +747,31 @@ func (s *Store) decideIdentityMatchCandidateContext(
 			state == IdentityMatchStateConflict && decidedBy == string(ProvenanceUser), candidateID,
 		); err != nil {
 			return fmt.Errorf("decide identity match candidate: %w", err)
+		}
+		if reviewToken != nil && state == IdentityMatchStateAccepted {
+			fingerprint, fingerprintErr := identityMatchFingerprintContext(ctx, tx, current, false)
+			if fingerprintErr != nil {
+				return fingerprintErr
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_match_review_decisions
+				(candidate_id, evidence_fingerprint) VALUES (?, ?)
+				ON CONFLICT (candidate_id) DO UPDATE
+				SET evidence_fingerprint = excluded.evidence_fingerprint`, candidateID, fingerprint); err != nil {
+				return fmt.Errorf("persist identity match review fingerprint: %w", err)
+			}
+		} else if _, err := tx.ExecContext(ctx,
+			`DELETE FROM identity_match_review_decisions WHERE candidate_id = ?`, candidateID); err != nil {
+			return fmt.Errorf("clear identity match review fingerprint: %w", err)
+		}
+		if reviewToken != nil && decidedBy == string(ProvenanceUser) &&
+			(state == IdentityMatchStateAccepted || state == IdentityMatchStateRejected) {
+			if err := recordIdentityMatchReviewReceiptTxContext(
+				ctx, tx, candidateID, state, *reviewToken); err != nil {
+				return err
+			}
+		} else if _, err := tx.ExecContext(ctx,
+			`DELETE FROM identity_match_review_receipts WHERE candidate_id = ?`, candidateID); err != nil {
+			return fmt.Errorf("clear identity match review receipt: %w", err)
 		}
 		candidate, err = getIdentityMatchCandidateTx(ctx, tx, candidateID)
 		return err
@@ -1478,6 +1553,7 @@ func scanIdentityMatchCandidate(row scanner) (*IdentityMatchCandidate, error) {
 	candidate.DecidedAt = nullTimePtr(decidedAt)
 	candidate.Notes = nullStringPtr(notes)
 	candidate.Evidence = []IdentityMatchEvidence{}
+	candidate.ApplicationPending = candidate.State == IdentityMatchStateAccepted && candidate.applicationPending
 	return &candidate, nil
 }
 

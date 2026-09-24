@@ -665,6 +665,8 @@ function reviewCandidate(id: number, overrides: Partial<IdentityMatchCandidate> 
     source: 'synthetic_import',
     source_ref: `fixture-${id}`,
     state: 'candidate',
+    actionable: true,
+    review_token: `review-${id}-candidate`,
     created_at: '2026-01-01T10:00:00Z',
     updated_at: '2026-01-02T11:00:00Z',
     evidence: [
@@ -959,16 +961,26 @@ export async function installDirectoryReviewArchive(page: Page) {
     });
   });
 
-  await page.route(/\/api\/v1\/identity\/match-candidates\/\d+\/(?:accept|reject)$/, async (route) => {
+  await page.route(/\/api\/v1\/identity\/match-candidates\/\d+\/review\/(?:accept|reject)$/, async (route) => {
     const request = route.request();
     const captured = capture(request);
     requests.push(captured);
-    const match = captured.path.match(/\/(\d+)\/(accept|reject)$/);
+    const match = captured.path.match(/\/(\d+)\/review\/(accept|reject)$/);
     const candidateID = Number(match?.[1]);
     const decision = match?.[2];
     const candidate = candidates.find((item) => item.id === candidateID);
     if (!candidate || (decision !== 'accept' && decision !== 'reject')) {
       return route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic candidate not found.' } });
+    }
+    const submittedToken =
+      typeof captured.body === 'object' && captured.body !== null && 'review_token' in captured.body
+        ? captured.body.review_token
+        : undefined;
+    if (submittedToken !== candidate.review_token) {
+      return route.fulfill({
+        status: 409,
+        json: { error: 'identity_match_review_stale', message: 'The identity match changed; read it again before deciding.' },
+      });
     }
 
     const gate = decisionGates.get(candidateID);
@@ -1006,6 +1018,7 @@ export async function installDirectoryReviewArchive(page: Page) {
     candidate.decided_at = '2026-01-03T12:00:00Z';
     candidate.decided_by = 'synthetic-reviewer';
     candidate.updated_at = candidate.decided_at;
+    candidate.review_token = `review-${candidateID}-${candidate.state}`;
     return route.fulfill({ json: { candidate, cache_state: 'ready', identity_revision: 8 } });
   });
 

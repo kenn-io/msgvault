@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -53,6 +53,39 @@ values remain in effect. Provider keys alone do not enable processing.
 - [Document indexing](usage/document-indexing.md): extraction, document vectors,
   and separate query consent.
 - [Vector search](usage/vector-search.md): text, person, and visual indexes.
+
+## People identity scoring
+
+Identity scoring is a separate, disabled-by-default dry-run policy. It sends a
+minimized identity evidence packet to Typesafe Jev only after the operator
+grants consent to the exact disclosure shown by `msgvault person match-auto
+status`. A score is a proposal for human review; scoring never accepts or
+links participants. Live automatic acceptance is unavailable.
+
+```toml
+[people.identity_merge]
+enabled = false
+model_id = "jev-1.13.0"
+minimum_probability = 0.80
+credential_env = "MSGVAULT_JEV_API_KEY"
+batch_size = 20
+retention_declaration = "provider retention policy accepted by the operator"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable consented identity scoring. Consent is still required. |
+| `model_id` | `jev-1.13.0` | Fixed provider model identifier. |
+| `minimum_probability` | `0.80` | Probability must be strictly greater than this threshold before local policy can propose acceptance. Accepted range is `0.80`–`1.00`. |
+| `credential_env` | empty | Name of the environment variable holding the provider key. The key value is read from the daemon environment and is never stored in `config.toml`. Required when enabled. |
+| `batch_size` | `20` | Default dry-run batch size, from 1 through 100. |
+| `retention_declaration` | empty | Operator's exact declaration of the provider retention policy. Required when enabled and included in the consent fingerprint. |
+
+Changing the endpoint/model disclosure or its retention declaration changes
+the disclosure fingerprint and requires fresh consent. Disable or revoke scoring
+with `msgvault person match-auto revoke <fingerprint>`. See [identity scoring](/docs/usage/people/#optional-identity-scoring)
+for the full workflow and [the API reference](/docs/api-server/#identity-match-review-and-scoring)
+for endpoints.
 
 ## People sweep inference
 

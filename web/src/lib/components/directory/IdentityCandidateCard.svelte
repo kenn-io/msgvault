@@ -70,7 +70,7 @@
       {/if}
     </section>
 
-    {#if candidate.state === 'candidate'}
+    {#if (candidate.state === 'candidate' && (candidate.actionable || candidate.blocker === 'person_merge_required')) || (candidate.state === 'conflict' && candidate.actionable)}
       <div class="actions">
         <Button label="Keep separate" size="sm" disabled={pending} onclick={onReject} />
         <Button label="Link identities" size="sm" tone="info" surface="solid" disabled={pending} onclick={onAccept} />

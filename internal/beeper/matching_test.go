@@ -2,6 +2,8 @@ package beeper
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -9,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/personmatchpolicy"
+	"go.kenn.io/msgvault/internal/personmatchworker"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -1344,6 +1349,35 @@ func TestPhoneEmailNameAndMembershipOnlyAddEvidence(t *testing.T) {
 	assert.True(kinds[evidenceEmail], "a matching email is evidence")
 	assert.True(kinds[evidenceName], "a matching display name is evidence")
 	assert.True(kinds[evidenceMembership], "a shared conversation is evidence")
+
+	// The evidence produced above uses the production matcher kind "phone".
+	// Score this same candidate through the worker so a high provider score
+	// cannot propose acceptance when the matcher found a shared phone.
+	declarationSource := newBeeperTestSource(t, st, "review-declaration")
+	declaration := "the same person"
+	_, err = st.AddIdentityMatchEvidenceContext(ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+		EvidenceKind: "self_declaration", Detail: &declaration,
+		Source: store.ProvenanceArchiveObservation, SourceID: &declarationSource,
+	})
+	require.NoError(err, "add independent identity evidence")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"same_person":{"type":"noul","noul":0.99}}}`))
+	}))
+	defer server.Close()
+	cfg := personmatch.Config{Enabled: true, ModelID: personmatch.ModelID,
+		MinimumProbability: 0.80, CredentialEnv: "MSGVAULT_JEV_MATCHER_FIXTURE",
+		BatchSize: 2, RetentionDeclaration: "fixture retention"}
+	t.Setenv(cfg.CredentialEnv, "fixture-key")
+	disclosure, err := cfg.Disclosure()
+	require.NoError(err)
+	_, _, err = st.GrantPersonMatchConsentContext(ctx, disclosure, "fixture_operator")
+	require.NoError(err)
+	worker := personmatchworker.Worker{Store: st, Config: cfg, Endpoint: server.URL + "/v1/systemone", HTTPClient: server.Client()}
+	results, err := worker.RunDry(ctx, 1)
+	require.NoError(err)
+	require.Len(results, 1)
+	assert.Equal(personmatchpolicy.NeedsReview, results[0].ProposedAction)
+	assert.Contains(results[0].Blockers, "shared_contact_point")
 }
 
 func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
