@@ -736,12 +736,12 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 	draft store.GmailDraft,
 	emit func(api.CLIRunEvent) error,
 ) error {
+	source, err := a.loadManagedGmailDraftSource(ctx, draft)
+	if err != nil {
+		return err
+	}
 	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
 	defer cancelEvidence()
-	source, err := a.store.GetSourceByIDContext(evidenceCtx, draft.SourceID)
-	if err != nil {
-		return draftReplyError("invalid_source", err)
-	}
 	execution, err := a.store.AcquireSyncExecutionContext(evidenceCtx, source.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSyncAlreadyActive) {

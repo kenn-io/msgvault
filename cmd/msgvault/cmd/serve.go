@@ -3355,10 +3355,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	var errs []error
 	for _, src := range srcs {
 		startTime := time.Now()
-		sourceType := src.SourceType
-		if sourceType == "" {
-			sourceType = sourceTypeGmail
-		}
+		sourceType := store.EffectiveSourceType(src.SourceType)
 
 		var (
 			summary *gmail.SyncSummary
@@ -3453,16 +3450,17 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	// Collect first occurrence of each syncable type.
 	seen := make(map[string]*store.Source, 4)
 	for _, src := range rows {
-		switch src.SourceType {
+		effectiveType := store.EffectiveSourceType(src.SourceType)
+		switch effectiveType {
 		case sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams:
-			if _, dup := seen[src.SourceType]; !dup {
-				seen[src.SourceType] = src
+			if _, dup := seen[effectiveType]; !dup {
+				seen[effectiveType] = src
 			}
 		case sourceTypeDiscord:
 			// Guild display names are not stable or unique. Scheduled Discord
 			// jobs must use the exact guild snowflake as their key.
 			if src.Identifier == identifier {
-				seen[src.SourceType] = src
+				seen[effectiveType] = src
 			}
 		}
 	}
@@ -3484,8 +3482,10 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 // re-authorize from a terminal.
 func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) (*gmail.SyncSummary, error) {
 	appName := ""
+	sourceEmail := email
 	if src != nil {
 		appName = sourceOAuthApp(src)
+		sourceEmail = src.Identifier
 	}
 
 	var tokenSource oauth2.TokenSource
@@ -3494,18 +3494,18 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
-			return nil, fmt.Errorf("service account for %s: %w", email, saErr)
+			return nil, fmt.Errorf("service account for %s: %w", sourceEmail, saErr)
 		}
-		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
+		tokenSource, tsErr = saMgr.TokenSource(ctx, sourceEmail)
 		if tsErr != nil {
-			return nil, fmt.Errorf("service account token for %s: %w", email, tsErr)
+			return nil, fmt.Errorf("service account token for %s: %w", sourceEmail, tsErr)
 		}
 	} else {
 		oauthMgr, oaErr := getOAuthMgr(appName)
 		if oaErr != nil {
-			return nil, fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr)
+			return nil, fmt.Errorf("resolve OAuth credentials for %s: %w", sourceEmail, oaErr)
 		}
-		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
+		tokenSource, tsErr = oauthMgr.TokenSource(ctx, sourceEmail)
 		if tsErr != nil {
 			// Distinguish transient network failures (DNS lookup timeout,
 			// dial timeout after laptop sleep/wake, Wi-Fi flap) from real
@@ -3514,10 +3514,10 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 			if syncerr.IsTransientNetwork(tsErr) {
 				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
 			}
-			if oauthMgr.HasToken(email) {
-				return nil, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)))
+			if oauthMgr.HasToken(sourceEmail) {
+				return nil, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(sourceEmail, accountIsNarrowed(oauthMgr, sourceEmail)))
 			}
-			return nil, fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
+			return nil, fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, sourceEmail)
 		}
 	}
 
@@ -3533,24 +3533,30 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 
 	syncer := newMessageSyncer(client, s, opts).WithLogger(logger)
 
-	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
-	if err != nil {
-		return nil, fmt.Errorf("get source: %w", err)
+	var source *store.Source
+	if src == nil {
+		var err error
+		source, err = s.GetOrCreateSource(sourceTypeGmail, sourceEmail)
+		if err != nil {
+			return nil, fmt.Errorf("get source: %w", err)
+		}
+	} else {
+		source = src
 	}
 	// Auto-default-identity must run BEFORE the legacy migration retry
 	// — see comment in account_identity.go. serve is a daemon, so the
 	// confirmation message has no terminal; discard it. Helper logs any
 	// failure path through its own logger.Warn.
-	confirmDefaultIdentity(io.Discard, s, source.ID, email, email, "account-identifier")
+	confirmDefaultIdentity(io.Discard, s, source.ID, sourceEmail, sourceEmail, "account-identifier")
 	if err := runPostSourceCreateMigrations(s); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	summary, err := syncer.IncrementalWithHistoryRecovery(ctx, source, func(resumed bool) {
 		if resumed {
-			logger.Warn("resuming interrupted Gmail history recovery", keyEmail, email)
+			logger.Warn("resuming interrupted Gmail history recovery", keyEmail, sourceEmail)
 		} else {
-			logger.Warn("gmail history expired; reconciling complete mailbox", keyEmail, email)
+			logger.Warn("gmail history expired; reconciling complete mailbox", keyEmail, sourceEmail)
 		}
 	})
 	if err != nil {

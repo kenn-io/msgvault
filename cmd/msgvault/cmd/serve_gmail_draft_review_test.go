@@ -400,11 +400,14 @@ func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *test
 	for _, test := range []struct {
 		name       string
 		absent     bool
+		blockedBy  string
 		wantStatus string
 		wantCode   string
 	}{
 		{name: "provider confirms delete", wantStatus: "deleted", wantCode: "deleted"},
 		{name: "inspection confirms absence", absent: true, wantStatus: "already_absent", wantCode: "already_absent"},
+		{name: "disabled grant keeps confirmed delete pending", blockedBy: "grant", wantStatus: "deleted", wantCode: "deleted"},
+		{name: "changed source keeps confirmed delete pending", blockedBy: "source", wantStatus: "deleted", wantCode: "deleted"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require := require.New(t)
@@ -445,6 +448,35 @@ func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *test
 
 			_, err = fixture.store.DB().Exec("DROP TRIGGER fail_gmail_draft_finish")
 			require.NoError(err)
+			if test.blockedBy != "" {
+				switch test.blockedBy {
+				case "grant":
+					fixture.adapter.gmailDraftPolicy = []config.GmailDraftSource{{SourceID: fixture.source.ID, Enabled: false}}
+				case "source":
+					_, err = fixture.store.DB().Exec("UPDATE sources SET source_type = ? WHERE id = ?", "imap", fixture.source.ID)
+					require.NoError(err)
+				}
+
+				events, err = fixture.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
+				require.Error(err)
+				assert.Equal("draft_disabled", err.Error())
+				assert.Empty(events)
+				assert.Equal(getCalls, fixture.client.getCalls)
+				assert.Equal(deleteCalls, fixture.client.deleteCalls)
+
+				blocked, readErr := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+				require.NoError(readErr)
+				require.NotNil(blocked.Pending)
+				assert.Equal(test.wantCode, blocked.Pending.Code)
+				assert.Nil(blocked.DiscardedAt)
+
+				if test.blockedBy == "grant" {
+					fixture.adapter.gmailDraftPolicy = []config.GmailDraftSource{{SourceID: fixture.source.ID, Enabled: true}}
+				} else {
+					_, err = fixture.store.DB().Exec("UPDATE sources SET source_type = ? WHERE id = ?", sourceTypeGmail, fixture.source.ID)
+					require.NoError(err)
+				}
+			}
 			events, err = fixture.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
 			require.NoError(err)
 			require.Len(events, 1)

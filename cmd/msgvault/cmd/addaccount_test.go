@@ -41,13 +41,22 @@ func TestFindGmailSource(t *testing.T) {
 	require.ErrorIs(err, errGmailSourceNotFound, "findGmailSource")
 	assert.Nil(src, "expected nil with only mbox source")
 
-	// Gmail source exists — should suppress the hint.
+	// A legacy empty source type is Gmail and should suppress the hint.
+	legacy, err := s.GetOrCreateSource("", email)
+	require.NoError(err, "create legacy gmail source")
+	src, err = findGmailSource(s, email)
+	require.NoError(err, "findGmailSource")
+	require.NotNil(src, "expected non-nil with legacy gmail source")
+	assert.Equal(legacy.ID, src.ID, "legacy source ID")
+	assert.Empty(src.SourceType, "legacy source type remains empty")
+
+	// An explicit Gmail source remains a match too.
 	_, err = s.GetOrCreateSource("gmail", email)
 	require.NoError(err, "create gmail source")
 	src, err = findGmailSource(s, email)
 	require.NoError(err, "findGmailSource")
 	require.NotNil(src, "expected non-nil with gmail source")
-	assert.Equal("gmail", src.SourceType, "source type")
+	assert.Equal(legacy.ID, src.ID, "legacy source remains the first match")
 }
 
 // TestAddAccount_InheritedBindingValidatesToken verifies that re-running

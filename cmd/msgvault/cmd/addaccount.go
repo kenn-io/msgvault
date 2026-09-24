@@ -1009,7 +1009,7 @@ func findGmailSource(
 		return nil, fmt.Errorf("look up sources for %s: %w", email, err)
 	}
 	for _, src := range sources {
-		if src.SourceType == sourceTypeGmail {
+		if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail {
 			return src, nil
 		}
 	}

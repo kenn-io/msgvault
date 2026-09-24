@@ -2440,6 +2440,15 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	assert.Equal("gmail", got[0].SourceType, "source should be gmail")
 	assert.Equal(gmailSrc.ID, got[0].ID, "gmail source ID")
 
+	const legacyGmailAddr = "legacy-g@example.com"
+	legacyGmailSrc, err := s.GetOrCreateSource("", legacyGmailAddr)
+	require.NoError(err, "create legacy gmail source")
+	got, err = findScheduledSyncSources(s, legacyGmailAddr)
+	require.NoError(err, "findScheduledSyncSources(legacy gmail)")
+	require.Len(got, 1, "findScheduledSyncSources(legacy gmail) should return 1 source")
+	assert.Equal(legacyGmailSrc.ID, got[0].ID, "legacy gmail source ID")
+	assert.Empty(got[0].SourceType, "legacy gmail source type remains empty")
+
 	// Non-syncable types (mbox) are ignored; returns empty.
 	const mboxAddr = "mbox-only@example.com"
 	_, err = s.GetOrCreateSource("mbox", mboxAddr)
@@ -2466,6 +2475,60 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	got, err = findScheduledSyncSources(s, "Shared Guild")
 	require.NoError(err, "do not resolve Discord source by display name")
 	assert.Empty(got, "duplicate guild display names must not select an arbitrary source")
+}
+
+func TestRunScheduledGmailSyncReusesLegacySource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+
+	s, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+
+	legacy, err := s.GetOrCreateSource("", scopeEscalationAccount)
+	require.NoError(err, "create legacy gmail source")
+	const schedulerAlias = "scheduled-alias@example.com"
+	require.NoError(s.UpdateSourceDisplayName(legacy.ID, schedulerAlias), "set scheduler lookup name")
+	require.NoError(s.UpdateSourceSyncCursor(legacy.ID, "123"), "set history cursor")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = runScheduledSync(ctx, schedulerAlias, s, oauthManagerCache())
+	require.Error(err, "canceled sync should stop after resolving the source identity")
+	require.ErrorIs(err, context.Canceled)
+
+	sources, err := s.ListSources("")
+	require.NoError(err, "list sources")
+	require.Len(sources, 1, "scheduled sync must reuse the discovered source")
+	assert.Equal(legacy.ID, sources[0].ID, "source ID")
+	assert.Empty(sources[0].SourceType, "raw source type remains legacy empty")
+}
+
+func TestRunScheduledGmailSyncNilSourceFallbackCreatesGmailSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+
+	s, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = runScheduledGmailSync(ctx, scopeEscalationAccount, nil, s, oauthManagerCache())
+	require.Error(err, "canceled sync should stop after source setup")
+	require.ErrorIs(err, context.Canceled)
+
+	sources, err := s.ListSources("")
+	require.NoError(err, "list sources")
+	require.Len(sources, 1, "token-first fallback should create one source")
+	assert.Equal(sourceTypeGmail, sources[0].SourceType, "fallback source type")
+	assert.Equal(scopeEscalationAccount, sources[0].Identifier, "fallback source identifier")
 }
 
 func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
