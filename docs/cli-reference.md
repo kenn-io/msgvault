@@ -275,16 +275,18 @@ the local revision and returns `changed_externally`; the next mutation must name
 that revision. A pending Gmail `remote_unknown` blocks further edits and
 deletes. These commands never send mail.
 
-Recovery and delegated grants apply to IMAP drafts only. `draft-recover`
-refuses a Gmail draft ID with `not_supported`, and a delegated token cannot
-reach a Gmail draft. Recovery resumes a pending IMAP operation from recorded
-receipts. It can publish a known replacement or finish confirmed removal without
-APPEND. Delegated recovery requires `draft.edit` for an edit or active repeat
-and `draft.delete` for a delete or discarded repeat, scoped to the source in the
-grant. An active draft with no pending operation requires `draft.edit`,
-including after a delete was aborted before writing. `draft-get`, `draft-edit`,
-and `draft-delete` remain owner-only; delegated edit and delete commands are
-outside this release's scope. Recovery output keeps the saved `pending_code`.
+Recovery applies to IMAP drafts only. `draft-recover` refuses a Gmail draft ID
+with `not_supported`. Delegated tokens with `draft.create` can create Gmail
+reply drafts. For Gmail drafts, `draft-get`, `draft-edit`, `draft-delete`, and
+`draft-send-as` remain owner-only. For IMAP drafts, recovery resumes a pending
+operation from recorded receipts. It can publish a known replacement or finish
+confirmed removal without APPEND. Delegated recovery requires
+`draft.edit` for an edit or active repeat and `draft.delete` for a delete or
+discarded repeat, scoped to the source in the grant. An active draft with no
+pending operation requires `draft.edit`, including after a delete was aborted
+before writing. `draft-get`, `draft-edit`, and `draft-delete` remain owner-only;
+delegated edit and delete commands are outside this release's scope. Recovery
+output keeps the saved `pending_code`.
 Refused results use `refusal_code`; pending cleanup results describe the current
 provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
