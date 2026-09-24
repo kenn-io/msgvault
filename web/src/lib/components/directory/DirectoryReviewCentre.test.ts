@@ -23,6 +23,9 @@ function candidate(id: number, state = 'candidate'): IdentityMatchCandidate {
     basis: 'stable_provider_id',
     source: 'synthetic',
     state,
+    review_token: `token-${id}-${state}`,
+    actionable: state === 'candidate',
+    application_pending: false,
     evidence: [],
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z'

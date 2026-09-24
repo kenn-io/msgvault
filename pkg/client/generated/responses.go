@@ -1343,6 +1343,12 @@ type ListIdentityMatchCandidatesResponse = IdentityMatchCandidatesResponse
 
 type ListIdentityMatchCandidatesErrorResponse = ErrorResponse
 
+type GetIdentityMatchCandidateResponse = IdentityMatchCandidate
+
+type GetIdentityMatchCandidateErrorResponse = ErrorResponse
+
+type GetIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+
 type AcceptIdentityMatchCandidateResponse = IdentityMatchAcceptResponse
 
 type AcceptIdentityMatchCandidateErrorResponse = ErrorResponse
@@ -1394,6 +1400,96 @@ type RejectIdentityMatchCandidateErrorResponse = ErrorResponse
 type RejectIdentityMatchCandidateErrorResponseJSON = ErrorResponse
 
 type RejectIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
+
+type ReviewAcceptIdentityMatchCandidateResponse = IdentityMatchAcceptResponse
+
+type ReviewAcceptIdentityMatchCandidateErrorResponse = ErrorResponse
+
+type ReviewAcceptIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+
+type ReviewAcceptIdentityMatchCandidateErrorResponseJSON409 struct {
+	ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf *ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf `json:"-"`
+}
+
+func (r ReviewAcceptIdentityMatchCandidateErrorResponseJSON409) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(r.ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (r *ReviewAcceptIdentityMatchCandidateErrorResponseJSON409) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if r.ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf == nil {
+		r.ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf = &ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, r.ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf); err != nil {
+		return fmt.Errorf("ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ReviewAcceptIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
+
+type ReviewRejectIdentityMatchCandidateResponse = IdentityMatchRejectResponse
+
+type ReviewRejectIdentityMatchCandidateErrorResponse = ErrorResponse
+
+type ReviewRejectIdentityMatchCandidateErrorResponseJSON = ErrorResponse
+
+type ReviewRejectIdentityMatchCandidateErrorResponseJSON409 = ErrorResponse
+
+type ReviewRejectIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
+
+type PersonMatchScoringConsentResponse = PersonMatchConsentDecisionResponse
+
+type PersonMatchScoringConsentErrorResponse = ErrorResponse
+
+type PersonMatchScoringConsentErrorResponseJSON = ErrorResponse
+
+type PersonMatchScoringConsentErrorResponseJSON503 = ErrorResponse
+
+type ListPersonMatchJudgmentsResponse = PersonMatchJudgmentHistoryResponse
+
+type ListPersonMatchJudgmentsErrorResponse = ErrorResponse
+
+type ListPersonMatchJudgmentsErrorResponseJSON = ErrorResponse
+
+type PersonMatchScoringRevokeResponse = PersonMatchConsentDecisionResponse
+
+type PersonMatchScoringRevokeErrorResponse = ErrorResponse
+
+type PersonMatchScoringRevokeErrorResponseJSON = ErrorResponse
+
+type PersonMatchScoringRevokeErrorResponseJSON503 = ErrorResponse
+
+type RunPersonMatchScoringResponse = PersonMatchDryRunResponse
+
+type RunPersonMatchScoringErrorResponse = ErrorResponse
+
+type RunPersonMatchScoringErrorResponseJSON = ErrorResponse
+
+type RunPersonMatchScoringErrorResponseJSON503 = ErrorResponse
+
+type GetPersonMatchScoringStatusResponse = PersonMatchScoringStatus
+
+type GetPersonMatchScoringStatusErrorResponse = ErrorResponse
 
 type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
@@ -4127,6 +4223,15 @@ type ListIdentityMatchCandidatesResp struct {
 	JSON503      *ListIdentityMatchCandidatesErrorResponse
 }
 
+type GetIdentityMatchCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetIdentityMatchCandidateResponse
+	JSON404      *GetIdentityMatchCandidateErrorResponse
+	JSON503      *GetIdentityMatchCandidateErrorResponseJSON
+}
+
 type AcceptIdentityMatchCandidateResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4145,6 +4250,75 @@ type RejectIdentityMatchCandidateResp struct {
 	JSON404      *RejectIdentityMatchCandidateErrorResponse
 	JSON409      *RejectIdentityMatchCandidateErrorResponseJSON
 	JSON503      *RejectIdentityMatchCandidateErrorResponseJSON503
+}
+
+type ReviewAcceptIdentityMatchCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ReviewAcceptIdentityMatchCandidateResponse
+	JSON400      *ReviewAcceptIdentityMatchCandidateErrorResponse
+	JSON404      *ReviewAcceptIdentityMatchCandidateErrorResponseJSON
+	JSON409      *ReviewAcceptIdentityMatchCandidateErrorResponseJSON409
+	JSON503      *ReviewAcceptIdentityMatchCandidateErrorResponseJSON503
+}
+
+type ReviewRejectIdentityMatchCandidateResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ReviewRejectIdentityMatchCandidateResponse
+	JSON400      *ReviewRejectIdentityMatchCandidateErrorResponse
+	JSON404      *ReviewRejectIdentityMatchCandidateErrorResponseJSON
+	JSON409      *ReviewRejectIdentityMatchCandidateErrorResponseJSON409
+	JSON503      *ReviewRejectIdentityMatchCandidateErrorResponseJSON503
+}
+
+type PersonMatchScoringConsentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PersonMatchScoringConsentResponse
+	JSON400      *PersonMatchScoringConsentErrorResponse
+	JSON409      *PersonMatchScoringConsentErrorResponseJSON
+	JSON503      *PersonMatchScoringConsentErrorResponseJSON503
+}
+
+type ListPersonMatchJudgmentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonMatchJudgmentsResponse
+	JSON400      *ListPersonMatchJudgmentsErrorResponse
+	JSON503      *ListPersonMatchJudgmentsErrorResponseJSON
+}
+
+type PersonMatchScoringRevokeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PersonMatchScoringRevokeResponse
+	JSON400      *PersonMatchScoringRevokeErrorResponse
+	JSON409      *PersonMatchScoringRevokeErrorResponseJSON
+	JSON503      *PersonMatchScoringRevokeErrorResponseJSON503
+}
+
+type RunPersonMatchScoringResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RunPersonMatchScoringResponse
+	JSON400      *RunPersonMatchScoringErrorResponse
+	JSON409      *RunPersonMatchScoringErrorResponseJSON
+	JSON503      *RunPersonMatchScoringErrorResponseJSON503
+}
+
+type GetPersonMatchScoringStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonMatchScoringStatusResponse
+	JSON503      *GetPersonMatchScoringStatusErrorResponse
 }
 
 type UnlinkIdentityParticipantsResp struct {

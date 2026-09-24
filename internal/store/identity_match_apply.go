@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -92,7 +93,7 @@ func (s *Store) AcceptIdentityMatchCandidateContext(
 			s.identityMatchAcceptBeforeDecisionHook()
 		}
 		accepted, beforeTransition, err = s.decideIdentityMatchCandidateContext(
-			ctx, candidateID, IdentityMatchStateAccepted, decidedBy, notes)
+			ctx, candidateID, IdentityMatchStateAccepted, decidedBy, notes, nil)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -243,6 +244,22 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 					refreshed = loaded
 					return errIdentityMatchSnapshotStale
 				}
+				var reviewedFingerprint string
+				fingerprintErr := tx.QueryRowContext(ctx,
+					`SELECT evidence_fingerprint FROM identity_match_review_decisions WHERE candidate_id = ?`,
+					loaded.ID).Scan(&reviewedFingerprint)
+				if fingerprintErr != nil && !errors.Is(fingerprintErr, sql.ErrNoRows) {
+					return fmt.Errorf("read identity match review fingerprint: %w", fingerprintErr)
+				}
+				if fingerprintErr == nil {
+					actual, hashErr := identityMatchFingerprintContext(ctx, tx, loaded, false)
+					if hashErr != nil {
+						return hashErr
+					}
+					if actual != reviewedFingerprint {
+						return ErrIdentityMatchReviewStale
+					}
+				}
 				loaded.Evidence = current.Evidence
 				current = *loaded
 				if _, updateErr := tx.ExecContext(ctx, `UPDATE identity_match_candidates
@@ -260,6 +277,13 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 	}
 	switch {
 	case err == nil:
+	case errors.Is(err, ErrIdentityMatchReviewStale):
+		note := "reviewed identity evidence changed before application; review again"
+		if _, decideErr := s.DecideIdentityMatchCandidateContext(
+			ctx, current.ID, IdentityMatchStateConflict, decidedBy, &note); decideErr != nil {
+			return nil, 0, false, errors.Join(err, decideErr)
+		}
+		return nil, 0, false, err
 	case errors.Is(err, errIdentityMatchEndpointsCollapsed),
 		errors.Is(err, errIdentityMatchAlreadyConnected):
 		// A merge record confirms that the endpoints became one participant,
@@ -324,7 +348,8 @@ func (s *Store) ApplyAcceptedIdentityMatchesContext(ctx context.Context, limit i
 			switch {
 			case errors.Is(err, ErrIdentityMatchNotAccepted):
 				continue
-			case errors.Is(err, ErrPersonBindingConflict):
+			case errors.Is(err, ErrPersonBindingConflict),
+				errors.Is(err, ErrIdentityMatchReviewStale):
 				slog.Warn("accepted identity match could not be applied",
 					"candidate_id", candidate.ID, "error", err)
 				continue

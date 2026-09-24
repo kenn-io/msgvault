@@ -106,6 +106,16 @@ type AcceptIdentityMatchCandidateBody = DecideIdentityMatchRequest
 
 type RejectIdentityMatchCandidateBody = DecideIdentityMatchRequest
 
+type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
+
+type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
+
+type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
+
+type PersonMatchScoringRevokeBody = PersonMatchConsentDecisionRequest
+
+type RunPersonMatchScoringBody = PersonMatchDryRunRequest
+
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest

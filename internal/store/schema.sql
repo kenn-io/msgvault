@@ -593,6 +593,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS person_enrichment_consents_active
     ON person_enrichment_consents(profile_fingerprint)
     WHERE revoked_at IS NULL;
 
+-- Jev identity evidence requires a separate exact disclosure grant. Revoked
+-- rows remain for audit; another grant for the same disclosure is allowed.
+CREATE TABLE IF NOT EXISTS person_match_consents (
+    id                    INTEGER PRIMARY KEY,
+    disclosure_fingerprint TEXT NOT NULL,
+    endpoint              TEXT NOT NULL,
+    model_id              TEXT NOT NULL,
+    packet_schema         TEXT NOT NULL,
+    retention_declaration TEXT NOT NULL,
+    policy_version        TEXT NOT NULL,
+    question_version      TEXT NOT NULL,
+    granted_by            TEXT NOT NULL,
+    granted_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by            TEXT,
+    revoked_at            DATETIME,
+    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_match_consents_active
+    ON person_match_consents(disclosure_fingerprint) WHERE revoked_at IS NULL;
+
 -- Suppressions outlive curated people and contain only provider-scoped keyed
 -- digests. They intentionally have no person FK or recoverable identifier.
 CREATE TABLE IF NOT EXISTS person_enrichment_suppressions (
@@ -3105,6 +3125,9 @@ CREATE INDEX IF NOT EXISTS idx_participant_observations_current_lookup
     ON participant_contact_observations(
         address_kind, service_id, scope_kind, scope_value, normalized_value
     ) WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_match_scoring_contact_lookup
+    ON participant_contact_observations(address_kind, normalized_value, participant_id)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_participant_observations_participant
     ON participant_contact_observations(participant_id);
 CREATE INDEX IF NOT EXISTS idx_participant_observations_source
@@ -3158,6 +3181,51 @@ CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_state
 CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value
     ON identity_match_candidates(basis, normalized_value)
     WHERE normalized_value IS NOT NULL;
+
+-- Scoring stores only a fingerprint and redacted outcome. The work row is a
+-- mutable lease/retry slot; the journal itself is append-only.
+CREATE TABLE IF NOT EXISTS person_match_judgment_work (
+    candidate_id INTEGER PRIMARY KEY REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_token TEXT,
+    lease_until DATETIME,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    retry_after_at DATETIME,
+    CHECK (attempt_count >= 0)
+);
+CREATE TABLE IF NOT EXISTS person_match_judgments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    question_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    probability REAL,
+    blockers_json TEXT NOT NULL DEFAULT '[]',
+    outcome TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('scored', 'retryable_error', 'terminal_error', 'stale')),
+    error_class TEXT,
+    retry_after_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (probability IS NULL OR (probability >= 0 AND probability <= 1))
+);
+CREATE INDEX IF NOT EXISTS idx_person_match_judgments_candidate
+    ON person_match_judgments(candidate_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_match_judgments_final
+    ON person_match_judgments(candidate_id, fingerprint)
+    WHERE status IN ('scored', 'terminal_error');
+CREATE TABLE IF NOT EXISTS person_match_judgment_cursor (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    candidate_id INTEGER NOT NULL DEFAULT 0
+);
+
+-- A reviewed acceptance has a second transaction for applying its link.
+-- Keep the evidence snapshot so restart recovery cannot link changed evidence.
+CREATE TABLE IF NOT EXISTS identity_match_review_decisions (
+    candidate_id INTEGER PRIMARY KEY REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    evidence_fingerprint TEXT NOT NULL
+);
 
 -- A participant merge can collapse duplicate candidates while an accepted
 -- application is waiting for the identity lock. Record the exact survivor,

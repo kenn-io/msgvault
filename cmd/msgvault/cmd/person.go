@@ -680,6 +680,7 @@ func init() {
 	personCmd.AddCommand(newPersonSweepCommand(defaultPersonSweepCommandDeps()))
 	personCmd.AddCommand(newPersonEnrichmentCommand(defaultPersonEnrichmentCommandDeps()))
 	personCmd.AddCommand(newPersonBriefCommand())
+	personCmd.AddCommand(newPersonMatchAutoCommand())
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
 		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd,
 		personMergeCmd, personSplitCmd, personMergeHistoryCmd, personMergeShowCmd,

@@ -506,6 +506,24 @@ func (a *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error 
 	return nil
 }
 
+type ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf struct {
+	runtime.Either[PersonMergeRequiredError, ErrorResponse]
+}
+
+func (r *ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error {
+	if r.IsA() {
+		if v, ok := any(r.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if r.IsB() {
+		if v, ok := any(r.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type SearchParticipants_ErrorResponse_503_AnyOf struct {
 	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
 }
