@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,10 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- **Clearer slow-search notice.** On a terminal, a slow search shows elapsed
+  time and any concurrent daemon work. Piped output reports labeled daemon
+  work once, without implying the search is waiting on it.
 
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP

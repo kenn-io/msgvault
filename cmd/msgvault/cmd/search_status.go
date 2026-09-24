@@ -22,11 +22,8 @@ var (
 
 // startSearchStatus prints the transient "Searching..." stderr line and keeps
 // it honest while the request runs: once the quiet window passes, the line
-// gains elapsed time and — when the daemon reports one via /health — the
-// operation the search is actually waiting on (e.g. "checking the search
-// index", which can take a minute on a large archive after a daemon
-// restart). The returned stop func erases the line; call it before printing
-// results.
+// gains elapsed time and any concurrent daemon work reported via /health.
+// The returned stop func erases the line; call it before printing results.
 func startSearchStatus(ctx context.Context, prefix string, info HTTPStoreInfo) func() {
 	line := &searchStatusLine{
 		out:     os.Stderr,
@@ -84,13 +81,13 @@ func (l *searchStatusLine) run(ctx context.Context) {
 
 func (l *searchStatusLine) render(elapsed time.Duration, op *api.OperationHealth) {
 	if !l.tty {
-		// A pipe gets no in-place updates, but the one fact worth a log
-		// line — the daemon is busy with something expensive — is still
-		// printed once.
+		// A pipe gets no in-place updates; print one line so a slow search
+		// with concurrent daemon work is visible in logs. The search is not
+		// operation-gated, so the label is context, never the cause.
 		if op != nil && op.Label != "" && !l.noticed {
 			l.noticed = true
-			_, _ = fmt.Fprintf(l.out, "\nDaemon is busy: %s. The search will finish when it does.\n",
-				op.Label)
+			_, _ = fmt.Fprintf(l.out, "\nSearch still running after %s. The daemon is also running: %s.\n",
+				elapsed.Round(time.Second), op.Label)
 		}
 		return
 	}
@@ -105,14 +102,13 @@ func (l *searchStatusLine) clear() {
 	_, _ = fmt.Fprintf(l.out, "\r%s\r", strings.Repeat(" ", l.width))
 }
 
-// formatSearchStatus renders one status line. The daemon operation label wins
-// over a bare elapsed count because it answers the actual question ("why is
-// this taking so long"); Busy without a label (unauthenticated /health
-// fallback) degrades to the elapsed-only form.
+// formatSearchStatus renders one status line. Daemon activity is shown as
+// concurrent work, because the search does not wait on it; a busy daemon
+// without a label (unauthenticated /health) degrades to elapsed time only.
 func formatSearchStatus(prefix string, elapsed time.Duration, op *api.OperationHealth) string {
 	rounded := elapsed.Round(time.Second)
 	if op != nil && op.Label != "" {
-		return fmt.Sprintf("%s daemon is busy: %s (%s)", prefix, op.Label, rounded)
+		return fmt.Sprintf("%s (%s; daemon also running: %s)", prefix, rounded, op.Label)
 	}
 	return fmt.Sprintf("%s (%s)", prefix, rounded)
 }
