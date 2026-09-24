@@ -744,6 +744,108 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 	assert.Equal("input-1", deliveries[0].SuppliedInput)
 }
 
+func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
+	for _, state := range []string{"pending", "source_unavailable"} {
+		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			wav := syntheticWAV(800, 28)
+			world := importVoiceChat(t,
+				voiceSpec{id: "voice1", asset: "mxc://beeper.local/race-shared-1", mime: "audio/wav",
+					fileName: "voice.wav", transcript: "shared race words", data: wav},
+				voiceSpec{id: "voice2", asset: "mxc://beeper.local/race-shared-2", mime: "audio/wav",
+					fileName: "voice.wav", transcript: "shared race words", data: wav})
+			docbank := newFakeDocbank(t)
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			submitter := world.submitter(t, server, "destination-race-shared")
+
+			runPasses(t, submitter, 1)
+			rows := occurrenceRows(t, world.st, "destination-race-shared")
+			require.Len(rows, 2)
+			var retained, sibling occurrenceRow
+			for _, row := range rows {
+				if row.State == "retained" {
+					retained = row
+				} else {
+					sibling = row
+				}
+			}
+			require.Equal("retained", retained.State)
+			require.Equal("pending", sibling.State)
+			assert.Equal(retained.ProcessingKey, sibling.ProcessingKey)
+
+			// Keep the second source pending while the first reaches process.
+			future := time.Now().UTC().Add(24 * time.Hour)
+			_, err := world.st.DB().Exec(world.st.Rebind(`
+				UPDATE beeper_media_occurrences SET next_action_at = ?
+				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
+				future, "destination-race-shared", sibling.Ref, sibling.Revision)
+			require.NoError(err)
+			runPasses(t, submitter, 1)
+			deliveries := deliveryRows(t, world.st, "destination-race-shared")
+			require.Len(deliveries, 1)
+			require.Equal("pending-process", deliveries[0].Phase)
+
+			operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-race-shared", time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			require.Equal(store.BeeperMediaOperationProcess, operation.Kind)
+			var sourceID int64
+			require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+				SELECT source_id FROM messages WHERE source_message_id = ?`), retained.MessageID).Scan(&sourceID))
+			errorCode := ""
+			if state == "source_unavailable" {
+				errorCode = state
+			}
+			_, err = world.st.DB().Exec(world.st.Rebind(`
+				UPDATE beeper_media_occurrences
+				SET retention_state = ?, next_action_at = ?, error_code = ?
+				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
+				state, future, errorCode,
+				"destination-race-shared", sibling.Ref, sibling.Revision)
+			require.NoError(err)
+			require.NoError(world.st.MarkMessageDeleted(sourceID, retained.MessageID))
+
+			require.NoError(submitter.process(t.Context(), t.Context(), operation))
+			deliveries = deliveryRows(t, world.st, "destination-race-shared")
+			require.Len(deliveries, 1)
+			assert.Equal("pending-process", deliveries[0].Phase)
+			assert.Empty(deliveries[0].ErrorCode)
+			assert.Equal("input-1", deliveries[0].SuppliedInput)
+			docbank.mu.Lock()
+			assert.Empty(docbank.processOps)
+			docbank.mu.Unlock()
+
+			// Once the other source can retain the audio, the saved operation runs.
+			_, err = world.st.DB().Exec(world.st.Rebind(`
+				UPDATE beeper_media_occurrences SET next_action_at = ?
+				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
+				time.Now().UTC().Add(-time.Minute), "destination-race-shared", sibling.Ref, sibling.Revision)
+			require.NoError(err)
+			runPasses(t, submitter, 1)
+			rows = occurrenceRows(t, world.st, "destination-race-shared")
+			for _, row := range rows {
+				if row.Ref == sibling.Ref {
+					assert.Equal("retained", row.State)
+				}
+			}
+			resumed, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "destination-race-shared", time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			assert.Equal(store.BeeperMediaOperationProcess, resumed.Kind)
+			assert.Equal(operation.OperationID, resumed.OperationID)
+			require.NoError(submitter.process(t.Context(), t.Context(), resumed))
+			deliveries = deliveryRows(t, world.st, "destination-race-shared")
+			require.Len(deliveries, 1)
+			assert.Equal("observing", deliveries[0].Phase)
+			docbank.mu.Lock()
+			assert.Len(docbank.processOps, 1)
+			docbank.mu.Unlock()
+		})
+	}
+}
+
 func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

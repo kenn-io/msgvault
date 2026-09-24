@@ -513,9 +513,7 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 		return err
 	}
 	if len(mappings) == 0 {
-		return w.finishOperation(ctx, operation, store.BeeperMediaResult{
-			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(),
-		})
+		return nil
 	}
 	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
 		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
@@ -533,9 +531,7 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 		return err
 	}
 	if len(mappings) == 0 {
-		return w.finishOperation(ctx, prepared, store.BeeperMediaResult{
-			ErrorCode: errBeeperMediaNoLiveOccurrence.Error(),
-		})
+		return nil
 	}
 	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing.SuppliedInputID)
 	if err != nil {
