@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-24"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `msgvault search` shows snippets for subjectless chat hits, keeps Unicode characters whole when truncating, and shows `-` when a message has no recorded size.
 - Log canceled SQLite planner-statistics maintenance at debug level.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
