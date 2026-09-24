@@ -830,3 +830,95 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	assert.Equal(contactID, *counterpartsByTitle["Source-native sender before owner envelope"],
 		"the matching envelope participant remains a counterpart for source-native attribution")
 }
+
+func TestSourceAttributionChangeRebuildsCachedOwner(t *testing.T) {
+	for _, upgrade := range []bool{false, true} {
+		name := "fresh"
+		if upgrade {
+			name = "upgrade"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dbPath := filepath.Join(t.TempDir(), "msgvault.db")
+			analyticsDir := filepath.Join(t.TempDir(), "analytics")
+			st, err := store.OpenForTest(dbPath)
+			require.NoError(err)
+			t.Cleanup(func() { _ = st.Close() })
+			require.NoError(st.InitSchema())
+			src, err := st.GetOrCreateSource("test", "synthetic@example.test")
+			require.NoError(err)
+			conv, err := st.EnsureConversationWithType(src.ID, "thread", "email_thread", "Synthetic")
+			require.NoError(err)
+			sender, err := st.EnsureParticipant("sender@example.test", "Sender", "example.test")
+			require.NoError(err)
+			envelope, err := st.EnsureParticipant("envelope@example.test", "Envelope", "example.test")
+			require.NoError(err)
+			require.NoError(st.AddAccountIdentity(src.ID, "sender@example.test", "manual"))
+			require.NoError(st.AddAccountIdentity(src.ID, "envelope@example.test", "manual"))
+			msg := &store.Message{ConversationID: conv, SourceID: src.ID,
+				SourceMessageID: "message", MessageType: "email",
+				SenderID: sql.NullInt64{Int64: sender, Valid: true},
+				SentAt:   sql.NullTime{Time: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true}}
+			id, err := st.PersistMessage(&store.MessagePersistData{Message: msg,
+				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{envelope},
+					DisplayNames: []string{"Envelope"}, EmailAddresses: []string{"envelope@example.test"}}}})
+			require.NoError(err)
+			if upgrade {
+				_, err = st.DB().Exec(`
+                    DROP TRIGGER trg_cache_message_facts_update;
+                    CREATE TRIGGER trg_cache_message_facts_update
+                    AFTER UPDATE OF sender_id, is_from_me, has_attachments, attachment_count
+                    ON messages FOR EACH ROW
+                    WHEN OLD.sender_id IS NOT NEW.sender_id OR OLD.is_from_me IS NOT NEW.is_from_me
+                        OR OLD.has_attachments IS NOT NEW.has_attachments
+                        OR OLD.attachment_count IS NOT NEW.attachment_count BEGIN
+                        INSERT INTO cache_related_change_journal (dataset, message_id)
+                        VALUES ('message_facts', NEW.id);
+                    END;
+                    DELETE FROM applied_migrations WHERE name = 'cache_message_source_attribution';
+                `)
+				require.NoError(err)
+			}
+			_, err = buildCache(dbPath, analyticsDir, true)
+			require.NoError(err)
+			db, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			t.Cleanup(func() { _ = db.Close() })
+			var cachedOwner int64
+			require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+				filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&cachedOwner))
+			require.Equal(envelope, cachedOwner)
+			msg.IsFromMe = true
+			_, err = st.UpsertMessage(msg)
+			require.NoError(err)
+			var sourceNative, effective bool
+			require.NoError(st.DB().QueryRow(`SELECT source_is_from_me, is_from_me FROM messages WHERE id = ?`, id).Scan(&sourceNative, &effective))
+			require.True(sourceNative)
+			require.True(effective)
+			if upgrade {
+				require.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild,
+					"legacy trigger misses source-only attribution changes")
+				require.NoError(st.InitSchema())
+			}
+			stale := cacheNeedsBuild(dbPath, analyticsDir)
+			assert.True(stale.NeedsBuild)
+			assert.True(stale.FullRebuild)
+			automatic, err := buildCacheAuto(dbPath, analyticsDir)
+			require.NoError(err)
+			assert.False(automatic.Skipped)
+			var refreshedOwner int64
+			require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+				filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&refreshedOwner))
+			assert.Equal(sender, refreshedOwner)
+			require.NoError(st.InitSchema())
+			assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild,
+				"reopening an upgraded archive must not invalidate its cache again")
+			msg.IsFromMe = false
+			_, err = st.UpsertMessage(msg)
+			require.NoError(err)
+			assert.True(cacheNeedsBuild(dbPath, analyticsDir).FullRebuild,
+				"the installed trigger must also capture later source attribution edits")
+		})
+	}
+}

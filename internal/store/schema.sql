@@ -1624,6 +1624,8 @@ CREATE TABLE IF NOT EXISTS cache_related_change_journal (
     dataset TEXT NOT NULL,
     message_id INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_cache_related_change_message
+    ON cache_related_change_journal(message_id);
 
 -- Revisions caused solely by related-row edits can be repaired from the
 -- child-row journal. Every other derived revision still requires a full build.
@@ -1645,42 +1647,6 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_cache_label_definitions_delete
 AFTER DELETE ON labels FOR EACH ROW BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('labels', 0);
-END;
-
--- Child edits that also change baked message facts require a message rebuild.
-CREATE TRIGGER IF NOT EXISTS trg_cache_message_facts_update
-AFTER UPDATE OF sender_id, is_from_me,
-    has_attachments, attachment_count ON messages FOR EACH ROW
-WHEN OLD.sender_id IS NOT NEW.sender_id OR OLD.is_from_me IS NOT NEW.is_from_me
-    OR OLD.has_attachments IS NOT NEW.has_attachments
-    OR OLD.attachment_count IS NOT NEW.attachment_count BEGIN
-    INSERT INTO cache_related_change_journal (dataset, message_id)
-    VALUES ('message_facts', NEW.id);
-END;
-
--- From rows determine owner_participant_id in message shards even when
--- replacing them leaves messages.is_from_me unchanged.
-CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_insert
-AFTER INSERT ON message_recipients FOR EACH ROW BEGIN
-    INSERT INTO cache_related_change_journal (dataset, message_id)
-    VALUES (CASE WHEN NEW.recipient_type = 'from' THEN 'message_facts'
-            ELSE 'message_recipients' END, NEW.message_id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_update
-AFTER UPDATE ON message_recipients FOR EACH ROW BEGIN
-    INSERT INTO cache_related_change_journal (dataset, message_id)
-    VALUES (CASE WHEN OLD.recipient_type = 'from' OR NEW.recipient_type = 'from'
-            THEN 'message_facts' ELSE 'message_recipients' END, OLD.message_id);
-    INSERT INTO cache_related_change_journal (dataset, message_id)
-    SELECT CASE WHEN NEW.recipient_type = 'from' THEN 'message_facts'
-            ELSE 'message_recipients' END, NEW.message_id
-    WHERE NEW.message_id <> OLD.message_id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_delete
-AFTER DELETE ON message_recipients FOR EACH ROW BEGIN
-    INSERT INTO cache_related_change_journal (dataset, message_id)
-    VALUES (CASE WHEN OLD.recipient_type = 'from' THEN 'message_facts'
-            ELSE 'message_recipients' END, OLD.message_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_cache_labels_insert

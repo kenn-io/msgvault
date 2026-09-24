@@ -948,7 +948,12 @@ func derivedDriftOnly(staleness cacheStaleness) bool {
 
 func relatedDriftOnly(staleness cacheStaleness) bool {
 	return staleness.HasUsablePublication && staleness.HasRelatedRowDrift &&
-		staleness.Reason == "related rows changed"
+		!staleness.FullRebuild && !staleness.HasNew && !staleness.HasDeleted &&
+		!staleness.HasUpdated && !staleness.HasDerivedDataDrift &&
+		!staleness.HasIdentityDrift && !staleness.HasAccountIdentityDrift &&
+		!staleness.HasConversationParticipantDrift && !staleness.HasConversationTypeDrift &&
+		!staleness.HasParticipantIdentifierDrift && !staleness.HasParticipantDisplayNameDrift &&
+		!staleness.HasPersonDisplayNameDrift
 }
 
 // refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while

@@ -1108,7 +1108,7 @@ func runDaemonSQLQueryWithJobs(
 			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
 		}
 		return nil, &api.CacheBuildAccepted{
-			Status: job.Status, JobID: job.JobID, Cache: cacheFreshnessFromStaleness(staleness),
+			Status: job.Status, JobID: job.JobID,
 		}, nil
 	}
 	if staleness.NeedsBuild {
@@ -1137,7 +1137,9 @@ func runDaemonSQLQueryWithJobs(
 			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
 		}
 	}
-	querier, ok := engine.(query.SQLQuerier)
+	// Raw SQL over a SQLite archive must use the committed Parquet views,
+	// even if the aggregate engine is a SQL-capable fallback.
+	querier, ok := engine.(*query.DuckDBEngine)
 	if options.archiveOnly {
 		duckOptions, err := daemonDuckDBOptions(c)
 		if err != nil {
@@ -1145,6 +1147,9 @@ func runDaemonSQLQueryWithJobs(
 		}
 		duckEngine, err := query.NewArchiveDuckDBEngine(ctx, c.AnalyticsDir(), duckOptions)
 		if err != nil {
+			if errors.Is(err, query.ErrCacheUnavailable) {
+				return acceptUnavailableCacheQuery(c, jobs, options.fresh)
+			}
 			return nil, nil, fmt.Errorf("open archive SQL engine: %w", err)
 		}
 		defer func() { _ = duckEngine.Close() }()
@@ -1152,6 +1157,9 @@ func runDaemonSQLQueryWithJobs(
 	} else if !ok {
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
+			if errors.Is(err, query.ErrCacheUnavailable) {
+				return acceptUnavailableCacheQuery(c, jobs, options.fresh)
+			}
 			return nil, nil, fmt.Errorf("open DuckDB query engine: %w", err)
 		}
 		defer func() { _ = duckEngine.Close() }()
@@ -1159,12 +1167,28 @@ func runDaemonSQLQueryWithJobs(
 	}
 	result, err := queryCommittedSQL(ctx, querier, sqlStr, staleness)
 	if err != nil {
+		if errors.Is(err, query.ErrCacheUnavailable) {
+			return acceptUnavailableCacheQuery(c, jobs, options.fresh)
+		}
 		return nil, nil, err
 	}
 	if result.Cache != nil {
 		result.Cache.Building = jobs.active()
 	}
 	return result, nil, nil
+}
+
+func acceptUnavailableCacheQuery(
+	c *config.Config, jobs *cacheBuildJobs, fresh bool,
+) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+	if !fresh && !c.Analytics.AutoBuildCache {
+		return nil, nil, api.ErrSQLQueryEngineUnavailable
+	}
+	job, err := jobs.accept(buildCacheModeAuto)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+	}
+	return nil, &api.CacheBuildAccepted{Status: job.Status, JobID: job.JobID}, nil
 }
 
 func cacheFreshnessFromStaleness(staleness cacheStaleness) *query.CacheFreshness {

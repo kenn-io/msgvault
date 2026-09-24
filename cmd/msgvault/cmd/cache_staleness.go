@@ -91,6 +91,14 @@ func deletedSinceBuildCountSQL() string {
 		  AND ` + sentCacheExportMessageWhere("")
 }
 
+// Bound freshness work by the published message IDs, not by the number of
+// unpublished rows a sync has added. SQLite otherwise prefers the seq key.
+func coveredRelatedChangesSQL() string {
+	return `SELECT COUNT(*) > 0, COALESCE(MAX(dataset = 'message_facts'), 0)
+		FROM cache_related_change_journal INDEXED BY idx_cache_related_change_message
+		WHERE seq > ? AND message_id <= ?`
+}
+
 // hiddenSinceBuildCountSQL counts exportable messages dedup-hidden since the
 // last cache build. Same cold-start constraint as deletedSinceBuildCountSQL:
 // it must be served by idx_messages_deleted_at.
@@ -145,7 +153,7 @@ func cacheStalenessFailure(ctx context.Context, reason string) cacheStaleness {
 // for a builder that is staging the next generation. The shared lock excludes
 // only the brief publication step and destructive cache maintenance.
 func cacheNeedsBuildForQuery(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
-	return inspectCacheForQuery(ctx, dbPath, analyticsDir, true)
+	return inspectCacheForQuery(ctx, dbPath, analyticsDir, true, false)
 }
 
 // cacheNeedsBuildForServing omits the two archive-wide conversation hashes.
@@ -153,10 +161,10 @@ func cacheNeedsBuildForQuery(ctx context.Context, dbPath, analyticsDir string) (
 // rebuild interval expires; requests still see indexed sync and revision
 // signals immediately, without scanning millions of membership rows.
 func cacheNeedsBuildForServing(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
-	return inspectCacheForQuery(ctx, dbPath, analyticsDir, false)
+	return inspectCacheForQuery(ctx, dbPath, analyticsDir, false, true)
 }
 
-func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full bool) (cacheStaleness, error) {
+func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full, markerOnly bool) (cacheStaleness, error) {
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}, nil
 	}
@@ -165,7 +173,7 @@ func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full
 		return cacheStaleness{}, err
 	}
 	defer release()
-	result := cacheNeedsBuildLockedWithConversationHashes(ctx, dbPath, analyticsDir, full)
+	result := cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, markerOnly)
 	return result, ctx.Err()
 }
 
@@ -179,10 +187,18 @@ func cacheNeedsBuildLocked(ctx context.Context, dbPath, analyticsDir string) cac
 }
 
 func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, analyticsDir string, full bool) cacheStaleness {
+	return cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, false)
+}
+
+func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir string, full, markerOnly bool) cacheStaleness {
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
-	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	inspect := query.InspectCacheReadiness
+	if markerOnly {
+		inspect = query.InspectCacheMarkerReadiness
+	}
+	readiness, err := inspect(analyticsDir)
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
@@ -392,7 +408,7 @@ func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, an
 		return cacheStalenessFailure(ctx, "cannot inspect related-change journal")
 	}
 	if hasRelatedChangeJournal == 0 && state.LastRelatedChangeSeq != 0 {
-		return cacheStaleness{NeedsBuild: true, FullRebuild: true, Reason: "related-change journal is missing"}
+		return cacheStalenessFailure(ctx, "related-change journal is missing")
 	}
 	if hasRelatedChangeJournal > 0 {
 		var latestSeq int64
@@ -407,25 +423,15 @@ func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, an
 			result.FullRebuild = true
 			reasons = append(reasons, "related-change journal moved backwards")
 		} else if latestSeq > state.LastRelatedChangeSeq {
-			var coveredChanges bool
-			err = db.DB().QueryRowContext(ctx, `
-				SELECT EXISTS(SELECT 1 FROM cache_related_change_journal
-					WHERE seq > ? AND message_id <= ?)
-			`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&coveredChanges)
+			var coveredChanges, messageFactsChanged bool
+			err = db.DB().QueryRowContext(ctx, coveredRelatedChangesSQL(),
+				state.LastRelatedChangeSeq, state.LastMessageID).Scan(&coveredChanges, &messageFactsChanged)
 			if err != nil {
 				return cacheStalenessFailure(ctx, "cannot inspect related-row changes")
 			}
 			if coveredChanges {
 				result.HasRelatedRowDrift = true
 				reasons = append(reasons, "related rows changed")
-			}
-			var messageFactsChanged bool
-			err = db.DB().QueryRowContext(ctx, `
-				SELECT EXISTS(SELECT 1 FROM cache_related_change_journal
-					WHERE seq > ? AND message_id <= ? AND dataset = 'message_facts')
-			`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&messageFactsChanged)
-			if err != nil {
-				return cacheStalenessFailure(ctx, "cannot inspect message fact changes")
 			}
 			if messageFactsChanged {
 				result.HasDerivedDataDrift = true
@@ -448,7 +454,8 @@ func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, an
 		if relatedErr != nil {
 			return cacheStalenessFailure(ctx, "cannot classify derived-data revision")
 		}
-		if !relatedOnly || !result.HasRelatedRowDrift {
+		// Appends already export related rows above the published message ID.
+		if !relatedOnly {
 			result.HasDerivedDataDrift = true
 			result.FullRebuild = true
 			reasons = append(reasons, "derived message data changed")

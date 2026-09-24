@@ -274,6 +274,9 @@ There is no dedicated cancellation endpoint for these jobs.
 Send one read-only SQL statement as `{"sql":"SELECT 1"}`. Set `fresh` to
 `true` in the JSON body or as `?fresh=true` to request a background cache
 refresh. Conflicting body and query values are rejected.
+For SQLite archives, this endpoint queries published Parquet through DuckDB.
+The `[analytics].engine` setting selects the engine for aggregate views; it
+does not change this raw SQL endpoint.
 
 A `200` response contains `columns`, `rows`, and `row_count`. When the result
 uses a committed Parquet publication, `cache` includes `generation` and

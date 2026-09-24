@@ -1534,16 +1534,17 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive also predates the activity queue trigger, which
-	// names source_is_from_me and would otherwise block the DROP COLUMN; the
-	// upgrade below reinstalls it through its own migration.
+	// A pre-attribution archive predates both triggers that name source_is_from_me.
+	// The upgrade below reinstalls them through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
+		DROP TRIGGER trg_cache_message_facts_update;
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_attribution_provenance_v3',
-		               'activity_projection_triggers_v4');
+		               'activity_projection_triggers_v4',
+		               'cache_message_source_attribution');
 	`)
 	require.NoError(err, "simulate pre-attribution schema")
 	require.NoError(st.InitSchema(), "upgrade source schema")
@@ -3471,10 +3472,8 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 // update messages, which resolves to main.messages, so the rename back — ALTER
 // TABLE ... RENAME TO messages — fails its schema reparse with "error in
 // trigger trg_message_bodies_last_modified_upd: no such table: main.messages".
-// Neither attribution column is indexed, and the only trigger naming one
-// (trg_activity_queue_messages_update, on source_is_from_me) postdates such
-// archives, so it is dropped first and ALTER TABLE ... DROP COLUMN works
-// directly.
+// Neither attribution column is indexed. The activity and cache triggers that
+// name source_is_from_me postdate such archives, so drop them before the column.
 func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3486,8 +3485,9 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
 
-	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update`)
-	require.NoError(err, "drop the activity trigger that names source_is_from_me")
+	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update;
+		DROP TRIGGER trg_cache_message_facts_update`)
+	require.NoError(err, "drop triggers that name source_is_from_me")
 
 	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
 		_, err = db.Exec(

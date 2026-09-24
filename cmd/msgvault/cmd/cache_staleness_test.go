@@ -545,3 +545,94 @@ func TestCacheStalenessCounts_UseDeletionIndexes(t *testing.T) {
 	assert.Equal(int64(1), deleted)
 	assert.Equal(int64(1), hidden)
 }
+
+func TestCoveredRelatedChangesUseMessageBoundary(t *testing.T) {
+	s := testutil.NewSQLiteTestStore(t)
+	_, err := s.DB().Exec(`DELETE FROM cache_related_change_journal;
+		INSERT INTO cache_related_change_journal (seq, dataset, message_id)
+		VALUES (1, 'message_facts', 1), (2, 'labels', 0),
+			(3, 'message_labels', 100), (4, 'message_facts', 50), (5, 'message_facts', 101)`)
+	require.NoError(t, err)
+	plan := explainQueryPlan(t, s, coveredRelatedChangesSQL(), 1, 100)
+	assert.Contains(t, plan, "SEARCH cache_related_change_journal USING INDEX idx_cache_related_change_message (message_id<?)")
+	for _, tt := range []struct {
+		name            string
+		after, boundary int64
+		changed, facts  bool
+	}{
+		{"new messages only", 4, 100, false, false},
+		{"label definition", 1, 0, true, false},
+		{"covered message facts", 1, 100, true, true},
+		{"acknowledged rows", 5, 100, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var changed, facts bool
+			require.NoError(t, s.DB().QueryRow(coveredRelatedChangesSQL(), tt.after, tt.boundary).Scan(&changed, &facts))
+			assert.Equal(t, tt.changed, changed)
+			assert.Equal(t, tt.facts, facts)
+		})
+	}
+}
+
+func TestRelatedDriftOnlyDoesNotDependOnReason(t *testing.T) {
+	assert := assert.New(t)
+	s := cacheStaleness{HasUsablePublication: true, HasRelatedRowDrift: true, Reason: "changed wording"}
+	assert.True(relatedDriftOnly(s))
+	s.HasNew = true
+	assert.False(relatedDriftOnly(s), "new messages need an append")
+	s.HasNew = false
+	s.HasIdentityDrift = true
+	assert.False(relatedDriftOnly(s), "identity edits need an identity refresh")
+	s.HasIdentityDrift = false
+	s.FullRebuild = true
+	assert.False(relatedDriftOnly(s), "message facts need a full rebuild")
+}
+
+func TestLabelsOnNewMessageKeepCacheBuildIncremental(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	_, err := s.DB().Exec(`
+        INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+        INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+            VALUES (1, 1, 'thread-1', 'email_thread');
+        INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+            VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+        INSERT INTO labels (id, name) VALUES (1, 'synthetic');
+    `)
+	require.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	shards, err := filepath.Glob(filepath.Join(c.AnalyticsDir(), "messages", "*", "*.parquet"))
+	require.NoError(err)
+	require.NotEmpty(shards)
+	original, err := os.ReadFile(shards[0])
+	require.NoError(err)
+	_, err = s.DB().Exec(`INSERT INTO messages
+        (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+        VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')`)
+	require.NoError(err)
+	before, err := cacheNeedsBuildForServing(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
+	require.NoError(err)
+	require.False(before.FullRebuild, "append alone: %s", before.Reason)
+	require.NoError(s.AddMessageLabels(2, []int64{1}))
+	after, err := cacheNeedsBuildForServing(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
+	require.NoError(err)
+	assert.True(after.HasNew)
+	assert.False(after.FullRebuild, "labels on the new message are exported by append: %s", after.Reason)
+	built, err := buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+	require.NoError(err)
+	assert.Equal(int64(1), built.StagedCount)
+	preserved, err := os.ReadFile(shards[0])
+	require.NoError(err)
+	assert.Equal(original, preserved, "append must preserve the committed message shard")
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
+	result, err := engine.QuerySQL(t.Context(), "SELECT message_id, label_id FROM message_labels")
+	require.NoError(err)
+	require.Len(result.Rows, 1)
+	assert.EqualValues(2, result.Rows[0][0])
+	assert.EqualValues(1, result.Rows[0][1])
+	assert.False(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
+}

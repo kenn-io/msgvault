@@ -1380,6 +1380,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
+	if !s.IsPostgreSQL() {
+		if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: s.db}); err != nil {
+			return err
+		}
+	}
 	if freshPostgreSQLSchema {
 		if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+
 			rfc822CanonicalIndexName+` `+s.dialect.RFC822CanonicalIDIndexDefinition()); err != nil {
@@ -1532,6 +1537,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.ensureCacheSourceAttribution(ctx); err != nil {
+		return err
 	}
 	// Older runs predate typed checkpoints. Restore types only when the source
 	// or pinned Gmail handoff cursor identifies them unambiguously, then tag

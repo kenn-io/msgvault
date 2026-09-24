@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -73,7 +72,8 @@ func manualSyncCacheFlagValues(args []string) (force, skip bool) {
 }
 
 // queueCacheRefreshAfterManualSync runs in the daemon, after its CLI child
-// returns. It may inspect cache metadata, but it never waits for a builder.
+// returns. The background builder validates files before applying the rebuild
+// interval, so a recent marker cannot postpone repair of a damaged publication.
 func (a *storeAPIAdapter) queueCacheRefreshAfterManualSync(force, skip bool) error {
 	if a == nil || a.cacheJobs == nil || skip {
 		return nil
@@ -89,27 +89,12 @@ func (a *storeAPIAdapter) queueCacheRefreshAfterManualSync(force, skip bool) err
 	if a.cacheJobs.ctx.Err() != nil {
 		return nil //nolint:nilerr // Shutdown must not turn a completed sync into a failure.
 	}
-	dbPath := cfg.DatabaseDSN()
-	if store.IsPostgresURL(dbPath) {
+	if store.IsPostgresURL(cfg.DatabaseDSN()) {
 		return nil
 	}
-	staleness, err := cacheNeedsBuildForServing(a.cacheJobs.ctx, dbPath, cfg.AnalyticsDir())
-	if err != nil {
-		if a.cacheJobs.ctx.Err() != nil {
-			return nil //nolint:nilerr // Shutdown must not turn a completed sync into a failure.
-		}
-		return fmt.Errorf("inspect analytics cache after sync: %w", err)
-	}
-	// Even a light check with no changes needs background verification:
-	// conversation-only edits do not appear in its indexed revision signals.
-	mode := buildCacheModeAuto
-	if !force && staleness.HasUsablePublication {
-		if remaining, deferBuild := scheduledCacheBuildDelay(staleness, cfg.Analytics.MinRebuildInterval, time.Now()); deferBuild {
-			logger.Info("skipping cache rebuild after manual sync: minimum interval not elapsed",
-				"remaining", remaining.String(), "published_at", staleness.PublishedAt)
-			return nil
-		}
-		mode = buildCacheModeScheduledAuto
+	mode := buildCacheModeScheduledAuto
+	if force {
+		mode = buildCacheModeAuto
 	}
 	job, err := a.cacheJobs.acceptAfterWrite(mode)
 	if err != nil {

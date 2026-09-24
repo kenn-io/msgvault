@@ -73,7 +73,7 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 					return fmt.Errorf("create idx_message_recipients_envelope: %w", err)
 				}
 				if rebuilt {
-					if err := restoreRecipientCacheJournalTriggers(tx); err != nil {
+					if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
 						return err
 					}
 					if err := s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
@@ -103,17 +103,18 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 	)
 }
 
-// Rebuilding the legacy recipient table drops triggers attached to it. Restore
-// the cache journal within the same migration transaction as the table swap.
-func restoreRecipientCacheJournalTriggers(q querier) error {
+// Install after schema creation and after a legacy recipient table rebuild.
+// From rows determine owner_participant_id in message shards even when
+// replacing them leaves messages.is_from_me unchanged.
+func ensureRecipientCacheJournalTriggers(q querier) error {
 	for _, stmt := range []string{
-		`CREATE TRIGGER trg_cache_recipients_insert
+		`CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_insert
 		AFTER INSERT ON message_recipients FOR EACH ROW BEGIN
 			INSERT INTO cache_related_change_journal (dataset, message_id)
 			VALUES (CASE WHEN NEW.recipient_type = 'from' THEN 'message_facts'
 				ELSE 'message_recipients' END, NEW.message_id);
 		END`,
-		`CREATE TRIGGER trg_cache_recipients_update
+		`CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_update
 		AFTER UPDATE ON message_recipients FOR EACH ROW BEGIN
 			INSERT INTO cache_related_change_journal (dataset, message_id)
 			VALUES (CASE WHEN OLD.recipient_type = 'from' OR NEW.recipient_type = 'from'
@@ -123,7 +124,7 @@ func restoreRecipientCacheJournalTriggers(q querier) error {
 				ELSE 'message_recipients' END, NEW.message_id
 			WHERE NEW.message_id <> OLD.message_id;
 		END`,
-		`CREATE TRIGGER trg_cache_recipients_delete
+		`CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_delete
 		AFTER DELETE ON message_recipients FOR EACH ROW BEGIN
 			INSERT INTO cache_related_change_journal (dataset, message_id)
 			VALUES (CASE WHEN OLD.recipient_type = 'from' THEN 'message_facts'
@@ -131,7 +132,7 @@ func restoreRecipientCacheJournalTriggers(q querier) error {
 		END`,
 	} {
 		if _, err := q.Exec(stmt); err != nil {
-			return fmt.Errorf("restore recipient cache journal trigger: %w", err)
+			return fmt.Errorf("ensure recipient cache journal trigger: %w", err)
 		}
 	}
 	return nil

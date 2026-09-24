@@ -176,6 +176,35 @@ func ReadCacheSyncState(analyticsDir string) (CacheSyncState, error) {
 // replaces it.
 var inspectDatasetFingerprint = CacheDatasetFingerprint
 
+// InspectCacheMarkerReadiness checks the marker without walking Parquet files.
+// Serving paths use it for freshness decisions; DuckDBEngine validates the
+// committed files before executing a query.
+func InspectCacheMarkerReadiness(analyticsDir string) (CacheReadiness, error) {
+	info, err := os.Stat(analyticsDir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return CacheAbsent, nil
+	case err != nil:
+		return "", fmt.Errorf("inspect analytics cache root: %w", err)
+	case !info.IsDir():
+		return "", fmt.Errorf("inspect analytics cache root: %s is not a directory", analyticsDir)
+	}
+	state, err := ReadCacheSyncState(analyticsDir)
+	switch {
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, errInvalidCacheState):
+		return CacheInterrupted, nil
+	case err != nil:
+		return "", fmt.Errorf("read analytics cache state: %w", err)
+	}
+	if state.LastSyncAt.IsZero() || state.PublishedAt.IsZero() || state.DatasetFingerprint == "" {
+		return CacheInterrupted, nil
+	}
+	if state.SchemaVersion != CacheSchemaVersion {
+		return CacheStaleSchema, nil
+	}
+	return CacheReady, nil
+}
+
 // InspectCacheReadiness classifies only committed live cache paths. Sibling
 // staging directories are deliberately outside analyticsDir and never enter
 // this inspection.

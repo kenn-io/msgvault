@@ -1196,7 +1196,92 @@ func TestSQLAnalyticsModeQueryQueuesMissingCache(t *testing.T) {
 	}
 }
 
-func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
+func TestQueryUsesPublishedParquetWhenDaemonEngineIsSQLite(t *testing.T) {
+	c, s := openPublishedQueryTestStore(t)
+	sqliteEngine := query.NewEngine(s.DB(), false)
+	t.Cleanup(func() { _ = sqliteEngine.Close() })
+	// Model a SQL-capable fallback without changing the real SQLite engine.
+	// Cache queries must still go to DuckDB when a publication exists.
+	engine := &sqlCapableSQLiteFallback{Engine: sqliteEngine}
+	jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error { return nil })
+
+	for _, mode := range []string{config.AnalyticsEngineAuto, config.AnalyticsEngineSQL} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			c.Analytics.Engine = mode
+			result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine,
+				"SELECT COUNT(*) FROM v_senders", daemonSQLQueryOptions{}, jobs)
+			requirements.NoError(err)
+			assertions.Nil(accepted)
+			requirements.NotNil(result)
+			requirements.NotNil(result.Cache)
+			assertions.EqualValues(0, result.Rows[0][0])
+		})
+	}
+}
+
+type sqlCapableSQLiteFallback struct{ query.Engine }
+
+func (*sqlCapableSQLiteFallback) QuerySQL(context.Context, string) (*query.QueryResult, error) {
+	return nil, errors.New("cache query reached SQLite fallback")
+}
+
+func TestQueryQueuesRepairWhenPublishedShardDisappears(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fresh-%t", fresh), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			c, s := openPublishedQueryTestStore(t)
+			c.Analytics.AutoBuildCache = true
+			engine, err := openDaemonDuckDBEngine(c, s)
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = engine.Close() })
+			shards, err := filepath.Glob(filepath.Join(c.AnalyticsDir(), "messages", "*", "*.parquet"))
+			requirements.NoError(err)
+			requirements.NotEmpty(shards)
+			requirements.NoError(os.Remove(shards[0]))
+			started := make(chan buildCacheMode, 1)
+			jobs := newCacheBuildJobs(t.Context(), nil, func(_ context.Context, mode buildCacheMode) error {
+				started <- mode
+				return nil
+			})
+
+			result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine,
+				"SELECT COUNT(*) FROM v_senders", daemonSQLQueryOptions{fresh: fresh}, jobs)
+			requirements.NoError(err)
+			assertions.Nil(result)
+			requirements.NotNil(accepted)
+			assertions.NotEmpty(accepted.JobID)
+			assertions.Nil(accepted.Cache, "damaged publication must not be advertised as queryable")
+			select {
+			case mode := <-started:
+				assertions.Equal(buildCacheModeAuto, mode)
+			case <-time.After(time.Second):
+				requirements.FailNow("cache repair did not start")
+			}
+		})
+	}
+}
+
+func openPublishedQueryTestStore(t *testing.T) (*config.Config, *store.Store) {
+	t.Helper()
+	requirements := require.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+			VALUES (1, 1, 'thread-1', 'email_thread');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
+	`)
+	requirements.NoError(err)
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	requirements.NoError(err)
+	return c, s
+}
+
+func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
@@ -1224,7 +1309,7 @@ func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
 		wantQueued bool
 		wantMode   buildCacheMode
 	}{
-		{name: "default inside interval", args: []string{"sync-slack"}, interval: 6 * time.Hour},
+		{name: "default inside interval", args: []string{"sync-slack"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "forced inside interval", args: []string{"sync-teams", "--build-cache"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeAuto},
 		{name: "default when due", args: []string{"sync-calendar"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "skip when due", args: []string{"sync-slack", "--no-build-cache"}},
