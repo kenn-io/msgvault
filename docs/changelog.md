@@ -37,6 +37,11 @@ All notable changes to msgvault, grouped by release.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.
 - Log canceled SQLite planner-statistics maintenance at debug level.
+
+- **Clearer slow-search notice.** On a terminal, a slow search shows elapsed
+  time and any concurrent daemon work. Piped output reports labeled daemon
+  work once, without implying the search is waiting on it.
+
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.

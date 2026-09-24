@@ -26,10 +26,10 @@ func TestFormatSearchStatus(t *testing.T) {
 			want:    "Searching... (12s)",
 		},
 		{
-			name:    "daemon operation label wins",
+			name:    "daemon activity is reported as concurrent, not as the cause",
 			elapsed: 45 * time.Second,
 			op:      &api.OperationHealth{Busy: true, Label: "checking the search index"},
-			want:    "Searching... daemon is busy: checking the search index (45s)",
+			want:    "Searching... (45s; daemon also running: checking the search index)",
 		},
 		{
 			name:    "busy without label degrades to elapsed only",
@@ -84,9 +84,11 @@ func TestSearchStatusLineRenderNonTTYPrintsNoticeOnce(t *testing.T) {
 	op := &api.OperationHealth{Busy: true, Label: "checking the search index"}
 	l.render(7*time.Second, op)
 	l.render(9*time.Second, op)
-	notice := "Daemon is busy: checking the search index. The search will finish when it does."
+	notice := "Search still running after 7s. The daemon is also running: checking the search index."
 	assert.Equal(1, strings.Count(buf.String(), notice),
 		"the busy notice must be printed exactly once")
+	assert.NotContains(buf.String(), "Daemon is busy")
+	assert.NotContains(buf.String(), "will finish when it does")
 }
 
 func TestStartSearchStatusLoopShowsDaemonActivity(t *testing.T) {
@@ -137,6 +139,6 @@ func TestStartSearchStatusLoopShowsDaemonActivity(t *testing.T) {
 		require.FailNow("run loop must stop on cancel")
 	}
 
-	assert.Contains(buf.String(), "daemon is busy: checking the search index",
+	assert.Contains(buf.String(), "daemon also running: checking the search index",
 		"the loop must render the daemon's reported operation")
 }
