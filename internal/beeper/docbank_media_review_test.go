@@ -13,9 +13,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type processDeliveryIdentity struct {
+	key, phase, operationID, suppliedInputID, frozenRequest, errorCode string
+}
+
+func processDeliveryIdentities(t *testing.T, st *store.Store, destination string) []processDeliveryIdentity {
+	t.Helper()
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT processing_key, phase, COALESCE(pending_operation_id, ''),
+		       COALESCE(supplied_input_id, ''), COALESCE(frozen_request_json, ''),
+		       COALESCE(error_code, '')
+		FROM beeper_media_deliveries WHERE destination_key = ? ORDER BY processing_key`), destination)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var result []processDeliveryIdentity
+	for rows.Next() {
+		var identity processDeliveryIdentity
+		require.NoError(t, rows.Scan(&identity.key, &identity.phase, &identity.operationID,
+			&identity.suppliedInputID, &identity.frozenRequest, &identity.errorCode))
+		result = append(result, identity)
+	}
+	require.NoError(t, rows.Err())
+	return result
+}
+
+func preparePendingProcess(t *testing.T, worker *MediaSubmitter, destination string) store.BeeperMediaOperation {
+	t.Helper()
+	runPasses(t, worker, 2)
+	operation, ok, err := worker.store.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, store.BeeperMediaOperationProcess, operation.Kind)
+	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
+		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
+	})
+	prepared, err := worker.prepareOperation(t.Context(), operation)
+	require.NoError(t, err)
+	return prepared
+}
 
 func TestBeeperMediaDailyRescan(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
@@ -212,7 +252,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		assert.Empty(occurrenceRows(t, world.st, "query-failure"))
 	})
 
-	for _, kind := range []string{"retain", "artifact"} {
+	for _, kind := range []string{"retain", "artifact", "process"} {
 		for _, failure := range []string{"cancel", "database"} {
 			t.Run(kind+"-final-read-"+failure, func(t *testing.T) {
 				if failure == "database" {
@@ -226,19 +266,34 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				server := httptest.NewServer(docbank)
 				defer server.Close()
 				worker := world.submitter(t, server, destination)
-				if kind == "retain" {
+				var operation store.BeeperMediaOperation
+				var ok bool
+				var err error
+				switch kind {
+				case "retain":
 					runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir), 1)
-				} else {
-					_, err := worker.RunBatch(t.Context())
+				case "artifact":
+					_, err = worker.RunBatch(t.Context())
 					require.NoError(err)
+				case "process":
+					operation = preparePendingProcess(t, worker, destination)
+					ok = true
 				}
-				operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+				if kind != "process" {
+					operation, ok, err = world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+					require.NoError(err)
+					require.True(ok)
+				}
 				require.NoError(err)
 				require.True(ok)
-				if kind == "retain" {
+				switch kind {
+				case "retain":
 					require.Equal(store.BeeperMediaOperationRetain, operation.Kind)
-				} else {
+				case "artifact":
 					require.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+				case "process":
+					require.Equal(store.BeeperMediaOperationProcess, operation.Kind)
+					require.NotEmpty(operation.FrozenRequestJSON)
 				}
 				beforeOccurrences := occurrenceRows(t, world.st, destination)
 				beforeDeliveries := deliveryRows(t, world.st, destination)
@@ -251,7 +306,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 					installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 				}
 				calls, finalGate := 0, 1
-				if kind == "artifact" {
+				if kind != "retain" {
 					finalGate = 2
 				}
 				ctx, cancel := context.WithCancel(t.Context())
@@ -273,10 +328,13 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				})
 				archiveUID, err := world.st.ArchiveUIDContext(t.Context())
 				require.NoError(err)
-				if kind == "retain" {
+				switch kind {
+				case "retain":
 					_, err = worker.retain(ctx, ctx, archiveUID, operation)
-				} else {
+				case "artifact":
 					err = worker.artifact(ctx, ctx, archiveUID, operation)
+				case "process":
+					err = worker.process(ctx, ctx, archiveUID, operation)
 				}
 				if failure == "cancel" {
 					require.ErrorIs(err, context.Canceled)
@@ -446,6 +504,63 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				docbank.mu.Unlock()
 			})
 		}
+	}
+
+	for _, rawFailure := range []string{"missing", "malformed-envelope", "corrupt-compression"} {
+		t.Run("process-"+rawFailure, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			destination := "process-raw-" + rawFailure
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/" + destination,
+				mime: "audio/wav", fileName: "voice.wav", transcript: "process raw gap", data: syntheticWAV(800, 46)})
+			docbank := newFakeDocbank(t)
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			worker := world.submitter(t, server, destination)
+			operation := preparePendingProcess(t, worker, destination)
+			beforeOperationID, beforeInput, beforeFrozen := operation.OperationID, operation.SuppliedInputID, operation.FrozenRequestJSON
+			mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), destination, operation.ProcessingKey, 1)
+			require.NoError(err)
+			require.Len(mappings, 1)
+			messageID := mappings[0].MessageID
+			switch rawFailure {
+			case "missing":
+				_, err := world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
+				require.NoError(err)
+			case "malformed-envelope":
+				require.NoError(world.st.UpsertMessageRawWithFormat(messageID, []byte("{"), "beeper_json"))
+			case "corrupt-compression":
+				_, err := world.st.DB().Exec(world.st.Rebind(
+					`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
+					[]byte("corrupt zlib"), messageID)
+				require.NoError(err)
+			}
+			archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
+			docbank.mu.Lock()
+			assert.Empty(docbank.processOps)
+			docbank.mu.Unlock()
+			identity := findProcessDelivery(t, processDeliveryIdentities(t, world.st, destination), operation.ProcessingKey)
+			assert.Equal("blocked", identity.phase)
+			assert.Equal("source_raw_invalid", identity.errorCode)
+			assert.Equal(beforeOperationID, identity.operationID)
+			assert.Equal(beforeInput, identity.suppliedInputID)
+			assert.Equal(beforeFrozen, identity.frozenRequest)
+			rows := occurrenceRows(t, world.st, destination)
+			require.Len(rows, 2)
+			var revoked, gap *occurrenceRow
+			for i := range rows {
+				if rows[i].ErrorCode == "source_raw_invalid" {
+					gap = &rows[i]
+				} else {
+					revoked = &rows[i]
+				}
+			}
+			require.NotNil(revoked)
+			require.NotNil(gap)
+			assert.Equal("revoked", revoked.State)
+			assert.Equal("blocked", gap.State)
+		})
 	}
 
 	t.Run("artifact-source-changed", func(t *testing.T) {
@@ -785,6 +900,225 @@ func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
 	deliveries = deliveryRows(t, world.st, "final-read-change")
 	require.Len(deliveries, 1)
 	assert.Equal("pending-process", deliveries[0].Phase)
+}
+
+func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutate       func(string) string
+		keyChanges   bool
+		reactionOnly bool
+	}{
+		{name: "transcript", mutate: func(raw string) string {
+			return strings.Replace(raw, "refresh transcript", "replacement transcript", 1)
+		}, keyChanges: true},
+		{name: "language", mutate: func(raw string) string {
+			return strings.Replace(raw, `"language":"en"`, `"language":"fr"`, 1)
+		}, keyChanges: true},
+		{name: "filename", mutate: func(raw string) string {
+			return strings.Replace(raw, `"fileName":"voice.wav"`, `"fileName":"renamed.wav"`, 1)
+		}},
+		{name: "timestamp", mutate: func(raw string) string {
+			marker := `"timestamp":"`
+			start := strings.Index(raw, marker)
+			if start < 0 {
+				return raw
+			}
+			start += len(marker)
+			end := strings.IndexByte(raw[start:], '"')
+			if end < 0 {
+				return raw
+			}
+			return raw[:start] + "2026-09-23T10:11:12.123Z" + raw[start+end:]
+		}},
+		{name: "reaction", mutate: func(raw string) string {
+			return strings.Replace(raw, `"attachments":[`, `"reactions":[{"reactionKey":"reaction-process"}],"attachments":[`, 1)
+		}, reactionOnly: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/process-refresh-" + tc.name,
+				mime: "audio/wav", fileName: "voice.wav", transcript: "refresh transcript", data: syntheticWAV(800, 44)})
+			docbank := newFakeDocbank(t)
+			server := httptest.NewServer(docbank)
+			defer server.Close()
+			destination := "process-refresh-" + tc.name
+			worker := world.submitter(t, server, destination)
+			operation := preparePendingProcess(t, worker, destination)
+			beforeOperationID, beforeInput, beforeFrozen := operation.OperationID, operation.SuppliedInputID, operation.FrozenRequestJSON
+			mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), destination, operation.ProcessingKey, 1)
+			require.NoError(err)
+			require.Len(mappings, 1)
+			beforeMapping := mappings[0]
+			raw, err := world.st.GetMessageRawContext(t.Context(), beforeMapping.MessageID)
+			require.NoError(err)
+			updated := tc.mutate(string(raw))
+			require.NotEqual(string(raw), updated)
+			require.NoError(world.st.UpsertMessageRawWithFormat(beforeMapping.MessageID, []byte(updated), "beeper_json"))
+			archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+
+			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
+			docbank.mu.Lock()
+			processOps := append([]string(nil), docbank.processOps...)
+			processReceipt, processSeen := docbank.processReceipts[beforeOperationID]
+			docbank.mu.Unlock()
+
+			if tc.reactionOnly {
+				require.Len(processOps, 1)
+				assert.Equal(beforeOperationID, processOps[0])
+				assert.True(processSeen)
+				assert.Equal(beforeInput, processReceipt.SuppliedInputID)
+				assert.Equal("observing", deliveryRows(t, world.st, destination)[0].Phase)
+				after, err := world.st.ListLiveBeeperMediaMappings(t.Context(), destination, beforeMapping.ProcessingKey, 1)
+				require.NoError(err)
+				require.Len(after, 1)
+				assert.Equal(beforeMapping.Revision, after[0].Revision)
+				assert.Equal(hashBytes([]byte(updated)), after[0].RawHash)
+				return
+			}
+
+			assert.Empty(processOps)
+			identities := processDeliveryIdentities(t, world.st, destination)
+			oldIdentity := findProcessDelivery(t, identities, beforeMapping.ProcessingKey)
+			assert.Equal(beforeOperationID, oldIdentity.operationID)
+			assert.Equal(beforeInput, oldIdentity.suppliedInputID)
+			assert.Equal(beforeFrozen, oldIdentity.frozenRequest)
+			rows := occurrenceRows(t, world.st, destination)
+			if tc.keyChanges {
+				assert.Equal("blocked", oldIdentity.phase)
+				assert.Equal("no_live_occurrence", oldIdentity.errorCode)
+				var current *occurrenceRow
+				for i := range rows {
+					if rows[i].Revision != beforeMapping.Revision {
+						current = &rows[i]
+					}
+				}
+				require.NotNil(current)
+				assert.Equal("pending", current.State)
+				assert.NotEqual(beforeMapping.ProcessingKey, current.ProcessingKey)
+				for _, identity := range identities {
+					if identity.key != beforeMapping.ProcessingKey {
+						assert.NotEqual(beforeOperationID, identity.operationID)
+					}
+				}
+				return
+			}
+
+			assert.Equal("pending-process", oldIdentity.phase)
+			assert.Empty(oldIdentity.errorCode)
+			var current *occurrenceRow
+			for i := range rows {
+				if rows[i].Revision != beforeMapping.Revision {
+					current = &rows[i]
+				}
+			}
+			require.NotNil(current)
+			assert.Equal("pending", current.State)
+			assert.Equal(beforeMapping.ProcessingKey, current.ProcessingKey)
+
+			_, err = worker.RunBatch(t.Context())
+			require.NoError(err)
+			rows = occurrenceRows(t, world.st, destination)
+			for _, row := range rows {
+				if row.Revision == current.Revision {
+					assert.Equal("retained", row.State)
+				}
+			}
+			identities = processDeliveryIdentities(t, world.st, destination)
+			oldIdentity = findProcessDelivery(t, identities, beforeMapping.ProcessingKey)
+			assert.Equal(beforeOperationID, oldIdentity.operationID)
+			assert.Equal(beforeInput, oldIdentity.suppliedInputID)
+			assert.Equal(beforeFrozen, oldIdentity.frozenRequest)
+			operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			require.Equal(store.BeeperMediaOperationProcess, operation.Kind)
+			assert.Equal(beforeOperationID, operation.OperationID)
+			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
+			docbank.mu.Lock()
+			assert.Len(docbank.processOps, 1)
+			assert.Equal(beforeOperationID, docbank.processOps[0])
+			docbank.mu.Unlock()
+		})
+	}
+}
+
+func findProcessDelivery(t *testing.T, identities []processDeliveryIdentity, key string) processDeliveryIdentity {
+	t.Helper()
+	for _, identity := range identities {
+		if identity.key == key {
+			return identity
+		}
+	}
+	require.FailNow(t, "processing delivery not found", key)
+	return processDeliveryIdentity{}
+}
+
+func TestBeeperMediaProcessActionFence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/process-action-fence",
+		mime: "audio/wav", fileName: "voice.wav", transcript: "fence transcript", data: syntheticWAV(800, 45)})
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	destination := "process-action-fence"
+	worker := world.submitter(t, server, destination)
+	operation := preparePendingProcess(t, worker, destination)
+	beforeOperationID, beforeInput, beforeFrozen := operation.OperationID, operation.SuppliedInputID, operation.FrozenRequestJSON
+	mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), destination, operation.ProcessingKey, 1)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	raw, err := world.st.GetMessageRawContext(t.Context(), mappings[0].MessageID)
+	require.NoError(err)
+	updated := strings.Replace(string(raw), "fence transcript", "changed fence transcript", 1)
+	require.NotEqual(string(raw), updated)
+	calls := 0
+	worker.WithOperationGate(func(context.Context) (func(), bool) {
+		calls++
+		if calls == 2 {
+			require.NoError(world.st.UpsertMessageRawWithFormat(mappings[0].MessageID, []byte(updated), "beeper_json"))
+		}
+		return func() {}, true
+	})
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
+	assert.Equal(2, calls)
+	docbank.mu.Lock()
+	assert.Empty(docbank.processOps)
+	docbank.mu.Unlock()
+	identity := findProcessDelivery(t, processDeliveryIdentities(t, world.st, destination), operation.ProcessingKey)
+	assert.Equal("pending-process", identity.phase)
+	assert.Equal("source_changed", identity.errorCode)
+	assert.Equal(beforeOperationID, identity.operationID)
+	assert.Equal(beforeInput, identity.suppliedInputID)
+	assert.Equal(beforeFrozen, identity.frozenRequest)
+	var nextActionAt time.Time
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(
+		`SELECT next_action_at FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`),
+		destination, operation.ProcessingKey).Scan(&nextActionAt))
+	assert.True(nextActionAt.After(time.Now().UTC()))
+	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = ? WHERE destination_key = ?`),
+		time.Now().UTC().Add(-time.Minute), destination)
+	require.NoError(err)
+	worker.WithOperationGate(nil)
+	require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
+	docbank.mu.Lock()
+	assert.Empty(docbank.processOps)
+	docbank.mu.Unlock()
+	rows := occurrenceRows(t, world.st, destination)
+	var replacement *occurrenceRow
+	for i := range rows {
+		if rows[i].Revision != mappings[0].Revision {
+			replacement = &rows[i]
+		}
+	}
+	require.NotNil(replacement)
+	assert.NotEqual(operation.ProcessingKey, replacement.ProcessingKey)
+	assert.Equal("pending", replacement.State)
 }
 
 func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {

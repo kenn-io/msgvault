@@ -934,6 +934,8 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 	assert.Equal(store.BeeperMediaOperationProcess, operation.Kind)
 	var sourceID int64
 	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
 
 	var gateCalls int
 	submitter.WithOperationGate(func(context.Context) (func(), bool) {
@@ -945,7 +947,7 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 		}
 		return func() {}, true
 	})
-	require.NoError(submitter.process(t.Context(), t.Context(), operation))
+	require.NoError(submitter.process(t.Context(), t.Context(), archiveUID, operation))
 	deliveries := deliveryRows(t, world.st, "destination-race")
 	require.Len(deliveries, 1)
 	assert.Equal("blocked", deliveries[0].Phase)
@@ -993,10 +995,12 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 			require.Equal("retained", retained.State)
 			require.Equal("pending", sibling.State)
 			assert.Equal(retained.ProcessingKey, sibling.ProcessingKey)
+			archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+			require.NoError(err)
 
 			// Keep the second source pending while the first reaches process.
 			future := time.Now().UTC().Add(24 * time.Hour)
-			_, err := world.st.DB().Exec(world.st.Rebind(`
+			_, err = world.st.DB().Exec(world.st.Rebind(`
 				UPDATE beeper_media_occurrences SET next_action_at = ?
 				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
 				future, "destination-race-shared", sibling.Ref, sibling.Revision)
@@ -1026,7 +1030,7 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 			require.NoError(err)
 			require.NoError(world.st.MarkMessageDeleted(sourceID, retained.MessageID))
 
-			require.NoError(submitter.process(t.Context(), t.Context(), operation))
+			require.NoError(submitter.process(t.Context(), t.Context(), archiveUID, operation))
 			deliveries = deliveryRows(t, world.st, "destination-race-shared")
 			require.Len(deliveries, 1)
 			assert.Equal("pending-process", deliveries[0].Phase)
@@ -1054,7 +1058,7 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 			require.True(ok)
 			assert.Equal(store.BeeperMediaOperationProcess, resumed.Kind)
 			assert.Equal(operation.OperationID, resumed.OperationID)
-			require.NoError(submitter.process(t.Context(), t.Context(), resumed))
+			require.NoError(submitter.process(t.Context(), t.Context(), archiveUID, resumed))
 			deliveries = deliveryRows(t, world.st, "destination-race-shared")
 			require.Len(deliveries, 1)
 			assert.Equal("observing", deliveries[0].Phase)

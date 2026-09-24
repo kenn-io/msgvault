@@ -476,7 +476,7 @@ func (w *MediaSubmitter) runOperation(
 	case store.BeeperMediaOperationArtifact:
 		return false, w.artifact(ctx, actionCtx, archiveUID, operation)
 	case store.BeeperMediaOperationProcess:
-		return false, w.process(ctx, actionCtx, operation)
+		return false, w.process(ctx, actionCtx, archiveUID, operation)
 	case store.BeeperMediaOperationStatus:
 		return false, w.status(ctx, actionCtx, operation)
 	default:
@@ -749,7 +749,9 @@ func (w *MediaSubmitter) artifact(
 }
 
 // process explicitly queues the supplied-transcript profile once per key.
-func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store.BeeperMediaOperation) error {
+func (w *MediaSubmitter) process(
+	ctx, actionCtx context.Context, archiveUID string, operation store.BeeperMediaOperation,
+) error {
 	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 1)
 	if err != nil {
 		return err
@@ -757,29 +759,82 @@ func (w *MediaSubmitter) process(ctx, actionCtx context.Context, operation store
 	if len(mappings) == 0 {
 		return nil
 	}
+	evidence, err := w.mappingEvidence(ctx, archiveUID, mappings[0])
+	if err != nil {
+		return err
+	}
 	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
 		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
 	})
-	prepared, err := w.prepareOperation(ctx, operation)
+	var prepared store.BeeperMediaOperation
+	var vaultUID string
+	var retryScheduled bool
+	err = w.gated(ctx, func() error {
+		current, err := w.store.ListLiveBeeperMediaMappings(ctx, w.destination, operation.ProcessingKey, 1)
+		if err != nil {
+			return err
+		}
+		var selected *store.BeeperMediaMapping
+		for i := range current {
+			if sameBeeperMediaMapping(current[i], evidence) {
+				selected = &current[i]
+				break
+			}
+		}
+		if selected == nil {
+			return nil
+		}
+		vaultUID = selected.VaultUID
+		raw, err := w.store.GetMessageRawContext(ctx, selected.MessageID)
+		if beeperMediaRawGap(err) {
+			gap := fallbackMediaMapping(w.destination, mappingCandidate(*selected), archiveUID,
+				errBeeperMediaRawInvalid)
+			return w.store.ReconcileBeeperMediaMapping(ctx, gap)
+		}
+		if err != nil {
+			return err
+		}
+		currentRawHash := hashBytes(raw)
+		if currentRawHash != evidence.rawHash {
+			prepared, err = w.store.PrepareBeeperMediaOperation(ctx, operation)
+			if err != nil {
+				return err
+			}
+			_, err = w.store.FinishBeeperMediaOperation(ctx, prepared, store.BeeperMediaResult{
+				ErrorCode: errBeeperMediaSourceChanged.Error(), Retry: true,
+			})
+			retryScheduled = err == nil
+			return err
+		}
+		if evidence.gapCode != "" {
+			gap := fallbackMediaMappingCode(w.destination, mappingCandidate(*selected), archiveUID, evidence.gapCode)
+			return w.store.ReconcileBeeperMediaMapping(ctx, gap)
+		}
+		fresh := descriptorMapping(w.destination, evidence.candidate, evidence.descriptor)
+		if !sameBeeperMediaMapping(*selected, beeperMediaEvidence{mapping: fresh}) {
+			return w.store.ReconcileBeeperMediaMapping(ctx, fresh)
+		}
+		if err := w.store.ReconcileBeeperMediaMapping(ctx, fresh); err != nil {
+			return err
+		}
+		prepared, err = w.store.PrepareBeeperMediaOperation(ctx, operation)
+		return err
+	})
 	if err != nil {
 		return err
+	}
+	if retryScheduled || prepared.OperationID == "" {
+		return nil
 	}
 	var processing docbankmedia.Processing
 	if err := json.Unmarshal([]byte(prepared.FrozenRequestJSON), &processing); err != nil {
 		return fmt.Errorf("decode saved beeper processing request: %w", err)
 	}
-	mappings, err = w.liveMappings(ctx, operation.ProcessingKey, 1)
-	if err != nil {
-		return err
-	}
-	if len(mappings) == 0 {
-		return nil
-	}
 	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing.SuppliedInputID)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, prepared, err)
 	}
-	if receipt.VaultUID != mappings[0].VaultUID || receipt.SourceID != prepared.DocbankSourceID {
+	if receipt.VaultUID != vaultUID || receipt.SourceID != prepared.DocbankSourceID {
 		return w.finishOperation(ctx, prepared, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
 	result := store.BeeperMediaResult{
