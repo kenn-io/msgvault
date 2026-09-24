@@ -306,28 +306,31 @@ describe('PersonBriefCard', () => {
     });
     render(PersonBriefCard, { client: createAPIClient(fetchFn), personID: 7 });
 
-    // The Toggle stays mounted across every enrolment change, so one
-    // reference tracks it through the whole flow. A settled mutation always
-    // ends by refocusing this same control (the card's only enabled input
-    // while unenrolled or brief-missing), so blurring after each click and
-    // waiting for focus to return is a reliable way to wait out the full
-    // change, including the "also track" reset that follows it.
+    // Wait for the requested enrollment state and its content before the
+    // next toggle. Focus can return before the asynchronous PUT settles.
     const toggle = (await screen.findByRole('switch', {
       name: 'Enroll this person in briefs'
     })) as HTMLInputElement;
-    async function clickAndSettle(): Promise<void> {
+    async function clickAndSettle(nextEnrolled: boolean): Promise<void> {
+      const previousCount = bodies.length;
       await fireEvent.click(toggle);
-      toggle.blur();
-      await waitFor(() => expect(document.activeElement).toBe(toggle));
+      await waitFor(() => {
+        expect(bodies).toHaveLength(previousCount + 1);
+        expect(toggle.checked).toBe(nextEnrolled);
+        expect(toggle.disabled).toBe(false);
+        expect(document.activeElement).toBe(toggle);
+      });
+      if (nextEnrolled) await screen.findByText('No brief yet.');
+      else await screen.findByText('This person is not enrolled, so no brief is generated or shown.');
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.
     await fireEvent.click(await screen.findByRole('checkbox', { name: 'Also track this person' }));
-    await clickAndSettle();
+    await clickAndSettle(true);
     expect(bodies).toEqual([{ enrolled: true, track: true }]);
 
     // Unenrol: the checkbox reappears once the person is unenrolled again.
-    await clickAndSettle();
+    await clickAndSettle(false);
     expect(bodies[1].enrolled).toBe(false);
 
     // The remounted checkbox settles unchecked: a stale "also track" from the
@@ -338,7 +341,7 @@ describe('PersonBriefCard', () => {
     expect(checkbox.checked).toBe(false);
 
     // Enrolling again without re-checking the box posts track: false.
-    await clickAndSettle();
+    await clickAndSettle(true);
     expect(bodies[2]).toEqual({ enrolled: true, track: false });
   });
 

@@ -315,7 +315,10 @@ import (
 // carddav_inference_review_required. Additive (minor bump): existing CardDAV
 // routes are unchanged.
 // 2.26.0 adds optional web_url metadata to message result schemas.
-const APISchemaVersion = "2.26.0"
+// 2.27.0 adds deterministic meeting context, archived action-item listing,
+// and duration metrics with exact direct or Explore scope. Additive (minor
+// bump): meeting import and every existing route retain their behavior.
+const APISchemaVersion = "2.27.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -379,7 +382,81 @@ func baseOpenAPIDocument(includeHidden bool) *huma.OpenAPI {
 	hardenPersonRelationshipSchemas(doc)
 	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
+	hardenMeetingSchemas(doc)
 	return doc
+}
+
+func hardenMeetingSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	contextRequest := schemas["MeetingContextRequest"]
+	if contextRequest != nil {
+		if messageIDs := contextRequest.Properties["message_ids"]; messageIDs != nil {
+			messageIDs.Nullable = false
+			one := 1
+			messageIDs.MinItems = &one
+			hardenMeetingIDItems(messageIDs)
+		}
+		if selection := contextRequest.Properties["selection"]; selection != nil {
+			selection.Nullable = false
+		}
+		contextRequest.OneOf = []*huma.Schema{
+			{
+				Type: huma.TypeObject, Required: []string{"message_ids"},
+				Properties: map[string]*huma.Schema{"message_ids": contextRequest.Properties["message_ids"]},
+			},
+			{
+				Type: huma.TypeObject, Required: []string{"selection"},
+				Properties: map[string]*huma.Schema{"selection": contextRequest.Properties["selection"]},
+			},
+		}
+	}
+	for _, name := range []string{"MeetingActionsRequest", "MeetingMetricsRequest"} {
+		request := schemas[name]
+		if request == nil {
+			continue
+		}
+		for _, field := range []string{"scope", "explore"} {
+			if property := request.Properties[field]; property != nil {
+				property.Nullable = false
+			}
+		}
+		request.Not = &huma.Schema{Type: huma.TypeObject, Required: []string{"scope", "explore"}}
+	}
+	scope := schemas["MeetingScopeRequest"]
+	if scope != nil {
+		if messageIDs := scope.Properties["message_ids"]; messageIDs != nil {
+			messageIDs.Nullable = false
+			hardenMeetingIDItems(messageIDs)
+		}
+		for _, field := range []string{"source_ids", "participant_ids"} {
+			if property := scope.Properties[field]; property != nil {
+				one := 1
+				property.MinItems = &one
+				hardenMeetingIDItems(property)
+			}
+		}
+		if domains := scope.Properties["domains"]; domains != nil {
+			one := 1
+			domains.MinItems = &one
+		}
+		scope.AllOf = []*huma.Schema{
+			{Not: &huma.Schema{Type: huma.TypeObject, Required: []string{"person_id", "participant_id"}}},
+			{Not: &huma.Schema{Type: huma.TypeObject, Required: []string{"person_id", "participant_ids"}}},
+			{Not: &huma.Schema{Type: huma.TypeObject, Required: []string{"participant_id", "participant_ids"}}},
+		}
+	}
+}
+
+func hardenMeetingIDItems(array *huma.Schema) {
+	if array == nil || array.Items == nil {
+		return
+	}
+	minimum, maximum := float64(1), float64(maxPublicMeetingID)
+	array.Items.Minimum = &minimum
+	array.Items.Maximum = &maximum
 }
 
 func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
@@ -731,6 +808,27 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	const emailProperty = "email"
+	if contextRequest := schemas["MeetingContextRequest"]; contextRequest != nil {
+		// Keep the public one-of validation, but avoid an unusable generated
+		// union overlay. The concrete fields already describe both request forms.
+		contextRequest.OneOf = nil
+	}
+	for _, schemaName := range []string{"MeetingContextRequest", "MeetingScopeRequest"} {
+		if schema := schemas[schemaName]; schema != nil {
+			if messageIDs := schema.Properties["message_ids"]; messageIDs != nil {
+				// Optional slices otherwise collapse omission and an explicit empty
+				// slice, even though the server assigns those different meanings.
+				setCodegenGoType(messageIDs, "*[]int64")
+				validation := "omitempty,max=100,dive,gte=1,lte=9007199254740991"
+				if schemaName == "MeetingContextRequest" {
+					validation = "omitempty,min=1,max=100,dive,gte=1,lte=9007199254740991"
+				}
+				messageIDs.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+					"validate": validation,
+				}
+			}
+		}
+	}
 	if meeting := schemas["Meeting"]; meeting != nil {
 		// The Go client generator treats composed object schemas as union
 		// wrappers. Runtime validation and the public schema retain these
@@ -741,7 +839,21 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				setCodegenGoType(timestamp, "string")
 			}
 		}
+		if actions := meeting.Properties["action_items"]; actions != nil {
+			setCodegenGoType(actions, "*[]MeetingActionItem")
+			actions.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty,max=1000,dive",
+			}
+		}
 	}
+	if totals := schemas["DurationTotals"]; totals != nil {
+		if average := totals.Properties["average_known_seconds"]; average != nil {
+			setCodegenGoType(average, "*float64")
+		}
+		nullableSchemaProperty(totals, "average_known_seconds")
+	}
+	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
+	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",
@@ -911,6 +1023,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		setEnumNames(response.Properties["status"], []any{
 			"MeetingImportResponseStatusCreated",
 			"MeetingImportResponseStatusUpdated",
+		})
+	}
+	if request := schemas["MeetingActionsRequest"]; request != nil {
+		setEnumNames(request.Properties["status"], []any{
+			"MeetingActionsRequestStatusPending",
+			"MeetingActionsRequestStatusCompleted",
+			"MeetingActionsRequestStatusCancelled",
+			"MeetingActionsRequestStatusUnknown",
 		})
 	}
 	for schemaName, properties := range map[string]map[string][]any{

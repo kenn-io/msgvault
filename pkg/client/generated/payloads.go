@@ -112,6 +112,12 @@ type ImportMeetingBody = MeetingImportRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type ListMeetingActionItemsBody = MeetingActionsRequest
+
+type GetMeetingContextBody = MeetingContextRequest
+
+type GetMeetingMetricsBody = MeetingMetricsRequest
+
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
 type StartVisualAttachmentBuildBody = VisualBuildRequest

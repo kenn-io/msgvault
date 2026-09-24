@@ -58,6 +58,9 @@ const (
 	ToolCreateSavedView         = "create_saved_view"
 	ToolUpdateSavedView         = "update_saved_view"
 	ToolDeleteSavedView         = "delete_saved_view"
+	ToolGetMeetingContext       = "get_meeting_context"
+	ToolListMeetingActionItems  = "list_meeting_action_items"
+	ToolGetMeetingMetrics       = "get_meeting_metrics"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -103,6 +106,9 @@ type ServeOptions struct {
 	// when the embedder has no durable Saved View store; the Saved View tools
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
+	// Meetings exposes daemon-backed archived meeting context, action, and
+	// metric reads. Leave it nil when the daemon predates those routes.
+	Meetings MeetingBackend
 }
 
 type HTTPOptions struct {
@@ -230,6 +236,7 @@ func newMCPServerWithPolicy(
 		backend:            opts.Backend,
 		visualSearcher:     opts.VisualSearcher,
 		savedViews:         opts.SavedViews,
+		meetings:           opts.Meetings,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

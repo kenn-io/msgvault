@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -105,6 +106,7 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var marker atomic.Value
+	requestStarted := make(chan struct{}, 1)
 	requestCanceled := make(chan struct{})
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -118,6 +120,7 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v1/stats", func(_ http.ResponseWriter, r *http.Request) {
 		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
+		requestStarted <- struct{}{}
 		<-r.Context().Done()
 		close(requestCanceled)
 	})
@@ -142,19 +145,17 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 		_, err := st.GetStats()
 		done <- err
 	}()
-	require.Eventually(func() bool {
-		return marker.Load() != nil
-	}, 2*time.Second, 10*time.Millisecond, "stats request starts")
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow("stats request did not start")
+	}
 	cancel()
-
-	require.Eventually(func() bool {
-		select {
-		case <-requestCanceled:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches stats request")
+	select {
+	case <-requestCanceled:
+	case <-time.After(2 * time.Second):
+		require.FailNow("root cancellation did not reach stats request")
+	}
 	assert.Equal(apiprotocol.ClientClassCLI, marker.Load())
 	require.Error(<-done, "canceled stats request")
 }
@@ -455,36 +456,38 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 }
 
 func TestWaitForStartupCacheBuildOutcomeWaitsAfterHTTPReadiness(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	dataDir := t.TempDir()
-	record := daemon.RuntimeRecord{
-		PID:      os.Getpid(),
-		Network:  daemon.NetworkTCP,
-		Address:  "127.0.0.1:1",
-		Service:  daemonService,
-		Version:  Version,
-		Metadata: map[string]string{},
-	}
-	_, err := daemonRuntimeStore(dataDir).Write(record)
-	require.NoError(err)
-	rt := &DaemonRuntime{Record: record}
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		updated := record
-		updated.Metadata = map[string]string{
-			runtimeStartupCacheBuildOutcome: string(startupCacheBuildOutcomeFulfilled),
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		dataDir := t.TempDir()
+		record := daemon.RuntimeRecord{
+			PID:      os.Getpid(),
+			Network:  daemon.NetworkTCP,
+			Address:  "127.0.0.1:1",
+			Service:  daemonService,
+			Version:  Version,
+			Metadata: map[string]string{},
 		}
-		_, _ = daemonRuntimeStore(dataDir).Write(updated)
-	}()
+		_, err := daemonRuntimeStore(dataDir).Write(record)
+		require.NoError(err)
+		rt := &DaemonRuntime{Record: record}
 
-	gotRT, outcome, err := waitForStartupCacheBuildOutcome(
-		context.Background(), dataDir, &backgroundServeProcess{}, rt, time.Second,
-	)
-	require.NoError(err)
-	require.NotNil(gotRT)
-	assert.Equal(startupCacheBuildOutcomeFulfilled, outcome)
+		go func() {
+			synctest.Sleep(50 * time.Millisecond)
+			updated := record
+			updated.Metadata = map[string]string{
+				runtimeStartupCacheBuildOutcome: string(startupCacheBuildOutcomeFulfilled),
+			}
+			_, _ = daemonRuntimeStore(dataDir).Write(updated)
+		}()
+
+		gotRT, outcome, err := waitForStartupCacheBuildOutcome(
+			context.Background(), dataDir, &backgroundServeProcess{}, rt, time.Second,
+		)
+		require.NoError(err)
+		require.NotNil(gotRT)
+		assert.Equal(startupCacheBuildOutcomeFulfilled, outcome)
+	})
 }
 
 func TestWaitForStartupCacheBuildOutcomeReportsProcessExit(t *testing.T) {

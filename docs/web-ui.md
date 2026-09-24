@@ -141,6 +141,16 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
+## Meeting context and follow-ups
+
+Filter Everything to meetings to see **Meeting activity and follow-ups**.
+Select meeting rows to export their context as JSON or Markdown, with transcripts
+included only when requested. Participant/domain reading panes, Directory, and
+Relationships show meeting metrics and recorded actions for their current scope.
+**Open archived meeting** opens the source evidence; Back restores the originating
+view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
+for selection limits, source coverage, unknown duration, and action filters.
+
 ## Cache states
 
 The web tables share one analytical cache across message types. When it is missing,

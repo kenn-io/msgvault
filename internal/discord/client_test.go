@@ -9,10 +9,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	globalRateLimitObservationBudget = 500 * time.Millisecond
+	headerRateLimitObservationBudget = 500 * time.Millisecond
 )
 
 func TestClientReadAPI(t *testing.T) {
@@ -122,31 +128,23 @@ func TestClientFormattingDoesNotExposeBotToken(t *testing.T) {
 }
 
 func TestWaitGlobalObservesExtendedDeadline(t *testing.T) {
-	require := require.New(t)
-	limits := newRateLimitState()
-	limits.pause(nil, 60*time.Millisecond, true)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- limits.waitGlobal(t.Context())
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	limits.pause(nil, 160*time.Millisecond, true)
-
-	select {
-	case err := <-done:
-		require.NoError(err)
-		require.Fail("global wait returned before an extended deadline")
-	case <-time.After(80 * time.Millisecond):
-	}
-
-	select {
-	case err := <-done:
-		require.NoError(err)
-	case <-time.After(200 * time.Millisecond):
-		require.Fail("global wait did not return after the extended deadline")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		limits := newRateLimitState()
+		limits.pause(nil, 60*time.Millisecond, true)
+		done := make(chan error, 1)
+		go func() { done <- limits.waitGlobal(t.Context()) }()
+		synctest.Sleep(20 * time.Millisecond)
+		limits.pause(nil, 160*time.Millisecond, true)
+		synctest.Sleep(80 * time.Millisecond)
+		select {
+		case <-done:
+			require.Fail("global wait returned before an extended deadline")
+		default:
+		}
+		synctest.Sleep(100 * time.Millisecond)
+		require.NoError(<-done)
+	})
 }
 
 func TestMessageQueryValidation(t *testing.T) {
@@ -330,7 +328,7 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 		client.limits.mu.Lock()
 		defer client.limits.mu.Unlock()
 		return client.limits.globalUntil.After(time.Now())
-	}, 500*time.Millisecond, time.Millisecond)
+	}, globalRateLimitObservationBudget, time.Millisecond)
 	_, err = client.Guild(context.Background(), "201")
 	require.NoError(err)
 	require.NoError(<-meDone)
@@ -405,7 +403,7 @@ func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
 					}
 				}
 				return false
-			}, 500*time.Millisecond, time.Millisecond)
+			}, headerRateLimitObservationBudget, time.Millisecond)
 			started := time.Now()
 
 			_, err = client.Guild(context.Background(), "201")

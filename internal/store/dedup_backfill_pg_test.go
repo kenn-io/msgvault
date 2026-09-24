@@ -396,9 +396,7 @@ func newRFC822IDBackfillSQLiteGateStore(
 	require.NoError(t, setup.InitSchemaContext(t.Context()))
 	require.NoError(t, setup.Close())
 
-	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-		return conn.RegisterFunc(sqliteutil.UnicodeLowerFunction, strings.ToLower, true)
-	}}
+	sqliteDriver := &sqlite3.SQLiteDriver{ConnectHook: sqliteutil.RegisterFunctions}
 	base := &rfc822IDBackfillSQLiteConnector{driver: sqliteDriver, dsn: path + testSQLiteParams}
 	db := sql.OpenDB(&rfc822IDBackfillGateConnector{
 		Connector: base, statementGate: gate,
