@@ -89,7 +89,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "")
+	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "", cfg.OAuth.ClientSecrets != "")
 	return nil
 }
 
@@ -111,7 +111,11 @@ func setupAddAccountCommand(o *config.OAuthConfig) string {
 	return ""
 }
 
-func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote bool) {
+// printSetupNextSteps prints the closing steps. bundleHasSecrets reports
+// whether the NAS bundle carries the credential add-account uses; the
+// bundle copies only the default [oauth] client_secrets, so a token from
+// a named app or a service account cannot be refreshed there.
+func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHasSecrets bool) {
 	var b strings.Builder
 	b.WriteString("\nSetup complete! Next steps:\n\n")
 	if addAccountCmd != "" {
@@ -119,9 +123,13 @@ func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote bool) {
 		b.WriteString("     " + addAccountCmd + "\n\n")
 		b.WriteString("  2. Sync your emails:\n")
 		b.WriteString("     msgvault sync-full you@gmail.com\n\n")
-		if hasRemote {
+		switch {
+		case hasRemote && bundleHasSecrets:
 			b.WriteString("  3. Export token to your NAS (after add-account):\n")
 			b.WriteString("     msgvault export-token you@gmail.com\n\n")
+		case hasRemote:
+			b.WriteString("  The NAS bundle carries only the default [oauth] client_secrets,\n")
+			b.WriteString("  so this account cannot be exported to the NAS.\n\n")
 		}
 	} else {
 		b.WriteString("  Add a source, for example:\n")

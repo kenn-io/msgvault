@@ -207,3 +207,17 @@ func TestSetupAddAccountCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestPrintSetupNextStepsExportNeedsBundledSecrets(t *testing.T) {
+	assert := assert.New(t)
+	const named = "msgvault add-account you@gmail.com --oauth-app 'work'"
+
+	var withSecrets bytes.Buffer
+	printSetupNextSteps(&withSecrets, "msgvault add-account you@gmail.com", true, true)
+	assert.Contains(withSecrets.String(), "export-token")
+
+	var namedOnly bytes.Buffer
+	printSetupNextSteps(&namedOnly, named, true, false)
+	assert.NotContains(namedOnly.String(), "export-token")
+	assert.Contains(namedOnly.String(), "cannot be exported to the NAS")
+}
