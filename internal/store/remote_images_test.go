@@ -10,6 +10,7 @@ import (
 )
 
 func TestRemoteImageBackfillIncludesLegacyEmailTypes(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
 	var want []int64

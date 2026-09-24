@@ -9,6 +9,7 @@ import (
 )
 
 func TestConflictOwnedIntentReopenPreservesEvidenceAndIdentity(t *testing.T) {
+	t.Parallel()
 	for _, finish := range []string{"commit", "rollback", "mismatch"} {
 		t.Run(finish, func(t *testing.T) {
 			require := require.New(t)
@@ -86,6 +87,7 @@ func TestConflictOwnedIntentReopenPreservesEvidenceAndIdentity(t *testing.T) {
 }
 
 func TestConflictOwnedCreateRetryUsesCapturedApprovalScope(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"none", "inference", "generation", "book", "body"} {
 		t.Run(change, func(t *testing.T) {
 			require := require.New(t)
@@ -162,6 +164,7 @@ func standaloneConflict(t *testing.T, inferred bool) (*store.Store, *store.CardD
 }
 
 func TestConflictOwnedIntentSurvivesLegacyTableUpgrade(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, c := approvedStandaloneConflict(t)
@@ -202,6 +205,7 @@ func TestConflictOwnedIntentSurvivesLegacyTableUpgrade(t *testing.T) {
 }
 
 func TestConflictOwnedReprepareRejectsOldCanonicalResult(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, c := standaloneConflict(t, false)
@@ -219,6 +223,7 @@ func TestConflictOwnedReprepareRejectsOldCanonicalResult(t *testing.T) {
 }
 
 func TestConflictOwnedIntentProtectsConnectionChangeUntilRollback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, c := approvedStandaloneConflict(t)
 	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{ConflictID: c.ID, ExpectedMappingRevision: c.MappingRevision, RemoteETag: c.RemoteETag, OutgoingSemanticHash: "approved"})
@@ -231,6 +236,7 @@ func TestConflictOwnedIntentProtectsConnectionChangeUntilRollback(t *testing.T) 
 }
 
 func TestConflictOwnedIntentRejectsPullBeforeAdvancingSyncToken(t *testing.T) {
+	t.Parallel()
 	for _, tombstone := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tombstone_%t", tombstone), func(t *testing.T) {
 			require := require.New(t)

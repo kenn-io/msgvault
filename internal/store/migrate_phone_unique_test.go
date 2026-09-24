@@ -30,6 +30,7 @@ import (
 // id (proving ON CONFLICT (phone_number) now binds to a real UNIQUE
 // constraint).
 func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	// SQLite-only: this test pokes at sqlite_master and reseats the
@@ -241,6 +242,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 // silently dropped by participant_links' ON DELETE CASCADE, and the
 // identity revision must bump since the merge changed the link graph.
 func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "phone_unique_links.db")
@@ -332,6 +334,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMatches(
 	t *testing.T,
 ) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "phone_unique_observations.db")
@@ -441,6 +444,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_PreservesObservationsAndReconcilesMa
 // its merge path must still be able to read and rewrite linked duplicate-phone
 // participants during the same InitSchema upgrade.
 func TestInitSchema_LegacyPhoneDedupeAddsParticipantLinkOwnershipColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-phone-links.db")
@@ -518,6 +522,7 @@ func TestInitSchema_LegacyPhoneDedupeAddsParticipantLinkOwnershipColumn(t *testi
 // fields still empty on the winner, so for each field the lowest-id
 // participant holding a value wins.
 func TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "phone_unique_meta.db")

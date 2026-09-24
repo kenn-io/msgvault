@@ -24,6 +24,7 @@ func setKeys(component map[int64]struct{}) map[int64]bool {
 // that leaked across components or dropped a reachable node would change these
 // literals.
 func TestComponentOfAdjReturnsExactComponent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// Components: {1-2-3}, {5-6}, {10-11}; node 8 is isolated (no edges).
 	edges := []linkEdge{{1, 2}, {2, 3}, {5, 6}, {10, 11}}
@@ -42,6 +43,7 @@ func TestComponentOfAdjReturnsExactComponent(t *testing.T) {
 // yield the same set as calling componentOfAdj against a separately built
 // adjacency map, for every node in a multi-component graph.
 func TestComponentOfDelegatesToComponentOfAdj(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	edges := []linkEdge{{1, 2}, {2, 3}, {5, 6}, {10, 11}}
 	adj := buildAdjacency(edges)
@@ -61,6 +63,7 @@ func TestComponentOfDelegatesToComponentOfAdj(t *testing.T) {
 // component in ascending-id order, which pins that the canonical root is the
 // smallest member of each component and not merely the first node visited.
 func TestClustersFromEdgesSmallestRootAcrossComponents(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	edges := []linkEdge{
 		{1, 2}, {2, 3}, // chain 1-2-3 rooted at 1
@@ -85,6 +88,7 @@ func TestClustersFromEdgesSmallestRootAcrossComponents(t *testing.T) {
 // and a star (10 linked to 11..14) collapses to its center, all resolved from
 // one adjacency build.
 func TestClustersFromEdgesMultiHopChainAndStar(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	edges := []linkEdge{
 		{1, 2}, {2, 3}, {3, 4}, {4, 5}, // chain
@@ -104,6 +108,7 @@ func TestClustersFromEdgesMultiHopChainAndStar(t *testing.T) {
 // edge list return identical maps, so cache builds and identity refreshes are
 // reproducible.
 func TestClustersFromEdgesIsDeterministic(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	edges := []linkEdge{{1, 2}, {2, 3}, {5, 6}, {10, 11}}
 
@@ -119,7 +124,7 @@ func TestClustersFromEdgesIsDeterministic(t *testing.T) {
 // component (four times here); the fix builds it once and traverses the shared
 // map with componentOfAdj, so this pins that the quadratic per-component
 // rebuild is gone.
-func TestClustersFromEdgesBuildsAdjacencyOnce(t *testing.T) {
+func TestClustersFromEdgesBuildsAdjacencyOnce(t *testing.T) { //nolint:paralleltest // swaps the package-level buildAdjacency hook
 	assert := assert.New(t)
 	orig := buildAdjacency
 	t.Cleanup(func() { buildAdjacency = orig })

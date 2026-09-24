@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonSweepLastContactReportsContactStateCoordinates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -59,6 +60,7 @@ func TestPersonSweepLastContactReportsContactStateCoordinates(t *testing.T) {
 }
 
 func TestPersonSweepLastContactRejectsInvalidPerson(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	_, _, err := st.PersonSweepLastContact(t.Context(), 0)
 	require.Error(t, err)

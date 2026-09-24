@@ -11,6 +11,7 @@ import (
 )
 
 func TestSeededRelationshipTypesCoverEveryRegisteredRelatedValue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -66,6 +67,7 @@ func TestSeededRelationshipTypesCoverEveryRegisteredRelatedValue(t *testing.T) {
 }
 
 func TestSeededRelationshipTypeOrientationAndSymmetry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -109,6 +111,7 @@ func TestSeededRelationshipTypeOrientationAndSymmetry(t *testing.T) {
 }
 
 func TestEnsureSeededRelationshipTypesIsIdempotentAndPreservesLabelEdits(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -157,6 +160,7 @@ func TestEnsureSeededRelationshipTypesIsIdempotentAndPreservesLabelEdits(t *test
 }
 
 func TestInitSchemaPreservesUserRemappedSeededVCardType(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -209,6 +213,7 @@ func TestInitSchemaPreservesUserRemappedSeededVCardType(t *testing.T) {
 }
 
 func TestEnsureSeededRelationshipTypesRestoresADeletedSeed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -235,6 +240,7 @@ func TestEnsureSeededRelationshipTypesRestoresADeletedSeed(t *testing.T) {
 }
 
 func TestEnsureSeededRelationshipTypesRepairsStructuralDriftButPreservesLabels(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -284,6 +290,7 @@ func TestEnsureSeededRelationshipTypesRepairsStructuralDriftButPreservesLabels(t
 }
 
 func TestEnsureSeededRelationshipTypesRepairsInverseDriftWithRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -322,6 +329,7 @@ func TestEnsureSeededRelationshipTypesRepairsInverseDriftWithRevision(t *testing
 }
 
 func TestCreateRelationshipTypeAssignsUUIDUniversalIDAndUserOwnership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -364,6 +372,7 @@ func TestCreateRelationshipTypeAssignsUUIDUniversalIDAndUserOwnership(t *testing
 }
 
 func TestCreateRelationshipTypeValidatesSlugSymmetryAndRelatedType(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -424,6 +433,7 @@ func TestCreateRelationshipTypeValidatesSlugSymmetryAndRelatedType(t *testing.T)
 }
 
 func TestUpdateRelationshipTypeEditsPresentationAndRejectsStaleRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -463,6 +473,7 @@ func TestUpdateRelationshipTypeEditsPresentationAndRejectsStaleRevision(t *testi
 }
 
 func TestRelationshipTypeVCardMappingNormalizesAndClears(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -485,6 +496,7 @@ func TestRelationshipTypeVCardMappingNormalizesAndClears(t *testing.T) {
 }
 
 func TestUpdateRelationshipTypeKeepsSymmetricLabelsIdentical(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -507,6 +519,7 @@ func TestUpdateRelationshipTypeKeepsSymmetricLabelsIdentical(t *testing.T) {
 }
 
 func TestDeleteRelationshipTypeProtectsSystemTypesAndTypesInUse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -533,6 +546,7 @@ func TestDeleteRelationshipTypeProtectsSystemTypesAndTypesInUse(t *testing.T) {
 }
 
 func TestSeededSymmetryDriftRepairsLabelsInsteadOfBreakingInitSchema(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

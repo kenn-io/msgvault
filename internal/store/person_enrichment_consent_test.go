@@ -50,6 +50,7 @@ func enrichmentTestProfile(t *testing.T) personenrichment.ProviderProfile {
 }
 
 func TestPersonEnrichmentConsentLifecycleAndDistinctAuthority(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -129,6 +130,7 @@ func TestPersonEnrichmentConsentLifecycleAndDistinctAuthority(t *testing.T) {
 }
 
 func TestPersonEnrichmentConsentRejectsImmutableProfileCollisions(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := enrichmentTestProfile(t)
@@ -185,6 +187,7 @@ func TestPersonEnrichmentConsentRejectsImmutableProfileCollisions(t *testing.T) 
 }
 
 func TestPersonEnrichmentConsentConcurrentGrantAndRevoke(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -251,6 +254,7 @@ func TestPersonEnrichmentConsentConcurrentGrantAndRevoke(t *testing.T) {
 }
 
 func TestRevokeAllPersonEnrichmentConsentsSerializesRacingGrant(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)

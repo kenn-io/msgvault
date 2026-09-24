@@ -10,6 +10,7 @@ import (
 )
 
 func TestInitSchemaClassifiesLegacyGmailChatMessages(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := storetest.New(t).Store

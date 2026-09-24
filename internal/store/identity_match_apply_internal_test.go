@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandidate(
+func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandidate( //nolint:paralleltest // swaps the package-level buildAdjacency hook
 	t *testing.T,
 ) {
 	require := require.New(t)
@@ -56,6 +56,7 @@ func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandi
 }
 
 func TestApplyAcceptedIdentityMatchFollowsParticipantMergeCollision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "accepted-merge-collision.db"))
@@ -118,6 +119,7 @@ func TestApplyAcceptedIdentityMatchFollowsParticipantMergeCollision(t *testing.T
 }
 
 func TestApplyAcceptedIdentityMatchDoesNotAssumeMissingCandidateWasMerged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "accepted-missing-candidate.db"))
 	require.NoError(err)

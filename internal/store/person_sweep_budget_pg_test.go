@@ -18,7 +18,7 @@ import (
 // attempt, so on PostgreSQL the two transactions can abort each other with
 // 40P01. The mark must retry from a fresh transaction and converge either to
 // success or to the typed peoplesweep.ErrLeaseLost.
-func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) {
+func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	t.Run("deadlock victim marks the batch running from a fresh transaction", func(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)

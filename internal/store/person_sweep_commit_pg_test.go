@@ -16,6 +16,7 @@ import (
 )
 
 func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
+	t.Parallel()
 	t.Run("apply locks active grant before revoke", func(t *testing.T) {
 		requirements := require.New(t)
 		f := newPersonSweepApplyFixture(t, "pg-consent-apply-first", true)
@@ -95,6 +96,7 @@ func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
 }
 
 func TestPersonSweepPostgreSQLReclaimedFinalizerAndSuccessorApplyUseOneLockOrder(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "pg-reclaimed-finalizer", true)
 	if !f.store.IsPostgreSQL() {

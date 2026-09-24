@@ -15,6 +15,7 @@ import (
 // scans the person's whole journal prefix for every live message, which is
 // quadratic on a real archive; the plan must search the covering index.
 func TestPersonSweepHistoricalCandidatesBoundUsesTheJournalMessageIndex(t *testing.T) {
+	t.Parallel()
 	// openTestStore is always SQLite, which is the dialect EXPLAIN QUERY PLAN
 	// speaks and the one where the unindexed bound was measured as quadratic.
 	requirements := require.New(t)

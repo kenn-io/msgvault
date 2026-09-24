@@ -48,7 +48,7 @@ func (h *plannerMaintenanceSignalHandler) Handle(ctx context.Context, record slo
 	return nil
 }
 
-func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
+func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -75,7 +75,7 @@ func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
 	assert.Contains(errorText, "context deadline exceeded")
 }
 
-func TestPlannerMaintenanceLogLevel(t *testing.T) {
+func TestPlannerMaintenanceLogLevel(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	contextDeadlineText := errors.New("context deadline exceeded")
 	cases := []struct {
 		name      string
@@ -150,7 +150,7 @@ func TestPlannerMaintenanceLogLevel(t *testing.T) {
 	}
 }
 
-func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
+func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -171,7 +171,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	assert.Equal(actualErr.Error(), records[0]["error"])
 }
 
-func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
+func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -196,7 +196,7 @@ func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
 	assert.Equal(actualErr.Error(), records[0]["error"])
 }
 
-func TestStoreCloseCancellationLogsDebugAndRunsCleanup(t *testing.T) {
+func TestStoreCloseCancellationLogsDebugAndRunsCleanup(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -257,6 +257,7 @@ func messagePlannerStatisticCount(t *testing.T, s *Store) int {
 }
 
 func TestInitSchemaRefreshesSQLitePlannerStatistics(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -275,6 +276,7 @@ func TestInitSchemaRefreshesSQLitePlannerStatistics(t *testing.T) {
 }
 
 func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -294,7 +296,7 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 		"successful sync must analyze populated message indexes")
 }
 
-func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
+func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) { //nolint:paralleltest // expects the checkpoint to finish inside a 250ms real-time window
 	require := require.New(t)
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
@@ -328,6 +330,7 @@ func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
 }
 
 func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -393,7 +396,7 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 	}
 }
 
-func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
+func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) { //nolint:paralleltest // expects the duplicate optimize to return inside a 250ms real-time window
 	require := require.New(t)
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
@@ -436,6 +439,7 @@ func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
 }
 
 func TestOptimizeSQLiteBoundsPoolReservation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
@@ -461,6 +465,7 @@ func TestOptimizeSQLiteBoundsPoolReservation(t *testing.T) {
 }
 
 func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")

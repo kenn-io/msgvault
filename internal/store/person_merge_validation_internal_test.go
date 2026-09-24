@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonMergeRequestValidation(t *testing.T) {
+	t.Parallel()
 	valid := PersonMergeRequest{
 		SurvivorID:               1,
 		AbsorbedID:               2,
@@ -43,6 +44,7 @@ func TestPersonMergeRequestValidation(t *testing.T) {
 }
 
 func TestPersonSplitRequestValidation(t *testing.T) {
+	t.Parallel()
 	valid := PersonSplitRequest{
 		SourcePersonID:         1,
 		MergeID:                2,

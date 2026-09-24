@@ -17,6 +17,7 @@ import (
 // get-or-create that hits the conflict path must leave the queue untouched, or
 // an N-message thread costs ~N^2/2 queue writes per full sync.
 func TestEnsureConversationConflictDoesNotRequeueThread(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -37,6 +38,7 @@ func TestEnsureConversationConflictDoesNotRequeueThread(t *testing.T) {
 // requeue the thread, while a conversation_type change is classification input
 // and must.
 func TestEnsureConversationWithTypeRequeuesOnlyOnRealChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -68,6 +70,7 @@ func TestEnsureConversationWithTypeRequeuesOnlyOnRealChange(t *testing.T) {
 // snapshot once per message, and a delete-and-reinsert of an unchanged
 // snapshot would requeue every message in the conversation twice per member.
 func TestConversationParticipantSnapshotRequeuesOnlyOnRealChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -97,6 +100,7 @@ func TestConversationParticipantSnapshotRequeuesOnlyOnRealChange(t *testing.T) {
 // every conversation row after each import and must not reproject the archive
 // or hold the contact-state freshness barrier open.
 func TestConversationStatsRecomputeDoesNotRequeueActivity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -116,6 +120,7 @@ func TestConversationStatsRecomputeDoesNotRequeueActivity(t *testing.T) {
 // shares the same statement shape, while 66k round trips to a PostgreSQL
 // server would dominate the suite's runtime.
 func TestReplaceConversationParticipantsHandlesHugeMemberships(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite bound-variable cap regression; shared statement shape")
 	require := require.New(t)
 	assert := assert.New(t)

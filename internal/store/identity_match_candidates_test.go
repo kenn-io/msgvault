@@ -13,6 +13,7 @@ import (
 )
 
 func TestIdentityMatchCardDAVResourceValidatesLedgerEndpoint(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -33,6 +34,7 @@ func TestIdentityMatchCardDAVResourceValidatesLedgerEndpoint(t *testing.T) {
 }
 
 func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := storetest.New(t)
@@ -98,6 +100,7 @@ func TestAddIdentityMatchEvidenceConcurrentCallsConverge(t *testing.T) {
 }
 
 func TestUsernameOnlyCandidateCannotBeAcceptedWithoutCorroboration(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -134,6 +137,7 @@ func TestUsernameOnlyCandidateCannotBeAcceptedWithoutCorroboration(t *testing.T)
 }
 
 func TestStableProviderIDCandidateMayBeAcceptedBySystem(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -157,6 +161,7 @@ func TestStableProviderIDCandidateMayBeAcceptedBySystem(t *testing.T) {
 }
 
 func TestStableProviderIDCandidateWithoutRecordedValueRequiresUserAcceptance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -185,6 +190,7 @@ func TestStableProviderIDCandidateWithoutRecordedValueRequiresUserAcceptance(t *
 }
 
 func TestUpsertIdentityMatchCandidateEnforcesServiceScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -220,6 +226,7 @@ func TestUpsertIdentityMatchCandidateEnforcesServiceScope(t *testing.T) {
 }
 
 func TestBlankNormalizedValueDoesNotSatisfySystemAcceptance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -246,6 +253,7 @@ func TestBlankNormalizedValueDoesNotSatisfySystemAcceptance(t *testing.T) {
 }
 
 func TestSystemAcceptedLinkedIdentityMatchCanBeRejectedAndUnlinked(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -283,6 +291,7 @@ func TestSystemAcceptedLinkedIdentityMatchCanBeRejectedAndUnlinked(t *testing.T)
 }
 
 func TestManualLinkConfirmationDetachesSystemCandidateOwnership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -314,6 +323,7 @@ func TestManualLinkConfirmationDetachesSystemCandidateOwnership(t *testing.T) {
 }
 
 func TestRejectingOwnedSystemMatchTransfersEdgeToAnotherAcceptedCandidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -361,6 +371,7 @@ func TestRejectingOwnedSystemMatchTransfersEdgeToAnotherAcceptedCandidate(t *tes
 }
 
 func TestRejectingOwnedSystemMatchReappliesAcceptedCrossComponentCandidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -421,6 +432,7 @@ func maxInt64(a, b int64) int64 {
 }
 
 func TestRejectingSystemMatchPreservesPreexistingManualLink(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -448,6 +460,7 @@ func TestRejectingSystemMatchPreservesPreexistingManualLink(t *testing.T) {
 }
 
 func TestRejectingSystemMatchRemovesItsOwnedEdgeAfterParticipantMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -488,6 +501,7 @@ func TestRejectingSystemMatchRemovesItsOwnedEdgeAfterParticipantMerge(t *testing
 }
 
 func TestUserAcceptedIdentityMatchRemainsProtectedFromRejection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -515,6 +529,7 @@ func TestUserAcceptedIdentityMatchRemainsProtectedFromRejection(t *testing.T) {
 }
 
 func TestRejectedSystemMatchCannotBeReplayedBySystem(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -542,6 +557,7 @@ func TestRejectedSystemMatchCannotBeReplayedBySystem(t *testing.T) {
 }
 
 func TestAppliedIdentityMatchCannotBecomeConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -573,6 +589,7 @@ func TestAppliedIdentityMatchCannotBecomeConflict(t *testing.T) {
 }
 
 func TestUpsertIdentityMatchCandidateRejectsDecisionStates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
@@ -601,6 +618,7 @@ func TestUpsertIdentityMatchCandidateRejectsDecisionStates(t *testing.T) {
 }
 
 func TestRejectedCandidateIsRetainedAndEndpointsCanonical(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -636,6 +654,7 @@ func TestRejectedCandidateIsRetainedAndEndpointsCanonical(t *testing.T) {
 }
 
 func TestObservationConflictPromotesNeutralCandidateAndPreservesReviewProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -689,6 +708,7 @@ func TestObservationConflictPromotesNeutralCandidateAndPreservesReviewProvenance
 }
 
 func TestIdentityMatchCandidatesKeepDistinctNormalizedValues(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -725,6 +745,7 @@ func TestIdentityMatchCandidatesKeepDistinctNormalizedValues(t *testing.T) {
 }
 
 func TestIdentityMatchCandidateRequiresExistingEndpoints(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
@@ -777,6 +798,7 @@ func TestIdentityMatchCandidateRequiresExistingEndpoints(t *testing.T) {
 }
 
 func TestDeletePersonRemovesCandidatesForDeletedProfileEndpoints(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

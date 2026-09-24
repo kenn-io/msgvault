@@ -35,6 +35,7 @@ func setDedupHidden(f *storetest.Fixture, id int64) {
 // exact complements within the non-dedup-hidden set, and that dedup-hidden
 // rows are excluded from both.
 func TestStore_StatsSourceDeletedBreakdown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -73,6 +74,7 @@ func TestStore_StatsSourceDeletedBreakdown(t *testing.T) {
 // TestStore_CollectionSourceDeletedCount asserts the collection aggregate
 // carries the same active/source-deleted split as global stats.
 func TestStore_CollectionSourceDeletedCount(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

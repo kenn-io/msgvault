@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 )
 
-func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testing.T) {
+func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testing.T) { //nolint:paralleltest // finds its writer as any idle-in-transaction backend holding the lock across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -107,7 +107,7 @@ func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testi
 	assert.Equal(personEnrichmentTriggerBit(personenrichment.TriggerIdentity), rows[0].TriggerMask)
 }
 
-func TestPostgreSQLPersonEnrichmentResultSerializesWithDefinitionExposure(t *testing.T) {
+func TestPostgreSQLPersonEnrichmentResultSerializesWithDefinitionExposure(t *testing.T) { //nolint:paralleltest // finds its writer as any idle-in-transaction backend holding the lock across the whole PostgreSQL database in pg_stat_activity
 	if !IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("PostgreSQL enrichment/catalog lock barrier")
 	}

@@ -13,6 +13,7 @@ import (
 )
 
 func TestResolvePersonByVCardUIDMatchesExactlyAndDoesNotCreate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -34,6 +35,7 @@ func TestResolvePersonByVCardUIDMatchesExactlyAndDoesNotCreate(t *testing.T) {
 }
 
 func TestResolveRelatedValueLinksExactUIDAndReturnsExactCanonicalDuplicate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -68,6 +70,7 @@ func TestResolveRelatedValueLinksExactUIDAndReturnsExactCanonicalDuplicate(t *te
 }
 
 func TestResolveRelatedValueStagesUnresolvedAndSelfUID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -103,6 +106,7 @@ func TestResolveRelatedValueStagesUnresolvedAndSelfUID(t *testing.T) {
 }
 
 func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -174,6 +178,7 @@ func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T
 }
 
 func TestResolveRelatedValueAcceptsUrnUUIDCaseInsensitively(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -201,6 +206,7 @@ func TestResolveRelatedValueAcceptsUrnUUIDCaseInsensitively(t *testing.T) {
 }
 
 func TestRelationshipReviewPreservesIdentityAndAcceptsAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -224,6 +230,7 @@ func TestRelationshipReviewPreservesIdentityAndAcceptsAtomically(t *testing.T) {
 }
 
 func TestRelationshipReviewAcceptRollbackAndRejectDurability(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -255,6 +262,7 @@ func TestRelationshipReviewAcceptRollbackAndRejectDurability(t *testing.T) {
 }
 
 func TestRelationshipReviewConcurrentAcceptAndRejectHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -316,6 +324,7 @@ func TestRelationshipReviewConcurrentAcceptAndRejectHaveOneWinner(t *testing.T) 
 }
 
 func TestResolveRelatedValueRejectsUnsplitTypeListsAndInvalidValues(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -332,6 +341,7 @@ func TestResolveRelatedValueRejectsUnsplitTypeListsAndInvalidValues(t *testing.T
 }
 
 func TestRelationshipReviewRejectsOversizedActorsWithoutStateChanges(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -368,6 +378,7 @@ func TestRelationshipReviewRejectsOversizedActorsWithoutStateChanges(t *testing.
 }
 
 func TestRelationshipReviewDatabaseConstraintsAndColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -389,6 +400,7 @@ func TestRelationshipReviewDatabaseConstraintsAndColumns(t *testing.T) {
 }
 
 func TestResolveRelatedValueOrientsAsymmetricTypeFromTheRelatedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -412,6 +424,7 @@ func TestResolveRelatedValueOrientsAsymmetricTypeFromTheRelatedPerson(t *testing
 }
 
 func TestAcceptRelationshipReviewOrientsEdgeFromTheRelatedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -435,6 +448,7 @@ func TestAcceptRelationshipReviewOrientsEdgeFromTheRelatedPerson(t *testing.T) {
 }
 
 func TestResolveRelatedValuePreservesRejectionWhenOccurrenceBecomesResolvable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -471,6 +485,7 @@ func TestResolveRelatedValuePreservesRejectionWhenOccurrenceBecomesResolvable(t 
 }
 
 func TestResolveRelatedValueAcceptsPendingReviewWhenOccurrenceBecomesResolvable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -526,6 +541,7 @@ func TestResolveRelatedValueAcceptsPendingReviewWhenOccurrenceBecomesResolvable(
 }
 
 func TestResolveRelatedValueRecordsAutomaticAcceptanceAndKeepsDeletionDurable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -568,6 +584,7 @@ func TestResolveRelatedValueRecordsAutomaticAcceptanceAndKeepsDeletionDurable(t 
 }
 
 func TestResolveRelatedValueSecondOccurrenceReusesActiveEdge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -608,6 +625,7 @@ func TestResolveRelatedValueSecondOccurrenceReusesActiveEdge(t *testing.T) {
 }
 
 func TestResolveRelatedValueConcurrentFirstImportsShareOneDecision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -654,6 +672,7 @@ func TestResolveRelatedValueConcurrentFirstImportsShareOneDecision(t *testing.T)
 }
 
 func TestAcceptRelationshipReviewAttachesToExistingActiveEdge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -695,6 +714,7 @@ func TestAcceptRelationshipReviewAttachesToExistingActiveEdge(t *testing.T) {
 // edge would drop the source and let the edge claim look-alike occurrences on
 // every card it appears on.
 func TestAcceptRelationshipReviewKeepsEdgeIdentityAndBindsReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

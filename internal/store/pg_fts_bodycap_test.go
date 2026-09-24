@@ -102,6 +102,7 @@ func nullSearchFTSCount(t *testing.T, st interface{ DB() *sql.DB }) int {
 // search_fts non-NULL. Without the cap this would fail with SQLSTATE 54000
 // ("string is too long for tsvector") and leave the row permanently NULL.
 func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
@@ -129,6 +130,7 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 // oversized row index fine; the row-by-row retry fallback is the belt-and-
 // suspenders guarantee that no single bad row can wedge later batches.
 func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgres(t)
@@ -178,6 +180,7 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 // must end up indexed (search_fts non-NULL). The key property: a pathological
 // multibyte body can never wedge the sync FTS path.
 func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
@@ -215,6 +218,7 @@ func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
 // subject alone could still trip 54000 and leave the row NULL; this test fails
 // without the per-field Go byte-truncation in FTSUpsert.
 func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	require.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
@@ -264,6 +268,7 @@ func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
 // property: BackfillFTS COMPLETES WITHOUT ERROR and indexes every OTHER row,
 // regardless of whether the pathological row itself survives the char cap.
 func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgres(t)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestParticipantIdentifiersServiceScopeBackfillClassifiesLegacyIdentifiers(t *testing.T) {
+	t.Parallel()
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite file-path migration test")
 	}
@@ -52,6 +53,7 @@ func TestParticipantIdentifiersServiceScopeBackfillClassifiesLegacyIdentifiers(t
 }
 
 func TestInitSchemaContext_ParticipantIdentifiersServiceScopeBackfillStopsWhenContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite file-path migration test")
 	}
@@ -96,6 +98,7 @@ func TestInitSchemaContext_ParticipantIdentifiersServiceScopeBackfillStopsWhenCo
 }
 
 func TestInitSchemaContext_CommunicationServiceSeedStopsWhenContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite statement interception test")
 	}

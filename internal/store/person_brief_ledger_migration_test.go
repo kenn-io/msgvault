@@ -146,6 +146,7 @@ func insertBriefOriginClaim(
 }
 
 func TestPersonFactClaimOriginMigrationKeepsExtractionLedgerAndAdmitsBriefClaims(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "claim-origin-migration")
@@ -203,6 +204,7 @@ func st1000ClaimEvidenceInsert(st *store.Store) string {
 }
 
 func TestPersonSweepAttemptBriefFailureMigrationAddsColumnToExistingArchives(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "attempt-brief-failure-migration")

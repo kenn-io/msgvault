@@ -22,6 +22,7 @@ var personOnlyNameColumns = map[string]bool{
 }
 
 func TestOrganizationChildTablesMirrorPersonChildTables(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	pairs := []struct {
 		person       string
@@ -60,6 +61,7 @@ func TestOrganizationChildTablesMirrorPersonChildTables(t *testing.T) {
 }
 
 func TestPersonsHasNoDenormalizedCompanyOrTitle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	columns := tableColumns(t, st, "persons")
@@ -78,6 +80,7 @@ var organizationProfileEnvelopeColumnNames = []string{
 }
 
 func TestOrganizationChildTablesCarryTheFullEnvelope(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	for _, table := range []string{
 		"organization_names", "organization_identifiers", "organization_addresses",

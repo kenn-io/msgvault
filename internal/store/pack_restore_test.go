@@ -19,6 +19,7 @@ const (
 )
 
 func TestRestorePackCatalogCreatesOnlyPackSchema(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
 
@@ -33,6 +34,7 @@ func TestRestorePackCatalogCreatesOnlyPackSchema(t *testing.T) {
 }
 
 func TestLooseMetadataClearDoesNotCreatePackSchema(t *testing.T) {
+	t.Parallel()
 	db := openHistoricalRestoreDB(t)
 	st := &Store{db: newLoggedDB(db, nil), dialect: &SQLiteDialect{}}
 
@@ -43,6 +45,7 @@ func TestLooseMetadataClearDoesNotCreatePackSchema(t *testing.T) {
 }
 
 func TestRestorePackCatalogReplacesMetadataAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
@@ -78,6 +81,7 @@ func TestRestorePackCatalogReplacesMetadataAtomically(t *testing.T) {
 }
 
 func TestRestorePackCatalogRejectsNonSnapshotHash(t *testing.T) {
+	t.Parallel()
 	db := openHistoricalRestoreDB(t)
 	liveHash := restoreHash("c3")
 	outsideHash := restoreHash("d4")
@@ -96,6 +100,7 @@ func TestRestorePackCatalogRejectsNonSnapshotHash(t *testing.T) {
 }
 
 func TestRestorePackCatalogKeepsFullFooterTotals(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
@@ -116,6 +121,7 @@ func TestRestorePackCatalogKeepsFullFooterTotals(t *testing.T) {
 }
 
 func TestRestorePackCatalogEmptyReplacementClearsMetadata(t *testing.T) {
+	t.Parallel()
 	db := openHistoricalRestoreDB(t)
 	catalog := openRestoreCatalog(t, db)
 	insertOldPackMetadata(t, db, restoreHash("9a"))
@@ -127,6 +133,7 @@ func TestRestorePackCatalogEmptyReplacementClearsMetadata(t *testing.T) {
 }
 
 func TestRestorePackCatalogRollbackPreservesPriorMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
@@ -151,6 +158,7 @@ func TestRestorePackCatalogRollbackPreservesPriorMetadata(t *testing.T) {
 }
 
 func TestRestorePackCatalogUsesRestoreTime(t *testing.T) {
+	t.Parallel()
 	db := openHistoricalRestoreDB(t)
 	hash := restoreHash("18")
 	insertHistoricalAttachment(t, db, 1, 1, "", "", strings.ToUpper(hash), "thumb")

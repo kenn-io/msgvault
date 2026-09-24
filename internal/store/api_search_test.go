@@ -20,6 +20,7 @@ import (
 // query returns zero rows from any backend without ever building a
 // malformed FTS argument. Runs under both SQLite and PostgreSQL.
 func TestSearchMessagesQuery_TokenlessTextTerms(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -88,6 +89,7 @@ func TestSearchMessagesQuery_TokenlessTextTerms(t *testing.T) {
 // SearchMessagesQuery shares the same FALSE fallback as
 // TokenlessTextTerms and lets multi-word queries actually work.
 func TestSearchMessages_LegacyRawString(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msg1 := f.NewMessage().
@@ -150,6 +152,7 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 	}
 }
 func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -193,6 +196,7 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 // message_type:email, or narrowing a deletion search by type silently drops
 // exactly the oldest mail.
 func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -237,6 +241,7 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows(t *testing.
 // NULL constraint carry NULL message_type, and message_type:email must match
 // them exactly as the repair and analytical paths already do.
 func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
@@ -276,6 +281,7 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows(t *testing.T
 // List-Id substrings as wildcard patterns, skip case folding, or OR repeated
 // filters instead of requiring every requested literal substring.
 func TestSearchMessagesQuery_ListIDFilters(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	create := func(sourceMessageID, listID string) int64 {

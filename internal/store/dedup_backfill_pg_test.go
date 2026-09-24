@@ -25,6 +25,7 @@ import (
 type rfc822IDBackfillApplyContextKey struct{}
 
 func TestStore_RFC822IDBackfillStreamsAcrossBoundedPages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -227,6 +228,7 @@ func (g *rfc822IDBackfillPostgresRowGate) reportQueryStarted() {
 }
 
 func TestStore_ApplyRFC822IDBackfillSQLiteReservesWriterBeforeValidation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -295,6 +297,7 @@ func TestStore_ApplyRFC822IDBackfillSQLiteReservesWriterBeforeValidation(t *test
 }
 
 func TestStore_ApplyRFC822IDBackfillPostgresLocksAscendingAndRollsBackDrift(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

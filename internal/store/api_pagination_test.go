@@ -27,6 +27,7 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path (the engine the Q2 fix did not touch).
 func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "page@example.com")

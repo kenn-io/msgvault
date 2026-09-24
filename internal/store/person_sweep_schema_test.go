@@ -8,6 +8,7 @@ import (
 )
 
 func TestPersonSweepSchemaParity(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)

@@ -23,6 +23,7 @@ func trackedTestPerson(t *testing.T) (*store.Store, *store.Person) {
 }
 
 func TestPersonTrackingIsIdempotentPresenceState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, person := trackedTestPerson(t)
@@ -72,6 +73,7 @@ func TestPersonTrackingIsIdempotentPresenceState(t *testing.T) {
 }
 
 func TestPersonTrackingRejectsUnknownPersonAndCascadesOnDelete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, person := trackedTestPerson(t)
 	ctx := t.Context()
@@ -95,6 +97,7 @@ func TestPersonTrackingRejectsUnknownPersonAndCascadesOnDelete(t *testing.T) {
 }
 
 func TestPersonTrackingCreatesSweepWork(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st, person := trackedTestPerson(t)
@@ -132,6 +135,7 @@ func TestPersonTrackingCreatesSweepWork(t *testing.T) {
 }
 
 func TestPersonTrackingReenrollmentForcesFreshBackstop(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	st, person := trackedTestPerson(t)
@@ -160,6 +164,7 @@ func TestPersonTrackingReenrollmentForcesFreshBackstop(t *testing.T) {
 }
 
 func TestPersonUntrackingStopsSweep(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)

@@ -22,6 +22,7 @@ import (
 // stale-value clear, unchanged-row skip, and accidental application during a
 // dry run. It uses the persisted zlib MIME representation, not a parser stub.
 func TestRepairListIDsReplaysArchivedMIME(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -66,6 +67,7 @@ func TestRepairListIDsReplaysArchivedMIME(t *testing.T) {
 }
 
 func TestRepairListIDsIncludesLegacyEmailRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -88,6 +90,7 @@ func TestRepairListIDsIncludesLegacyEmailRows(t *testing.T) {
 // writer-lock statement that updates an arbitrary message column and therefore
 // advances its optimistic-CAS watermark even though every List-Id is current.
 func TestRepairListIDsIdempotentApplyPreservesMessageWatermarks(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -126,6 +129,7 @@ func TestRepairListIDsIdempotentApplyPreservesMessageWatermarks(t *testing.T) {
 // TestRepairListIDsSkipsNonMIMEAndUndecodableRows catches repair attempts that
 // accidentally treat chat payloads or damaged/oversized streams as email MIME.
 func TestRepairListIDsSkipsNonMIMEAndUndecodableRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	nonEmail := f.NewMessage().WithSourceMessageID("list-id-chat").Build()
@@ -160,6 +164,7 @@ func TestRepairListIDsSkipsNonMIMEAndUndecodableRows(t *testing.T) {
 // TestRepairListIDsCancellation catches a repair that ignores an already
 // cancelled caller context and makes archive changes after cancellation.
 func TestRepairListIDsCancellation(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("list-id-cancelled")
 	require.NoError(t, f.Store.UpsertMessageRaw(messageID,
@@ -177,6 +182,7 @@ func TestRepairListIDsCancellation(t *testing.T) {
 // that commits a first keyset batch before a later cancellation. The cache
 // revision and every list ID must remain unchanged until the whole pass commits.
 func TestRepairListIDsCancellationRollsBackAllBatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -210,6 +216,7 @@ func TestRepairListIDsCancellationRollsBackAllBatches(t *testing.T) {
 // trigger forces a real second message update error after the first batch has
 // been prepared, proving the pass is one cache-visible transaction.
 func TestRepairListIDsRollsBackEarlierBatchesOnLaterWriteFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -250,7 +257,7 @@ func TestRepairListIDsRollsBackEarlierBatchesOnLaterWriteFailure(t *testing.T) {
 // driver to materialize a full archived body before applying its MIME-header
 // cap. The allocation measurement covers a real SQLite BLOB scan, after the
 // large fixture has already been persisted and collected.
-func TestRepairListIDsBoundsRawDataRead(t *testing.T) {
+func TestRepairListIDsBoundsRawDataRead(t *testing.T) { //nolint:paralleltest // reads process-wide heap stats from runtime.ReadMemStats
 	f := storetest.New(t)
 	messageID := f.CreateMessage("list-id-large-raw")
 	raw := append([]byte("List-Id: <large.example.test>\r\n\r\n"), bytes.Repeat([]byte("x"), 8<<20)...)
@@ -278,6 +285,7 @@ func TestRepairListIDsBoundsRawDataRead(t *testing.T) {
 // assumes identifiers begin at one, although the archive permits zero and
 // negative primary keys.
 func TestRepairListIDsIncludesNonpositiveMessageIDs(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	zero := insertMessageAtID(t, f, 0, "list-id-zero")
 	negative := insertMessageAtID(t, f, -1, "list-id-negative")
@@ -294,6 +302,7 @@ func TestRepairListIDsIncludesNonpositiveMessageIDs(t *testing.T) {
 // TestRepairListIDsHonorsExactHeaderLimit catches a delimiter search that
 // accepts a header one byte past the configured decompression limit.
 func TestRepairListIDsHonorsExactHeaderLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	const maxHeaderBytes = 64
@@ -320,6 +329,7 @@ func TestRepairListIDsHonorsExactHeaderLimit(t *testing.T) {
 // overwrites a real sync which replaces both raw MIME and list_id before the
 // repair transaction reads its first batch.
 func TestRepairListIDsLeavesConcurrentRawResyncUntouched(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -347,6 +357,7 @@ func TestRepairListIDsLeavesConcurrentRawResyncUntouched(t *testing.T) {
 // archived payload and its authoritative value. Removing the fingerprint
 // predicates would overwrite the resync with <old.example.test>.
 func TestRepairListIDsSkipsPostScanRawResync(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -379,6 +390,7 @@ func TestRepairListIDsSkipsPostScanRawResync(t *testing.T) {
 // second file-backed WAL connection commits after the repair scan; a deferred
 // repair then cannot upgrade to write and returns SQLITE_BUSY_SNAPSHOT.
 func TestRepairListIDsSerializesSQLiteWriterBeforeSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -482,7 +494,7 @@ func TestRepairListIDsSerializesSQLiteWriterBeforeSnapshot(t *testing.T) {
 // SELECT FOR UPDATE from the fingerprint guard. The second real connection
 // must block until repair commits its old-MIME update, then publish its newer
 // raw MIME and List-Id.
-func TestPostgreSQLRepairListIDsLocksFingerprintBeforeUpdate(t *testing.T) {
+func TestPostgreSQLRepairListIDsLocksFingerprintBeforeUpdate(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -573,6 +585,7 @@ func TestPostgreSQLRepairListIDsLocksFingerprintBeforeUpdate(t *testing.T) {
 // TestRepairListIDsCommitsRevisionWithRepair catches an apply repair that
 // commits changed list IDs without the matching derived-data revision.
 func TestRepairListIDsCommitsRevisionWithRepair(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -593,6 +606,7 @@ func TestRepairListIDsCommitsRevisionWithRepair(t *testing.T) {
 // bump. A complete two-batch repair must publish one derived-data revision at
 // its atomic whole-pass commit.
 func TestRepairListIDsBumpsRevisionOnceAcrossBatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

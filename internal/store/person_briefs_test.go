@@ -87,6 +87,7 @@ func (f personBriefFixture) applyBrief(t *testing.T, input PersonBriefInsert) Pe
 }
 
 func TestPersonBriefEnrollmentRequiresTracking(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID := newPersonFactLedgerStore(t)
@@ -113,6 +114,7 @@ func TestPersonBriefEnrollmentRequiresTracking(t *testing.T) {
 }
 
 func TestPersonBriefEnrollmentIsIdempotentAndReversible(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "enrollment")
@@ -138,6 +140,7 @@ func TestPersonBriefEnrollmentIsIdempotentAndReversible(t *testing.T) {
 }
 
 func TestPersonBriefEnrollmentListIsBoundedAndAscending(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "list")
@@ -165,6 +168,7 @@ func TestPersonBriefEnrollmentListIsBoundedAndAscending(t *testing.T) {
 }
 
 func TestPersonBriefVersionsAreImmutableAndSupersede(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "versions")
@@ -202,6 +206,7 @@ func TestPersonBriefVersionsAreImmutableAndSupersede(t *testing.T) {
 }
 
 func TestPersonBriefKeepsOneCurrentVersionPerPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "one-current")
@@ -225,6 +230,7 @@ func TestPersonBriefKeepsOneCurrentVersionPerPerson(t *testing.T) {
 }
 
 func TestPersonBriefRejectionAppliesToCurrentVersionOnly(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "reject")
@@ -252,6 +258,7 @@ func TestPersonBriefRejectionAppliesToCurrentVersionOnly(t *testing.T) {
 }
 
 func TestPersonBriefEvidencePointersReportSupportFromStatusEvents(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "evidence")
@@ -282,6 +289,7 @@ func TestPersonBriefEvidencePointersReportSupportFromStatusEvents(t *testing.T) 
 }
 
 func TestListBriefEligiblePeopleReportsCurrentVersionMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "eligible")
@@ -316,6 +324,7 @@ func TestListBriefEligiblePeopleReportsCurrentVersionMetadata(t *testing.T) {
 }
 
 func TestApplyPersonBriefRejectsInconsistentInput(t *testing.T) {
+	t.Parallel()
 	f := newPersonBriefFixture(t, "validation")
 
 	for _, test := range []struct {
@@ -356,6 +365,7 @@ func TestApplyPersonBriefRejectsInconsistentInput(t *testing.T) {
 }
 
 func TestPersonBriefReadsReportMissingVersions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "missing")
@@ -375,6 +385,7 @@ func TestPersonBriefReadsReportMissingVersions(t *testing.T) {
 }
 
 func TestPersonBriefVersionsCascadeWithTheAbsorbedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonBriefFixture(t, "merge")

@@ -16,6 +16,7 @@ import (
 // renamed column would otherwise fail only when the trigger is next rebuilt on
 // an upgrading archive.
 func TestMessagesActivityColumnsAreRealColumns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -38,6 +39,7 @@ func TestMessagesActivityColumnsAreRealColumns(t *testing.T) {
 // every message in the archive and none of them changes an activity input, so
 // none may requeue the message. A real activity input change still must.
 func TestMessageBookkeepingUpdatesDoNotRequeueActivity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -88,6 +90,7 @@ func TestMessageBookkeepingUpdatesDoNotRequeueActivity(t *testing.T) {
 // whatever definition is already there, so the swap has to ride the
 // EnsureActivityProjectionTriggers migration.
 func TestActivityMessagesTriggerUpgradeReplacesBlanketDefinition(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL always DROP + CREATEs its activity triggers")
 	require := require.New(t)
 	assert := assert.New(t)

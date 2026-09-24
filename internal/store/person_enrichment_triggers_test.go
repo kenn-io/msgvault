@@ -86,6 +86,7 @@ func (f enrichmentTriggerFixture) work(t *testing.T, profile int) []store.Person
 }
 
 func TestPersonEnrichmentTriggerCoalescesKindsAndAdvancesGeneration(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -110,6 +111,7 @@ func TestPersonEnrichmentTriggerCoalescesKindsAndAdvancesGeneration(t *testing.T
 }
 
 func TestPersonEnrichmentIdempotentTrackingDoesNotRepublishWork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -127,6 +129,7 @@ func TestPersonEnrichmentIdempotentTrackingDoesNotRepublishWork(t *testing.T) {
 }
 
 func TestPersonEnrichmentManualRunRunningIdempotencyRejectsDifferentProfile(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 2)
@@ -151,6 +154,7 @@ func TestPersonEnrichmentManualRunRunningIdempotencyRejectsDifferentProfile(t *t
 }
 
 func TestPersonEnrichmentManualRunCompletedIdempotencyRejectsDifferentPerson(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -199,6 +203,7 @@ func TestPersonEnrichmentManualRunCompletedIdempotencyRejectsDifferentPerson(t *
 }
 
 func TestPersonEnrichmentManualRunReplaysAfterPersonDeletion(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -222,18 +227,22 @@ func TestPersonEnrichmentManualRunReplaysAfterPersonDeletion(t *testing.T) {
 }
 
 func TestPersonEnrichmentManualRunSerializesWithConsentRevocation(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentManualAuthorizationRaceBackends(t, "revoke")
 }
 
 func TestPersonEnrichmentManualRunSerializesWithUntracking(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentManualAuthorizationRaceBackends(t, "untrack")
 }
 
 func TestPersonEnrichmentTrackingSerializesWithMissingPersonRevocation(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentMissingPersonRevocationBackends(t, false)
 }
 
 func TestPersonEnrichmentManualRunSerializesWithMissingPersonRevocation(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentMissingPersonRevocationBackends(t, true)
 }
 
@@ -465,6 +474,7 @@ func requireChannelSignal(t *testing.T, channel <-chan struct{}, message string)
 }
 
 func TestPersonEnrichmentTriggerCoalescingKeepsSelectedKindAndGenerationPaired(t *testing.T) {
+	t.Parallel()
 	kinds := []personenrichment.TriggerKind{
 		personenrichment.TriggerTracked,
 		personenrichment.TriggerRefresh,
@@ -527,6 +537,7 @@ func TestPersonEnrichmentTriggerCoalescingKeepsSelectedKindAndGenerationPaired(t
 }
 
 func TestPersonEnrichmentTriggerPublishesTrackedIdentityAndConsentWorkPerProfile(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 2)
@@ -563,6 +574,7 @@ func TestPersonEnrichmentTriggerPublishesTrackedIdentityAndConsentWorkPerProfile
 }
 
 func TestPersonEnrichmentTriggerMutationBoundariesRemainTransactionLocal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
 	f.grant(t, 0)
@@ -623,6 +635,7 @@ func TestPersonEnrichmentTriggerMutationBoundariesRemainTransactionLocal(t *test
 }
 
 func TestPersonEnrichmentCatchUpRepairsMissingTrackedWorkAndExcludesUntracked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -646,6 +659,7 @@ func TestPersonEnrichmentCatchUpRepairsMissingTrackedWorkAndExcludesUntracked(t 
 }
 
 func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -699,6 +713,7 @@ func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 }
 
 func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing.T) {
+	t.Parallel()
 	for _, expiredClaim := range []bool{false, true} {
 		t.Run("expired_claim="+strconv.FormatBool(expiredClaim), func(t *testing.T) {
 			requirements := require.New(t)
@@ -726,6 +741,7 @@ func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing
 }
 
 func TestPersonEnrichmentCatchUpAdvancesExistingRefreshWhenProviderClaimExpires(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -754,6 +770,7 @@ func TestPersonEnrichmentCatchUpAdvancesExistingRefreshWhenProviderClaimExpires(
 }
 
 func TestPersonEnrichmentCatchUpIgnoresHistoricalExpiredProviderClaim(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -784,6 +801,7 @@ func TestPersonEnrichmentCatchUpIgnoresHistoricalExpiredProviderClaim(t *testing
 }
 
 func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -831,6 +849,7 @@ func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *te
 }
 
 func TestPersonEnrichmentMergeAndSplitInvalidateProviderIdentities(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -877,6 +896,7 @@ func TestPersonEnrichmentMergeAndSplitInvalidateProviderIdentities(t *testing.T)
 }
 
 func TestPersonEnrichmentRepromotionInvalidatesNewParticipantIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -906,6 +926,7 @@ func TestPersonEnrichmentRepromotionInvalidatesNewParticipantIdentity(t *testing
 }
 
 func TestPersonEnrichmentPersonMergeInvalidatesSurvivorIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -954,6 +975,7 @@ func TestPersonEnrichmentPersonMergeInvalidatesSurvivorIdentity(t *testing.T) {
 }
 
 func TestPersonEnrichmentUnlinkWithoutAuthorizationPreservesPersonRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -974,6 +996,7 @@ func TestPersonEnrichmentUnlinkWithoutAuthorizationPreservesPersonRevision(t *te
 }
 
 func TestPersonEnrichmentEmploymentWithoutAuthorizationPreservesPersonRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -998,6 +1021,7 @@ func TestPersonEnrichmentEmploymentWithoutAuthorizationPreservesPersonRevision(t
 }
 
 func TestOrganizationIdentityChangesInvalidateEnrichment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentTriggerFixture(t, 1)
@@ -1070,6 +1094,7 @@ func TestOrganizationIdentityChangesInvalidateEnrichment(t *testing.T) {
 }
 
 func TestCardDAVProjectionRetirementInvalidatesEnrichment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, account, book := newCardDAVResourceStore(t)

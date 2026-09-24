@@ -11,6 +11,7 @@ import (
 )
 
 func TestOpenForTestCreatesFileURIParentAndPreservesQuery(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "nested", "msgvault.db")
 	uriPath := filepath.ToSlash(dbPath)
 	if filepath.VolumeName(dbPath) != "" && !strings.HasPrefix(uriPath, "/") {
@@ -30,6 +31,7 @@ func TestOpenForTestCreatesFileURIParentAndPreservesQuery(t *testing.T) {
 }
 
 func TestOpenReadOnlyAcceptsFileURIWithExistingQuery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 	writable, err := OpenForTest(dbPath)

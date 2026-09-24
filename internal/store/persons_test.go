@@ -15,6 +15,7 @@ import (
 )
 
 func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -69,6 +70,7 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 }
 
 func TestLinkParticipantsRejectsDifferentCuratedPersons(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -90,6 +92,7 @@ func TestLinkParticipantsRejectsDifferentCuratedPersons(t *testing.T) {
 }
 
 func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
+	t.Parallel()
 	t.Run("preserves loser binding on winner", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -125,6 +128,7 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 }
 
 func TestLinkAutoBindsNewClusterMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -155,6 +159,7 @@ func TestLinkAutoBindsNewClusterMembers(t *testing.T) {
 }
 
 func TestLinkWithoutPersonsBindsNothing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -172,6 +177,7 @@ func TestLinkWithoutPersonsBindsNothing(t *testing.T) {
 }
 
 func TestRepromotionThatFillsBindingBumpsIdentityRevisionOnce(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -203,6 +209,7 @@ func TestRepromotionThatFillsBindingBumpsIdentityRevisionOnce(t *testing.T) {
 }
 
 func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -235,6 +242,7 @@ func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
 }
 
 func TestConcurrentLinkAndMergeKeepPersonBinding(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -275,6 +283,7 @@ func TestConcurrentLinkAndMergeKeepPersonBinding(t *testing.T) {
 }
 
 func TestDeletePersonRetiresProfileAndUnblocksLinking(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -321,6 +330,7 @@ func TestDeletePersonRetiresProfileAndUnblocksLinking(t *testing.T) {
 }
 
 func TestMergeFillsPersonAcrossCombinedCluster(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -341,6 +351,7 @@ func TestMergeFillsPersonAcrossCombinedCluster(t *testing.T) {
 }
 
 func TestPersonMergeInvalidatesSweep(t *testing.T) {
+	t.Parallel()
 	t.Run("participant merge", func(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)
@@ -404,6 +415,7 @@ func TestPersonMergeInvalidatesSweep(t *testing.T) {
 }
 
 func TestUntrackedPersonIdentityMutationDoesNotPublishSweep(t *testing.T) {
+	t.Parallel()
 	t.Run("participant merge", func(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)
@@ -449,6 +461,7 @@ func TestUntrackedPersonIdentityMutationDoesNotPublishSweep(t *testing.T) {
 }
 
 func TestPersonForParticipants(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

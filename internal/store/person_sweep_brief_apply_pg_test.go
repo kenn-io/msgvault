@@ -17,6 +17,7 @@ import (
 // ends up with exactly one named constraint that still rejects an unknown
 // origin.
 func TestPostgreSQLPersonFactClaimOriginConstraintStaysClosedAfterWidening(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -45,6 +46,7 @@ func TestPostgreSQLPersonFactClaimOriginConstraintStaysClosedAfterWidening(t *te
 // PostgreSQL can show that the ON CONFLICT path, not a read-then-write race,
 // is what keeps the row single.
 func TestPostgreSQLEnsurePersonSweepWorkPublishesOneRowUnderConcurrency(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -80,6 +82,7 @@ func TestPostgreSQLEnsurePersonSweepWorkPublishesOneRowUnderConcurrency(t *testi
 // brief's failure accounting on PostgreSQL, where the batch row is locked with
 // FOR UPDATE inside the apply transaction.
 func TestPostgreSQLApplyPersonSweepReconcilesAFailedBriefReservation(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)

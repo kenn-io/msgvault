@@ -85,6 +85,7 @@ func (tx *rollbackSignalTx) Rollback() error {
 }
 
 func TestRunMaintenancePreservesCanceledContextAfterAsyncRollback(t *testing.T) {
+	t.Parallel()
 	rolledBack := make(chan struct{})
 	connector := &rollbackSignalConnector{
 		rolledBack: rolledBack,
@@ -115,6 +116,7 @@ func TestRunMaintenancePreservesCanceledContextAfterAsyncRollback(t *testing.T) 
 }
 
 func TestRunMaintenancePreservesCommitErrorWhenContextIsCanceledDuringCommit(t *testing.T) {
+	t.Parallel()
 	commitErr := errors.New("commit failed")
 	ctx, cancel := context.WithCancel(context.Background())
 	connector := &rollbackSignalConnector{

@@ -13,6 +13,7 @@ import (
 )
 
 func TestAttachmentRoleSchemaDefaultsHistoricalRowsUnknown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("legacy-role-default")
@@ -35,6 +36,7 @@ func TestAttachmentRoleSchemaDefaultsHistoricalRowsUnknown(t *testing.T) {
 }
 
 func TestUpsertAttachmentRecordPersistsRoleProvenanceAndSourcePartKey(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("typed-attachment-write")
@@ -68,6 +70,7 @@ func TestUpsertAttachmentRecordPersistsRoleProvenanceAndSourcePartKey(t *testing
 }
 
 func TestLegacyUpsertAttachmentFailsClosed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -84,6 +87,7 @@ func TestLegacyUpsertAttachmentFailsClosed(t *testing.T) {
 }
 
 func TestSourceAwareUpsertPromotesMatchingLegacyOccurrence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -118,6 +122,7 @@ func TestSourceAwareUpsertPromotesMatchingLegacyOccurrence(t *testing.T) {
 }
 
 func TestAttachmentSourcePartKeyPreservesDistinctDuplicateBytes(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("duplicate-byte-parts")
 	hash := strings.Repeat("cd", 32)
@@ -141,6 +146,7 @@ func TestAttachmentSourcePartKeyPreservesDistinctDuplicateBytes(t *testing.T) {
 }
 
 func TestAttachmentSourcePartKeyResyncUpdatesOneOccurrence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("source-part-resync")
@@ -181,6 +187,7 @@ func TestAttachmentSourcePartKeyResyncUpdatesOneOccurrence(t *testing.T) {
 }
 
 func TestUpsertAttachmentRecordPreservingStoredKeepsBlobForMissingResync(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -225,6 +232,7 @@ func TestUpsertAttachmentRecordPreservingStoredKeepsBlobForMissingResync(t *test
 // so a rerun while the bytes are still absent must not fail scanning that
 // NULL into a string when the stored occurrence is loaded.
 func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -263,6 +271,7 @@ func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
 }
 
 func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -310,6 +319,7 @@ func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testin
 }
 
 func TestUpsertAttachmentRecordRejectsInvalidRoleEvidence(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("invalid-role")
 	err := f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{

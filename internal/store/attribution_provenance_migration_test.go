@@ -12,6 +12,7 @@ import (
 )
 
 func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -116,6 +117,7 @@ func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
 }
 
 func TestInitSchemaClearsLegacyAttributionWithoutRemainingIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -170,6 +172,7 @@ func TestInitSchemaClearsLegacyAttributionWithoutRemainingIdentity(t *testing.T)
 }
 
 func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -231,6 +234,7 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 // envelope) must re-reconcile under the envelope-authoritative predicate and
 // invalidate published caches.
 func TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -292,6 +296,7 @@ func TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives(t *testing.T) 
 }
 
 func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

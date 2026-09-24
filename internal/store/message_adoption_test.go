@@ -61,6 +61,7 @@ func adoptionLabelNames(t *testing.T, st *store.Store, messageID int64) []string
 // The label write fails through a real constraint — a nonexistent label ID
 // violates the foreign key on both SQLite and PostgreSQL.
 func TestAdoptMessageSourceIDContextRollsBackLabelFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, messageID, labelIDs := adoptionFixture(t)
@@ -92,6 +93,7 @@ func TestAdoptMessageSourceIDContextRollsBackLabelFailure(t *testing.T) {
 // Deferred authoritative reconciliation rekeys alone and never touches
 // labels; the command finalizer owns them.
 func TestAdoptMessageSourceIDContextDeferredLabels(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, messageID, labelIDs := adoptionFixture(t)
@@ -113,6 +115,7 @@ func TestAdoptMessageSourceIDContextDeferredLabels(t *testing.T) {
 // The expected-old-source guard must reject a lost race without touching the
 // row, and a canceled context must fail before any write commits.
 func TestAdoptMessageSourceIDContextGuardAndCancellation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, messageID, _ := adoptionFixture(t)

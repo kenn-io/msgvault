@@ -394,6 +394,7 @@ func skipUnlessSecondWriterCanCommit(t *testing.T, st *store.Store) {
 // before its own transaction began is something no writer does — every real
 // stamp comes from the database clock while the transaction is running.
 func TestListChangedMessages_SameInstantUncommittedChangeIsNotStranded(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "millisecond stamps make same-instant ties ordinary on SQLite alone")
@@ -462,6 +463,7 @@ func TestListChangedMessages_SameInstantUncommittedChangeIsNotStranded(t *testin
 // open, and the arrangement cannot be built at all. SQLite's version of this
 // loss is the same-instant test above.
 func TestListChangedMessages_LaterCommitDoesNotStrandAnEarlierPendingChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -517,6 +519,7 @@ func TestListChangedMessages_LaterCommitDoesNotStrandAnEarlierPendingChange(t *t
 // with no rows. So complete_through must actually stop below a pending change,
 // and must actually move once it lands.
 func TestListChangedMessages_CompleteThroughHoldsBelowAPendingChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -575,6 +578,7 @@ func TestListChangedMessages_CompleteThroughHoldsBelowAPendingChange(t *testing.
 // it — and it is the only way the feed can deliver a PREFIX of one batch and
 // strand the rest, which is the shape a loss of this kind takes.
 func TestListChangedMessages_DeletionRunTombstonesAllArrive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -725,6 +729,7 @@ func firstOrZero(times []time.Time) time.Time {
 // bound that steps into the range is wrong on every poll while the transaction
 // remains open, so one poll after each statement observes it directly.
 func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -829,6 +834,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 // Every message's FINAL value must reach the consumer. Intermediate values may
 // be missed — the feed reports that a message changed, not each change.
 func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -957,6 +963,7 @@ func storedWatermarks(t *testing.T, st *store.Store, ids []int64) map[int64]stri
 // PostgreSQL only: the SQLite bound is a write-lock probe, which cannot fail
 // this way — it either takes the lock or it does not.
 func TestListChangedMessages_UnresolvableMessagesTableIsRefused(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1004,6 +1011,7 @@ func TestListChangedMessages_UnresolvableMessagesTableIsRefused(t *testing.T) {
 // SQLite only: PostgreSQL reads its bound from pg_stat_activity, which needs no
 // lock and cannot be blocked this way.
 func TestListChangedMessages_BlockedFirstProbePublishesNoBound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "the SQLite bound is a write-lock probe; PostgreSQL has none")
@@ -1077,6 +1085,7 @@ func TestListChangedMessages_BlockedFirstProbePublishesNoBound(t *testing.T) {
 // importer itself got writes in. Losing no row under contention is a different
 // property, and ConcurrentTransactionalWritersLoseNothing owns it.
 func TestListChangedMessages_ConcurrentWithActiveImportMakesProgress(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestInitSchemaBackfillsLegacySyncResumeMetadata(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	fixture := storetest.New(t)

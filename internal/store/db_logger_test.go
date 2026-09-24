@@ -47,7 +47,7 @@ func openLoggedMem(t *testing.T) *loggedDB {
 // TestLoggedDB_RequestIDFromContext proves the request id stashed via
 // WithRequestID flows through loggedDB into the emitted log line, so a slow or
 // failing query can be correlated with the API request that issued it.
-func TestLoggedDB_RequestIDFromContext(t *testing.T) {
+func TestLoggedDB_RequestIDFromContext(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
@@ -66,7 +66,7 @@ func TestLoggedDB_RequestIDFromContext(t *testing.T) {
 		"log line must carry the context request id")
 }
 
-func TestLoggedDB_ExecLogsStatement(t *testing.T) {
+func TestLoggedDB_ExecLogsStatement(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	assert := assert.New(t)
 	// Force full trace so every exec shows up at INFO.
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
@@ -90,7 +90,7 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	assert.InDelta(float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
-func TestLogStmt_SlowQueryLogsAtInfo(t *testing.T) {
+func TestLogStmt_SlowQueryLogsAtInfo(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	assert := assert.New(t)
 	// Drive the emitter directly with a synthetic elapsed time
 	// to avoid flakiness from "actually make a query slow".
@@ -112,7 +112,7 @@ func TestLogStmt_SlowQueryLogsAtInfo(t *testing.T) {
 		"slow line must carry the issuing request id")
 }
 
-func TestLogStmt_VerySlowQueryPromotedToWarn(t *testing.T) {
+func TestLogStmt_VerySlowQueryPromotedToWarn(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	assert := assert.New(t)
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
@@ -129,7 +129,7 @@ func TestLogStmt_VerySlowQueryPromotedToWarn(t *testing.T) {
 	assert.InDelta(float64(500), rec["duration_ms"], 1e-9, "duration_ms")
 }
 
-func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
+func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
@@ -148,7 +148,7 @@ func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
 	assert.True(ok, "error attr missing: %v", rec)
 }
 
-func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
+func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
@@ -181,7 +181,7 @@ func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
 // for a streaming Query is emitted on Close, not at QueryContext
 // return. This is the behaviour change that gives streaming queries
 // honest duration_ms numbers.
-func TestLoggedRows_LogsAtClose(t *testing.T) {
+func TestLoggedRows_LogsAtClose(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
@@ -214,7 +214,7 @@ func TestLoggedRows_LogsAtClose(t *testing.T) {
 // TestLoggedRows_CloseIdempotent verifies that double-Close
 // (e.g. an early-return defer plus an explicit close) does not
 // emit two log lines.
-func TestLoggedRows_CloseIdempotent(t *testing.T) {
+func TestLoggedRows_CloseIdempotent(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
@@ -243,7 +243,7 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 // is logged at the QueryContext call site, not deferred to a
 // Close call that would never happen because no rows handle
 // is returned.
-func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
+func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	ConfigureSQLLogging(SQLLogOptions{})
 	buf := captureSlog(t)
 	db := openLoggedMem(t)
@@ -261,7 +261,7 @@ func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
 // queries, batchPopulate, unrelated work) would otherwise be
 // charged to the streaming query. The end-of-Next finalizer
 // keeps the timing honest.
-func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
+func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	// Keep this test about finalization timing, independent of whether a busy
@@ -312,7 +312,7 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 // the caller breaks out of the Next loop without exhausting rows.
 // The finalizer must run from Close on that path so the log line
 // is still emitted exactly once.
-func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
+func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
@@ -343,7 +343,7 @@ func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
 // as an error on Close, even when Rows.Close() itself returns
 // nil. Without checking Rows.Err(), a cancelled scan would log
 // as a successful query.
-func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
+func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
 	buf := captureSlog(t)
@@ -375,7 +375,7 @@ func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
 // parameter's type and length, but never the raw value. Raw
 // values can carry PII (addresses, subjects, tokens) and must
 // not be persisted in logs by default.
-func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
+func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
@@ -406,7 +406,7 @@ func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
 // TestLogStmt_FullTraceOmitsArgs verifies that --full-trace mode
 // does not attach args or args_shape. nargs is enough at
 // high-volume Info level.
-func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
+func TestLogStmt_FullTraceOmitsArgs(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
@@ -429,6 +429,7 @@ func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
 // emits type and length only, never raw values, even for long
 // strings that could carry sensitive content.
 func TestFormatArgsShape_RedactsValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	long := strings.Repeat("x", 200)
 	got := formatArgsShape([]any{long, "secret-token", []byte("hello world"), nil, int64(42)})
@@ -448,6 +449,7 @@ func TestFormatArgsShape_RedactsValues(t *testing.T) {
 }
 
 func TestNormalizeStmt_CollapsesWhitespace(t *testing.T) {
+	t.Parallel()
 	in := "SELECT\n  *\nFROM\n\tt WHERE id = ?"
 	got := normalizeStmt(in, 0)
 	want := "SELECT * FROM t WHERE id = ?"
@@ -455,6 +457,7 @@ func TestNormalizeStmt_CollapsesWhitespace(t *testing.T) {
 }
 
 func TestNormalizeStmt_TruncatesLong(t *testing.T) {
+	t.Parallel()
 	// Long uniform input gets a head + " ... " + tail split.
 	// The truncation budget includes the separator, so the
 	// final string is exactly maxChars long.
@@ -470,6 +473,7 @@ func TestNormalizeStmt_TruncatesLong(t *testing.T) {
 // distinguishing feature is the WHERE clause must remain
 // distinguishable in the logs.
 func TestNormalizeStmt_KeepsWhereClause(t *testing.T) {
+	t.Parallel()
 	in := "SELECT m.id, m.source_id, s.source_type, s.identifier, " +
 		"m.source_message_id, COALESCE(m.subject, ''), m.sent_at, " +
 		"m.archived_at, (CASE WHEN mr.message_id IS NOT NULL THEN 1 " +
@@ -487,6 +491,7 @@ func TestNormalizeStmt_KeepsWhereClause(t *testing.T) {
 // edge case where the budget is too small for a meaningful
 // head+tail split.
 func TestNormalizeStmt_TinyBudgetFallsBackToHead(t *testing.T) {
+	t.Parallel()
 	in := strings.Repeat("a", 50)
 	got := normalizeStmt(in, 8)
 	assert.True(t, strings.HasSuffix(got, "..."),
@@ -499,6 +504,7 @@ func TestNormalizeStmt_TinyBudgetFallsBackToHead(t *testing.T) {
 // boundaries — multi-byte characters in SQL literals or comments
 // must not be split, which would emit invalid UTF-8 to logs.
 func TestNormalizeStmt_UTF8Safe(t *testing.T) {
+	t.Parallel()
 	// Each "café — 漢" is 13 bytes / 7 runes; repeat to exceed
 	// any reasonable budget.
 	in := strings.Repeat("café — 漢 ", 30)

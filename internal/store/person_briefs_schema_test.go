@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonBriefSchemaParity(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)

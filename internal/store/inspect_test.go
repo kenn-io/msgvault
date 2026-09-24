@@ -13,6 +13,7 @@ import (
 // TestInspectMessage_NotFound verifies that InspectMessage returns sql.ErrNoRows
 // when the message does not exist.
 func TestInspectMessage_NotFound(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	_, err := st.InspectMessage("nonexistent-msg-id")
@@ -22,6 +23,7 @@ func TestInspectMessage_NotFound(t *testing.T) {
 // TestInspectMessage_BasicFields verifies that InspectMessage returns correct
 // basic fields for a message.
 func TestInspectMessage_BasicFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -44,6 +46,7 @@ func TestInspectMessage_BasicFields(t *testing.T) {
 // TestInspectMessage_WithRawData verifies that InspectMessage correctly detects
 // when raw data exists for a message.
 func TestInspectMessage_WithRawData(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("inspect-raw-test-msg")
@@ -63,6 +66,7 @@ func TestInspectMessage_WithRawData(t *testing.T) {
 // instead of masking them. This tests the behavior where errors from the
 // raw-data existence query are propagated rather than treated as "no rows".
 func TestInspectMessage_DBError(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Create a message first
@@ -80,6 +84,7 @@ func TestInspectMessage_DBError(t *testing.T) {
 // TestInspectRawDataExists_NotFound verifies that InspectRawDataExists returns
 // false (not an error) when no raw data exists.
 func TestInspectRawDataExists_NotFound(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	f.CreateMessage("raw-exists-not-found-msg")
@@ -93,6 +98,7 @@ func TestInspectRawDataExists_NotFound(t *testing.T) {
 // TestInspectRawDataExists_Found verifies that InspectRawDataExists returns
 // true when raw data exists.
 func TestInspectRawDataExists_Found(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("raw-exists-found-msg")
@@ -110,6 +116,7 @@ func TestInspectRawDataExists_Found(t *testing.T) {
 // TestInspectRawDataExists_DBError verifies that InspectRawDataExists returns
 // DB errors instead of masking them.
 func TestInspectRawDataExists_DBError(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	f.CreateMessage("raw-exists-db-error-msg")
@@ -126,6 +133,7 @@ func TestInspectRawDataExists_DBError(t *testing.T) {
 // returns false when the message itself doesn't exist (no raw data for
 // non-existent message).
 func TestInspectRawDataExists_MessageNotFound(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	exists, err := st.InspectRawDataExists("nonexistent-msg")
@@ -137,6 +145,7 @@ func TestInspectRawDataExists_MessageNotFound(t *testing.T) {
 // TestInspectMessage_RecipientCounts verifies that InspectMessage correctly
 // counts recipients by type.
 func TestInspectMessage_RecipientCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -164,6 +173,7 @@ func TestInspectMessage_RecipientCounts(t *testing.T) {
 // TestInspectMessage_RecipientDisplayNames verifies that InspectMessage correctly
 // returns recipient display names.
 func TestInspectMessage_RecipientDisplayNames(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("inspect-display-names-msg")

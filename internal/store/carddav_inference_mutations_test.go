@@ -35,6 +35,7 @@ func inferenceNote(t *testing.T, st *Store, id int64, source Provenance, text st
 }
 
 func TestInferenceExportEmploymentMutations(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"revise", "move", "end inferred", "nonrendering", "declared replace", "manual end", "manual delete", "primary", "primary no-op", "primary hides", "rollback"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
@@ -111,6 +112,7 @@ func TestInferenceExportEmploymentMutations(t *testing.T) {
 }
 
 func TestInferenceExportDefinitionExposureRetriesConcurrentWrite(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
@@ -147,6 +149,7 @@ func TestInferenceExportDefinitionExposureRetriesConcurrentWrite(t *testing.T) {
 }
 
 func TestInferenceExportDefinitionExposure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
@@ -172,6 +175,7 @@ func TestInferenceExportDefinitionExposure(t *testing.T) {
 }
 
 func TestInferenceExportSeedMappingExposure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
@@ -196,6 +200,7 @@ func TestInferenceExportSeedMappingExposure(t *testing.T) {
 }
 
 func TestInferenceExportOrganizationMutations(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"rename", "metadata", "merge", "same-name merge", "nonprimary", "declared"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
@@ -242,6 +247,7 @@ func TestInferenceExportOrganizationMutations(t *testing.T) {
 }
 
 func TestInferenceExportResolverMultipleTargetsAdvanceOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, targets := newPersonFactProjectionStore(t)
@@ -261,6 +267,7 @@ func TestInferenceExportResolverMultipleTargetsAdvanceOnce(t *testing.T) {
 }
 
 func TestInferenceExportResolverStatusAndUnpin(t *testing.T) {
+	t.Parallel()
 	for _, pinned := range []bool{false, true} {
 		t.Run(map[bool]string{false: "status", true: "unpin"}[pinned], func(t *testing.T) {
 			require := require.New(t)
@@ -296,6 +303,7 @@ func TestInferenceExportResolverStatusAndUnpin(t *testing.T) {
 }
 
 func TestInferenceExportMergeAndSplit(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"attribute", "employment", "declared"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
@@ -345,6 +353,7 @@ func inferenceGenerationInput(id int64, suffix string, claims []personfacts.Prop
 }
 
 func TestInferenceExportCanonicalAttributeInputs(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"ordinal", "reserved", "json", "archive observation", "system resolver", "brief resolver", "takeover"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
@@ -422,6 +431,7 @@ func TestInferenceExportCanonicalAttributeInputs(t *testing.T) {
 }
 
 func TestInferenceExportMergeCandidateAcceptance(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{ProvenanceExtraction, ProvenanceVCardImport} {
 		t.Run(string(source), func(t *testing.T) {
 			require := require.New(t)
@@ -455,6 +465,7 @@ func TestInferenceExportMergeCandidateAcceptance(t *testing.T) {
 }
 
 func TestInferenceExportResolverRollback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, targets := newPersonFactProjectionStore(t)
@@ -482,6 +493,7 @@ func TestInferenceExportResolverRollback(t *testing.T) {
 }
 
 func TestInferenceExportEmploymentRetirementAndHistoricalDeletion(t *testing.T) {
+	t.Parallel()
 	for _, historical := range []bool{false, true} {
 		t.Run(map[bool]string{false: "current retirement", true: "historical deletion"}[historical], func(t *testing.T) {
 			require := require.New(t)
@@ -524,6 +536,7 @@ func TestInferenceExportEmploymentRetirementAndHistoricalDeletion(t *testing.T) 
 }
 
 func TestInferenceExportSystemResolverReplacement(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, targets := newPersonFactProjectionStore(t)
@@ -553,6 +566,7 @@ func TestInferenceExportSystemResolverReplacement(t *testing.T) {
 }
 
 func TestInferenceExportCanonicalEmploymentInputs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
@@ -579,6 +593,7 @@ func TestInferenceExportCanonicalEmploymentInputs(t *testing.T) {
 }
 
 func TestInferenceExportSupportedSystemRetirement(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"attribute", "employment"} {
 		for _, approved := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/approved=%t", kind, approved), func(t *testing.T) {

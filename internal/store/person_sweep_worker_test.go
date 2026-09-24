@@ -49,6 +49,7 @@ func (r *noProviderSweepRunner) RunStructured(context.Context, peoplesweep.Struc
 }
 
 func TestPersonSweepWorkerFilteredNoTextAdvancesCursorAndClearsWork(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)

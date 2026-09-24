@@ -15,6 +15,7 @@ import (
 )
 
 func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")
 	assert := assert.New(t)
 	require := require.New(t)
@@ -47,6 +48,7 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 }
 
 func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "VACUUM INTO backup cancellation is SQLite-only")
 	assert := assert.New(t)
 	require := require.New(t)
@@ -98,6 +100,7 @@ func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T
 }
 
 func TestBackupDatabaseContext_PreservesReversiblePersonMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")

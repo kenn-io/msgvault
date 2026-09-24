@@ -67,6 +67,7 @@ func readLM(t *testing.T, st *store.Store, id int64) string {
 // TestLastModified_MessageUpdateBumps verifies any UPDATE to a message row
 // bumps last_modified via the trigger.
 func TestLastModified_MessageUpdateBumps(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
@@ -92,6 +93,7 @@ func TestLastModified_MessageUpdateBumps(t *testing.T) {
 // overwriting the value the caller just wrote. ApplyMessageDateRepairs' CAS
 // compares against exactly this token, so losing the write disarms it silently.
 func TestLastModified_ExplicitWriteSurvivesContentUpdate(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	control := seedMessage(t, st, 91)
 	withContent := seedMessage(t, st, 92)
@@ -122,6 +124,7 @@ func TestLastModified_ExplicitWriteSurvivesContentUpdate(t *testing.T) {
 // PRE-trigger value, so its own stamp still succeeds; see
 // SetEmbedGenIfUnchanged).
 func TestLastModified_EmbedGenUpdateBumps(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
@@ -137,6 +140,7 @@ func TestLastModified_EmbedGenUpdateBumps(t *testing.T) {
 // TestLastModified_BodyUpdateBumpsParent verifies an UPDATE to message_bodies
 // bumps the PARENT message's last_modified (the repair-encoding rewrite path).
 func TestLastModified_BodyUpdateBumpsParent(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
@@ -153,6 +157,7 @@ func TestLastModified_BodyUpdateBumpsParent(t *testing.T) {
 // TestLastModified_BodyInsertBumpsParent verifies an INSERT into
 // message_bodies bumps the parent message's last_modified.
 func TestLastModified_BodyInsertBumpsParent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "bob@example.com")
@@ -206,6 +211,7 @@ func TestLastModified_BodyInsertBumpsParent(t *testing.T) {
 // CURRENT_TIMESTAMP backfills automatically and its triggers are created
 // after the column, so the upgrade ordering risk does not apply there.
 func TestLastModified_UpgradePathMissingColumn(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite ALTER TABLE DROP COLUMN + deferred trigger column resolution")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -310,6 +316,7 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 // place, so it has no second UPDATE to re-enter and no blanket trigger to
 // replace.
 func TestLastModified_UpgradeReplacesBlanketTrigger(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "the blanket-trigger clobber is a SQLite-only failure")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -458,6 +465,7 @@ func openArchiveWithMessagesColumn(t *testing.T, name string) (*store.Store, err
 }
 
 func TestLastModified_TriggerMigrationDoesNotRunOnEveryOpen(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "the test inspects SQLite trigger DDL")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -508,6 +516,7 @@ func messagesTableExists(t *testing.T, st *store.Store) bool {
 // the same initialisation have already committed. So the archive must open, the
 // payload must stay inert, and the trigger must go on working.
 func TestLastModified_TriggerScopeEscapesAQuoteInAColumnName(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "only the SQLite dialect interpolates the UPDATE OF column list")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -538,6 +547,7 @@ func TestLastModified_TriggerScopeEscapesAQuoteInAColumnName(t *testing.T) {
 // A renderer that dropped or mangled the quote would silently scope the trigger
 // to a column that does not exist.
 func TestLastModified_TriggerScopeRoundTripsAQuotedColumnName(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "only the SQLite dialect interpolates the UPDATE OF column list")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -581,6 +591,7 @@ func TestLastModified_TriggerScopeRoundTripsAQuotedColumnName(t *testing.T) {
 // none — SQLite accepts an unterminated comment at end of input — so it commits
 // and the archive is destroyed. Quoted, the whole thing is one column name.
 func TestLastModified_TriggerScopeQuotesAHostileColumnName(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "only the SQLite dialect interpolates the UPDATE OF column list")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -608,6 +619,7 @@ func TestLastModified_TriggerScopeQuotesAHostileColumnName(t *testing.T) {
 // identifiers that a real archive can carry, and every one of them is fine once
 // quoted — a fix that refused them would make legitimate archives unopenable.
 func TestLastModified_TriggerScopeAcceptsAwkwardButLegalColumnNames(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "only the SQLite dialect interpolates the UPDATE OF column list")
 
 	for _, name := range []string{
@@ -635,6 +647,7 @@ func TestLastModified_TriggerScopeAcceptsAwkwardButLegalColumnNames(t *testing.T
 // completes (the trigger's own UPDATE does not re-fire forever). If recursion
 // were unbounded the Exec would error or hang; we simply require it returns.
 func TestLastModified_NoInfiniteRecursion(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	ctx := context.Background()

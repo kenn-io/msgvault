@@ -13,6 +13,7 @@ import (
 )
 
 func TestMessageDateRepairsListAndApplyCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -73,6 +74,7 @@ func TestMessageDateRepairsListAndApplyCandidates(t *testing.T) {
 }
 
 func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -174,6 +176,7 @@ func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
 }
 
 func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

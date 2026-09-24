@@ -12,6 +12,7 @@ import (
 )
 
 func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -44,6 +45,7 @@ func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
 }
 
 func TestRecordingTheSameObservationTwiceIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -66,6 +68,7 @@ func TestRecordingTheSameObservationTwiceIsIdempotent(t *testing.T) {
 }
 
 func TestBlankProviderIDsAreAbsentAndDoNotSuppressConflicts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -97,6 +100,7 @@ func TestBlankProviderIDsAreAbsentAndDoNotSuppressConflicts(t *testing.T) {
 }
 
 func TestContactObservationOrdinalsPreserveExplicitAndAppendMissingValues(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -161,6 +165,7 @@ func TestContactObservationOrdinalsPreserveExplicitAndAppendMissingValues(t *tes
 }
 
 func TestRecordingTheSameObservationFromTwoSourcesKeepsBothProvenances(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -199,6 +204,7 @@ func TestRecordingTheSameObservationFromTwoSourcesKeepsBothProvenances(t *testin
 }
 
 func TestMergeParticipantsPreservesContactObservations(t *testing.T) {
+	t.Parallel()
 	t.Run("repoints current and historical rows", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -328,6 +334,7 @@ func TestMergeParticipantsPreservesContactObservations(t *testing.T) {
 }
 
 func TestDuplicateUsernameUnderDifferentStableIDsBecomesAConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -365,6 +372,7 @@ func TestDuplicateUsernameUnderDifferentStableIDsBecomesAConflict(t *testing.T) 
 }
 
 func TestProviderIDEnrichmentRemovesGeneratedConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -398,6 +406,7 @@ func TestProviderIDEnrichmentRemovesGeneratedConflict(t *testing.T) {
 }
 
 func TestProviderIDEnrichmentChecksOtherParticipantProviderIDs(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name             string
 		enrichedProvider string
@@ -455,6 +464,7 @@ func TestProviderIDEnrichmentChecksOtherParticipantProviderIDs(t *testing.T) {
 }
 
 func TestContradictoryProviderIDSupersedesCurrentObservation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -499,6 +509,7 @@ func TestContradictoryProviderIDSupersedesCurrentObservation(t *testing.T) {
 }
 
 func TestProviderIDChangeRemovesStaleGeneratedConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -531,6 +542,7 @@ func TestProviderIDChangeRemovesStaleGeneratedConflict(t *testing.T) {
 }
 
 func TestMergeParticipantsRemovesConflictAfterProviderIDConvergence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -567,6 +579,7 @@ func TestMergeParticipantsRemovesConflictAfterProviderIDConvergence(t *testing.T
 }
 
 func TestCrossKindObservationPairDoesNotSupportGeneratedConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -603,6 +616,7 @@ func TestCrossKindObservationPairDoesNotSupportGeneratedConflict(t *testing.T) {
 }
 
 func TestSameUsernameOnDifferentScopesIsNotAConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -626,6 +640,7 @@ func TestSameUsernameOnDifferentScopesIsNotAConflict(t *testing.T) {
 }
 
 func TestRenameSupersedesWithoutMovingHistoryBetweenParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -659,6 +674,7 @@ func TestRenameSupersedesWithoutMovingHistoryBetweenParticipants(t *testing.T) {
 }
 
 func TestSupersedeParticipantObservationRecomputesGeneratedConflicts(t *testing.T) {
+	t.Parallel()
 	t.Run("removes conflict after the last endpoint support is superseded", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -724,6 +740,7 @@ func TestSupersedeParticipantObservationRecomputesGeneratedConflicts(t *testing.
 }
 
 func TestObservationMutationReconcilesGeneratedIdentityMatches(t *testing.T) {
+	t.Parallel()
 	t.Run("provider correction withdraws system match but preserves user decision", func(t *testing.T) {
 		for _, test := range []struct {
 			name          string
@@ -900,6 +917,7 @@ func TestObservationMutationReconcilesGeneratedIdentityMatches(t *testing.T) {
 }
 
 func TestUserConfirmedObservationConflictSurvivesSupportCleanup(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name        string
 		preexisting bool
@@ -970,6 +988,7 @@ func TestUserConfirmedObservationConflictSurvivesSupportCleanup(t *testing.T) {
 }
 
 func TestGeneratedObservationConflictRetainsEnvelopeSourceRef(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -1006,6 +1025,7 @@ func TestGeneratedObservationConflictRetainsEnvelopeSourceRef(t *testing.T) {
 }
 
 func TestSupersedeParticipantObservationDemotesPromotedCandidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -1062,6 +1082,7 @@ func TestSupersedeParticipantObservationDemotesPromotedCandidate(t *testing.T) {
 }
 
 func TestSupersedeParticipantObservationKeepsConflictsBetweenOtherParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

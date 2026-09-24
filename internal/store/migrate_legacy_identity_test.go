@@ -12,6 +12,7 @@ import (
 )
 
 func TestSourceTypeUsesEmailIdentity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		sourceType string
 		want       bool
@@ -50,6 +51,7 @@ func TestSourceTypeUsesEmailIdentity(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -85,6 +87,7 @@ func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
 // "pst" was missing from SourceTypeUsesEmailIdentity, so normal PST
 // imports were bypassed by the legacy identity migration.
 func TestMigrateLegacyIdentityConfig_PstIncludedPhoneSkipped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -121,6 +124,7 @@ func TestMigrateLegacyIdentityConfig_PstIncludedPhoneSkipped(t *testing.T) {
 // invalidates its cached owner_participants/is_from_me), and that the
 // idempotent no-op re-run leaves both revisions unchanged.
 func TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -159,6 +163,7 @@ func TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts(t *testing.
 }
 
 func TestMigrateLegacyIdentityConfigRefreshesExistingMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -186,6 +191,7 @@ func TestMigrateLegacyIdentityConfigRefreshesExistingMessages(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -203,6 +209,7 @@ func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_SecondCallNoOp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -222,6 +229,7 @@ func TestMigrateLegacyIdentityConfig_SecondCallNoOp(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_DeferredUntilSourceExists(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -248,6 +256,7 @@ func TestMigrateLegacyIdentityConfig_DeferredUntilSourceExists(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_EmptyAddresses(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -267,6 +276,7 @@ func TestMigrateLegacyIdentityConfig_EmptyAddresses(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -281,6 +291,7 @@ func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -302,6 +313,7 @@ func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
 // row per source. Synthetic identifiers (Matrix MXIDs, chat handles)
 // remain case-sensitive and are NOT collapsed by dedupe.
 func TestMigrateLegacyIdentityConfig_DedupesEmailCaseVariants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

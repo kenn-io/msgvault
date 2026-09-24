@@ -14,6 +14,7 @@ import (
 )
 
 func TestPersistIMAPDraft(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)

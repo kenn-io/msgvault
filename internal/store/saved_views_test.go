@@ -33,6 +33,7 @@ func savedViewInput(name string) store.SavedViewInput {
 }
 
 func TestSavedViewsSQLiteSchema(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 
@@ -56,6 +57,7 @@ func TestSavedViewsSQLiteSchema(t *testing.T) {
 }
 
 func TestSavedViewsCRUDAndStableListOrder(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := context.Background()
@@ -95,6 +97,7 @@ func TestSavedViewsCRUDAndStableListOrder(t *testing.T) {
 }
 
 func TestSavedViewsRejectDuplicateNamesAndStaleRevisions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := context.Background()
@@ -115,6 +118,7 @@ func TestSavedViewsRejectDuplicateNamesAndStaleRevisions(t *testing.T) {
 }
 
 func TestSavedViewsPreserveInspectorPreference(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{`{}`, `{"inspector_pinned":true}`, `{"inspector_pinned":false}`} {
 		t.Run(state, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -138,6 +142,7 @@ func TestSavedViewsPreserveInspectorPreference(t *testing.T) {
 }
 
 func TestSavedViewsValidateCanonicalStateBeforePersistence(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := context.Background()
@@ -185,6 +190,7 @@ func TestSavedViewsValidateCanonicalStateBeforePersistence(t *testing.T) {
 }
 
 func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := context.Background()
@@ -223,6 +229,7 @@ func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
 }
 
 func TestSavedViewsPreserveLargeNumericFilterIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
 	input := savedViewInput("Large source ID")

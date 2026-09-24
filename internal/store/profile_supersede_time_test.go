@@ -13,6 +13,7 @@ import (
 )
 
 func TestSupersedeDefaultsFutureDatedProfileCloseToActiveFrom(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -83,6 +84,7 @@ func TestSupersedeDefaultsFutureDatedProfileCloseToActiveFrom(t *testing.T) {
 }
 
 func TestSupersedeRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -145,6 +147,7 @@ func TestSupersedeRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
 }
 
 func TestSupersedeObservationRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -169,6 +172,7 @@ func TestSupersedeObservationRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
 }
 
 func TestSupersedeDefaultsFutureDatedObservationCloseToActiveFrom(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -195,6 +199,7 @@ func TestSupersedeDefaultsFutureDatedObservationCloseToActiveFrom(t *testing.T) 
 }
 
 func TestSupersedePreservesExistingWorldTimeClose(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -220,6 +225,7 @@ func TestSupersedePreservesExistingWorldTimeClose(t *testing.T) {
 }
 
 func TestSupersedeObservationPreservesExistingWorldTimeClose(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

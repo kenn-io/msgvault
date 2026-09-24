@@ -138,6 +138,7 @@ func countContentChangedAtTriggers(t *testing.T, st *store.Store) int {
 // the trigger installation, and then ordinary writes that name only columns the
 // previous release knows about.
 func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

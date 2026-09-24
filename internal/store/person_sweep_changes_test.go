@@ -85,6 +85,7 @@ func personSweepChangesAfter(
 }
 
 func TestPersonSweepJournalCapturesLateOldMessage(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	newerID := f.insertMessage(t, "newer", "email", f.aliceID,
@@ -101,6 +102,7 @@ func TestPersonSweepJournalCapturesLateOldMessage(t *testing.T) {
 }
 
 func TestPersonSweepJournalCapturesBodyAndSourceDeletion(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -129,6 +131,7 @@ func TestPersonSweepJournalCapturesBodyAndSourceDeletion(t *testing.T) {
 }
 
 func TestPersonSweepJournalPreservesDeleteCoordinates(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -151,6 +154,7 @@ func TestPersonSweepJournalPreservesDeleteCoordinates(t *testing.T) {
 }
 
 func TestPersonSweepJournalCapturesRecipientAndRosterScope(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -183,6 +187,7 @@ func TestPersonSweepJournalCapturesRecipientAndRosterScope(t *testing.T) {
 }
 
 func TestPersonSweepJournalCapturesPersonParticipantBinding(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -217,6 +222,7 @@ func TestPersonSweepJournalCapturesPersonParticipantBinding(t *testing.T) {
 }
 
 func TestPersonSweepJournalClassifiesEvidenceEffects(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -272,6 +278,7 @@ func archiveEffects(changes []peoplesweep.ArchiveChange) []peoplesweep.EvidenceC
 }
 
 func TestPersonSweepJournalRollbackIsInvisible(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -295,6 +302,7 @@ func TestPersonSweepJournalRollbackIsInvisible(t *testing.T) {
 }
 
 func TestPersonSweepJournalIgnoresUntrackedPeople(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, false, false)
@@ -313,6 +321,7 @@ func TestPersonSweepJournalIgnoresUntrackedPeople(t *testing.T) {
 }
 
 func TestPersonSweepChangeScanBoundsAndCoalescingScope(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -341,6 +350,7 @@ func TestPersonSweepChangeScanBoundsAndCoalescingScope(t *testing.T) {
 }
 
 func TestPersonRelinkReactivatesExactEvidence(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -387,6 +397,7 @@ func TestPersonRelinkReactivatesExactEvidence(t *testing.T) {
 }
 
 func TestSourceEditDisablesOldVersionAndQueuesReplacement(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -421,6 +432,7 @@ func TestSourceEditDisablesOldVersionAndQueuesReplacement(t *testing.T) {
 }
 
 func TestPersonSweepJournalSourceLaneUsesClosedVocabulary(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	messageID := f.insertMessage(t, "meeting", "meeting_transcript", f.aliceID,
 		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
@@ -432,6 +444,7 @@ func TestPersonSweepJournalSourceLaneUsesClosedVocabulary(t *testing.T) {
 }
 
 func TestPersonSweepJournalIgnoresMessageMaintenanceUpdates(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	messageID := f.insertMessage(t, "maintenance", "email", f.aliceID,
 		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
@@ -450,6 +463,7 @@ func TestPersonSweepJournalIgnoresMessageMaintenanceUpdates(t *testing.T) {
 }
 
 func TestPersonSweepJournalCapturesDateCorrection(t *testing.T) {
+	t.Parallel()
 	dateColumns := []string{"sent_at", "received_at", "internal_date"}
 	for _, column := range dateColumns {
 		t.Run(column, func(t *testing.T) {
@@ -474,6 +488,7 @@ func TestPersonSweepJournalCapturesDateCorrection(t *testing.T) {
 }
 
 func TestPersonSweepJournalCapturesCanonicalRosterScope(t *testing.T) {
+	t.Parallel()
 	for _, conversationType := range []string{"group_chat", "channel", "unclassified"} {
 		t.Run(conversationType, func(t *testing.T) {
 			checks := assert.New(t)
@@ -506,6 +521,7 @@ func TestPersonSweepJournalCapturesCanonicalRosterScope(t *testing.T) {
 }
 
 func TestPersonSweepJournalRecipientRoleScopeBoundaries(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -540,6 +556,7 @@ func TestPersonSweepJournalRecipientRoleScopeBoundaries(t *testing.T) {
 }
 
 func TestPersonSweepJournalMetadataEditsUseSourceEdited(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)

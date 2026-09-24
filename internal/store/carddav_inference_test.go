@@ -9,6 +9,7 @@ import (
 )
 
 func TestDirectAttributeAdvancesInferenceExportRevisionOnlyForChangedPortableProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -39,6 +40,7 @@ func TestDirectAttributeAdvancesInferenceExportRevisionOnlyForChangedPortablePro
 }
 
 func TestInferenceExportRevisionIgnoresSystemAndNonportableAttributeWrites(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -62,6 +64,7 @@ func TestInferenceExportRevisionIgnoresSystemAndNonportableAttributeWrites(t *te
 }
 
 func TestInferenceExportRevisionRollsBackWithFailedAttributeWrite(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)

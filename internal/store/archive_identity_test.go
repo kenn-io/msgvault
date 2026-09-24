@@ -11,6 +11,7 @@ import (
 )
 
 func TestArchiveUIDInitializedOnceAndStableAcrossReopen(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
 	first, err := OpenForTest(dbPath)
@@ -36,6 +37,7 @@ func TestArchiveUIDInitializedOnceAndStableAcrossReopen(t *testing.T) {
 }
 
 func TestArchiveUIDMigrationRejectsMissingIdentityAfterLedgerRecorded(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := OpenForTest(dbPath)
@@ -55,6 +57,7 @@ func TestArchiveUIDMigrationRejectsMissingIdentityAfterLedgerRecorded(t *testing
 }
 
 func TestArchiveUIDMigrationInitializesLegacyArchiveWithoutLedger(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-unmigrated.db")
 	st, err := OpenForTest(dbPath)
@@ -73,6 +76,7 @@ func TestArchiveUIDMigrationInitializesLegacyArchiveWithoutLedger(t *testing.T) 
 }
 
 func TestArchiveUIDConcurrentInitializationConverges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "concurrent.db")
 	setup, err := OpenForTest(dbPath)
@@ -118,6 +122,7 @@ func TestArchiveUIDConcurrentInitializationConverges(t *testing.T) {
 }
 
 func TestArchiveUIDDiffersAcrossArchives(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	first, err := OpenForTest(filepath.Join(t.TempDir(), "first.db"))
 	require.NoError(err)

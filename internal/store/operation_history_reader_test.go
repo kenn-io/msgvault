@@ -14,6 +14,7 @@ import (
 )
 
 func TestOperationHistoryReaderWalksExactMergedOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -56,6 +57,7 @@ func TestOperationHistoryReaderWalksExactMergedOrder(t *testing.T) {
 }
 
 func TestOperationHistoryReaderFiltersAndRejectsInvalidQueries(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -87,6 +89,7 @@ func TestOperationHistoryReaderFiltersAndRejectsInvalidQueries(t *testing.T) {
 }
 
 func TestOperationHistoryReaderOrdersNeighboringTimestamps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -119,6 +122,7 @@ func TestOperationHistoryReaderOrdersNeighboringTimestamps(t *testing.T) {
 }
 
 func TestOperationHistoryReaderPreservesMixedTimestampPrecision(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	second := time.Date(2026, 8, 29, 3, 30, 0, 0, time.UTC)
 	cardDAVID := insertCardDAVOperationRun(t, st, cardDAVOperationRunSeed{
@@ -143,6 +147,7 @@ func TestOperationHistoryReaderPreservesMixedTimestampPrecision(t *testing.T) {
 }
 
 func TestOperationHistoryReaderDoesNotApplyIDTieAtFinerSourceCursor(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	second := time.Date(2026, 8, 29, 3, 45, 0, 0, time.UTC)
 	source := createOperationSource(t, st, "source-fine-cursor@example.invalid")
@@ -169,6 +174,7 @@ func TestOperationHistoryReaderDoesNotApplyIDTieAtFinerSourceCursor(t *testing.T
 }
 
 func TestOperationHistoryReaderDoesNotApplyIDTieAtSubMillisecondPeopleCursor(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	stored := time.Date(2026, 8, 29, 3, 50, 0, 500_000_000, time.UTC)
 	for _, id := range []string{"run-a", "run-b"} {
@@ -189,6 +195,7 @@ func TestOperationHistoryReaderDoesNotApplyIDTieAtSubMillisecondPeopleCursor(t *
 }
 
 func TestOperationHistoryReaderBoundsEveryAdapterToLimitPlusOne(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	query := operations.Query{Limit: 1}
 	for _, list := range []func(int) error{
@@ -244,6 +251,7 @@ func TestOperationHistoryReaderBoundsEveryAdapterToLimitPlusOne(t *testing.T) {
 }
 
 func TestOperationHistoryReaderReturnsPartialRowsOnAdapterFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -268,6 +276,7 @@ func TestOperationHistoryReaderReturnsPartialRowsOnAdapterFailure(t *testing.T) 
 }
 
 func TestOperationHistoryReaderGetDispatchesByTypedKind(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -301,6 +310,7 @@ func TestOperationHistoryReaderGetDispatchesByTypedKind(t *testing.T) {
 }
 
 func TestOperationHistoryReaderUsesOneCoherentSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -349,6 +359,7 @@ func TestOperationHistoryReaderUsesOneCoherentSnapshot(t *testing.T) {
 }
 
 func TestOperationHistoryReaderLaneStatusUsesOneCoherentSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

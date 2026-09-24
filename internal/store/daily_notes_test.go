@@ -25,6 +25,7 @@ func dailyNotePerson(t *testing.T, f *storetest.Fixture, suffix string) *store.P
 }
 
 func TestDailyNoteValidationAndCalendarDates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -56,6 +57,7 @@ func TestDailyNoteValidationAndCalendarDates(t *testing.T) {
 }
 
 func TestDailyNoteDatabaseDateChecksAreASCIIOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	for _, table := range []string{"daily_note_entries", "daily_note_day_sequences"} {
@@ -75,6 +77,7 @@ func TestDailyNoteDatabaseDateChecksAreASCIIOnly(t *testing.T) {
 }
 
 func TestDailyNoteOrderingTargetsPaginationAndDeletion(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -145,6 +148,7 @@ func TestDailyNoteOrderingTargetsPaginationAndDeletion(t *testing.T) {
 }
 
 func TestDailyNoteInvalidTargetsRollbackEntryAndAllocator(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -168,6 +172,7 @@ func TestDailyNoteInvalidTargetsRollbackEntryAndAllocator(t *testing.T) {
 }
 
 func TestDailyNoteTargetInsertFailureRollsBackAllocator(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -230,6 +235,7 @@ func TestDailyNoteTargetInsertFailureRollsBackAllocator(t *testing.T) {
 }
 
 func TestDailyNotePaginationDefaultsAndCaps(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -273,6 +279,7 @@ func TestDailyNotePaginationDefaultsAndCaps(t *testing.T) {
 }
 
 func TestDailyNoteConcurrentAppendsUseConsecutiveOrdinals(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	n := 24
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -318,6 +325,7 @@ func TestDailyNoteConcurrentAppendsUseConsecutiveOrdinals(t *testing.T) {
 }
 
 func TestDailyNoteConcurrentDifferentDays(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -352,6 +360,7 @@ func TestDailyNoteConcurrentDifferentDays(t *testing.T) {
 }
 
 func TestDailyNoteAuthoringDoesNotTouchComputedActivity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -381,6 +390,7 @@ func TestDailyNoteAuthoringDoesNotTouchComputedActivity(t *testing.T) {
 }
 
 func TestDailyNoteSchemaReinitializationIsIdempotent(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	require.NoError(t, f.Store.InitSchema())
 	require.NoError(t, f.Store.InitSchema())

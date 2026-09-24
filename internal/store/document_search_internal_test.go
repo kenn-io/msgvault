@@ -8,6 +8,7 @@ import (
 )
 
 func TestFuseDocumentSearchRowsCapsCombinedSignals(t *testing.T) {
+	t.Parallel()
 	contentRows := []documentSearchRow{
 		{OccurrenceKey: "content-1", AttachmentID: 1, ContentRank: 1},
 		{OccurrenceKey: "content-2", AttachmentID: 2, ContentRank: 2},

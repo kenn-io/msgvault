@@ -13,6 +13,7 @@ import (
 )
 
 func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	require := require.New(t)
 	assert := assert.New(t)
@@ -102,6 +103,7 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 }
 
 func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForExistingMetadata(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	require := require.New(t)
 	messageID := f.CreateMessage("beeper-cache-revision")
@@ -140,6 +142,7 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForExistingMetadata(t *t
 }
 
 func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForAddedMetadata(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	require := require.New(t)
 	messageID := f.CreateMessage("beeper-cache-added-attachment")
@@ -171,6 +174,7 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForAddedMetadata(t *test
 }
 
 func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	require := require.New(t)
 	messageID := f.CreateMessage("beeper-cache-rollback")

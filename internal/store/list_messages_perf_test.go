@@ -81,6 +81,7 @@ func explainPlan(t *testing.T, s *Store, sql string, args ...any) string {
 // scan + temp-B-tree sort. This locks in the perf fix for GET /api/v1/messages,
 // which was seconds per page on a multi-GB SQLite archive.
 func TestListMessages_UsesLiveIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -129,6 +130,7 @@ func TestListMessages_UsesLiveIndex(t *testing.T) {
 // matching index, julianday(COALESCE(...)) forces date-filtered result counts
 // to scan every live message in large SQLite archives.
 func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

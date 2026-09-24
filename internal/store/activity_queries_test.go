@@ -19,6 +19,7 @@ import (
 )
 
 func TestActivityIntersectionsUseTheSameStableRefsAndIndependentPages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -100,6 +101,7 @@ func TestActivityIntersectionsUseTheSameStableRefsAndIndependentPages(t *testing
 }
 
 func TestActivityIntersectionValidationAndEmptyPages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -131,6 +133,7 @@ func TestActivityIntersectionValidationAndEmptyPages(t *testing.T) {
 }
 
 func TestActivityPaginationAcceptanceMatrix(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -253,6 +256,7 @@ func TestActivityPaginationAcceptanceMatrix(t *testing.T) {
 }
 
 func TestDayPaginationAndReferenceMetadataAreDeterministic(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, firstPersonID := newActivityQueryFixture(t)
@@ -316,6 +320,7 @@ func TestDayPaginationAndReferenceMetadataAreDeterministic(t *testing.T) {
 }
 
 func TestActivityPagesKeepTotalsBeyondTheTailAndExcludeNoteOnlyDayPersons(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -366,6 +371,7 @@ func TestActivityPagesKeepTotalsBeyondTheTailAndExcludeNoteOnlyDayPersons(t *tes
 }
 
 func TestContactStateDerivesCadenceAndDirectChannelAtReadTime(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -406,6 +412,7 @@ func TestContactStateDerivesCadenceAndDirectChannelAtReadTime(t *testing.T) {
 }
 
 func TestContactStateMarksExistingProjectionStaleWhileQueueIsPending(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -445,6 +452,7 @@ func TestContactStateMarksExistingProjectionStaleWhileQueueIsPending(t *testing.
 // stale, and with a message-shaped classification the transcript surfaces as
 // message:* on channel other with sender/addressed roles.
 func TestProjectorClassifiesImportedMeetingTranscriptAsMeeting(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -504,6 +512,7 @@ func TestProjectorClassifiesImportedMeetingTranscriptAsMeeting(t *testing.T) {
 // it a repaired owner address would leave direction, evidence, and contact
 // state permanently stale.
 func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -575,6 +584,7 @@ func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
 // placeholder list would exceed SQLite's bound-variable limit at maximum
 // projection batch sizes.
 func TestRecomputeContactStateLocksAcrossPersonChunks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
 
@@ -614,6 +624,7 @@ func TestRecomputeContactStateLocksAcrossPersonChunks(t *testing.T) {
 // messages.sender_id identifies, not to every co-author From row — otherwise
 // co-authors are excluded from contact evidence as if they were the owner.
 func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -717,6 +728,7 @@ func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
 // one candidate and counterpart chunk (512 IDs), exercising both bounded
 // queries in the public exact-load path.
 func TestAttachActivityCounterpartsChunksLargeBatches(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	recipient := f.EnsureParticipant(
@@ -746,6 +758,7 @@ func TestAttachActivityCounterpartsChunksLargeBatches(t *testing.T) {
 // classification needs the source-native flag because a source-native outgoing
 // message can lack a resolved author counterpart entirely.
 func TestActivityCandidatesCarrySourceNativeOwnership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -774,6 +787,7 @@ func TestActivityCandidatesCarrySourceNativeOwnership(t *testing.T) {
 // batches, so an empty queue alone must not present partially reclassified
 // counts as fresh.
 func TestContactStateStaysStaleDuringActivePolicyTransitions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -820,6 +834,7 @@ func TestContactStateStaysStaleDuringActivePolicyTransitions(t *testing.T) {
 }
 
 func TestContactStateMarksMissingProjectionStaleForPendingSenderBinding(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -858,6 +873,7 @@ func TestContactStateMarksMissingProjectionStaleForPendingSenderBinding(t *testi
 }
 
 func TestContactStateHandlesMissingProjectionAndMalformedCadence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -908,6 +924,7 @@ func TestContactStateHandlesMissingProjectionAndMalformedCadence(t *testing.T) {
 }
 
 func TestContactStateInfersOnlyDirectEvidenceWithDeterministicChannelTie(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -954,6 +971,7 @@ func TestContactStateInfersOnlyDirectEvidenceWithDeterministicChannelTie(t *test
 }
 
 func TestContactCadenceAcceptanceMatrixAndNoteSeparation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -1126,6 +1144,7 @@ func TestContactCadenceAcceptanceMatrixAndNoteSeparation(t *testing.T) {
 }
 
 func TestContactCadenceUsesSeedIdentityWhenPreferredSlugIsOccupied(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -1185,6 +1204,7 @@ func TestContactCadenceUsesSeedIdentityWhenPreferredSlugIsOccupied(t *testing.T)
 }
 
 func TestContactCadenceRejectsDueDateOutsideJSONRange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)

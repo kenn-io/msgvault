@@ -9,6 +9,7 @@ import (
 )
 
 func TestValueEnvelopeValidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	confidence := 0.4
@@ -57,6 +58,7 @@ func TestValueEnvelopeValidate(t *testing.T) {
 }
 
 func TestValueEnvelopeIsCurrentUsesBothTimeAxes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	closed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -67,6 +69,7 @@ func TestValueEnvelopeIsCurrentUsesBothTimeAxes(t *testing.T) {
 }
 
 func TestTypeTokensRoundTripPreservesOrderAndSpelling(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

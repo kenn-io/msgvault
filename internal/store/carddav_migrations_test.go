@@ -12,11 +12,13 @@ import (
 )
 
 func TestCardDAVSyncTokenUpgradeSQLite(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	assertCardDAVSyncTokenUpgrade(t, st)
 }
 
 func TestCardDAVSyncTokenUpgradePostgreSQL(t *testing.T) {
+	t.Parallel()
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
 		t.Skip("CardDAV PostgreSQL upgrade test requires MSGVAULT_TEST_DB")
@@ -27,11 +29,13 @@ func TestCardDAVSyncTokenUpgradePostgreSQL(t *testing.T) {
 }
 
 func TestCardDAVRoleReconcileUpgradeSQLite(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	assertCardDAVRoleReconcileUpgrade(t, st)
 }
 
 func TestCardDAVRoleReconcileUpgradePostgreSQL(t *testing.T) {
+	t.Parallel()
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
 		t.Skip("CardDAV PostgreSQL role upgrade test requires MSGVAULT_TEST_DB")
@@ -42,11 +46,13 @@ func TestCardDAVRoleReconcileUpgradePostgreSQL(t *testing.T) {
 }
 
 func TestCardDAVConflictPendingUpgradeSQLite(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	assertCardDAVConflictPendingUpgrade(t, st)
 }
 
 func TestCardDAVConflictPendingUpgradePostgreSQL(t *testing.T) {
+	t.Parallel()
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
 		t.Skip("CardDAV PostgreSQL conflict upgrade test requires MSGVAULT_TEST_DB")

@@ -25,6 +25,7 @@ import (
 )
 
 func TestPersonFactOrganizationFingerprintPreservesLegacyLookupKeyEncoding(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -45,6 +46,7 @@ func TestPersonFactOrganizationFingerprintPreservesLegacyLookupKeyEncoding(t *te
 }
 
 func TestPersonFactEmploymentResolvesOrganizationReferences(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		seed      func(*testing.T, *Store) *Organization
@@ -124,6 +126,7 @@ func TestPersonFactEmploymentResolvesOrganizationReferences(t *testing.T) {
 }
 
 func TestPersonFactEmploymentRequiresEveryOrganizationIdentifierToMatch(t *testing.T) {
+	t.Parallel()
 	type organizationFixture struct {
 		name   string
 		domain string
@@ -208,6 +211,7 @@ func TestPersonFactEmploymentRequiresEveryOrganizationIdentifierToMatch(t *testi
 }
 
 func TestPersonFactOrganizationExistingIDRejectsDisagreeingIdentity(t *testing.T) {
+	t.Parallel()
 	st, _, _ := newPersonFactProjectionStore(t)
 	organization := createPersonFactOrganization(t, st, "Exact Company", "exact.example")
 	ref := personfacts.OrganizationReference{
@@ -222,6 +226,7 @@ func TestPersonFactOrganizationExistingIDRejectsDisagreeingIdentity(t *testing.T
 }
 
 func TestPersonFactOrganizationReferenceFailureClassifier(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	for _, err := range []error{
 		ErrOrganizationNotFound,
@@ -240,6 +245,7 @@ func TestPersonFactOrganizationReferenceFailureClassifier(t *testing.T) {
 }
 
 func TestPersonFactEmploymentInvalidValuesDoNotRollbackValidSibling(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		employment func(*testing.T, *Store) string
@@ -328,6 +334,7 @@ func TestPersonFactEmploymentInvalidValuesDoNotRollbackValidSibling(t *testing.T
 }
 
 func TestPersonFactOrganizationAmbiguityRetainsWithoutMerge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -367,6 +374,7 @@ func TestPersonFactOrganizationAmbiguityRetainsWithoutMerge(t *testing.T) {
 }
 
 func TestPersonFactOrganizationBelowThresholdDoesNotCreate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -388,6 +396,7 @@ func TestPersonFactOrganizationBelowThresholdDoesNotCreate(t *testing.T) {
 }
 
 func TestPersonFactOrganizationConcurrentZeroMatchRequeriesUnderLock(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, _, _ := newPersonFactProjectionStore(t)
@@ -452,6 +461,7 @@ func TestPersonFactOrganizationConcurrentZeroMatchRequeriesUnderLock(t *testing.
 }
 
 func TestPersonFactEmploymentCorrectionRevisesUniqueRowAndPreservesHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -501,6 +511,7 @@ func TestPersonFactEmploymentCorrectionRevisesUniqueRowAndPreservesHistory(t *te
 }
 
 func TestPersonFactEmploymentSameGenerationCurrentClaimsCompeteByStableIdentity(t *testing.T) {
+	t.Parallel()
 	type decisionSummary struct {
 		ClaimKey          string
 		Action            personfacts.DecisionAction
@@ -589,6 +600,7 @@ func TestPersonFactEmploymentSameGenerationCurrentClaimsCompeteByStableIdentity(
 }
 
 func TestPersonFactEmploymentSameGenerationCompetitionHonorsTieAndReplacementMargin(t *testing.T) {
+	t.Parallel()
 	type decisionSummary struct {
 		ClaimKey          string
 		Action            personfacts.DecisionAction
@@ -696,6 +708,7 @@ func TestPersonFactEmploymentSameGenerationCompetitionHonorsTieAndReplacementMar
 }
 
 func TestPersonFactEmploymentSameGenerationCompetitionRewritesWholeDirections(t *testing.T) {
+	t.Parallel()
 	type decisionSummary struct {
 		ClaimKey          string
 		Action            personfacts.DecisionAction
@@ -843,6 +856,7 @@ func TestPersonFactEmploymentSameGenerationCompetitionRewritesWholeDirections(t 
 }
 
 func TestPersonFactEmploymentStrongDirectionSupersedesBelowThresholdDirection(t *testing.T) {
+	t.Parallel()
 	type decisionSummary struct {
 		ClaimKey          string
 		Action            personfacts.DecisionAction
@@ -947,6 +961,7 @@ func TestPersonFactEmploymentStrongDirectionSupersedesBelowThresholdDirection(t 
 }
 
 func TestPersonFactEmploymentEndedSupportIsNotReinsertedByUnrelatedResolution(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -993,6 +1008,7 @@ func TestPersonFactEmploymentEndedSupportIsNotReinsertedByUnrelatedResolution(t 
 }
 
 func TestPersonFactEmploymentRepeatedEndedSupportUsesStableEpisodeIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1028,6 +1044,7 @@ func TestPersonFactEmploymentRepeatedEndedSupportUsesStableEpisodeIdentity(t *te
 }
 
 func TestPersonFactEmploymentIncrementalNonOverlappingStintCreatesNewEpisode(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1064,6 +1081,7 @@ func TestPersonFactEmploymentIncrementalNonOverlappingStintCreatesNewEpisode(t *
 }
 
 func TestPersonFactEmploymentExplicitUnpinRepairsMissingOrEditedHistoricalProjection(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"deleted", "edited"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1127,6 +1145,7 @@ func TestPersonFactEmploymentExplicitUnpinRepairsMissingOrEditedHistoricalProjec
 }
 
 func TestPersonFactEmploymentLaterEndedCorrectionRevisesStableEpisode(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1174,6 +1193,7 @@ func TestPersonFactEmploymentLaterEndedCorrectionRevisesStableEpisode(t *testing
 }
 
 func TestPersonFactEmploymentHistoricalCorrectionsPreserveDistinctEpisodesAndCurrentStint(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1242,6 +1262,7 @@ func TestPersonFactEmploymentHistoricalCorrectionsPreserveDistinctEpisodesAndCur
 }
 
 func TestPersonFactEmploymentLaterCurrentSupportCreatesNewEpisodeAfterEndedSupport(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1292,6 +1313,7 @@ func TestPersonFactEmploymentLaterCurrentSupportCreatesNewEpisodeAfterEndedSuppo
 }
 
 func TestPersonFactEmploymentOlderCorrectionCannotOverwriteNewerOnLaterResolution(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1344,6 +1366,7 @@ func TestPersonFactEmploymentOlderCorrectionCannotOverwriteNewerOnLaterResolutio
 }
 
 func TestPersonFactEmploymentLaterSupportRehiresAfterRetirement(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1395,6 +1418,7 @@ func TestPersonFactEmploymentLaterSupportRehiresAfterRetirement(t *testing.T) {
 }
 
 func TestPersonFactEmploymentNewJobRetainsUnrelatedCurrentJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1442,6 +1466,7 @@ func TestPersonFactEmploymentNewJobRetainsUnrelatedCurrentJob(t *testing.T) {
 }
 
 func TestPersonFactEmploymentSupersessionEndsOnlyExactRowAtEffectiveDate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1498,6 +1523,7 @@ func TestPersonFactEmploymentSupersessionEndsOnlyExactRowAtEffectiveDate(t *test
 }
 
 func TestPersonFactEmploymentSupersessionClampsEndDateToEmploymentStart(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1534,6 +1560,7 @@ func TestPersonFactEmploymentSupersessionClampsEndDateToEmploymentStart(t *testi
 }
 
 func TestPersonFactEmploymentNegativeClaimRetractsOwnedHistoricalProjection(t *testing.T) {
+	t.Parallel()
 	for _, relation := range []personfacts.ClaimRelation{
 		personfacts.RelationContradict,
 		personfacts.RelationSupersede,
@@ -1576,6 +1603,7 @@ func TestPersonFactEmploymentNegativeClaimRetractsOwnedHistoricalProjection(t *t
 }
 
 func TestPersonFactEmploymentMultipleProjectionsBumpVCardOnce(t *testing.T) {
+	t.Parallel()
 	st, personID, _ := newPersonFactProjectionStore(t)
 	target := projectionTargetBySlug(t, st, "employment")
 	first := createPersonFactOrganization(t, st, "Bump One", "bump-one.example")
@@ -1596,6 +1624,7 @@ func TestPersonFactEmploymentMultipleProjectionsBumpVCardOnce(t *testing.T) {
 }
 
 func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1665,6 +1694,7 @@ func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *tes
 }
 
 func TestPersonFactEmploymentUnsupportedEvidenceDoesNotRetire(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1698,6 +1728,7 @@ func TestPersonFactEmploymentUnsupportedEvidenceDoesNotRetire(t *testing.T) {
 }
 
 func TestPersonFactEmploymentReplayIsByteIdentical(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1718,6 +1749,7 @@ func TestPersonFactEmploymentReplayIsByteIdentical(t *testing.T) {
 }
 
 func TestPersonFactEmploymentAutomaticLockPrecedesCurrentStateSQLite(t *testing.T) {
+	t.Parallel()
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite production-path lock-order observation")
 	}
@@ -1772,6 +1804,7 @@ func TestPersonFactEmploymentAutomaticLockPrecedesCurrentStateSQLite(t *testing.
 }
 
 func TestPersonFactEmploymentAutomaticAndDeclaredMutationSerializePostgres(t *testing.T) {
+	t.Parallel()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL person/organization lock interleaving requires MSGVAULT_TEST_DB")
@@ -1839,7 +1872,7 @@ func TestPersonFactEmploymentAutomaticAndDeclaredMutationSerializePostgres(t *te
 	assert.Equal(ProvenanceUser, employments[0].Source)
 }
 
-func TestPersonFactEmploymentNonIDTableLockDeadlockRetriesPostgres(t *testing.T) {
+func TestPersonFactEmploymentNonIDTableLockDeadlockRetriesPostgres(t *testing.T) { //nolint:paralleltest // reads the database-wide pg_stat_database deadlocks counter
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL table and row locks are required for the retry regression")

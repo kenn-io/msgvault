@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonVCardSnapshotLoadsAllProjectionInputsDeterministically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -110,6 +111,7 @@ func TestPersonVCardSnapshotLoadsAllProjectionInputsDeterministically(t *testing
 }
 
 func TestPersonNotesSnapshotCarriesVCardDefinitionAndValue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -139,6 +141,7 @@ func TestPersonNotesSnapshotCarriesVCardDefinitionAndValue(t *testing.T) {
 // page-sized read would delete the mapped properties of every employment past
 // the first page.
 func TestPersonVCardSnapshotRetainsEmploymentsBeyondOnePage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -205,6 +208,7 @@ func TestPersonVCardSnapshotRetainsEmploymentsBeyondOnePage(t *testing.T) {
 }
 
 func TestVCardSemanticCommitRejectsChangedProjectionAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

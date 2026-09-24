@@ -12,6 +12,7 @@ import (
 )
 
 func TestInitSchemaCanonicalizesLegacyOrganizationDomains(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

@@ -24,6 +24,7 @@ func reviewedCurrentPlan(t *testing.T, st *store.Store, personID int64) store.Ca
 }
 
 func TestReviewedPublicationStoreRejectsChangedArtifactFences(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"body", "person", "inference", "generation", "book_revision", "write_target", "href", "token", "mapping", "mutation", "conflict", "etag"} {
 		t.Run(field, func(t *testing.T) {
 			require := require.New(t)
@@ -75,6 +76,7 @@ func TestReviewedPublicationStoreRejectsChangedArtifactFences(t *testing.T) {
 }
 
 func TestCardDAVPersonCoordinatorSharesScopedViewsAndCancelsWaiters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
 	personID := inferenceReviewPerson(t, st)
@@ -102,6 +104,7 @@ func TestCardDAVPersonCoordinatorSharesScopedViewsAndCancelsWaiters(t *testing.T
 }
 
 func TestAppendNotesDoesNotAdvanceDebtForDeclaredBlankOrDryRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
@@ -127,6 +130,7 @@ func TestAppendNotesDoesNotAdvanceDebtForDeclaredBlankOrDryRun(t *testing.T) {
 }
 
 func TestReviewedPublicationZeroStateRemainsSparseAndIntentAuthorized(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
 	personID := inferenceReviewPerson(t, st)
@@ -144,6 +148,7 @@ func TestReviewedPublicationZeroStateRemainsSparseAndIntentAuthorized(t *testing
 }
 
 func TestReviewedPublicationFirstInvalidationRejectsStalePostgresSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
@@ -190,6 +195,7 @@ func TestReviewedPublicationFirstInvalidationRejectsStalePostgresSnapshot(t *tes
 }
 
 func TestReviewedPublicationUpgradeLeavesLegacyIntentUnapproved(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
@@ -217,6 +223,7 @@ func TestReviewedPublicationUpgradeLeavesLegacyIntentUnapproved(t *testing.T) {
 }
 
 func TestReviewedPublicationReopenPreservesExactIntentProof(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, _ := newCardDAVResourceStore(t)
@@ -237,6 +244,7 @@ func TestReviewedPublicationReopenPreservesExactIntentProof(t *testing.T) {
 }
 
 func TestCurrentPublicationOrdinaryPreparationRejectsChangedSourceFence(t *testing.T) {
+	t.Parallel()
 	st, _, book := newCardDAVResourceStore(t)
 	personID := inferenceReviewPerson(t, st)
 	reviewed := reviewedCurrentPlan(t, st, personID)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestPartialDateValidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -40,6 +41,7 @@ func TestPartialDateValidate(t *testing.T) {
 }
 
 func TestPartialDateStringRoundTrips(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -74,6 +76,7 @@ func TestPartialDateStringRoundTrips(t *testing.T) {
 }
 
 func TestCompareAtSharedPrecisionUsesOnlyCommonComponents(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	tests := []struct {
@@ -109,6 +112,7 @@ func TestCompareAtSharedPrecisionUsesOnlyCommonComponents(t *testing.T) {
 }
 
 func TestPartialDateComponentColumnsRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	date := partialDate(1985, 4, 0)

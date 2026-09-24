@@ -41,6 +41,7 @@ func (d cancelDuringTriggersDialect) EnsureTriggers(q querier) error {
 // site hands the dialect — so this runs on SQLite, where a store can be opened
 // without the package's external test helpers.
 func TestInitSchema_TriggerReplacementStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

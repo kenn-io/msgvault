@@ -154,6 +154,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 }
 
 func TestPersonEnrichmentSynchronousResultCommitsFromStartingAttempt(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -216,6 +217,7 @@ func (f *enrichmentResultFixture) reseal(t *testing.T) {
 }
 
 func TestCommitEnrichmentClaimsAppliesAtomicallyAndReplaysRichResult(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -269,6 +271,7 @@ func TestCommitEnrichmentClaimsAppliesAtomicallyAndReplaysRichResult(t *testing.
 }
 
 func TestPersonEnrichmentResultRejectsConcurrentConfiguredKeyWinner(t *testing.T) {
+	t.Parallel()
 	for _, winner := range []string{"suppression", "deletion"} {
 		t.Run(winner, func(t *testing.T) {
 			checks := assert.New(t)
@@ -345,6 +348,7 @@ func TestPersonEnrichmentResultRejectsConcurrentConfiguredKeyWinner(t *testing.T
 }
 
 func TestPersonEnrichmentResultDeletionRevocationLockHierarchyDoesNotDeadlock(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -450,6 +454,7 @@ func requireEnrichmentResultSignal(t *testing.T, signal <-chan struct{}, message
 }
 
 func TestPersonEnrichmentResultPreparationHasNoDurableSideEffects(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -464,6 +469,7 @@ func TestPersonEnrichmentResultPreparationHasNoDurableSideEffects(t *testing.T) 
 }
 
 func TestCommitEnrichmentClaimsRollsBackCitationAndProjectionFailures(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		trigger string
@@ -490,6 +496,7 @@ func TestCommitEnrichmentClaimsRollsBackCitationAndProjectionFailures(t *testing
 }
 
 func TestCommitEnrichmentClaimsRejectsStaleFenceWithoutWrites(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentResultFixture(t)
 	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE person_enrichment_attempts SET lease_fence = lease_fence + 1 WHERE id = ?`), f.attempt.ID)
@@ -500,6 +507,7 @@ func TestCommitEnrichmentClaimsRejectsStaleFenceWithoutWrites(t *testing.T) {
 }
 
 func TestPersonEnrichmentResultRejectsEnvelopeChangesAfterPreparation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*testing.T, *enrichmentResultFixture)
@@ -550,6 +558,7 @@ func TestPersonEnrichmentResultRejectsEnvelopeChangesAfterPreparation(t *testing
 }
 
 func TestPersonEnrichmentResultSensitivePostureChangeAfterPreparationIsPolicyTerminal(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -574,6 +583,7 @@ func TestPersonEnrichmentResultSensitivePostureChangeAfterPreparationIsPolicyTer
 }
 
 func TestPersonEnrichmentResultUsesOnePreparedCompletionTimestamp(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -596,6 +606,7 @@ func TestPersonEnrichmentResultUsesOnePreparedCompletionTimestamp(t *testing.T) 
 }
 
 func TestPersonEnrichmentResultDeduplicatesMetadataAndPreservesOpaqueIDs(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -617,6 +628,7 @@ func TestPersonEnrichmentResultDeduplicatesMetadataAndPreservesOpaqueIDs(t *test
 }
 
 func TestCommitEnrichmentClaimsRanksUnsupportedAggregatorEvidenceBelowThreshold(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -643,6 +655,7 @@ func TestCommitEnrichmentClaimsRanksUnsupportedAggregatorEvidenceBelowThreshold(
 }
 
 func TestCommitEnrichmentClaimsRecordsMismatchedExternalEvidenceAsInvalid(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		claim  func(*enrichmentResultFixture) personfacts.ProposedClaim
@@ -699,6 +712,7 @@ func TestCommitEnrichmentClaimsRecordsMismatchedExternalEvidenceAsInvalid(t *tes
 }
 
 func TestCommitEnrichmentClaimsWeakIdentityIsAuditableAndCannotProject(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -743,6 +757,7 @@ func TestCommitEnrichmentClaimsWeakIdentityIsAuditableAndCannotProject(t *testin
 }
 
 func TestCommitEnrichmentClaimsLateReturnedIdentifierSuppressionIsPrivateAndTerminal(t *testing.T) {
+	t.Parallel()
 	for _, class := range []personenrichment.SuppressionIdentifierClass{
 		personenrichment.SuppressionProviderPersonID,
 		personenrichment.SuppressionPublicProfileURL,
@@ -781,6 +796,7 @@ func TestCommitEnrichmentClaimsLateReturnedIdentifierSuppressionIsPrivateAndTerm
 }
 
 func TestCommitEnrichmentClaimsProviderIdentityOwnedByAnotherPersonIsAuditable(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -821,6 +837,7 @@ func TestCommitEnrichmentClaimsProviderIdentityOwnedByAnotherPersonIsAuditable(t
 }
 
 func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwnership(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
@@ -986,6 +1003,7 @@ func openPostgresStoreInCurrentSchema(t *testing.T, current *Store, testDB strin
 }
 
 func TestPersonEnrichmentResultRevokedConsentAfterPreparationIsPolicyTerminal(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -1055,6 +1073,7 @@ func requireAttemptActualCost(t *testing.T, attempt *PersonEnrichmentAttempt) in
 }
 
 func TestClaimsWithIdentityScoreCopiesEveryEvidenceAndRejectsEmptyClaims(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	target := personfacts.TargetDescriptor{
@@ -1083,6 +1102,7 @@ func TestClaimsWithIdentityScoreCopiesEveryEvidenceAndRejectsEmptyClaims(t *test
 }
 
 func TestExternalEvidenceAlignerRejectsMismatchedAndUnsafeEvidence(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	aligner := externalEvidenceAligner{
@@ -1126,6 +1146,7 @@ func TestExternalEvidenceAlignerRejectsMismatchedAndUnsafeEvidence(t *testing.T)
 }
 
 func TestPersonEnrichmentResultMetadataStructsDoNotExposeSecretsOrRawIdentifiers(t *testing.T) {
+	t.Parallel()
 	citation := PersonEnrichmentCitation{}
 	encoded, err := json.Marshal(citation)
 	require.NoError(t, err)
@@ -1145,6 +1166,7 @@ func TestPersonEnrichmentResultMetadataStructsDoNotExposeSecretsOrRawIdentifiers
 // settled the work row, reports a stale lease. Either is fine; a deadlock is
 // not.
 func TestPersonEnrichmentResultCommitAndLeaseRenewalDoNotDeadlock(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentResultFixture(t)

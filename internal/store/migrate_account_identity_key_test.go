@@ -13,6 +13,7 @@ import (
 )
 
 func TestAccountIdentityAddressKeyBackfillMergesCaseVariantEmails(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -50,6 +51,7 @@ func TestAccountIdentityAddressKeyBackfillMergesCaseVariantEmails(t *testing.T) 
 }
 
 func TestAccountIdentityAddressKeyBackfillPreservesNonEmailCase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -82,6 +84,7 @@ func TestAccountIdentityAddressKeyBackfillPreservesNonEmailCase(t *testing.T) {
 }
 
 func TestAccountIdentityKeyIndexRejectsKeyedCaseVariantDuplicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "index-reject@example.com")
@@ -100,6 +103,7 @@ func TestAccountIdentityKeyIndexRejectsKeyedCaseVariantDuplicate(t *testing.T) {
 }
 
 func TestAccountIdentityLegacyOmittedKeyInsertSucceedsAndIsRepaired(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -128,6 +132,7 @@ func TestAccountIdentityLegacyOmittedKeyInsertSucceedsAndIsRepaired(t *testing.T
 }
 
 func TestAddAccountIdentityCaseVariantsMergeToOneRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -156,6 +161,7 @@ func TestAddAccountIdentityCaseVariantsMergeToOneRow(t *testing.T) {
 // initialized, or the provenance backfill would read identity-derived
 // is_from_me values as source-native and bake them in permanently.
 func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -215,6 +221,7 @@ func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T)
 }
 
 func TestAccountIdentityKeyOnlyBackfillLeavesOtherColumnsUntouched(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -247,6 +254,7 @@ func TestAccountIdentityKeyOnlyBackfillLeavesOtherColumnsUntouched(t *testing.T)
 }
 
 func TestAddAccountIdentityPromotesUnkeyedLegacyRowWithoutSignalChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestOperationInvocationSchemasExposeOnlyAllowlistedColumns(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	common := []string{"id", "invocation_key", "trigger", "state", "started_at", "finished_at", "error_code", "attempted", "succeeded", "failed"}
 	want := map[string][]string{
@@ -55,6 +56,7 @@ func operationTableColumns(t *testing.T, st interface {
 }
 
 func TestOperationRunOrderIndexes(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	type expectedIndex struct {
@@ -83,6 +85,7 @@ func TestOperationRunOrderIndexes(t *testing.T) {
 }
 
 func TestOperationLaneStatusIndexesFilterOnStatus(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	tests := []struct {
 		index    string
@@ -122,6 +125,7 @@ func TestOperationLaneStatusIndexesFilterOnStatus(t *testing.T) {
 }
 
 func TestPersonSweepOperationIndexesOwnBytewiseOrdering(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	if st.IsPostgreSQL() {
 		assertPostgresIndexDefinitionContains(t, st.DB(),

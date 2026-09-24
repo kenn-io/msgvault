@@ -7,6 +7,7 @@ import (
 )
 
 func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st, err := OpenForTest(":memory:")
 	requirements.NoError(err)

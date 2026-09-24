@@ -154,6 +154,7 @@ func newPersonSweepApplyFixtureWithBudget(
 }
 
 func TestApplyPersonSweepPricesReconciledKnownUsageDimensions(t *testing.T) {
+	t.Parallel()
 	budget := personSweepApplyBudget()
 	budget.InputCostMicroUSDPerMillionTokens = 2_000_000
 	budget.OutputCostMicroUSDPerMillionTokens = 3_000_000
@@ -174,6 +175,7 @@ func TestApplyPersonSweepPricesReconciledKnownUsageDimensions(t *testing.T) {
 }
 
 func TestApplyPersonSweepCommitsFactsUsageAndCursorAtomically(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "atomic", true)
@@ -198,6 +200,7 @@ func TestApplyPersonSweepCommitsFactsUsageAndCursorAtomically(t *testing.T) {
 }
 
 func TestApplyPersonSweepCommitsPrimaryAndRepairCallHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepApplyFixture(t, "repair-history", true)
@@ -259,6 +262,7 @@ func TestApplyPersonSweepCommitsPrimaryAndRepairCallHistory(t *testing.T) {
 }
 
 func TestApplyPersonSweepRequeuesExplicitlyDeferredCursorWork(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := newPersonSweepApplyFixture(t, "deferred-cursor-work", false)
@@ -275,6 +279,7 @@ func TestApplyPersonSweepRequeuesExplicitlyDeferredCursorWork(t *testing.T) {
 }
 
 func TestFinishPersonSweepWorkRequeuesDocumentContinuations(t *testing.T) {
+	t.Parallel()
 	for _, column := range []string{"optimistic_document_key", "reconcile_document_key"} {
 		t.Run(column, func(t *testing.T) {
 			checks := assert.New(t)
@@ -303,6 +308,7 @@ func TestFinishPersonSweepWorkRequeuesDocumentContinuations(t *testing.T) {
 }
 
 func TestApplyPersonSweepStoresGenerationIDAndKeyOnAttempt(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "identity", true)
@@ -323,6 +329,7 @@ func TestApplyPersonSweepStoresGenerationIDAndKeyOnAttempt(t *testing.T) {
 }
 
 func TestApplyPersonSweepRollsBackAtEveryStage(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{
 		"locks", "consent", "evidence_status", "claim", "decision", "projection", "usage", "cursor_cas",
 	} {
@@ -392,6 +399,7 @@ func personSweepApplyRollbackSnapshot(t *testing.T, st *Store) personSweepRollba
 }
 
 func TestApplyPersonSweepRejectsReclaimedLease(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepApplyFixture(t, "reclaimed", true)
 	_, err := f.store.db.Exec(`UPDATE person_sweep_work SET lease_owner = 'new-worker', lease_fence = 2
 		WHERE person_id = ?`, f.personID)
@@ -402,6 +410,7 @@ func TestApplyPersonSweepRejectsReclaimedLease(t *testing.T) {
 }
 
 func TestApplyPersonSweepRevokedConsentChargesUsageOnly(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "revoked-consent", true)
@@ -437,6 +446,7 @@ func TestApplyPersonSweepRevokedConsentChargesUsageOnly(t *testing.T) {
 }
 
 func TestApplyPersonSweepRejectsUnboundCursorAdvance(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(*peoplesweep.ApplyRequest){
 		"missing": func(r *peoplesweep.ApplyRequest) { r.CursorAdvances = nil },
 		"extra":   func(r *peoplesweep.ApplyRequest) { r.CursorAdvances = append(r.CursorAdvances, r.CursorAdvances[0]) },
@@ -455,6 +465,7 @@ func TestApplyPersonSweepRejectsUnboundCursorAdvance(t *testing.T) {
 }
 
 func TestApplyPersonSweepReturnsSortedResolutions(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepApplyFixture(t, "sorted", true)
 	f.request.Generation.Claims = []personfacts.ProposedClaim{
 		personFactProjectionClaim(f.personID, f.targets[AttributeSlugAskMeAbout], `["systems"]`, "sorted-z"),
@@ -470,6 +481,7 @@ func TestApplyPersonSweepReturnsSortedResolutions(t *testing.T) {
 }
 
 func TestApplyPersonSweepReplayReturnsFullGenerationAndZeroFactMutations(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "replay-first", true)
@@ -491,6 +503,7 @@ func TestApplyPersonSweepReplayReturnsFullGenerationAndZeroFactMutations(t *test
 }
 
 func TestPersonSweepStatusOnlyGenerationUsesHostIdentity(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepApplyFixture(t, "status-host", false)
 	result, err := f.store.ApplyPersonSweep(t.Context(), f.request)
 	require.NoError(t, err)
@@ -514,6 +527,7 @@ func TestPersonSweepStatusOnlyGenerationUsesHostIdentity(t *testing.T) {
 }
 
 func TestPersonSweepStatusOnlyGenerationRejectsSpoofedIdentity(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"provider", "provider-version", "model", "model-version", "claim", "usage", "batch"} {
 		t.Run(field, func(t *testing.T) {
 			f := newPersonSweepApplyFixture(t, "status-spoof-"+field, false)
@@ -540,6 +554,7 @@ func TestPersonSweepStatusOnlyGenerationRejectsSpoofedIdentity(t *testing.T) {
 }
 
 func TestPersonSweepStatusOnlyGenerationBindsDurableProfilePolicy(t *testing.T) {
+	t.Parallel()
 	t.Run("missing profile", func(t *testing.T) {
 		f := newPersonSweepApplyFixture(t, "status-profile-missing", false)
 		_, err := f.store.db.ExecContext(t.Context(), `DELETE FROM person_inference_profiles
@@ -559,6 +574,7 @@ func TestPersonSweepStatusOnlyGenerationBindsDurableProfilePolicy(t *testing.T) 
 }
 
 func TestPersonSweepBackstopAppliesWithoutOptimisticAdvance(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "backstop", false)
@@ -593,6 +609,7 @@ func TestPersonSweepBackstopAppliesWithoutOptimisticAdvance(t *testing.T) {
 }
 
 func TestPersonSweepPartialBackstopPersistsRangeWithoutCompletionStamp(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "partial-backstop", false)
@@ -631,6 +648,7 @@ func TestPersonSweepPartialBackstopPersistsRangeWithoutCompletionStamp(t *testin
 }
 
 func TestApplyPersonSweepAdvancesPluralModesInCASOrder(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "plural-cas", false)
 	key := f.request.CursorEnvelope[0].Key
@@ -663,6 +681,7 @@ func TestApplyPersonSweepAdvancesPluralModesInCASOrder(t *testing.T) {
 }
 
 func TestApplyPersonSweepRecomputesGenerationKey(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepApplyFixture(t, "generation-key", false)
 	prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), f.request.Generation, nil)
 	require.NoError(t, err)
@@ -700,6 +719,7 @@ func TestApplyPersonSweepRecomputesGenerationKey(t *testing.T) {
 }
 
 func TestApplyPersonSweepStoresClaimMutationInGenerationKey(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "stored-claim-key", true)
@@ -719,6 +739,7 @@ func TestApplyPersonSweepStoresClaimMutationInGenerationKey(t *testing.T) {
 }
 
 func TestApplyPersonSweepGenerationCollisionRollsBack(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "collision", true)
@@ -753,6 +774,7 @@ func TestApplyPersonSweepGenerationCollisionRollsBack(t *testing.T) {
 }
 
 func TestPersonSweepApplyLockPlanOrdersDailyUsageBeforeWork(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, []personSweepLockCoordinate{
 		{kind: personSweepLockDailyUsage, value: "2026-08-22"},
 		{kind: personSweepLockDailyUsage, value: "2026-08-23"},
@@ -779,6 +801,7 @@ func (a blockingSweepAligner) Align(context.Context, personfacts.EvidenceInput) 
 }
 
 func TestApplyPersonSweepPreparesBeforeOuterTransaction(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "prepare-before-tx", true)
 	start, end := int64(0), int64(4)

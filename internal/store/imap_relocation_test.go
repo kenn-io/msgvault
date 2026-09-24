@@ -158,6 +158,7 @@ func imapRelocationParticipants() []store.ParticipantPersistData {
 }
 
 func TestPersistIMAPRelocationReplacesCompleteSnapshotAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedIMAPRelocationFixture(t)
@@ -198,6 +199,7 @@ func TestPersistIMAPRelocationReplacesCompleteSnapshotAtomically(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRequiresGuardedIMAPSyncScope(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		setup func(t *testing.T) (imapRelocationFixture, *store.Store, store.MessageIdentityGuard)
@@ -267,6 +269,7 @@ func TestPersistIMAPRelocationRequiresGuardedIMAPSyncScope(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRejectsSupersededSyncGeneration(t *testing.T) {
+	t.Parallel()
 	fixture := seedIMAPRelocationFixture(t)
 	require.NoError(t, fixture.Store.CompleteSync(fixture.SyncID, "complete"))
 	var built atomic.Bool
@@ -283,6 +286,7 @@ func TestPersistIMAPRelocationRejectsSupersededSyncGeneration(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRejectsDifferentRFC822Identity(t *testing.T) {
+	t.Parallel()
 	fixture := seedIMAPRelocationFixture(t)
 	before := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
 
@@ -299,6 +303,7 @@ func TestPersistIMAPRelocationRejectsDifferentRFC822Identity(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRequiresCompleteSnapshotPayload(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*store.MessagePersistData)
@@ -367,6 +372,7 @@ func TestPersistIMAPRelocationRequiresCompleteSnapshotPayload(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRequiresExactlyOneCompleteRecipientSetPerRole(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*store.MessagePersistData)
@@ -414,6 +420,7 @@ func TestPersistIMAPRelocationRequiresExactlyOneCompleteRecipientSetPerRole(t *t
 }
 
 func TestPersistIMAPRelocationAppliesLabelPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		replaceLabels  bool
@@ -455,6 +462,7 @@ func TestPersistIMAPRelocationAppliesLabelPolicy(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRejectsNewSourceIDCollisionWithoutChangingEitherRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := seedIMAPRelocationFixture(t)
@@ -481,6 +489,7 @@ func TestPersistIMAPRelocationRejectsNewSourceIDCollisionWithoutChangingEitherRo
 }
 
 func TestPersistIMAPRelocationHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
 	fixture := seedIMAPRelocationFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -498,6 +507,7 @@ func TestPersistIMAPRelocationHonorsCanceledContext(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRollsBackEveryMutationOnLateLabelFailure(t *testing.T) {
+	t.Parallel()
 	fixture := seedIMAPRelocationFixture(t)
 	before := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
 
@@ -515,6 +525,7 @@ func TestPersistIMAPRelocationRollsBackEveryMutationOnLateLabelFailure(t *testin
 }
 
 func TestPersistIMAPRelocationDoesNotMutateCallerData(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := seedIMAPRelocationFixture(t)
@@ -555,6 +566,7 @@ func TestPersistIMAPRelocationDoesNotMutateCallerData(t *testing.T) {
 }
 
 func TestPersistIMAPRelocationRequiresBuilder(t *testing.T) {
+	t.Parallel()
 	fixture := seedIMAPRelocationFixture(t)
 	_, err := fixture.Scoped.PersistIMAPRelocationWithParticipantsContext(
 		t.Context(), fixture.Guard, nil, nil, true)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunOnceMigrationAtVersionRerunsReshapedMigration(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "versioned-migration.db"))
@@ -38,6 +39,7 @@ func TestRunOnceMigrationAtVersionRerunsReshapedMigration(t *testing.T) {
 }
 
 func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "versioned-migration-failure.db"))
@@ -82,6 +84,7 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 }
 
 func TestInitSchemaAddsVersionToLegacyLedger(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "legacy-ledger.db"))
@@ -182,6 +185,7 @@ func (c *cancelAtStatement) install(db *loggedDB) {
 // context already cancelled it stamps "this migration is done" for a migration
 // that was cut off, and the next open skips it forever.
 func TestInitSchemaContext_MigrationLedgerStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		prepare func(t *testing.T, st *Store)
@@ -254,6 +258,7 @@ func TestInitSchemaContext_MigrationLedgerStopsWhenTheContextIsCancelled(t *test
 }
 
 func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -289,6 +294,7 @@ func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
 // statement_timeout deliberately disabled, so on PostgreSQL nothing but the
 // context can cut short its wait for a conflicting lock.
 func TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -341,6 +347,7 @@ func TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled(t *tes
 // walk on an archive of calendar events and it runs under the maintenance hatch,
 // so it is exactly the shape of statement an operator needs to be able to stop.
 func TestInitSchemaContext_LegacyCalendarAttributionStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -478,6 +485,7 @@ func (d cancelDuringFTSProbeDialect) FTSAvailable(
 // The wiring under test is dialect-independent — it is which querier the call
 // site hands the dialect — so this runs on SQLite.
 func TestInitSchemaContext_FTSIndexBuildRunsOnTheBoundTransaction(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -510,6 +518,7 @@ func TestInitSchemaContext_FTSIndexBuildRunsOnTheBoundTransaction(t *testing.T) 
 // "full-text search is unavailable" on a store the daemon was about to hand to
 // callers — a silent, wrong, durable answer produced by an operator's Ctrl-C.
 func TestInitSchemaContext_FTSAvailabilityProbeStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -573,6 +582,7 @@ func (d cancelAtDialectStepDialect) SchemaFTS() string {
 // site uses — so this runs on SQLite, where a store can be opened without the
 // package's external test helpers.
 func TestInitSchemaContext_DDLStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		step    func(*cancelAtDialectStepDialect)
@@ -641,6 +651,7 @@ func TestInitSchemaContext_DDLStopsWhenTheContextIsCancelled(t *testing.T) {
 // context.Background(), so InitSchemaContext's promise to stop on a signal did
 // not cover it.
 func TestEnsureParticipantsPhoneUniqueIndex_HonoursItsContext(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

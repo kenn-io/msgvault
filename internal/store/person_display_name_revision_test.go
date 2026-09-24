@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonDisplayNameRevision(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)

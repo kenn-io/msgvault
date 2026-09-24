@@ -33,6 +33,7 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path as well as SQLite.
 func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromdup@example.com")

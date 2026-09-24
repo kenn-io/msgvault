@@ -8,6 +8,7 @@ import (
 )
 
 func TestDocumentVectorChunkLifecyclePostgreSQLContract(t *testing.T) {
+	t.Parallel()
 	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("PostgreSQL contract runs when MSGVAULT_TEST_DB selects PostgreSQL")
 	}
@@ -15,6 +16,7 @@ func TestDocumentVectorChunkLifecyclePostgreSQLContract(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationLifecyclePostgreSQLContract(t *testing.T) {
+	t.Parallel()
 	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("PostgreSQL contract runs when MSGVAULT_TEST_DB selects PostgreSQL")
 	}

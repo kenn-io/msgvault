@@ -105,6 +105,7 @@ func sweepAttemptLease(f personSweepBudgetFixture) peoplesweep.Lease {
 }
 
 func TestPersonSweepBudgetRejectsConcurrentDailyOverrun(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "concurrent")
@@ -156,6 +157,7 @@ func TestPersonSweepBudgetRejectsConcurrentDailyOverrun(t *testing.T) {
 }
 
 func TestPersonSweepBudgetEnforcesPersonRunAndDayDimensions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		cap  func(*peoplesweep.BudgetConfig)
@@ -194,6 +196,7 @@ func TestPersonSweepBudgetEnforcesPersonRunAndDayDimensions(t *testing.T) {
 }
 
 func TestPersonSweepBudgetAggregatesPersonAcrossAttemptsInRun(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepBudgetFixture(t, "person-across-attempts")
 	budget := generousSweepBudget()
 	budget.MaxRequestsPerPerson = 1
@@ -211,6 +214,7 @@ func TestPersonSweepBudgetAggregatesPersonAcrossAttemptsInRun(t *testing.T) {
 }
 
 func TestPersonSweepBudgetReleaseBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	t.Run("never started restores every reservation", func(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)
@@ -272,6 +276,7 @@ func TestPersonSweepBudgetReleaseBeforeNetwork(t *testing.T) {
 }
 
 func TestPersonSweepBudgetStartedRequiresLiveFencedLease(t *testing.T) {
+	t.Parallel()
 	requireSweepBatchUntouchedByLostLease := func(t *testing.T, f personSweepBudgetFixture) {
 		t.Helper()
 		checks := assert.New(t)
@@ -448,6 +453,7 @@ func TestPersonSweepBudgetStartedRequiresLiveFencedLease(t *testing.T) {
 }
 
 func TestFinalizePersonSweepFailureRequiresCurrentLease(t *testing.T) {
+	t.Parallel()
 	execWork := func(t *testing.T, f personSweepBudgetFixture, query string, args ...any) {
 		t.Helper()
 		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(query), args...)
@@ -614,6 +620,7 @@ func TestFinalizePersonSweepFailureRequiresCurrentLease(t *testing.T) {
 }
 
 func TestPersonSweepBudgetReconcilesActualUsage(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "reconcile")
@@ -651,6 +658,7 @@ func TestPersonSweepBudgetReconcilesActualUsage(t *testing.T) {
 }
 
 func TestPersonSweepBudgetJournalsPrimaryAndRepairCalls(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "call-ordinals")
@@ -690,6 +698,7 @@ func TestPersonSweepBudgetJournalsPrimaryAndRepairCalls(t *testing.T) {
 }
 
 func TestPersonSweepBudgetConcurrentRepairReservationReplaysOneCall(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "concurrent-repair")
@@ -730,6 +739,7 @@ func TestPersonSweepBudgetConcurrentRepairReservationReplaysOneCall(t *testing.T
 }
 
 func TestPersonSweepBudgetRejectsInvalidCallCoordinates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		callOrdinal int
@@ -752,6 +762,7 @@ func TestPersonSweepBudgetRejectsInvalidCallCoordinates(t *testing.T) {
 }
 
 func TestPersonSweepBudgetRejectsCallGaps(t *testing.T) {
+	t.Parallel()
 	t.Run("repair without primary", func(t *testing.T) {
 		f := newPersonSweepBudgetFixture(t, "repair-without-primary")
 		request := sweepReservation(f, 0, 250, "provider-fingerprint", generousSweepBudget())
@@ -781,6 +792,7 @@ func TestPersonSweepBudgetRejectsCallGaps(t *testing.T) {
 }
 
 func TestPersonSweepBudgetMissingUsageChargesFullReservation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "missing-usage")
@@ -814,6 +826,7 @@ func TestPersonSweepBudgetMissingUsageChargesFullReservation(t *testing.T) {
 }
 
 func TestPersonSweepBudgetDoesNotTrustProviderUnderreporting(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "underreport")
@@ -840,6 +853,7 @@ func TestPersonSweepBudgetDoesNotTrustProviderUnderreporting(t *testing.T) {
 }
 
 func TestPersonSweepBudgetAggregatesRunAcrossAttempts(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "attempt-run")
 	requirements.NoError(f.store.StartPersonSweepAttempt(t.Context(), sweepStartAttempt(t,
@@ -866,6 +880,7 @@ func TestPersonSweepBudgetAggregatesRunAcrossAttempts(t *testing.T) {
 }
 
 func TestPersonSweepDailyBudgetAggregatesAcrossProfiles(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "profiles")
 	budget := generousSweepBudget()
@@ -891,6 +906,7 @@ func TestPersonSweepDailyBudgetAggregatesAcrossProfiles(t *testing.T) {
 }
 
 func TestPersonSweepBudgetAuthenticatesBoundedWireMetadata(t *testing.T) {
+	t.Parallel()
 	t.Run("canonical SHA-256", func(t *testing.T) {
 		f := newPersonSweepBudgetFixture(t, "invalid-hash")
 		request := sweepReservation(f, 0, 100, "provider-fingerprint", generousSweepBudget())
@@ -949,6 +965,7 @@ func TestPersonSweepBudgetAuthenticatesBoundedWireMetadata(t *testing.T) {
 }
 
 func TestPersonSweepBudgetRejectsReservationPolicyReplay(t *testing.T) {
+	t.Parallel()
 	for _, mutate := range []struct {
 		name string
 		fn   func(*peoplesweep.BudgetReservation)
@@ -998,6 +1015,7 @@ func TestPersonSweepBudgetRejectsReservationPolicyReplay(t *testing.T) {
 }
 
 func TestPersonSweepBudgetReleaseFinalizeLockOrder(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "lock-order")
@@ -1047,6 +1065,7 @@ func TestPersonSweepBudgetReleaseFinalizeLockOrder(t *testing.T) {
 }
 
 func TestPersonSweepBudgetRejectsTerminalRun(t *testing.T) {
+	t.Parallel()
 	t.Run("reserve", func(t *testing.T) {
 		f := newPersonSweepBudgetFixture(t, "terminal-reserve")
 		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
@@ -1072,6 +1091,7 @@ func TestPersonSweepBudgetRejectsTerminalRun(t *testing.T) {
 }
 
 func TestPersonSweepRunFinishAccountingRaceIsSerialized(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"reserve", "mark"} {
 		t.Run(operation, func(t *testing.T) {
 			f := newPersonSweepBudgetFixture(t, "finish-race-"+operation)

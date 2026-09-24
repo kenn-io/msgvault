@@ -15,6 +15,7 @@ import (
 )
 
 func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -80,6 +81,7 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 }
 
 func TestPackMaintenanceUsesPreservedCaseAliasesForLiveness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		path func(string) string
@@ -147,6 +149,7 @@ func TestPackMaintenanceUsesPreservedCaseAliasesForLiveness(t *testing.T) {
 }
 
 func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -187,6 +190,7 @@ func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
 }
 
 func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	fx := newPackAttachmentFixture(t, st)
@@ -209,6 +213,7 @@ func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
 }
 
 func TestPackUsageRejectsNegativeTotals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		entryCount  int64
@@ -232,6 +237,7 @@ func TestPackUsageRejectsNegativeTotals(t *testing.T) {
 }
 
 func TestPackUsageRejectsInconsistentMaxima(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"stored_len", "raw_len"} {
 		t.Run(field, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -268,6 +274,7 @@ func TestPackUsageRejectsInconsistentMaxima(t *testing.T) {
 }
 
 func TestPackUsageRejectsRawMaximumBeyondPackLimit(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	fx := newPackAttachmentFixture(t, st)
 	hash := packTestHash("ca03")
@@ -288,6 +295,7 @@ func TestPackUsageRejectsRawMaximumBeyondPackLimit(t *testing.T) {
 }
 
 func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -329,6 +337,7 @@ func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
 }
 
 func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -371,6 +380,7 @@ func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
 }
 
 func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
+	t.Parallel()
 	const (
 		oldA = "01hzy3v7q8r9s0t1a2v3w4x6g1"
 		oldB = "01hzy3v7q8r9s0t1a2v3w4x6g2"
@@ -489,6 +499,7 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 }
 
 func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -528,6 +539,7 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 }
 
 func TestRepackMetadataMaintenanceHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())

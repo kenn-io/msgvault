@@ -11,6 +11,7 @@ import (
 )
 
 func TestPostgresPersonMergeParity(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL integration database is not configured")
@@ -85,6 +86,7 @@ func TestPostgresPersonMergeParity(t *testing.T) {
 }
 
 func TestPostgresPersonSplitParity(t *testing.T) {
+	t.Parallel()
 	t.Run("exact reversal and replay", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)

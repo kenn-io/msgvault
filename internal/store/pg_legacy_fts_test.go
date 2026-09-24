@@ -26,6 +26,7 @@ import (
 // then drop the search_fts column (CASCADE drops its GIN index too), then
 // re-run InitSchema and assert the column + index + availability are restored.
 func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {

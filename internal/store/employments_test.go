@@ -15,6 +15,7 @@ import (
 )
 
 func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -52,6 +53,7 @@ func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing
 }
 
 func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -78,6 +80,7 @@ func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 }
 
 func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -163,6 +166,7 @@ func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
 }
 
 func TestEndEmploymentClearsCurrentAndPrimaryWithoutDeletingHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -191,6 +195,7 @@ func TestEndEmploymentClearsCurrentAndPrimaryWithoutDeletingHistory(t *testing.T
 }
 
 func TestEmploymentValidationRejectsBadInput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
 	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
@@ -225,6 +230,7 @@ func TestEmploymentValidationRejectsBadInput(t *testing.T) {
 }
 
 func TestConfidenceIsAcceptedOnEveryDerivedProvenance(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
 	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
@@ -244,6 +250,7 @@ func TestConfidenceIsAcceptedOnEveryDerivedProvenance(t *testing.T) {
 }
 
 func TestEmploymentColumnChecksAreEnforcedBySQL(t *testing.T) {
+	t.Parallel()
 	req := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -310,6 +317,7 @@ func TestEmploymentColumnChecksAreEnforcedBySQL(t *testing.T) {
 }
 
 func TestDuplicateCurrentEmploymentAtTheSameOrganizationAndTitleIsRejected(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -325,6 +333,7 @@ func TestDuplicateCurrentEmploymentAtTheSameOrganizationAndTitleIsRejected(t *te
 }
 
 func TestOrganizationDeletionCannotEraseEmploymentHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -350,6 +359,7 @@ func TestOrganizationDeletionCannotEraseEmploymentHistory(t *testing.T) {
 }
 
 func TestEmploymentCannotTargetAMergedOrganizationRedirect(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -371,6 +381,7 @@ func TestEmploymentCannotTargetAMergedOrganizationRedirect(t *testing.T) {
 }
 
 func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -443,6 +454,7 @@ func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
 }
 
 func TestDeletingAPersonRemovesTheirEmploymentsButNotTheOrganization(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -462,6 +474,7 @@ func TestDeletingAPersonRemovesTheirEmploymentsButNotTheOrganization(t *testing.
 }
 
 func TestUpdateAndDeleteEmploymentEnforceRevisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -488,6 +501,7 @@ func TestUpdateAndDeleteEmploymentEnforceRevisions(t *testing.T) {
 }
 
 func TestUpdateEmploymentClassifiesAnActiveTitleConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -515,6 +529,7 @@ func TestUpdateEmploymentClassifiesAnActiveTitleConflict(t *testing.T) {
 }
 
 func TestMergeOrganizationsClearsRepointedEmploymentAddressAndBumpsRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -578,6 +593,7 @@ func mustPromotedPerson(t *testing.T, st *store.Store, email, name string) *stor
 }
 
 func TestUpdateEmploymentDoesNotPromoteToPrimaryWhenFlagOmitted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -608,6 +624,7 @@ func TestUpdateEmploymentDoesNotPromoteToPrimaryWhenFlagOmitted(t *testing.T) {
 }
 
 func TestEmploymentRejectsCurrentWithEndDate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -619,6 +636,7 @@ func TestEmploymentRejectsCurrentWithEndDate(t *testing.T) {
 }
 
 func TestConcurrentEmploymentWritesRetryOnSQLiteBusy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -646,6 +664,7 @@ func TestConcurrentEmploymentWritesRetryOnSQLiteBusy(t *testing.T) {
 }
 
 func TestUpdateEmploymentPreservesHistoricalStateWhenFlagsOmitted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -664,6 +683,7 @@ func TestUpdateEmploymentPreservesHistoricalStateWhenFlagsOmitted(t *testing.T) 
 }
 
 func TestEmploymentManualWritesRepinTarget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()

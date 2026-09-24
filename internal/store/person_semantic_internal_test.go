@@ -10,6 +10,7 @@ import (
 )
 
 func TestCapPersonSemanticUTF8RepairsMalformedInputBeforeCapping(t *testing.T) {
+	t.Parallel()
 	input := string([]byte{0xff}) + strings.Repeat("x", MaxPersonSemanticDocumentBytes+100)
 
 	got := capPersonSemanticUTF8(input)
@@ -20,6 +21,7 @@ func TestCapPersonSemanticUTF8RepairsMalformedInputBeforeCapping(t *testing.T) {
 }
 
 func TestCapPersonSemanticUTF8BacksOffPartialRune(t *testing.T) {
+	t.Parallel()
 	input := strings.Repeat("x", MaxPersonSemanticDocumentBytes-1) + "雪"
 
 	got := capPersonSemanticUTF8(input)
@@ -30,6 +32,7 @@ func TestCapPersonSemanticUTF8BacksOffPartialRune(t *testing.T) {
 }
 
 func TestRenderPersonSemanticNameFallsBackFromBlankOptionalValues(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "Alice Example", renderPersonSemanticName(PersonName{
 		Formatted: new("  "), GivenName: new("Alice"), FamilyName: new("Example"),
 	}))

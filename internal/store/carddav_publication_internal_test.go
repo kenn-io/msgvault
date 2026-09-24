@@ -9,6 +9,7 @@ import (
 )
 
 func TestCardDAVPublicationStateSourceUsesOneReadSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "publication-state.db")

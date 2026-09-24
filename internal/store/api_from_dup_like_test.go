@@ -22,6 +22,7 @@ import (
 // drive the unexported fallback directly; the join fix is dialect-agnostic and
 // the cross-backend coverage lives in TestStoreAPI_MultipleFromRows_NoDuplication.
 func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromduplike@example.com")

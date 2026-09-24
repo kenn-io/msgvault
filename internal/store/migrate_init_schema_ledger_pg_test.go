@@ -9,6 +9,7 @@ import (
 )
 
 func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
+	t.Parallel()
 	dbURL := skipUnlessPostgresInternal(t)
 	assert := assert.New(t)
 	require := require.New(t)

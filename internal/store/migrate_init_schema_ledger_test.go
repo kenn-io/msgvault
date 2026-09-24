@@ -23,6 +23,7 @@ import (
 // SQLite-only: it reseats applied_migrations rows directly, mirroring
 // TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique.
 func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "ledger.db")

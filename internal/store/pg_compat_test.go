@@ -22,6 +22,7 @@ import (
 // and refuses to convert to *string. Under SQLite the test asserts
 // the formatted string still contains the expected date/time pieces.
 func TestInspectMessage_TimestampScan(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -52,6 +53,7 @@ func TestInspectMessage_TimestampScan(t *testing.T) {
 // PG's is strict-case. The fix wraps both sides in LOWER so a query
 // for "Invoice" matches "invoice from acme".
 func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -78,6 +80,7 @@ func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
 // the LOWER(p.email_address) IN (...) predicate matches against
 // case-folded participants.
 func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -119,6 +122,7 @@ func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
 // match a body containing the two separate words), so cross-backend
 // match-count assertions would diverge.
 func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msg1 := f.NewMessage().
@@ -164,6 +168,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 // one row and no errors. The fix collapsed the SELECT-then-INSERT
 // race into a single INSERT … ON CONFLICT … RETURNING id statement.
 func TestEnsureParticipant_Concurrent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -203,6 +208,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 // now in place, concurrent inserts collapse to one row via the
 // ON CONFLICT clause.
 func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -241,6 +247,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 // of the same (source_id, address) collapse to exactly one row, and
 // merging different signals across calls preserves the union.
 func TestAddAccountIdentity_Concurrent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -298,6 +305,7 @@ func splitComma(s string) []string {
 // the same (message_id, content_hash) attachment race; the retry loop
 // must collapse to one row with no error.
 func TestUpsertAttachment_Concurrent(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	mid := f.NewMessage().WithSourceMessageID("att-msg-1").Create(t, f.Store)
 

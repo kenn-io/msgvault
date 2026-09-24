@@ -19,7 +19,7 @@ import (
 // higher-numbered person and asks for the lower one once the write under test
 // is parked on the higher one. PostgreSQL's detector aborts one side; the
 // write has to absorb that and finish once the blocker lets go.
-func TestPersonAndRelationshipWritesRetryDeadlock(t *testing.T) {
+func TestPersonAndRelationshipWritesRetryDeadlock(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for the relationship deadlock regression")

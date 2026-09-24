@@ -126,6 +126,7 @@ func gatedMeetingProjectionStore(t *testing.T, base *Store, gate *meetingProject
 }
 
 func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
@@ -162,6 +163,7 @@ func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) 
 }
 
 func TestMeetingProjectionBackfillLocksBeforeEvidenceAndSeesConcurrentUpdate(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
@@ -211,6 +213,7 @@ func TestMeetingProjectionBackfillLocksBeforeEvidenceAndSeesConcurrentUpdate(t *
 }
 
 func TestMeetingProjectionPublicRawWritesLockMessageBeforeRaw(t *testing.T) {
+	t.Parallel()
 	for _, mime := range []bool{false, true} {
 		t.Run(fmt.Sprint("mime=", mime), func(t *testing.T) {
 			assertions := assert.New(t)

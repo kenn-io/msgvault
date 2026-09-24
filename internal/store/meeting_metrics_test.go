@@ -12,6 +12,7 @@ import (
 )
 
 func TestMeetingMetricsDurationCoverageAndUTCMonths(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -49,6 +50,7 @@ func TestMeetingMetricsDurationCoverageAndUTCMonths(t *testing.T) {
 }
 
 func TestMeetingMetricsOrdersSQLiteBoundaryOffsetsByInstant(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -74,6 +76,7 @@ func TestMeetingMetricsOrdersSQLiteBoundaryOffsetsByInstant(t *testing.T) {
 }
 
 func TestMeetingMetricsPreservesSubmillisecondExtrema(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -96,6 +99,7 @@ func TestMeetingMetricsPreservesSubmillisecondExtrema(t *testing.T) {
 }
 
 func TestMeetingMetricsDeletionUndatedAndMissingProjection(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -136,6 +140,7 @@ func TestMeetingMetricsDeletionUndatedAndMissingProjection(t *testing.T) {
 }
 
 func TestMeetingMetricsScopeIntersectionsAndPersonSemantics(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -187,6 +192,7 @@ func TestMeetingMetricsScopeIntersectionsAndPersonSemantics(t *testing.T) {
 }
 
 func TestMeetingScopeChangedRejectsDriftedExplorePopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	fixture := newMeetingQueryFixture(t)
 	ids := []int64{fixture.meetingIDs[0], fixture.localDelete, fixture.nonMeetingID, -1}
@@ -202,6 +208,7 @@ func TestMeetingScopeChangedRejectsDriftedExplorePopulation(t *testing.T) {
 }
 
 func TestMeetingMetricsLargeInternalMessagePopulationUsesBoundedBinding(t *testing.T) {
+	t.Parallel()
 	fixture := newMeetingQueryFixture(t)
 	ids := make([]int64, 0, 600)
 	ids = append(ids, fixture.meetingIDs[0])

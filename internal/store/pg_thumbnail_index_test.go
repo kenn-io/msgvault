@@ -17,6 +17,7 @@ import (
 // exceed the pool-wide 30s statement_timeout, which would have aborted the
 // whole schema apply had it stayed in the schema file.
 func TestInitSchema_PGCreatesAttachmentMaintenanceIndexes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
@@ -63,6 +64,7 @@ func TestInitSchema_PGCreatesAttachmentMaintenanceIndexes(t *testing.T) {
 }
 
 func TestInitSchema_SQLiteCreatesThumbnailPathIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
@@ -78,6 +80,7 @@ func TestInitSchema_SQLiteCreatesThumbnailPathIndex(t *testing.T) {
 }
 
 func TestInitSchema_SQLiteCreatesAttachmentHashExpressionIndexes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {

@@ -19,7 +19,7 @@ import (
 
 // This catches a decoder that allocates the caller-controlled base64 payload
 // before enforcing the Directory cursor's encoded-size boundary.
-func TestDecodeDirectoryPeopleCursorRejectsOversizedInputBeforeAllocation(t *testing.T) {
+func TestDecodeDirectoryPeopleCursorRejectsOversizedInputBeforeAllocation(t *testing.T) { //nolint:paralleltest // testing.AllocsPerRun counts allocations process-wide
 	cursor := strings.Repeat("a", maxDirectoryCursorBytes*8)
 	_, err := decodeDirectoryPeopleCursor(cursor)
 	require.ErrorIs(t, err, ErrInvalidDirectoryCursor)
@@ -34,6 +34,7 @@ func TestDecodeDirectoryPeopleCursorRejectsOversizedInputBeforeAllocation(t *tes
 // pagination. The query must retain only the requested page plus its cursor
 // row, even when the durable directory has substantially more people.
 func TestSelectDirectoryPeopleTxBoundsLargeSyntheticDirectory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory.db"))
 	require.NoError(err)
@@ -68,6 +69,7 @@ func TestSelectDirectoryPeopleTxBoundsLargeSyntheticDirectory(t *testing.T) {
 // Directory projection: the tables and triggers must be installed and every
 // existing person indexed by a backfill that runs exactly once.
 func TestInitSchemaBackfillsDirectoryProjectionOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-backfill.db"))
@@ -136,6 +138,7 @@ func directoryTriggerNames(t *testing.T, st *Store) []string {
 // This catches a writable archive reopen that leaves the Directory projection
 // disabled even though its migrations and tables are already installed.
 func TestOpenExistingDirectoryProjectionRefreshesDirtyRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	path := filepath.Join(t.TempDir(), "directory-reopen.db")
@@ -161,6 +164,7 @@ func TestOpenExistingDirectoryProjectionRefreshesDirtyRows(t *testing.T) {
 // policy inside the Directory dirty trigger. A person already in the dirty
 // queue must not turn a valid contact-state insertion into a duplicate error.
 func TestDirectoryDirtyContactStateTriggerIgnoresPreexistingDirtyRowDuringUpsertSQLite(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-contact-upsert.db"))
 	require.NoError(err)
@@ -197,6 +201,7 @@ func applyDirectoryContactAddition(ctx context.Context, st *Store, personID, mes
 // This instruments the actual indexed token relation used by candidate
 // selection; a full current-profile projection cannot satisfy this plan.
 func TestDirectoryProjectionTokenLookupUsesIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-plan.db"))
@@ -235,6 +240,7 @@ func TestDirectoryProjectionTokenLookupUsesIndex(t *testing.T) {
 }
 
 func TestReadOnlyDirectoryRejectsDirtyProjectionUntilWriterRefreshes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-reader.db")
 	writer, err := OpenForTest(path)
@@ -263,6 +269,7 @@ func TestReadOnlyDirectoryRejectsDirtyProjectionUntilWriterRefreshes(t *testing.
 // correct implementation serves one internally consistent older snapshot;
 // the next call observes or refreshes the dirty row.
 func TestDirectoryFreshnessDecisionSharesServingSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, readOnly := range []bool{false, true} {
 		t.Run(fmt.Sprintf("read_only_%t", readOnly), func(t *testing.T) {
 			require := require.New(t)
@@ -313,6 +320,7 @@ func TestDirectoryFreshnessDecisionSharesServingSnapshot(t *testing.T) {
 }
 
 func TestWritableDirectoryRefreshRetriesDirtySnapshotContention(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-dirty-contention.db")
 	writer, err := OpenForTest(path)

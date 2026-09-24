@@ -13,6 +13,7 @@ import (
 // lookup gives the same case-aware semantics as EqualIdentifier
 // without paying for pairwise comparison on the hot path.
 func TestNormalizeIdentifierForCompare(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   string
@@ -42,6 +43,7 @@ func TestNormalizeIdentifierForCompare(t *testing.T) {
 // UX message correctly when the user re-supplies an email with
 // different casing.
 func TestEqualIdentifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		a, b string
@@ -74,6 +76,7 @@ func TestEqualIdentifier(t *testing.T) {
 // a dot" — see looksLikeEmail. This test treats that rule as the
 // contract; TestLooksLikeEmail tests the predicate directly.
 func TestIdentifierMatch_TableDriven(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		input     string
@@ -101,6 +104,7 @@ func TestIdentifierMatch_TableDriven(t *testing.T) {
 // is column-name-driven so call sites can specify their own column
 // (today every site uses "address", but the contract supports more).
 func TestIdentifierMatch_WhereClauseAcceptsCustomColumn(t *testing.T) {
+	t.Parallel()
 	m := newIdentifierMatch("foo@x.com")
 	assert.Equal(t, "LOWER(normalized) = LOWER(?)", m.WhereClause("normalized"))
 	m2 := newIdentifierMatch("AliceHandle")
@@ -112,6 +116,7 @@ func TestIdentifierMatch_WhereClauseAcceptsCustomColumn(t *testing.T) {
 // the load-bearing rows here: a future refactor that loosens the
 // predicate to "@ contains" must fail this test.
 func TestLooksLikeEmail(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string

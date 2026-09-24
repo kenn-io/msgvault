@@ -18,6 +18,7 @@ import (
 )
 
 func TestMissingMIMESenderRepair(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -116,6 +117,7 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 }
 
 func TestApplySenderRepairRejectsChangedCandidate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -154,6 +156,7 @@ func TestApplySenderRepairRejectsChangedCandidate(t *testing.T) {
 }
 
 func TestApplySenderRepairRejectsChangedRawMIME(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := f.NewMessage().
@@ -183,6 +186,7 @@ func TestApplySenderRepairRejectsChangedRawMIME(t *testing.T) {
 }
 
 func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "sender-repair-lock.db")
 	repairStore, err := store.OpenForTest(dbPath)
@@ -255,6 +259,7 @@ func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
 }
 
 func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
@@ -295,6 +300,7 @@ func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
 }
 
 func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -344,6 +350,7 @@ func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {
 }
 
 func TestMissingMIMESenderScanIncludesLegacyNullMessageType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
 	messageID, err := st.UpsertMessage(&store.Message{
@@ -365,6 +372,7 @@ func TestMissingMIMESenderScanIncludesLegacyNullMessageType(t *testing.T) {
 }
 
 func TestApplySenderRepairAcceptsLegacyNullMessageType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
 	messageID, err := st.UpsertMessage(&store.Message{
@@ -438,6 +446,7 @@ func newLegacyNullableMessageTypeStore(t *testing.T) (*store.Store, int64, int64
 }
 
 func TestMissingMIMESenderScanSkipsOversizedHeaderWithoutBlockingLaterRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -465,6 +474,7 @@ func TestMissingMIMESenderScanSkipsOversizedHeaderWithoutBlockingLaterRows(t *te
 }
 
 func TestMissingMIMESenderScanSkipsCorruptCompressionWithoutBlockingLaterRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -496,6 +506,7 @@ func TestMissingMIMESenderScanSkipsCorruptCompressionWithoutBlockingLaterRows(t 
 }
 
 func TestApplySenderRepairRollsBackSenderWhenRecipientWriteFails(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

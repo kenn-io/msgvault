@@ -28,6 +28,7 @@ func isPostgresTestDB() bool {
 // PostgreSQL the probe is the EXISTS(search_fts IS NULL) short-circuit; on
 // SQLite it is the MAX(rowid) vs MAX(id) comparison. Both must agree.
 func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -56,6 +57,7 @@ func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
 // once backfill completes. (Interior holes are explicitly out of contract on
 // SQLite — the full NeedsFTSBackfill anti-join is authoritative for those.)
 func TestStore_NeedsFTSBackfillQuick_Transition(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -87,6 +89,7 @@ func TestStore_NeedsFTSBackfillQuick_Transition(t *testing.T) {
 // Runs on both backends; before the fix this passed on PG (EXISTS probe) and
 // failed on SQLite, proving the divergence.
 func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {

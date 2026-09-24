@@ -10,6 +10,7 @@ import (
 )
 
 func TestIsSQLiteError_ValueForm(t *testing.T) {
+	t.Parallel()
 	// Create a sqlite3.Error value
 	sqliteErr := sqlite3.Error{
 		Code:         sqlite3.ErrConstraint,
@@ -28,6 +29,7 @@ func TestIsSQLiteError_ValueForm(t *testing.T) {
 }
 
 func TestIsSQLiteError_PointerForm(t *testing.T) {
+	t.Parallel()
 	// Create a *sqlite3.Error pointer
 	sqliteErr := &sqlite3.Error{
 		Code:         sqlite3.ErrConstraint,
@@ -42,6 +44,7 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 }
 
 func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
+	t.Parallel()
 	// Create a typed nil *sqlite3.Error (interface value non-nil, underlying pointer nil)
 	var sqliteErr *sqlite3.Error
 
@@ -55,16 +58,19 @@ func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
 }
 
 func TestIsSQLiteError_NonSQLiteError(t *testing.T) {
+	t.Parallel()
 	plainErr := errors.New("some other error")
 
 	assert.False(t, isSQLiteError(plainErr, "error"), "isSQLiteError should return false for non-sqlite errors")
 }
 
 func TestIsSQLiteError_NilError(t *testing.T) {
+	t.Parallel()
 	assert.False(t, isSQLiteError(nil, "anything"), "isSQLiteError should return false for nil error")
 }
 
 func TestSQLiteDialect_IsBusyError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	d := &SQLiteDialect{}
 

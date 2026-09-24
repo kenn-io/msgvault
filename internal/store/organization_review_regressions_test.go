@@ -13,6 +13,7 @@ import (
 )
 
 func TestOrganizationProfileUsesStoredCanonicalAddressAndMediaValuesAsKeys(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -58,6 +59,7 @@ func TestOrganizationProfileUsesStoredCanonicalAddressAndMediaValuesAsKeys(t *te
 }
 
 func TestOrganizationContactScopePartsAreTrimmedBeforeValidationAndStorage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -91,6 +93,7 @@ func TestOrganizationContactScopePartsAreTrimmedBeforeValidationAndStorage(t *te
 }
 
 func TestOrganizationProfileReconcilesWritableMetadataWithDurableVCardIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -137,6 +140,7 @@ func TestOrganizationProfileReconcilesWritableMetadataWithDurableVCardIdentity(t
 }
 
 func TestOrganizationProfileMatchesDurableVCardIdentityWhenBusinessValueChanges(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -182,6 +186,7 @@ func TestOrganizationProfileMatchesDurableVCardIdentityWhenBusinessValueChanges(
 }
 
 func TestOrganizationProfileScopesDuplicateValuesToVCardResources(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -223,6 +228,7 @@ func TestOrganizationProfileScopesDuplicateValuesToVCardResources(t *testing.T) 
 }
 
 func TestOrganizationProfileHistorizesSourceResourceUIDChanges(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -265,7 +271,7 @@ func TestOrganizationProfileHistorizesSourceResourceUIDChanges(t *testing.T) {
 	require.Len(history.Identifiers, 2)
 }
 
-func TestMergeOrganizationsLocksBothRootsInStableOrder(t *testing.T) {
+func TestMergeOrganizationsLocksBothRootsInStableOrder(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {

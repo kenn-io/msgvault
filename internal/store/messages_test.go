@@ -26,6 +26,7 @@ func (failingMessageIDReader) Read([]byte) (int, error) {
 }
 
 func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -72,6 +73,7 @@ func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *
 }
 
 func TestPersistMessageDeliveryEvidenceUsesNewExplicitEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	message := storetest.NewMessage(f.Source.ID, f.ConvID).
@@ -103,6 +105,7 @@ func TestPersistMessageDeliveryEvidenceUsesNewExplicitEvidence(t *testing.T) {
 // TestUpsertMessagePersistsListID catches a missing list_id column or an
 // upsert that omits the parsed email list identifier.
 func TestUpsertMessagePersistsListID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -133,6 +136,7 @@ func TestUpsertMessagePersistsListID(t *testing.T) {
 }
 
 func TestUpsertMessagePreservesRFCMessageID(t *testing.T) {
+	t.Parallel()
 	stored := sql.NullString{String: "<Original-ID@example.test>", Valid: true}
 	incoming := sql.NullString{String: "incoming@example.test", Valid: true}
 	for _, tc := range []struct {
@@ -600,6 +604,7 @@ func readSiblingMessageSnapshot(t *testing.T, st *store.Store, messageID int64) 
 }
 
 func TestPersistMessageWithParticipantsKeepsSiblingDependentsIsolatedOnUpsert(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1025,6 +1030,7 @@ func changedMessageIDs(page store.ChangedMessagePage) []int64 {
 }
 
 func TestPersistRepairMessageReplacesCompleteSnapshotAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedRepairStoreFixture(t)
@@ -1091,6 +1097,7 @@ func TestPersistRepairMessageReplacesCompleteSnapshotAtomically(t *testing.T) {
 }
 
 func TestPersistRepairMessageAttachmentReplacementModes(t *testing.T) {
+	t.Parallel()
 	t.Run("nil preserves every attachment row", func(t *testing.T) {
 		assert := assert.New(t)
 		fixture := seedRepairStoreFixture(t)
@@ -1131,6 +1138,7 @@ func TestPersistRepairMessageAttachmentReplacementModes(t *testing.T) {
 }
 
 func TestPersistRepairMessageRejectsProviderAttachmentSourcePartCollision(t *testing.T) {
+	t.Parallel()
 	fixture := seedRepairStoreFixture(t)
 	before := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
 	providerBefore := attachmentBySourcePartKey(t, before, "provider:part:1")
@@ -1157,6 +1165,7 @@ func TestPersistRepairMessageRejectsProviderAttachmentSourcePartCollision(t *tes
 }
 
 func TestPersistRepairMessageRejectsUnkeyedProviderAttachmentHashCollision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedRepairStoreFixture(t)
@@ -1188,6 +1197,7 @@ func TestPersistRepairMessageRejectsUnkeyedProviderAttachmentHashCollision(t *te
 }
 
 func TestUpsertAttachmentRecordStillUpdatesProviderOccurrenceBySourcePartKey(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	fixture := seedRepairStoreFixture(t)
 	updated := store.AttachmentWrite{
@@ -1211,6 +1221,7 @@ func TestUpsertAttachmentRecordStillUpdatesProviderOccurrenceBySourcePartKey(t *
 }
 
 func TestPersistRepairMessageRejectsIdentityGuardBeforeBuilder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*store.MessageIdentityGuard)
@@ -1246,6 +1257,7 @@ func TestPersistRepairMessageRejectsIdentityGuardBeforeBuilder(t *testing.T) {
 }
 
 func TestPersistRepairMessageRollsBackEveryMutationOnLateFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedRepairStoreFixture(t)
@@ -1291,7 +1303,7 @@ func TestPersistRepairMessageRollsBackEveryMutationOnLateFailure(t *testing.T) {
 	assert.Empty(afterFeed.Messages, "rolled-back work must not become visible in the change feed")
 }
 
-func TestPersistRepairMessageSerializesIdentityGuardRevalidation(t *testing.T) {
+func TestPersistRepairMessageSerializesIdentityGuardRevalidation(t *testing.T) { //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedRepairStoreFixture(t)
@@ -1348,7 +1360,7 @@ func TestPersistRepairMessageSerializesIdentityGuardRevalidation(t *testing.T) {
 	assert.False(built.Load(), "guard must be re-read after acquiring serialization")
 }
 
-func TestPersistRepairMessageLocksParticipantDirectoryBeforeIdentityGuard(t *testing.T) {
+func TestPersistRepairMessageLocksParticipantDirectoryBeforeIdentityGuard(t *testing.T) { //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	fixture := seedRepairStoreFixture(t)
 	if !fixture.Store.IsPostgreSQL() {
@@ -1400,6 +1412,7 @@ func TestPersistRepairMessageLocksParticipantDirectoryBeforeIdentityGuard(t *tes
 }
 
 func TestPersistRepairMessageHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
 	fixture := seedRepairStoreFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -1416,6 +1429,7 @@ func TestPersistRepairMessageHonorsCanceledContext(t *testing.T) {
 }
 
 func TestRecomputeConversationStats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1515,6 +1529,7 @@ func TestRecomputeConversationStats(t *testing.T) {
 //   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) clears embed_gen
 //     when the embeddable subject text changes.
 func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1568,6 +1583,7 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 }
 
 func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1610,6 +1626,7 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 }
 
 func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1645,6 +1662,7 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 }
 
 func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1688,6 +1706,7 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -1707,6 +1726,7 @@ func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -1726,6 +1746,7 @@ func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) 
 }
 
 func TestMessageSourceIDsInSnowflakeInterval(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1787,6 +1808,7 @@ func TestMessageSourceIDsInSnowflakeInterval(t *testing.T) {
 }
 
 func TestMessageSourceIDsInSnowflakeIntervalPageAndMaximum(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1819,6 +1841,7 @@ func TestMessageSourceIDsInSnowflakeIntervalPageAndMaximum(t *testing.T) {
 }
 
 func TestMessageSourceIDsInSnowflakeIntervalRejectsUnsafeBounds(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	for _, tc := range []struct {
@@ -1841,6 +1864,7 @@ func TestMessageSourceIDsInSnowflakeIntervalRejectsUnsafeBounds(t *testing.T) {
 }
 
 func TestClearMessageDeletedFromSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1875,6 +1899,7 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 }
 
 func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1920,6 +1945,7 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 }
 
 func TestMarkMessagesDeletedFromReaderIsAtomicOnLateReadFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1989,6 +2015,7 @@ func assertMessageDeletedFromSource(
 }
 
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -2026,6 +2053,7 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 }
 
 func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -2067,6 +2095,7 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 }
 
 func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -2112,6 +2141,7 @@ func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
 }
 
 func TestRetitleImessageChats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -2229,6 +2259,7 @@ func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 }
 
 func TestCountMessagesPerMailbox(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

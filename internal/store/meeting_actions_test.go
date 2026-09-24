@@ -15,6 +15,7 @@ import (
 )
 
 func TestMeetingActionsCoverageFiltersAndPaging(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -53,6 +54,7 @@ func TestMeetingActionsCoverageFiltersAndPaging(t *testing.T) {
 }
 
 func TestMeetingActionsFiltersAreExactAndCoveragePrecedesThem(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -92,6 +94,7 @@ func TestMeetingActionsFiltersAreExactAndCoveragePrecedesThem(t *testing.T) {
 }
 
 func TestMeetingActionsIntersectsMeetingAndActionFilters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -117,6 +120,7 @@ func TestMeetingActionsIntersectsMeetingAndActionFilters(t *testing.T) {
 }
 
 func TestMeetingActionsCursorRejectsChangedInputsAndArchive(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	page, err := fixture.store.ListMeetingActionsContext(t.Context(), MeetingActionsQuery{Limit: 1})
@@ -147,6 +151,7 @@ func TestMeetingActionsCursorRejectsChangedInputsAndArchive(t *testing.T) {
 }
 
 func TestMeetingActionsNextPageReadsCurrentEvidence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	page, err := fixture.store.ListMeetingActionsContext(t.Context(), MeetingActionsQuery{Limit: 2})
@@ -164,6 +169,7 @@ func TestMeetingActionsNextPageReadsCurrentEvidence(t *testing.T) {
 }
 
 func TestMeetingActionsRejectsCursorWithMissingPositionFields(t *testing.T) {
+	t.Parallel()
 	fixture := newMeetingQueryFixture(t)
 	uid, err := fixture.store.ArchiveUID()
 	require.NoError(t, err)
@@ -173,6 +179,7 @@ func TestMeetingActionsRejectsCursorWithMissingPositionFields(t *testing.T) {
 }
 
 func TestMeetingActionsCursorCanonicalizesScopePopulation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	firstIDs := []int64{fixture.meetingIDs[0], fixture.meetingIDs[2], fixture.meetingIDs[0]}
@@ -201,6 +208,7 @@ func TestMeetingActionsCursorCanonicalizesScopePopulation(t *testing.T) {
 }
 
 func TestMeetingActionsCursorDistinguishesUnrestrictedFromPresentEmptyScopes(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -232,6 +240,7 @@ func TestMeetingActionsCursorDistinguishesUnrestrictedFromPresentEmptyScopes(t *
 }
 
 func TestMeetingActionsExplicitEmptyScopeMatchesNone(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	fixture := newMeetingQueryFixture(t)
 	empty := []int64{}
@@ -245,6 +254,7 @@ func TestMeetingActionsExplicitEmptyScopeMatchesNone(t *testing.T) {
 }
 
 func TestMeetingActionsCursorPreservesFullSignedMessageIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -315,6 +325,7 @@ func insertMeetingQueryRowWithID(t *testing.T, fixture *meetingQueryFixture, id 
 // Opposing IDs expose rounded timestamp order; page size one also exercises
 // continuation inside exact ties and across the submillisecond boundary.
 func TestMeetingActionsExactInstantsAndBounds(t *testing.T) {
+	t.Parallel()
 	fixture := newMeetingQueryFixture(t)
 	older := time.Date(2026, time.January, 1, 0, 0, 0, 100000, time.UTC)
 	newer := older.Add(100 * time.Microsecond)
@@ -388,6 +399,7 @@ func TestMeetingActionsExactInstantsAndBounds(t *testing.T) {
 }
 
 func TestMeetingActionsWideInstants(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)

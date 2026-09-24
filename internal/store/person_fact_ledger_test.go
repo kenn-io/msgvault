@@ -17,6 +17,7 @@ import (
 var personFactLedgerNow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
 func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "multi", []personfacts.ProposedClaim{
 		personFactLedgerClaim(personID, "favorite-color", `"blue"`, "color"),
@@ -32,6 +33,7 @@ func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
 }
 
 func TestPersonFactGenerationPersistsProgramFingerprint(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "fingerprint", nil, nil)
 
@@ -40,6 +42,7 @@ func TestPersonFactGenerationPersistsProgramFingerprint(t *testing.T) {
 }
 
 func TestPersonFactGenerationPortableTimestampReplayIsExact(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -79,6 +82,7 @@ func TestPersonFactGenerationPortableTimestampReplayIsExact(t *testing.T) {
 }
 
 func TestPersonFactLedgerStoresInvalidSubmittedValueWithNullNormalizedValue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -100,6 +104,7 @@ func TestPersonFactLedgerStoresInvalidSubmittedValueWithNullNormalizedValue(t *t
 }
 
 func TestPersonFactLedgerRejectsDuplicateEnvelopeBeforePersistence(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	baseClaim := personFactLedgerClaim(personID, "duplicate", `"value"`, "duplicate")
 	duplicateEvidenceClaim := baseClaim
@@ -131,6 +136,7 @@ func TestPersonFactLedgerRejectsDuplicateEnvelopeBeforePersistence(t *testing.T)
 }
 
 func TestPersonFactLedgerRejectsCanonicalKeyCollision(t *testing.T) {
+	t.Parallel()
 	t.Run("generation", func(t *testing.T) {
 		st, personID := newPersonFactLedgerStore(t)
 		prepared := preparePersonFactLedgerGeneration(t, personID, "generation-collision",
@@ -228,6 +234,7 @@ func TestPersonFactLedgerRejectsCanonicalKeyCollision(t *testing.T) {
 }
 
 func TestPersonFactLedgerReplayHydratesWholeGeneration(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -274,6 +281,7 @@ func TestPersonFactLedgerReplayHydratesWholeGeneration(t *testing.T) {
 }
 
 func TestPersonFactLedgerReplayHydratesDurableResolutionResults(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -338,6 +346,7 @@ func TestPersonFactLedgerReplayHydratesDurableResolutionResults(t *testing.T) {
 }
 
 func TestPersonFactEvidenceStatusFalseLatestWins(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -366,6 +375,7 @@ func TestPersonFactEvidenceStatusFalseLatestWins(t *testing.T) {
 }
 
 func TestPersonFactEvidenceStatusTrueReactivates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -397,6 +407,7 @@ func TestPersonFactEvidenceStatusTrueReactivates(t *testing.T) {
 }
 
 func TestPersonFactEvidenceStatusReasonsCoverDeleteEditUnlinkAndIdentityReassignment(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	evidenceKey := seedPersonFactEvidence(t, st, personID, "reasons")
 	reasons := []personfacts.EvidenceStatusReason{
@@ -425,6 +436,7 @@ func TestPersonFactEvidenceStatusReasonsCoverDeleteEditUnlinkAndIdentityReassign
 }
 
 func TestPersonFactEvidenceStatusReplayIsIdempotent(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	evidenceKey := seedPersonFactEvidence(t, st, personID, "status-replay")
 	prepared := preparePersonFactLedgerGeneration(t, personID, "status-replay-generation", nil,
@@ -439,6 +451,7 @@ func TestPersonFactEvidenceStatusReplayIsIdempotent(t *testing.T) {
 }
 
 func TestPersonFactEvidenceStatusRejectsCanonicalKeyCollision(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	evidenceKey := seedPersonFactEvidence(t, st, personID, "status-collision")
 	prepared := preparePersonFactLedgerGeneration(t, personID, "status-collision-generation", nil,
@@ -466,6 +479,7 @@ func TestPersonFactEvidenceStatusRejectsCanonicalKeyCollision(t *testing.T) {
 }
 
 func TestPersonFactLedgerPersonDeletionCascadesAllRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st, personID := newPersonFactLedgerStore(t)
@@ -517,6 +531,7 @@ func TestPersonFactLedgerPersonDeletionCascadesAllRows(t *testing.T) {
 }
 
 func TestPersonFactLedgerPaginationValidationAndOrdering(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 

@@ -9,6 +9,7 @@ import (
 )
 
 func TestCheckRelationshipTypeDeleteCASResultRejectsZeroAffectedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "relationship-types.db"))
 	require.NoError(err)

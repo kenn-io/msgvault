@@ -23,6 +23,7 @@ func newIMAPIdentityFixture(t *testing.T) imapMembershipFixture {
 }
 
 func TestIMAPIdentity_CanonicalIdentitySkipsRawPriming(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newIMAPIdentityFixture(t)
 	messageID := f.createMessage(t, "canonical", "")
@@ -50,6 +51,7 @@ func TestIMAPIdentity_CanonicalIdentitySkipsRawPriming(t *testing.T) {
 }
 
 func TestIMAPIdentity_ResetSameUIDIdentityMismatchSelectsIncomingMessage(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -86,6 +88,7 @@ func TestIMAPIdentity_ResetSameUIDIdentityMismatchSelectsIncomingMessage(t *test
 }
 
 func TestIMAPIdentity_ResetPreservesCanonicalIdentity(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -143,6 +146,7 @@ func TestIMAPIdentity_ResetPreservesCanonicalIdentity(t *testing.T) {
 }
 
 func TestIMAPIdentity_ResetKeepsLiveIncumbentWithoutIndependentIdentity(t *testing.T) {
+	t.Parallel()
 	for _, messageID := range []string{"", "<shared@example.com>"} {
 		t.Run(messageID, func(t *testing.T) {
 			requirements := require.New(t)
@@ -181,6 +185,7 @@ func TestIMAPIdentity_ResetKeepsLiveIncumbentWithoutIndependentIdentity(t *testi
 }
 
 func TestIMAPIdentity_ResetResolvesUntrackedLiveHolder(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"different", "same", "missing", "ambiguous"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
@@ -223,6 +228,7 @@ func TestIMAPIdentity_ResetResolvesUntrackedLiveHolder(t *testing.T) {
 }
 
 func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -286,6 +292,7 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 }
 
 func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -339,6 +346,7 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 }
 
 func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -394,6 +402,7 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 }
 
 func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -435,6 +444,7 @@ func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testin
 }
 
 func TestIMAPIdentity_SameEpochOmissionReappears(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -462,6 +472,7 @@ func TestIMAPIdentity_SameEpochOmissionReappears(t *testing.T) {
 }
 
 func TestIMAPIdentity_UnobservedUIDLaterReuse(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -493,6 +504,7 @@ func TestIMAPIdentity_UnobservedUIDLaterReuse(t *testing.T) {
 }
 
 func TestIMAPIdentity_NewPublishedCopyKeepsKey(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"append", "ingest", "ingest-shared"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
@@ -549,6 +561,7 @@ func TestIMAPIdentity_NewPublishedCopyKeepsKey(t *testing.T) {
 }
 
 func TestIMAPIdentity_AmbiguousLiveAppendKeyRefuses(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -566,6 +579,7 @@ func TestIMAPIdentity_AmbiguousLiveAppendKeyRefuses(t *testing.T) {
 }
 
 func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unique", "same", "missing", "duplicate", "canonical", "known-missing", "known-duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
@@ -619,6 +633,7 @@ func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
 }
 
 func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -646,6 +661,7 @@ func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
 }
 
 func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -685,6 +701,7 @@ func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 }
 
 func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -728,6 +745,7 @@ func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *tes
 }
 
 func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -783,6 +801,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 }
 
 func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -828,6 +847,7 @@ func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
 }
 
 func TestIMAPIdentity_DeletedKeyOwnerBesideOldCanonicalMembership(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -850,6 +870,7 @@ func TestIMAPIdentity_DeletedKeyOwnerBesideOldCanonicalMembership(t *testing.T) 
 }
 
 func TestIMAPIdentity_OmittedReplacedKeyAllowsAppend(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newIMAPIdentityFixture(t)
@@ -879,6 +900,7 @@ func TestIMAPIdentity_OmittedReplacedKeyAllowsAppend(t *testing.T) {
 }
 
 func TestIMAPIdentity_LiveKeyOwnerBesideOldCanonicalMembership(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 

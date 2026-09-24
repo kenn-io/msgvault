@@ -16,6 +16,7 @@ import (
 // message_bodies rows whose body_html contains a hostedContents URL for the
 // given source, and skips rows without one (and NULL/empty bodies).
 func TestForEachTeamsHostedContentBody(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -82,6 +83,7 @@ func TestForEachTeamsHostedContentBody(t *testing.T) {
 // inline images — i.e. messages still missing media — and skips fully-downloaded
 // ones.
 func TestForEachTeamsIncompleteHostedContentBody(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -122,6 +124,7 @@ func TestForEachTeamsIncompleteHostedContentBody(t *testing.T) {
 }
 
 func TestForEachTeamsIncompleteHostedContentBodyReevaluatesPolicySkips(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -168,6 +171,7 @@ func TestForEachTeamsIncompleteHostedContentBodyReevaluatesPolicySkips(t *testin
 // the policy. Other exclusions keep applying so a scope-excluded marker does
 // not trigger a roster fetch on every run.
 func TestForEachTeamsIncompleteHostedContentBodyYieldsUnresolvedRosterSkips(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -227,6 +231,7 @@ func TestForEachTeamsIncompleteHostedContentBodyYieldsUnresolvedRosterSkips(t *t
 }
 
 func TestForEachTeamsIncompleteHostedContentBodyFindsMarkersBesideLegacyMedia(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -270,6 +275,7 @@ func TestForEachTeamsIncompleteHostedContentBodyFindsMarkersBesideLegacyMedia(t 
 // from the message — deleting them loses the outcome and re-fetches excluded
 // media on the next sync.
 func TestReplaceMessageLinkAttachmentsPreservesTeamsInlineMarkers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -331,6 +337,7 @@ func TestReplaceMessageLinkAttachmentsPreservesTeamsInlineMarkers(t *testing.T) 
 // contention — the iterator must read all matching rows and close the cursor
 // before invoking callbacks, since callers write (UpsertAttachment) inside fn.
 func TestForEachTeamsHostedContentBody_WriteInsideCallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

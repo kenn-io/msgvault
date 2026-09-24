@@ -8,6 +8,7 @@ import (
 )
 
 func TestAllProvenancesIsTheSpecVocabulary(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, []Provenance{
 		"user", "carddav_import", "vcard_import", "archive_observation",
 		"extraction", "enrichment", "system",
@@ -15,6 +16,7 @@ func TestAllProvenancesIsTheSpecVocabulary(t *testing.T) {
 }
 
 func TestParseProvenance(t *testing.T) {
+	t.Parallel()
 	for _, provenance := range AllProvenances {
 		parsed, err := ParseProvenance("  " + string(provenance) + "  ")
 		require.NoError(t, err)
@@ -28,6 +30,7 @@ func TestParseProvenance(t *testing.T) {
 }
 
 func TestProvenanceIsDeclaredSplitsDeclaredFromDerived(t *testing.T) {
+	t.Parallel()
 	for _, declared := range []Provenance{
 		ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport,
 	} {
@@ -42,6 +45,7 @@ func TestProvenanceIsDeclaredSplitsDeclaredFromDerived(t *testing.T) {
 }
 
 func TestConfidenceScopeSentinelIsDeclared(t *testing.T) {
+	t.Parallel()
 	require.Error(t, ErrConfidenceScope)
 	assert.Equal(t,
 		"confidence is only meaningful for derived or suggested values",
@@ -49,6 +53,7 @@ func TestConfidenceScopeSentinelIsDeclared(t *testing.T) {
 }
 
 func TestProvenanceCheckValuesCoversEveryVocabularyEntry(t *testing.T) {
+	t.Parallel()
 	clause := ProvenanceCheckValues()
 	for _, provenance := range AllProvenances {
 		assert.Contains(t, clause, "'"+string(provenance)+"'")

@@ -30,6 +30,7 @@ func personTextDefinition(slug string) store.AttributeDefinitionInput {
 }
 
 func TestAttributeDescriptionAcceptsExactly280UnicodeRunes(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	description := strings.Repeat("🙂", 280)
 	input := personTextDefinition("maximum_description")
@@ -42,6 +43,7 @@ func TestAttributeDescriptionAcceptsExactly280UnicodeRunes(t *testing.T) {
 }
 
 func TestAttributeDescriptionCreateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	description := strings.Repeat("🙂", 281)
 	input := personTextDefinition("too_long_description")
@@ -54,6 +56,7 @@ func TestAttributeDescriptionCreateAcceptsMoreThan280UnicodeRunes(t *testing.T) 
 }
 
 func TestAttributeDescriptionUpdateAcceptsMoreThan280UnicodeRunes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -73,6 +76,7 @@ func TestAttributeDescriptionUpdateAcceptsMoreThan280UnicodeRunes(t *testing.T) 
 }
 
 func TestAttributeDescriptionBlankNormalizesToNil(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	description := " \n\t "
 	input := personTextDefinition("blank_description")
@@ -100,6 +104,7 @@ func onlyTestDefinitions(
 }
 
 func TestCreateAttributeDefinitionRejectsInvalidVocabularies(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -266,6 +271,7 @@ func TestCreateAttributeDefinitionRejectsInvalidVocabularies(t *testing.T) {
 func TestCreateAttributeDefinitionRejectsSelectTypesWithoutCanonicalChoices(
 	t *testing.T,
 ) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -307,6 +313,7 @@ func TestCreateAttributeDefinitionRejectsSelectTypesWithoutCanonicalChoices(
 }
 
 func TestCreateAttributeDefinitionCanonicalizesChoicesForValueType(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -377,6 +384,7 @@ func TestCreateAttributeDefinitionCanonicalizesChoicesForValueType(t *testing.T)
 func TestCreateAttributeDefinitionRejectsInvalidAndDuplicateCanonicalChoices(
 	t *testing.T,
 ) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -443,6 +451,7 @@ func TestCreateAttributeDefinitionRejectsInvalidAndDuplicateCanonicalChoices(
 }
 
 func TestCreateAttributeDefinitionStoresANovelUserDefinition(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -478,6 +487,7 @@ func TestCreateAttributeDefinitionStoresANovelUserDefinition(t *testing.T) {
 }
 
 func TestAttributeDefinitionSensitivityRoundTripsAndUpdates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -509,6 +519,7 @@ func TestAttributeDefinitionSensitivityRoundTripsAndUpdates(t *testing.T) {
 }
 
 func TestAttributeDefinitionSensitivityRejectsSystemDefinitionUpdates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -531,6 +542,7 @@ func TestAttributeDefinitionSensitivityRejectsSystemDefinitionUpdates(t *testing
 }
 
 func TestCreateAttributeDefinitionAllowsOrganizationObjectTypeWithoutAValuePath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -558,6 +570,7 @@ func TestCreateAttributeDefinitionAllowsOrganizationObjectTypeWithoutAValuePath(
 }
 
 func TestCreateAttributeDefinitionRejectsDuplicateSlugAndUniversalID(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -576,6 +589,7 @@ func TestCreateAttributeDefinitionRejectsDuplicateSlugAndUniversalID(t *testing.
 }
 
 func TestCreateAttributeDefinitionDerivesUniqueSlug(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -623,6 +637,7 @@ func TestCreateAttributeDefinitionDerivesUniqueSlug(t *testing.T) {
 }
 
 func TestCreateAttributeDefinitionKeepsExplicitSlug(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -639,6 +654,7 @@ func TestCreateAttributeDefinitionKeepsExplicitSlug(t *testing.T) {
 }
 
 func TestValidateAttributeDefinitionInputDerivesOmittedSlug(t *testing.T) {
+	t.Parallel()
 	input := personTextDefinition("unused")
 	input.Slug = ""
 	input.Label = "Favorite café"
@@ -649,6 +665,7 @@ func TestValidateAttributeDefinitionInputDerivesOmittedSlug(t *testing.T) {
 }
 
 func TestUpdateAttributeDefinitionRenamesLabelAndKeepsIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -687,6 +704,7 @@ func TestUpdateAttributeDefinitionRenamesLabelAndKeepsIdentity(t *testing.T) {
 }
 
 func TestDeleteAttributeDefinitionRefusesUndeletableAndAllowsUnused(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
@@ -710,6 +728,7 @@ func TestDeleteAttributeDefinitionRefusesUndeletableAndAllowsUnused(t *testing.T
 }
 
 func TestListAttributeDefinitionsOrdersByDisplayOrderAndHidesInactiveByDefault(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

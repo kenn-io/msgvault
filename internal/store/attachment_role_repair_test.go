@@ -15,6 +15,7 @@ import (
 )
 
 func TestRepairHistoricalAttachmentRolesUsesUnambiguousRawMIME(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := seedHistoricalMIMEAttachment(t, f, "repair-explicit", "attachment", "asset-1", "unique-bytes")
@@ -38,6 +39,7 @@ func TestRepairHistoricalAttachmentRolesUsesUnambiguousRawMIME(t *testing.T) {
 }
 
 func TestRepairHistoricalAttachmentRolesLeavesAmbiguousBytesUnknown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("repair-ambiguous")
@@ -59,6 +61,7 @@ func TestRepairHistoricalAttachmentRolesLeavesAmbiguousBytesUnknown(t *testing.T
 }
 
 func TestRepairHistoricalAttachmentRolesResumesFromDurableCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -96,6 +99,7 @@ func TestRepairHistoricalAttachmentRolesResumesFromDurableCursor(t *testing.T) {
 }
 
 func TestRepairHistoricalAttachmentRolesCancellationLeavesCursorResumable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -114,6 +118,7 @@ func TestRepairHistoricalAttachmentRolesCancellationLeavesCursorResumable(t *tes
 }
 
 func TestRepairHistoricalAttachmentRolesSkipsCorruptRawWithoutWedging(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := seedHistoricalMIMEAttachment(t, f, "repair-corrupt", "attachment", "", "bytes")
@@ -135,6 +140,7 @@ func TestRepairHistoricalAttachmentRolesSkipsCorruptRawWithoutWedging(t *testing
 }
 
 func TestRepairHistoricalAttachmentRolesFindsMessagesAddedAfterCompletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -155,6 +161,7 @@ func TestRepairHistoricalAttachmentRolesFindsMessagesAddedAfterCompletion(t *tes
 }
 
 func TestRepairHistoricalAttachmentRolesCollapsesResyncDuplicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -216,6 +223,7 @@ func TestRepairHistoricalAttachmentRolesCollapsesResyncDuplicate(t *testing.T) {
 }
 
 func TestRepairHistoricalAttachmentRolesDoesNotApplyStaleMIMEEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

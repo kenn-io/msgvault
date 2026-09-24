@@ -10,6 +10,7 @@ import (
 )
 
 func TestGetFileMetadataBatchUsesTransactionalAttachmentAuthority(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -63,6 +64,7 @@ func TestGetFileMetadataBatchUsesTransactionalAttachmentAuthority(t *testing.T) 
 // recover that hash so the alias stays downloadable. A hashless row with a
 // non-CAS path stays metadata-only.
 func TestGetFileMetadataBatchRecoversHashFromTrustedCASPath(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -97,6 +99,7 @@ func TestGetFileMetadataBatchRecoversHashFromTrustedCASPath(t *testing.T) {
 }
 
 func TestGetFileMetadataReturnsNotFoundWithoutError(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	file, err := f.Store.GetFileMetadata(t.Context(), 999999)
 	require.NoError(t, err)
@@ -104,6 +107,7 @@ func TestGetFileMetadataReturnsNotFoundWithoutError(t *testing.T) {
 }
 
 func TestGetFileMetadataHidesAttachmentsOnDedupHiddenMessages(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)

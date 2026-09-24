@@ -13,6 +13,7 @@ import (
 )
 
 func TestOperationInvocationConcurrentIdenticalFinishIsIdempotent(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	created, err := st.BeginOperationInvocation(t.Context(), operations.InvocationSpec{
 		Kind: operations.KindMessageEmbedding, Key: "manual:concurrent-finish",
@@ -46,6 +47,7 @@ func TestOperationInvocationConcurrentIdenticalFinishIsIdempotent(t *testing.T) 
 }
 
 func TestOperationInvocationSchemasRejectErrorsOutsideDurableAllowlist(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	tables := []string{
 		"message_embedding_runs", "person_embedding_runs", "document_extraction_runs",
@@ -69,6 +71,7 @@ func TestOperationInvocationSchemasRejectErrorsOutsideDurableAllowlist(t *testin
 }
 
 func TestOperationInvocationLifecycleForEveryLedger(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	started := time.Date(2026, 8, 30, 12, 0, 0, 123000000, time.UTC)
 	ledgers := []struct {
@@ -149,6 +152,7 @@ func mustStoreOperationID(t *testing.T, id operations.StableID) int64 {
 }
 
 func TestOperationInvocationRecoveryUsesDurableOutcomes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

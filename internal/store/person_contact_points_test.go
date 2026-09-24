@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -47,6 +48,7 @@ func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *
 }
 
 func TestSameUsernameIsSafeAcrossServicesAndScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -72,6 +74,7 @@ func TestSameUsernameIsSafeAcrossServicesAndScopes(t *testing.T) {
 }
 
 func TestContactPointScopeKindAndLanguageValidation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -99,6 +102,7 @@ func TestContactPointScopeKindAndLanguageValidation(t *testing.T) {
 }
 
 func TestRetractedContactPointLeavesCurrentSetButStaysInHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

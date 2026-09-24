@@ -21,6 +21,7 @@ import (
 // TestScanSource_NullLastSyncAt_Valid verifies that a new source with NULL
 // last_sync_at is handled correctly (Valid=false).
 func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -42,6 +43,7 @@ func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
 // the go-sqlite3 driver normalizes to zero time (from invalid input).
 // The driver converts unparseable DATETIME values to "0001-01-01T00:00:00Z".
 func TestScanSyncRun_ZeroTime(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	f := storetest.New(t)
@@ -66,6 +68,7 @@ func TestScanSyncRun_ZeroTime(t *testing.T) {
 }
 
 func TestSyncRunRecoveryTerminalizesOnlyRunningRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -132,6 +135,7 @@ func TestSyncRunRecoveryTerminalizesOnlyRunningRows(t *testing.T) {
 // TestScanSource_ZeroTime verifies that sources with timestamps that the driver
 // normalizes to zero time are handled correctly.
 func TestScanSource_ZeroTime(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	st := testutil.NewTestStore(t)
@@ -160,6 +164,7 @@ func TestScanSource_ZeroTime(t *testing.T) {
 // TestParseDBTime_MultipleFormats verifies that the timestamp parser accepts
 // both SQLite datetime('now') format and RFC3339 format from go-sqlite3.
 func TestParseDBTime_MultipleFormats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -181,6 +186,7 @@ func TestParseDBTime_MultipleFormats(t *testing.T) {
 }
 
 func TestStore_GetLatestSync(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -201,6 +207,7 @@ func TestStore_GetLatestSync(t *testing.T) {
 }
 
 func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -219,6 +226,7 @@ func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
 }
 
 func TestStore_CompleteSyncWriteFailureReleasesExecution(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -241,6 +249,7 @@ func TestStore_CompleteSyncWriteFailureReleasesExecution(t *testing.T) {
 }
 
 func TestStore_StartSyncRejectsConcurrentRunAcrossSQLiteStores(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	testutil.SkipIfPostgres(t, "exercises the cross-process SQLite file lock")
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
@@ -267,6 +276,7 @@ func TestStore_StartSyncRejectsConcurrentRunAcrossSQLiteStores(t *testing.T) {
 }
 
 func TestStore_StartSyncUsesFilesystemPathForSQLiteFileURI(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	testutil.SkipIfPostgres(t, "exercises SQLite file URI lock resolution")
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
@@ -295,6 +305,7 @@ func TestStore_StartSyncUsesFilesystemPathForSQLiteFileURI(t *testing.T) {
 }
 
 func TestStore_StartSyncRecoversRunWhoseOwnerClosed(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	first := testutil.NewTestStore(t)
@@ -338,6 +349,7 @@ func TestStore_StartSyncRecoversRunWhoseOwnerClosed(t *testing.T) {
 }
 
 func TestStore_GetActiveSyncOnReadOnlyStoreDoesNotRecover(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "read-only-active.db")
 	writable, err := store.OpenForTest(dbPath)
@@ -358,6 +370,7 @@ func TestStore_GetActiveSyncOnReadOnlyStoreDoesNotRecover(t *testing.T) {
 }
 
 func TestStore_SyncExecutionRetainsOwnershipAcrossRuns(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	first := testutil.NewTestStore(t)
 	source, err := first.GetOrCreateSource("gmail", "multi-phase-owner@example.com")
@@ -390,6 +403,7 @@ func TestStore_SyncExecutionRetainsOwnershipAcrossRuns(t *testing.T) {
 }
 
 func TestStore_UnfinishedSyncOperationIsRecoveredAtDaemonStartup(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "operation-recovery@example.com")
@@ -420,6 +434,7 @@ func TestStore_UnfinishedSyncOperationIsRecoveredAtDaemonStartup(t *testing.T) {
 }
 
 func TestStore_UnfinishedSyncOperationRecoveryFailsRunningRun(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -455,6 +470,7 @@ func TestStore_UnfinishedSyncOperationRecoveryFailsRunningRun(t *testing.T) {
 }
 
 func TestStore_StartSyncRejectsConcurrentRunAcrossPostgresStores(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("PostgreSQL integration test")
@@ -478,6 +494,7 @@ func TestStore_StartSyncRejectsConcurrentRunAcrossPostgresStores(t *testing.T) {
 }
 
 func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -509,6 +526,7 @@ func TestStore_CompleteSyncAndUpdateSourceCursorRejectsSupersededRunAtomically(t
 }
 
 func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -538,6 +556,7 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 }
 
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -643,7 +662,7 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 	checks.Zero(staleEmailThreads)
 }
 
-func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) {
+func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	f := storetest.New(t)
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL-only sync source lock-order regression")
@@ -666,6 +685,7 @@ func TestScopedSourceWriteMatchesStartSyncLockOrder(t *testing.T) {
 }
 
 func TestSuccessfulSyncCoalescesTrackedPeopleOnce(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		complete func(t *testing.T, f personSweepJournalFixture, syncID int64)
@@ -729,6 +749,7 @@ func TestSuccessfulSyncCoalescesTrackedPeopleOnce(t *testing.T) {
 }
 
 func TestSupersededSyncDoesNotCoalescePersonSweep(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -781,6 +802,7 @@ func personSweepSyncPublicationBounds(
 }
 
 func TestStore_GetLatestCheckpointedSyncFallsBackPastUncheckpointedRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -801,6 +823,7 @@ func TestStore_GetLatestCheckpointedSyncFallsBackPastUncheckpointedRun(t *testin
 }
 
 func TestStore_GetLatestCheckpointedSyncNeverFallsBackPastCompletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	checkpointedID := f.StartSync()
@@ -815,6 +838,7 @@ func TestStore_GetLatestCheckpointedSyncNeverFallsBackPastCompletion(t *testing.
 }
 
 func TestStore_CreateSyncOperationRejectsActiveSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := storetest.New(t)
 	runID := fixture.StartSync()
@@ -825,6 +849,7 @@ func TestStore_CreateSyncOperationRejectsActiveSource(t *testing.T) {
 }
 
 func TestStore_PendingSyncOperationReservesSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := storetest.New(t)
 	const operationID = "reserved-operation"
@@ -849,6 +874,7 @@ func TestStore_PendingSyncOperationReservesSource(t *testing.T) {
 }
 
 func TestStore_SyncOperationGroupsRunsAndPublishesFinalState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -889,6 +915,7 @@ func TestStore_SyncOperationGroupsRunsAndPublishesFinalState(t *testing.T) {
 }
 
 func TestStore_FinishSyncOperationPreservesFirstTerminalStatus(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	for _, first := range []string{"done", store.SyncStatusFailed} {
@@ -915,6 +942,7 @@ func TestStore_FinishSyncOperationPreservesFirstTerminalStatus(t *testing.T) {
 }
 
 func TestStore_FinishFailedSyncOperationFailsRunningRuns(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -940,6 +968,7 @@ func TestStore_FinishFailedSyncOperationFailsRunningRuns(t *testing.T) {
 }
 
 func TestStore_FailUnfinishedSyncOperations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -959,6 +988,7 @@ func TestStore_FailUnfinishedSyncOperations(t *testing.T) {
 }
 
 func TestStore_FailUnfinishedSyncOperationsRepairsFailedOperationRuns(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	first := testutil.NewTestStore(t)
@@ -998,6 +1028,7 @@ func TestStore_FailUnfinishedSyncOperationsRepairsFailedOperationRuns(t *testing
 }
 
 func TestStore_SyncRunItems(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1040,6 +1071,7 @@ func TestStore_SyncRunItems(t *testing.T) {
 }
 
 func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1065,6 +1097,7 @@ func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
 // TestListSources_ParsesTimestamps verifies that ListSources correctly parses
 // timestamps for all returned sources.
 func TestListSources_ParsesTimestamps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1093,6 +1126,7 @@ func TestListSources_ParsesTimestamps(t *testing.T) {
 // TestScanSource_UnrecognizedFormat verifies that parseDBTime returns an error
 // with helpful context when encountering a truly unrecognized timestamp format.
 func TestScanSource_UnrecognizedFormat(t *testing.T) {
+	t.Parallel()
 	badTimestamp := "not-a-date-at-all"
 
 	// Verify that parseDBTime rejects unrecognized formats
@@ -1106,6 +1140,7 @@ func TestScanSource_UnrecognizedFormat(t *testing.T) {
 // TestScanSource_NullRequiredTimestamp verifies that parseRequiredTime returns
 // an error when a required timestamp field (created_at/updated_at) is NULL.
 func TestScanSource_NullRequiredTimestamp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1128,6 +1163,7 @@ func TestScanSource_NullRequiredTimestamp(t *testing.T) {
 }
 
 func TestStore_HasAnyActiveSync(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

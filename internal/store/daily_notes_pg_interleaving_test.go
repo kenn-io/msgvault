@@ -211,6 +211,7 @@ func newGatedPostgresStore(
 // the harness pauses the second statement until deletion has cascaded the
 // target row; the statement count and returned target set both fail.
 func TestDailyNotePersonListingUsesOneSnapshot(t *testing.T) {
+	t.Parallel()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL DB-boundary interleaving test")

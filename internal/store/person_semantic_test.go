@@ -19,6 +19,7 @@ import (
 )
 
 func TestPersonSemanticDocumentRendersCuratedCurrentTextExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -201,6 +202,7 @@ func TestPersonSemanticDocumentRendersCuratedCurrentTextExactly(t *testing.T) {
 }
 
 func TestPersonSemanticDocumentIsStableAcrossInsertionOrderAndCanonicalJSON(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -257,6 +259,7 @@ func TestPersonSemanticDocumentIsStableAcrossInsertionOrderAndCanonicalJSON(t *t
 }
 
 func TestPersonSemanticDocumentIncludesEveryAllowedTypedAttributeKind(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	personID := mustPerson(t, f, "semantic-types@example.invalid", "Typed Person")
 	targetID := mustPerson(t, f, "semantic-types-target@example.invalid", "Target Person")
@@ -298,6 +301,7 @@ func TestPersonSemanticDocumentIncludesEveryAllowedTypedAttributeKind(t *testing
 }
 
 func TestPersonSemanticDocumentMutationListAndDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -341,6 +345,7 @@ func TestPersonSemanticDocumentMutationListAndDeletion(t *testing.T) {
 }
 
 func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -394,7 +399,7 @@ func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(
 	})
 }
 
-func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing.T) {
+func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -432,6 +437,7 @@ func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing
 }
 
 func TestPersonSemanticDocumentCapsExactHashedUTF8Bytes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestDocumentVectorChunkLifecycleSQLiteContract(t *testing.T) {
+	t.Parallel()
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite contract runs without MSGVAULT_TEST_DB")
 	}
@@ -22,6 +23,7 @@ func TestDocumentVectorChunkLifecycleSQLiteContract(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationLifecycleSQLiteContract(t *testing.T) {
+	t.Parallel()
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite contract runs without MSGVAULT_TEST_DB")
 	}
@@ -29,6 +31,7 @@ func TestDocumentVectorGenerationLifecycleSQLiteContract(t *testing.T) {
 }
 
 func TestDocumentVectorOperationLockSerializesPostgresWriters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("PostgreSQL-only cross-process writer lock")
@@ -70,6 +73,7 @@ func TestDocumentVectorOperationLockSerializesPostgresWriters(t *testing.T) {
 }
 
 func TestDocumentVectorOperationLockSerializesSQLiteWriters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite-only process-local writer lock")
@@ -1198,6 +1202,7 @@ func seedDocumentVectorGenerationWithChunks(t *testing.T, chunkCount int) (*stor
 }
 
 func TestDocumentVectorGenerationCreateResumeCollisionAndBounds(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1236,6 +1241,7 @@ func TestDocumentVectorGenerationCreateResumeCollisionAndBounds(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationRejectsNonCurrentTarget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1272,6 +1278,7 @@ func TestDocumentVectorGenerationRejectsNonCurrentTarget(t *testing.T) {
 }
 
 func TestDocumentVectorBaseSchemaPreservesCleanupAuthority(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1326,6 +1333,7 @@ func TestDocumentVectorBaseSchemaPreservesCleanupAuthority(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationRetirementAndActiveConstraints(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1347,6 +1355,7 @@ func TestDocumentVectorGenerationRetirementAndActiveConstraints(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationRejectsHistoricalSpecCollision(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	profile, _ := seedDocumentPublicationAuthority(t, f)
 	spec := store.DocumentVectorGenerationSpec{Fingerprint: strings.Repeat("c", 64), TargetExtractionProfileID: profile.ID, EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 768}
@@ -1359,6 +1368,7 @@ func TestDocumentVectorGenerationRejectsHistoricalSpecCollision(t *testing.T) {
 }
 
 func TestDocumentVectorGenerationRejectsInvalidFingerprintAndProfile(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	profile, _ := seedDocumentPublicationAuthority(t, f)
 	for _, spec := range []store.DocumentVectorGenerationSpec{
@@ -1371,6 +1381,7 @@ func TestDocumentVectorGenerationRejectsInvalidFingerprintAndProfile(t *testing.
 }
 
 func TestDocumentVectorTargetRejectsLegacyNormalizedIdentity(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f, _ := seedDocumentVectorGenerationWithChunks(t, 1)
 	var extractionID string
@@ -1390,6 +1401,7 @@ func TestDocumentVectorTargetRejectsLegacyNormalizedIdentity(t *testing.T) {
 }
 
 func TestDocumentVectorTargetIgnoresDeadLegacyNormalizedIdentity(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f, _ := seedDocumentVectorGenerationWithChunks(t, 1)
 	var extractionID, profileID, hash string
@@ -1411,6 +1423,7 @@ func TestDocumentVectorTargetIgnoresDeadLegacyNormalizedIdentity(t *testing.T) {
 }
 
 func TestDocumentVectorChunkCandidatesUseCurrentLiveAuthority(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1447,6 +1460,7 @@ func TestDocumentVectorChunkCandidatesUseCurrentLiveAuthority(t *testing.T) {
 }
 
 func TestDocumentVectorChunkCandidatesHideAfterTargetProfileRotation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -1461,6 +1475,7 @@ func TestDocumentVectorChunkCandidatesHideAfterTargetProfileRotation(t *testing.
 }
 
 func TestDocumentVectorPublicationCommitRejectsInconsistentImmutableSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1488,6 +1503,7 @@ func TestDocumentVectorPublicationCommitRejectsInconsistentImmutableSnapshot(t *
 }
 
 func TestDocumentVectorGenerationCannotDeletePublicationBeforeBackendCleanup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -1505,6 +1521,7 @@ func TestDocumentVectorGenerationCannotDeletePublicationBeforeBackendCleanup(t *
 }
 
 func TestDocumentVectorChunkCandidatesRequireConfiguredExtractionProfile(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -1544,6 +1561,7 @@ func TestDocumentVectorChunkCandidatesRequireConfiguredExtractionProfile(t *test
 }
 
 func TestDocumentVectorChunkCandidatesHaveStableBoundedPagination(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)

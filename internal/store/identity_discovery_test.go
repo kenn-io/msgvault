@@ -101,6 +101,7 @@ func newIdentityDiscoveryFixture(t *testing.T) identityDiscoveryFixture {
 }
 
 func TestIdentityDiscoveryPageReadsStrongWeakAndAllRecipientMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	fx := newIdentityDiscoveryFixture(t)
 
@@ -121,6 +122,7 @@ func TestIdentityDiscoveryPageReadsStrongWeakAndAllRecipientMetadata(t *testing.
 }
 
 func TestIdentityDiscoveryScanReadsOnlySourceNativeAttribution(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -173,6 +175,7 @@ func TestIdentityDiscoveryScanReadsOnlySourceNativeAttribution(t *testing.T) {
 }
 
 func TestIdentityDiscoveryScanReportsEnvelopeAddressAfterParticipantMerge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -228,6 +231,7 @@ func TestIdentityDiscoveryScanReportsEnvelopeAddressAfterParticipantMerge(t *tes
 // primary one destroyed the alias's envelope evidence, and identity discovery
 // could no longer observe the alias at all.
 func TestParticipantMergeKeepsDistinctEnvelopeAliasRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -361,6 +365,7 @@ func assertMessageIdentityAttributed(t *testing.T, f *storetest.Fixture, message
 }
 
 func TestBatchConfirmationAttributesMergedAliasEnvelopeMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, messageID := mergedAliasEnvelopeFixture(t)
 
@@ -376,6 +381,7 @@ func TestBatchConfirmationAttributesMergedAliasEnvelopeMessages(t *testing.T) {
 }
 
 func TestAddAccountIdentityAttributesMergedAliasEnvelopeMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, messageID := mergedAliasEnvelopeFixture(t)
 
@@ -391,6 +397,7 @@ func TestAddAccountIdentityAttributesMergedAliasEnvelopeMessages(t *testing.T) {
 // so a confirmed identity represented only in that snapshot must still come
 // out attributed once the recipient rows are final.
 func TestPersistMessageAttributesEnvelopeOnlyIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -426,6 +433,7 @@ func TestPersistMessageAttributesEnvelopeOnlyIdentity(t *testing.T) {
 // requires the repaired attribution to survive: the upsert's ON CONFLICT
 // recomputation cannot see envelope rows and would otherwise clear it.
 func TestRepersistKeepsMergedAliasEnvelopeAttribution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, messageID := mergedAliasEnvelopeFixture(t)
 
@@ -458,6 +466,7 @@ func TestRepersistKeepsMergedAliasEnvelopeAttribution(t *testing.T) {
 }
 
 func TestIdentityDiscoveryCountAndPageUseDistinctMessageKeyset(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fx := newIdentityDiscoveryFixture(t)
@@ -484,6 +493,7 @@ func TestIdentityDiscoveryCountAndPageUseDistinctMessageKeyset(t *testing.T) {
 }
 
 func TestIdentityDiscoverySourceMessageIDsAreSourceScopedAndBounded(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fx := newIdentityDiscoveryFixture(t)
@@ -527,7 +537,7 @@ func TestIdentityDiscoverySourceMessageIDsAreSourceScopedAndBounded(t *testing.T
 		"an IMAP mailbox ID named SENT is not canonical Gmail sent evidence")
 }
 
-func TestIdentityDiscoveryDoesNotReadContentTables(t *testing.T) {
+func TestIdentityDiscoveryDoesNotReadContentTables(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	fx := newIdentityDiscoveryFixture(t)
 	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true, MaxStmtChars: 10_000})
 	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
@@ -548,6 +558,7 @@ func TestIdentityDiscoveryDoesNotReadContentTables(t *testing.T) {
 }
 
 func TestAccountIdentityBatchDeterministicallyMergesCaseAndSignals(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -585,6 +596,7 @@ func TestAccountIdentityBatchDeterministicallyMergesCaseAndSignals(t *testing.T)
 }
 
 func TestAccountIdentityBatchRefreshesExistingMessageAttribution(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -617,6 +629,7 @@ func TestAccountIdentityBatchRefreshesExistingMessageAttribution(t *testing.T) {
 }
 
 func TestAccountIdentityBatchBoundsLargeWritesAndKeepsRetryIdempotent(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -661,6 +674,7 @@ func TestAccountIdentityBatchBoundsLargeWritesAndKeepsRetryIdempotent(t *testing
 }
 
 func TestAccountIdentityBatchPreservesExistingSpellingTimestampAndRevisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -697,6 +711,7 @@ func TestAccountIdentityBatchPreservesExistingSpellingTimestampAndRevisions(t *t
 }
 
 func TestAccountIdentityBatchRejectsInvalidSignalBeforeWriting(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	_, err := f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{
@@ -711,6 +726,7 @@ func TestAccountIdentityBatchRejectsInvalidSignalBeforeWriting(t *testing.T) {
 }
 
 func TestAccountIdentityBatchRefreshesOnlyAffectedSenders(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -765,6 +781,7 @@ func TestAccountIdentityBatchRefreshesOnlyAffectedSenders(t *testing.T) {
 }
 
 func TestAccountIdentityBatchWithUnseenAliasSkipsRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

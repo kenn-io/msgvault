@@ -94,6 +94,7 @@ func (r *singleInt64Rows) Next(dest []driver.Value) error {
 }
 
 func TestStartSyncContextRollbackOutlivesRequestCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

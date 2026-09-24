@@ -27,6 +27,7 @@ func insertRawDefinition(t *testing.T, st *store.Store, slug string) int64 {
 }
 
 func TestInitSchemaAddsSensitivityToLegacyAttributeDefinitions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "legacy-attributes.db"))
 	require.NoError(err)
@@ -86,6 +87,7 @@ func insertRawValue(
 }
 
 func TestAttributeSchemaRejectsMultipleTypedValueColumns(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "one_value_only")
@@ -99,6 +101,7 @@ func TestAttributeSchemaRejectsMultipleTypedValueColumns(t *testing.T) {
 }
 
 func TestAttributeSchemaRejectsNoTypedValueColumn(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "needs_a_value")
@@ -111,6 +114,7 @@ func TestAttributeSchemaRejectsNoTypedValueColumn(t *testing.T) {
 }
 
 func TestAttributeSchemaRequiresBothRecordReferenceHalves(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "record_ref")
@@ -124,6 +128,7 @@ func TestAttributeSchemaRequiresBothRecordReferenceHalves(t *testing.T) {
 }
 
 func TestAttributeSchemaRejectsOutOfRangeConfidenceAndOrdinal(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "bounds")
@@ -138,6 +143,7 @@ func TestAttributeSchemaRejectsOutOfRangeConfidenceAndOrdinal(t *testing.T) {
 }
 
 func TestAttributeSchemaPinsValueDateSeparatorPositions(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "date_shape")
@@ -158,6 +164,7 @@ func TestAttributeSchemaPinsValueDateSeparatorPositions(t *testing.T) {
 }
 
 func TestAttributeSchemaRejectsInvertedActiveInterval(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "interval")
@@ -173,6 +180,7 @@ func TestAttributeSchemaRejectsInvertedActiveInterval(t *testing.T) {
 }
 
 func TestAttributeSchemaAllowsOnlyOneCurrentValuePerOrdinal(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -213,6 +221,7 @@ func TestAttributeSchemaAllowsOnlyOneCurrentValuePerOrdinal(t *testing.T) {
 // without a table rebuild, the same compatibility-ceiling problem the
 // communication-services catalog deliberately avoids.
 func TestAttributeSchemaProvenanceVocabularyIsOpenAtTheDatabase(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "provenance_probe")
@@ -242,6 +251,7 @@ func TestAttributeSchemaProvenanceVocabularyIsOpenAtTheDatabase(t *testing.T) {
 }
 
 func TestAttributeSchemaRefusesDeletingADefinitionThatHasValues(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "restricted")
@@ -253,6 +263,7 @@ func TestAttributeSchemaRefusesDeletingADefinitionThatHasValues(t *testing.T) {
 }
 
 func TestAttributeSchemaCascadesValuesWhenAPersonIsDeleted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profileID := "profile-" + strings.Repeat("a", 64)
@@ -74,6 +75,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 }
 
 func TestInitSchemaAddsDocumentRebuildIDToLegacyExtractionTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	drop := `ALTER TABLE document_extractions DROP COLUMN rebuild_id`
@@ -96,6 +98,7 @@ func TestInitSchemaAddsDocumentRebuildIDToLegacyExtractionTable(t *testing.T) {
 }
 
 func TestInitSchemaAddsDocumentTargetProfileToLegacyIndexState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.DB().Exec(`ALTER TABLE document_index_state DROP COLUMN target_profile_id`)
@@ -114,6 +117,7 @@ func TestInitSchemaAddsDocumentTargetProfileToLegacyIndexState(t *testing.T) {
 }
 
 func TestInitSchemaAddsDocumentProviderAccountingToLegacyExtractions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, column := range []string{"retry_count", "request_count", "provider_latency_ms"} {

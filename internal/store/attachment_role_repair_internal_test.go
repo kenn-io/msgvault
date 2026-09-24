@@ -12,6 +12,7 @@ import (
 )
 
 func TestDecodeMessageRawBoundedStopsAtLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	var compressed bytes.Buffer
@@ -30,6 +31,7 @@ func TestDecodeMessageRawBoundedStopsAtLimit(t *testing.T) {
 }
 
 func TestDecodeMessageRawHeaderBoundedStopsAfterHeaders(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	var compressed bytes.Buffer
 	writer := zlib.NewWriter(&compressed)
@@ -47,6 +49,7 @@ func TestDecodeMessageRawHeaderBoundedStopsAfterHeaders(t *testing.T) {
 }
 
 func TestDecodeMessageRawHeaderBoundedRejectsOversizedHeaders(t *testing.T) {
+	t.Parallel()
 	raw, err := decodeMessageRawHeaderBounded(
 		[]byte("From: "+strings.Repeat("x", 128)), sql.NullString{}, 64,
 	)

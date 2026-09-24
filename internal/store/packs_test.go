@@ -20,6 +20,7 @@ import (
 )
 
 func TestRecordAndGetPackedBlobs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -56,6 +57,7 @@ func TestRecordAndGetPackedBlobs(t *testing.T) {
 }
 
 func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -79,6 +81,7 @@ func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
 }
 
 func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -100,6 +103,7 @@ func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
 }
 
 func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*store.PackRecord, []store.PackIndexEntry)
@@ -197,6 +201,7 @@ func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) 
 }
 
 func TestAdoptPackedBlobsAllowsPartialPackMetadata(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	hash := packTestHash("ac08")
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a5", hash)
@@ -208,6 +213,7 @@ func TestAdoptPackedBlobsAllowsPartialPackMetadata(t *testing.T) {
 }
 
 func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -232,6 +238,7 @@ func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
 }
 
 func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -279,6 +286,7 @@ func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
 }
 
 func TestAdoptPackedBlobsWithAliasesPreservesKeyedDuplicateOccurrences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -327,6 +335,7 @@ func TestAdoptPackedBlobsWithAliasesPreservesKeyedDuplicateOccurrences(t *testin
 }
 
 func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -351,6 +360,7 @@ func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *test
 }
 
 func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		preservedPath string
@@ -395,6 +405,7 @@ func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t 
 }
 
 func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		alias string
@@ -543,6 +554,7 @@ func (f *packAttachmentFixture) setThumbnail(contentHash, thumbHash, thumbPath s
 }
 
 func TestResolveAttachmentBlob(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -585,6 +597,7 @@ func TestResolveAttachmentBlob(t *testing.T) {
 }
 
 func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		path func(string) string
@@ -626,6 +639,7 @@ func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
 }
 
 func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		field string
@@ -692,6 +706,7 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 }
 
 func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		hash string
@@ -752,6 +767,7 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 }
 
 func TestListReferencedBlobHashes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	fx := newPackAttachmentFixture(t, st)
@@ -772,6 +788,7 @@ func TestListReferencedBlobHashes(t *testing.T) {
 }
 
 func TestPruneUnreferencedPackIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -801,6 +818,7 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 }
 
 func TestPruneUnreferencedPackIndexPreservesCaseAliasReference(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -864,6 +882,7 @@ func (f *packAttachmentFixture) thumbnailPathsForHash(thumbHash string) []string
 }
 
 func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -916,6 +935,7 @@ func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
 }
 
 func TestCanonicalizeAttachmentBlobPathsPreservesURLsWithCaseSensitiveLike(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -939,6 +959,7 @@ func TestCanonicalizeAttachmentBlobPathsPreservesURLsWithCaseSensitiveLike(t *te
 }
 
 func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1027,6 +1048,7 @@ func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing
 }
 
 func TestCanonicalizeAttachmentBlobPathsRejectsMalformedHash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1043,6 +1065,7 @@ func TestCanonicalizeAttachmentBlobPathsRejectsMalformedHash(t *testing.T) {
 }
 
 func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1092,6 +1115,7 @@ func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
 }
 
 func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1122,6 +1146,7 @@ func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
 }
 
 func TestListUnpackedBlobs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1183,6 +1208,7 @@ func TestListUnpackedBlobs(t *testing.T) {
 }
 
 func TestListUnpackedBlobsCoalescesCaseAliasesDeterministically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1221,6 +1247,7 @@ func TestListUnpackedBlobsCoalescesCaseAliasesDeterministically(t *testing.T) {
 }
 
 func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1250,6 +1277,7 @@ func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {
 }
 
 func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -1277,6 +1305,7 @@ func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {
 }
 
 func TestPackRecordLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1336,6 +1365,7 @@ func TestPackRecordLifecycle(t *testing.T) {
 }
 
 func TestListIndexedBlobEntries(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1356,6 +1386,7 @@ func TestListIndexedBlobEntries(t *testing.T) {
 }
 
 func TestClearAttachmentPackMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

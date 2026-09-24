@@ -18,6 +18,7 @@ import (
 // storing therefore happen under the same lock, which is what this asserts: a
 // second prover cannot get in while the first is still proving.
 func TestSQLiteQuiescentProofsAreStoredInTheOrderTheyAreProved(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
@@ -81,6 +82,7 @@ func TestSQLiteQuiescentProofsAreStoredInTheOrderTheyAreProved(t *testing.T) {
 // matching nothing rather than by a decision. The floor turns that into a
 // stalled feed, which is visible.
 func TestPostgreSQLVisibilityFloor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	base := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonDatesRoundTripPartialPrecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -43,6 +44,7 @@ func TestPersonDatesRoundTripPartialPrecision(t *testing.T) {
 }
 
 func TestPersonDateDayOnlyRoundTrips(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -67,6 +69,7 @@ func TestPersonDateDayOnlyRoundTrips(t *testing.T) {
 }
 
 func TestPersonDateAcceptsTextValueAndCalendarScale(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -82,6 +85,7 @@ func TestPersonDateAcceptsTextValueAndCalendarScale(t *testing.T) {
 }
 
 func TestPersonDateValidation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
@@ -104,6 +108,7 @@ func TestPersonDateValidation(t *testing.T) {
 }
 
 func TestPersonDateComponentChecksAreEnforcedBySQL(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()

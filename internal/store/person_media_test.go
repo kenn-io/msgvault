@@ -14,6 +14,7 @@ import (
 )
 
 func TestPersonMediaStoresInlineBytesWithHashAndSize(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -40,6 +41,7 @@ func TestPersonMediaStoresInlineBytesWithHashAndSize(t *testing.T) {
 }
 
 func TestPersonMediaStoresURIReferenceWithoutBytes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -58,6 +60,7 @@ func TestPersonMediaStoresURIReferenceWithoutBytes(t *testing.T) {
 }
 
 func TestPersonMediaHoldsAllFourVCardMediaKinds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -83,6 +86,7 @@ func TestPersonMediaHoldsAllFourVCardMediaKinds(t *testing.T) {
 }
 
 func TestPersonMediaValidation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)

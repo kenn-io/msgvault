@@ -14,6 +14,7 @@ import (
 )
 
 func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -82,6 +83,7 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 }
 
 func TestExecuteGCRejectsPlanMismatchWithoutDeleting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -104,6 +106,7 @@ func TestExecuteGCRejectsPlanMismatchWithoutDeleting(t *testing.T) {
 }
 
 func TestExecuteGCRejectsSameCountDifferentPopulation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -129,6 +132,7 @@ func TestExecuteGCRejectsSameCountDifferentPopulation(t *testing.T) {
 }
 
 func TestExecuteGCRecomputesAffectedConversationStats(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -171,6 +175,7 @@ func TestExecuteGCRecomputesAffectedConversationStats(t *testing.T) {
 }
 
 func TestExecuteGCClearsSurvivingRepliesToSourceDeletedMessages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)

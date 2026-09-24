@@ -22,6 +22,7 @@ var profileEnvelopeColumnNames = []string{
 }
 
 func TestProfileTableColumnsMatchOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := storetest.New(t).Store
 
@@ -129,6 +130,7 @@ func TestProfileTableColumnsMatchOnTheConfiguredBackend(t *testing.T) {
 }
 
 func TestParticipantIdentifiersGainedServiceScopeColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := storetest.New(t).Store
 
@@ -142,6 +144,7 @@ func TestParticipantIdentifiersGainedServiceScopeColumns(t *testing.T) {
 }
 
 func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -170,6 +173,7 @@ func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *test
 }
 
 func TestProfileReadsSucceedOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -194,6 +198,7 @@ func TestProfileReadsSucceedOnTheConfiguredBackend(t *testing.T) {
 }
 
 func TestDirectoryPeoplePageSucceedsOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	st := storetest.New(t).Store
 	alice := createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
 	createDirectoryPerson(t, st, "Alice Other", "other@example.test", "colleague", "active", "Other Co")
@@ -210,6 +215,7 @@ func TestDirectoryPeoplePageSucceedsOnTheConfiguredBackend(t *testing.T) {
 // MSGVAULT_TEST_DB is configured) to keep keyset ordering identical across
 // the exact, prefix, and one-edit tiers.
 func TestDirectoryPeoplePageSequenceOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	st := storetest.New(t).Store
 	exact := createDirectoryPerson(t, st, "Alice Exact", "alice-exact@example.test", "friend", "active", "Acme")
 	prefix := createDirectoryPerson(t, st, "Alicef Prefix", "alicef-prefix@example.test", "friend", "active", "Acme")
@@ -236,6 +242,7 @@ func TestDirectoryPeoplePageSequenceOnTheConfiguredBackend(t *testing.T) {
 // This runs on the configured backend and protects the persisted canonical
 // order key from whitespace or Unicode collation drift between page requests.
 func TestDirectoryPeopleUnicodeCursorSequenceOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	first := createDirectoryPerson(t, st, "Ålice  a", "unicode-first@sample.test", "friend", "active", "Acme")
@@ -250,6 +257,7 @@ func TestDirectoryPeopleUnicodeCursorSequenceOnTheConfiguredBackend(t *testing.T
 }
 
 func TestDirectoryPeopleLastContactRangeAndCursorOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -304,6 +312,7 @@ func TestDirectoryPeopleLastContactRangeAndCursorOnTheConfiguredBackend(t *testi
 // Delete keys are only an indexed prefilter: this configured-backend fixture
 // proves the actual canonical token distance before Directory returns a row.
 func TestDirectoryPeopleFuzzyTokenDistanceOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -334,6 +343,7 @@ func TestDirectoryPeopleFuzzyTokenDistanceOnTheConfiguredBackend(t *testing.T) {
 // a later verified one-edit match. The resumed page starts after the exact
 // prior row and must still scan past those false raw candidates.
 func TestDirectoryPeopleFuzzyCollisionPagingOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -358,6 +368,7 @@ func TestDirectoryPeopleFuzzyCollisionPagingOnTheConfiguredBackend(t *testing.T)
 // Moving a current employment through a raw update must queue both the old
 // and new people, so refresh never leaves the old Directory projection stale.
 func TestDirectoryProjectionEmploymentMoveOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	first := createDirectoryPerson(t, st, "First Person", "move-first@sample.test", "friend", "active", "Shared Org")
@@ -381,6 +392,7 @@ func TestDirectoryProjectionEmploymentMoveOnTheConfiguredBackend(t *testing.T) {
 // dirty row, so the second refresh must tolerate the first one committing
 // its projection rows in between.
 func TestDirectoryProjectionConcurrentRefreshOnTheConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	person := createDirectoryPerson(t, st, "Shared Person", "shared@sample.test", "friend", "active", "Shared Org")
@@ -428,6 +440,7 @@ func TestDirectoryProjectionConcurrentRefreshOnTheConfiguredBackend(t *testing.T
 }
 
 func TestFullProfileLifecycleOnConfiguredBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

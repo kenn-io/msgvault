@@ -20,6 +20,7 @@ import (
 // dropped the second chunk, or mis-merged results across chunks, would leave
 // one of the two empty instead of populated.
 func TestBatchGetRecipientsAndLabels_ChunkLargeIDSets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)

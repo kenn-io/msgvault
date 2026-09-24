@@ -11,6 +11,7 @@ import (
 )
 
 func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
@@ -72,6 +73,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 }
 
 func TestManagedIMAPDraftReplacementUIDReuse(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name        string
 		uidValidity uint32
@@ -128,6 +130,7 @@ func TestManagedIMAPDraftReplacementUIDReuse(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -152,6 +155,7 @@ func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, source, draft, _ := newReviewManagedDraft(t, "surviving-membership", 61, "body")

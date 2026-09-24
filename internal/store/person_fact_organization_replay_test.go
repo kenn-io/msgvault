@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonFactEmploymentHistoricalNameDomainClaimKeepsResolvedOrganization(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -60,6 +61,7 @@ func TestPersonFactEmploymentHistoricalNameDomainClaimKeepsResolvedOrganization(
 }
 
 func TestPersonFactEmploymentHistoricalMergedOrganizationReplaysAsSurvivor(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -111,6 +113,7 @@ func TestPersonFactEmploymentHistoricalMergedOrganizationReplaysAsSurvivor(t *te
 }
 
 func TestPersonFactEmploymentHistoricalOrganizationRenameAllowsPin(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -159,6 +162,7 @@ func TestPersonFactEmploymentHistoricalOrganizationRenameAllowsPin(t *testing.T)
 }
 
 func TestPersonFactEmploymentUnavailableHistoricalOrganizationRejectsOnlyThatClaim(t *testing.T) {
+	t.Parallel()
 	for _, unavailable := range []string{"deleted", "retired"} {
 		t.Run(unavailable, func(t *testing.T) {
 			assertions := assert.New(t)

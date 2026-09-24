@@ -18,6 +18,7 @@ import (
 )
 
 func TestDiscordExportReturnsBoundedStableHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -56,7 +57,7 @@ func TestDiscordExportReturnsBoundedStableHistory(t *testing.T) {
 	assert.Equal("20", got[1].ParentID)
 }
 
-func TestDiscordExportPagesMetadataAndLoadsBodiesByPrimaryKey(t *testing.T) {
+func TestDiscordExportPagesMetadataAndLoadsBodiesByPrimaryKey(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("discord", "guild")

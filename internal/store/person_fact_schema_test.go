@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonFactSchemaInitializesTwice(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -42,6 +43,7 @@ func assertPersonFactTableQueryable(t *testing.T, st *store.Store, table string)
 }
 
 func TestPersonFactSchemaHasScopedUniqueKeys(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -131,6 +133,7 @@ func TestPersonFactSchemaHasScopedUniqueKeys(t *testing.T) {
 }
 
 func TestPersonFactClaimSchemaRejectsUnknownRelationAndOriginTokens(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	personID := personFactSchemaPerson(t, st, "closed-vocabulary@example.com")
 	generationID := insertPersonFactSchemaGeneration(t, st, personID, "closed-vocabulary")

@@ -38,6 +38,7 @@ func semanticPersonTestProfile(t *testing.T) vector.SemanticPersonEmbeddingProfi
 // TestPersonSemanticConsentLifecycle catches semantic grants being stored in
 // the people-sweep consent namespace or revocation failing to stop authority.
 func TestPersonSemanticConsentLifecycle(t *testing.T) {
+	t.Parallel()
 	check := assert.New(t)
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -87,6 +88,7 @@ func TestPersonSemanticConsentLifecycle(t *testing.T) {
 // TestPeopleSweepConsentCannotAuthorizeSemanticPersonEmbeddings catches a
 // purpose-confused lookup accepting a grant from the pre-existing subsystem.
 func TestPeopleSweepConsentCannotAuthorizeSemanticPersonEmbeddings(t *testing.T) {
+	t.Parallel()
 	check := assert.New(t)
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -105,6 +107,7 @@ func TestPeopleSweepConsentCannotAuthorizeSemanticPersonEmbeddings(t *testing.T)
 // TestPersonSemanticStoredProfileRejectsImmutablePolicyCorruption catches an
 // audit/list path trusting mutable columns or noncanonical policy JSON.
 func TestPersonSemanticStoredProfileRejectsImmutablePolicyCorruption(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	profile := semanticPersonTestProfile(t)
 	_, err := st.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestCardDAVReviewSourceTransactionRetainsAllFences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	reader, id, _ := newPersonFactProjectionStore(t)

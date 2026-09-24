@@ -46,6 +46,7 @@ func probeValidIndex(t *testing.T, st *store.Store, index, table string) bool {
 }
 
 func TestInitSchema_PGCreatesIdentityDiscoveryIndexForFreshAndUpgradedStores(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
@@ -80,6 +81,7 @@ func TestInitSchema_PGCreatesIdentityDiscoveryIndexForFreshAndUpgradedStores(t *
 // environment-dependent in CI. That branch is reviewed by inspection in
 // Store.buildLargeIndexesConcurrently / dropInvalidIndexConcurrently.
 func TestInitSchema_PGConcurrentIndexBuildIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {

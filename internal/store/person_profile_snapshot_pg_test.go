@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPostgreSQLPersonProfileReadsUseOneRevisionSnapshot(t *testing.T) {
+func TestPostgreSQLPersonProfileReadsUseOneRevisionSnapshot(t *testing.T) { //nolint:paralleltest // counts AccessShareLock waits in pg_locks without a database filter
 	for _, history := range []bool{false, true} {
 		name := "current"
 		if history {

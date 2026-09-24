@@ -14,6 +14,7 @@ import (
 )
 
 func TestLinkParticipantsCreatesEdgeAndBumpsRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -30,6 +31,7 @@ func TestLinkParticipantsCreatesEdgeAndBumpsRevision(t *testing.T) {
 }
 
 func TestLinkParticipantsExactEdgeIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
@@ -44,6 +46,7 @@ func TestLinkParticipantsExactEdgeIsIdempotent(t *testing.T) {
 }
 
 func TestLinkParticipantsRejectsSelfAndUnknown(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
 
@@ -55,6 +58,7 @@ func TestLinkParticipantsRejectsSelfAndUnknown(t *testing.T) {
 }
 
 func TestLinkParticipantsRedundantIndirectEdgeIsAlreadyLinked(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	a := f.EnsureParticipant("a@example.com", "A", "example.com")
@@ -71,6 +75,7 @@ func TestLinkParticipantsRedundantIndirectEdgeIsAlreadyLinked(t *testing.T) {
 }
 
 func TestUnlinkParticipantsSplitsClusterDeterministically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -100,6 +105,7 @@ func TestUnlinkParticipantsSplitsClusterDeterministically(t *testing.T) {
 }
 
 func TestUnlinkParticipantsMissingEdgeIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	a := f.EnsureParticipant("a@example.com", "A", "example.com")
@@ -118,6 +124,7 @@ func TestUnlinkParticipantsMissingEdgeIsIdempotent(t *testing.T) {
 // (ErrParticipantNotFound, 400 at the API layer) instead of silently
 // succeeding as a no-op, and must not bump the identity revision.
 func TestUnlinkParticipantsRejectsUnknown(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -135,6 +142,7 @@ func TestUnlinkParticipantsRejectsUnknown(t *testing.T) {
 }
 
 func TestClusterMembersForUnlinkedParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	a := f.EnsureParticipant("a@example.com", "A", "example.com")
@@ -150,6 +158,7 @@ func TestClusterMembersForUnlinkedParticipant(t *testing.T) {
 // component, excluding a wholly disjoint cluster's edges even though both
 // clusters share one participant_links table.
 func TestClusterEdgesFiltersToTheRequestedComponent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -186,6 +195,7 @@ func TestClusterEdgesFiltersToTheRequestedComponent(t *testing.T) {
 // pair is linked in reversed order (11-10 normalizes to 10-11) to pin that
 // the canonical root is the smallest member regardless of insertion order.
 func TestParticipantClustersMultipleDisjointComponents(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -237,6 +247,7 @@ func TestParticipantClustersMultipleDisjointComponents(t *testing.T) {
 // build-adjacency-per-call path) report exactly one component's members and
 // edges, never bleeding into a disjoint cluster.
 func TestClusterMembersAndEdgesWithinMultiComponentGraph(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -285,6 +296,7 @@ func normalizeEdgeForTest(a, b int64) (int64, int64) {
 // Parquet shards, so the staleness check must force a full rebuild (not the
 // cheap identity-only refresh) — see cache_staleness.go.
 func TestMergeParticipantsRewritesLinkEdges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -325,6 +337,7 @@ func TestMergeParticipantsRewritesLinkEdges(t *testing.T) {
 // path's endpoints together, which would yield cycle a-x-y-a if the edges
 // were merely repointed without rebuilding the cluster as a star.
 func TestMergeParticipantsPathContractionKeepsForest(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -376,6 +389,7 @@ func TestMergeParticipantsPathContractionKeepsForest(t *testing.T) {
 // merge repoints messages.sender_id regardless of whether a link edge
 // existed, so a stale is_from_me can only be repaired by a full rebuild.
 func TestMergeParticipantsWithoutLinksStillBumpsRevisionButRewritesNoLinks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -402,6 +416,7 @@ func TestMergeParticipantsWithoutLinksStillBumpsRevisionButRewritesNoLinks(t *te
 }
 
 func TestMergeParticipantsRefreshesSenderAttribution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -444,6 +459,7 @@ func TestMergeParticipantsRefreshesSenderAttribution(t *testing.T) {
 // separate connections, real SQLite/PostgreSQL locking), following the
 // pattern of TestEnsureParticipant_Concurrent.
 func TestLinkParticipants_ConcurrentDisjointClusters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 

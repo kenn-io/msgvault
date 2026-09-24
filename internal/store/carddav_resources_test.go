@@ -37,6 +37,7 @@ func remoteResource(href, uid, name, email, etag string) store.CardDAVRemoteReso
 }
 
 func TestCardDAVApplyPersistsLosslessEnvelopeAndMaterializesSubscribedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -70,6 +71,7 @@ func TestCardDAVApplyPersistsLosslessEnvelopeAndMaterializesSubscribedPerson(t *
 }
 
 func TestCardDAVResourceMoveRewritesProjectionProvenanceBeforeRemoteEdit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -112,6 +114,7 @@ func TestCardDAVResourceMoveRewritesProjectionProvenanceBeforeRemoteEdit(t *test
 }
 
 func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -169,6 +172,7 @@ func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
 }
 
 func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -229,6 +233,7 @@ func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *tes
 }
 
 func TestCardDAVDisplayNameRevisionTracksRebaseAndRetirement(t *testing.T) {
+	t.Parallel()
 	t.Run("rebase", func(t *testing.T) {
 		require := require.New(t)
 		st, account, book := newCardDAVResourceStore(t)
@@ -289,6 +294,7 @@ func TestCardDAVDisplayNameRevisionTracksRebaseAndRetirement(t *testing.T) {
 }
 
 func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -347,6 +353,7 @@ func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 }
 
 func TestCardDAVETagRefreshPreservesLocallyDeletedMapping(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -399,6 +406,7 @@ func mustPersonSnapshot(t *testing.T, st *store.Store, personID int64) *store.Pe
 }
 
 func TestCardDAVApplyBindsExactCanonicalUIDBeforeContactPoints(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -420,6 +428,7 @@ func TestCardDAVApplyBindsExactCanonicalUIDBeforeContactPoints(t *testing.T) {
 }
 
 func TestCardDAVApplyNeverRebasesLocalGovernedProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -461,6 +470,7 @@ func TestCardDAVApplyNeverRebasesLocalGovernedProjection(t *testing.T) {
 }
 
 func TestCardDAVEmailBindingStoresLocalCanonicalUIDInEnvelope(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -486,6 +496,7 @@ func TestCardDAVEmailBindingStoresLocalCanonicalUIDInEnvelope(t *testing.T) {
 }
 
 func TestCardDAVLookupOnlyResourceRetainsBytesWithoutCreatingPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -512,6 +523,7 @@ func TestCardDAVLookupOnlyResourceRetainsBytesWithoutCreatingPerson(t *testing.T
 }
 
 func TestCardDAVAmbiguousContactMatchCreatesReviewCandidateWithoutMerging(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -550,6 +562,7 @@ func TestCardDAVAmbiguousContactMatchCreatesReviewCandidateWithoutMerging(t *tes
 }
 
 func TestCardDAVCandidateAcceptanceBindsPersonAndPreservesReviewedDecisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -644,6 +657,7 @@ func TestCardDAVCandidateAcceptanceBindsPersonAndPreservesReviewedDecisions(t *t
 }
 
 func TestCardDAVReconciliationPreservesRejectedCandidate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -698,6 +712,7 @@ func TestCardDAVReconciliationPreservesRejectedCandidate(t *testing.T) {
 }
 
 func TestCardDAVResourceRefreshReconcilesAmbiguousCandidatesToUniqueMatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -758,6 +773,7 @@ func TestCardDAVResourceRefreshReconcilesAmbiguousCandidatesToUniqueMatch(t *tes
 }
 
 func TestCardDAVResourceRefreshReplacesThenRemovesAmbiguousCandidates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -811,6 +827,7 @@ func TestCardDAVResourceRefreshReplacesThenRemovesAmbiguousCandidates(t *testing
 }
 
 func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
@@ -830,6 +847,7 @@ func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
 }
 
 func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -924,6 +942,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 }
 
 func TestCardDAVTombstoneDeletesImportedPersonAfterRemoteMappingBeforeLocalDuplicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
@@ -973,6 +992,7 @@ func TestCardDAVTombstoneDeletesImportedPersonAfterRemoteMappingBeforeLocalDupli
 }
 
 func TestCardDAVTombstoneRetainsPublishedImportedPerson(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
@@ -1013,6 +1033,7 @@ func TestCardDAVTombstoneRetainsPublishedImportedPerson(t *testing.T) {
 }
 
 func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1062,6 +1083,7 @@ func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing
 }
 
 func TestCardDAVTombstoneRetainsTrackedImportedPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1106,6 +1128,7 @@ func contactPointValues(points []store.PersonContactPoint) []string {
 }
 
 func TestCardDAVTombstoneRemovesIdentityCandidatesReferencingImportedPerson(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)

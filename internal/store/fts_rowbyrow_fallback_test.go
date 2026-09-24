@@ -53,7 +53,7 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 //
 // PG-only: the fallback exists for the PostgreSQL tsvector-overflow case
 // (SQLite's FTS5 has no such limit, so a real backfill never errors there).
-func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
+func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgres(t)
@@ -172,6 +172,7 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 // PG-only: the discriminating classifier (IsFTSValueTooLargeError) is a no-op on
 // SQLite (always false), so on SQLite every error already aborts.
 func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgres(t)
 
 	f := storetest.New(t)

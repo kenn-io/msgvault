@@ -10,6 +10,7 @@ import (
 )
 
 func TestIMAPFolderStates_EmptyForNewSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "folders-empty@example.com")
@@ -21,6 +22,7 @@ func TestIMAPFolderStates_EmptyForNewSource(t *testing.T) {
 }
 
 func TestIMAPFolderStates_RoundTrip(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "folders-roundtrip@example.com")
@@ -38,6 +40,7 @@ func TestIMAPFolderStates_RoundTrip(t *testing.T) {
 }
 
 func TestIMAPFolderStates_UpsertOverwrites(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "folders-overwrite@example.com")
@@ -61,6 +64,7 @@ func TestIMAPFolderStates_UpsertOverwrites(t *testing.T) {
 }
 
 func TestIMAPFolderStates_IsolatedPerSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	a, err := st.GetOrCreateSource("imap", "folders-a@example.com")
@@ -78,6 +82,7 @@ func TestIMAPFolderStates_IsolatedPerSource(t *testing.T) {
 }
 
 func TestIMAPFolderStates_MaxUint32Values(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "folders-max@example.com")

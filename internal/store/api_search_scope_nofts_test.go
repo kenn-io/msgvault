@@ -16,6 +16,7 @@ import (
 // FTS errors at runtime or the binary is built without the fts5 tag. Forces the
 // no-FTS branch directly so it runs regardless of the fts5 build tag.
 func TestSearchMessagesQueryImpl_NoFTS_AccountScoping(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestPersonSweepPostgreSQLReclaimedFenceRejectsPriorWorker(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	if !f.store.IsPostgreSQL() {
 		t.Skip("PostgreSQL-only reclaimed-fence concurrency regression")
@@ -38,6 +39,7 @@ func TestPersonSweepPostgreSQLReclaimedFenceRejectsPriorWorker(t *testing.T) {
 }
 
 func TestPersonSweepPostgreSQLUntrackingWinsPausedPublication(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -140,6 +142,7 @@ func TestPersonSweepPostgreSQLUntrackingWinsPausedPublication(t *testing.T) {
 }
 
 func TestPersonSweepPostgreSQLConcurrentStartDoesNotSupersedeWriter(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -181,6 +184,7 @@ func TestPersonSweepPostgreSQLConcurrentStartDoesNotSupersedeWriter(t *testing.T
 }
 
 func TestPersonSweepPostgreSQLClaimDoesNotReversePublicationOptOutLocks(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)

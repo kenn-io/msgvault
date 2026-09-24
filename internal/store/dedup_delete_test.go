@@ -16,6 +16,7 @@ import (
 // rows associated with the given batch ID and that ON DELETE CASCADE removes
 // child rows (message_labels).
 func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -60,6 +61,7 @@ func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
 // TestDeleteDedupedBatch_UnknownBatch verifies that DeleteDedupedBatch with a non-existent
 // batch ID returns 0 without error.
 func TestDeleteDedupedBatch_UnknownBatch(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_ = newRFC822Message(t, f, "msg-a", "rfc822-only")
 
@@ -69,6 +71,7 @@ func TestDeleteDedupedBatch_UnknownBatch(t *testing.T) {
 }
 
 func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger and registered driver function to pause the second batch")
 	require := require.New(t)
 	f := storetest.New(t)
@@ -148,6 +151,7 @@ func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.
 // TestDeleteAllDeduped_MultiplesBatches verifies that DeleteAllDeduped removes
 // rows from all batches and reports the correct counts.
 func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -183,6 +187,7 @@ func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
 // deleted_at for any other reason (trash view, per-message hide) must not
 // have its rows silently destroyed by the dedup hard-delete rung.
 func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -219,6 +224,7 @@ func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
 // TestDeleteAllDeduped_Empty verifies that DeleteAllDeduped with no hidden rows
 // returns 0/0 without error.
 func TestDeleteAllDeduped_Empty(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_ = newRFC822Message(t, f, "visible", "rfc822-vis")
 
@@ -231,6 +237,7 @@ func TestDeleteAllDeduped_Empty(t *testing.T) {
 // TestDeleteDedupedBatch_ThenUndoNoOps verifies that calling UndoDedup after DeleteDedupedBatch
 // returns 0 (the rows no longer exist) without error.
 func TestDeleteDedupedBatch_ThenUndoNoOps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-undo-noop")

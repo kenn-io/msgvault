@@ -7,6 +7,7 @@ import (
 )
 
 func TestGCRefusesPostgreSQLBeforeDatabaseAccess(t *testing.T) {
+	t.Parallel()
 	st := &Store{dialect: &PostgreSQLDialect{}}
 
 	_, err := st.ExecuteGCContext(t.Context(), GCPlan{})

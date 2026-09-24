@@ -56,6 +56,7 @@ func newBacklogTestSource(t *testing.T) (*store.Store, int64) {
 }
 
 func TestIdentityDiscoveryBacklogSetRecordsCause(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, sourceID := newBacklogTestSource(t)
@@ -78,6 +79,7 @@ func TestIdentityDiscoveryBacklogSetRecordsCause(t *testing.T) {
 }
 
 func TestIdentityDiscoveryBacklogSetTwiceIncrementsAttempts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, sourceID := newBacklogTestSource(t)
@@ -101,6 +103,7 @@ func TestIdentityDiscoveryBacklogSetTwiceIncrementsAttempts(t *testing.T) {
 }
 
 func TestIdentityDiscoveryBacklogClearRemovesMarker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, sourceID := newBacklogTestSource(t)
@@ -126,6 +129,7 @@ func TestIdentityDiscoveryBacklogClearRemovesMarker(t *testing.T) {
 }
 
 func TestIdentityDiscoveryBacklogReportsNotFoundWhenNeverSet(t *testing.T) {
+	t.Parallel()
 	st, sourceID := newBacklogTestSource(t)
 
 	found, lastError, err := st.IdentityDiscoveryBacklogContext(t.Context(), sourceID)
@@ -139,6 +143,7 @@ func TestIdentityDiscoveryBacklogReportsNotFoundWhenNeverSet(t *testing.T) {
 // fallback in the getter: the debt is real whether or not its payload parses,
 // so refusing to read it would strand the very repair the marker exists for.
 func TestIdentityDiscoveryBacklogSurfacesUndecodableMarker(t *testing.T) {
+	t.Parallel()
 	st, sourceID := newBacklogTestSource(t)
 	writeRawBacklogValue(t, st, sourceID, "not-a-json-marker")
 
@@ -155,6 +160,7 @@ func TestIdentityDiscoveryBacklogSurfacesUndecodableMarker(t *testing.T) {
 // restarts at one rather than failing the sync that is trying to record a
 // failure.
 func TestIdentityDiscoveryBacklogRestartsAttemptsFromUnusablePriorValue(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		prior string
@@ -186,6 +192,7 @@ func TestIdentityDiscoveryBacklogRestartsAttemptsFromUnusablePriorValue(t *testi
 }
 
 func TestIdentityDiscoveryBacklogIsPerSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, sourceID := newBacklogTestSource(t)

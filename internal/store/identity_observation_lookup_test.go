@@ -43,6 +43,7 @@ func recordObservation(
 }
 
 func TestFindObservationsByProviderUserIDGroupsBothParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -74,6 +75,7 @@ func TestFindObservationsByProviderUserIDGroupsBothParticipants(t *testing.T) {
 }
 
 func TestFindObservationsByServiceValueIgnoresScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -100,6 +102,7 @@ func TestFindObservationsByServiceValueIgnoresScope(t *testing.T) {
 }
 
 func TestFindObservationsByQueriesPreserveCompleteValueEnvelope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -171,6 +174,7 @@ func TestFindObservationsByQueriesPreserveCompleteValueEnvelope(t *testing.T) {
 }
 
 func TestFindObservationsByAndEvidenceQueriesHonorCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,6 +214,7 @@ func TestFindObservationsByAndEvidenceQueriesHonorCancellation(t *testing.T) {
 }
 
 func TestClassifyParticipantIdentifierService(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -245,6 +250,7 @@ func TestClassifyParticipantIdentifierService(t *testing.T) {
 }
 
 func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

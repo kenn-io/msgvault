@@ -19,6 +19,7 @@ import (
 // until something calls InitSchema again, and every search it serves silently
 // falls back to the slow path.
 func TestOpenReportsFTSAvailableForInitializedSQLiteDB(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -40,6 +41,7 @@ func TestOpenReportsFTSAvailableForInitializedSQLiteDB(t *testing.T) {
 // half of the same invariant: there the FTS column lives in the messages table,
 // so a second Store opened on an initialized schema must see it too.
 func TestOpenReportsFTSAvailableForInitializedPostgresSchema(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

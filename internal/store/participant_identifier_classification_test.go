@@ -33,6 +33,7 @@ func assertParticipantIdentifierClassification(
 }
 
 func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -91,6 +92,7 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 }
 
 func TestParticipantIdentifierServiceScopeV2RepairsAlreadyMigratedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store

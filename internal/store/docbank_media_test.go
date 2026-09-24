@@ -104,6 +104,7 @@ func liveMessageIDs(t *testing.T, st *store.Store) []string {
 }
 
 func TestBeeperMediaOperationReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -235,6 +236,7 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 // TestBeeperMediaReconsiderBlocked reopens remote blocks at daemon start while
 // local source gaps and revoked rows stay put.
 func TestBeeperMediaReconsiderBlocked(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -281,6 +283,7 @@ func TestBeeperMediaReconsiderBlocked(t *testing.T) {
 // TestBeeperMediaUnsupportedDelivery retires a transcript delivery once no
 // occurrence can supply its audio, and reopens it for a new source revision.
 func TestBeeperMediaUnsupportedDelivery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -343,6 +346,7 @@ func TestBeeperMediaUnsupportedDelivery(t *testing.T) {
 }
 
 func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -393,6 +397,7 @@ func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
 }
 
 func TestBeeperMediaRevocationLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -537,6 +542,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 }
 
 func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
+	t.Parallel()
 	requireOuter := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st, err := store.Open(path)
@@ -570,6 +576,7 @@ func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
 }
 
 func TestBeeperMediaLiveMappings(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -618,6 +625,7 @@ func TestBeeperMediaLiveMappings(t *testing.T) {
 }
 
 func TestBeeperMediaDiscovery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
@@ -698,6 +706,7 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 }
 
 func TestBeeperMediaSchemaReopen(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")

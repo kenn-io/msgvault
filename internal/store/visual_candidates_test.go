@@ -12,6 +12,7 @@ import (
 )
 
 func TestVisualCandidateCatalogUsesMessageScopedOwners(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -40,6 +41,7 @@ func TestVisualCandidateCatalogUsesMessageScopedOwners(t *testing.T) {
 }
 
 func TestVisualCandidateCatalogFailsClosedAndRecoversTrustedCASHash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -69,6 +71,7 @@ func TestVisualCandidateCatalogFailsClosedAndRecoversTrustedCASHash(t *testing.T
 }
 
 func TestVisualCandidateCatalogPagesWholeMessagesAndAppliesScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -102,6 +105,7 @@ func TestVisualCandidateCatalogPagesWholeMessagesAndAppliesScope(t *testing.T) {
 }
 
 func TestVisualCandidateCatalogReflectsMovesRolesReplacementAndDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	first := f.CreateMessage("visual-lifecycle-first")
@@ -144,6 +148,7 @@ func TestVisualCandidateCatalogReflectsMovesRolesReplacementAndDeletion(t *testi
 }
 
 func TestVisualMessageContextUsesDirectBodyFallbackAndLivePredicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

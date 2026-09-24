@@ -8,6 +8,7 @@ import (
 )
 
 func TestPersonSweepBriefEligibilityReportsEnrollmentAndBoundary(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefFixture(t, "sweep-eligibility")

@@ -52,6 +52,7 @@ func newEmbeddingJournalFixture(t *testing.T) embeddingJournalFixture {
 }
 
 func TestEmbeddingChangeJournal_DisabledUntilContextualUse(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -149,6 +150,7 @@ func requireJournalTypes(t *testing.T, change store.EmbeddingChange, oldType, ne
 }
 
 func TestEmbeddingChangeJournal_ContextualMessageInsert(t *testing.T) {
+	t.Parallel()
 	for _, messageType := range []string{"beeper", "meeting_transcript"} {
 		t.Run(messageType, func(t *testing.T) {
 			assert := assert.New(t)
@@ -183,6 +185,7 @@ func TestEmbeddingChangeJournal_ContextualMessageInsert(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_ContextualSoftDeleteAndRestoreClearInactiveScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
 	sentAt := time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC)
@@ -213,6 +216,7 @@ func TestEmbeddingChangeJournal_ContextualSoftDeleteAndRestoreClearInactiveScope
 }
 
 func TestEmbeddingChangeJournal_CoalescesSameScopeMessagePersistence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -234,6 +238,7 @@ func TestEmbeddingChangeJournal_CoalescesSameScopeMessagePersistence(t *testing.
 }
 
 func TestEmbeddingChangeJournal_PrunesOnlyConsumedPrefix(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -258,6 +263,7 @@ func TestEmbeddingChangeJournal_PrunesOnlyConsumedPrefix(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_BodylessOrdinaryLifecycle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -308,6 +314,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryLifecycle(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_NewBodylessContextualMessage(t *testing.T) {
+	t.Parallel()
 	for _, messageType := range []string{"beeper", "meeting_transcript"} {
 		t.Run(messageType, func(t *testing.T) {
 			assert := assert.New(t)
@@ -338,6 +345,7 @@ func TestEmbeddingChangeJournal_NewBodylessContextualMessage(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_EmbedGenResetJournalsBodylessOrdinary(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -361,6 +369,7 @@ func TestEmbeddingChangeJournal_EmbedGenResetJournalsBodylessOrdinary(t *testing
 }
 
 func TestEmbeddingChangeJournal_BodylessOrdinaryUpsertRollsBackWithJournalFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -398,6 +407,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryUpsertRollsBackWithJournalFailur
 }
 
 func TestEmbeddingChangeJournal_MessageLookupIndexRestoredByInitSchema(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -420,6 +430,7 @@ func TestEmbeddingChangeJournal_MessageLookupIndexRestoredByInitSchema(t *testin
 }
 
 func TestEmbeddingChangeJournal_UnchangedMembershipSnapshotIsNoOp(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -436,6 +447,7 @@ func TestEmbeddingChangeJournal_UnchangedMembershipSnapshotIsNoOp(t *testing.T) 
 }
 
 func TestEmbeddingChangeJournal_MembershipSnapshotEmitsOneConversationEvent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -456,6 +468,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotEmitsOneConversationEvent(t *t
 }
 
 func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -530,6 +543,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 }
 
 func TestEmbeddingChangeJournal_MembershipSnapshotBoundsSQLParameters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -571,6 +585,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotBoundsSQLParameters(t *testing
 }
 
 func TestEmbeddingChangeJournal_MessageTypeTransitionsPreserveOldAndNewKind(t *testing.T) {
+	t.Parallel()
 	transitions := []struct {
 		name    string
 		oldType string
@@ -603,6 +618,7 @@ func TestEmbeddingChangeJournal_MessageTypeTransitionsPreserveOldAndNewKind(t *t
 }
 
 func TestEmbeddingChangeJournal_BodylessOrdinaryTransitionToContextualPreservesBothScopes(t *testing.T) {
+	t.Parallel()
 	for _, newType := range []string{"beeper", "meeting_transcript"} {
 		t.Run(newType, func(t *testing.T) {
 			assert := assert.New(t)
@@ -655,6 +671,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryTransitionToContextualPreservesB
 }
 
 func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T) {
+	t.Parallel()
 	sentAt := time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC)
 	movedAt := sentAt.Add(25 * time.Hour)
 	tests := []struct {
@@ -770,6 +787,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 }
 
 func TestEmbeddingChangeJournal_FallbackTimestampMutationsKeepCanonicalScope(t *testing.T) {
+	t.Parallel()
 	oldTime := time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC)
 	newTime := oldTime.Add(25 * time.Hour)
 	tests := []struct {
@@ -819,6 +837,7 @@ func TestEmbeddingChangeJournal_FallbackTimestampMutationsKeepCanonicalScope(t *
 }
 
 func TestEmbeddingChangeJournal_MessageBodyMutations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		seed  bool
@@ -901,6 +920,7 @@ func TestEmbeddingChangeJournal_MessageBodyMutations(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		seed          func(t *testing.T, f embeddingJournalFixture)
@@ -1027,6 +1047,7 @@ func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_ParticipantDisplayNameIncludesSenderWithoutMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -1053,6 +1074,7 @@ func TestEmbeddingChangeJournal_ParticipantDisplayNameIncludesSenderWithoutMembe
 }
 
 func TestEmbeddingChangeJournal_ParticipantEffectiveDisplayFallbacks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		seed       string
@@ -1108,6 +1130,7 @@ func TestEmbeddingChangeJournal_ParticipantEffectiveDisplayFallbacks(t *testing.
 }
 
 func TestEmbeddingChangeJournal_NoOpConversationTitleDoesNotJournal(t *testing.T) {
+	t.Parallel()
 	f := newEmbeddingJournalFixture(t)
 	messageID := f.insertMessage(t, "no-op-title", "beeper", f.oldConversationID,
 		time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC))
@@ -1123,6 +1146,7 @@ func TestEmbeddingChangeJournal_NoOpConversationTitleDoesNotJournal(t *testing.T
 }
 
 func TestEmbeddingChangeJournal_ContextualSubjectAndSnippetDoNotJournal(t *testing.T) {
+	t.Parallel()
 	for _, messageType := range []string{"beeper", "meeting_transcript"} {
 		for _, field := range []string{"subject", "snippet"} {
 			t.Run(messageType+"/"+field, func(t *testing.T) {
@@ -1148,6 +1172,7 @@ func TestEmbeddingChangeJournal_ContextualSubjectAndSnippetDoNotJournal(t *testi
 }
 
 func TestEmbeddingChangeJournal_OrdinaryEmbeddingContentMutations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		seedBody bool
@@ -1208,6 +1233,7 @@ func TestEmbeddingChangeJournal_OrdinaryEmbeddingContentMutations(t *testing.T) 
 }
 
 func TestEmbeddingChangeJournal_EmailOnlyMetadataDoesNotJournal(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -1235,6 +1261,7 @@ func TestEmbeddingChangeJournal_EmailOnlyMetadataDoesNotJournal(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_RollbackRestoresClockAndEvent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -1264,6 +1291,7 @@ func TestEmbeddingChangeJournal_RollbackRestoresClockAndEvent(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_InitSchemaIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
 	require.NoError(f.store.InitSchema())
@@ -1282,6 +1310,7 @@ func TestEmbeddingChangeJournal_InitSchemaIsIdempotent(t *testing.T) {
 }
 
 func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
 	_, err := f.store.DB().Exec(f.store.Rebind(
@@ -1338,7 +1367,7 @@ func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *test
 		sql.NullString{String: "beeper", Valid: true})
 }
 
-func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.T) {
+func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.T) { //nolint:paralleltest // accepts any matching advisory lock wait across the whole PostgreSQL database in pg_locks
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
@@ -1408,6 +1437,7 @@ func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.
 }
 
 func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
@@ -1479,6 +1509,7 @@ func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T)
 }
 
 func TestEmbeddingChangeJournal_PostgresMutationLocksClockBeforeSourceRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
 	if !f.store.IsPostgreSQL() {
@@ -1543,6 +1574,7 @@ func TestEmbeddingChangeJournal_PostgresMutationLocksClockBeforeSourceRow(t *tes
 }
 
 func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
 	if !f.store.IsPostgreSQL() {
@@ -1602,6 +1634,7 @@ func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot
 }
 
 func TestEmbeddingChangeJournal_ScanPagesInSequenceOrder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)

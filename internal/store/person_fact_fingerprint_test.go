@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonFactInvalidClaimSubmittedNumberReplayIsLossless(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 

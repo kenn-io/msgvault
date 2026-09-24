@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonSweepWorkerForcedBriefWithoutArchiveHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "brief-empty-archive")

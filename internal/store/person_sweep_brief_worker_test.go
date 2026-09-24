@@ -260,6 +260,7 @@ func newBriefWorkerEndToEndFixture(
 // worker-to-store seam: a brief the real ParseBrief and RenderBrief produced,
 // over a real archive window, committed by the real ApplyPersonSweep.
 func TestPersonSweepWorkerStoresARealBriefThroughApplyPersonSweep(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "brief-e2e")
@@ -348,6 +349,7 @@ func TestPersonSweepWorkerStoresARealBriefThroughApplyPersonSweep(t *testing.T) 
 // brief call is the only provider work in the attempt. The generation must
 // still carry the provider identity rather than the host-only one.
 func TestPersonSweepWorkerStoresABriefOnAStatusOnlyAttemptThroughApplyPersonSweep(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "brief-e2e-status")
@@ -408,6 +410,7 @@ func TestPersonSweepWorkerStoresABriefOnAStatusOnlyAttemptThroughApplyPersonSwee
 // A manual force for a person who is not enrolled is refused before any work is
 // published and before any provider call is paid for.
 func TestPersonSweepWorkerRefusesAForcedBriefForAnUnenrolledPersonEndToEnd(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "brief-e2e-unenrolled")
@@ -464,6 +467,7 @@ func sweepCursorsToHighWater(
 }
 
 func TestPersonSweepWorkerSchedulesBriefForCaughtUpPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-caught-up")
@@ -497,6 +501,7 @@ func TestPersonSweepWorkerSchedulesBriefForCaughtUpPerson(t *testing.T) {
 }
 
 func TestPersonSweepWorkerSchedulesBriefWhenIntervalElapsesAfterExtraction(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-interval")
@@ -533,6 +538,7 @@ func TestPersonSweepWorkerSchedulesBriefWhenIntervalElapsesAfterExtraction(t *te
 }
 
 func TestPersonSweepWorkerSchedulesRejectedBriefWithoutNewActivity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-rejected")
@@ -561,6 +567,7 @@ func TestPersonSweepWorkerSchedulesRejectedBriefWithoutNewActivity(t *testing.T)
 }
 
 func TestPersonSweepWorkerReconsidersBriefDeferredByBudget(t *testing.T) {
+	t.Parallel()
 	for _, retry := range []string{"due", "forced"} {
 		t.Run(retry, func(t *testing.T) {
 			assert := assert.New(t)
@@ -628,6 +635,7 @@ func TestPersonSweepWorkerReconsidersBriefDeferredByBudget(t *testing.T) {
 }
 
 func TestPersonSweepWorkerDoesNotScheduleCaughtUpBriefWithoutEvidence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-no-evidence")
@@ -647,6 +655,7 @@ func TestPersonSweepWorkerDoesNotScheduleCaughtUpBriefWithoutEvidence(t *testing
 }
 
 func TestPersonSweepWorkerSchedulesBriefBeyondFirstTrackedPage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-page")
@@ -689,6 +698,7 @@ func TestPersonSweepWorkerSchedulesBriefBeyondFirstTrackedPage(t *testing.T) {
 }
 
 func TestPersonSweepWorkerBriefAdmissionFailureKeepsOtherExtractionWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-admission")
@@ -720,6 +730,7 @@ func TestPersonSweepWorkerBriefAdmissionFailureKeepsOtherExtractionWork(t *testi
 }
 
 func TestPersonSweepWorkerDiscardsObsoleteBriefRetry(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unenrolled", "disabled"} {
 		for _, newActivity := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/new_activity=%t", mode, newActivity), func(t *testing.T) {
@@ -779,6 +790,7 @@ func TestPersonSweepWorkerDiscardsObsoleteBriefRetry(t *testing.T) {
 }
 
 func TestCompleteIdlePersonSweepKeepsNewWorkAndRequiresCurrentLease(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"idle", "new activity", "stale fence"} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)

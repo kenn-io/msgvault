@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.T) {
+func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -74,6 +74,7 @@ func TestDocumentExtractionPublicationRoundTripsNormalizedV3Identity(t *testing.
 }
 
 func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -134,6 +135,7 @@ func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T
 }
 
 func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -159,6 +161,7 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 }
 
 func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -207,6 +210,7 @@ func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(
 }
 
 func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -253,6 +257,7 @@ func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T)
 }
 
 func TestDocumentExtractionPublicationAcceptsIdenticalCSVReceipt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -291,6 +296,7 @@ func TestDocumentExtractionPublicationAcceptsIdenticalCSVReceipt(t *testing.T) {
 }
 
 func TestFailDocumentExtractionPersistsCSVReceipt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -330,6 +336,7 @@ func TestFailDocumentExtractionPersistsCSVReceipt(t *testing.T) {
 }
 
 func TestDocumentExtractionPublicationRequiresNormalizedIdentity(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -355,6 +362,7 @@ func TestDocumentExtractionPublicationRequiresNormalizedIdentity(t *testing.T) {
 }
 
 func TestDocumentExtractionClaimRequiresAuthoritativeRoleProvenance(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		update string
@@ -388,6 +396,7 @@ func TestDocumentExtractionClaimRequiresAuthoritativeRoleProvenance(t *testing.T
 }
 
 func TestDocumentExtractionPublicationRechecksClaimedOccurrenceScope(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		update string
@@ -437,6 +446,7 @@ func TestDocumentExtractionPublicationRechecksClaimedOccurrenceScope(t *testing.
 }
 
 func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -458,6 +468,7 @@ func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.
 }
 
 func TestDocumentPublicationQueuesPersonSweep(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -562,6 +573,7 @@ func TestDocumentPublicationQueuesPersonSweep(t *testing.T) {
 }
 
 func TestDocumentOccurrenceAfterCursorCapturePublishesPersonSweepChange(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -617,6 +629,7 @@ func TestDocumentOccurrenceAfterCursorCapturePublishesPersonSweepChange(t *testi
 }
 
 func TestDocumentOccurrencePublishesExactPersonSweepLifecycle(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -692,6 +705,7 @@ func TestDocumentOccurrencePublishesExactPersonSweepLifecycle(t *testing.T) {
 }
 
 func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -751,6 +765,7 @@ func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone
 }
 
 func TestGarbageCollectDocumentDerivativesKeepsTerminalSuppressionUntilFinalOccurrenceIsGone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -806,6 +821,7 @@ func TestGarbageCollectDocumentDerivativesKeepsTerminalSuppressionUntilFinalOccu
 }
 
 func TestPurgeDocumentDerivedByHashKeepsOccurrenceReadyForRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -837,6 +853,7 @@ func TestPurgeDocumentDerivedByHashKeepsOccurrenceReadyForRebuild(t *testing.T) 
 }
 
 func TestPurgeDocumentDerivedByHashInvalidatesTerminalSuppression(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

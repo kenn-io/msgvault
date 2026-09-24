@@ -20,6 +20,7 @@ import (
 // This mirrors the FTS path's tokenless handling. It forces the no-FTS branch
 // directly, so it runs regardless of the fts5 build tag.
 func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "noftstokenless@example.com")

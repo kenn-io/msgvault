@@ -15,6 +15,7 @@ import (
 // CLI's 30-minute plan-request timeout before content-hash comparison
 // started.
 func TestGetDuplicateGroupMessages_UsesRFC822Index(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -85,6 +86,7 @@ func seedDuplicateDiscoveryRows(t *testing.T, s *Store) {
 // selection would make these plans regress. The test also covers fresh and
 // upgraded schema creation and verifies scope and malformed-ID semantics.
 func TestFindDuplicatesByRFC822ID_UsesCanonicalExpressionIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

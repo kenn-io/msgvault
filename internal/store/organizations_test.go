@@ -14,6 +14,7 @@ import (
 )
 
 func TestCreateGetAndListOrganizations(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -64,6 +65,7 @@ func TestCreateGetAndListOrganizations(t *testing.T) {
 }
 
 func TestCreateOrganizationRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
 
@@ -100,6 +102,7 @@ func TestCreateOrganizationRejectsInvalidInput(t *testing.T) {
 }
 
 func TestCreateOrganizationDefaultsKindToOther(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -111,6 +114,7 @@ func TestCreateOrganizationDefaultsKindToOther(t *testing.T) {
 }
 
 func TestUpdateOrganizationBumpsRevisionAndRejectsStaleWrites(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -139,6 +143,7 @@ func TestUpdateOrganizationBumpsRevisionAndRejectsStaleWrites(t *testing.T) {
 }
 
 func TestRetireAndUnretireOrganizationHidesItFromDefaultListing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -174,6 +179,7 @@ func TestRetireAndUnretireOrganizationHidesItFromDefaultListing(t *testing.T) {
 }
 
 func TestDeleteOrganizationSucceedsOnlyWithoutEmploymentHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -194,6 +200,7 @@ func TestDeleteOrganizationSucceedsOnlyWithoutEmploymentHistory(t *testing.T) {
 }
 
 func TestNormalizeOrganizationNameAndDomain(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	nameTests := []struct{ raw, want string }{
 		{raw: "Example Org", want: "example org"},
@@ -218,6 +225,7 @@ func TestNormalizeOrganizationNameAndDomain(t *testing.T) {
 }
 
 func TestNormalizeDomainMatchesStoreNormalization(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		"Example.COM", "https://www.bücher.example/jobs", "person@BÜCHER.example",
 		"https://www.Example.com/search?q=user@other.example",
@@ -236,6 +244,7 @@ func TestNormalizeDomainMatchesStoreNormalization(t *testing.T) {
 }
 
 func TestMergeOrganizationsRejectsSelfWithoutChangingTheRoot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -259,6 +268,7 @@ func TestMergeOrganizationsRejectsSelfWithoutChangingTheRoot(t *testing.T) {
 }
 
 func TestMergedOrganizationRedirectCannotBeRemergedOrDeleted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -299,6 +309,7 @@ func TestMergedOrganizationRedirectCannotBeRemergedOrDeleted(t *testing.T) {
 }
 
 func TestMergedOrganizationRedirectRejectsRootAndProfileMutations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(context.Context, *store.Store, *store.Organization) error
@@ -362,6 +373,7 @@ func TestMergedOrganizationRedirectRejectsRootAndProfileMutations(t *testing.T) 
 }
 
 func TestOrganizationKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -378,6 +390,7 @@ func TestOrganizationKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
 }
 
 func TestOrganizationNameKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -396,6 +409,7 @@ func TestOrganizationNameKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T)
 }
 
 func TestMergeRetiresLosingProfileValuesAndAttributes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -475,7 +489,7 @@ func TestMergeRetiresLosingProfileValuesAndAttributes(t *testing.T) {
 // and asks for the organization once the replacement is parked on the person.
 // PostgreSQL's detector aborts one side; the replacement has to absorb that
 // and finish once the blocker lets go.
-func TestOrganizationReplacementRetriesEmploymentDeadlock(t *testing.T) {
+func TestOrganizationReplacementRetriesEmploymentDeadlock(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for the replacement retry regression")

@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonSweepWorkerBriefExcludesOwnerAuthoredLastContact(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "brief-outbound-last-contact")

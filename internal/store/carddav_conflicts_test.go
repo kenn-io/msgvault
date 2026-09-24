@@ -43,6 +43,7 @@ func conflictCapture(mapping *store.CardDAVResource) store.CardDAVConflictCaptur
 }
 
 func TestCardDAVConflictSafeReadModelsUseCompactHeadersAndExactBaseFence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		mutate        func(*testing.T, *store.Store, *store.CardDAVResource, *store.CardDAVConflict)
@@ -197,6 +198,7 @@ func refreshedCardDAVTombstonePlan(
 }
 
 func TestCardDAVOversizedConflictDoesNotAdvanceMapping(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -217,6 +219,7 @@ func TestCardDAVOversizedConflictDoesNotAdvanceMapping(t *testing.T) {
 }
 
 func TestCardDAVConflictRefreshKeepsOneUnresolvedRowPerMapping(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -241,6 +244,7 @@ func TestCardDAVConflictRefreshKeepsOneUnresolvedRowPerMapping(t *testing.T) {
 }
 
 func TestCardDAVKeepRemoteResolutionAppliesRetainedSnapshotAndAuditsChoice(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -270,6 +274,7 @@ func TestCardDAVKeepRemoteResolutionAppliesRetainedSnapshotAndAuditsChoice(t *te
 }
 
 func TestCardDAVKeepLocalUsesCapableSubscribedSourceBook(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -299,6 +304,7 @@ func TestCardDAVKeepLocalUsesCapableSubscribedSourceBook(t *testing.T) {
 }
 
 func TestCardDAVKeepRemoteRevalidatesAfterUnlockedConflictIdentityRead(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -352,6 +358,7 @@ func TestCardDAVKeepRemoteRevalidatesAfterUnlockedConflictIdentityRead(t *testin
 }
 
 func TestCardDAVTombstonePreparationRevalidatesAfterUnlockedConflictIdentityRead(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name         string
 		mappedPerson bool
@@ -406,7 +413,7 @@ func TestCardDAVTombstonePreparationRevalidatesAfterUnlockedConflictIdentityRead
 	}
 }
 
-func TestCardDAVTombstonePreparationAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
+func TestCardDAVTombstonePreparationAndPullUseCanonicalPostgresLockOrder(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -466,7 +473,7 @@ func TestCardDAVTombstonePreparationAndPullUseCanonicalPostgresLockOrder(t *test
 	assert.Equal(after.MappingRevision, afterMapping.MappingRevision)
 }
 
-func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
+func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -550,6 +557,7 @@ func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
 }
 
 func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		subscribed bool
@@ -623,6 +631,7 @@ func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {
 }
 
 func TestCardDAVResolvedConflictSweepKeepsThirtyDayAuditWindow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

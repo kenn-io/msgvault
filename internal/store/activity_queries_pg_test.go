@@ -17,7 +17,7 @@ import (
 
 var activityQueryPGSchemaSequence atomic.Uint64
 
-func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T) {
+func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T) { //nolint:paralleltest // searches pg_stat_activity by SQL text across the whole PostgreSQL database
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") &&
 		!strings.HasPrefix(dbURL, "postgresql://") {

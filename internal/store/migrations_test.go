@@ -14,6 +14,7 @@ import (
 )
 
 func TestIsMigrationApplied_NotApplied(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	applied, err := f.Store.IsMigrationApplied("test_migration")
@@ -22,6 +23,7 @@ func TestIsMigrationApplied_NotApplied(t *testing.T) {
 }
 
 func TestMarkAndCheckMigrationApplied(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	require.NoError(t, f.Store.MarkMigrationApplied("test_migration"), "MarkMigrationApplied")
@@ -32,6 +34,7 @@ func TestMarkAndCheckMigrationApplied(t *testing.T) {
 }
 
 func TestMarkMigrationApplied_Idempotent(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	for range 2 {
@@ -44,6 +47,7 @@ func TestMarkMigrationApplied_Idempotent(t *testing.T) {
 }
 
 func TestMigrationLedgerVersionLifecycle(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -81,6 +85,7 @@ func TestMigrationLedgerVersionLifecycle(t *testing.T) {
 }
 
 func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	for _, tc := range []struct {
@@ -103,6 +108,7 @@ func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
 }
 
 func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -132,6 +138,7 @@ func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
 }
 
 func TestNameOnlyLedgerWriterDoesNotRegressVersion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -147,6 +154,7 @@ func TestNameOnlyLedgerWriterDoesNotRegressVersion(t *testing.T) {
 }
 
 func TestArchiveIdentityMigrationIsRecorded(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	applied, err := f.Store.IsMigrationApplied("archive_identity_v1")
@@ -155,6 +163,7 @@ func TestArchiveIdentityMigrationIsRecorded(t *testing.T) {
 }
 
 func TestArchiveIdentityExistsInConfiguredDialect(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	uid, err := f.Store.ArchiveUID()
 	require.NoError(t, err)
@@ -165,6 +174,7 @@ func TestArchiveIdentityExistsInConfiguredDialect(t *testing.T) {
 // messages.list_id existed, then proves the regular schema upgrade restores
 // the column for the production upsert path.
 func TestInitSchemaMigratesListIDColumn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "legacy-list-id.db"))
@@ -238,6 +248,7 @@ CREATE TRIGGER trg_messages_content_changed_at
     END`
 
 func TestInitSchemaUpgradesV9WatermarkTriggersForListID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	messageID := seedMessage(t, st, 1)
@@ -268,6 +279,7 @@ func TestInitSchemaUpgradesV9WatermarkTriggersForListID(t *testing.T) {
 // omits messages.list_id: the normal email upsert must work after InitSchema
 // restores the removed legacy column.
 func TestPostgresInitSchemaMigratesListIDColumn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

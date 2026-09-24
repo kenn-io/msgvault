@@ -13,6 +13,7 @@ import (
 )
 
 func TestEmailReplyParentEligibility(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		parentID string
@@ -68,6 +69,7 @@ func TestEmailReplyParentEligibility(t *testing.T) {
 }
 
 func TestEmailHeaderRepairPreservesMetadataAndRevision(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -93,6 +95,7 @@ func TestEmailHeaderRepairPreservesMetadataAndRevision(t *testing.T) {
 }
 
 func TestEmailRepliesSurviveDeduplication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -125,6 +128,7 @@ func TestEmailRepliesSurviveDeduplication(t *testing.T) {
 }
 
 func TestEmailReplyResolutionResumesCommittedPages(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -154,6 +158,7 @@ func TestEmailReplyResolutionResumesCommittedPages(t *testing.T) {
 }
 
 func TestEmailHeaderRepairRejectsWrongSourceAndCancellation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -169,6 +174,7 @@ func TestEmailHeaderRepairRejectsWrongSourceAndCancellation(t *testing.T) {
 }
 
 func TestEmailHeaderRepairRollsBackWhenRevisionWriteFails(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -193,6 +199,7 @@ func TestEmailHeaderRepairRollsBackWhenRevisionWriteFails(t *testing.T) {
 }
 
 func TestEmailHeadersFenceSupersededSync(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)

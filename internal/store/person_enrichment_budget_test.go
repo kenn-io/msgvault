@@ -90,6 +90,7 @@ func hashForTest(value byte) string {
 }
 
 func TestPersonRemovalReconcilesEnrichmentReservation(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"delete", "merge"} {
 		t.Run(mutation, func(t *testing.T) {
 			requirements := require.New(t)
@@ -134,12 +135,14 @@ func TestPersonRemovalReconcilesEnrichmentReservation(t *testing.T) {
 }
 
 func TestPersonEnrichmentRequestBudgetContention(t *testing.T) {
+	t.Parallel()
 	profile := enrichmentBudgetProfile(t, 1, 0, 0, 0)
 	st, claims := newBudgetClaims(t, profile)
 	assertExactlyOneBudgetReservation(t, st, claims, false)
 }
 
 func TestPersonEnrichmentGuaranteedCostBudgetContention(t *testing.T) {
+	t.Parallel()
 	profile := enrichmentBudgetProfile(t, 10, 1000, 1000, 1000)
 	st, claims := newBudgetClaims(t, profile)
 	for i := range claims {
@@ -150,6 +153,7 @@ func TestPersonEnrichmentGuaranteedCostBudgetContention(t *testing.T) {
 }
 
 func TestPersonEnrichmentGuaranteedCostChecksOnlyConfiguredCaps(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                         string
 		personCost, runCost, dayCost int64
@@ -187,6 +191,7 @@ func TestPersonEnrichmentGuaranteedCostChecksOnlyConfiguredCaps(t *testing.T) {
 }
 
 func TestPersonEnrichmentPersonDayBudgetContentionUsesProductionReservation(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	fixture := storetest.New(t)
@@ -296,6 +301,7 @@ func installTwoPartyPersonEnrichmentBudgetBarrier(st *store.Store) {
 }
 
 func TestPersonEnrichmentBudgetRejectsUnsafeGuaranteesAndOnlyReconcilesDown(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	profile := enrichmentBudgetProfile(t, 10, 1000, 1000, 1000)
@@ -327,6 +333,7 @@ func TestPersonEnrichmentBudgetRejectsUnsafeGuaranteesAndOnlyReconcilesDown(t *t
 }
 
 func TestPersonEnrichmentBudgetDisablesStartsWhenActualExceedsGuarantee(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	profile := enrichmentBudgetProfile(t, 10, 1000, 1000, 1000)
@@ -355,6 +362,7 @@ func TestPersonEnrichmentBudgetDisablesStartsWhenActualExceedsGuarantee(t *testi
 }
 
 func TestPersonEnrichmentAttemptRejectsRequestHashCollisionAcrossPeople(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	profile := enrichmentBudgetProfile(t, 10, 0, 0, 0)
 	st, claims := newBudgetClaims(t, profile)

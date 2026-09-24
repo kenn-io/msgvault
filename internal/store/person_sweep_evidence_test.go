@@ -40,6 +40,7 @@ func loadSweepWindow(t *testing.T, f personSweepJournalFixture, lane peoplesweep
 }
 
 func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
@@ -66,6 +67,7 @@ func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
 }
 
 func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
 	aliasID, err := f.store.EnsureParticipant("scope-alias@example.test", "Scope Alias", "example.test")
@@ -102,6 +104,7 @@ func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {
 }
 
 func TestListPersonSweepHistoricalCandidatesFiltersBeforeLimit(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	eligible := f.insertMessage(t, "eligible-meeting", "meeting_transcript", f.aliceID,
 		time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC))
@@ -123,6 +126,7 @@ func TestListPersonSweepHistoricalCandidatesFiltersBeforeLimit(t *testing.T) {
 // the limit ahead of the person's own older messages, and the rows it returns
 // are exactly the ones hydration marks with the person as its own subject.
 func TestListPersonSweepHistoricalCandidatesAuthoredByPersonSkipsOwnerMessages(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -189,6 +193,7 @@ func TestListPersonSweepHistoricalCandidatesAuthoredByPersonSkipsOwnerMessages(t
 }
 
 func TestLoadPersonSweepWindowPreservesFromToAndGroupProvenance(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -223,6 +228,7 @@ func TestLoadPersonSweepWindowPreservesFromToAndGroupProvenance(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowIncludesLinkedAliases(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -240,6 +246,7 @@ func TestLoadPersonSweepWindowIncludesLinkedAliases(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowReturnsDeletionTombstone(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -265,6 +272,7 @@ func TestLoadPersonSweepWindowReturnsDeletionTombstone(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowIncludesLateOldMessage(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	after := latestPersonSweepSequence(t, f.store)
 	id := f.insertMessage(t, "late-old", "email", f.aliceID, time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -273,6 +281,7 @@ func TestLoadPersonSweepWindowIncludesLateOldMessage(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowSeparatesMeetingAndConversationLanes(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	conversationID := f.insertMessage(t, "chat", "email", f.aliceID, time.Now().UTC())
 	meetingID := f.insertMessage(t, "meeting", "meeting_transcript", f.aliceID, time.Now().UTC())
@@ -284,6 +293,7 @@ func TestLoadPersonSweepWindowSeparatesMeetingAndConversationLanes(t *testing.T)
 }
 
 func TestLoadPersonSweepWindowBackstopCapturesFreshUpperKey(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	firstID := f.insertMessage(t, "backstop-first", "email", f.aliceID, time.Now().UTC())
@@ -306,6 +316,7 @@ func TestLoadPersonSweepWindowBackstopCapturesFreshUpperKey(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowBackstopContinuesCapturedRange(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -339,6 +350,7 @@ func TestLoadPersonSweepWindowBackstopContinuesCapturedRange(t *testing.T) {
 }
 
 func TestPersonSweepEvidenceRejectsWrongCanonicalSubject(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -361,6 +373,7 @@ func TestPersonSweepEvidenceRejectsWrongCanonicalSubject(t *testing.T) {
 }
 
 func TestPersonSweepEvidenceRejectsEditBetweenPacketAndPrepare(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -377,6 +390,7 @@ func TestPersonSweepEvidenceRejectsEditBetweenPacketAndPrepare(t *testing.T) {
 }
 
 func TestPersonSweepEmailEvidenceDoesNotTrustUnauthenticatedFromHeader(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
@@ -393,6 +407,7 @@ func TestPersonSweepEmailEvidenceDoesNotTrustUnauthenticatedFromHeader(t *testin
 }
 
 func TestSearchPersonSweepMessagesPreservesNewestFirstCandidateRanking(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	older := f.insertMessage(t, "older", "email", f.aliceID,
 		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -411,6 +426,7 @@ func TestSearchPersonSweepMessagesPreservesNewestFirstCandidateRanking(t *testin
 }
 
 func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
+	t.Parallel()
 	for _, sourceType := range []string{"slack", "slackdump"} {
 		t.Run(sourceType, func(t *testing.T) {
 			f := newPersonSweepJournalFixture(t, true, false)
@@ -427,6 +443,7 @@ func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
 }
 
 func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -479,6 +496,7 @@ func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
 }
 
 func TestPersonSweepEvidenceStatusChangesCoalesceToTerminalEffect(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	id := f.insertMessage(t, "status", "email", f.aliceID, time.Now().UTC())
 	addSweepBody(t, f, id, "Status evidence text")
@@ -511,6 +529,7 @@ func TestPersonSweepEvidenceStatusChangesCoalesceToTerminalEffect(t *testing.T) 
 }
 
 func TestPersonSweepReimportDoesNotReactivateStaleEvidenceVersion(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	id := f.insertMessage(t, "reimport", "email", f.aliceID, time.Now().UTC())
@@ -536,6 +555,7 @@ func TestPersonSweepReimportDoesNotReactivateStaleEvidenceVersion(t *testing.T) 
 }
 
 func TestLoadPersonSweepWindowReturnsCanonicalDocumentTombstone(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f, personID := newPersonSweepDocumentFixture(t)
@@ -590,6 +610,7 @@ func TestLoadPersonSweepWindowReturnsCanonicalDocumentTombstone(t *testing.T) {
 }
 
 func TestDocumentOccurrenceRemovalDeactivatesStoredEvidence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		update       string
@@ -681,6 +702,7 @@ func TestDocumentOccurrenceRemovalDeactivatesStoredEvidence(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowPagesOneDocumentAcrossChunkContinuation(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f, personID := newPersonSweepDocumentFixture(t)
@@ -753,6 +775,7 @@ func TestLoadPersonSweepWindowPagesOneDocumentAcrossChunkContinuation(t *testing
 }
 
 func TestPersonSweepEvidenceAppliesPolicyDateAndSourceBounds(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -779,6 +802,7 @@ func TestPersonSweepEvidenceAppliesPolicyDateAndSourceBounds(t *testing.T) {
 }
 
 func TestPersonSweepEvidenceAlignsDocumentChunkSpans(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f, personID := newPersonSweepDocumentFixture(t)
@@ -809,6 +833,7 @@ func TestPersonSweepEvidenceAlignsDocumentChunkSpans(t *testing.T) {
 }
 
 func TestSearchPersonSweepDocumentsPreservesCoordinates(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f, personID := newPersonSweepDocumentFixture(t)
@@ -827,6 +852,7 @@ func TestSearchPersonSweepDocumentsPreservesCoordinates(t *testing.T) {
 }
 
 func TestPersonSweepEvidenceNonTextAttachmentsFailClosed(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	ref, err := peoplesweep.EncodePersonSweepEvidenceRef(peoplesweep.EvidenceRef{
 		SourceLane: peoplesweep.SourceAttachmentOCR, SourceID: f.sourceID,
@@ -840,6 +866,7 @@ func TestPersonSweepEvidenceNonTextAttachmentsFailClosed(t *testing.T) {
 }
 
 func TestLoadPersonSweepWindowNonTextAttachmentsFailClosed(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 
 	_, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
@@ -947,6 +974,7 @@ func countSweepMessage(items []peoplesweep.EvidenceItem, id int64) int {
 // saw, here one archived before the person was tracked, is in as well, because
 // it can never trigger a regeneration and hiding it would lose old history.
 func TestPersonSweepRetrievalHonorsTheJournalSequenceBound(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, false, false)

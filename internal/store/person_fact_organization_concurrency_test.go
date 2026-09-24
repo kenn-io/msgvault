@@ -20,7 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func TestPersonFactEmploymentCrossedOrganizationChainsSerialize(t *testing.T) {
+func TestPersonFactEmploymentCrossedOrganizationChainsSerialize(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	postgres := IsPostgresURL(dbURL)
 	var gate *personFactOrganizationCrossedLockGate
@@ -107,7 +107,7 @@ func TestPersonFactEmploymentCrossedOrganizationChainsSerialize(t *testing.T) {
 	assertions.Equal(int64(4), personFactProjectionRowCount(t, st, "person_fact_generations"))
 }
 
-func TestPersonFactEmploymentIncomingAndHistoricalOrganizationsShareLockOrder(t *testing.T) {
+func TestPersonFactEmploymentIncomingAndHistoricalOrganizationsShareLockOrder(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	postgres := IsPostgresURL(dbURL)
 	var gate *personFactOrganizationCrossedLockGate
@@ -165,7 +165,7 @@ func TestPersonFactEmploymentIncomingAndHistoricalOrganizationsShareLockOrder(t 
 	assertions.Equal(int64(4), personFactProjectionRowCount(t, st, "employments"))
 }
 
-func TestPersonFactEmploymentNonIDCandidateSnapshotPrecedesOrganizationMutation(t *testing.T) {
+func TestPersonFactEmploymentNonIDCandidateSnapshotPrecedesOrganizationMutation(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL table locks are required for the candidate snapshot race")
@@ -280,7 +280,7 @@ func TestPersonFactEmploymentNonIDCandidateSnapshotPrecedesOrganizationMutation(
 	}
 }
 
-func TestPersonFactEmploymentOrganizationTableLockWaitsForMergeMutation(t *testing.T) {
+func TestPersonFactEmploymentOrganizationTableLockWaitsForMergeMutation(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL lock queues are required for the table-lock upgrade race")

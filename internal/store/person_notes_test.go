@@ -12,6 +12,7 @@ import (
 )
 
 func TestAppendPersonNoteCreatesAndHistorizesOrdinalZero(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -46,6 +47,7 @@ func TestAppendPersonNoteCreatesAndHistorizesOrdinalZero(t *testing.T) {
 }
 
 func TestAppendPersonNotePreservesFutureScheduledValueOrdering(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -78,6 +80,7 @@ func TestAppendPersonNotePreservesFutureScheduledValueOrdering(t *testing.T) {
 }
 
 func TestAppendPersonNoteResolvesSeedByUniversalIDAfterSlugCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -112,6 +115,7 @@ func TestAppendPersonNoteResolvesSeedByUniversalIDAfterSlugCollision(t *testing.
 }
 
 func TestAppendPersonNoteSerializesConcurrentFragments(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -150,6 +154,7 @@ func TestAppendPersonNoteSerializesConcurrentFragments(t *testing.T) {
 }
 
 func TestAppendPersonNoteRejectsBlankAndMissingPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -171,6 +176,7 @@ func TestAppendPersonNoteRejectsBlankAndMissingPerson(t *testing.T) {
 }
 
 func TestAppendPersonNoteDryRunPreviewsWithoutWriting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

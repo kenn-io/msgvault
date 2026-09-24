@@ -13,6 +13,7 @@ import (
 )
 
 func TestManagedIMAPDraftPendingReopen(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, _, draft, _ := newReviewManagedDraft(t, "pending-reopen", 11, "original")
@@ -43,6 +44,7 @@ func TestManagedIMAPDraftPendingReopen(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRevision(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, source, draft, conversationID := newReviewManagedDraft(t, "revision", 21, "original")
@@ -119,6 +121,7 @@ func TestManagedIMAPDraftRevision(t *testing.T) {
 }
 
 func TestManagedIMAPDraftAbort(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"rejected", "cancelled", "remote_unknown", "accepted_unidentified", "created", "delete", "acknowledged", "advanced", "stale"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
@@ -170,6 +173,7 @@ func TestManagedIMAPDraftAbort(t *testing.T) {
 }
 
 func TestManagedIMAPDraftConstraints(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st, _, draft, _ := newReviewManagedDraft(t, "constraints", 31, "original")
 	update := func(query string, args ...any) error {
@@ -218,6 +222,7 @@ func TestManagedIMAPDraftConstraints(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRetention(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -260,6 +265,7 @@ func TestManagedIMAPDraftRetention(t *testing.T) {
 }
 
 func TestManagedIMAPDraftSourceCascade(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st, source, draft, _ := newReviewManagedDraft(t, "source-cascade", 51, "source")
 	requirements.NoError(st.RemoveSource(source.ID))
@@ -268,6 +274,7 @@ func TestManagedIMAPDraftSourceCascade(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRecoveryCompletionIsIdempotent(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestEscapeLike(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -66,6 +67,7 @@ func seedMessage(t *testing.T, st *Store, sourceID, convID int64, sourceMessageI
 }
 
 func TestParseSQLiteTime(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -164,6 +166,7 @@ func TestParseSQLiteTime(t *testing.T) {
 // affinity); pgx/v5 always delivers time.Time for TIMESTAMP columns.
 // The scanner must accept all of these without erroring.
 func TestNullableTimestampScan(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	tref := time.Date(2024, 6, 15, 10, 30, 45, 0, time.UTC)
@@ -207,6 +210,7 @@ func TestNullableTimestampScan(t *testing.T) {
 // timed-out request is cancelled instead of running (including batch hydration)
 // to completion on a background context.
 func TestContextAwareReadsHonorCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := openTestStore(t)
 
@@ -236,6 +240,7 @@ func TestContextAwareReadsHonorCancellation(t *testing.T) {
 }
 
 func TestGetMessageCcBcc(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)
@@ -299,6 +304,7 @@ func TestGetMessageCcBcc(t *testing.T) {
 }
 
 func TestListMessagesCcBcc(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)
@@ -358,6 +364,7 @@ func TestListMessagesCcBcc(t *testing.T) {
 // these rendered with blank From/To because the SELECT only read
 // p.email_address.
 func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)
@@ -482,6 +489,7 @@ func sourceMessageIDForTest(t *testing.T, st *Store, id int64) string {
 }
 
 func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
+	t.Parallel()
 	st := openTestStore(t)
 
 	// Create a source and conversation
@@ -550,6 +558,7 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 // is exercised here on SQLite; the cross-backend store-API paths are covered by
 // TestStoreAPI_PaginationStability_IdenticalSentAt.
 func TestSearchMessagesLikePaginationStability(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)

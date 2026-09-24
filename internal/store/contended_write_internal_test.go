@@ -18,6 +18,7 @@ import (
 // persistent busy gives up at the attempt cap, and a cancelled context ends
 // the wait instead of sleeping through the budget.
 func TestRetryContendedWriteErrRetriesTransientBusyOnly(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	s, err := Open(filepath.Join(t.TempDir(), "retry.db"))
@@ -54,7 +55,7 @@ func TestRetryContendedWriteErrRetriesTransientBusyOnly(t *testing.T) {
 		"persistent busy must stop at the attempt cap")
 }
 
-func TestRetryContendedWriteStopsWaitingWhenContextIsCancelled(t *testing.T) {
+func TestRetryContendedWriteStopsWaitingWhenContextIsCancelled(t *testing.T) { //nolint:paralleltest // expects cancellation to return inside the 256ms contendedWriteBackoffMax wall-clock window
 	assert := assert.New(t)
 	require := require.New(t)
 	s, err := Open(filepath.Join(t.TempDir(), "retry.db"))

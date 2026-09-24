@@ -16,6 +16,7 @@ import (
 )
 
 func TestPersonEnrichmentBackendParityMatrix(t *testing.T) {
+	t.Parallel()
 	t.Run("exact consent and suppression survives deletion", func(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)
@@ -153,6 +154,7 @@ func TestPersonEnrichmentBackendParityMatrix(t *testing.T) {
 }
 
 func TestPersonEnrichmentSchemaEnforcesConsentAuditState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := enrichmentTestProfile(t)
@@ -189,6 +191,7 @@ func TestPersonEnrichmentSchemaEnforcesConsentAuditState(t *testing.T) {
 }
 
 func TestPersonEnrichmentSchemaSQLiteForeignKeysAndIndexes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -233,6 +236,7 @@ func TestPersonEnrichmentSchemaSQLiteForeignKeysAndIndexes(t *testing.T) {
 }
 
 func TestPersonEnrichmentSchemaWorkAttemptPointerAndIndexes(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite PRAGMA shape is covered here; portable behavior runs on both backends")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -267,6 +271,7 @@ func TestPersonEnrichmentSchemaWorkAttemptPointerAndIndexes(t *testing.T) {
 }
 
 func TestPersonEnrichmentSchemaManualRunTargetBinding(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite PRAGMA shape is covered here; portable behavior runs on both backends")
 	st := testutil.NewSQLiteTestStore(t)
 	columns := pragmaTextColumn(t, st.DB(),
@@ -281,6 +286,7 @@ func TestPersonEnrichmentSchemaManualRunTargetBinding(t *testing.T) {
 }
 
 func TestPersonEnrichmentAttemptProviderStartedAtLegacyMigrationParity(t *testing.T) {
+	t.Parallel()
 	for name, migrations := range map[string][]store.ColumnMigration{
 		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
 		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
@@ -300,6 +306,7 @@ func TestPersonEnrichmentAttemptProviderStartedAtLegacyMigrationParity(t *testin
 }
 
 func TestPersonEnrichmentAttemptDispatchAuthorizationLegacyMigrationParity(t *testing.T) {
+	t.Parallel()
 	for name, migrations := range map[string][]store.ColumnMigration{
 		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
 		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
@@ -319,6 +326,7 @@ func TestPersonEnrichmentAttemptDispatchAuthorizationLegacyMigrationParity(t *te
 }
 
 func TestPersonEnrichmentAttemptTargetsLegacyMigrationParity(t *testing.T) {
+	t.Parallel()
 	for name, migrations := range map[string][]store.ColumnMigration{
 		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
 		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
@@ -338,6 +346,7 @@ func TestPersonEnrichmentAttemptTargetsLegacyMigrationParity(t *testing.T) {
 }
 
 func TestPersonEnrichmentFreshTriggerLegacyMigrationParity(t *testing.T) {
+	t.Parallel()
 	for name, migrations := range map[string][]store.ColumnMigration{
 		"sqlite":   (&store.SQLiteDialect{}).LegacyColumnMigrations(),
 		"postgres": (&store.PostgreSQLDialect{}).LegacyColumnMigrations(),
@@ -358,6 +367,7 @@ func TestPersonEnrichmentFreshTriggerLegacyMigrationParity(t *testing.T) {
 }
 
 func TestInitSchemaAddsDurableAttemptTargetsToLegacySchema(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	drop := `ALTER TABLE person_enrichment_attempts DROP COLUMN targets_json`
@@ -380,6 +390,7 @@ func TestInitSchemaAddsDurableAttemptTargetsToLegacySchema(t *testing.T) {
 }
 
 func TestInitSchemaAddsProviderStartedAtToLegacySchema(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	drop := `ALTER TABLE person_enrichment_attempts DROP COLUMN provider_started_at`
@@ -402,6 +413,7 @@ func TestInitSchemaAddsProviderStartedAtToLegacySchema(t *testing.T) {
 }
 
 func TestInitSchemaAddsFreshTriggerMarkerToLegacySchema(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -425,6 +437,7 @@ func TestInitSchemaAddsFreshTriggerMarkerToLegacySchema(t *testing.T) {
 }
 
 func TestPersonEnrichmentSchemaResultMetadataPrivacyIdentityAndCitationIndexes(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite PRAGMA shape is covered here; portable behavior runs on both backends")
 	require := require.New(t)
 	assert := assert.New(t)

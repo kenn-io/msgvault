@@ -49,6 +49,7 @@ func addMergeEvidence(
 }
 
 func TestMergeParticipantsRewritesCandidatesAndDropsSelfLinks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -75,6 +76,7 @@ func TestMergeParticipantsRewritesCandidatesAndDropsSelfLinks(t *testing.T) {
 }
 
 func TestMergeParticipantsCollapsesCandidateEvidenceAndDecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -116,6 +118,7 @@ func TestMergeParticipantsCollapsesCandidateEvidenceAndDecision(t *testing.T) {
 }
 
 func TestMergeParticipantsMarksOpposingCandidateDecisionsConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -151,6 +154,7 @@ func TestMergeParticipantsMarksOpposingCandidateDecisionsConflict(t *testing.T) 
 }
 
 func TestMergeParticipantsPreservesAppliedAcceptedCandidate(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
@@ -187,6 +191,7 @@ func TestMergeParticipantsPreservesAppliedAcceptedCandidate(t *testing.T) {
 }
 
 func TestMergeParticipantsPrefersUserAcceptanceMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -223,6 +228,7 @@ func TestMergeParticipantsPrefersUserAcceptanceMetadata(t *testing.T) {
 }
 
 func TestMergeParticipantsTransfersCollapsedSystemMatchOwnership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -269,6 +275,7 @@ func TestMergeParticipantsTransfersCollapsedSystemMatchOwnership(t *testing.T) {
 }
 
 func TestMergeParticipantsPreservesManualSupportWhenEdgesCollapse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -305,6 +312,7 @@ func TestMergeParticipantsPreservesManualSupportWhenEdgesCollapse(t *testing.T) 
 }
 
 func TestMergeParticipantsRetainsDeterministicOwnerForCollapsedAutomatedEdges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -358,6 +366,7 @@ func TestMergeParticipantsRetainsDeterministicOwnerForCollapsedAutomatedEdges(t 
 }
 
 func TestMergeParticipantsPreservesAutomatedChainEdgeProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -395,6 +404,7 @@ func TestMergeParticipantsPreservesAutomatedChainEdgeProvenance(t *testing.T) {
 }
 
 func TestMergeParticipantsPreservesAcceptedCandidateLinkedByContraction(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
@@ -433,6 +443,7 @@ func TestMergeParticipantsPreservesAcceptedCandidateLinkedByContraction(t *testi
 }
 
 func TestMergeParticipantsCarriesConfidenceProvenanceFromDuplicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -474,6 +485,7 @@ func TestMergeParticipantsCarriesConfidenceProvenanceFromDuplicate(t *testing.T)
 }
 
 func TestMergeParticipantsPreservesPromotedObservationConflictOrigin(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -529,6 +541,7 @@ func TestMergeParticipantsPreservesPromotedObservationConflictOrigin(t *testing.
 }
 
 func TestMergeParticipantsPreservesDecisionMetadataWhenConflictWins(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -601,6 +614,7 @@ func TestMergeParticipantsPreservesDecisionMetadataWhenConflictWins(t *testing.T
 }
 
 func TestMergeParticipantsPreservesManualConflictAfterObservationCleanup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -651,6 +665,7 @@ func TestMergeParticipantsPreservesManualConflictAfterObservationCleanup(t *test
 }
 
 func TestMergeParticipantsKeepsCandidatesForDistinctNormalizedValues(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -688,6 +703,7 @@ func TestMergeParticipantsKeepsCandidatesForDistinctNormalizedValues(t *testing.
 }
 
 func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

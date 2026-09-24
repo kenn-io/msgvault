@@ -9,6 +9,7 @@ import (
 )
 
 func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		options     CopySubsetOptions

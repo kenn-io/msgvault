@@ -49,6 +49,7 @@ func organizationAttributeTestBind(st *store.Store) string {
 }
 
 func TestOrganizationAttributeSetSupersedeAndHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -114,6 +115,7 @@ func TestOrganizationAttributeSetSupersedeAndHistory(t *testing.T) {
 }
 
 func TestOrganizationAttributeRejectsWrongScopeAndInvalidConfidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -145,6 +147,7 @@ func TestOrganizationAttributeRejectsWrongScopeAndInvalidConfidence(t *testing.T
 }
 
 func TestOrganizationAttributeRequiresAnExistingOrganization(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -161,6 +164,7 @@ func TestOrganizationAttributeRequiresAnExistingOrganization(t *testing.T) {
 }
 
 func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -226,6 +230,7 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 }
 
 func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -268,6 +273,7 @@ func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
 }
 
 func TestOrganizationAttributeRetractionIsNotCurrentAndCanBeReplaced(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -320,6 +326,7 @@ func TestOrganizationAttributeRetractionIsNotCurrentAndCanBeReplaced(t *testing.
 }
 
 func TestOrganizationDeleteCascadesAttributeValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -349,6 +356,7 @@ func TestOrganizationDeleteCascadesAttributeValues(t *testing.T) {
 func TestDeleteAttributeDefinitionRejectsDefinitionsWithOnlyOrganizationValues(
 	t *testing.T,
 ) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -369,6 +377,7 @@ func TestDeleteAttributeDefinitionRejectsDefinitionsWithOnlyOrganizationValues(
 }
 
 func TestOrganizationAttributeWriteUsesTransactionalDefinitionState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -419,6 +428,7 @@ func TestOrganizationAttributeWriteUsesTransactionalDefinitionState(t *testing.T
 }
 
 func TestInactiveOrganizationAttributeDefinitionAllowsSupersede(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -447,7 +457,7 @@ func TestInactiveOrganizationAttributeDefinitionAllowsSupersede(t *testing.T) {
 	require.NotNil(cleared.Superseded)
 }
 
-func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
+func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
@@ -516,6 +526,7 @@ func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
 }
 
 func TestDeletePersonRejectsOrganizationStoredRecordReferences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()

@@ -56,6 +56,7 @@ func runLegacyInferenceUpgrade(t *testing.T, st *Store) {
 }
 
 func TestCardDAVInferenceMigrationCurrentAndHistoricalContributors(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"current", "desired history", "pending history", "unpublished history", "nonportable history", "rejected", "deleted employment", "unpublished deleted employment", "legacy mapped attribute"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
@@ -145,6 +146,7 @@ func TestCardDAVInferenceMigrationCurrentAndHistoricalContributors(t *testing.T)
 }
 
 func TestCardDAVInferenceMigrationPreservesNewerState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
 	book := inferenceMigrationBook(t, st)
@@ -165,6 +167,7 @@ func TestCardDAVInferenceMigrationPreservesNewerState(t *testing.T) {
 }
 
 func TestCardDAVInferenceMigrationRunsAfterLegacyColumnMigrations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := Open(path)

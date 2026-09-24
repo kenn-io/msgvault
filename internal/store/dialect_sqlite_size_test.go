@@ -42,6 +42,7 @@ func sqliteLogicalMainSize(t *testing.T, db *sql.DB) int64 {
 }
 
 func TestSQLiteDatabaseSizeReportsLogicalMainDatabasePages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	db, dbPath := openSQLiteSizeTestDB(t)
@@ -77,6 +78,7 @@ func TestSQLiteDatabaseSizeReportsLogicalMainDatabasePages(t *testing.T) {
 }
 
 func TestSQLiteDatabaseSizeContextCancelsConnectionWait(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	db, dbPath := openSQLiteSizeTestDB(t)
@@ -116,6 +118,7 @@ func TestSQLiteDatabaseSizeContextCancelsConnectionWait(t *testing.T) {
 }
 
 func TestSQLiteDatabaseSizeReportsQueryError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	db, dbPath := openSQLiteSizeTestDB(t)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestDeletePersonWithEnrichmentSuppressionsCopiesDigestsAndCascades(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentDeletionFixture(t)
@@ -42,6 +43,7 @@ func TestDeletePersonWithEnrichmentSuppressionsCopiesDigestsAndCascades(t *testi
 }
 
 func TestDeletePersonWithEnrichmentSuppressionsRollsBackOnSuppressionFailure(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentDeletionFixture(t)
@@ -81,6 +83,7 @@ func TestDeletePersonWithEnrichmentSuppressionsRollsBackOnSuppressionFailure(t *
 }
 
 func TestDeletePersonContextCopiesPreviouslyRecordedEnrichmentDigests(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentDeletionFixture(t)
 	require.NoError(t, f.store.DeletePersonContext(t.Context(), f.person.ID, f.person.Revision))
 
@@ -92,6 +95,7 @@ func TestDeletePersonContextCopiesPreviouslyRecordedEnrichmentDigests(t *testing
 }
 
 func TestPersonEnrichmentReimportRemainsSuppressedAfterDeletion(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentDeletionFixture(t)
@@ -203,6 +207,7 @@ func deletionSuppressionLookup(input PersonEnrichmentSuppressionInput) PersonEnr
 }
 
 func TestDeletePersonWithEnrichmentSuppressionsRejectsInvalidInputWithoutMutation(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentDeletionFixture(t)
 	input := f.returned[0]
 	input.Digest = []byte("not-a-digest")
@@ -217,6 +222,7 @@ func TestDeletePersonWithEnrichmentSuppressionsRejectsInvalidInputWithoutMutatio
 }
 
 func TestDeletePersonWithEnrichmentSuppressionsRejectsRecordedAttemptKeyMismatch(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentDeletionFixture(t)

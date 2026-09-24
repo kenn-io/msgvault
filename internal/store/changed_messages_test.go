@@ -219,6 +219,7 @@ func walkChangedMessages(t *testing.T, st *store.Store, limit int) []int64 {
 // that instant forever (`>=`). Every row of one same-instant block must come
 // back exactly once across a walk whose pages are smaller than the block.
 func TestListChangedMessages_SameInstantBlockPagesExactlyOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -247,6 +248,7 @@ func TestListChangedMessages_SameInstantBlockPagesExactlyOnce(t *testing.T) {
 // here are the ones the trigger actually wrote, and the walk uses a page size of
 // one so every single row is a page boundary.
 func TestListChangedMessages_CursorSurvivesInstantBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -304,6 +306,7 @@ const feedOpenInstantLead = 500 * time.Millisecond
 // like from inside -- an instant that has not closed yet and can still take
 // writes. The feed must refuse to hand out a cursor from it.
 func TestListChangedMessages_ChangeInTheCursorsOwnInstantIsNotLost(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -348,6 +351,7 @@ func TestListChangedMessages_ChangeInTheCursorsOwnInstantIsNotLost(t *testing.T)
 // sent_at. Ordering by message date hides it behind everything newer; ordering
 // by change time puts it in the very next page.
 func TestListChangedMessages_SurfacesBackfilledOldMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -380,6 +384,7 @@ func TestListChangedMessages_SurfacesBackfilledOldMessage(t *testing.T) {
 }
 
 func TestListChangedMessages_NullHasAttachmentsDefaultsFalse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -402,6 +407,7 @@ func TestListChangedMessages_NullHasAttachmentsDefaultsFalse(t *testing.T) {
 // insert order here and the watermarks deliberately are not, so an
 // ORDER BY that fell back to id would produce a different sequence.
 func TestListChangedMessages_OrdersByWatermarkThenID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -431,6 +437,7 @@ func TestListChangedMessages_OrdersByWatermarkThenID(t *testing.T) {
 // hid disappearances could not be used to mirror the archive, and a row filtered
 // out after the cursor passed it is indistinguishable from the end of a page.
 func TestListChangedMessages_IncludesDeletedAndDedupHidden(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -472,6 +479,7 @@ func TestListChangedMessages_IncludesDeletedAndDedupHidden(t *testing.T) {
 // and the projection: a consumer starting from nothing gets every message, in
 // cursor order, with the message fields the watermark actually covers.
 func TestListChangedMessages_ZeroCursorReturnsEverything(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -521,6 +529,7 @@ func TestListChangedMessages_ZeroCursorReturnsEverything(t *testing.T) {
 // content_changed_at is a typed TIMESTAMPTZ and cannot hold a value its driver
 // refuses to parse, so there is nothing to pin there.
 func TestListChangedMessages_UnreadableWatermarkReturnsAnError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -539,6 +548,7 @@ func TestListChangedMessages_UnreadableWatermarkReturnsAnError(t *testing.T) {
 }
 
 func TestListChangedMessages_NullWatermarkReturnsAnError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -568,6 +578,7 @@ func TestListChangedMessages_NullWatermarkReturnsAnError(t *testing.T) {
 // SQLite only: PostgreSQL compares real timestamps, so no row it returns can be
 // below the cursor and there is nothing to rewrite.
 func TestListChangedMessages_ReportsTheStoredWatermarkNotTheRequestCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -598,6 +609,7 @@ func TestListChangedMessages_ReportsTheStoredWatermarkNotTheRequestCursor(t *tes
 // returns a page rather than a slice: a caught-up consumer gets no rows, and the
 // database clock is the only thing that tells it how far "caught up" reaches.
 func TestListChangedMessages_EmptyPageStillCarriesServerTime(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -617,6 +629,7 @@ func TestListChangedMessages_EmptyPageStillCarriesServerTime(t *testing.T) {
 // TestListChangedMessages_NonPositiveLimitReturnsEmptyPage: a limit of zero or
 // less asks for no rows, which is not an error condition.
 func TestListChangedMessages_NonPositiveLimitReturnsEmptyPage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	seedFeedMessage(t, st, 1, time.Time{})

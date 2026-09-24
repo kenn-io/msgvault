@@ -64,6 +64,7 @@ func pgCanonicalIndexOID(t *testing.T, s *Store) int64 {
 // the exact failure mode (silently falling back to a scan) that a drifted
 // expression would produce.
 func TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

@@ -32,6 +32,7 @@ func cardDAVRoleDiscovery() store.CardDAVDiscoveryInput {
 }
 
 func TestCardDAVDiscoveryPersistsEveryHomeURL(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -94,6 +95,7 @@ func importCardDAVRoleTestPeople(
 }
 
 func TestCardDAVSetBookRolesAtomicallySwapsWriteTargetAndSchedulesWidening(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -124,6 +126,7 @@ func TestCardDAVSetBookRolesAtomicallySwapsWriteTargetAndSchedulesWidening(t *te
 }
 
 func TestCardDAVSetBookRolesRefusesUnsubscribingWriteTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -141,6 +144,7 @@ func TestCardDAVSetBookRolesRefusesUnsubscribingWriteTarget(t *testing.T) {
 }
 
 func TestCardDAVSetBookRolesClearsWriteTargetAndSubscriptionTogether(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -167,6 +171,7 @@ func TestCardDAVSetBookRolesClearsWriteTargetAndSubscriptionTogether(t *testing.
 }
 
 func TestCardDAVSetBookRolesPreservesScheduledReconcileAcrossNarrowing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -186,6 +191,7 @@ func TestCardDAVSetBookRolesPreservesScheduledReconcileAcrossNarrowing(t *testin
 }
 
 func TestCardDAVSetBookRolesRejectsLifecycleDeniedWriteTarget(t *testing.T) {
+	t.Parallel()
 	for _, capability := range []string{"create", "update", "delete"} {
 		t.Run(capability, func(t *testing.T) {
 			assert := assert.New(t)
@@ -217,6 +223,7 @@ func TestCardDAVSetBookRolesRejectsLifecycleDeniedWriteTarget(t *testing.T) {
 }
 
 func TestCardDAVDiscoverySkipsLifecycleDeniedAutomaticWriteTarget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -234,6 +241,7 @@ func TestCardDAVDiscoverySkipsLifecycleDeniedAutomaticWriteTarget(t *testing.T) 
 }
 
 func TestCardDAVSetBookRolesUnsubscribeDeletesOnlyUntouchedImportedPeople(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -316,6 +324,7 @@ func TestCardDAVSetBookRolesUnsubscribeDeletesOnlyUntouchedImportedPeople(t *tes
 }
 
 func TestCardDAVSetBookRolesUnsubscribePreservesUserLinkedImports(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -444,6 +453,7 @@ func TestCardDAVSetBookRolesUnsubscribePreservesUserLinkedImports(t *testing.T) 
 }
 
 func TestCardDAVSetBookRolesUnsubscribePreservesReviewedRelationships(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -509,6 +519,7 @@ func TestCardDAVSetBookRolesUnsubscribePreservesReviewedRelationships(t *testing
 }
 
 func TestCardDAVSetBookRolesUnsubscribePreservesReviewedIdentityMatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -601,6 +612,7 @@ func TestCardDAVSetBookRolesUnsubscribePreservesReviewedIdentityMatches(t *testi
 }
 
 func TestCardDAVIgnoredBookDropsLedgerOnceAndSurvivesAliasRediscovery(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -653,6 +665,7 @@ func TestCardDAVIgnoredBookDropsLedgerOnceAndSurvivesAliasRediscovery(t *testing
 }
 
 func TestCardDAVIgnoredBookIdentitySurvivesTemporaryDiscoveryAbsence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -687,6 +700,7 @@ func TestCardDAVIgnoredBookIdentitySurvivesTemporaryDiscoveryAbsence(t *testing.
 }
 
 func TestCardDAVDiscoveryPruneUsesGovernanceAwareImportedCleanup(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -747,6 +761,7 @@ func contactOriginalValues(points []store.PersonContactPoint) []string {
 }
 
 func TestCardDAVDiscoveryRetainsBookWithPendingPublicationIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -781,6 +796,7 @@ func TestCardDAVDiscoveryRetainsBookWithPendingPublicationIntent(t *testing.T) {
 }
 
 func TestCardDAVDiscoveryRetainsBookWithSettledPublicationOwnership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -816,6 +832,7 @@ func TestCardDAVDiscoveryRetainsBookWithSettledPublicationOwnership(t *testing.T
 }
 
 func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -863,6 +880,7 @@ func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.
 }
 
 func TestCardDAVDiscoveryRetainsBookWithUnresolvedConflictIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -912,6 +930,7 @@ func TestCardDAVDiscoveryRetainsBookWithUnresolvedConflictIntent(t *testing.T) {
 }
 
 func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingMutation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -946,6 +965,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingMutation(t *testing
 }
 
 func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithSettledPublication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -970,6 +990,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithSettledPublication(t *test
 }
 
 func TestCardDAVSetBookRolesRejectsWriteTargetSwapWhenProposedTargetHasPublication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -998,6 +1019,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWhenProposedTargetHasPublicati
 }
 
 func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingConflictIntent(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name                     string
 		demoteCurrentTarget      bool
@@ -1069,6 +1091,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingConflictIntent(t *t
 }
 
 func TestCardDAVSetBookRolesRejectsTransitionWithUnresolvedConflict(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name                     string
 		demoteCurrentTarget      bool
@@ -1118,6 +1141,7 @@ func TestCardDAVSetBookRolesRejectsTransitionWithUnresolvedConflict(t *testing.T
 }
 
 func TestCardDAVSetBookRolesAllowsTransitionWithResolvedConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1147,6 +1171,7 @@ func TestCardDAVSetBookRolesAllowsTransitionWithResolvedConflict(t *testing.T) {
 }
 
 func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithUnresolvedConflict(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		roles store.CardDAVBookRoles
@@ -1187,6 +1212,7 @@ func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithUnresolvedConflict(t *t
 }
 
 func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithPendingPublication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1220,6 +1246,7 @@ func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithPendingPublication(t *t
 }
 
 func TestCardDAVSetBookRolesAllowsResolvedConflictNarrowingAndKeepsAudit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1250,6 +1277,7 @@ func TestCardDAVSetBookRolesAllowsResolvedConflictNarrowingAndKeepsAudit(t *test
 }
 
 func TestCardDAVSetBookRolesAllowsOrdinaryNonTargetNarrowing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1326,6 +1354,7 @@ func settleCardDAVTestPublication(
 }
 
 func TestCardDAVDiscoveryPersistsRolesAndPrunesOnlyAfterCompleteReplacement(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1374,6 +1403,7 @@ func TestCardDAVDiscoveryPersistsRolesAndPrunesOnlyAfterCompleteReplacement(t *t
 }
 
 func TestCardDAVDiscoveryBumpsConnectionGenerationForConnectionOrCredentialChanges(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1409,6 +1439,7 @@ func TestCardDAVDiscoveryBumpsConnectionGenerationForConnectionOrCredentialChang
 }
 
 func TestCardDAVDiscoveryRejectsIncompleteSnapshotWithoutChangingStoredBooks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -1431,6 +1462,7 @@ func TestCardDAVDiscoveryRejectsIncompleteSnapshotWithoutChangingStoredBooks(t *
 }
 
 func TestCardDAVDiscoveryKeepsCanonicalURLWhenServerReadvertisesItsAlias(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1476,6 +1508,7 @@ func TestCardDAVDiscoveryKeepsCanonicalURLWhenServerReadvertisesItsAlias(t *test
 }
 
 func TestCardDAVDiscoveryCanonicalURLChangeInvalidatesIncrementalSync(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1512,6 +1545,7 @@ func TestCardDAVDiscoveryCanonicalURLChangeInvalidatesIncrementalSync(t *testing
 }
 
 func TestCardDAVDiscoveryRejectsTwoBooksClaimingOneStoredURLIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1554,6 +1588,7 @@ func TestCardDAVDiscoveryRejectsTwoBooksClaimingOneStoredURLIdentity(t *testing.
 }
 
 func TestCardDAVURLIdentityPreservesPathCase(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1575,6 +1610,7 @@ func TestCardDAVURLIdentityPreservesPathCase(t *testing.T) {
 }
 
 func TestCardDAVURLIdentityUsesOneCanonicalAndAliasNamespace(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1627,6 +1663,7 @@ func cardDAVRediscoveryForBook(
 }
 
 func TestCardDAVDiscoveryRejectsCredentialRotationWithPendingRemoteFirstIntent(t *testing.T) {
+	t.Parallel()
 	t.Run("publication", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -1685,6 +1722,7 @@ func TestCardDAVDiscoveryRejectsCredentialRotationWithPendingRemoteFirstIntent(t
 }
 
 func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, baseURL, username, localDisplay string
 	}{
@@ -1794,6 +1832,7 @@ func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState
 }
 
 func TestCardDAVConnectionIdentityChangeRejectsOwnedPublicationOrConflict(t *testing.T) {
+	t.Parallel()
 	t.Run("publication", func(t *testing.T) {
 		st, account, book := newCardDAVResourceStore(t)
 		personID, _ := settleCardDAVTestPublication(t, st, book, "identity-owner")
@@ -1826,6 +1865,7 @@ func TestCardDAVConnectionIdentityChangeRejectsOwnedPublicationOrConflict(t *tes
 }
 
 func TestCardDAVDiscoveryRetainsResolvedConflictUntilAuditSweep(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1864,6 +1904,7 @@ func TestCardDAVDiscoveryRetainsResolvedConflictUntilAuditSweep(t *testing.T) {
 }
 
 func TestCardDAVIdentityChangeWaitsForResolvedConflictAuditSweep(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

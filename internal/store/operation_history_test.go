@@ -26,6 +26,7 @@ var allOperationHistoryKinds = []operations.Kind{
 }
 
 func TestOperationHistorySnapshotReadsAllKindsInExactOrderAndDateBounds(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -59,6 +60,7 @@ func TestOperationHistorySnapshotReadsAllKindsInExactOrderAndDateBounds(t *testi
 }
 
 func TestOperationMillisecondHistoryDateBounds(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []operations.Kind{
 		operations.KindDocumentEmbedding, operations.KindDocumentExtraction,
 		operations.KindMessageEmbedding, operations.KindPersonEmbedding,
@@ -113,6 +115,7 @@ func TestOperationMillisecondHistoryDateBounds(t *testing.T) {
 }
 
 func TestOperationAdapterPersonEnrichmentStartsAtFirstClaimAndKeepsOriginalOrder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -154,6 +157,7 @@ func TestOperationAdapterPersonEnrichmentStartsAtFirstClaimAndKeepsOriginalOrder
 }
 
 func TestOperationAdapterFailureRollsBackToSavepointAndReturnsPartialSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -178,6 +182,7 @@ func TestOperationAdapterFailureRollsBackToSavepointAndReturnsPartialSnapshot(t 
 }
 
 func TestOperationAdapterValidationFailureReturnsPartialSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -199,6 +204,7 @@ func TestOperationAdapterValidationFailureReturnsPartialSnapshot(t *testing.T) {
 }
 
 func TestOperationAdapterDispatchesListGetAndStatusForAllKinds(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -229,6 +235,7 @@ func TestOperationAdapterDispatchesListGetAndStatusForAllKinds(t *testing.T) {
 }
 
 func TestOperationAdapterStatusReturnsActiveLatestAndLatestSuccessfulRoles(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -252,6 +259,7 @@ func TestOperationAdapterStatusReturnsActiveLatestAndLatestSuccessfulRoles(t *te
 }
 
 func TestOperationMembershipRevisionTracksMembershipButNotCounterCheckpoints(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

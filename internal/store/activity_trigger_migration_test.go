@@ -14,6 +14,7 @@ import (
 // The helper initializes an archive through the combined message and attachment
 // trigger migration, then this test proves that activity triggers are installed.
 func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing.T) {
+	t.Parallel()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") &&
 		!strings.HasPrefix(dbURL, "postgresql://") {

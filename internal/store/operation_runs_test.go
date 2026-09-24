@@ -16,6 +16,7 @@ import (
 )
 
 func TestOperationRunsSourceProjectsStatesCountersAndFilters(t *testing.T) {
+	t.Parallel()
 	newAssertions := assert.New
 	newRequirements := require.New
 	require := require.New(t)
@@ -147,6 +148,7 @@ func TestOperationRunsSourceProjectsStatesCountersAndFilters(t *testing.T) {
 }
 
 func TestOperationRunsPersonSweepProjectsStatesTriggersCountersAndFailures(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -242,6 +244,7 @@ func TestOperationRunsPersonSweepProjectsStatesTriggersCountersAndFailures(t *te
 }
 
 func TestOperationRunsPersonSweepPagesMillisecondsAndTextIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -280,6 +283,7 @@ func TestOperationRunsPersonSweepPagesMillisecondsAndTextIDs(t *testing.T) {
 }
 
 func TestOperationRunsPersonSweepUsesNewestNonemptyFailureClass(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	startedAt := time.Date(2026, 8, 28, 16, 30, 0, 0, time.UTC)
 	runID := insertPersonSweepOperationRun(t, st, personSweepOperationSeed{
@@ -304,6 +308,7 @@ func TestOperationRunsPersonSweepUsesNewestNonemptyFailureClass(t *testing.T) {
 }
 
 func TestOperationRunsPersonSweepListDetailStatusAndPrivacy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -439,6 +444,7 @@ func personSweepOperationTextID(t *testing.T, id operations.StableID) string {
 }
 
 func TestOperationRunsSourcePagesWholeSecondExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -485,6 +491,7 @@ func TestOperationRunsSourcePagesWholeSecondExactly(t *testing.T) {
 }
 
 func TestOperationRunsSourceListDetailNotFoundAndStatus(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -539,6 +546,7 @@ func TestOperationRunsSourceListDetailNotFoundAndStatus(t *testing.T) {
 }
 
 func TestOperationRunsSourceDoesNotHydratePrivateRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -599,6 +607,7 @@ func TestOperationRunsSourceDoesNotHydratePrivateRows(t *testing.T) {
 }
 
 func TestOperationRunsSourceRejectsInvalidDurableRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -640,6 +649,7 @@ func TestOperationRunsSourceRejectsInvalidDurableRows(t *testing.T) {
 }
 
 func TestOperationRunsSourceRejectsMalformedSQLiteTimestamps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	source := createOperationSource(t, st, "timestamp-source@example.invalid")
@@ -750,6 +760,7 @@ func reverseInt64s(values []int64) {
 }
 
 func TestOperationRunsCardDAVProjectsNativeStatesTriggersAndCounters(t *testing.T) {
+	t.Parallel()
 	newAssertions := assert.New
 	newRequirements := require.New
 	require := require.New(t)
@@ -857,6 +868,7 @@ func TestOperationRunsCardDAVProjectsNativeStatesTriggersAndCounters(t *testing.
 }
 
 func TestOperationRunsCardDAVProjectsOnlyFixedFailureMessages(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	base := time.Date(2026, 8, 28, 13, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -910,6 +922,7 @@ func TestOperationRunsCardDAVProjectsOnlyFixedFailureMessages(t *testing.T) {
 }
 
 func TestOperationRunsCardDAVPagesSameSecondByNumericID(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	instant := time.Date(2026, 8, 28, 14, 15, 16, 0, time.UTC)
 	for range 10 {
@@ -937,6 +950,7 @@ func TestOperationRunsCardDAVPagesSameSecondByNumericID(t *testing.T) {
 }
 
 func TestOperationRunsCardDAVPagesAfterFractionalCrossKindCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -980,6 +994,7 @@ func TestOperationRunsCardDAVPagesAfterFractionalCrossKindCursor(t *testing.T) {
 }
 
 func TestOperationRunsCardDAVDetailAndStatusMatchListProjection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1028,6 +1043,7 @@ func TestOperationRunsCardDAVDetailAndStatusMatchListProjection(t *testing.T) {
 }
 
 func TestOperationRunsCardDAVExcludesPrivateCardDAVData(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1084,6 +1100,7 @@ func TestOperationRunsCardDAVExcludesPrivateCardDAVData(t *testing.T) {
 }
 
 func TestOperationRunsCardDAVRejectsMalformedSQLiteFinishedTimestamp(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 	st.DB().SetMaxOpenConns(1)
 	runningID := insertCardDAVOperationRun(t, st, cardDAVOperationRunSeed{

@@ -24,6 +24,7 @@ func removeMeetingProjectionSchema(t *testing.T, st *Store) {
 }
 
 func TestMeetingProjectionUpgradeAllFormatsTwice(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -60,6 +61,7 @@ func TestMeetingProjectionUpgradeAllFormatsTwice(t *testing.T) {
 }
 
 func TestMeetingProjectionCopySubsetRebuildsFromLegacyEvidence(t *testing.T) {
+	t.Parallel()
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("CopySubset accepts SQLite archives")
 	}
@@ -95,6 +97,7 @@ func TestMeetingProjectionCopySubsetRebuildsFromLegacyEvidence(t *testing.T) {
 // Existing archives permit the whole signed message-ID range. An initial zero
 // cursor would skip nonpositive rows yet incorrectly mark this upgrade complete.
 func TestMeetingProjectionUpgradeIncludesNonpositiveIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

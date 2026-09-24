@@ -16,6 +16,7 @@ func personSweepBriefClaim(personID int64) peoplesweep.ClaimRequest {
 }
 
 func TestHasPersonSweepChangesAfterReportsNewActivity(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -44,6 +45,7 @@ func TestHasPersonSweepChangesAfterReportsNewActivity(t *testing.T) {
 }
 
 func TestEnsurePersonSweepWorkPublishesClaimableWorkForATrackedPerson(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -77,6 +79,7 @@ func TestEnsurePersonSweepWorkPublishesClaimableWorkForATrackedPerson(t *testing
 }
 
 func TestAutomaticBriefWorkPreservesRetryBackoff(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -102,6 +105,7 @@ func TestAutomaticBriefWorkPreservesRetryBackoff(t *testing.T) {
 // projection derives at read time from last_contact_at and the person's contact
 // frequency attribute; there is no stored cadence column.
 func TestPersonSweepCadenceDueAtReadsDerivedContactCadence(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f, personID := newActivityQueryFixture(t)
@@ -134,6 +138,7 @@ func TestPersonSweepCadenceDueAtReadsDerivedContactCadence(t *testing.T) {
 // TestPersonSweepHistoryReportsBriefFailureClass pins the operator-visible half
 // of a brief failure: an attempt that succeeded with no brief still says why.
 func TestPersonSweepHistoryReportsBriefFailureClass(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "brief-history")

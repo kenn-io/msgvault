@@ -10,6 +10,7 @@ import (
 )
 
 func TestPostgreSQLDialect_Rebind(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	tests := []struct {
 		name string
@@ -55,11 +56,13 @@ func TestPostgreSQLDialect_Rebind(t *testing.T) {
 }
 
 func TestPostgreSQLDialect_Now(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	assert.Equal(t, "NOW()", d.Now())
 }
 
 func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	tests := []struct {
 		name string
@@ -95,11 +98,13 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 }
 
 func TestPostgreSQLDialect_InsertOrIgnoreSuffix(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	assert.Equal(t, " ON CONFLICT DO NOTHING", d.InsertOrIgnoreSuffix())
 }
 
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 	join, where, orderBy, orderArgCount := d.FTSSearchClause()
@@ -127,6 +132,7 @@ func (*recordingFTSQuerier) QueryRow(string, ...any) *sql.Row {
 }
 
 func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 	q := &recordingFTSQuerier{}
@@ -158,12 +164,14 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 }
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
+	t.Parallel()
 	sql := postgresFTSNeedsBackfillSQL()
 	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 2")
 	assert.NotContains(t, sql, "$1", "partial-index predicate must remain plan-time provable")
 }
 
 func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
@@ -182,6 +190,7 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 // strings into PG lives in pg_compat_test.go as
 // TestSearchMessages_R3PunctuationTerms.
 func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	tests := []struct {
 		name string
@@ -211,6 +220,7 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 }
 
 func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {
+	t.Parallel()
 	d := &PostgreSQLDialect{}
 	in := "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "
 	want := "INSERT INTO message_labels (message_id, label_id) VALUES "

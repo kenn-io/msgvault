@@ -18,6 +18,7 @@ import (
 )
 
 func TestApplyPersonFactGenerationProjectsValidClaimsAndRetainsInvalidClaims(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -51,7 +52,7 @@ func TestApplyPersonFactGenerationProjectsValidClaimsAndRetainsInvalidClaims(t *
 	}
 }
 
-func TestLoadPersonFactResolvedClaimsQueriesStayBoundedAcrossUnrelatedHistory(t *testing.T) {
+func TestLoadPersonFactResolvedClaimsQueriesStayBoundedAcrossUnrelatedHistory(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -94,6 +95,7 @@ func TestLoadPersonFactResolvedClaimsQueriesStayBoundedAcrossUnrelatedHistory(t 
 }
 
 func TestApplyPersonFactGenerationPersistsDistinctMalformedEvidenceSubmissions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -121,6 +123,7 @@ func TestApplyPersonFactGenerationPersistsDistinctMalformedEvidenceSubmissions(t
 }
 
 func TestApplyPersonFactGenerationPersistsUnsupportedTargetBesideValidSibling(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -195,6 +198,7 @@ func TestApplyPersonFactGenerationPersistsUnsupportedTargetBesideValidSibling(t 
 }
 
 func TestApplyPersonFactGenerationPreservesSensitivePolicyFailureForNonProjectableTarget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -220,6 +224,7 @@ func TestApplyPersonFactGenerationPreservesSensitivePolicyFailureForNonProjectab
 }
 
 func TestApplyPersonFactStatusOnlyGenerationAppliesCurrentSensitivePolicy(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -260,6 +265,7 @@ func TestApplyPersonFactStatusOnlyGenerationAppliesCurrentSensitivePolicy(t *tes
 }
 
 func TestApplyPersonFactStatusOnlyGenerationKeepsUnavailableSensitiveTargetUnsupported(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*testing.T, *Store, AttributeDefinition)
@@ -327,6 +333,7 @@ func TestApplyPersonFactStatusOnlyGenerationKeepsUnavailableSensitiveTargetUnsup
 }
 
 func TestApplyPersonFactGenerationPersistsRemovedOrIneligibleTargetBesideValidSibling(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*testing.T, *Store, personfacts.TargetDescriptor)
@@ -411,6 +418,7 @@ func TestApplyPersonFactGenerationPersistsRemovedOrIneligibleTargetBesideValidSi
 }
 
 func TestApplyPersonFactGenerationPersistsInvalidEnvelopeClaimsAlongsideValidSibling(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		rawToken string
@@ -508,6 +516,7 @@ func TestApplyPersonFactGenerationPersistsInvalidEnvelopeClaimsAlongsideValidSib
 }
 
 func TestApplyPersonFactGenerationDoesNotRetireUnownedDerivedAttribute(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{
 		ProvenanceExtraction,
 		ProvenanceEnrichment,
@@ -548,6 +557,7 @@ func TestApplyPersonFactGenerationDoesNotRetireUnownedDerivedAttribute(t *testin
 }
 
 func TestApplyPersonFactGenerationProtectsUnownedDerivedAttributeFromProjectionPlans(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{
 		ProvenanceExtraction,
 		ProvenanceEnrichment,
@@ -599,6 +609,7 @@ func TestApplyPersonFactGenerationProtectsUnownedDerivedAttributeFromProjectionP
 }
 
 func TestPersonFactProjectionOwnershipUsesScopedCompositeIndex(t *testing.T) {
+	t.Parallel()
 	st, personID, _ := newPersonFactProjectionStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("SQLite query-plan coverage; PostgreSQL schema uses the same composite key order")
@@ -612,6 +623,7 @@ func TestPersonFactProjectionOwnershipUsesScopedCompositeIndex(t *testing.T) {
 }
 
 func TestApplyPersonFactGenerationPersistsOverLimitTextClaimAlongsideValidSibling(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -653,6 +665,7 @@ func TestApplyPersonFactGenerationPersistsOverLimitTextClaimAlongsideValidSiblin
 }
 
 func TestApplyPersonFactGenerationPersistsTamperedTargetDescriptorAlongsideValidSibling(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -698,6 +711,7 @@ func TestApplyPersonFactGenerationPersistsTamperedTargetDescriptorAlongsideValid
 }
 
 func TestApplyPersonFactGenerationPersistsOutsideValidityDecision(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*personfacts.ProposedClaim)
@@ -745,6 +759,7 @@ func TestApplyPersonFactGenerationPersistsOutsideValidityDecision(t *testing.T) 
 }
 
 func TestApplyPersonFactGenerationExpiresProjectionAtExclusiveValidityEndWhenProcessedLate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -799,6 +814,7 @@ func TestApplyPersonFactGenerationExpiresProjectionAtExclusiveValidityEndWhenPro
 }
 
 func TestApplyPersonFactGenerationDoesNotMoveTargetResolutionBackward(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -831,6 +847,7 @@ func TestApplyPersonFactGenerationDoesNotMoveTargetResolutionBackward(t *testing
 }
 
 func TestApplyPersonFactGenerationClampsBackdatedAttributeReplacementToCurrentStart(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -877,6 +894,7 @@ func TestApplyPersonFactGenerationClampsBackdatedAttributeReplacementToCurrentSt
 }
 
 func TestApplyPersonFactGenerationClampsBackdatedAttributeRetirementToCurrentStart(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -922,6 +940,7 @@ func TestApplyPersonFactGenerationClampsBackdatedAttributeRetirementToCurrentSta
 }
 
 func TestApplyPersonFactGenerationRejectsUntrackedPersonWithoutWrites(t *testing.T) {
+	t.Parallel()
 	st, personID := newPersonFactLedgerStore(t)
 	target := projectionTargetBySlug(t, st, AttributeSlugPrimaryChannel)
 	input := personFactProjectionInput(personID, "untracked", []personfacts.ProposedClaim{
@@ -935,6 +954,7 @@ func TestApplyPersonFactGenerationRejectsUntrackedPersonWithoutWrites(t *testing
 }
 
 func TestPersonTrackingUntrackWaitsForInFlightFactGeneration(t *testing.T) {
+	t.Parallel()
 	type generationOutcome struct {
 		result *personfacts.GenerationResult
 		err    error
@@ -1037,6 +1057,7 @@ func TestPersonTrackingUntrackWaitsForInFlightFactGeneration(t *testing.T) {
 }
 
 func TestApplyPersonFactPreparationCompletesBeforeTransactionBegin(t *testing.T) {
+	t.Parallel()
 	st, personID, targets := newPersonFactProjectionStore(t)
 	transactionStarted := false
 	alignments := 0
@@ -1070,6 +1091,7 @@ func TestApplyPersonFactPreparationCompletesBeforeTransactionBegin(t *testing.T)
 }
 
 func TestApplyPersonFactOperationalAlignmentFailureWritesNothing(t *testing.T) {
+	t.Parallel()
 	st, personID, targets := newPersonFactProjectionStore(t)
 	claim := personFactProjectionClaim(personID, targets[AttributeSlugPrimaryChannel], `"chat"`, "alignment-error")
 	claim.Evidence[0].SourceClass = personfacts.EvidenceArchive
@@ -1094,6 +1116,7 @@ func TestApplyPersonFactOperationalAlignmentFailureWritesNothing(t *testing.T) {
 }
 
 func TestApplyPreparedPersonFactGenerationDoesNotEndCallerTransaction(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1120,6 +1143,7 @@ func TestApplyPreparedPersonFactGenerationDoesNotEndCallerTransaction(t *testing
 }
 
 func TestApplyPreparedPersonFactGenerationIgnoresCallerMutation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1156,6 +1180,7 @@ func TestApplyPreparedPersonFactGenerationIgnoresCallerMutation(t *testing.T) {
 }
 
 func TestApplyPreparedPersonFactGenerationRejectsZeroValue(t *testing.T) {
+	t.Parallel()
 	st, _, _ := newPersonFactProjectionStore(t)
 	err := st.withTxContext(t.Context(), func(tx *loggedTx) error {
 		_, applyErr := st.applyPreparedPersonFactGenerationTx(t.Context(), tx, personfacts.PreparedGeneration{})
@@ -1166,6 +1191,7 @@ func TestApplyPreparedPersonFactGenerationRejectsZeroValue(t *testing.T) {
 }
 
 func TestApplyPersonFactReplayHydratesByteIdenticalResolutionResults(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1199,6 +1225,7 @@ func TestApplyPersonFactReplayHydratesByteIdenticalResolutionResults(t *testing.
 }
 
 func TestApplyPersonFactRechecksEveryTouchedDescriptorInTransaction(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1276,6 +1303,7 @@ func TestApplyPersonFactRechecksEveryTouchedDescriptorInTransaction(t *testing.T
 }
 
 func TestApplyPersonFactProgramFingerprintChangesGenerationIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1292,6 +1320,7 @@ func TestApplyPersonFactProgramFingerprintChangesGenerationIdentity(t *testing.T
 }
 
 func TestApplyPersonFactMultipleTargetsBumpVCardOnce(t *testing.T) {
+	t.Parallel()
 	st, personID, targets := newPersonFactProjectionStore(t)
 	before := personFactProjectionRevision(t, st, personID)
 	input := personFactProjectionInput(personID, "one-bump", []personfacts.ProposedClaim{
@@ -1306,6 +1335,7 @@ func TestApplyPersonFactMultipleTargetsBumpVCardOnce(t *testing.T) {
 }
 
 func TestApplyPersonFactProjectionChangesSemanticRenderHash(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1323,6 +1353,7 @@ func TestApplyPersonFactProjectionChangesSemanticRenderHash(t *testing.T) {
 }
 
 func TestApplyPersonFactProjectionFailureRollsBackAllTargets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1352,6 +1383,7 @@ func TestApplyPersonFactProjectionFailureRollsBackAllTargets(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusOnlyUnsupportedReresolvesTargets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, target, first, evidenceKey := seedProjectedPersonFact(t)
@@ -1380,6 +1412,7 @@ func TestApplyPersonFactStatusOnlyUnsupportedReresolvesTargets(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusPersistsForRejectedClaimAfterTargetDeletion(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -1419,6 +1452,7 @@ func TestApplyPersonFactStatusPersistsForRejectedClaimAfterTargetDeletion(t *tes
 }
 
 func TestApplyPersonFactStatusUsesGenerationChronology(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _, _, evidenceKey := seedProjectedPersonFact(t)
@@ -1456,6 +1490,7 @@ func TestApplyPersonFactStatusUsesGenerationChronology(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusOnlySupportedReactivatesTargets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -1536,6 +1571,7 @@ func TestApplyPersonFactStatusOnlySupportedReactivatesTargets(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusReplayIsIdempotent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _, _, evidenceKey := seedProjectedPersonFact(t)
@@ -1558,6 +1594,7 @@ func TestApplyPersonFactStatusReplayIsIdempotent(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusRejectsUnknownEvidence(t *testing.T) {
+	t.Parallel()
 	st, personID, _ := newPersonFactProjectionStore(t)
 	status := personFactProjectionInput(personID, "status-unknown", nil,
 		[]personfacts.EvidenceStatusChange{{
@@ -1570,6 +1607,7 @@ func TestApplyPersonFactStatusRejectsUnknownEvidence(t *testing.T) {
 }
 
 func TestApplyPersonFactStatusRejectsSourceVersionMismatch(t *testing.T) {
+	t.Parallel()
 	st, personID, _, _, evidenceKey := seedProjectedPersonFact(t)
 	before := personFactProjectionRowCount(t, st, "person_fact_generations")
 	status := personFactProjectionInput(personID, "status-version", nil,
@@ -1583,6 +1621,7 @@ func TestApplyPersonFactStatusRejectsSourceVersionMismatch(t *testing.T) {
 }
 
 func TestApplyPersonFactClaimsAndStatusesCommitAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)

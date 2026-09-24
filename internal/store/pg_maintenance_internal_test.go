@@ -35,9 +35,17 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 	t.Helper()
 	st := newUninitializedPGStoreInternal(t, dbURL)
-	require.NoError(t, st.InitSchema(), "init schema")
+	pgSchemaDDLMu.Lock()
+	err := st.InitSchema()
+	pgSchemaDDLMu.Unlock()
+	require.NoError(t, err, "init schema")
 	return st
 }
+
+// pgSchemaDDLMu runs one whole-schema create or drop at a time per test
+// process: each locks every object in the schema in one transaction, and
+// parallel ones exhaust the server's shared lock table (out of shared memory).
+var pgSchemaDDLMu sync.Mutex
 
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
 // store without running InitSchema. Tests that need to observe a specific
@@ -67,6 +75,8 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 			return
 		}
 		defer func() { _ = cleanupDB.Close() }()
+		pgSchemaDDLMu.Lock()
+		defer pgSchemaDDLMu.Unlock()
 		_, _ = cleanupDB.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
 	})
 
@@ -93,6 +103,7 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 // FKs to sources; that is authoritative for the cascade tables this lock must
 // cover.
 func TestExclusiveLockTablesCoverCascade(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
@@ -173,6 +184,7 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 // PostgreSQL surfaces such a deadlock as an error on one transaction after
 // deadlock_timeout, so the loop requires every racing pair to succeed.
 func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
@@ -217,6 +229,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 // removed sources are non-email (imessage) so the migration never writes
 // identities for a source that is concurrently deleted.
 func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
@@ -260,6 +273,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *tes
 // participant_identifiers). The identifier alternates between two
 // participants each iteration so every call takes the write path.
 func TestRemoveSourceSerializedDoesNotDeadlockWithSetParticipantIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
@@ -304,6 +318,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithSetParticipantIdentifier(t *te
 }
 
 func TestMaintenanceTimeoutResetSQL(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "SET LOCAL statement_timeout = 0", (&PostgreSQLDialect{}).MaintenanceTimeoutResetSQL())
 	assert.Empty(t, (&SQLiteDialect{}).MaintenanceTimeoutResetSQL())
 }
@@ -326,6 +341,7 @@ func is57014(err error) bool { return isPgError(err, "57014") }
 //     statement_timeout is 100ms runs pg_sleep(0.3) to completion, because the
 //     hatch resets the timeout to 0 inside the maintenance tx.
 func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
+	t.Parallel()
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
 	ctx := context.Background()
@@ -400,6 +416,7 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 // Slow DELETE triggers make both stale-index repair and zero-live record
 // cleanup exceed a deliberately tiny session timeout; both must still finish.
 func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

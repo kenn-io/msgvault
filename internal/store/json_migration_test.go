@@ -14,6 +14,7 @@ import (
 )
 
 func TestAttributeValuePreservesPresentEmptyJSON(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{`{}`, `[]`, `""`, `null`} {
 		t.Run(raw, func(t *testing.T) {
 			require := require.New(t)
@@ -30,6 +31,7 @@ func TestAttributeValuePreservesPresentEmptyJSON(t *testing.T) {
 }
 
 func TestPersonVCardFingerprintPreservesStoredJSONEncoding(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	snapshot := &PersonVCardSnapshot{}
 	legacy, err := legacyjson.Marshal(personVCardFingerprintView(snapshot))

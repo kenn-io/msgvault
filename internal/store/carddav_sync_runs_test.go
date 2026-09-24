@@ -16,6 +16,7 @@ import (
 )
 
 func TestCardDAVSyncRunLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -68,6 +69,7 @@ func TestCardDAVSyncRunLifecycle(t *testing.T) {
 }
 
 func TestCardDAVSyncRunConcurrentActiveClaim(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -105,6 +107,7 @@ func TestCardDAVSyncRunConcurrentActiveClaim(t *testing.T) {
 }
 
 func TestCardDAVSyncRunTerminalStatesRetainCounters(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
@@ -137,6 +140,7 @@ func TestCardDAVSyncRunTerminalStatesRetainCounters(t *testing.T) {
 }
 
 func TestCardDAVSyncRunRejectsInvalidInputAndTransitions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -174,6 +178,7 @@ func TestCardDAVSyncRunRejectsInvalidInputAndTransitions(t *testing.T) {
 }
 
 func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -229,6 +234,7 @@ func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 }
 
 func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -267,6 +273,7 @@ func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
 }
 
 func TestCardDAVSyncRunRecoveryAndSafePublicErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -294,6 +301,7 @@ func TestCardDAVSyncRunRecoveryAndSafePublicErrors(t *testing.T) {
 }
 
 func TestCardDAVSyncRunRecoveryUsesDurableUsefulCounters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -316,6 +324,7 @@ func TestCardDAVSyncRunRecoveryUsesDurableUsefulCounters(t *testing.T) {
 }
 
 func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -369,6 +378,7 @@ func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
 }
 
 func TestCardDAVSyncRunSchemaErrorCodeConstraintParity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	insert := st.Rebind(`INSERT INTO carddav_sync_runs
@@ -389,6 +399,7 @@ func TestCardDAVSyncRunSchemaErrorCodeConstraintParity(t *testing.T) {
 }
 
 func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -452,6 +463,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 }
 
 func TestCardDAVSyncRunRedactsStandaloneCredentialMarkers(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 

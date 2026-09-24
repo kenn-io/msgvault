@@ -10,6 +10,7 @@ import (
 )
 
 func TestPostgresColumnExistsSQLScopesToCurrentSchema(t *testing.T) {
+	t.Parallel()
 	query := postgresColumnExistsSQL("messages", "search_fts")
 
 	for _, want := range []string{
@@ -22,6 +23,7 @@ func TestPostgresColumnExistsSQLScopesToCurrentSchema(t *testing.T) {
 }
 
 func TestPostgresConnConfigRuntimeParams(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	cfg, err := postgresConnConfig("postgres://user:pass@example.com:5432/msgvault", true)
 	require.NoError(t, err, "postgresConnConfig")
@@ -34,6 +36,7 @@ func TestPostgresConnConfigRuntimeParams(t *testing.T) {
 }
 
 func TestStoreCloseRunsRegisteredCleanup(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open sqlite")
 

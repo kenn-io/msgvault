@@ -11,6 +11,7 @@ import (
 )
 
 func TestCompletePersonProfilesReturnsOnlyCurrentCuratedPrimitives(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := storetest.New(t).Store
@@ -99,6 +100,7 @@ func TestCompletePersonProfilesReturnsOnlyCurrentCuratedPrimitives(t *testing.T)
 }
 
 func TestCompletePersonProfilesValidatesAndCapsResults(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()

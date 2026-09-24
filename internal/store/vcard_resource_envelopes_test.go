@@ -15,6 +15,7 @@ import (
 )
 
 func TestVCardResourceEnvelopeRoundTripsExactBodyAndMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -60,6 +61,7 @@ func TestVCardResourceEnvelopeRoundTripsExactBodyAndMetadata(t *testing.T) {
 }
 
 func TestVCardResourceCommitPersistsBodyTreeMappingsAndResidueAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -123,6 +125,7 @@ func TestVCardResourceCommitPersistsBodyTreeMappingsAndResidueAtomically(t *test
 }
 
 func TestVCardResourceNoOpDoesNotAdvanceRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -169,6 +172,7 @@ func TestVCardResourceNoOpDoesNotAdvanceRevision(t *testing.T) {
 }
 
 func TestVCardResourceUpdateRejectsPersonReassignment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -213,6 +217,7 @@ func TestVCardResourceUpdateRejectsPersonReassignment(t *testing.T) {
 // gone — silently, and only under concurrency. It is refused as invalid input
 // rather than accepted as a weaker commit.
 func TestVCardResourceCommitRequiresProjectionFingerprint(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -259,6 +264,7 @@ func TestVCardResourceCommitRequiresProjectionFingerprint(t *testing.T) {
 }
 
 func TestVCardResourceIdentityAndHrefAreScopedBySource(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := createEnvelopePerson(t, st, "alice@example.com")
 	raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Alice\r\nEND:VCARD\r\n")
@@ -291,6 +297,7 @@ func TestVCardResourceIdentityAndHrefAreScopedBySource(t *testing.T) {
 }
 
 func TestVCardResourceRejectsStaleWriterAcrossHandles(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "vcard-cas.db")
@@ -358,6 +365,7 @@ func TestVCardResourceRejectsStaleWriterAcrossHandles(t *testing.T) {
 }
 
 func TestVCardResourceSourceUIDRewriteUsesCASAndKeepsCanonicalIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -390,6 +398,7 @@ func TestVCardResourceSourceUIDRewriteUsesCASAndKeepsCanonicalIdentity(t *testin
 }
 
 func TestVCardResourceSourceUIDRewriteMigratesProvenanceAndProjectionRevisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -482,6 +491,7 @@ func TestVCardResourceSourceUIDRewriteMigratesProvenanceAndProjectionRevisions(t
 }
 
 func TestVCardResourceSourceUIDRewriteAdvancesProfileCASRevisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -582,6 +592,7 @@ func TestVCardResourceSourceUIDRewriteAdvancesProfileCASRevisions(t *testing.T) 
 }
 
 func TestVCardResourceSourceUIDRewriteRollsBackOnProvenanceCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -648,6 +659,7 @@ func TestVCardResourceSourceUIDRewriteRollsBackOnProvenanceCollision(t *testing.
 }
 
 func TestVCardResourcePreservesInitialRawBytesOnReplacement(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -675,6 +687,7 @@ func TestVCardResourcePreservesInitialRawBytesOnReplacement(t *testing.T) {
 }
 
 func TestCanonicalAndSourceUIDNamespacesRemainSeparate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -712,6 +725,7 @@ func TestCanonicalAndSourceUIDNamespacesRemainSeparate(t *testing.T) {
 }
 
 func TestVCardResourceReadRejectsCorruptHash(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person := createEnvelopePerson(t, st, "alice@example.com")
 	envelope := parseStoreEnvelope(t,
@@ -799,6 +813,7 @@ func replaceStoreFormattedName(
 // handler. Without the contended-write retry roughly a tenth of these Puts
 // surfaced "database is locked" to the caller under one concurrent writer.
 func TestVCardResourceWritesRetrySQLiteSnapshotContention(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	ctx := t.Context()
@@ -861,6 +876,7 @@ func TestVCardResourceWritesRetrySQLiteSnapshotContention(t *testing.T) {
 // unrelated writer that committed meanwhile, and a busy neighbour then starves
 // it through the whole retry budget.
 func TestVCardSemanticCommitAbsorbsSQLiteWriterContention(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	ctx := t.Context()

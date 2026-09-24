@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *testing.T) {
+func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *testing.T) { //nolint:paralleltest // counts blocked carddav_discovery_lock writers across every database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 

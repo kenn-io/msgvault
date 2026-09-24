@@ -11,6 +11,7 @@ import (
 )
 
 func TestSavedViewsPostgreSQLSchemaUsesIdentityJSONBAndTimestamps(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")

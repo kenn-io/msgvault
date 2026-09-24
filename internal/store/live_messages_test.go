@@ -8,18 +8,21 @@ import (
 )
 
 func TestLiveMessagesWhere_NoAlias(t *testing.T) {
+	t.Parallel()
 	got := store.LiveMessagesWhere("", true)
 	want := "deleted_at IS NULL AND deleted_from_source_at IS NULL"
 	assert.Equal(t, want, got)
 }
 
 func TestLiveMessagesWhere_WithAlias(t *testing.T) {
+	t.Parallel()
 	got := store.LiveMessagesWhere("m", true)
 	want := "m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL"
 	assert.Equal(t, want, got)
 }
 
 func TestLiveMessagesWhere_TableDriven(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		alias                 string
 		hideDeletedFromSource bool

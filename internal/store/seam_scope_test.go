@@ -19,6 +19,7 @@ import (
 // it after the installing test returned failed with "sql: database is closed" —
 // and, worse, could have written into a live test's archive.
 func TestInitSchemaWindowHookFiresOnlyForItsOwnStore(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	owner := testutil.NewTestStore(t)
 	other := testutil.NewTestStore(t)

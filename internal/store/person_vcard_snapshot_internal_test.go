@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonVCardSnapshotTransactionDoesNotMixConcurrentSemanticWrites(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "snapshot.db")

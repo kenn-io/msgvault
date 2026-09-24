@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	_, err := f.store.DB().Exec(f.store.Rebind(
@@ -49,6 +50,7 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 }
 
 func TestPersonSweepTriggerMigrationV5RepairsV4DocumentLifecycleDefinition(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f, personID := newPersonSweepDocumentFixture(t)

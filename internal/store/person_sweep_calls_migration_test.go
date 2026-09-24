@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonSweepCallJournalMigrationPreservesLegacyRowsAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "calls-migration")

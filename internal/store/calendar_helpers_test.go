@@ -17,6 +17,7 @@ import (
 // back semantically intact. Runs under both dialects (make test-pg) so the
 // JSONBindExpr cast is exercised on Postgres.
 func TestSetMessageMetadata_RoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -48,6 +49,7 @@ func TestSetMessageMetadata_RoundTrip(t *testing.T) {
 // TestSetMessageMetadata_Clear proves an invalid sql.NullString writes SQL NULL,
 // clearing a previously-set metadata value.
 func TestSetMessageMetadata_Clear(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -70,6 +72,7 @@ func TestSetMessageMetadata_Clear(t *testing.T) {
 // identifier (the natural calendar key). A source with NULL/garbage sync_config
 // is skipped, not fatal.
 func TestGetSourcesByTypeAndAccount(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -116,6 +119,7 @@ func TestGetSourcesByTypeAndAccount(t *testing.T) {
 }
 
 func TestGetSourcesByTypeAndAccount_EmailCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

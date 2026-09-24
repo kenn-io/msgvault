@@ -13,6 +13,7 @@ import (
 )
 
 func TestPostgreSQLManualPersonAttributeWritesLockBeforeMutation(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		run  func(*testing.T, *Store, int64) error
@@ -92,6 +93,7 @@ func TestPostgreSQLManualPersonAttributeWritesLockBeforeMutation(t *testing.T) {
 }
 
 func TestPostgreSQLSystemPersonAttributeWriteWaitsForFactResolution(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -256,7 +258,7 @@ func personAttributePostgreSQLBlockedWriterPID(t *testing.T, st *Store, blockerP
 	return writerPID
 }
 
-func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) {
+func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) { //nolint:paralleltest // finds its writer as any idle-in-transaction backend holding the lock across the whole PostgreSQL database in pg_stat_activity
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !IsPostgresURL(dbURL) {
 		t.Skip("PostgreSQL catalog/person lock barrier")

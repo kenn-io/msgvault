@@ -18,6 +18,7 @@ func inferenceReviewPerson(t *testing.T, st *store.Store) int64 {
 }
 
 func TestCardDAVReviewSourceUnpublishedTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, account, book := newCardDAVResourceStore(t)
@@ -38,6 +39,7 @@ func TestCardDAVReviewSourceUnpublishedTarget(t *testing.T) {
 }
 
 func TestCardDAVReviewSourceMissingAccount(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := inferenceReviewPerson(t, st)
 	_, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
@@ -47,6 +49,7 @@ func TestCardDAVReviewSourceMissingAccount(t *testing.T) {
 }
 
 func TestCardDAVReviewSourceMappedEnvelopeAndConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, account, book, mapping := seededCardDAVConflictMapping(t)
@@ -72,6 +75,7 @@ func TestCardDAVReviewSourceMappedEnvelopeAndConflict(t *testing.T) {
 }
 
 func TestCardDAVReviewSourcePendingRetainsCapturedTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, book := newCardDAVResourceStore(t)
@@ -94,6 +98,7 @@ func TestCardDAVReviewSourcePendingRetainsCapturedTarget(t *testing.T) {
 }
 
 func TestCardDAVReviewSourcePropagatesBrokenOptionalRecords(t *testing.T) {
+	t.Parallel()
 	for _, broken := range []string{"resource", "envelope", "conflict", "missing envelope"} {
 		t.Run(broken, func(t *testing.T) {
 			st, _, book, mapping := seededCardDAVConflictMapping(t)
@@ -119,6 +124,7 @@ func TestCardDAVReviewSourcePropagatesBrokenOptionalRecords(t *testing.T) {
 }
 
 func TestCardDAVInferenceApprovalClearedWhenDiscoveryDeletesBook(t *testing.T) {
+	t.Parallel()
 	for _, identityChange := range []bool{false, true} {
 		t.Run(fmt.Sprintf("identity_change_%t", identityChange), func(t *testing.T) {
 			require := require.New(t)
@@ -164,6 +170,7 @@ func TestCardDAVInferenceApprovalClearedWhenDiscoveryDeletesBook(t *testing.T) {
 }
 
 func TestCardDAVReviewSourceSettledPublicationRequiresUsableTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, book := newCardDAVResourceStore(t)
@@ -183,6 +190,7 @@ func TestCardDAVReviewSourceSettledPublicationRequiresUsableTarget(t *testing.T)
 }
 
 func TestCardDAVReviewSourceRejectsPublicationMissingCapturedBook(t *testing.T) {
+	t.Parallel()
 	st, _, book := newCardDAVResourceStore(t)
 	id, _ := settleCardDAVTestPublication(t, st, book, "review-missing-book")
 	// Settled legacy rows allow NULL scope, but cannot authorize choosing a new

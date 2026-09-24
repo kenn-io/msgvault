@@ -20,6 +20,7 @@ import (
 )
 
 func TestStore_GetSourcesByIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -40,6 +41,7 @@ func TestStore_GetSourcesByIdentifier(t *testing.T) {
 }
 
 func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	sources, err := st.GetSourcesByIdentifier("nobody@example.com")
@@ -48,6 +50,7 @@ func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
 }
 
 func TestStore_GetSourcesByIdentifierOrDisplayNameIgnoresCase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -72,6 +75,7 @@ func TestStore_GetSourcesByIdentifierOrDisplayNameIgnoresCase(t *testing.T) {
 }
 
 func TestStore_RemoveSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -127,6 +131,7 @@ func TestStore_RemoveSource(t *testing.T) {
 }
 
 func TestStore_RemoveSource_NotFound(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	err := st.RemoveSource(99999)
@@ -158,6 +163,7 @@ func recordStableProviderObservationPair(
 }
 
 func TestStore_RemoveSourceRemovesObservationIdentityCandidates(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		remove func(context.Context, *store.Store, int64) error
@@ -240,6 +246,7 @@ func TestStore_RemoveSourceRemovesObservationIdentityCandidates(t *testing.T) {
 }
 
 func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		remove func(context.Context, *store.Store, int64) error
@@ -537,6 +544,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 }
 
 func TestStore_RemoveSourceRecomputesGeneratedObservationConflicts(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		kind  store.ContactAddressKind
 		value string
@@ -593,6 +601,7 @@ func TestStore_RemoveSourceRecomputesGeneratedObservationConflicts(t *testing.T)
 }
 
 func TestStore_RemoveSourceKeepsGeneratedConflictWithOtherSourceSupport(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
@@ -628,6 +637,7 @@ func TestStore_RemoveSourceKeepsGeneratedConflictWithOtherSourceSupport(t *testi
 }
 
 func TestStore_RemoveUnrelatedSourceKeepsGeneratedUsernameConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
@@ -667,6 +677,7 @@ func TestStore_RemoveUnrelatedSourceKeepsGeneratedUsernameConflict(t *testing.T)
 }
 
 func TestStore_RemoveUnrelatedSourceKeepsSupportedPolymorphicEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
@@ -711,6 +722,7 @@ func TestStore_RemoveUnrelatedSourceKeepsSupportedPolymorphicEvidence(t *testing
 }
 
 func TestStoreRemoveSourceDemotesPromotedObservationConflict(t *testing.T) {
+	t.Parallel()
 	for name, remove := range map[string]func(context.Context, *store.Store, int64) error{
 		"maintenance": func(_ context.Context, st *store.Store, sourceID int64) error {
 			return st.RemoveSource(sourceID)
@@ -775,6 +787,7 @@ func TestStoreRemoveSourceDemotesPromotedObservationConflict(t *testing.T) {
 }
 
 func TestStore_RemoveSourceKeepsConflictsBetweenOtherParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -819,6 +832,7 @@ func TestStore_RemoveSourceKeepsConflictsBetweenOtherParticipants(t *testing.T) 
 }
 
 func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -880,6 +894,7 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -896,6 +911,7 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_PreservesPendingOperation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	fixture := storetest.New(t)
@@ -921,6 +937,7 @@ func TestStore_RemoveSourceSerialized_PreservesPendingOperation(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1031,6 +1048,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		path func(string) string
@@ -1102,6 +1120,7 @@ func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *test
 }
 
 func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1149,6 +1168,7 @@ func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *tes
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1168,6 +1188,7 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1195,6 +1216,7 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	_, _, err := st.RemoveSourceSerialized(context.Background(), 99999)
@@ -1202,6 +1224,7 @@ func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
 }
 
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -1290,6 +1313,7 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 }
 
 func TestStore_GetSourceByID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1302,6 +1326,7 @@ func TestStore_GetSourceByID(t *testing.T) {
 }
 
 func TestStore_GetSourceByID_NotFound(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	_, err := f.Store.GetSourceByID(99999)
@@ -1309,6 +1334,7 @@ func TestStore_GetSourceByID_NotFound(t *testing.T) {
 }
 
 func TestStore_IsAttachmentPathReferenced(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1336,6 +1362,7 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 }
 
 func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	// Simulate a pre-migration database that lacks the oauth_app column.
@@ -1406,6 +1433,7 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 // `deleted_at` (LiveMessagesWhere, the dedup engine, the cache
 // staleness check) fails on upgraded databases with "no such column".
 func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)

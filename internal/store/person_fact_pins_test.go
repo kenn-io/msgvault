@@ -14,6 +14,7 @@ import (
 )
 
 func TestPersonFactImplicitPinUnpinRerunsAndManualSetRepins(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -69,6 +70,7 @@ func TestPersonFactImplicitPinUnpinRerunsAndManualSetRepins(t *testing.T) {
 }
 
 func TestPersonFactManualNoteAppendRepinsAfterExplicitUnpin(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -105,6 +107,7 @@ func TestPersonFactManualNoteAppendRepinsAfterExplicitUnpin(t *testing.T) {
 }
 
 func TestPersonFactExplicitUnpinOverridesUnownedDerivedAttributeProtection(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{
 		ProvenanceExtraction,
 		ProvenanceEnrichment,
@@ -178,6 +181,7 @@ func TestPersonFactExplicitUnpinOverridesUnownedDerivedAttributeProtection(t *te
 }
 
 func TestListPersonFactPinsDoesNotInferPinForFactOwnedDerivedAttribute(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, target, result, evidenceKey := seedProjectedPersonFact(t)
@@ -191,6 +195,7 @@ func TestListPersonFactPinsDoesNotInferPinForFactOwnedDerivedAttribute(t *testin
 }
 
 func TestListPersonFactPinsAttributeDiscoveryUsesCurrentIndex(t *testing.T) {
+	t.Parallel()
 	st, personID, _ := newPersonFactProjectionStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("SQLite query-plan coverage; PostgreSQL uses the equivalent partial current-row index")
@@ -207,6 +212,7 @@ func TestListPersonFactPinsAttributeDiscoveryUsesCurrentIndex(t *testing.T) {
 }
 
 func TestListPersonFactPinsEmploymentDiscoveryUsesCurrentAndOwnershipIndexes(t *testing.T) {
+	t.Parallel()
 	st, personID, _ := newPersonFactProjectionStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("SQLite query-plan coverage; PostgreSQL has equivalent person/current and ownership indexes")
@@ -222,6 +228,7 @@ func TestListPersonFactPinsEmploymentDiscoveryUsesCurrentAndOwnershipIndexes(t *
 }
 
 func TestPersonFactManualSupersedePinsAbsence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -249,6 +256,7 @@ func TestPersonFactManualSupersedePinsAbsence(t *testing.T) {
 }
 
 func TestPersonFactManualSupersedePinsInactiveAttributeAbsence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -297,6 +305,7 @@ func TestPersonFactManualSupersedePinsInactiveAttributeAbsence(t *testing.T) {
 }
 
 func TestPersonFactExplicitPinSurvivesAutomaticValueChanges(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -320,6 +329,7 @@ func TestPersonFactExplicitPinSurvivesAutomaticValueChanges(t *testing.T) {
 }
 
 func TestPersonFactPinnedAutomaticProjectionSurvivesStatusInvalidationUntilUnpinned(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, target, _, evidenceKey := seedProjectedPersonFact(t)
@@ -359,6 +369,7 @@ func TestPersonFactPinnedAutomaticProjectionSurvivesStatusInvalidationUntilUnpin
 }
 
 func TestPersonFactPinReresolutionUsesHostGenerationAndPreservesProviderReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, target, providerResult, _ := seedProjectedPersonFact(t)
@@ -393,6 +404,7 @@ func TestPersonFactPinReresolutionUsesHostGenerationAndPreservesProviderReplay(t
 }
 
 func TestPersonFactExplicitPinSurvivesDescriptorRevisionChange(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -416,6 +428,7 @@ func TestPersonFactExplicitPinSurvivesDescriptorRevisionChange(t *testing.T) {
 }
 
 func TestListPersonFactPinsRetainsEventForDeletedAttributeDefinition(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, _ := newPersonFactProjectionStore(t)
@@ -456,6 +469,7 @@ func TestListPersonFactPinsRetainsEventForDeletedAttributeDefinition(t *testing.
 }
 
 func TestPersonFactHistoricalDeclaredEmploymentIsEffectivelyPinnedUntilExplicitUnpin(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport} {
 		t.Run(string(source), func(t *testing.T) {
 			assert := assert.New(t)
@@ -509,6 +523,7 @@ func TestPersonFactHistoricalDeclaredEmploymentIsEffectivelyPinnedUntilExplicitU
 }
 
 func TestPersonFactUnownedDerivedEmploymentIsImplicitlyPinned(t *testing.T) {
+	t.Parallel()
 	for _, source := range []Provenance{
 		ProvenanceExtraction,
 		ProvenanceEnrichment,
@@ -574,6 +589,7 @@ func TestPersonFactUnownedDerivedEmploymentIsImplicitlyPinned(t *testing.T) {
 }
 
 func TestPersonFactExplicitUnpinOverridesUnownedDerivedEmploymentProtection(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []struct {
 		name     string
 		relation personfacts.ClaimRelation
@@ -635,6 +651,7 @@ func TestPersonFactExplicitUnpinOverridesUnownedDerivedEmploymentProtection(t *t
 }
 
 func TestPersonFactOwnedEmploymentRemainsAutomaticallyMutable(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []struct {
 		name     string
 		relation personfacts.ClaimRelation
@@ -697,6 +714,7 @@ func TestPersonFactOwnedEmploymentRemainsAutomaticallyMutable(t *testing.T) {
 }
 
 func TestPersonFactEmploymentUpdatesPinProjectedRows(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []struct {
 		name, updatedRole  string
 		relation           personfacts.ClaimRelation
@@ -786,6 +804,7 @@ func TestPersonFactEmploymentUpdatesPinProjectedRows(t *testing.T) {
 }
 
 func TestPersonFactDerivedEmploymentDetachmentDurablyPinsAffectedPeople(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []struct {
 		name     string
 		reassign bool
@@ -890,6 +909,7 @@ func TestPersonFactDerivedEmploymentDetachmentDurablyPinsAffectedPeople(t *testi
 }
 
 func TestSetPersonFactPinRejectsBlankActorAndSkipsDuplicateEvent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
@@ -906,6 +926,7 @@ func TestSetPersonFactPinRejectsBlankActorAndSkipsDuplicateEvent(t *testing.T) {
 }
 
 func TestSetPersonFactPinRejectsUntrackedPersonWithoutWrites(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)

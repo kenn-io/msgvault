@@ -16,6 +16,7 @@ import (
 // before the fix searchMessagesQueryImpl never referenced it, so every
 // account returned byte-identical results. Runs under SQLite and PostgreSQL.
 func TestSearchMessagesQuery_AccountScoping(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -91,6 +92,7 @@ func TestSearchMessagesQuery_AccountScoping(t *testing.T) {
 // them and scope=any must return everything; the zero value keeps the
 // historical active-only behavior. Runs under SQLite and PostgreSQL.
 func TestSearchMessagesQuery_DeletionScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -151,6 +153,7 @@ func TestSearchMessagesQuery_DeletionScope(t *testing.T) {
 // conversation scope, so they match any listed conversation while excluding
 // messages from every other thread.
 func TestSearchMessagesQuery_ConversationIDScoping(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -187,6 +190,7 @@ func TestSearchMessagesQuery_ConversationIDScoping(t *testing.T) {
 }
 
 func TestSearchMessagesQuery_ExplicitEmptyConversationScopeMatchesNothing(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	f.NewMessage().
 		WithSourceMessageID("conversation-scope-must-not-widen").

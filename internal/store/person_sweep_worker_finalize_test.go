@@ -34,6 +34,7 @@ func (p *overflowUsageProvider) ServeHTTP(w http.ResponseWriter, _ *http.Request
 }
 
 func TestPersonSweepWorkerUnaccountableUsageFinalizesWithoutPendingLease(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newProductionPersonSweepParityFixture(t)

@@ -76,6 +76,7 @@ func newMessageIdentityFixture(t *testing.T) messageIdentityFixture {
 }
 
 func TestMatchMessageIdentitiesUsesEveryFromAndRecipientWithinSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := newMessageIdentityFixture(t)
@@ -102,6 +103,7 @@ func TestMatchMessageIdentitiesUsesEveryFromAndRecipientWithinSource(t *testing.
 }
 
 func TestMatchMessageIdentitiesCannotLeakAcrossSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := newMessageIdentityFixture(t)
@@ -115,6 +117,7 @@ func TestMatchMessageIdentitiesCannotLeakAcrossSource(t *testing.T) {
 }
 
 func TestMatchMessageIdentitiesPreservesSyntheticExactness(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -138,6 +141,7 @@ func TestMatchMessageIdentitiesPreservesSyntheticExactness(t *testing.T) {
 }
 
 func TestMatchMessageIdentitiesUsesDirectSenderOnlyWithoutFromRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -155,6 +159,7 @@ func TestMatchMessageIdentitiesUsesDirectSenderOnlyWithoutFromRow(t *testing.T) 
 }
 
 func TestMatchMessageIdentitiesDoesNotReplaceHeaderAddressWithAlternateIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -174,6 +179,7 @@ func TestMatchMessageIdentitiesDoesNotReplaceHeaderAddressWithAlternateIdentifie
 }
 
 func TestMatchMessageIdentitiesChunksAndReturnsStableEmptyMatches(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -191,6 +197,7 @@ func TestMatchMessageIdentitiesChunksAndReturnsStableEmptyMatches(t *testing.T) 
 }
 
 func TestResolveAccountIdentityContextReturnsStoredIdentityAndAllParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -220,6 +227,7 @@ func TestResolveAccountIdentityContextReturnsStoredIdentityAndAllParticipants(t 
 }
 
 func TestResolveAccountIdentityContextRequiresExactSourceConfirmation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -253,6 +261,7 @@ func TestResolveAccountIdentityContextRequiresExactSourceConfirmation(t *testing
 // disappears (the MergeParticipants edge, simulated here with a direct
 // delete) the badge must vanish, exactly as attribution stops matching.
 func TestMatchMessageIdentitiesMatchesAttributionForPhoneIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -295,6 +304,7 @@ func TestMatchMessageIdentitiesMatchesAttributionForPhoneIdentity(t *testing.T) 
 // email-looking bridge handle and badge a differently cased identity that
 // attribution rejects.
 func TestMatchMessageIdentitiesNonEmailIdentifierIsCaseSensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -338,6 +348,7 @@ func TestMatchMessageIdentitiesNonEmailIdentifierIsCaseSensitive(t *testing.T) {
 // the email-typed half of the per-row rule: identifier rows of type "email"
 // keep badging case-insensitively, same as attribution.
 func TestMatchMessageIdentitiesEmailTypedIdentifierIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -372,6 +383,7 @@ func TestMatchMessageIdentitiesEmailTypedIdentifierIsCaseInsensitive(t *testing.
 // MergeParticipants edge, simulated here with a direct delete) the resolver
 // must stop matching, exactly as attribution would.
 func TestResolveAccountIdentityMatchesAttributionForPhoneIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -408,6 +420,7 @@ func TestResolveAccountIdentityMatchesAttributionForPhoneIdentity(t *testing.T) 
 // rule would apply LOWER() everywhere and over-match a differently cased,
 // non-email-typed row; the per-row rule must not.
 func TestResolveAccountIdentityNonEmailIdentifierIsCaseSensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -431,6 +444,7 @@ func TestResolveAccountIdentityNonEmailIdentifierIsCaseSensitive(t *testing.T) {
 // behavior: participant_identifiers rows of type "email" keep comparing
 // case-insensitively, same as attribution.
 func TestResolveAccountIdentityEmailRemainsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -494,6 +508,7 @@ func persistEnvelopeMessage(
 // must keep badging the alias that actually appeared in its envelope, not
 // every alias the merged participant now carries.
 func TestMatchMessageIdentitiesPrefersEnvelopeAddressAfterParticipantMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -520,6 +535,7 @@ func TestMatchMessageIdentitiesPrefersEnvelopeAddressAfterParticipantMerge(t *te
 }
 
 func TestMessageAttributionPrefersNonEmptyEnvelopeOverCurrentParticipantAliases(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -569,6 +585,7 @@ func TestMessageAttributionPrefersNonEmptyEnvelopeOverCurrentParticipantAliases(
 // NULL From row must not badge the sender through the participant fallback
 // when attribution stored the message as not-from-me.
 func TestMatchMessageIdentitiesSuppressesSenderFallbackWhenAnyEnvelopeExists(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -607,6 +624,7 @@ func TestMatchMessageIdentitiesSuppressesSenderFallbackWhenAnyEnvelopeExists(t *
 // an email-typed identifier row only claims ownership when the sender carries
 // no primary email of its own.
 func TestUpsertMessageAttributionMirrorsPrimaryEmailGuard(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -650,6 +668,7 @@ func TestUpsertMessageAttributionMirrorsPrimaryEmailGuard(t *testing.T) {
 // changes attribution evidence the message upsert's CTE never saw, so the
 // replacement itself must settle the persisted flag.
 func TestReplaceFromRecipientsRefreshesAttribution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -678,6 +697,7 @@ func TestReplaceFromRecipientsRefreshesAttribution(t *testing.T) {
 // existed (email_address NULL) keep matching through the current participant
 // fields.
 func TestMatchMessageIdentitiesFallsBackToParticipantEmailWithoutEnvelope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -702,6 +722,7 @@ func TestMatchMessageIdentitiesFallsBackToParticipantEmailWithoutEnvelope(t *tes
 // absorbs a phone participant. The survivor's primary email suppresses
 // alternate email aliases, but must not hide the preserved phone identifier.
 func TestMatchMessageIdentitiesKeepsNonEmailIdentifierAfterParticipantMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -738,6 +759,7 @@ func TestMatchMessageIdentitiesKeepsNonEmailIdentifierAfterParticipantMerge(t *t
 // the envelope snapshot column applies (emails) or participant matching is
 // the only surface (phones, matrix IDs, handles).
 func TestResolveAccountIdentityContextReportsEmailIdentifierShape(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)
@@ -755,7 +777,7 @@ func TestResolveAccountIdentityContextReportsEmailIdentifierShape(t *testing.T) 
 	assert.False(phone.IdentifierIsEmail, "phone identifier must not be classified as email")
 }
 
-func TestGenericAPIMessagePathsDoNotHydrateIdentityMatches(t *testing.T) {
+func TestGenericAPIMessagePathsDoNotHydrateIdentityMatches(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	fx := storetest.New(t)

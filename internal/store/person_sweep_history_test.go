@@ -12,6 +12,7 @@ import (
 )
 
 func TestFinalizePersonSweepFailureAccountsAfterLeaseLoss(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	journal := newPersonSweepJournalFixture(t, true, false)
@@ -78,6 +79,7 @@ func TestFinalizePersonSweepFailureAccountsAfterLeaseLoss(t *testing.T) {
 }
 
 func TestPersonSweepRecoveryUsesLeaseReclamation(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	journal := newPersonSweepJournalFixture(t, true, false)
@@ -119,6 +121,7 @@ func TestPersonSweepRecoveryUsesLeaseReclamation(t *testing.T) {
 }
 
 func TestPersonSweepRecoveryCountsDistinctTerminalizedRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	journal := newPersonSweepJournalFixture(t, true, true)
@@ -162,6 +165,7 @@ func TestPersonSweepRecoveryCountsDistinctTerminalizedRuns(t *testing.T) {
 }
 
 func TestPersonSweepHistoryContainsOnlySafeMetadata(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "safe-history")
@@ -239,6 +243,7 @@ func TestPersonSweepHistoryContainsOnlySafeMetadata(t *testing.T) {
 }
 
 func TestPersonSweepHistoryFiltersExactProviderFingerprint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "provider-history-filter")
@@ -279,6 +284,7 @@ func TestPersonSweepHistoryFiltersExactProviderFingerprint(t *testing.T) {
 }
 
 func TestPersonSweepOperationalStatusSelectsLatestSafeFailure(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name        string
 		attemptTime string
@@ -316,6 +322,7 @@ func TestPersonSweepOperationalStatusSelectsLatestSafeFailure(t *testing.T) {
 }
 
 func TestFinalizePersonSweepFailureRejectsAttemptLeaseMismatch(t *testing.T) {
+	t.Parallel()
 	for _, mutate := range []struct {
 		name string
 		fn   func(*peoplesweep.Lease)
@@ -356,6 +363,7 @@ func TestFinalizePersonSweepFailureRejectsAttemptLeaseMismatch(t *testing.T) {
 }
 
 func TestFinalizePersonSweepFailureRequiresFullBatchCoverage(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "full-coverage")
@@ -396,6 +404,7 @@ func TestFinalizePersonSweepFailureRequiresFullBatchCoverage(t *testing.T) {
 }
 
 func TestPersonSweepHistoryRejectsUnsafeProviderRequestID(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "unsafe-request-id")
@@ -423,6 +432,7 @@ func TestPersonSweepHistoryRejectsUnsafeProviderRequestID(t *testing.T) {
 }
 
 func TestPersonSweepHistoryAttemptGenerationIdentity(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepBudgetFixture(t, "generation")
@@ -483,6 +493,7 @@ func TestPersonSweepHistoryAttemptGenerationIdentity(t *testing.T) {
 }
 
 func TestPersonSweepRunRejectsTerminalizationWithActiveAccounting(t *testing.T) {
+	t.Parallel()
 	t.Run("running attempt", func(t *testing.T) {
 		f := newPersonSweepBudgetFixture(t, "finish-running-attempt")
 		err := f.store.FinishPersonSweepRun(t.Context(), f.runID,
@@ -509,6 +520,7 @@ func TestPersonSweepRunRejectsTerminalizationWithActiveAccounting(t *testing.T) 
 }
 
 func TestPersonSweepRunTerminalReplayPreservesCompletedAt(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	journal := newPersonSweepJournalFixture(t, true, false)

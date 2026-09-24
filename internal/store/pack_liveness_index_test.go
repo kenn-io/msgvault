@@ -10,6 +10,7 @@ import (
 )
 
 func TestAttachmentPackLivenessQueriesUseExpressionIndexes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()

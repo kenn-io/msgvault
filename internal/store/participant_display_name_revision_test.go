@@ -15,6 +15,7 @@ import (
 )
 
 func TestPersistMessageWithParticipantsBumpsDisplayNameRevisionOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -41,7 +42,7 @@ func TestPersistMessageWithParticipantsBumpsDisplayNameRevisionOnce(t *testing.T
 		"one message transaction must invalidate derived participant data once")
 }
 
-func TestPostgreSQLParticipantBatchSerializesWithMerge(t *testing.T) {
+func TestPostgreSQLParticipantBatchSerializesWithMerge(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	st := storetest.New(t).Store
 	if !st.IsPostgreSQL() {
@@ -109,6 +110,7 @@ func TestPostgreSQLParticipantBatchSerializesWithMerge(t *testing.T) {
 }
 
 func TestEnsureParticipantsBatchConcurrentOppositeOrderConverges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -153,6 +155,7 @@ func TestEnsureParticipantsBatchConcurrentOppositeOrderConverges(t *testing.T) {
 }
 
 func TestEnsureParticipantBumpsDisplayNameRevisionOnlyWhenCreatingParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -177,6 +180,7 @@ func TestEnsureParticipantBumpsDisplayNameRevisionOnlyWhenCreatingParticipant(t 
 }
 
 func TestEnsureParticipantsBatchBumpsDisplayNameRevisionForActualInserts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -209,6 +213,7 @@ func participantDisplayNameRevision(t *testing.T, st *store.Store) int64 {
 }
 
 func TestEnsureParticipantByIdentifierBackfillBumpsDisplayNameRevisionOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -243,6 +248,7 @@ func TestEnsureParticipantByIdentifierBackfillBumpsDisplayNameRevisionOnce(t *te
 }
 
 func TestEnsureParticipantByPhoneBackfillBumpsDisplayNameRevisionOnceWhenIdentifierNoop(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -277,6 +283,7 @@ func TestEnsureParticipantByPhoneBackfillBumpsDisplayNameRevisionOnceWhenIdentif
 }
 
 func TestEnsureParticipantByPhoneSameWhitespaceNameDoesNotBumpDisplayNameRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -295,6 +302,7 @@ func TestEnsureParticipantByPhoneSameWhitespaceNameDoesNotBumpDisplayNameRevisio
 }
 
 func TestUpdateParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnlyOnActualUpdate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -320,6 +328,7 @@ func TestUpdateParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnlyOnActual
 }
 
 func TestUpdateImessageParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnlyOnActualUpdate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -345,6 +354,7 @@ func TestUpdateImessageParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnly
 }
 
 func TestUpdateImessageParticipantDisplayNameByPhoneSameValueIsNoop(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -363,6 +373,7 @@ func TestUpdateImessageParticipantDisplayNameByPhoneSameValueIsNoop(t *testing.T
 }
 
 func TestUpdateParticipantDisplayNameByEmailBumpsDisplayNameRevisionOnlyOnActualUpdate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

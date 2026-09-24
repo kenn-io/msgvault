@@ -16,6 +16,7 @@ import (
 )
 
 func TestPersonInferenceProviderV2Schema(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	profileColumns := liveTableColumns(t, st, "person_inference_profiles")
 	for _, column := range []string{
@@ -37,6 +38,7 @@ func TestPersonInferenceProviderV2Schema(t *testing.T) {
 // columns and check table appear, and the pre-profile row, which no current
 // configuration can fingerprint, is removed rather than carried forward.
 func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newUninitializedPersonInferenceMigrationStore(t)
@@ -117,6 +119,7 @@ func newUninitializedPersonInferenceMigrationStore(t *testing.T) *store.Store {
 }
 
 func TestPersonInferenceConsentSchemaEnforcesAuditState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := inferenceTestProfile(t)

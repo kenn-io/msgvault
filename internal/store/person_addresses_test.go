@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonAddressRoundTripsStructuredComponentsAndMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -42,6 +43,7 @@ func TestPersonAddressRoundTripsStructuredComponentsAndMetadata(t *testing.T) {
 }
 
 func TestBirthAndDeathPlacesAreAddressRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -69,6 +71,7 @@ func TestBirthAndDeathPlacesAreAddressRows(t *testing.T) {
 }
 
 func TestPersonAddressDerivesOriginalValueFromAlternateRepresentation(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		value string
@@ -148,6 +151,7 @@ func TestPersonAddressDerivesOriginalValueFromAlternateRepresentation(t *testing
 }
 
 func TestPersonAddressValidationAndSupersession(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

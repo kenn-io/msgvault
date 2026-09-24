@@ -67,6 +67,7 @@ func newMembershipFixture(
 // ever accumulate, so a conversation whose membership shrank below the
 // threshold would otherwise stay excluded forever.
 func TestAttachmentConversationAppliesProviderMembershipRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		sourceType string
@@ -122,6 +123,7 @@ func TestAttachmentConversationAppliesProviderMembershipRecord(t *testing.T) {
 // roster reads as a small conversation and the backfill downloads exactly what
 // the threshold excluded.
 func TestRetryableAttachmentMessagesFailClosedOnUnknownMembership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -183,6 +185,7 @@ func TestRetryableAttachmentMessagesFailClosedOnUnknownMembership(t *testing.T) 
 // the Beeper policy pass must not admit on them. A roster the provider reads
 // later resolves it either way.
 func TestRetryableAttachmentMessagesFailClosedWithoutArchivedRoster(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -238,6 +241,7 @@ func TestRetryableAttachmentMessagesFailClosedWithoutArchivedRoster(t *testing.T
 // retry policy pass and retry selection must weigh the archived total — and
 // fail closed on an unresolved roster — rather than the smaller stored rows.
 func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -285,6 +289,7 @@ func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
 // a read failed or none was ever recorded — rather than let the accumulated
 // participant rows stand in for one.
 func TestAttachmentPolicyCandidatesReportUnresolvedRosters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -331,6 +336,7 @@ func TestAttachmentPolicyCandidatesReportUnresolvedRosters(t *testing.T) {
 // succeeds again, and neither disturbs the other provider metadata sharing the
 // column.
 func TestMembershipRecordWritesPreserveKnownCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

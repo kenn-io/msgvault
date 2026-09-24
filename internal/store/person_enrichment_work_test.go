@@ -101,6 +101,7 @@ func testAttemptStart(f *enrichmentWorkFixture, runID int64, hashByte string) pe
 }
 
 func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *testing.T) {
+	t.Parallel()
 	for _, winner := range []string{"suppression", "deletion"} {
 		t.Run(winner, func(t *testing.T) {
 			require := require.New(t)
@@ -192,6 +193,7 @@ func TestPersonEnrichmentBeginAttemptRejectsConcurrentConfiguredKeyWinner(t *tes
 }
 
 func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -232,6 +234,7 @@ func TestPersonEnrichmentDispatchAuthorizationIsFencedByConsentRevocation(t *tes
 }
 
 func TestPersonEnrichmentDispatchAuthorizationRejectsStaleIdentityRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -261,6 +264,7 @@ func TestPersonEnrichmentDispatchAuthorizationRejectsStaleIdentityRevision(t *te
 }
 
 func TestPersonEnrichmentProfileCleanupRejectsAuthorizedDispatch(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -295,6 +299,7 @@ func TestPersonEnrichmentProfileCleanupRejectsAuthorizedDispatch(t *testing.T) {
 }
 
 func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAttempt(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"add_name", "supersede_name", "add_contact", "supersede_contact"} {
 		t.Run(mutation, func(t *testing.T) {
 			requirements := require.New(t)
@@ -373,6 +378,7 @@ func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAtt
 }
 
 func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -395,6 +401,7 @@ func TestPersonEnrichmentUntrackingFencesLeasedAttemptBeforeDispatch(t *testing.
 }
 
 func TestPersonEnrichmentRetrackingCreatesFreshAttempt(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -437,6 +444,7 @@ func TestPersonEnrichmentRetrackingCreatesFreshAttempt(t *testing.T) {
 }
 
 func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -470,6 +478,7 @@ func TestPersonEnrichmentSuppressionFencesLeasedAttemptBeforeDispatch(t *testing
 }
 
 func TestPersonEnrichmentSuppressionSerializesAttemptCreation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -540,6 +549,7 @@ func TestPersonEnrichmentSuppressionSerializesAttemptCreation(t *testing.T) {
 }
 
 func TestPersonEnrichmentBeginAttemptRechecksCheckedIdentifierSuppression(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -570,6 +580,7 @@ func TestPersonEnrichmentBeginAttemptRechecksCheckedIdentifierSuppression(t *tes
 }
 
 func TestPersonEnrichmentLeaseRejectsStaleWorkerAfterReclaim(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "2026-08-22T12:00:00Z")
@@ -584,6 +595,7 @@ func TestPersonEnrichmentLeaseRejectsStaleWorkerAfterReclaim(t *testing.T) {
 }
 
 func TestPersonEnrichmentClaimReturnsBoundActiveAttempt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -627,6 +639,7 @@ func TestPersonEnrichmentClaimReturnsBoundActiveAttempt(t *testing.T) {
 }
 
 func TestPersonEnrichmentReclaimClearsInterruptedPollAuthorization(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "interrupted-poll")
@@ -656,6 +669,7 @@ func TestPersonEnrichmentReclaimClearsInterruptedPollAuthorization(t *testing.T)
 }
 
 func TestSixtyfourReclaimUsesProviderStartTimeForMaximumJobAge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	checks := assert.New(t)
 	target := durableAttemptTarget(t)
@@ -725,6 +739,7 @@ func TestSixtyfourReclaimUsesProviderStartTimeForMaximumJobAge(t *testing.T) {
 }
 
 func TestSixtyfourAttemptPollsAfterDurableReleaseAndReclaim(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	checks := assert.New(t)
 	target := durableAttemptTarget(t)
@@ -801,6 +816,7 @@ func TestSixtyfourAttemptPollsAfterDurableReleaseAndReclaim(t *testing.T) {
 }
 
 func TestPersonEnrichmentClaimRejectsCorruptDurableAttemptTargets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "corrupt-durable-targets")
@@ -844,6 +860,7 @@ func durableAttemptTarget(t *testing.T) personfacts.TargetDescriptor {
 }
 
 func TestPersonEnrichmentOneActiveAttemptInvariant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -873,6 +890,7 @@ func TestPersonEnrichmentOneActiveAttemptInvariant(t *testing.T) {
 }
 
 func TestPersonEnrichmentBeginAttemptReplacesActiveAttemptAfterFreshTrigger(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -917,6 +935,7 @@ func TestPersonEnrichmentBeginAttemptReplacesActiveAttemptAfterFreshTrigger(t *t
 }
 
 func TestPersonEnrichmentFreshTriggerSurvivesActiveAttemptRetryRelease(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -955,6 +974,7 @@ func TestPersonEnrichmentFreshTriggerSurvivesActiveAttemptRetryRelease(t *testin
 }
 
 func TestPersonEnrichmentStaleAttemptRetainsReplacementWork(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -987,6 +1007,7 @@ func TestPersonEnrichmentStaleAttemptRetainsReplacementWork(t *testing.T) {
 }
 
 func TestPersonEnrichmentActiveRetryReleaseIncrementsAttemptCount(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1013,6 +1034,7 @@ func TestPersonEnrichmentActiveRetryReleaseIncrementsAttemptCount(t *testing.T) 
 }
 
 func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "generated-schema-shape")
 	f.enqueue(t)
@@ -1032,6 +1054,7 @@ func TestPersonEnrichmentAttemptRejectsGeneratedSchemaHashWithoutGeneratedSchema
 }
 
 func TestPersonEnrichmentAttemptRejectsNonAtomicSynchronousStart(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1060,6 +1083,7 @@ func TestPersonEnrichmentAttemptRejectsNonAtomicSynchronousStart(t *testing.T) {
 }
 
 func TestPersonDisplayNameRejectsAuthorizedEnrichmentDispatch(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1083,6 +1107,7 @@ func TestPersonDisplayNameRejectsAuthorizedEnrichmentDispatch(t *testing.T) {
 }
 
 func TestPersonEnrichmentAttemptRejectsPollingDifferentOpaqueJob(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "poll-job-binding")
@@ -1106,6 +1131,7 @@ func TestPersonEnrichmentAttemptRejectsPollingDifferentOpaqueJob(t *testing.T) {
 }
 
 func TestPersonEnrichmentAttemptPersistsOpaqueProviderIDsExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1138,6 +1164,7 @@ func TestPersonEnrichmentAttemptPersistsOpaqueProviderIDsExactly(t *testing.T) {
 }
 
 func TestPersonEnrichmentAttemptDiagnosticsAreBoundedAndRedacted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1171,6 +1198,7 @@ func TestPersonEnrichmentAttemptDiagnosticsAreBoundedAndRedacted(t *testing.T) {
 }
 
 func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1206,6 +1234,7 @@ func TestPersonEnrichmentWorkUncertainStartIsNotAutomaticallyReplayed(t *testing
 }
 
 func TestPersonEnrichmentWorkReleasePreservesManualTrigger(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run, _, err := f.store.StartRun(t.Context(), personenrichment.RunStart{
@@ -1232,6 +1261,7 @@ func TestPersonEnrichmentWorkReleasePreservesManualTrigger(t *testing.T) {
 }
 
 func TestPersonEnrichmentTerminalReleasePreservesFreshTrigger(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1260,6 +1290,7 @@ func TestPersonEnrichmentTerminalReleasePreservesFreshTrigger(t *testing.T) {
 }
 
 func TestPersonEnrichmentWorkLoadsCurrentMinimumRequestInput(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1317,6 +1348,7 @@ func TestPersonEnrichmentWorkLoadsCurrentMinimumRequestInput(t *testing.T) {
 }
 
 func TestPersonEnrichmentRequestUsesPersonDisplayName(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1364,6 +1396,7 @@ func TestPersonEnrichmentRequestUsesPersonDisplayName(t *testing.T) {
 }
 
 func TestPersonEnrichmentTerminalRefreshBecomesUnboundWork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -1394,6 +1427,7 @@ func TestPersonEnrichmentTerminalRefreshBecomesUnboundWork(t *testing.T) {
 }
 
 func TestPersonEnrichmentSuccessfulCompletionComposesInsideCallerTransaction(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)

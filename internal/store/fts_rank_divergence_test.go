@@ -66,6 +66,7 @@ var longPadding = strings.Repeat("alpha beta gamma delta epsilon ", 600)
 // isolates the scorer behavior from store/query glue; full PostgreSQL
 // store search coverage lives in the regular PostgreSQL test suite.
 func TestFTSRank_KnownDivergence(t *testing.T) {
+	t.Parallel()
 	switch currentBackend() {
 	case "sqlite":
 		assertSQLiteBodyHitWins(t)

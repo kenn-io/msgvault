@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersonEnrichmentClaimLocksRunBeforeBindingWork(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentWorkFixture(t)
 	if !f.store.IsPostgreSQL() {
 		t.Skip("PostgreSQL row-lock interleaving requires MSGVAULT_TEST_DB")
@@ -61,6 +62,7 @@ func TestPersonEnrichmentClaimLocksRunBeforeBindingWork(t *testing.T) {
 }
 
 func TestPersonEnrichmentClaimRetriesSQLiteSnapshotContention(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	if f.store.IsPostgreSQL() {
@@ -108,6 +110,7 @@ func TestPersonEnrichmentClaimRetriesSQLiteSnapshotContention(t *testing.T) {
 }
 
 func TestPersonEnrichmentScheduledRunLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -133,6 +136,7 @@ func TestPersonEnrichmentScheduledRunLifecycle(t *testing.T) {
 }
 
 func TestPersonEnrichmentManualRunIdempotency(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -148,6 +152,7 @@ func TestPersonEnrichmentManualRunIdempotency(t *testing.T) {
 }
 
 func TestPersonEnrichmentRunTransitionsQueuedOccurrenceToRunning(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
@@ -164,6 +169,7 @@ func TestPersonEnrichmentRunTransitionsQueuedOccurrenceToRunning(t *testing.T) {
 }
 
 func TestQueuedPersonEnrichmentClaimsOldestStartedRunAtomically(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -194,6 +200,7 @@ func TestQueuedPersonEnrichmentClaimsOldestStartedRunAtomically(t *testing.T) {
 }
 
 func TestPersonEnrichmentRecoveryQueuesValidatedPendingRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -231,6 +238,7 @@ func TestPersonEnrichmentRecoveryQueuesValidatedPendingRun(t *testing.T) {
 }
 
 func TestPersonEnrichmentRecoveryTerminalizesAttemptlessRunFromNormalOutcomes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -252,6 +260,7 @@ func TestPersonEnrichmentRecoveryTerminalizesAttemptlessRunFromNormalOutcomes(t 
 }
 
 func TestPersonEnrichmentRecoveryPreservesClaimedWorkBeforeAttempt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -278,6 +287,7 @@ func TestPersonEnrichmentRecoveryPreservesClaimedWorkBeforeAttempt(t *testing.T)
 }
 
 func TestPersonEnrichmentRecoveryReconcilesUncertainStartCostOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	profile := enrichmentBudgetProfile(t, 10, 1_200, 1_200, 1_200)
@@ -367,6 +377,7 @@ func TestPersonEnrichmentRecoveryReconcilesUncertainStartCostOnce(t *testing.T) 
 }
 
 func TestPersonEnrichmentRecoveryUsesNormalOutcomeDerivation(t *testing.T) {
+	t.Parallel()
 	seedAttempt := func(t *testing.T, f enrichmentWorkFixture, runID int64, suffix, state, failure string) {
 		t.Helper()
 		var failureValue any
@@ -426,10 +437,12 @@ func TestPersonEnrichmentRecoveryUsesNormalOutcomeDerivation(t *testing.T) {
 }
 
 func TestPersonEnrichmentRunCannotCompleteWithFutureRetry(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentRunCannotCompleteWithDeferredAttempt(t, "retry")
 }
 
 func TestPersonEnrichmentRunCannotCompleteWithPendingPoll(t *testing.T) {
+	t.Parallel()
 	testPersonEnrichmentRunCannotCompleteWithDeferredAttempt(t, "poll")
 }
 
@@ -483,6 +496,7 @@ func testPersonEnrichmentRunCannotCompleteWithDeferredAttempt(t *testing.T, kind
 }
 
 func TestPersonEnrichmentRunningRunPaginationIncludesDeferredRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -508,6 +522,7 @@ func TestPersonEnrichmentRunningRunPaginationIncludesDeferredRuns(t *testing.T) 
 }
 
 func TestPersonEnrichmentCompleteRunDerivesTruthfulState(t *testing.T) {
+	t.Parallel()
 	terminalPerson := func(t *testing.T, f enrichmentWorkFixture, runID int64, owner, hashByte string) {
 		t.Helper()
 		lease := f.claim(t, runID, owner)

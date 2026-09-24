@@ -13,6 +13,7 @@ import (
 // the PostgreSQL dialect. It needs no database: IsBusyError only inspects the
 // SQLSTATE on a *pgconn.PgError, so synthetic errors fully exercise it.
 func TestPostgreSQLDialect_IsBusyError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 

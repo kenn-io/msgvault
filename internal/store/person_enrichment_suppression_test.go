@@ -37,6 +37,7 @@ func suppressionLookup(input store.PersonEnrichmentSuppressionInput) store.Perso
 }
 
 func TestPersonEnrichmentSuppressionSurvivesProductionPersonDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -66,6 +67,7 @@ func TestPersonEnrichmentSuppressionSurvivesProductionPersonDeletion(t *testing.
 }
 
 func TestPersonEnrichmentSuppressionRejectsStalePersonSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, person := trackedTestPerson(t)
@@ -88,6 +90,7 @@ func TestPersonEnrichmentSuppressionRejectsStalePersonSnapshot(t *testing.T) {
 }
 
 func TestPersonEnrichmentSuppressionIsProviderScopedAndMetadataImmutable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -129,6 +132,7 @@ func TestPersonEnrichmentSuppressionIsProviderScopedAndMetadataImmutable(t *test
 }
 
 func TestPersonEnrichmentSuppressionListRedactsAndBoundsPages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -170,6 +174,7 @@ func TestPersonEnrichmentSuppressionListRedactsAndBoundsPages(t *testing.T) {
 }
 
 func TestPersonEnrichmentSuppressionRejectsUnsafeInputs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	valid := enrichmentSuppressionInput()
@@ -198,6 +203,7 @@ func TestPersonEnrichmentSuppressionRejectsUnsafeInputs(t *testing.T) {
 var _ personenrichment.SuppressionChecker = (*store.Store)(nil)
 
 func TestPersonEnrichmentSuppressionKeyIDsIncludeAttemptIdentifierKeys(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newEnrichmentWorkFixture(t)
 	run := f.startRun(t, "gate-union-key-state")

@@ -13,6 +13,7 @@ import (
 )
 
 func TestAttachmentChangeJournalCapturesOnlyRelevantCommittedMutations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -78,6 +79,7 @@ func TestAttachmentChangeJournalCapturesOnlyRelevantCommittedMutations(t *testin
 }
 
 func TestAttachmentChangeConsumersPruneOnlySharedConsumedPrefix(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -122,6 +124,7 @@ func TestAttachmentChangeConsumersPruneOnlySharedConsumedPrefix(t *testing.T) {
 }
 
 func TestSQLiteAttachmentChangeAdvanceWaitsForWriterSlot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
@@ -182,6 +185,7 @@ func TestSQLiteAttachmentChangeAdvanceWaitsForWriterSlot(t *testing.T) {
 }
 
 func TestAttachmentChangeJournalCapturesCascadeDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("attachment-cascade")

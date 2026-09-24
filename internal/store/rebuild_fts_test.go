@@ -30,6 +30,7 @@ func assertFTSContains(t *testing.T, st *store.Store, term string, wantCount int
 // recreates the FTS index with correct searchable content.
 // Runs on both SQLite and PostgreSQL — PG verification uses the tsvector column.
 func TestStore_RebuildFTS_HappyPath(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -67,6 +68,7 @@ func TestStore_RebuildFTS_HappyPath(t *testing.T) {
 // Runs on both SQLite and PostgreSQL — the availability-flag bypass is
 // a Store-level concern independent of dialect.
 func TestStore_RebuildFTS_BypassesAvailabilityFlag(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -100,6 +102,7 @@ func TestStore_RebuildFTS_BypassesAvailabilityFlag(t *testing.T) {
 // has no equivalent on PostgreSQL (PG stores FTS inline on messages.search_fts;
 // the PG DROP INDEX + recreate path is exercised by FTSRebuildSchema directly).
 func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "SQLite-only: drops the messages_fts virtual table; PG FTS is a column on messages, not a separate table — the PG DROP INDEX path is covered by dialect_pg tests")
@@ -131,6 +134,7 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 // invoked with monotonic (done, total) values.
 // Runs on both SQLite and PostgreSQL — progress reporting is dialect-agnostic.
 func TestStore_RebuildFTS_ReportsProgress(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

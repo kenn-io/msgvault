@@ -10,6 +10,7 @@ import (
 )
 
 func TestAutomaticProfileOrdinalsNeverReuseHistoricalSlots(t *testing.T) {
+	t.Parallel()
 	t.Run("kind-scoped values", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)

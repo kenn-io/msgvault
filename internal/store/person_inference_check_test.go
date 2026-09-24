@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersonInferenceProviderV2PersistsCanonicalFields(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -74,6 +75,7 @@ func TestPersonInferenceProviderV2PersistsCanonicalFields(t *testing.T) {
 }
 
 func TestPersonInferenceCheckPinsAndReplacesExactProfile(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -116,6 +118,7 @@ func TestPersonInferenceCheckPinsAndReplacesExactProfile(t *testing.T) {
 }
 
 func TestPersonInferenceCheckRejectsUnknownProfileAndUnsafeMetadata(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := inferenceTestProfile(t)
@@ -154,6 +157,7 @@ func TestPersonInferenceCheckRejectsUnknownProfileAndUnsafeMetadata(t *testing.T
 }
 
 func TestPersonInferenceCheckLookupRequiresExactFingerprint(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -196,6 +200,7 @@ func TestPersonInferenceCheckLookupRequiresExactFingerprint(t *testing.T) {
 }
 
 func TestPersonInferenceCheckRejectsStoredProfileMetadataMismatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := inferenceTestProfile(t)

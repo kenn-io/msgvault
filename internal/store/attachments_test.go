@@ -37,7 +37,7 @@ func persistedProviderRef(ref store.AttachmentRef) store.AttachmentRef {
 	return ref
 }
 
-func TestListDiscordPendingAttachmentMessagesManyDownloadedUsesSingleQuery(t *testing.T) {
+func TestListDiscordPendingAttachmentMessagesManyDownloadedUsesSingleQuery(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -64,6 +64,7 @@ func TestListDiscordPendingAttachmentMessagesManyDownloadedUsesSingleQuery(t *te
 }
 
 func TestListDiscordPendingAttachmentMessagesGroupsScopesAndOrders(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -114,7 +115,7 @@ func TestListDiscordPendingAttachmentMessagesGroupsScopesAndOrders(t *testing.T)
 	}, pending)
 }
 
-func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *testing.T) {
+func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -158,6 +159,7 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 }
 
 func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -220,6 +222,7 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 }
 
 func TestReplaceMessageDiscordAttachmentsPersistsEmptyURLMarker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -252,6 +255,7 @@ func TestReplaceMessageDiscordAttachmentsPersistsEmptyURLMarker(t *testing.T) {
 }
 
 func TestIsDiscordAttachmentDownloadedRequiresTrustedCASPath(t *testing.T) {
+	t.Parallel()
 	contentHash := strings.Repeat("ef", 32)
 	localPath := contentHash[:2] + "/" + contentHash
 	tests := []struct {
@@ -274,6 +278,7 @@ func TestIsDiscordAttachmentDownloadedRequiresTrustedCASPath(t *testing.T) {
 }
 
 func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -303,6 +308,7 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 }
 
 func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -335,6 +341,7 @@ func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
 }
 
 func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -408,6 +415,7 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 }
 
 func TestListDiscordPendingAttachmentMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -465,6 +473,7 @@ func TestListDiscordPendingAttachmentMessages(t *testing.T) {
 }
 
 func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

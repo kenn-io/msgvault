@@ -10,6 +10,7 @@ import (
 )
 
 func TestCollection_CRUD(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -72,6 +73,7 @@ func TestCollection_CRUD(t *testing.T) {
 }
 
 func TestCollection_DefaultAll(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
@@ -91,6 +93,7 @@ func TestCollection_DefaultAll(t *testing.T) {
 }
 
 func TestCollection_Validation(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	st := f.Store
 
@@ -116,6 +119,7 @@ func TestCollection_Validation(t *testing.T) {
 }
 
 func TestCollection_Idempotent(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	st := f.Store
 
@@ -143,6 +147,7 @@ func TestCollection_Idempotent(t *testing.T) {
 // with ErrCollectionImmutable. Otherwise the next EnsureDefaultCollection
 // call would silently revert the change, surprising the user.
 func TestCollection_DefaultAllIsImmutable(t *testing.T) {
+	t.Parallel()
 	require :=
 		require.
 			New(t)
@@ -162,6 +167,7 @@ func TestCollection_DefaultAllIsImmutable(t *testing.T) {
 }
 
 func TestCollection_DefaultAllIncremental(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store

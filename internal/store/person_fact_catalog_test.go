@@ -12,6 +12,7 @@ import (
 )
 
 func TestStoreBuildPersonFactCatalogCarriesMaxLength(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	input := personTextDefinition("catalog_max_length")
 	description := "Short biographical note"
@@ -40,6 +41,7 @@ func personFactCatalogTarget(
 }
 
 func TestStoreBuildPersonFactCatalogExcludesOverLimitDescription(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)

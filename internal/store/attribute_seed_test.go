@@ -13,6 +13,7 @@ import (
 )
 
 func TestInitSchemaSeedsTheSystemPersonCatalog(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -49,6 +50,7 @@ func TestInitSchemaSeedsTheSystemPersonCatalog(t *testing.T) {
 }
 
 func TestSeededAttributeDefinitionsIncludeExpandedPersonCatalog(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		slug        string
 		universalID string
@@ -103,6 +105,7 @@ func TestSeededAttributeDefinitionsIncludeExpandedPersonCatalog(t *testing.T) {
 }
 
 func TestSeededAttributeDefinitionsIncludeHowWeMet(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -134,6 +137,7 @@ func TestSeededAttributeDefinitionsIncludeHowWeMet(t *testing.T) {
 }
 
 func TestSeededAttributeDefinitionsIncludeNotes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	notes := definitionBySlug(t, store.SeededAttributeDefinitions(), store.AttributeSlugNotes)
 	assert.Equal("b72b3cf7-509f-4286-a0f0-bb039c85ff40", notes.UniversalID)
@@ -166,6 +170,7 @@ func definitionBySlug(
 }
 
 func TestSeededDefinitionsCarryTheirDocumentedShape(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -204,6 +209,7 @@ func TestSeededDefinitionsCarryTheirDocumentedShape(t *testing.T) {
 }
 
 func TestSeededLastContactedIsReadOnlyAndDerived(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -223,6 +229,7 @@ func TestSeededLastContactedIsReadOnlyAndDerived(t *testing.T) {
 }
 
 func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -277,6 +284,7 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 }
 
 func TestReSeedingWidensTextCapsOnExistingArchives(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -336,6 +344,7 @@ func TestReSeedingWidensTextCapsOnExistingArchives(t *testing.T) {
 }
 
 func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -368,6 +377,7 @@ func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
 }
 
 func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -457,6 +467,7 @@ func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
 }
 
 func TestInitSchemaUsesNextFallbackWhenSeedFallbackSlugIsOccupied(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -498,6 +509,7 @@ func TestInitSchemaUsesNextFallbackWhenSeedFallbackSlugIsOccupied(t *testing.T) 
 }
 
 func TestInitSchemaPreservesExistingSeedSlugByUniversalID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -520,6 +532,7 @@ func TestInitSchemaPreservesExistingSeedSlugByUniversalID(t *testing.T) {
 }
 
 func TestInitSchemaResolvesCombinedSeedSlugAndUniversalIDCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -552,6 +565,7 @@ func TestInitSchemaResolvesCombinedSeedSlugAndUniversalIDCollision(t *testing.T)
 }
 
 func TestInitSchemaRejectsSeedUniversalIDOnWrongObjectType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -568,6 +582,7 @@ func TestInitSchemaRejectsSeedUniversalIDOnWrongObjectType(t *testing.T) {
 }
 
 func TestSeededDefinitionsPassTheSameValidationAsUserDefinitions(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -580,6 +595,7 @@ func TestSeededDefinitionsPassTheSameValidationAsUserDefinitions(t *testing.T) {
 }
 
 func TestEnsureSeededAttributeDefinitionsRetriesConcurrentMissingSeed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -625,6 +641,7 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentMissingSeed(t *testing
 }
 
 func TestEnsureSeededAttributeDefinitionsRetriesConcurrentFallbackSeed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

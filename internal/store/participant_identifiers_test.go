@@ -28,6 +28,7 @@ func readRevisions(t *testing.T, f *storetest.Fixture) (identity, account, ident
 // re-derives committed shards). Idempotent re-runs must bump nothing, or
 // every importer re-run would force a rebuild.
 func TestSetParticipantIdentifierOwnerEvidenceBumpsRevisions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -57,6 +58,7 @@ func TestSetParticipantIdentifierOwnerEvidenceBumpsRevisions(t *testing.T) {
 // changes which participant resolves as the owner, so it must bump both
 // revisions even though no new row is created.
 func TestSetParticipantIdentifierRepointOwnerEvidenceBumpsRevisions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -80,6 +82,7 @@ func TestSetParticipantIdentifierRepointOwnerEvidenceBumpsRevisions(t *testing.T
 }
 
 func TestSetParticipantIdentifierRepointRefreshesSenderAttribution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -131,6 +134,7 @@ func TestSetParticipantIdentifierRepointRefreshesSenderAttribution(t *testing.T)
 // identity nor account-identity revision moves (no full rebuild, and no
 // escalation when new messages coincide).
 func TestSetParticipantIdentifierNonOwnerEvidenceBumpsOnlyIdentifierRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -153,6 +157,7 @@ func TestSetParticipantIdentifierNonOwnerEvidenceBumpsOnlyIdentifierRevision(t *
 }
 
 func TestEnsureParticipantByIdentifierBumpsRevisionOnlyWhenCreatingIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -176,6 +181,7 @@ func TestEnsureParticipantByIdentifierBumpsRevisionOnlyWhenCreatingIdentifier(t 
 }
 
 func TestEnsureParticipantByPhoneBumpsRevisionOnlyForIdentifierChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

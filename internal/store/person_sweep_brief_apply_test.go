@@ -109,6 +109,7 @@ func addBriefUsage(usage peoplesweep.Usage, reserved peoplesweep.Usage) peoplesw
 }
 
 func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "brief-with-extraction", true)
@@ -161,6 +162,7 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 }
 
 func TestApplyPersonSweepDropsBriefEvidenceThatNoLongerAligns(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "brief-unaligned-evidence", true)
@@ -184,6 +186,7 @@ func TestApplyPersonSweepDropsBriefEvidenceThatNoLongerAligns(t *testing.T) {
 }
 
 func TestApplyPersonSweepRecordsBriefFailureAndReconcilesItsReservation(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "brief-failure", true)
@@ -216,6 +219,7 @@ func TestApplyPersonSweepRecordsBriefFailureAndReconcilesItsReservation(t *testi
 }
 
 func TestApplyPersonSweepStoresBriefOnStatusOnlyExtraction(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "brief-status-only", true)
@@ -258,6 +262,7 @@ func TestApplyPersonSweepStoresBriefOnStatusOnlyExtraction(t *testing.T) {
 }
 
 func TestApplyPersonSweepStoresBriefOriginClaimsInTheSameGeneration(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "brief-origin-claims", true)
@@ -283,6 +288,7 @@ func TestApplyPersonSweepStoresBriefOriginClaimsInTheSameGeneration(t *testing.T
 }
 
 func TestApplyPersonSweepRejectsInconsistentBriefRequests(t *testing.T) {
+	t.Parallel()
 	for name, mutate := range map[string]func(*personSweepApplyFixture){
 		"brief without a completed brief call": func(f *personSweepApplyFixture) {
 			f.request.Brief = briefApplyResult(f.personID, "person-sweep/v1:orphan")
@@ -320,6 +326,7 @@ func TestApplyPersonSweepRejectsInconsistentBriefRequests(t *testing.T) {
 }
 
 func TestApplyPersonSweepRefusesUncoveredBriefCallWithoutAFailureClass(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepApplyFixture(t, "brief-uncovered", true)
 	_ = reserveBriefCall(t, f, strings.Repeat("6", 64))
 

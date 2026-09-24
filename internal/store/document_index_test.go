@@ -13,6 +13,7 @@ import (
 )
 
 func TestDocumentExtractionProfileRequiresExactConsent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -95,6 +96,7 @@ func TestCurrentDocumentIndexStatusScopeUsesOnlySelectedDurableProfile(t *testin
 }
 
 func TestReconcileDocumentOccurrenceUsesTrustedCASAndLiveRole(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -148,6 +150,7 @@ func TestReconcileDocumentOccurrenceUsesTrustedCASAndLiveRole(t *testing.T) {
 }
 
 func TestReconcileDocumentOccurrenceFailsClosedForUnknownRole(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -166,6 +169,7 @@ func TestReconcileDocumentOccurrenceFailsClosedForUnknownRole(t *testing.T) {
 }
 
 func TestDocumentCandidatesReprocessOwnerWhenRepresentativeRouteChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -217,6 +221,7 @@ func TestDocumentCandidatesReprocessOwnerWhenRepresentativeRouteChanges(t *testi
 }
 
 func TestDocumentCandidatesReprocessOwnerWhenReplacedStableKeyChangesRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -238,6 +243,7 @@ func TestDocumentCandidatesReprocessOwnerWhenReplacedStableKeyChangesRoute(t *te
 }
 
 func TestDocumentCandidatesKeepHeadCoverageThroughSameRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthorityForMediaTypes(t, f, []string{"application/pdf", "text/csv"})
@@ -258,6 +264,7 @@ func TestDocumentCandidatesKeepHeadCoverageThroughSameRoute(t *testing.T) {
 }
 
 func TestDocumentCandidatesTreatUntrackedRouteAsCurrent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthorityForMediaTypes(t, f, []string{"application/pdf", "text/csv"})
@@ -276,6 +283,7 @@ func TestDocumentCandidatesTreatUntrackedRouteAsCurrent(t *testing.T) {
 }
 
 func TestDocumentCandidatesReprocessOwnerWhenAddedOccurrenceChangesRepresentativeRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -292,6 +300,7 @@ func TestDocumentCandidatesReprocessOwnerWhenAddedOccurrenceChangesRepresentativ
 }
 
 func TestDocumentCandidatesIgnoreOutOfScopeOccurrenceWhenRouteChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -317,6 +326,7 @@ func TestDocumentCandidatesIgnoreOutOfScopeOccurrenceWhenRouteChanges(t *testing
 }
 
 func TestDocumentCandidatesFollowMessageTypeScopeChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -350,6 +360,7 @@ func TestDocumentCandidatesFollowMessageTypeScopeChanges(t *testing.T) {
 }
 
 func TestDocumentCandidatesReprocessOwnerWhenRemovedOccurrenceChangesRepresentativeRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -374,6 +385,7 @@ func TestDocumentCandidatesReprocessOwnerWhenRemovedOccurrenceChangesRepresentat
 }
 
 func TestDocumentCandidatesReprocessReturningOwnerOnlyThroughAnotherRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -472,6 +484,7 @@ func reconcileDocumentAttachmentUntilOrdered(
 }
 
 func TestListPendingDocumentExtractionsRespectsAuthorityAndRetryState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -513,6 +526,7 @@ func TestListPendingDocumentExtractionsRespectsAuthorityAndRetryState(t *testing
 }
 
 func TestListDocumentExtractionCandidatesIncludesCurrentOnlyForFullRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -537,6 +551,7 @@ func TestListDocumentExtractionCandidatesIncludesCurrentOnlyForFullRebuild(t *te
 }
 
 func TestDocumentExtractionRebuildKeepsTerminalTargetsIncompleteUntilRetry(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -587,6 +602,7 @@ func TestDocumentExtractionRebuildKeepsTerminalTargetsIncompleteUntilRetry(t *te
 }
 
 func TestDocumentIndexScopedStatusClassifiesOwnersAndRoleExclusions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -631,6 +647,7 @@ func TestDocumentIndexScopedStatusClassifiesOwnersAndRoleExclusions(t *testing.T
 }
 
 func TestDocumentIndexScopedStatusUsesCurrentTerminalAttempt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -672,6 +689,7 @@ func TestDocumentIndexScopedStatusUsesCurrentTerminalAttempt(t *testing.T) {
 }
 
 func TestDocumentIndexStatusCountsCompletedAttemptOutcomes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -726,6 +744,7 @@ func TestDocumentIndexStatusCountsCompletedAttemptOutcomes(t *testing.T) {
 }
 
 func TestDocumentIndexStatusCountsBytesOnlyAfterProviderRequest(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -761,6 +780,7 @@ func TestDocumentIndexStatusCountsBytesOnlyAfterProviderRequest(t *testing.T) {
 }
 
 func TestRetryDocumentExtractionReschedulesOnlyTerminalOwner(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -791,6 +811,7 @@ func TestRetryDocumentExtractionReschedulesOnlyTerminalOwner(t *testing.T) {
 }
 
 func TestListDocumentAttachmentIDsAfterIsBoundedAndResumable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("document-bootstrap")

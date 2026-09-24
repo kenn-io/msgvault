@@ -16,6 +16,7 @@ import (
 // This catches a directory query that ignores its typo-tolerant lexical
 // matching or any of its conjunctive profile filters.
 func TestDirectoryPeoplePageContextFiltersRanksAndPaginates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -37,6 +38,7 @@ func TestDirectoryPeoplePageContextFiltersRanksAndPaginates(t *testing.T) {
 // This catches a sort regression where one-edit typo matches outrank exact or
 // prefix matches, which would make a Directory result order unpredictable.
 func TestDirectoryPeoplePageContextRanksExactAndPrefixBeforeFuzzyMatches(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	alice := createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
 	alicf := createDirectoryPerson(t, st, "Alicf Example", "alicf@example.test", "friend", "active", "Acme")
@@ -50,6 +52,7 @@ func TestDirectoryPeoplePageContextRanksExactAndPrefixBeforeFuzzyMatches(t *test
 // This catches backend-specific SQL lowercasing: Directory matching must use
 // the same Go-canonical Unicode token representation on every backend.
 func TestDirectoryPeoplePageContextMatchesUnicodeCaseFoldedTokens(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	emile := createDirectoryPerson(t, st, "Émile Example", "emile@example.test", "friend", "active", "Acme")
 
@@ -62,6 +65,7 @@ func TestDirectoryPeoplePageContextMatchesUnicodeCaseFoldedTokens(t *testing.T) 
 // composed and decomposed spellings must qualify, filter, sort, and resume
 // through the same cursor sequence on the configured backend.
 func TestDirectoryPeoplePageContextNormalizesCanonicalUnicodeAcrossKeys(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -90,6 +94,7 @@ func TestDirectoryPeoplePageContextNormalizesCanonicalUnicodeAcrossKeys(t *testi
 // This catches a search path that recognizes only a fixed punctuation list
 // instead of the Unicode-aware lexical token boundaries used by Directory.
 func TestDirectoryPeoplePageContextMatchesPunctuationDelimitedTokens(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	alice := createDirectoryPerson(t, st, "Alice|Example", "alice@sample.test", "friend", "active", "Acme")
 
@@ -101,6 +106,7 @@ func TestDirectoryPeoplePageContextMatchesPunctuationDelimitedTokens(t *testing.
 // This catches keyset cursors that skip or duplicate rows, and cursors that
 // accidentally permit a different normalized filter set.
 func TestDirectoryPeoplePageContextPaginatesAndRejectsForeignCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -136,6 +142,7 @@ func TestDirectoryPeoplePageContextPaginatesAndRejectsForeignCursor(t *testing.T
 // encoded on page one. Unicode folding and repeated whitespace must still
 // advance a limit-one sequence without a skipped row.
 func TestDirectoryPeoplePageContextUsesCanonicalOrderKeyAcrossPages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -154,6 +161,7 @@ func TestDirectoryPeoplePageContextUsesCanonicalOrderKeyAcrossPages(t *testing.T
 // This catches a cursor that becomes oversized when the persisted canonical
 // order key is derived from an otherwise valid long display name.
 func TestDirectoryPeoplePageContextLongNameCursorRoundTrip(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	first := createDirectoryPerson(t, st, strings.Repeat("a", 600), "long-first@sample.test", "friend", "active", "Acme")
@@ -170,6 +178,7 @@ func TestDirectoryPeoplePageContextLongNameCursorRoundTrip(t *testing.T) {
 // This catches an ID-only cursor that silently resumes using an anchor whose
 // persisted order key changed after the prior page was generated.
 func TestDirectoryPeoplePageContextRejectsCursorAfterAnchorOrderMutation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	first := createDirectoryPerson(t, st, "Alice", "mutation-first@sample.test", "friend", "active", "Acme")
@@ -190,6 +199,7 @@ func TestDirectoryPeoplePageContextRejectsCursorAfterAnchorOrderMutation(t *test
 // This catches a projection that is not refreshed after direct bulk mutation
 // paths which the dirty triggers centralize for Store reads.
 func TestDirectoryPeoplePageContextRefreshesOrganizationAndContactState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	person := createDirectoryPerson(t, st, "Alice Example", "alice@sample.test", "friend", "inactive", "Acme")
@@ -207,6 +217,7 @@ func TestDirectoryPeoplePageContextRefreshesOrganizationAndContactState(t *testi
 // This catches a projection refresh that inserts one organization filter per
 // employment row instead of one normalized filter per person and organization.
 func TestDirectoryProjectionDeduplicatesOrganizationAcrossCurrentEmployments(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -234,6 +245,7 @@ func TestDirectoryProjectionDeduplicatesOrganizationAcrossCurrentEmployments(t *
 // This catches a query path that treats an empty qualified result as an error
 // or emits a cursor without a corresponding person.
 func TestDirectoryPeoplePageContextReturnsEmptyPage(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
 
@@ -246,6 +258,7 @@ func TestDirectoryPeoplePageContextReturnsEmptyPage(t *testing.T) {
 // This catches a directory filter that uses a contact-point service instead
 // of the primary activity channel from the contact-state projection.
 func TestDirectoryPeoplePageContextFiltersPrimaryChannel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -267,6 +280,7 @@ func TestDirectoryPeoplePageContextFiltersPrimaryChannel(t *testing.T) {
 // This catches cursors that decode as JSON but do not contain the normalized
 // ordering tuple emitted by the store.
 func TestDirectoryPeoplePageContextRejectsMalformedOrderingCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
@@ -292,6 +306,7 @@ func TestDirectoryPeoplePageContextRejectsMalformedOrderingCursor(t *testing.T) 
 // display-name ordering anchor remain valid. The complete ordering tuple must
 // still describe the current search projection before pagination resumes.
 func TestDirectoryPeoplePageContextRejectsChangedMatchQualityCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	createDirectoryPerson(t, st, "Alice", "alice-exact@example.test", "friend", "active", "Acme")

@@ -24,6 +24,7 @@ import (
 // then replaces the resource, and only after that does the production write
 // body run inside the pinned transaction.
 func TestVCardResourceNoOpWriteRejectsReplacementCommittedAfterRead(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()

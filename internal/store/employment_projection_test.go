@@ -11,6 +11,7 @@ import (
 )
 
 func TestPrimaryCurrentEmploymentProjectsCompanyAndTitle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -47,6 +48,7 @@ func TestPrimaryCurrentEmploymentProjectsCompanyAndTitle(t *testing.T) {
 }
 
 func TestEndingThePrimaryEmploymentClearsTheProjectionWithoutDeletingHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -76,6 +78,7 @@ func TestEndingThePrimaryEmploymentClearsTheProjectionWithoutDeletingHistory(t *
 }
 
 func TestPrimaryCurrentEmploymentFollowsRotation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()

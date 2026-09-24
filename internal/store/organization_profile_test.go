@@ -16,6 +16,7 @@ import (
 )
 
 func TestReplaceOrganizationProfileRoundTripsEveryCollectionAndKeepsStableRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -87,6 +88,7 @@ func TestReplaceOrganizationProfileRoundTripsEveryCollectionAndKeepsStableRows(t
 }
 
 func TestReplaceOrganizationProfileAppendsOmittedOrdinalsAcrossHistory(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := context.Background()
@@ -120,6 +122,7 @@ func TestReplaceOrganizationProfileAppendsOmittedOrdinalsAcrossHistory(t *testin
 }
 
 func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -161,6 +164,7 @@ func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
 }
 
 func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := t.Context()
@@ -207,6 +211,7 @@ func TestReplaceOrganizationProfileBoundsAggregateValues(t *testing.T) {
 }
 
 func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := t.Context()
@@ -247,6 +252,7 @@ func TestReplaceOrganizationProfileBoundsExplicitMediaTotal(t *testing.T) {
 }
 
 func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := t.Context()
@@ -297,6 +303,7 @@ func TestReplaceOrganizationProfileBoundsRetainedMediaExpansion(t *testing.T) {
 }
 
 func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
@@ -324,6 +331,7 @@ func TestReplaceOrganizationProfileRejectsProviderIdentityContactPoint(t *testin
 func TestRemovingFutureOrganizationProfileRowRetractsWithoutInvalidWorldInterval(
 	t *testing.T,
 ) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -358,13 +366,14 @@ func TestRemovingFutureOrganizationProfileRowRetractsWithoutInvalidWorldInterval
 }
 
 func TestGetOrganizationProfileRejectsMissingOrganization(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrganizationProfileContext(context.Background(), 9999, false)
 	require.ErrorIs(err, store.ErrOrganizationNotFound)
 }
 
-func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
+func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -486,6 +495,7 @@ func (h *organizationProfileBarrierHandler) WithGroup(string) slog.Handler {
 var _ slog.Handler = (*organizationProfileBarrierHandler)(nil)
 
 func TestOrganizationProfileKeepsValueDuplicatesWithDistinctIdentity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()

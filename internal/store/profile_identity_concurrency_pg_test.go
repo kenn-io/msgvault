@@ -15,7 +15,7 @@ import (
 
 const concurrentInsertCalls = 8
 
-func TestPostgreSQLMergeSerializesWithObservationInsert(t *testing.T) {
+func TestPostgreSQLMergeSerializesWithObservationInsert(t *testing.T) { //nolint:paralleltest // counts lock waits across the whole PostgreSQL database in pg_stat_activity
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -104,6 +104,7 @@ func postgreSQLWaitingLockCount(t *testing.T, st *store.Store) int {
 }
 
 func TestPostgreSQLConcurrentParticipantObservationInsertIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -156,6 +157,7 @@ func TestPostgreSQLConcurrentParticipantObservationInsertIsIdempotent(t *testing
 }
 
 func TestPostgreSQLConcurrentIdentityMatchCandidateInsertIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -212,6 +214,7 @@ func TestPostgreSQLConcurrentIdentityMatchCandidateInsertIsIdempotent(t *testing
 }
 
 func TestPostgreSQLConcurrentCommunicationServiceSlugIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -259,6 +262,7 @@ func TestPostgreSQLConcurrentCommunicationServiceSlugIsIdempotent(t *testing.T) 
 }
 
 func TestPostgreSQLConcurrentCommunicationServiceAliasClaimHasStableConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

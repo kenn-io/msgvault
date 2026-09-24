@@ -10,6 +10,7 @@ import (
 )
 
 func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testing.T) {
+	t.Parallel()
 	dbURL := skipUnlessPostgresInternal(t)
 
 	tests := []struct {

@@ -27,6 +27,7 @@ func conflictApprovalPlan(t *testing.T, st *store.Store, id int64) store.CardDAV
 }
 
 func TestConflictReviewRejectsStaleArtifactWithoutRefreshing(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"body", "person", "inference", "generation", "book", "mapping", "etag", "conflict", "mutation", "token"} {
 		t.Run(field, func(t *testing.T) {
 			require := require.New(t)
@@ -68,6 +69,7 @@ func TestConflictReviewRejectsStaleArtifactWithoutRefreshing(t *testing.T) {
 }
 
 func TestPendingReviewRejectsStaleArtifactWithoutAuthorizing(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"body", "person", "inference", "generation", "book", "mutation", "href", "token"} {
 		t.Run(field, func(t *testing.T) {
 			require := require.New(t)
@@ -113,6 +115,7 @@ func TestPendingReviewRejectsStaleArtifactWithoutAuthorizing(t *testing.T) {
 }
 
 func TestConflictArtifactUpgradeAndReopen(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, _, mapping := seededCardDAVConflictMapping(t)
@@ -165,6 +168,7 @@ func approvedInferenceConflict(t *testing.T) (*store.Store, *store.CardDAVConfli
 }
 
 func TestConflictLocalPreparationChecksDurableApproval(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"body", "inference", "generation", "book", "mapping", "approval_revision", "approval_inference", "remote_etag"} {
 		t.Run(field, func(t *testing.T) {
 			require := require.New(t)
@@ -200,6 +204,7 @@ func TestConflictLocalPreparationChecksDurableApproval(t *testing.T) {
 }
 
 func TestConflictRefreshClearsApprovedArtifact(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, approved := approvedInferenceConflict(t)
@@ -218,6 +223,7 @@ func TestConflictRefreshClearsApprovedArtifact(t *testing.T) {
 }
 
 func TestConflictIntentReopenAndRollbackPreserveExactOwnership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, conflict := approvedInferenceConflict(t)
@@ -250,6 +256,7 @@ func TestConflictIntentReopenAndRollbackPreserveExactOwnership(t *testing.T) {
 }
 
 func TestArtifactApprovalRejectsConcurrentPostgresInference(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"pending", "conflict"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)

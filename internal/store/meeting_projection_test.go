@@ -39,6 +39,7 @@ func readProjection(t *testing.T, st *Store, id int64) (meetingcontent.Content, 
 }
 
 func TestMeetingProjectionPersistRefreshAndRemove(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -86,6 +87,7 @@ func TestMeetingProjectionPersistRefreshAndRemove(t *testing.T) {
 }
 
 func TestMeetingProjectionDirectWritesAndCascade(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -139,6 +141,7 @@ func rejectMeetingProjectionWrites(t *testing.T, st *Store) {
 }
 
 func TestMeetingProjectionStorageFailureRollsBackEvidence(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"persist", "raw", "mime", "metadata", "type"} {
 		t.Run(operation, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -187,6 +190,7 @@ func TestMeetingProjectionStorageFailureRollsBackEvidence(t *testing.T) {
 }
 
 func TestMeetingProjectionActionWriteFailureRestoresPriorSnapshot(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -213,6 +217,7 @@ func TestMeetingProjectionActionWriteFailureRestoresPriorSnapshot(t *testing.T) 
 }
 
 func TestMeetingProjectionUnavailableRawStillPersists(t *testing.T) {
+	t.Parallel()
 	st := newRFC822IDBackfillBackendStore(t)
 	for _, tc := range []struct{ name, format, raw, reason string }{
 		{"missing", "meeting_json", "", "missing_raw"},
@@ -230,6 +235,7 @@ func TestMeetingProjectionUnavailableRawStillPersists(t *testing.T) {
 }
 
 func TestMeetingProjectionCompressedRawBoundAndCorruption(t *testing.T) {
+	t.Parallel()
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := projectionFixture(t, st, "bounded", "meeting_json", meetingProjectionRaw)
 	var compressed bytes.Buffer
@@ -263,6 +269,7 @@ func TestMeetingProjectionCompressedRawBoundAndCorruption(t *testing.T) {
 }
 
 func TestMeetingProjectionPostgresKeepsWideMessageIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

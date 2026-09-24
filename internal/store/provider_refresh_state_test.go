@@ -13,6 +13,7 @@ import (
 )
 
 func TestProviderIdentityRefreshStateRoundTrip(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -33,6 +34,7 @@ func TestProviderIdentityRefreshStateRoundTrip(t *testing.T) {
 }
 
 func TestProviderIdentityRefreshFailurePreservesLastSuccess(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -62,6 +64,7 @@ func TestProviderIdentityRefreshFailurePreservesLastSuccess(t *testing.T) {
 }
 
 func TestProviderIdentityRefreshStateFreshness(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	tests := []struct {
 		name  string
@@ -97,6 +100,7 @@ func TestProviderIdentityRefreshStateFreshness(t *testing.T) {
 }
 
 func TestProviderIdentityRefreshStateUndecodablePayloadIsDue(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -123,6 +127,7 @@ func TestProviderIdentityRefreshStateUndecodablePayloadIsDue(t *testing.T) {
 }
 
 func TestProviderIdentityRefreshStateRejectsNonPositiveSourceID(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	_, _, err := st.ProviderIdentityRefreshStateContext(t.Context(), 0)

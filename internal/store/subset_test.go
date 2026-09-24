@@ -102,6 +102,7 @@ func seedSubsetPersonMerge(
 }
 
 func TestSubsetCompletePersonMergePacket(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -144,6 +145,7 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 }
 
 func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -194,6 +196,7 @@ func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketCanSplitAfterNewPersonCreation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -249,6 +252,7 @@ func TestSubsetPersonMergePacketCanSplitAfterNewPersonCreation(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketReservesRestorableRowIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -315,6 +319,7 @@ func TestSubsetPersonMergePacketReservesRestorableRowIDs(t *testing.T) {
 }
 
 func TestSubsetCorruptPersonMergeSnapshotIsReported(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -346,6 +351,7 @@ func TestSubsetCorruptPersonMergeSnapshotIsReported(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithAbsorbedTrackingIsComplete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -383,6 +389,7 @@ func TestSubsetPersonMergePacketWithAbsorbedTrackingIsComplete(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketRebuildsDerivedActivity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -451,6 +458,7 @@ func TestSubsetPersonMergePacketRebuildsDerivedActivity(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithAbsorbedSplitResultIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -495,6 +503,7 @@ func TestSubsetPersonMergePacketWithAbsorbedSplitResultIsOmitted(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithRemappedDefinitionIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -558,6 +567,7 @@ func TestSubsetPersonMergePacketWithRemappedDefinitionIsOmitted(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithRemappedRelationshipTypeIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -613,6 +623,7 @@ func TestSubsetPersonMergePacketWithRemappedRelationshipTypeIsOmitted(t *testing
 }
 
 func TestSubsetPersonMergePacketWithRemappedOrganizationDefinitionIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -681,6 +692,7 @@ func TestSubsetPersonMergePacketWithRemappedOrganizationDefinitionIsOmitted(t *t
 }
 
 func TestSubsetPersonMergePacketWithRemappedServiceIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -735,6 +747,7 @@ func TestSubsetPersonMergePacketWithRemappedServiceIsOmitted(t *testing.T) {
 }
 
 func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	sourceDir := t.TempDir()
 	destinationDir := filepath.Join(t.TempDir(), "subset")
@@ -765,6 +778,7 @@ func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
 }
 
 func TestSubsetMergeAliasIsOmittedWithoutAttributes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -788,6 +802,7 @@ func TestSubsetMergeAliasIsOmittedWithoutAttributes(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithMissingRelationshipDependencyIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	sourceDir := t.TempDir()
 	destinationDir := filepath.Join(t.TempDir(), "subset")
@@ -838,6 +853,7 @@ func TestSubsetPersonMergePacketWithMissingRelationshipDependencyIsOmitted(t *te
 }
 
 func TestSubsetPersonMergePacketWithUnchangedHiddenRelationshipIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -884,6 +900,7 @@ func TestSubsetPersonMergePacketWithUnchangedHiddenRelationshipIsOmitted(t *test
 }
 
 func TestSubsetPersonMergePacketWithMissingRelationshipReviewDependencyIsOmitted(t *testing.T) {
+	t.Parallel()
 	for _, dependency := range []string{"matched_person", "accepted_relationship"} {
 		t.Run(dependency, func(t *testing.T) {
 			require := require.New(t)
@@ -953,6 +970,7 @@ func TestSubsetPersonMergePacketWithMissingRelationshipReviewDependencyIsOmitted
 }
 
 func TestSubsetPersonMergePacketWithOmittedPriorMergeIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	sourceDir := t.TempDir()
 	destinationDir := filepath.Join(t.TempDir(), "subset")
@@ -1000,6 +1018,7 @@ func TestSubsetPersonMergePacketWithOmittedPriorMergeIsOmitted(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketWithOmittedSplitOwnerIsOmitted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := t.Context()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -1072,6 +1091,7 @@ func TestSubsetPersonMergePacketWithOmittedSplitOwnerIsOmitted(t *testing.T) {
 }
 
 func TestSubsetPersonMergePacketsPruneAliasDependenciesToFixedPoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := t.Context()
 	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
@@ -1258,6 +1278,7 @@ func seedAcceptedSubsetParticipantLink(t *testing.T, srcDB string) int64 {
 }
 
 func TestCopySubset_Basic(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -1315,6 +1336,7 @@ func TestCopySubset_Basic(t *testing.T) {
 }
 
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
@@ -1387,6 +1409,7 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 }
 
 func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -1526,6 +1549,7 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 }
 
 func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -1597,6 +1621,7 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 }
 
 func TestCopySubset_UpgradedAttachmentColumnOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 1)
@@ -1685,6 +1710,7 @@ func TestCopySubset_UpgradedAttachmentColumnOrder(t *testing.T) {
 }
 
 func TestCopySubset_AllRows(t *testing.T) {
+	t.Parallel()
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -1697,6 +1723,7 @@ func TestCopySubset_AllRows(t *testing.T) {
 }
 
 func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -1726,6 +1753,7 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 }
 
 func TestCopySubset_ExcludesStructuredProfilesByDefault(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -1756,6 +1784,7 @@ func TestCopySubset_ExcludesStructuredProfilesByDefault(t *testing.T) {
 }
 
 func TestCopySubset_LegacyParticipantIdentifiersCopyByColumnName(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 1)
@@ -1804,6 +1833,7 @@ func TestCopySubset_LegacyParticipantIdentifiersCopyByColumnName(t *testing.T) {
 }
 
 func TestCopySubsetRemapsParticipantIdentifierServicesWithoutProfiles(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -1854,6 +1884,7 @@ func TestCopySubsetRemapsParticipantIdentifierServicesWithoutProfiles(t *testing
 }
 
 func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -2003,6 +2034,7 @@ func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T
 }
 
 func TestCopySubsetPreservesIdentityMatchSourceSupport(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -2085,6 +2117,7 @@ func TestCopySubsetPreservesIdentityMatchSourceSupport(t *testing.T) {
 }
 
 func TestCopySubsetOmitsConservativeIdentitySourceMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -2174,6 +2207,7 @@ func TestCopySubsetOmitsConservativeIdentitySourceMetadata(t *testing.T) {
 }
 
 func TestCopySubsetPreservesConservativeSupportForIncludedSources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -2270,6 +2304,7 @@ func TestCopySubsetPreservesConservativeSupportForIncludedSources(t *testing.T) 
 }
 
 func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -2375,6 +2410,7 @@ func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
 }
 
 func TestCopySubsetPreservesRawLegacySeedCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -2444,6 +2480,7 @@ func TestCopySubsetPreservesRawLegacySeedCollision(t *testing.T) {
 }
 
 func TestCopySubsetResolvesCombinedRawSeedIdentityCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -2483,6 +2520,7 @@ func TestCopySubsetResolvesCombinedRawSeedIdentityCollision(t *testing.T) {
 }
 
 func TestCopySubset_AttributesDefaultLegacySensitivityToFalse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 3)
 	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
@@ -2507,6 +2545,7 @@ func TestCopySubset_AttributesDefaultLegacySensitivityToFalse(t *testing.T) {
 }
 
 func TestCopySubset_RecordReferencesFollowIdentityPolicy(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -2589,6 +2628,7 @@ func TestCopySubset_RecordReferencesFollowIdentityPolicy(t *testing.T) {
 // bindings must all survive the copy, so the destination aggregates the
 // cluster exactly like the source.
 func TestCopySubset_IncludeIdentityPreservesClusters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -2624,6 +2664,7 @@ func TestCopySubset_IncludeIdentityPreservesClusters(t *testing.T) {
 // identifiers, not the link edge — and the person spanning it is skipped
 // entirely rather than copied with a truncated binding set.
 func TestCopySubset_DefaultExcludesOffMessageIdentities(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -2661,6 +2702,7 @@ func TestCopySubset_DefaultExcludesOffMessageIdentities(t *testing.T) {
 // closure must expand through person bindings (not just link edges) so the
 // copied profile keeps its complete binding set.
 func TestCopySubset_IncludeIdentitySpansUnlinkedClusters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -2690,6 +2732,7 @@ func TestCopySubset_IncludeIdentitySpansUnlinkedClusters(t *testing.T) {
 }
 
 func TestCopySubset_FTSPopulated(t *testing.T) {
+	t.Parallel()
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -2711,6 +2754,7 @@ func TestCopySubset_FTSPopulated(t *testing.T) {
 }
 
 func TestCopySubset_ConversationCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
@@ -2742,6 +2786,7 @@ func TestCopySubset_ConversationCounts(t *testing.T) {
 }
 
 func TestCopySubset_DestinationEmptyDir(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -2761,6 +2806,7 @@ func TestCopySubset_DestinationEmptyDir(t *testing.T) {
 }
 
 func TestCopySubset_DestinationDBExists(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
@@ -2778,6 +2824,7 @@ func TestCopySubset_DestinationDBExists(t *testing.T) {
 }
 
 func TestCopySubset_SQLInjectionInPath(t *testing.T) {
+	t.Parallel()
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -2791,6 +2838,7 @@ func TestCopySubset_SQLInjectionInPath(t *testing.T) {
 }
 
 func TestCopySubset_NonPositiveRowCount(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{0, -1, -100} {
 		_, err := CopySubset("/tmp/fake.db", t.TempDir(), n, false)
 		assert.Error(t, err, "CopySubset(rowCount=%d) should error", n)
@@ -2798,6 +2846,7 @@ func TestCopySubset_NonPositiveRowCount(t *testing.T) {
 }
 
 func TestCopySubset_TimestampFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -2899,6 +2948,7 @@ func TestCopySubset_TimestampFallback(t *testing.T) {
 }
 
 func TestCopySubset_TieBreaker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -2973,6 +3023,7 @@ func TestCopySubset_TieBreaker(t *testing.T) {
 }
 
 func TestCopySubset_ReplyToOrphanNulled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3060,6 +3111,7 @@ func TestCopySubset_ReplyToOrphanNulled(t *testing.T) {
 }
 
 func TestCopySubset_ExcludesSoftDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3098,6 +3150,7 @@ func TestCopySubset_ExcludesSoftDeleted(t *testing.T) {
 }
 
 func TestCopySubset_ReactionParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3157,6 +3210,7 @@ func TestCopySubset_ReactionParticipants(t *testing.T) {
 // TestCopySubset_NullSourceIDLabels verifies that user-created labels
 // with NULL source_id are preserved when attached to selected messages.
 func TestCopySubset_NullSourceIDLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3216,6 +3270,7 @@ func TestCopySubset_NullSourceIDLabels(t *testing.T) {
 // CopySubset to fail. This guards against the regression where src was
 // still attached during PRAGMA foreign_key_check.
 func TestCopySubset_SourceFKViolationIgnored(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
@@ -3239,6 +3294,7 @@ func TestCopySubset_SourceFKViolationIgnored(t *testing.T) {
 }
 
 func TestCopySubset_MissingSourceDB(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	fakeSrc := filepath.Join(t.TempDir(), "nonexistent.db")
@@ -3257,6 +3313,7 @@ func TestCopySubset_MissingSourceDB(t *testing.T) {
 }
 
 func TestCopySubset_MultiSourceScoping(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3394,6 +3451,7 @@ func TestCopySubset_MultiSourceScoping(t *testing.T) {
 }
 
 func TestCopySubset_LegacySourceWithoutOAuthApp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3438,6 +3496,7 @@ func TestCopySubset_LegacySourceWithoutOAuthApp(t *testing.T) {
 }
 
 func TestCopySubset_ControlCharInPath(t *testing.T) {
+	t.Parallel()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	base := t.TempDir()
 
@@ -3476,6 +3535,7 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 // archives, so it is dropped first and ALTER TABLE ... DROP COLUMN works
 // directly.
 func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3539,6 +3599,7 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 // schemas' intersection, so it is never interpolated into the copy's SQL and
 // the copy proceeds without it.
 func TestCopySubset_SourceOnlyColumnWithQuoteInName(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3574,6 +3635,7 @@ func TestCopySubset_SourceOnlyColumnWithQuoteInName(t *testing.T) {
 // refusing the copy. The name also carries an injection payload, which the
 // escaping renders inert.
 func TestCopySubset_CommonColumnWithQuoteIsEscapedAndCopied(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
@@ -3637,6 +3699,7 @@ func TestCopySubset_CommonColumnWithQuoteIsEscapedAndCopied(t *testing.T) {
 // compares identifiers case-insensitively, so the two are the same column and
 // its values must be copied rather than left at the destination's default.
 func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3688,6 +3751,7 @@ func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
 // TestCopySubset_SourceColumnCaseDiffers, which covers the ordinary ASCII case
 // where the two spellings are the same column.
 func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3746,6 +3810,7 @@ func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
 // names content_changed_at and gives it NULL. That is the hole the DEFAULT
 // leaves open on a fresh database, so it is the shape worth copying badly.
 func TestCopySubset_NullWatermarkIsRestamped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3823,6 +3888,7 @@ func TestCopySubset_NullWatermarkIsRestamped(t *testing.T) {
 // already current is a regression in that, and the NULL restamp that follows
 // the INSERT never got to run because the INSERT failed first.
 func TestCopySubset_LegacySourceWithoutContentChangedAt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -3913,6 +3979,7 @@ func TestCopySubset_LegacySourceWithoutContentChangedAt(t *testing.T) {
 // invisible from the copy statement and a reader would otherwise conclude, as
 // the code comment once did, that a subset preserves the source's watermarks.
 func TestCopySubset_BodyTriggersRestampWatermarks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -4013,6 +4080,7 @@ func TestCopySubset_BodyTriggersRestampWatermarks(t *testing.T) {
 // discovery depends on. The copy names its columns, so every value must land
 // in its own column.
 func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDir := t.TempDir()
@@ -4124,6 +4192,7 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 // ALTER TABLE migration. The destination is fresh, so its declaration order
 // differs. Copying by explicit column names must preserve both values.
 func TestCopySubset_UpgradedParticipantLinkColumnOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -4169,6 +4238,7 @@ func TestCopySubset_UpgradedParticipantLinkColumnOrder(t *testing.T) {
 }
 
 func TestCopySubset_ExcludesParticipantLinkOwnershipWithoutProfiles(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -4198,6 +4268,7 @@ func TestCopySubset_ExcludesParticipantLinkOwnershipWithoutProfiles(t *testing.T
 }
 
 func TestCopySubset_PreservesParticipantLinkOwnershipWithProfiles(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
@@ -4232,6 +4303,7 @@ func TestCopySubset_PreservesParticipantLinkOwnershipWithProfiles(t *testing.T) 
 // destination has the new column, so the copy must match columns by name and
 // let the destination default the missing envelope snapshot to NULL.
 func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srcDB := createTestSourceDB(t, t.TempDir(), 2)
@@ -4286,6 +4358,7 @@ func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) 
 }
 
 func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -4368,6 +4441,7 @@ func TestCopySubsetPreservesRelationshipsAndDecisionLedgerWithProfiles(t *testin
 }
 
 func TestCopySubsetExcludesRelationshipsByDefault(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -4404,6 +4478,7 @@ func TestCopySubsetExcludesRelationshipsByDefault(t *testing.T) {
 }
 
 func TestCopySubset_ProfilesIncludeEmploymentsAndOrganizations(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -4477,6 +4552,7 @@ func TestCopySubset_ProfilesIncludeEmploymentsAndOrganizations(t *testing.T) {
 }
 
 func TestCopySubset_ExcludesEmploymentsByDefault(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -4513,6 +4589,7 @@ func TestCopySubset_ExcludesEmploymentsByDefault(t *testing.T) {
 }
 
 func TestCopySubset_OrganizationRecordReferencesFollowIdentityPolicy(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -4594,6 +4671,7 @@ func TestCopySubset_OrganizationRecordReferencesFollowIdentityPolicy(t *testing.
 }
 
 func TestCopySubsetVCardResourcesRequireExplicitOptIn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -4675,6 +4753,7 @@ func TestCopySubsetVCardResourcesRequireExplicitOptIn(t *testing.T) {
 }
 
 func TestCopySubsetVCardResourcesFollowProfileBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -4742,6 +4821,7 @@ func TestCopySubsetVCardResourcesFollowProfileBoundary(t *testing.T) {
 }
 
 func TestCopySubsetReleasesVCardMappingsToOwnersLeftBehind(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -4834,6 +4914,7 @@ func TestCopySubsetReleasesVCardMappingsToOwnersLeftBehind(t *testing.T) {
 }
 
 func TestCopySubsetCopiesRelationshipsFromSourcesWithoutResourceColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -4887,6 +4968,7 @@ func TestCopySubsetCopiesRelationshipsFromSourcesWithoutResourceColumn(t *testin
 	assert.Nil(reviews[0].SourceResourceUID)
 }
 func TestCopySubsetReleasesReviewMappingsWhoseAcceptedEdgeWasFiltered(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()

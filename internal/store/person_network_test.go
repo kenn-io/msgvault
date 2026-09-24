@@ -19,6 +19,7 @@ type networkSourceRead struct {
 }
 
 func TestGetPersonNetworkContextUsesCuratedEdgesOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -45,6 +46,7 @@ func TestGetPersonNetworkContextUsesCuratedEdgesOnly(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextReturnsRootOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -64,6 +66,7 @@ func TestGetPersonNetworkContextReturnsRootOnly(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextUsesFirstHopAndStableFrontierOrder(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	root := createNetworkPerson(t, f.Store, "Root")
 	zulu := createNetworkPerson(t, f.Store, "Zulu")
@@ -85,6 +88,7 @@ func TestGetPersonNetworkContextUsesFirstHopAndStableFrontierOrder(t *testing.T)
 }
 
 func TestGetPersonNetworkContextReachesIncomingRelationships(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -108,6 +112,7 @@ func TestGetPersonNetworkContextReachesIncomingRelationships(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextExpandsOrganizationsToPeople(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	root := createNetworkPerson(t, f.Store, "Root")
 	peer := createNetworkPerson(t, f.Store, "Peer")
@@ -126,6 +131,7 @@ func TestGetPersonNetworkContextExpandsOrganizationsToPeople(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextBoundsHighDegreeEmploymentLayerInPublicOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -170,6 +176,7 @@ func TestGetPersonNetworkContextBoundsHighDegreeEmploymentLayerInPublicOrder(t *
 }
 
 func TestGetPersonNetworkContextAppliesNodeCapAfterLayerOrdering(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -202,6 +209,7 @@ func TestGetPersonNetworkContextAppliesNodeCapAfterLayerOrdering(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextAppliesEdgeCapSeparately(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -246,6 +254,7 @@ func TestGetPersonNetworkContextAppliesEdgeCapSeparately(t *testing.T) {
 // once from each endpoint, and the root edges are visible again from every
 // peer. Distinct unseen edges stay under the cap, so nothing may be dropped.
 func TestGetPersonNetworkContextChargesEdgeBudgetForDistinctUnseenEdgesOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -285,6 +294,7 @@ func TestGetPersonNetworkContextChargesEdgeBudgetForDistinctUnseenEdgesOnly(t *t
 // from the last peer sorts before every person, and the clique edges follow
 // their lesser endpoint's label.
 func TestGetPersonNetworkContextTruncatesLayerInPublicOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -338,6 +348,7 @@ func TestGetPersonNetworkContextTruncatesLayerInPublicOrder(t *testing.T) {
 }
 
 func TestGetPersonNetworkContextIncludesEndedRowsOnlyWhenRequested(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -364,6 +375,7 @@ func TestGetPersonNetworkContextIncludesEndedRowsOnlyWhenRequested(t *testing.T)
 }
 
 func TestGetPersonNetworkContextUsesEmploymentTitleRoleLabelFallback(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	root := createNetworkPerson(t, f.Store, "Root")
 	titleOrganization := createNetworkOrganization(t, f.Store, "Title Works")
@@ -396,6 +408,7 @@ func TestGetPersonNetworkContextUsesEmploymentTitleRoleLabelFallback(t *testing.
 }
 
 func TestGetPersonNetworkContextValidatesBoundsAndRoot(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	root := createNetworkPerson(t, f.Store, "Root")
 

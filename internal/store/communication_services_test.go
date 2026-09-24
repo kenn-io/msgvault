@@ -11,6 +11,7 @@ import (
 )
 
 func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -38,6 +39,7 @@ func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
 }
 
 func TestServiceAliasesResolveToOneCanonicalService(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -56,6 +58,7 @@ func TestServiceAliasesResolveToOneCanonicalService(t *testing.T) {
 }
 
 func TestUnknownServiceIsRegisteredWithoutASchemaMigration(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -84,6 +87,7 @@ func TestUnknownServiceIsRegisteredWithoutASchemaMigration(t *testing.T) {
 }
 
 func TestCommunicationServiceDiscoveryProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -117,6 +121,7 @@ func TestCommunicationServiceDiscoveryProvenance(t *testing.T) {
 }
 
 func TestServiceSeedIsIdempotentAndPreservesUserEdits(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -139,6 +144,7 @@ func TestServiceSeedIsIdempotentAndPreservesUserEdits(t *testing.T) {
 }
 
 func TestReferencedServiceNormalizationIsImmutable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -205,6 +211,7 @@ func TestReferencedServiceNormalizationIsImmutable(t *testing.T) {
 }
 
 func TestServiceAliasCannotBeStolenFromAnotherService(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -223,6 +230,7 @@ func TestServiceAliasCannotBeStolenFromAnotherService(t *testing.T) {
 }
 
 func TestCanonicalServiceSlugCannotShadowExistingAlias(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -241,6 +249,7 @@ func TestCanonicalServiceSlugCannotShadowExistingAlias(t *testing.T) {
 }
 
 func TestNormalizeServiceValuePerStrategy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -277,6 +286,7 @@ func TestNormalizeServiceValuePerStrategy(t *testing.T) {
 }
 
 func TestValidateServiceScopeFollowsScopePolicy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -296,6 +306,7 @@ func TestValidateServiceScopeFollowsScopePolicy(t *testing.T) {
 }
 
 func TestValidateServiceScopeRejectsHalfScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
@@ -324,6 +335,7 @@ func TestValidateServiceScopeRejectsHalfScopes(t *testing.T) {
 }
 
 func TestBlankScopeStringsDoNotFragmentObservationIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

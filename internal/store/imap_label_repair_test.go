@@ -30,6 +30,7 @@ func seedTwoInboxMessages(t *testing.T, f imapMembershipFixture) (int64, int64) 
 // described in issue #748: an add-only label merge leaves a label that no
 // imap_message_memberships row backs, and nothing else ever revisits it.
 func TestRepairIMAPSourceLabels_RemovesStrayAddOnlyLabel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -53,6 +54,7 @@ func TestRepairIMAPSourceLabels_RemovesStrayAddOnlyLabel(t *testing.T) {
 // TestRepairIMAPSourceLabels_DryRunDoesNotWrite asserts a dry run reports
 // what would change without persisting it.
 func TestRepairIMAPSourceLabels_DryRunDoesNotWrite(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -73,6 +75,7 @@ func TestRepairIMAPSourceLabels_DryRunDoesNotWrite(t *testing.T) {
 // TestRepairIMAPSourceLabels_NoopWhenLabelsAlreadyMatch asserts a second
 // apply run over already-consistent labels changes nothing.
 func TestRepairIMAPSourceLabels_NoopWhenLabelsAlreadyMatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -89,6 +92,7 @@ func TestRepairIMAPSourceLabels_NoopWhenLabelsAlreadyMatch(t *testing.T) {
 // per-message test hook cancels after the first message, so a second message
 // being processed proves cancellation was not honored between messages.
 func TestRepairIMAPSourceLabels_CancellationStopsTheLoop(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -114,6 +118,7 @@ func TestRepairIMAPSourceLabels_CancellationStopsTheLoop(t *testing.T) {
 // sentinel returning as a nil error even when the context was cancelled
 // mid-repair, which would report a cancelled run as a completed dry run.
 func TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -140,6 +145,7 @@ func TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess(t *testin
 // This asserts the statements themselves carry ctx, which is what lets a
 // cancellation reach a query already running.
 func TestReconcileMessageLabelsTxContext_CancelledContextStopsItsStatements(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newIMAPMembershipFixture(t)
 	messageID1, _ := seedTwoInboxMessages(t, f)

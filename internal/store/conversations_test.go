@@ -15,6 +15,7 @@ import (
 )
 
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -76,6 +77,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 }
 
 func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -104,6 +106,7 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 }
 
 func TestConversationWindowIncludesSourceDeletedArchiveEntries(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -127,6 +130,7 @@ func TestConversationWindowIncludesSourceDeletedArchiveEntries(t *testing.T) {
 }
 
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -204,6 +208,7 @@ func seedBudgetConversation(t *testing.T, bodySizes []int) (*store.Store, int64,
 }
 
 func TestConversationWindowOmitsBodiesBeyondInlineBudget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	half := store.ConversationInlineBodyBudget / 2
@@ -235,6 +240,7 @@ func TestConversationWindowOmitsBodiesBeyondInlineBudget(t *testing.T) {
 }
 
 func TestConversationWindowAlwaysInlinesAnchorBodyEvenOverBudget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	oversized := store.ConversationInlineBodyBudget + 16
@@ -252,6 +258,7 @@ func TestConversationWindowAlwaysInlinesAnchorBodyEvenOverBudget(t *testing.T) {
 }
 
 func TestConversationWindowInlinesAllBodiesWithinBudget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, conversationID, ids := seedBudgetConversation(t, []int{16, 0, 32})
@@ -268,6 +275,7 @@ func TestConversationWindowInlinesAllBodiesWithinBudget(t *testing.T) {
 }
 
 func TestConversationMetadataGetSetAndClear(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -300,6 +308,7 @@ func TestConversationMetadataGetSetAndClear(t *testing.T) {
 }
 
 func TestConversationMetadataBatchScopesSourceAndPreservesMissingMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

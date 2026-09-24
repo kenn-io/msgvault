@@ -44,6 +44,7 @@ func (s *collectingMessageExportSink) Message(message store.MessageExportMessage
 }
 
 func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -113,6 +114,7 @@ func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 }
 
 func TestExportMessagesUsesHalfOpenEffectiveTimestampWindow(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -176,6 +178,7 @@ func TestExportMessagesUsesHalfOpenEffectiveTimestampWindow(t *testing.T) {
 }
 
 func TestExportMessagesFiltersSourcesAndMessageTypes(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -219,6 +222,7 @@ func TestExportMessagesFiltersSourcesAndMessageTypes(t *testing.T) {
 }
 
 func TestExportMessagesSourceFilterBoundsConversationScan(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("SQLite query-plan regression")
@@ -287,6 +291,7 @@ func TestExportMessagesSourceFilterBoundsConversationScan(t *testing.T) {
 }
 
 func TestExportMessagesEmitsExplicitEmptySources(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -309,6 +314,7 @@ func TestExportMessagesEmitsExplicitEmptySources(t *testing.T) {
 }
 
 func TestExportMessagesNormalizesConversationsAuthorsAndDeletion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -357,6 +363,7 @@ func TestExportMessagesNormalizesConversationsAuthorsAndDeletion(t *testing.T) {
 }
 
 func TestExportMessagesUsesClosedConversationVocabulary(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -399,6 +406,7 @@ func TestExportMessagesUsesClosedConversationVocabulary(t *testing.T) {
 }
 
 func TestExportMessagesNormalizesParticipantAuthor(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -433,6 +441,7 @@ func TestExportMessagesNormalizesParticipantAuthor(t *testing.T) {
 }
 
 func TestExportMessagesPrefersDiscordMessageAuthorName(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -470,6 +479,7 @@ func TestExportMessagesPrefersDiscordMessageAuthorName(t *testing.T) {
 }
 
 func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -506,6 +516,7 @@ func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 }
 
 func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -569,6 +580,7 @@ func (s *hidingMessageExportSink) Message(message store.MessageExportMessage) er
 }
 
 func TestExportMessagesKeysetPagingDoesNotSkipAfterPrefixMutation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -619,6 +631,7 @@ func (s failingMessageExportSink) Message(store.MessageExportMessage) error {
 }
 
 func TestExportMessagesStopsWhenSinkFails(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("text", "source")
@@ -633,6 +646,7 @@ func TestExportMessagesStopsWhenSinkFails(t *testing.T) {
 }
 
 func TestExportMessagesRejectsInvalidFilter(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
@@ -728,6 +742,7 @@ func insertMessageExportMessage(
 }
 
 func TestExportMessagesPersonAuthorAndScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)

@@ -62,6 +62,7 @@ func seedEmbedScopeFixture(t *testing.T, st *store.Store) embedScopeFixture {
 }
 
 func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -87,6 +88,7 @@ func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
 }
 
 func TestCoverageCountsScopedFiltersBySource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -107,6 +109,7 @@ func TestCoverageCountsScopedFiltersBySource(t *testing.T) {
 }
 
 func TestScopedFiltersComposeMessageTypesAndSources(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
 	ctx := context.Background()

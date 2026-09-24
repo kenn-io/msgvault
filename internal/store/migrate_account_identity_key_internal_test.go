@@ -16,6 +16,7 @@ import (
 // The keyed lookup plus the partial unique index must leave exactly one
 // row carrying the union of both signal sets.
 func TestConcurrentTwoStoreCaseVariantAdds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "race.db")

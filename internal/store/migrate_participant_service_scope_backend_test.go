@@ -63,6 +63,7 @@ func installRejectParticipantIdentifierWrite(t *testing.T, st *store.Store) {
 }
 
 func TestParticipantIdentifiersServiceScopeLegacyTableUpgrade(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -105,6 +106,7 @@ func TestParticipantIdentifiersServiceScopeLegacyTableUpgrade(t *testing.T) {
 }
 
 func TestEnsureParticipantCreationSupportsLegacyIdentifierColumns(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		identifierType string
@@ -175,6 +177,7 @@ func TestEnsureParticipantCreationSupportsLegacyIdentifierColumns(t *testing.T) 
 }
 
 func TestEnsureParticipantCreationRollsBackWhenIdentifierWriteFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		ensure func(*store.Store) (int64, error)

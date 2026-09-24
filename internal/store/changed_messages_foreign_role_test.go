@@ -211,6 +211,7 @@ func peerBeginWrite(t *testing.T, conn *sql.Conn, id int64, subject string) time
 // connection at all — a monitoring exporter, a backup, someone's psql — into a
 // permanent freeze, recoverable only when that backend actually terminated.
 func TestListChangedMessages_BenignForeignConnectionsDoNotHoldTheFeedBack(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newForeignRoleFeed(t)
 	ctx := context.Background()
@@ -252,6 +253,7 @@ func TestListChangedMessages_BenignForeignConnectionsDoNotHoldTheFeedBack(t *tes
 // goes away, which is what an unscoped count required and which never happens
 // behind a pool.
 func TestListChangedMessages_ForeignRoleWriterStillHoldsTheBound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newForeignRoleFeed(t)
@@ -302,6 +304,7 @@ func TestListChangedMessages_ForeignRoleWriterStillHoldsTheBound(t *testing.T) {
 // refuse, and say what the operator has to grant, exactly as it already does
 // when `messages` cannot be resolved.
 func TestListChangedMessages_UntrustedBoundIsRefusedOnAFreshProcess(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newForeignRoleFeed(t)

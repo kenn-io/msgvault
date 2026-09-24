@@ -22,6 +22,7 @@ import (
 )
 
 func TestMergePersons_RootsAndBindings(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -154,6 +155,7 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 }
 
 func TestMergePersons_CardDAVState(t *testing.T) {
+	t.Parallel()
 	t.Run("resource binding follows exact split", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -347,6 +349,7 @@ func assertJSONEquivalent(t *testing.T, want, got any, msgAndArgs ...any) {
 }
 
 func TestPersonMerge_Inspect(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonMergeInspectionFixture(t, "inspect")
@@ -383,6 +386,7 @@ func TestPersonMerge_Inspect(t *testing.T) {
 }
 
 func TestPersonMerge_InspectNewestFirst(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -411,6 +415,7 @@ func TestPersonMerge_InspectNewestFirst(t *testing.T) {
 }
 
 func TestPersonMerge_Snapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := newPersonMergeInspectionFixture(t, "snapshot-read")
 	ctx := context.Background()
@@ -428,6 +433,7 @@ func TestPersonMerge_Snapshot(t *testing.T) {
 }
 
 func TestPersonMerge_CandidateDecisionAcceptedAndIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonMergeInspectionFixture(t, "candidate-accept")
@@ -477,6 +483,7 @@ func TestPersonMerge_CandidateDecisionAcceptedAndIdempotent(t *testing.T) {
 }
 
 func TestPersonMerge_PendingRecordReferenceCandidateBlocksTargetDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	f := newPersonMergeRecordReferenceFixture(t, "candidate-target-delete")
@@ -497,6 +504,7 @@ func TestPersonMerge_PendingRecordReferenceCandidateBlocksTargetDeletion(t *test
 }
 
 func TestPersonMerge_CandidateDecisionRejectedAndConflicts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonMergeInspectionFixture(t, "candidate-reject")
@@ -534,6 +542,7 @@ func TestPersonMerge_CandidateDecisionRejectedAndConflicts(t *testing.T) {
 }
 
 func TestPersonMerge_CandidateDecisionRejectsChangedCurrentValue(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newPersonMergeInspectionFixture(t, "candidate-current-changed")
 	ctx := context.Background()
@@ -559,6 +568,7 @@ func TestPersonMerge_CandidateDecisionRejectsChangedCurrentValue(t *testing.T) {
 }
 
 func TestPersonMerge_CandidateDecisionRejectsInactiveDefinitionWithoutMutation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -606,6 +616,7 @@ func TestPersonMerge_CandidateDecisionRejectsInactiveDefinitionWithoutMutation(t
 }
 
 func TestPersonMerge_CandidateDecisionMissingCandidate(t *testing.T) {
+	t.Parallel()
 	f := newPersonMergeInspectionFixture(t, "candidate-missing")
 	_, err := f.store.DecidePersonMergeCandidateContext(context.Background(),
 		store.PersonMergeCandidateDecisionRequest{
@@ -617,6 +628,7 @@ func TestPersonMerge_CandidateDecisionMissingCandidate(t *testing.T) {
 }
 
 func TestMergePersons_RevisionConflictChangesNothing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -646,6 +658,7 @@ func TestMergePersons_RevisionConflictChangesNothing(t *testing.T) {
 }
 
 func TestMergePersons_Facts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -817,6 +830,7 @@ func TestMergePersons_Facts(t *testing.T) {
 }
 
 func TestMergePersons_StructuredPropertyIdentityCollision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	survivorParticipant := f.EnsureParticipant("property-survivor@example.com", "Survivor", "example.com")
@@ -878,6 +892,7 @@ func TestMergePersons_StructuredPropertyIdentityCollision(t *testing.T) {
 }
 
 func TestMergePersons_RelationshipsAndReviews(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1019,6 +1034,7 @@ func TestMergePersons_RelationshipsAndReviews(t *testing.T) {
 }
 
 func TestMergePersons_Employments(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1089,6 +1105,7 @@ func TestMergePersons_Employments(t *testing.T) {
 }
 
 func TestMergePersons_InboundReferences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1155,6 +1172,7 @@ func TestMergePersons_InboundReferences(t *testing.T) {
 }
 
 func TestMergePersons_IdentityCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1277,6 +1295,7 @@ func TestMergePersons_IdentityCandidates(t *testing.T) {
 }
 
 func TestMergePersons_DailyNotes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1337,6 +1356,7 @@ func TestMergePersons_DailyNotes(t *testing.T) {
 }
 
 func TestMergePersons_DerivedState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, survivor, absorbed, messageID := mergeDerivedStateFixture(t)
@@ -1397,6 +1417,7 @@ func TestMergePersons_DerivedState(t *testing.T) {
 }
 
 func TestMergePersons_DerivedRollback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, survivor, absorbed, messageID := mergeDerivedStateFixture(t)
@@ -1509,6 +1530,7 @@ func mergeDerivedStateFixture(
 }
 
 func TestMergePersons_ParticipantMergeRejectsCrossOriginLineage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1557,6 +1579,7 @@ func TestMergePersons_ParticipantMergeRejectsCrossOriginLineage(t *testing.T) {
 }
 
 func TestMergePersons_ParticipantMergeRejectsDistinctPartialSplitLineage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1622,6 +1645,7 @@ func TestMergePersons_ParticipantMergeRejectsDistinctPartialSplitLineage(t *test
 }
 
 func TestMergePersons_DeleteCurrentLineageOwnerIsDomainConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	survivorParticipant := f.EnsureParticipant("delete-lineage-survivor@example.com", "Survivor", "example.com")
@@ -1646,6 +1670,7 @@ func TestMergePersons_DeleteCurrentLineageOwnerIsDomainConflict(t *testing.T) {
 }
 
 func TestMergePersons_ChainedReplayAndLineageJournal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1718,6 +1743,7 @@ func TestMergePersons_ChainedReplayAndLineageJournal(t *testing.T) {
 }
 
 func TestMergePersons_Rollback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -1768,6 +1794,7 @@ func TestMergePersons_Rollback(t *testing.T) {
 }
 
 func TestPersonMergeRollbackStages(t *testing.T) {
+	t.Parallel()
 	stages := []struct {
 		name, event, table, prepare string
 	}{
@@ -1848,6 +1875,7 @@ func installPersonMergeFailureTrigger(
 }
 
 func TestMergePersons_ErrorHygiene(t *testing.T) {
+	t.Parallel()
 	t.Run("participant IDs", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -1924,6 +1952,7 @@ func TestMergePersons_ErrorHygiene(t *testing.T) {
 }
 
 func TestPersonMergeConcurrencyMergeMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, survivor, absorbed := newPersonMergeConcurrencyFixture(t, "merge-merge")
@@ -1988,6 +2017,7 @@ func personOperationContentionBarrier(
 }
 
 func TestPersonMergeConcurrencyProfileUpdate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, survivor, absorbed := newPersonMergeConcurrencyFixture(t, "merge-profile")
@@ -2022,6 +2052,7 @@ func TestPersonMergeConcurrencyProfileUpdate(t *testing.T) {
 }
 
 func TestPersonMergeConcurrencyIdentityLink(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, survivor, absorbed := newPersonMergeConcurrencyFixture(t, "merge-link")
@@ -2138,12 +2169,14 @@ var personMergeTableColumns = map[string][]string{
 }
 
 func TestPersonMergeSchema(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewSQLiteTestStore(t)
 
 	assertPersonMergeSchema(t, st)
 }
 
 func TestPostgresPersonMergeSchema(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL-only person merge schema assertion")
@@ -2160,6 +2193,7 @@ func TestPostgresPersonMergeSchema(t *testing.T) {
 }
 
 func TestPostgresMergePersonsReconcilesSingleAttributes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
@@ -2219,6 +2253,7 @@ func TestPostgresMergePersonsReconcilesSingleAttributes(t *testing.T) {
 }
 
 func TestPostgresMergePersonsFencesConcurrentEnvelopeWriter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -2289,6 +2324,7 @@ func TestPostgresMergePersonsFencesConcurrentEnvelopeWriter(t *testing.T) {
 }
 
 func TestPostgresMergePersonsFencesConcurrentReferenceSupersede(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -2456,6 +2492,7 @@ func assertForeignKeyTarget(t *testing.T, st *store.Store, table, column, target
 }
 
 func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name           string
 		enrollSurvivor bool

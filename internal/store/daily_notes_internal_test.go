@@ -12,6 +12,7 @@ import (
 )
 
 func TestDailyNoteRetryClassifier(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	sqliteStore := &Store{dialect: &SQLiteDialect{}}
 	postgresStore := &Store{dialect: &PostgreSQLDialect{}}

@@ -71,6 +71,7 @@ func installLegacyPersonSweepBatchPurpose(t *testing.T, st *store.Store) {
 }
 
 func TestPersonSweepBatchPurposeMigrationPreservesExtractionRowsAndAdmitsBriefCalls(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "batch-purpose-migration")
@@ -139,6 +140,7 @@ func TestPersonSweepBatchPurposeMigrationPreservesExtractionRowsAndAdmitsBriefCa
 }
 
 func TestPersonSweepBudgetJournalsBriefCallsAfterExtraction(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newPersonSweepBudgetFixture(t, "brief-calls")
@@ -183,6 +185,7 @@ func TestPersonSweepBudgetJournalsBriefCallsAfterExtraction(t *testing.T) {
 }
 
 func TestPersonSweepBudgetRejectsMisplacedBriefCalls(t *testing.T) {
+	t.Parallel()
 	t.Run("brief repair paired with an extraction primary", func(t *testing.T) {
 		f := newPersonSweepBudgetFixture(t, "brief-repair-on-primary")
 		primaryRequest := sweepReservation(f, 0, 250, "provider-fingerprint", generousSweepBudget())

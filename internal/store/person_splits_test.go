@@ -86,6 +86,7 @@ func newPersonSplitFixtureWithAbsorbedSetup(
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
@@ -155,6 +156,7 @@ func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T
 }
 
 func TestSplitPersonMerge_ExactReversal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -194,6 +196,7 @@ func TestSplitPersonMerge_ExactReversal(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ZeroParticipantProfile(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                 string
 		cardDAVIsSurvivor    bool
@@ -269,6 +272,7 @@ func TestSplitPersonMerge_ZeroParticipantProfile(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalIncludesLaterAbsorbedAlias(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -312,6 +316,7 @@ func TestSplitPersonMerge_ExactReversalIncludesLaterAbsorbedAlias(t *testing.T) 
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresIdentityCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -442,6 +447,7 @@ func TestSplitPersonMerge_ExactReversalRestoresIdentityCandidates(t *testing.T) 
 }
 
 func TestSplitPersonMerge_ExactReversalKeepsExternalMergeLineage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -512,6 +518,7 @@ func TestSplitPersonMerge_ExactReversalKeepsExternalMergeLineage(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalSkipsUnsupportedGeneratedCandidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -589,6 +596,7 @@ func TestSplitPersonMerge_ExactReversalSkipsUnsupportedGeneratedCandidate(t *tes
 }
 
 func TestSplitPersonMerge_ExactReversalSkipsIndividuallyUnsupportedEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -667,6 +675,7 @@ func TestSplitPersonMerge_ExactReversalSkipsIndividuallyUnsupportedEvidence(t *t
 func TestSplitPersonMerge_ExactReversalSkipsUnsupportedEvidenceForCollapsedCandidate(
 	t *testing.T,
 ) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -737,6 +746,7 @@ func TestSplitPersonMerge_ExactReversalSkipsUnsupportedEvidenceForCollapsedCandi
 }
 
 func TestSplitPersonMerge_CompletedExactSplitReportsAlreadySplit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
 	ctx := context.Background()
@@ -758,6 +768,7 @@ func TestSplitPersonMerge_CompletedExactSplitReportsAlreadySplit(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesCompositeKeyJournal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -809,6 +820,7 @@ func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesCompositeKeyJourn
 }
 
 func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesEmploymentJournal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -862,6 +874,7 @@ func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesEmploymentJournal
 }
 
 func TestSplitPersonMerge_LaterSplitRebasesEarlierCompositeKeyJournal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -922,6 +935,7 @@ func TestSplitPersonMerge_LaterSplitRebasesEarlierCompositeKeyJournal(t *testing
 }
 
 func TestSplitPersonMerge_LaterSplitRebasesEarlierDeduplicatedRowJournal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -993,6 +1007,7 @@ func TestSplitPersonMerge_LaterSplitRebasesEarlierDeduplicatedRowJournal(t *test
 }
 
 func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1066,6 +1081,7 @@ func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t 
 }
 
 func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -1127,6 +1143,7 @@ func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowEdits(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
 	ctx := context.Background()
@@ -1149,6 +1166,7 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowEdits(t *testing.T) 
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1198,6 +1216,7 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowDeletion(t *testing.
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresDeduplicatedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -1242,6 +1261,7 @@ func TestSplitPersonMerge_ExactReversalRestoresDeduplicatedRows(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesDeletedDeduplicationTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1298,6 +1318,7 @@ func TestSplitPersonMerge_ExactReversalPreservesDeletedDeduplicationTarget(t *te
 }
 
 func TestSplitPersonMerge_ExactReversalAdvancesMovedRowRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1394,6 +1415,7 @@ func TestSplitPersonMerge_ExactReversalAdvancesMovedRowRevision(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalReleasesPersonDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -1433,6 +1455,7 @@ func TestSplitPersonMerge_ExactReversalReleasesPersonDeletion(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalLeavesMissingRecordTargetInactive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1460,6 +1483,7 @@ func TestSplitPersonMerge_ExactReversalLeavesMissingRecordTargetInactive(t *test
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresRetainedCollisionsInPlace(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1542,6 +1566,7 @@ func TestSplitPersonMerge_ExactReversalRestoresRetainedCollisionsInPlace(t *test
 }
 
 func TestSplitPersonMerge_ExactReversalFinalizesPendingCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1586,6 +1611,7 @@ func TestSplitPersonMerge_ExactReversalFinalizesPendingCandidates(t *testing.T) 
 }
 
 func TestSplitPersonMerge_ExactReversalRejectsAcceptedCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1643,6 +1669,7 @@ func TestSplitPersonMerge_ExactReversalRejectsAcceptedCandidates(t *testing.T) {
 func TestSplitPersonMerge_ExactReversalRejectsAcceptedAbsorbedCandidateFromEarlierMerge(
 	t *testing.T,
 ) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1709,6 +1736,7 @@ func TestSplitPersonMerge_ExactReversalRejectsAcceptedAbsorbedCandidateFromEarli
 }
 
 func TestSplitPersonMerge_ExactReversalAllowsCandidateAcceptedBeforeMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1767,6 +1795,7 @@ func TestSplitPersonMerge_ExactReversalAllowsCandidateAcceptedBeforeMerge(t *tes
 }
 
 func TestSplitPersonMerge_IdempotencyReplaysCommittedResultAfterLaterChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	f := newPersonSplitFixture(t)
@@ -1804,6 +1833,7 @@ func TestSplitPersonMerge_IdempotencyReplaysCommittedResultAfterLaterChanges(t *
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresTracking(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name            string
 		trackSurvivor   bool
@@ -1857,6 +1887,7 @@ func TestSplitPersonMerge_ExactReversalRestoresTracking(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalReconcilesDeduplicatedTracking(t *testing.T) {
+	t.Parallel()
 	t.Run("preserves supported changes", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -1941,6 +1972,7 @@ func TestSplitPersonMerge_ExactReversalReconcilesDeduplicatedTracking(t *testing
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesRecreatedTracking(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1987,6 +2019,7 @@ func TestSplitPersonMerge_ExactReversalPreservesRecreatedTracking(t *testing.T) 
 }
 
 func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -2042,6 +2075,7 @@ func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testi
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesPostMergePersonReassignment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -2098,6 +2132,7 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergePersonReassignment(t *t
 }
 
 func TestSplitPersonMerge_ExactReversalSkipsDeletedRelationshipType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -2166,6 +2201,7 @@ func TestSplitPersonMerge_ExactReversalSkipsDeletedRelationshipType(t *testing.T
 }
 
 func TestSplitPersonMerge_ExactReversalNullsMissingDependencyOnRecreatedReview(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -2255,6 +2291,7 @@ func TestSplitPersonMerge_ExactReversalNullsMissingDependencyOnRecreatedReview(t
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresRelationshipReviewDependency(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -2344,6 +2381,7 @@ func TestSplitPersonMerge_ExactReversalRestoresRelationshipReviewDependency(t *t
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresIdentityEvidenceDependency(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 	st := testutil.NewTestStore(t)
@@ -2400,6 +2438,7 @@ func TestSplitPersonMerge_ExactReversalRestoresIdentityEvidenceDependency(t *tes
 }
 
 func TestSplitPersonMerge_Partial(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2442,6 +2481,7 @@ func TestSplitPersonMerge_Partial(t *testing.T) {
 }
 
 func TestSplitPersonMerge_PartialRejectsAcceptedCandidateAcrossBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2478,6 +2518,7 @@ func TestSplitPersonMerge_PartialRejectsAcceptedCandidateAcrossBoundary(t *testi
 }
 
 func TestSplitPersonMerge_PartialReplayExcludesSurvivorJournalRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2506,6 +2547,7 @@ func TestSplitPersonMerge_PartialReplayExcludesSurvivorJournalRows(t *testing.T)
 }
 
 func TestSplitPersonMerge_CutsIdentityLinks(t *testing.T) {
+	t.Parallel()
 	f := newPersonSplitFixture(t)
 	ctx := context.Background()
 	result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
@@ -2521,6 +2563,7 @@ func TestSplitPersonMerge_CutsIdentityLinks(t *testing.T) {
 }
 
 func TestSplitPersonMerge_SequentialPartialSplitsReleasePersonDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2547,6 +2590,7 @@ func TestSplitPersonMerge_SequentialPartialSplitsReleasePersonDeletion(t *testin
 }
 
 func TestSplitPersonMerge_Validation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
 	ctx := context.Background()
@@ -2596,6 +2640,7 @@ func TestSplitPersonMerge_Validation(t *testing.T) {
 }
 
 func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -2695,6 +2740,7 @@ func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
 }
 
 func TestSplitPersonMerge_RecomputesAbsorbedActivityRemovedByOwnerMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2761,6 +2807,7 @@ func TestSplitPersonMerge_RecomputesAbsorbedActivityRemovedByOwnerMerge(t *testi
 }
 
 func TestSplitPersonMerge_Rollback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2804,6 +2851,7 @@ func TestSplitPersonMerge_Rollback(t *testing.T) {
 }
 
 func TestPersonSplitConcurrencySplitSplit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2838,6 +2886,7 @@ func TestPersonSplitConcurrencySplitSplit(t *testing.T) {
 }
 
 func TestPersonSplitConcurrencyProfileUpdate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
@@ -2890,6 +2939,7 @@ func assertPersonSplitConcurrencyState(t *testing.T, st *store.Store, wantSplits
 }
 
 func TestSplitPersonMerge_ExactReversalRestoresBriefEnrollment(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name             string
 		enrollSurvivor   bool
@@ -2941,6 +2991,7 @@ func TestSplitPersonMerge_ExactReversalRestoresBriefEnrollment(t *testing.T) {
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()

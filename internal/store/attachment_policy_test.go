@@ -17,6 +17,7 @@ import (
 )
 
 func TestInitSchemaAddsAttachmentOutcomeColumns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-attachments.db")
@@ -62,6 +63,7 @@ func newPolicyMessage(t *testing.T, st *store.Store, sourceType, identifier, con
 }
 
 func TestAttachmentOutcomeRoundTrip(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	_, messageID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "round-trip", 2)
 	want := store.AttachmentRef{
@@ -81,6 +83,7 @@ func TestAttachmentOutcomeRoundTrip(t *testing.T) {
 }
 
 func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -125,6 +128,7 @@ func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testi
 }
 
 func TestBeeperRetryPolicyReportsNewSizeSkips(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -160,6 +164,7 @@ func TestBeeperRetryPolicyReportsNewSizeSkips(t *testing.T) {
 }
 
 func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -203,6 +208,7 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 }
 
 func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -27,6 +27,7 @@ func mustTwoPersons(t *testing.T, f *storetest.Fixture) (int64, int64) {
 }
 
 func TestAddPersonRelationshipCanonicalizesOrientationAndSymmetry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -93,6 +94,7 @@ func TestAddPersonRelationshipCanonicalizesOrientationAndSymmetry(t *testing.T) 
 }
 
 func TestPersonRelationshipValidatesInputAndConstructedDateBounds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -148,6 +150,7 @@ func TestPersonRelationshipValidatesInputAndConstructedDateBounds(t *testing.T) 
 }
 
 func TestEndUpdateDeletePersonRelationshipUsesCASAndKeepsHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -192,6 +195,7 @@ func TestEndUpdateDeletePersonRelationshipUsesCASAndKeepsHistory(t *testing.T) {
 }
 
 func TestPatchPersonRelationshipIsAtomicAndBumpsRevisionOnce(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -230,6 +234,7 @@ func TestPatchPersonRelationshipIsAtomicAndBumpsRevisionOnce(t *testing.T) {
 // is exercised on both SQLite and PostgreSQL rather than merely asserted at a
 // store boundary.
 func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -288,6 +293,7 @@ func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
 }
 
 func TestPersonRelationshipConstraintsAndColumnParity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -324,6 +330,7 @@ func TestPersonRelationshipConstraintsAndColumnParity(t *testing.T) {
 }
 
 func TestDeletingAPersonCascadesItsRelationships(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()

@@ -12,6 +12,7 @@ import (
 )
 
 func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -68,6 +69,7 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 }
 
 func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
@@ -87,6 +89,7 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 }
 
 func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
+	t.Parallel()
 	fixture := newMeetingQueryFixture(t)
 	options := meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20}
 

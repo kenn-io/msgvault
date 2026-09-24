@@ -25,6 +25,7 @@ import (
 //     exact (case-insensitive) repeat is still rejected,
 //  4. marks the migration applied so the next run is a no-op.
 func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	// SQLite-only: this test rebuilds the legacy table shape through
@@ -152,7 +153,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 	assert.Equal(2, rowCount, "no-op rerun must not change row count")
 }
 
-func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
+func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) { //nolint:paralleltest // swaps the process-wide slog default logger to capture output
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "dangling_recipients.db")
@@ -304,6 +305,7 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 }
 
 func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy_recipient_activity.db")
@@ -412,6 +414,7 @@ func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T)
 // which one participant may carry several alias snapshots per message while a
 // case variant of an existing snapshot is still rejected.
 func TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)

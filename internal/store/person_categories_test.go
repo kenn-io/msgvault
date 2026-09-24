@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonCategoriesAreOneRowPerTagWithHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -41,6 +42,7 @@ func TestPersonCategoriesAreOneRowPerTagWithHistory(t *testing.T) {
 }
 
 func TestAddPersonCategoryRejectsBlankValue(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)

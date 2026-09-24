@@ -19,6 +19,7 @@ import (
 )
 
 func TestPackCatalogContract(t *testing.T) {
+	t.Parallel()
 	packstoretest.RunCatalogContract(t, newMsgvaultPackHarness, packstoretest.ContractOptions{
 		Now:       time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
 		NewPackID: pack.NewPackID,
@@ -26,6 +27,7 @@ func TestPackCatalogContract(t *testing.T) {
 }
 
 func TestPackCatalogMalformedReferenceDoesNotBlockValidPackingOrPermitOrphanSweep(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -60,6 +62,7 @@ func TestPackCatalogMalformedReferenceDoesNotBlockValidPackingOrPermitOrphanSwee
 }
 
 func TestMaintenancePackCatalogResolvesUnknownThumbnailSize(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	fx := newPackAttachmentFixture(t, st)
@@ -88,6 +91,7 @@ func TestMaintenancePackCatalogResolvesUnknownThumbnailSize(t *testing.T) {
 }
 
 func TestMaintenancePacksThumbnailFromRecordedNoncanonicalPath(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -14,6 +14,7 @@ import (
 // doubled, which is how SQL escapes it inside a quoted identifier, so no name
 // is unrenderable and no name can close the quoting the renderer opened.
 func TestQuoteIdentifierEscapesAnEmbeddedQuote(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, want string }{
 		{`plain`, `"plain"`},
 		{`a column with spaces`, `"a column with spaces"`},
@@ -32,6 +33,7 @@ func TestQuoteIdentifierEscapesAnEmbeddedQuote(t *testing.T) {
 // TestQuoteIdentifiersEscapesEveryName covers the list form, which is what the
 // last_modified trigger's UPDATE OF scope is built from.
 func TestQuoteIdentifiersEscapesEveryName(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t,
 		[]string{`"id"`, `"we""ird"`, `"subject"`},
 		quoteIdentifiers([]string{`id`, `we"ird`, `subject`}),
@@ -42,6 +44,7 @@ func TestQuoteIdentifiersEscapesEveryName(t *testing.T) {
 // cannot prove: that SQLite reads the rendered form back as the ORIGINAL name,
 // one identifier and not two, and that the payload riding in the name is inert.
 func TestQuoteIdentifierRoundTripsThroughSQLite(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

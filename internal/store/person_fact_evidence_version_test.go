@@ -9,6 +9,7 @@ import (
 )
 
 func TestApplyPersonFactGenerationTransitionsEmptySourceVersionEvidence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)

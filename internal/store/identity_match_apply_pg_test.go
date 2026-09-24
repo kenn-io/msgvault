@@ -20,6 +20,7 @@ type acceptedApplicationResult struct {
 }
 
 func TestPostgreSQLSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := storetest.New(t).Store
@@ -129,6 +130,7 @@ func TestPostgreSQLSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing
 }
 
 func TestPostgreSQLAcceptedMatchApplicationRechecksStateAfterLock(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := storetest.New(t).Store
@@ -244,6 +246,7 @@ func TestPostgreSQLAcceptedMatchApplicationRechecksStateAfterLock(t *testing.T) 
 }
 
 func TestPostgreSQLAppliedMatchBlocksConcurrentConflictDecision(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := storetest.New(t).Store
@@ -356,6 +359,7 @@ func TestPostgreSQLAppliedMatchBlocksConcurrentConflictDecision(t *testing.T) {
 }
 
 func TestPostgreSQLAcceptedMatchApplicationSurvivesParticipantMerge(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name        string
 		collapse    bool

@@ -12,6 +12,7 @@ import (
 )
 
 func TestGetPersonProfileReturnsEveryValueKindWithOneRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -30,6 +31,7 @@ func TestGetPersonProfileReturnsEveryValueKindWithOneRevision(t *testing.T) {
 }
 
 func TestProfileInputsPreserveExplicitZeroOrdinal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -106,6 +108,7 @@ func TestProfileInputsPreserveExplicitZeroOrdinal(t *testing.T) {
 }
 
 func TestApplyPersonProfilePatchIsAtomicUnderRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -137,6 +140,7 @@ func TestApplyPersonProfilePatchIsAtomicUnderRevision(t *testing.T) {
 }
 
 func TestApplyPersonProfilePatchPublishesIdentityEnrichment(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := newEnrichmentWorkFixture(t)
@@ -156,6 +160,7 @@ func TestApplyPersonProfilePatchPublishesIdentityEnrichment(t *testing.T) {
 }
 
 func TestFailedPatchRollsBackEveryCollection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -181,6 +186,7 @@ func TestFailedPatchRollsBackEveryCollection(t *testing.T) {
 }
 
 func TestPatchSupersedeMovesValuesIntoHistoryOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -202,6 +208,7 @@ func TestPatchSupersedeMovesValuesIntoHistoryOnly(t *testing.T) {
 }
 
 func TestPatchRejectsEmptyAndOversizedRequests(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()
@@ -224,6 +231,7 @@ func TestPatchRejectsEmptyAndOversizedRequests(t *testing.T) {
 }
 
 func TestGetPersonProfileHistoryIncludesParticipantObservations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -253,6 +261,7 @@ func TestGetPersonProfileHistoryIncludesParticipantObservations(t *testing.T) {
 }
 
 func TestGetPersonProfileRejectsUnknownPerson(t *testing.T) {
+	t.Parallel()
 	st := storetest.New(t).Store
 
 	_, err := st.GetPersonProfileContext(context.Background(), 999999)

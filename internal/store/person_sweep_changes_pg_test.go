@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonSweepJournalPostgreSQLSequenceFollowsCommitOrder(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	if !f.store.IsPostgreSQL() {

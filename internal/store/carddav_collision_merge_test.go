@@ -11,6 +11,7 @@ import (
 )
 
 func TestCardDAVCreateCollisionAndMergeUseCompatibleLocks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)

@@ -33,6 +33,7 @@ func newRFC822Message(
 }
 
 func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -55,6 +56,7 @@ func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupsCanonicalizeBracketedRFC822IDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -83,6 +85,7 @@ func TestStore_DuplicateGroupsCanonicalizeBracketedRFC822IDs(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupsPreserveMalformedRFC822IDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -112,6 +115,7 @@ func TestStore_DuplicateGroupsPreserveMalformedRFC822IDs(t *testing.T) {
 }
 
 func TestStore_PlanRFC822IDBackfillRejectsMalformedID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -130,6 +134,7 @@ func TestStore_PlanRFC822IDBackfillRejectsMalformedID(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupFetchMatchesWhitespaceDiscoveryGroups(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -185,6 +190,7 @@ func TestStore_DuplicateGroupFetchMatchesWhitespaceDiscoveryGroups(t *testing.T)
 }
 
 func TestStore_DuplicateGroupFetchPreservesInvalidUTF8(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL TEXT rejects invalid UTF-8 before duplicate grouping")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -214,6 +220,7 @@ func TestStore_DuplicateGroupFetchPreservesInvalidUTF8(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupFetchPreservesEmptyBrackets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -241,6 +248,7 @@ func TestStore_DuplicateGroupFetchPreservesEmptyBrackets(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupFetchPreservesNonASCIIAndControlEdges(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		suffix string
@@ -284,6 +292,7 @@ func TestStore_DuplicateGroupFetchPreservesNonASCIIAndControlEdges(t *testing.T)
 }
 
 func TestStore_DuplicateGroupFetchPreservesEmbeddedNUL(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL TEXT rejects embedded NUL bytes")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -313,6 +322,7 @@ func TestStore_DuplicateGroupFetchPreservesEmbeddedNUL(t *testing.T) {
 }
 
 func TestStore_DuplicateDiscoveryDoesNotTruncateAtEmbeddedNUL(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL TEXT rejects embedded NUL bytes")
 	f := storetest.New(t)
 	newRFC822Message(t, f, "nul-tail-c", "<ab>\x00c>")
@@ -324,6 +334,7 @@ func TestStore_DuplicateDiscoveryDoesNotTruncateAtEmbeddedNUL(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupsPreserveNULTailAsOwnKey(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL TEXT rejects embedded NUL bytes")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -362,6 +373,7 @@ func TestStore_DuplicateGroupsPreserveNULTailAsOwnKey(t *testing.T) {
 }
 
 func TestStore_DuplicateGroupFetchPreservesMultibyteID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -385,6 +397,7 @@ func TestStore_DuplicateGroupFetchPreservesMultibyteID(t *testing.T) {
 }
 
 func TestStore_GetDuplicateGroupMessages_SentLabel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -417,6 +430,7 @@ func TestStore_GetDuplicateGroupMessages_SentLabel(t *testing.T) {
 }
 
 func TestStore_MergeDuplicates_UnionsLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -460,6 +474,7 @@ func assertDedupDeleted(
 }
 
 func TestStore_ApplyRFC822IDBackfillEmptyTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -474,6 +489,7 @@ func TestStore_ApplyRFC822IDBackfillEmptyTable(t *testing.T) {
 }
 
 func TestStore_PlanRFC822IDBackfillDoesNotWriteAndSeparatesFailures(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -509,6 +525,7 @@ func TestStore_PlanRFC822IDBackfillDoesNotWriteAndSeparatesFailures(t *testing.T
 }
 
 func TestStore_PlanRFC822IDBackfillSanitizesInvalidUTF8(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -533,6 +550,7 @@ func TestStore_PlanRFC822IDBackfillSanitizesInvalidUTF8(t *testing.T) {
 }
 
 func TestStore_RFC822IDBackfillHandlesNULByBackend(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -565,6 +583,7 @@ func TestStore_RFC822IDBackfillHandlesNULByBackend(t *testing.T) {
 }
 
 func TestStore_ApplyRFC822IDBackfillCommitsSanitizedInvalidUTF8ID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -596,6 +615,7 @@ func TestStore_ApplyRFC822IDBackfillCommitsSanitizedInvalidUTF8ID(t *testing.T) 
 }
 
 func TestStore_PlanRFC822IDBackfillExcludesNonMIMEStoredRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -617,6 +637,7 @@ func TestStore_PlanRFC822IDBackfillExcludesNonMIMEStoredRows(t *testing.T) {
 }
 
 func TestStore_RFC822IDBackfillPlanDigestBindsRowsAndRawInput(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -649,6 +670,7 @@ func TestStore_RFC822IDBackfillPlanDigestBindsRowsAndRawInput(t *testing.T) {
 }
 
 func TestStore_RFC822IDBackfillPlanDigestIgnoresNonExecutableCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := newRFC822Message(t, f, "digest-counts", "")
@@ -686,6 +708,7 @@ func TestStore_RFC822IDBackfillPlanDigestIgnoresNonExecutableCounts(t *testing.T
 }
 
 func TestStore_RFC822IDBackfillRawFingerprintDistinguishesNullCompression(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -711,6 +734,7 @@ func TestStore_RFC822IDBackfillRawFingerprintDistinguishesNullCompression(t *tes
 }
 
 func TestStore_ApplyRFC822IDBackfillCommitsExactPlan(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -744,6 +768,7 @@ func TestStore_ApplyRFC822IDBackfillCommitsExactPlan(t *testing.T) {
 }
 
 func TestStore_ApplyRFC822IDBackfillRollsBackWhenLaterMessageIsStale(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -761,6 +786,7 @@ func TestStore_ApplyRFC822IDBackfillRollsBackWhenLaterMessageIsStale(t *testing.
 }
 
 func TestStore_ApplyRFC822IDBackfillRollsBackWhenRawMIMEChanged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -777,6 +803,7 @@ func TestStore_ApplyRFC822IDBackfillRollsBackWhenRawMIMEChanged(t *testing.T) {
 }
 
 func TestStore_ApplyRFC822IDBackfillProgressOnlyAfterCommit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -823,6 +850,7 @@ func storedRFC822ID(t *testing.T, st *store.Store, messageID int64) string {
 }
 
 func TestStore_CountActiveMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -846,6 +874,7 @@ func TestStore_CountActiveMessages(t *testing.T) {
 }
 
 func TestStore_ApplyRFC822IDBackfillParsesFromRawMIME(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -879,6 +908,7 @@ func TestStore_ApplyRFC822IDBackfillParsesFromRawMIME(t *testing.T) {
 }
 
 func TestStore_ApplyRFC822IDBackfillDoesNotOvercountRolledBackBatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses SQLite-specific CREATE TRIGGER ... NEW.* / RAISE(FAIL,...) syntax to force a mid-batch rollback")
 	f := storetest.New(t)
@@ -917,6 +947,7 @@ func TestStore_ApplyRFC822IDBackfillDoesNotOvercountRolledBackBatch(t *testing.T
 }
 
 func TestStore_MergeDuplicates_BackfillsRawMIME(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -953,6 +984,7 @@ func TestStore_MergeDuplicates_BackfillsRawMIME(t *testing.T) {
 // would prevent dedup's per-source identity match from finding a
 // stored case-mixed identity. Regression test for iter12 codex Medium.
 func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -982,6 +1014,7 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 // future refactor that reintroduces lowercasing in either query is
 // caught. Iter13 claude follow-up.
 func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1029,6 +1062,7 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 }
 
 func TestStore_GetDuplicateGroupMessagesBatch_MatchesPerGroupQuery(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1057,6 +1091,7 @@ func TestStore_GetDuplicateGroupMessagesBatch_MatchesPerGroupQuery(t *testing.T)
 }
 
 func TestStore_GetDuplicateGroupMessagesBatch_EmptyInput(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1067,6 +1102,7 @@ func TestStore_GetDuplicateGroupMessagesBatch_EmptyInput(t *testing.T) {
 }
 
 func TestStore_GetDuplicateGroupMessagesBatchRejectsOverlappingRequestedForms(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_, err := f.Store.GetDuplicateGroupMessagesBatch([]string{
 		"overlap@example.test",
@@ -1083,6 +1119,7 @@ func TestStore_GetDuplicateGroupMessagesBatchRejectsOverlappingRequestedForms(t 
 }
 
 func TestStore_GetDuplicateGroupMessagesBatchPreservesOrderAcrossChunks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1114,6 +1151,7 @@ func TestStore_GetDuplicateGroupMessagesBatchPreservesOrderAcrossChunks(t *testi
 }
 
 func TestStore_GetDuplicateGroupMessagesBatchContext_Canceled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	newRFC822Message(t, f, "src-a", "rfc822-canceled")
@@ -1129,6 +1167,7 @@ func TestStore_GetDuplicateGroupMessagesBatchContext_Canceled(t *testing.T) {
 }
 
 func TestStore_GetDuplicateGroupMessagesBatch_FiltersBySourceID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

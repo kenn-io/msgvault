@@ -16,6 +16,7 @@ import (
 )
 
 func TestCapturePersonMergeSnapshotIncludesRootsBindingsAndReferencedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "capture.db"))
@@ -109,6 +110,7 @@ func TestCapturePersonMergeSnapshotIncludesRootsBindingsAndReferencedRows(t *tes
 }
 
 func TestPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "inventory.db"))
 	require.NoError(err)
@@ -118,6 +120,7 @@ func TestPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
 }
 
 func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
+	t.Parallel()
 	dbURL := skipUnlessPostgresInternal(t)
 	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
 }
@@ -194,6 +197,7 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 }
 
 func TestPersonMergeSnapshotCodecIsDeterministicAndDetectsCorruption(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	displayName := "Survivor"
@@ -267,6 +271,7 @@ func encodeUncheckedPersonMergeSnapshot(
 }
 
 func TestNormalizePersonMergeSnapshotJSONPreservesLargeIntegers(t *testing.T) {
+	t.Parallel()
 	value, err := normalizePersonMergeSnapshotValue(
 		[]byte(`{"large":9007199254740993,"small":1}`), "JSON",
 	)

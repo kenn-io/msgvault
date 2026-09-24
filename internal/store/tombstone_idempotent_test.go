@@ -115,6 +115,7 @@ func seedTombstoneMessage(t *testing.T, st *store.Store, account, sourceMessageI
 // deleted_from_source_at. Before the fix this fails because every writer
 // unconditionally overwrites the column with the current time.
 func TestTombstoneWriters_PreserveExistingStamp(t *testing.T) {
+	t.Parallel()
 	writers := tombstoneWriters()
 	for _, name := range sortedWriterNames() {
 		writer := writers[name]
@@ -136,6 +137,7 @@ func TestTombstoneWriters_PreserveExistingStamp(t *testing.T) {
 // TestTombstoneWriters_StillSetFreshStamp is the no-regression check: a
 // not-yet-tombstoned message must still get stamped.
 func TestTombstoneWriters_StillSetFreshStamp(t *testing.T) {
+	t.Parallel()
 	writers := tombstoneWriters()
 	for _, name := range sortedWriterNames() {
 		writer := writers[name]
@@ -162,6 +164,7 @@ func TestTombstoneWriters_StillSetFreshStamp(t *testing.T) {
 // re-scan of the already-deleted population would bump last_modified,
 // forcing incremental consumers to reprocess it on every run.
 func TestTombstoneWriters_DoNotBumpLastModifiedForAlreadyTombstoned(t *testing.T) {
+	t.Parallel()
 	writers := tombstoneWriters()
 	for _, name := range sortedWriterNames() {
 		writer := writers[name]
@@ -213,6 +216,7 @@ func batchTombstoneWriters() map[string]batchTombstoneWriter {
 // the exact shape of a real repair-scan re-run against a partially-deleted
 // population.
 func TestTombstoneBatchWriters_MixedBatchOnlyTombstonesFreshRows(t *testing.T) {
+	t.Parallel()
 	writers := batchTombstoneWriters()
 	names := make([]string, 0, len(writers))
 	for name := range writers {
@@ -257,6 +261,7 @@ func TestTombstoneBatchWriters_MixedBatchOnlyTombstonesFreshRows(t *testing.T) {
 // re-mark, the guard's "AND deleted_from_source_at IS NULL" condition matches
 // again and must produce a value that is neither NULL nor the old sentinel.
 func TestMarkMessageDeleted_ClearThenReMarkSetsFreshStamp(t *testing.T) {
+	t.Parallel()
 	writers := tombstoneWriters()
 	for _, name := range sortedWriterNames() {
 		writer := writers[name]

@@ -12,6 +12,7 @@ import (
 )
 
 func TestCardDAVPublicationStateSourceDoesNotCopyMutationEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, _, book := newCardDAVResourceStore(t)
@@ -38,6 +39,7 @@ func TestCardDAVPublicationStateSourceDoesNotCopyMutationEvidence(t *testing.T) 
 }
 
 func TestCardDAVPublicationPreparePersistsExactCreateIntent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -63,6 +65,7 @@ func TestCardDAVPublicationPreparePersistsExactCreateIntent(t *testing.T) {
 }
 
 func TestDeletePersonRejectsCardDAVPublicationState(t *testing.T) {
+	t.Parallel()
 	for _, pending := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
 			assert := assert.New(t)
@@ -105,6 +108,7 @@ func TestDeletePersonRejectsCardDAVPublicationState(t *testing.T) {
 }
 
 func TestCardDAVPublicationPrepareNoopsWhenMappedSemanticHashMatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -139,6 +143,7 @@ func TestCardDAVPublicationPrepareNoopsWhenMappedSemanticHashMatches(t *testing.
 }
 
 func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -178,6 +183,7 @@ func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
 }
 
 func TestCardDAVPublicationThrottleRollbackRestoresMappedRevisionAndPreservesLongestGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

@@ -20,6 +20,7 @@ import (
 var sampleRawMessage = []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 
 func TestStore_Open(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	// Store should be usable
@@ -27,6 +28,7 @@ func TestStore_Open(t *testing.T) {
 }
 
 func TestStore_GetStats_Empty(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -39,6 +41,7 @@ func TestStore_GetStats_Empty(t *testing.T) {
 }
 
 func TestStore_Source_CreateAndGet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -59,6 +62,7 @@ func TestStore_Source_CreateAndGet(t *testing.T) {
 }
 
 func TestStore_Source_UpdateSyncCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -75,6 +79,7 @@ func TestStore_Source_UpdateSyncCursor(t *testing.T) {
 }
 
 func TestStore_Source_UpdateDisplayName(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -91,6 +96,7 @@ func TestStore_Source_UpdateDisplayName(t *testing.T) {
 }
 
 func TestStore_ListSources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -104,6 +110,7 @@ func TestStore_ListSources(t *testing.T) {
 }
 
 func TestStore_SourceImportItems(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -161,6 +168,7 @@ func TestStore_SourceImportItems(t *testing.T) {
 }
 
 func TestStore_Conversation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -179,6 +187,7 @@ func TestStore_Conversation(t *testing.T) {
 }
 
 func TestStore_EnsureParticipantByIdentifierAllowsShortCode(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	id, err := f.Store.EnsureParticipantByIdentifier("synctech_sms", "12345", "Bank alerts")
@@ -190,6 +199,7 @@ func TestStore_EnsureParticipantByIdentifierAllowsShortCode(t *testing.T) {
 }
 
 func TestStore_UpsertMessage(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	tests := []struct {
@@ -258,6 +268,7 @@ func TestStore_UpsertMessage(t *testing.T) {
 }
 
 func TestStore_MessageExistsBatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 
@@ -279,6 +290,7 @@ func TestStore_MessageExistsBatch(t *testing.T) {
 }
 
 func TestStore_MessageMetadataBatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -304,6 +316,7 @@ func TestStore_MessageMetadataBatch(t *testing.T) {
 }
 
 func TestStore_MessageRaw(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-1")
@@ -320,6 +333,7 @@ func TestStore_MessageRaw(t *testing.T) {
 }
 
 func TestStore_Participant(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Create participant
@@ -332,6 +346,7 @@ func TestStore_Participant(t *testing.T) {
 }
 
 func TestStore_EnsureParticipantsBatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 
@@ -350,6 +365,7 @@ func TestStore_EnsureParticipantsBatch(t *testing.T) {
 }
 
 func TestStore_Label(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -368,6 +384,7 @@ func TestStore_Label(t *testing.T) {
 }
 
 func TestStore_EnsureLabelUpdatesTypeWhenNameUnchanged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -389,6 +406,7 @@ func TestStore_EnsureLabelUpdatesTypeWhenNameUnchanged(t *testing.T) {
 }
 
 func TestStore_EnsureLabelUpdatesNullTypeWhenNameUnchanged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -412,6 +430,7 @@ func TestStore_EnsureLabelUpdatesNullTypeWhenNameUnchanged(t *testing.T) {
 }
 
 func TestStore_EnsureLabel_NameConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -434,6 +453,7 @@ func TestStore_EnsureLabel_NameConflict(t *testing.T) {
 }
 
 func TestStore_EnsureLabel_Rename(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Create label L1 with name "OldName"
@@ -448,6 +468,7 @@ func TestStore_EnsureLabel_Rename(t *testing.T) {
 }
 
 func TestStore_EnsureLabel_RenameAndReuse(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Scenario: L1 named "Foo" is renamed to "Bar", then L2 takes "Foo".
@@ -464,6 +485,7 @@ func TestStore_EnsureLabel_RenameAndReuse(t *testing.T) {
 }
 
 func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -493,6 +515,7 @@ func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
 }
 
 func TestStore_EnsureLabelsBatch(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	labels := map[string]store.LabelInfo{
@@ -511,6 +534,7 @@ func TestStore_EnsureLabelsBatch(t *testing.T) {
 }
 
 func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -553,6 +577,7 @@ func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
 }
 
 func TestStore_EnsureLabelsBatch_PersistsClearsAndCrossRenamesSystemRole(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -599,6 +624,7 @@ func TestStore_EnsureLabelsBatch_PersistsClearsAndCrossRenamesSystemRole(t *test
 }
 
 func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-labels.db")
@@ -650,6 +676,7 @@ func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
 }
 
 func TestStore_MessageLabels(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-1")
@@ -678,6 +705,7 @@ func TestStore_MessageLabels(t *testing.T) {
 }
 
 func TestStore_MessageRecipients(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-1")
@@ -703,6 +731,7 @@ func TestStore_MessageRecipients(t *testing.T) {
 }
 
 func TestStore_MarkMessageDeleted(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-1")
@@ -716,6 +745,7 @@ func TestStore_MarkMessageDeleted(t *testing.T) {
 }
 
 func TestStore_Attachment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -737,6 +767,7 @@ func TestStore_Attachment(t *testing.T) {
 }
 
 func TestStore_SyncRun(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -744,6 +775,7 @@ func TestStore_SyncRun(t *testing.T) {
 }
 
 func TestStore_SyncCheckpoint(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -767,6 +799,7 @@ func TestStore_SyncCheckpoint(t *testing.T) {
 }
 
 func TestStore_SyncComplete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -785,6 +818,7 @@ func TestStore_SyncComplete(t *testing.T) {
 }
 
 func TestStore_SyncFail(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -801,6 +835,7 @@ func TestStore_SyncFail(t *testing.T) {
 }
 
 func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("deleted-msg-1")
@@ -817,6 +852,7 @@ func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
 }
 
 func TestStore_MarkMessageDeletedByGmailID(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	f.CreateMessage("gmail-msg-123")
@@ -835,6 +871,7 @@ func TestStore_MarkMessageDeletedByGmailID(t *testing.T) {
 }
 
 func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -864,6 +901,7 @@ func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
 }
 
 func TestStore_SourceScopedRemoteIDDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -911,6 +949,7 @@ func TestStore_SourceScopedRemoteIDDeletion(t *testing.T) {
 }
 
 func TestStore_GetMessageRaw_NotFound(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Try to get raw for non-existent message
@@ -919,6 +958,7 @@ func TestStore_GetMessageRaw_NotFound(t *testing.T) {
 }
 
 func TestStore_UpsertMessageRaw_Update(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -941,6 +981,7 @@ func TestStore_UpsertMessageRaw_Update(t *testing.T) {
 }
 
 func TestStore_UpsertMessageBody(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -971,6 +1012,7 @@ func TestStore_UpsertMessageBody(t *testing.T) {
 }
 
 func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1024,6 +1066,7 @@ func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
 }
 
 func TestStore_MessageExistsBatch_Empty(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Check with empty list
@@ -1033,6 +1076,7 @@ func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 }
 
 func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	result, err := f.Store.MessageMetadataBatch(f.Source.ID, nil)
@@ -1041,6 +1085,7 @@ func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
 }
 
 func TestStore_SourceMessageMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1092,6 +1137,7 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 }
 
 func TestStore_ReplaceMessageLabels_Empty(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-labels")
@@ -1115,6 +1161,7 @@ func TestStore_ReplaceMessageLabels_Empty(t *testing.T) {
 }
 
 func TestStore_ReplaceMessageRecipients_Empty(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-recip")
@@ -1141,6 +1188,7 @@ func TestStore_ReplaceMessageRecipients_Empty(t *testing.T) {
 // UNIQUE(message_id, participant_id, recipient_type) constraint and aborted the
 // write. Duplicates must collapse to a single row instead of erroring.
 func TestStore_ReplaceMessageRecipients_DuplicateParticipants(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-dup-recip")
@@ -1157,11 +1205,13 @@ func TestStore_ReplaceMessageRecipients_DuplicateParticipants(t *testing.T) {
 }
 
 func TestStore_GetActiveSync_NoSync(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	f.AssertNoActiveSync()
 }
 
 func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// No successful sync yet
@@ -1171,6 +1221,7 @@ func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
 }
 
 func TestStore_GetSourceByIdentifier_NotFound(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	source, err := f.Store.GetSourceByIdentifier("nonexistent@example.com")
@@ -1179,6 +1230,7 @@ func TestStore_GetSourceByIdentifier_NotFound(t *testing.T) {
 }
 
 func TestStore_GetStats_WithData(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Add multiple messages
@@ -1192,6 +1244,7 @@ func TestStore_GetStats_WithData(t *testing.T) {
 }
 
 func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	ids := f.CreateMessages(3)
 
@@ -1206,6 +1259,7 @@ func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
 }
 
 func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	ids := f.CreateMessages(3)
 
@@ -1220,6 +1274,7 @@ func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
 }
 
 func TestStore_GetStats_ClosedDB(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	// Close the database
@@ -1232,6 +1287,7 @@ func TestStore_GetStats_ClosedDB(t *testing.T) {
 }
 
 func TestStore_GetStats_MissingTable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -1250,6 +1306,7 @@ func TestStore_GetStats_MissingTable(t *testing.T) {
 }
 
 func TestStore_CountMessagesForSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1276,6 +1333,7 @@ func TestStore_CountMessagesForSource(t *testing.T) {
 }
 
 func TestStore_CountMessagesWithRaw(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1302,6 +1360,7 @@ func TestStore_CountMessagesWithRaw(t *testing.T) {
 }
 
 func TestStore_GetRandomMessageIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1342,6 +1401,7 @@ func TestStore_GetRandomMessageIDs(t *testing.T) {
 }
 
 func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -1361,6 +1421,7 @@ func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
 }
 
 func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-large-recipients")
@@ -1390,6 +1451,7 @@ func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
 }
 
 func TestStore_UpsertFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable with MATCH; PG uses a tsvector column tested via FTSSearchClause")
@@ -1444,6 +1506,7 @@ func TestStore_UpsertFTS(t *testing.T) {
 }
 
 func TestStore_BackfillFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable; PG backfill is exercised separately via FTSBackfillBatchSQL")
@@ -1513,6 +1576,7 @@ func TestStore_BackfillFTS(t *testing.T) {
 }
 
 func TestStore_FTS5Available(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// FTS5Available should return a boolean (true on most builds)
@@ -1521,6 +1585,7 @@ func TestStore_FTS5Available(t *testing.T) {
 }
 
 func TestStore_NeedsFTSBackfill(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly mutates the SQLite FTS5 vtable; PG NeedsFTSBackfill probes the tsvector column instead")
@@ -1565,6 +1630,7 @@ func TestStore_NeedsFTSBackfill(t *testing.T) {
 }
 
 func TestStore_ReplaceMessageLabels_LargeBatch(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-large-labels")
@@ -1593,6 +1659,7 @@ func TestStore_ReplaceMessageLabels_LargeBatch(t *testing.T) {
 }
 
 func TestStore_AddMessageLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -1641,6 +1708,7 @@ func TestStore_AddMessageLabels(t *testing.T) {
 }
 
 func TestStore_ReconcileMessageLabelsReportsChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1677,6 +1745,7 @@ func TestStore_ReconcileMessageLabelsReportsChanges(t *testing.T) {
 }
 
 func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1722,6 +1791,7 @@ func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
 }
 
 func TestStore_MessageMetadataWithRawBatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1759,6 +1829,7 @@ func TestStore_MessageMetadataWithRawBatch(t *testing.T) {
 }
 
 func TestStore_RekeyMessageSourceIDRequiresExpectedID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1788,6 +1859,7 @@ func TestStore_RekeyMessageSourceIDRequiresExpectedID(t *testing.T) {
 }
 
 func TestStore_RekeyMessageSourceIDReportsScopedWrite(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -1808,6 +1880,7 @@ func TestStore_RekeyMessageSourceIDReportsScopedWrite(t *testing.T) {
 }
 
 func TestStore_RemoveMessageLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -1850,6 +1923,7 @@ func TestStore_RemoveMessageLabels(t *testing.T) {
 }
 
 func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	// Create several messages
@@ -1884,6 +1958,7 @@ func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
 }
 
 func TestStore_PersistMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -1942,6 +2017,7 @@ func TestStore_PersistMessage(t *testing.T) {
 }
 
 func TestStore_PersistMessage_Atomicity(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 
 	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
@@ -1969,6 +2045,7 @@ func TestStore_PersistMessage_Atomicity(t *testing.T) {
 }
 
 func TestStore_PersistMessageContext_CancellationRollsBack(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger and registered function to pause persistence")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2036,6 +2113,7 @@ func TestStore_PersistMessageContext_CancellationRollsBack(t *testing.T) {
 }
 
 func TestStore_OAuthAppColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2064,6 +2142,7 @@ func TestStore_OAuthAppColumn(t *testing.T) {
 }
 
 func TestStore_OAuthAppColumn_NullRoundTrip(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 
@@ -2085,6 +2164,7 @@ func TestStore_OAuthAppColumn_NullRoundTrip(t *testing.T) {
 }
 
 func TestStore_PersistMessage_Upsert(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2122,6 +2202,7 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 }
 
 func TestStore_PersistMessageSerializesSQLiteWritersBeforePriorStateRead(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "exercises SQLite WAL snapshot upgrades")
 	require := require.New(t)
 	f := storetest.New(t)
@@ -2167,6 +2248,7 @@ func TestStore_PersistMessageSerializesSQLiteWritersBeforePriorStateRead(t *test
 }
 
 func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2216,6 +2298,7 @@ func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.
 }
 
 func TestStore_PersistMessagePreservesEmbedGenForEquivalentHTMLFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2284,6 +2367,7 @@ func createMessagesForSource(t *testing.T, st *store.Store, srcID, convID int64,
 }
 
 func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2312,6 +2396,7 @@ func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
 }
 
 func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -2337,6 +2422,7 @@ func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {
 }
 
 func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	ids := createMessagesForSource(t, f.Store, f.Source.ID, f.ConvID, "a-srcdeleted", 2)
 

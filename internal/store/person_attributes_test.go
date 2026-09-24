@@ -25,6 +25,7 @@ func mustAttributePerson(t *testing.T, st *store.Store) int64 {
 }
 
 func TestSetPersonAttributeValueStoresEveryTypedColumn(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 	person := mustAttributePerson(t, st)
@@ -89,6 +90,7 @@ func TestSetPersonAttributeValueStoresEveryTypedColumn(t *testing.T) {
 }
 
 func TestDeletePersonRejectsStoredRecordReferences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
@@ -137,6 +139,7 @@ func TestDeletePersonRejectsStoredRecordReferences(t *testing.T) {
 }
 
 func TestSetPersonAttributeValueRejectsInvalidShapes(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 	person := mustAttributePerson(t, st)
@@ -185,6 +188,7 @@ func TestSetPersonAttributeValueRejectsInvalidShapes(t *testing.T) {
 }
 
 func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -244,6 +248,7 @@ func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
 }
 
 func TestInactiveDefinitionBlocksSetButAllowsSupersede(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
@@ -282,6 +287,7 @@ func TestInactiveDefinitionBlocksSetButAllowsSupersede(t *testing.T) {
 }
 
 func TestBackdatedReplacementSeparatesValidityAndAuditTimes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -317,6 +323,7 @@ func TestBackdatedReplacementSeparatesValidityAndAuditTimes(t *testing.T) {
 }
 
 func TestPersonAttributePublicDryRunAndCASDoNotPersistPins(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -353,6 +360,7 @@ func TestPersonAttributePublicDryRunAndCASDoNotPersistPins(t *testing.T) {
 }
 
 func TestMultiCardinalityAppendsPerOrdinalAndDerivedConfidenceIsAllowed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

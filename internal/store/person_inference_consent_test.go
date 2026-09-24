@@ -49,6 +49,7 @@ func inferenceTestProfile(t *testing.T) peoplesweep.ProviderProfile {
 }
 
 func TestPersonInferenceProfileNormalizesNullAndEmptySourceUntil(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -68,6 +69,7 @@ func TestPersonInferenceProfileNormalizesNullAndEmptySourceUntil(t *testing.T) {
 }
 
 func TestPersonInferenceConsentLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -142,6 +144,7 @@ func TestPersonInferenceConsentLifecycle(t *testing.T) {
 }
 
 func TestPersonInferenceProfileRejectsMismatchAndUnknownConsent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := inferenceTestProfile(t)
@@ -170,6 +173,7 @@ func TestPersonInferenceProfileRejectsMismatchAndUnknownConsent(t *testing.T) {
 }
 
 func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -207,6 +211,7 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 }
 
 func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -265,6 +270,7 @@ func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
 }
 
 func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	profile := inferenceTestProfile(t)
@@ -280,6 +286,7 @@ func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {
 }
 
 func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -309,6 +316,7 @@ func TestPersonInferenceProfilesRestoreCodexPolicyFields(t *testing.T) {
 }
 
 func TestPersonInferenceConsentConcurrentGrantAndRevoke(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

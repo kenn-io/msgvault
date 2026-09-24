@@ -280,6 +280,7 @@ func gmailAuditRecipientAddress(evidence GmailAuditEvidence, recipientType strin
 // every record from the snapshot its first statement established — a
 // committed rewrite must not split the page across two database states.
 func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	gate := newGmailAuditSnapshotGate(0)

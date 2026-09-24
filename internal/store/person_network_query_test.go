@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonNetworkIDValuesCTECastsEveryParameterOnlyIDRowAsBigint(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		cteName string
@@ -50,6 +51,7 @@ func TestPersonNetworkIDValuesCTECastsEveryParameterOnlyIDRowAsBigint(t *testing
 // instead of probing the adjacency indexes for each frontier node. The
 // public-order sort over the candidates is expected; a table scan is not.
 func TestPersonNetworkLayerQueryProbesAdjacencyIndexes(t *testing.T) {
+	t.Parallel()
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "network-query-plan.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

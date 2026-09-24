@@ -11,6 +11,7 @@ import (
 )
 
 func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "imap-baseline.db"))

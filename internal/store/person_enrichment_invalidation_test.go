@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonEnrichmentMergeInvalidatesActivePreparedAttemptAndAcceptsFreshResult(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -36,6 +37,7 @@ func TestPersonEnrichmentMergeInvalidatesActivePreparedAttemptAndAcceptsFreshRes
 }
 
 func TestPersonEnrichmentSplitInvalidatesActivePreparedAttemptAndAcceptsFreshResult(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -70,6 +72,7 @@ func TestPersonEnrichmentSplitInvalidatesActivePreparedAttemptAndAcceptsFreshRes
 }
 
 func TestPersonEnrichmentParticipantIdentityChangeFencesAttemptAndPublishesReplacement(t *testing.T) {
+	t.Parallel()
 	for _, identity := range []string{"display_name", "email"} {
 		t.Run(identity, func(t *testing.T) {
 			f := newEnrichmentResultFixture(t)
@@ -94,6 +97,7 @@ func TestPersonEnrichmentParticipantIdentityChangeFencesAttemptAndPublishesRepla
 }
 
 func TestPersonEnrichmentParticipantLinkFencesAttemptAndPublishesReplacement(t *testing.T) {
+	t.Parallel()
 	f := newEnrichmentResultFixture(t)
 	participantID := enrichmentInvalidationParticipant(t, f.store, f.person.ID)
 	linkedID, err := f.store.EnsureParticipant(
@@ -106,6 +110,7 @@ func TestPersonEnrichmentParticipantLinkFencesAttemptAndPublishesReplacement(t *
 }
 
 func TestPersonEnrichmentPersonSplitFencesSourceAttemptAndPublishesReplacement(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
 	absorbedParticipantID, err := f.store.EnsureParticipant(
@@ -136,6 +141,7 @@ func TestPersonEnrichmentPersonSplitFencesSourceAttemptAndPublishesReplacement(t
 }
 
 func TestPersonEnrichmentEmploymentAdvancesGenerationAndPreservesFreshCompanyWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -189,6 +195,7 @@ func TestPersonEnrichmentEmploymentAdvancesGenerationAndPreservesFreshCompanyWor
 }
 
 func TestPersonEnrichmentSuccessfulAttemptPreservesFreshTriggerAlongsideRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -231,6 +238,7 @@ func TestPersonEnrichmentSuccessfulAttemptPreservesFreshTriggerAlongsideRefresh(
 }
 
 func TestPersonEnrichmentTerminalAttemptDoesNotResurrectConsumedTrigger(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -255,6 +263,7 @@ func TestPersonEnrichmentTerminalAttemptDoesNotResurrectConsumedTrigger(t *testi
 }
 
 func TestPersonEnrichmentClaimedPublicationFencesBeginAndPreservesExactWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
@@ -323,6 +332,7 @@ func TestPersonEnrichmentClaimedPublicationFencesBeginAndPreservesExactWork(t *t
 }
 
 func TestPersonEnrichmentMergeSplitSerializeConcurrentBeginBeforeInvalidation(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"merge", "split"} {
 		t.Run(mutation, func(t *testing.T) {
 			assert := assert.New(t)

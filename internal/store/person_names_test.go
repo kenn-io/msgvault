@@ -11,6 +11,7 @@ import (
 )
 
 func TestPersonNamesRetainStructuredComponentsAndRFC9554Fields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -47,6 +48,7 @@ func TestPersonNamesRetainStructuredComponentsAndRFC9554Fields(t *testing.T) {
 }
 
 func TestPersonNameRetainsCompleteVCardResourceProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -89,6 +91,7 @@ func TestPersonNameRetainsCompleteVCardResourceProvenance(t *testing.T) {
 }
 
 func TestPersonNamesKeepMultipleFormattedFormsPerLanguage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -115,6 +118,7 @@ func TestPersonNamesKeepMultipleFormattedFormsPerLanguage(t *testing.T) {
 }
 
 func TestSupersedePersonNameClosesBothTimeAxes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -138,6 +142,7 @@ func TestSupersedePersonNameClosesBothTimeAxes(t *testing.T) {
 }
 
 func TestAddPersonNameRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	ctx := context.Background()

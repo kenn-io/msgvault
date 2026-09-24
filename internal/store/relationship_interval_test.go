@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseRelationshipDateRequiresAYear(t *testing.T) {
+	t.Parallel()
 	// Local helpers: make lint-ci runs testify-helper-check, which fails any
 	// test body with more than three direct testify package calls and at least
 	// two of one kind.
@@ -45,6 +46,7 @@ func TestParseRelationshipDateRequiresAYear(t *testing.T) {
 }
 
 func TestValidateRelationshipIntervalUsesSharedPrecision(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		from    string

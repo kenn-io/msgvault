@@ -50,6 +50,7 @@ func linkedPair(t *testing.T, st *store.Store, a, b int64) bool {
 }
 
 func TestAcceptStableProviderIDCandidateLinksParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -74,6 +75,7 @@ func TestAcceptStableProviderIDCandidateLinksParticipants(t *testing.T) {
 }
 
 func TestUserAcceptPromotesExistingSystemAcceptance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -105,6 +107,7 @@ func TestUserAcceptPromotesExistingSystemAcceptance(t *testing.T) {
 }
 
 func TestUserAcceptRecordsLegacyAcceptedDecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -137,6 +140,7 @@ func TestUserAcceptRecordsLegacyAcceptedDecision(t *testing.T) {
 }
 
 func TestAcceptStableProviderIDCandidateCancellationDoesNotCommitLink(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to cancel during participant linking")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -201,6 +205,7 @@ func TestAcceptStableProviderIDCandidateCancellationDoesNotCommitLink(t *testing
 }
 
 func TestSQLiteSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses SQLite writer-lock scheduling")
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -329,6 +334,7 @@ func TestSQLiteSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) 
 }
 
 func TestFailedUserAcceptanceRestoresLockedDecisionState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -392,6 +398,7 @@ func TestFailedUserAcceptanceRestoresLockedDecisionState(t *testing.T) {
 }
 
 func TestAcceptUsernameCandidateRequiresAUser(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -416,6 +423,7 @@ func TestAcceptUsernameCandidateRequiresAUser(t *testing.T) {
 }
 
 func TestAcceptAcrossDifferentPersonsBecomesAConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -443,6 +451,7 @@ func TestAcceptAcrossDifferentPersonsBecomesAConflict(t *testing.T) {
 }
 
 func TestFailedUserAcceptPreservesObservationConflictCleanup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -494,6 +503,7 @@ func TestFailedUserAcceptPreservesObservationConflictCleanup(t *testing.T) {
 }
 
 func TestAcceptRejectsUnsupportedEndpointKinds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -522,6 +532,7 @@ func TestAcceptRejectsUnsupportedEndpointKinds(t *testing.T) {
 }
 
 func TestApplyAcceptedIdentityMatchesIsResumableAndIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -551,6 +562,7 @@ func TestApplyAcceptedIdentityMatchesIsResumableAndIdempotent(t *testing.T) {
 }
 
 func TestAcceptedIdentityMatchApplicationStateTracksInterruptedWork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -598,6 +610,7 @@ func TestAcceptedIdentityMatchApplicationStateTracksInterruptedWork(t *testing.T
 }
 
 func TestUnlinkUserAcceptedIdentityMatchesSuppressReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -648,6 +661,7 @@ func TestUnlinkUserAcceptedIdentityMatchesSuppressReplay(t *testing.T) {
 }
 
 func TestUnlinkSystemAcceptedIdentityMatchSuppressesReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -686,6 +700,7 @@ func TestUnlinkSystemAcceptedIdentityMatchSuppressesReplay(t *testing.T) {
 }
 
 func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -743,6 +758,7 @@ func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 }
 
 func TestUnlinkOwnedIdentityMatchRollsBackSuppressionAndEdge(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to force unlink rollback")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -783,6 +799,7 @@ func TestUnlinkOwnedIdentityMatchRollsBackSuppressionAndEdge(t *testing.T) {
 }
 
 func TestApplyAcceptedIdentityMatchesBoundsPendingWork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -829,6 +846,7 @@ func TestApplyAcceptedIdentityMatchesBoundsPendingWork(t *testing.T) {
 }
 
 func TestGetIdentityMatchCandidateLoadsEvidenceAndReportsMissing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -856,6 +874,7 @@ func TestGetIdentityMatchCandidateLoadsEvidenceAndReportsMissing(t *testing.T) {
 }
 
 func TestGetIdentityMatchCandidateApplicationHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := storetest.New(t).Store
 	alice, err := st.EnsureParticipantByIdentifier(

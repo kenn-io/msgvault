@@ -42,6 +42,7 @@ var activityTableColumns = map[string][]string{
 }
 
 func TestActivitySchemaHasPortableColumns(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 
 	for table, want := range activityTableColumns {
@@ -53,11 +54,13 @@ func TestActivitySchemaHasPortableColumns(t *testing.T) {
 }
 
 func TestActivityEventRefIsStableAndNative(t *testing.T) {
+	t.Parallel()
 	event := store.ActivityEvent{MessageID: 4242, RefKind: store.RefKindMeeting}
 	assert.Equal(t, "meeting:4242", event.Ref())
 }
 
 func TestActivityValueValidationRejectsUnknownValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.True(store.DirectionInbound.Valid())
 	assert.True(store.ChannelMeeting.Valid())
@@ -73,6 +76,7 @@ func TestActivityValueValidationRejectsUnknownValues(t *testing.T) {
 }
 
 func TestActivityMetadataProtocolsRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -128,6 +132,7 @@ func TestActivityMetadataProtocolsRoundTrip(t *testing.T) {
 }
 
 func TestActivityCandidateLoadingPreservesExactTimezoneAndQueueObservations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -182,6 +187,7 @@ func TestActivityCandidateLoadingPreservesExactTimezoneAndQueueObservations(t *t
 }
 
 func TestActivityWatermarkRejectsMalformedMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -198,6 +204,7 @@ func TestActivityWatermarkRejectsMalformedMetadata(t *testing.T) {
 }
 
 func TestActivityTimezoneTransitionRejectsOlderProjectionAndCompletesExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -249,6 +256,7 @@ func TestActivityTimezoneTransitionRejectsOlderProjectionAndCompletesExactly(t *
 }
 
 func TestActivityTimezoneTransitionRejectsCorruptActiveMetadata(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_, err := activityExec(f.Store, `
 		INSERT INTO archive_metadata (key, value) VALUES
@@ -262,6 +270,7 @@ func TestActivityTimezoneTransitionRejectsCorruptActiveMetadata(t *testing.T) {
 }
 
 func TestActivityReconciledRevisionCASRequiresCurrentEpoch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -289,6 +298,7 @@ func TestActivityReconciledRevisionCASRequiresCurrentEpoch(t *testing.T) {
 }
 
 func TestMessageMutationsDurablyQueueProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -309,6 +319,7 @@ func TestMessageMutationsDurablyQueueProjection(t *testing.T) {
 }
 
 func TestExistingMessageMutationQueuesBelowWatermark(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-below-watermark")
 	require.NoError(t, f.Store.SetActivityWatermarkContext(context.Background(), messageID+1000))
@@ -320,6 +331,7 @@ func TestExistingMessageMutationQueuesBelowWatermark(t *testing.T) {
 }
 
 func TestActivitySchemaReinitKeepsQueueTriggers(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-after-reinit")
 	before := activityQueueRevision(t, f.Store, messageID)
@@ -332,6 +344,7 @@ func TestActivitySchemaReinitKeepsQueueTriggers(t *testing.T) {
 }
 
 func TestRecipientMutationsQueueOldAndNewMessages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -359,6 +372,7 @@ func TestRecipientMutationsQueueOldAndNewMessages(t *testing.T) {
 }
 
 func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -405,6 +419,7 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 }
 
 func TestConversationTypeMutationReopensEveryAffectedActivityCandidate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -445,6 +460,7 @@ func TestConversationTypeMutationReopensEveryAffectedActivityCandidate(t *testin
 }
 
 func TestGmailChatConversationProjectsChatActivity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -478,6 +494,7 @@ func TestGmailChatConversationProjectsChatActivity(t *testing.T) {
 }
 
 func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
+	t.Parallel()
 	t.Run("message mutation", func(t *testing.T) {
 		f := storetest.New(t)
 		messageID := f.CreateMessage("queue-processed-message")
@@ -511,6 +528,7 @@ func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 }
 
 func TestActivityProjectionQueueRejectsInvalidProcessedRevision(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-invalid-processed-revision")
 
@@ -528,6 +546,7 @@ func TestActivityProjectionQueueRejectsInvalidProcessedRevision(t *testing.T) {
 }
 
 func TestHardMessageDeleteCascadesProjectionQueue(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-cascade")
 	require.Positive(t, activityQueueRevision(t, f.Store, messageID))
@@ -538,6 +557,7 @@ func TestHardMessageDeleteCascadesProjectionQueue(t *testing.T) {
 }
 
 func TestDirectActivityLinkHardCascadeMarksExistingContactStateDirty(t *testing.T) {
+	t.Parallel()
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
 
 	_, err := activityExec(f.Store,
@@ -552,6 +572,7 @@ func TestDirectActivityLinkHardCascadeMarksExistingContactStateDirty(t *testing.
 }
 
 func TestCoPresenceActivityLinkDeleteDoesNotDirtyContactState(t *testing.T) {
+	t.Parallel()
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceCoPresence)
 
 	_, err := activityExec(f.Store,
@@ -567,6 +588,7 @@ func TestCoPresenceActivityLinkDeleteDoesNotDirtyContactState(t *testing.T) {
 }
 
 func TestDirectLinkCascadeDoesNotResurrectContactStateDuringPersonDelete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, personID, _ := activityLinkFixture(t, store.EvidenceDirect)
 	_, err := activityExec(
@@ -584,6 +606,7 @@ func TestDirectLinkCascadeDoesNotResurrectContactStateDuringPersonDelete(t *test
 }
 
 func TestActivityEventPersonAllowsOnlyOneStablePersonReference(t *testing.T) {
+	t.Parallel()
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
 
 	_, err := activityExec(f.Store, `
@@ -594,6 +617,7 @@ func TestActivityEventPersonAllowsOnlyOneStablePersonReference(t *testing.T) {
 }
 
 func TestActivitySchemaRejectsInvalidEnumAndDateValues(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		refKind   string
@@ -669,6 +693,7 @@ func TestActivitySchemaRejectsInvalidEnumAndDateValues(t *testing.T) {
 }
 
 func TestActivitySchemaRejectsInvalidRoleAndEvidence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		role     string
@@ -690,6 +715,7 @@ func TestActivitySchemaRejectsInvalidRoleAndEvidence(t *testing.T) {
 }
 
 func TestActivitySchemaRejectsNonDigitLocalDates(t *testing.T) {
+	t.Parallel()
 	t.Run("activity event", func(t *testing.T) {
 		f := storetest.New(t)
 		messageID := f.CreateMessage("invalid-event-date-digits")
@@ -863,6 +889,7 @@ func activityQueryRow(st *store.Store, query string, args ...any) *sql.Row {
 }
 
 func TestListActivityProjectionQueueIsOrderedAndLimited(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	messageIDs := []int64{
 		f.CreateMessage("queue-order-first"),
@@ -879,6 +906,7 @@ func TestListActivityProjectionQueueIsOrderedAndLimited(t *testing.T) {
 }
 
 func TestLoadQueuedActivityCandidatesPreservesRevisionOrderAndLimit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -910,6 +938,7 @@ func TestLoadQueuedActivityCandidatesPreservesRevisionOrderAndLimit(t *testing.T
 }
 
 func TestLoadActivityCandidateResolvesSourceOwnersWithoutDuplicateCounterparts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -965,6 +994,7 @@ func TestLoadActivityCandidateResolvesSourceOwnersWithoutDuplicateCounterparts(t
 }
 
 func TestActivityAttributionMatchesCanonicalMessageIdentityRules(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1066,6 +1096,7 @@ func TestActivityAttributionMatchesCanonicalMessageIdentityRules(t *testing.T) {
 }
 
 func TestLoadActivityCandidateUsesRecipientsBeforeConversationMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1086,6 +1117,7 @@ func TestLoadActivityCandidateUsesRecipientsBeforeConversationMembers(t *testing
 }
 
 func TestLoadActivityCandidateFallsBackToConversationMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1110,6 +1142,7 @@ func TestLoadActivityCandidateFallsBackToConversationMembers(t *testing.T) {
 }
 
 func TestLoadActivityCandidateSynthesizesSenderWithoutFromRecipient(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1139,6 +1172,7 @@ func TestLoadActivityCandidateSynthesizesSenderWithoutFromRecipient(t *testing.T
 }
 
 func TestLoadActivityCandidateKeepsConversationFallbackWithSenderMention(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1180,6 +1214,7 @@ func TestLoadActivityCandidateKeepsConversationFallbackWithSenderMention(t *test
 }
 
 func TestLoadActivityCandidatePreservesBakedSenderOwnerFallback(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1201,6 +1236,7 @@ func TestLoadActivityCandidatePreservesBakedSenderOwnerFallback(t *testing.T) {
 }
 
 func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(t *testing.T, f *storetest.Fixture, messageID int64)
@@ -1284,6 +1320,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 }
 
 func TestActivityCandidateDateOnlyRequiresExplicitAllDayMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1314,6 +1351,7 @@ func TestActivityCandidateDateOnlyRequiresExplicitAllDayMetadata(t *testing.T) {
 }
 
 func TestScanForActivityProjectionFindsForwardAndRevisionMismatchBelowWatermark(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1375,6 +1413,7 @@ func TestScanForActivityProjectionFindsForwardAndRevisionMismatchBelowWatermark(
 }
 
 func TestScanForActivityProjectionSkipsDrainedEventlessIneligibleRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	sent := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
@@ -1422,6 +1461,7 @@ func TestScanForActivityProjectionSkipsDrainedEventlessIneligibleRows(t *testing
 }
 
 func TestScanForActivityProjectionReopensEventlessCandidateAfterRestoration(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1455,6 +1495,7 @@ func TestScanForActivityProjectionReopensEventlessCandidateAfterRestoration(t *t
 }
 
 func TestLoadQueuedActivityCandidatesKeepsProjectedIneligibleRetractionDiscoverable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1618,6 +1659,7 @@ func contactDirtyAt(t *testing.T, st *store.Store, personID int64) sql.NullTime 
 }
 
 func TestContactStateDirtySelectionIsAtomicOrderedAndBounded(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1665,7 +1707,7 @@ func TestContactStateDirtySelectionIsAtomicOrderedAndBounded(t *testing.T) {
 	assert.Equal(personIDs, stale)
 }
 
-func TestContactStateDirtyEntrypointsLockIdentityBeforeContactRowsOnPostgreSQL(
+func TestContactStateDirtyEntrypointsLockIdentityBeforeContactRowsOnPostgreSQL( //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	t *testing.T,
 ) {
 	for _, test := range []struct {
@@ -1742,6 +1784,7 @@ func TestContactStateDirtyEntrypointsLockIdentityBeforeContactRowsOnPostgreSQL(
 }
 
 func TestStaleContactStateSelectionIncludesRevisionMismatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1783,6 +1826,7 @@ func TestStaleContactStateSelectionIncludesRevisionMismatch(t *testing.T) {
 }
 
 func TestPersonBindingChangesMarkExistingContactStateDirty(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1821,6 +1865,7 @@ func TestPersonBindingChangesMarkExistingContactStateDirty(t *testing.T) {
 }
 
 func TestDeletePersonCascadesContactLinksButPreservesActivityEvent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -1861,6 +1906,7 @@ func TestDeletePersonCascadesContactLinksButPreservesActivityEvent(t *testing.T)
 }
 
 func TestProjectActivityBatchMaintainsMonotoneExtremaAndReplayCount(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -1908,6 +1954,7 @@ func TestProjectActivityBatchMaintainsMonotoneExtremaAndReplayCount(t *testing.T
 }
 
 func TestProjectActivityBatchExactQueueReplayReportsNoContactWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -1944,6 +1991,7 @@ func TestProjectActivityBatchExactQueueReplayReportsNoContactWork(t *testing.T) 
 }
 
 func TestProjectActivityBatchBreaksTimestampTiesByMessageID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -1973,6 +2021,7 @@ func TestProjectActivityBatchBreaksTimestampTiesByMessageID(t *testing.T) {
 }
 
 func TestProjectActivityBatchPreservesMeetingReferenceKindInContactState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -1998,6 +2047,7 @@ func TestProjectActivityBatchPreservesMeetingReferenceKindInContactState(t *test
 }
 
 func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, oldPersonID := activityProjectionFixture(t)
@@ -2067,6 +2117,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 }
 
 func TestProjectActivityBatchRollsBackEveryItemOnLaterFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
 	occurredAt := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
@@ -2099,6 +2150,7 @@ func TestProjectActivityBatchRollsBackEveryItemOnLaterFailure(t *testing.T) {
 }
 
 func TestProjectActivityBatchRestoresContactAfterAuthoritativeRetraction(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2149,6 +2201,7 @@ func TestProjectActivityBatchRestoresContactAfterAuthoritativeRetraction(t *test
 }
 
 func TestProjectActivityBatchStaleItemRollsBackWholeBatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2186,6 +2239,7 @@ func TestProjectActivityBatchStaleItemRollsBackWholeBatch(t *testing.T) {
 }
 
 func TestProjectActivityBatchRejectsIdentityEpochMismatchWithoutAcknowledging(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2214,6 +2268,7 @@ func TestProjectActivityBatchRejectsIdentityEpochMismatchWithoutAcknowledging(t 
 }
 
 func TestProjectActivityBatchRejectsRetainedDrainedGenerationABA(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2252,6 +2307,7 @@ func TestProjectActivityBatchRejectsRetainedDrainedGenerationABA(t *testing.T) {
 }
 
 func TestProjectActivityBatchReservesAbsentLegacyQueueAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2305,6 +2361,7 @@ func TestProjectActivityBatchReservesAbsentLegacyQueueAtomically(t *testing.T) {
 }
 
 func TestProjectActivityBatchConcurrentSameTokenCommitsOnce(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2348,6 +2405,7 @@ func TestProjectActivityBatchConcurrentSameTokenCommitsOnce(t *testing.T) {
 }
 
 func TestProjectActivityBatchRacingMutationLeavesPendingGeneration(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2386,7 +2444,7 @@ func TestProjectActivityBatchRacingMutationLeavesPendingGeneration(t *testing.T)
 		"a mutation before or behind projection must leave discoverable work")
 }
 
-func TestProjectActivityBatchLocksMessageBeforeQueueOnPostgreSQL(t *testing.T) {
+func TestProjectActivityBatchLocksMessageBeforeQueueOnPostgreSQL(t *testing.T) { //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2447,6 +2505,7 @@ func TestProjectActivityBatchLocksMessageBeforeQueueOnPostgreSQL(t *testing.T) {
 func TestProjectActivityBatchPureAdditionDoesNotLockHistoricalEvidence(
 	t *testing.T,
 ) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2505,7 +2564,7 @@ func TestProjectActivityBatchPureAdditionDoesNotLockHistoricalEvidence(
 	assert.Equal(int64(2), state.InteractionCount)
 }
 
-func TestRecomputeContactStateLocksDifferentMessageEvidenceBeforeClearingDirty(
+func TestRecomputeContactStateLocksDifferentMessageEvidenceBeforeClearingDirty( //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	t *testing.T,
 ) {
 	assert := assert.New(t)
@@ -2584,7 +2643,7 @@ func TestRecomputeContactStateLocksDifferentMessageEvidenceBeforeClearingDirty(
 		"same-epoch recompute may clear dirty only after observing the deletion")
 }
 
-func TestRecomputeContactStateLocksEvidenceWhenContactRowIsMissing(t *testing.T) {
+func TestRecomputeContactStateLocksEvidenceWhenContactRowIsMissing(t *testing.T) { //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2672,6 +2731,7 @@ func waitForPostgreSQLLockWait(t *testing.T, st *store.Store, pattern string) {
 }
 
 func TestProjectActivityBatchRacingHardDeleteLeavesNoFreshGhostState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2731,6 +2791,7 @@ func TestProjectActivityBatchRacingHardDeleteLeavesNoFreshGhostState(t *testing.
 }
 
 func TestProjectActivityBatchRecomputesEveryContactRelevantChange(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(
@@ -2885,6 +2946,7 @@ func seedActivityReconciledEpoch(
 }
 
 func TestProjectActivityBatchPreservesDirtyStateUntilEpochReconciles(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2938,6 +3000,7 @@ func TestProjectActivityBatchPreservesDirtyStateUntilEpochReconciles(t *testing.
 }
 
 func TestProjectActivityBatchClearsOnlyTransactionLocalDirtyAtReconciledEpoch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -2974,6 +3037,7 @@ func TestProjectActivityBatchClearsOnlyTransactionLocalDirtyAtReconciledEpoch(t 
 }
 
 func TestRecomputeContactStateMatchesIncrementalProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -3008,6 +3072,7 @@ func TestRecomputeContactStateMatchesIncrementalProjection(t *testing.T) {
 }
 
 func TestRecomputeContactStateRejectsPendingProjectionQueue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, personID := activityProjectionFixture(t)
@@ -3043,7 +3108,7 @@ func TestRecomputeContactStateRejectsPendingProjectionQueue(t *testing.T) {
 		"recompute must not clear dirtiness while a projection repair is pending")
 }
 
-func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit(
+func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit( //nolint:paralleltest // waits for any matching lock wait across the whole PostgreSQL database in pg_stat_activity
 	t *testing.T,
 ) {
 	assert := assert.New(t)
@@ -3140,6 +3205,7 @@ func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit(
 // the persisted zone name, so a host TZ change would skew new projections
 // without ever replaying existing rows.
 func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_, err := f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "Local")
 	require.ErrorIs(t, err, store.ErrInvalidActivity)

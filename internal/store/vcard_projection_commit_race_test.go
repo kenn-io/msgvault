@@ -21,6 +21,7 @@ import (
 // the projection revision existed there was nothing for a commit to serialize
 // against except the fingerprint itself.
 func TestVCardSemanticCommitRejectsProjectionChangedByEmploymentWrite(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newVCardProjectionFixture(t)
@@ -55,6 +56,7 @@ func TestVCardSemanticCommitRejectsProjectionChangedByEmploymentWrite(t *testing
 // snapshot every render was made from, so the next render would conflict
 // against the commit before it, forever.
 func TestVCardSemanticCommitLeavesProjectionRevisionAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -103,6 +105,7 @@ func TestVCardSemanticCommitLeavesProjectionRevisionAlone(t *testing.T) {
 // before it commits, so the commit transaction is guaranteed to open its
 // snapshot while the write is still pending and to finish after it lands.
 func TestPostgreSQLVCardResourceCommitRejectsSemanticWriteCommittedAfterSnapshot(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := storetest.New(t).Store
@@ -188,6 +191,7 @@ func TestPostgreSQLVCardResourceCommitRejectsSemanticWriteCommittedAfterSnapshot
 // commit is guaranteed to open its snapshot while that write is pending and to
 // reach its own UPDATE after the write lands.
 func TestPostgreSQLVCardResourceCommitReportsEnvelopeReplacedAfterSnapshotAsWriteConflict(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := storetest.New(t).Store

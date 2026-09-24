@@ -24,6 +24,7 @@ import (
 // the change forever -- invisible in production and untestable after the fact.
 // Every real column must appear in exactly one list.
 func TestMessagesColumnClassificationIsExhaustive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -60,6 +61,7 @@ func TestMessagesColumnClassificationIsExhaustive(t *testing.T) {
 }
 
 func TestMessagesContentColumns_IncludeListID(t *testing.T) {
+	t.Parallel()
 	assert.Contains(t, store.MessagesContentColumns, "list_id",
 		"changing a List-Id must make consumers re-read the message")
 }
@@ -232,6 +234,7 @@ func updateMessageColumn(t *testing.T, st *store.Store, id int64, col string) er
 // list the triggers are built from, so a column added to the list but missing
 // from the trigger fails here.
 func TestContentChangedAt_ContentColumnUpdateBumps(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	for i, col := range store.MessagesContentColumns {
 		t.Run(col, func(t *testing.T) {
@@ -250,6 +253,7 @@ func TestContentChangedAt_ContentColumnUpdateBumps(t *testing.T) {
 // consumer woken by every embedding stamp would re-read the archive on every
 // index-generation rollover.
 func TestContentChangedAt_BookkeepingUpdateDoesNotBump(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	cases := []struct {
 		col   string
@@ -281,6 +285,7 @@ func TestContentChangedAt_BookkeepingUpdateDoesNotBump(t *testing.T) {
 // the value guard this passes vacuously and the feed reports every message a
 // sync touches.
 func TestContentChangedAt_SameValueWriteDoesNotBump(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessage(t, st, 1)
 	base := stampContentChangedAt(t, st, id)
@@ -310,6 +315,7 @@ func TestContentChangedAt_SameValueWriteDoesNotBump(t *testing.T) {
 // because upsertMessageBody always executes its ON CONFLICT DO UPDATE even when
 // messageBodyChanges reports no change.
 func TestContentChangedAt_ResyncOfUnchangedMessageDoesNotBump(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := persistMessage(t, st, 1, "original subject", "original body")
 	base := stampContentChangedAt(t, st, id)
@@ -326,6 +332,7 @@ func TestContentChangedAt_ResyncOfUnchangedMessageDoesNotBump(t *testing.T) {
 // TestContentChangedAt_ResyncOfChangedMessageBumps is its complement, for both a
 // changed subject and a changed body.
 func TestContentChangedAt_ResyncOfChangedMessageBumps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -349,6 +356,7 @@ func TestContentChangedAt_ResyncOfChangedMessageBumps(t *testing.T) {
 // watermark. The body lives in a separate table, so without this a
 // repair-encoding pass would be invisible to a consumer.
 func TestContentChangedAt_BodyWriteBumpsParent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -377,6 +385,7 @@ func TestContentChangedAt_BodyWriteBumpsParent(t *testing.T) {
 // a SQLite database upgraded by ALTER TABLE. A NULL watermark drops the row out
 // of the range query permanently.
 func TestContentChangedAt_NewRowIsStamped(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessage(t, st, 1)
 
@@ -396,6 +405,7 @@ func TestContentChangedAt_NewRowIsStamped(t *testing.T) {
 // bookkeeping-only UPDATE still bumps last_modified, which the embed worker's
 // CAS depends on. If this fails, the change has stopped being additive.
 func TestContentChangedAt_LastModifiedUnaffected(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -514,6 +524,7 @@ func clearContentChangedBackfillLedger(t *testing.T, st *store.Store) {
 // dropContentChangedAtColumn and clearContentChangedBackfillLedger reconstruct
 // the pre-upgrade shape first.
 func TestContentChangedAt_UpgradeFromDatabaseWithoutColumn(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -566,6 +577,7 @@ func TestContentChangedAt_UpgradeFromDatabaseWithoutColumn(t *testing.T) {
 // backfill seeds from — on the already-stamped rows: a run that re-stamped them
 // would drag their watermarks to the new value.
 func TestContentChangedAt_InterruptedBackfillResumesWhereItStopped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -661,6 +673,7 @@ func TestContentChangedAt_InterruptedBackfillResumesWhereItStopped(t *testing.T)
 // promptly, and that a cancelled upgrade does not record itself as applied —
 // which would strand every unstamped row outside the feed forever.
 func TestContentChangedAt_BackfillStopsWhenTheContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -799,6 +812,7 @@ func countBackfillBatches(t *testing.T, st *store.Store, maxBatches int) *int {
 // predicate excludes NULL and the ledger gate means the scan never runs again.
 // The message is invisible to the feed for the life of the archive.
 func TestContentChangedAt_BackfillStampsTheRowAtIDZero(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -831,6 +845,7 @@ func TestContentChangedAt_BackfillStampsTheRowAtIDZero(t *testing.T) {
 // the daemon never serves at all. The batch guard turns the non-termination into
 // a failure this suite can report.
 func TestContentChangedAt_BackfillFinishesAtTheEdgesOfTheIDSpace(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -864,6 +879,7 @@ func TestContentChangedAt_BackfillFinishesAtTheEdgesOfTheIDSpace(t *testing.T) {
 // startup — before the port is bound. A walk over the rows that need work pays
 // one transaction per batch of rows.
 func TestContentChangedAt_BackfillSkipsIDRangesWithNoWork(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -902,6 +918,7 @@ func TestContentChangedAt_BackfillSkipsIDRangesWithNoWork(t *testing.T) {
 // PostgreSQL cannot fail this way — last_modified is a real TIMESTAMPTZ there
 // and the backfill copies it without conversion — so this is SQLite-only.
 func TestContentChangedAt_BackfillNeverMintsANullWatermark(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "only SQLite's untyped DATETIME text can hold a value strftime rejects")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -963,6 +980,7 @@ func TestContentChangedAt_BackfillNeverMintsANullWatermark(t *testing.T) {
 // The insert is performed by a test-only hook placed at exactly that point in
 // InitSchema, so the race is reproduced rather than raced.
 func TestContentChangedAt_MessageInsertedDuringUpgradeIsStamped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1009,6 +1027,7 @@ func TestContentChangedAt_MessageInsertedDuringUpgradeIsStamped(t *testing.T) {
 // change), so asserting the whole column order would fail for reasons this
 // work did not cause.
 func TestContentChangedAt_ColumnOrderMatchesAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	fresh := testutil.NewTestStore(t)
@@ -1049,6 +1068,7 @@ var contentChangedStampShape = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2
 // layout, because the two databases can meet — subset.go copies messages
 // between them and the cursor comparison is lexical.
 func TestContentChangedAt_FreshAndUpgradedStampsShareOneFormat(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL compares TIMESTAMPTZ natively and has one stamping writer")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1120,6 +1140,7 @@ func insertMessagesTriggerPrograms(t *testing.T, st *store.Store, insert string,
 // changes() it does include rows written by trigger programs — which is exactly
 // what has to be counted.
 func TestContentChangedAt_InsertRunsNoTriggerOnAFreshDatabase(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "PostgreSQL stamps in a BEFORE trigger, which needs no second write")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1175,6 +1196,7 @@ func TestContentChangedAt_InsertRunsNoTriggerOnAFreshDatabase(t *testing.T) {
 // permanently invisible to the feed, since the backfill has already marked
 // itself applied.
 func TestContentChangedAt_UpgradedDatabaseKeepsTheInsertTrigger(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "the DEFAULT/trigger split is a SQLite ALTER TABLE limitation")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1273,6 +1295,7 @@ func readContentChangedAtDefault(t *testing.T, st *store.Store) string {
 // So the archive is refused at open, before a single row can be written with the
 // wrong shape. Loud and immediate beats a feed that quietly loses records.
 func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "the DEFAULT/trigger interaction is a SQLite one")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1345,6 +1368,7 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 // satisfied, and that row is stranded outside the feed forever. Rows can carry a
 // NULL watermark on an archive copied or restored from a pre-backfill database.
 func TestContentChangedAt_NullWatermarkIsStamped(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	id := seedMessage(t, st, 1)
 

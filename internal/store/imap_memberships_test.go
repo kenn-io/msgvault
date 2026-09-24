@@ -105,6 +105,7 @@ func messageIsRead(t *testing.T, st *store.Store, messageID int64) bool {
 }
 
 func TestApplyIMAPMailboxDeltas_PersistsMembershipsFlagsLabelsAndKnownUIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -157,6 +158,7 @@ func TestApplyIMAPMailboxDeltas_PersistsMembershipsFlagsLabelsAndKnownUIDs(t *te
 }
 
 func TestApplyIMAPMailboxDeltas_RFC822FallbackDoesNotCrossSources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -191,6 +193,7 @@ func TestApplyIMAPMailboxDeltas_RFC822FallbackDoesNotCrossSources(t *testing.T) 
 }
 
 func TestApplyIMAPMailboxDeltas_NormalizesOmittedMembershipIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -217,6 +220,7 @@ func TestApplyIMAPMailboxDeltas_NormalizesOmittedMembershipIdentity(t *testing.T
 }
 
 func TestGetIMAPKnownUIDs_PreservesEmptyMailboxBaseline(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -233,6 +237,7 @@ func TestGetIMAPKnownUIDs_PreservesEmptyMailboxBaseline(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_VanishedMembershipReconcilesLabelsAndTombstone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -288,6 +293,7 @@ func TestApplyIMAPMailboxDeltas_VanishedMembershipReconcilesLabelsAndTombstone(t
 }
 
 func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -308,6 +314,7 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -341,6 +348,7 @@ func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(t *testing.T) {
+	t.Parallel()
 	t.Run("deleted mailbox reconciles labels and tombstones last membership", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -477,6 +485,7 @@ func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(
 }
 
 func TestApplyIMAPMailboxDeltas_InitialBaselineReconcilesPreviouslyArchivedMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -507,6 +516,7 @@ func TestApplyIMAPMailboxDeltas_InitialBaselineReconcilesPreviouslyArchivedMessa
 }
 
 func TestApplyIMAPMailboxDeltas_ReconcilesLiveMessageImportedAfterBaseline(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -536,6 +546,7 @@ func TestApplyIMAPMailboxDeltas_ReconcilesLiveMessageImportedAfterBaseline(t *te
 }
 
 func TestApplyIMAPMailboxDeltas_CanonicalSourceHintWinsOverSecondaryCopy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -560,6 +571,7 @@ func TestApplyIMAPMailboxDeltas_CanonicalSourceHintWinsOverSecondaryCopy(t *test
 }
 
 func TestApplyIMAPMailboxDeltas_RawDigestResolvesDurableCanonicalMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -595,6 +607,7 @@ func TestApplyIMAPMailboxDeltas_RawDigestResolvesDurableCanonicalMessage(t *test
 }
 
 func TestApplyIMAPMailboxDeltas_AmbiguousRawDigestFallsBackToExactSourceID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -636,6 +649,7 @@ func TestApplyIMAPMailboxDeltas_AmbiguousRawDigestFallsBackToExactSourceID(t *te
 }
 
 func TestApplyIMAPMailboxDeltas_RawResolutionUsesPreMutationMembershipSnapshot(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -674,6 +688,7 @@ func TestApplyIMAPMailboxDeltas_RawResolutionUsesPreMutationMembershipSnapshot(t
 }
 
 func TestApplyIMAPMailboxDeltas_UnresolvedIdentityRollsBackEverything(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -723,6 +738,7 @@ func TestApplyIMAPMailboxDeltas_UnresolvedIdentityRollsBackEverything(t *testing
 }
 
 func TestApplyIMAPMailboxDeltas_ConflictingDeltaIdentityRollsBackEverything(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		invalid     store.IMAPMailboxDelta
@@ -809,6 +825,7 @@ func TestApplyIMAPMailboxDeltas_ConflictingDeltaIdentityRollsBackEverything(t *t
 	}
 }
 func TestGetIMAPSourceMessageAliases_ReturnsOnlyRequestedUIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -843,6 +860,7 @@ func TestGetIMAPSourceMessageAliases_ReturnsOnlyRequestedUIDs(t *testing.T) {
 }
 
 func TestGetIMAPSourceMessageAliases_AccumulatesEveryUIDChunk(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -899,6 +917,7 @@ func membershipsWritten(t *testing.T, st *store.Store, sourceID int64) int {
 }
 
 func TestApplyIMAPMailboxDeltas_UnchangedResetWritesNothing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -931,6 +950,7 @@ func TestApplyIMAPMailboxDeltas_UnchangedResetWritesNothing(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_ResetWritesOnlyChangedMemberships(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
@@ -971,6 +991,7 @@ func TestApplyIMAPMailboxDeltas_ResetWritesOnlyChangedMemberships(t *testing.T) 
 }
 
 func TestApplyIMAPMailboxDeltas_ResetPersistsFlagChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)

@@ -15,6 +15,7 @@ import (
 // transactions overlap, a unique constraint may reject one; if they run in
 // sequence, both may commit successive versions.
 func TestPostgreSQLPersonBriefKeepsOneCurrentVersionUnderConcurrentRegeneration(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -64,6 +65,7 @@ func TestPostgreSQLPersonBriefKeepsOneCurrentVersionUnderConcurrentRegeneration(
 // re-serializes JSONB, so a reader must still get the same document back, and a
 // malformed document must be refused by the column type rather than stored.
 func TestPostgreSQLPersonBriefStoresCanonicalJSONB(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -95,6 +97,7 @@ func TestPostgreSQLPersonBriefStoresCanonicalJSONB(t *testing.T) {
 // read against JSONB, where boundary_json comes back as PostgreSQL's own
 // serialization rather than the bytes the writer supplied.
 func TestPostgreSQLBriefEligibilityReadsBoundarySequence(t *testing.T) {
+	t.Parallel()
 	skipUnlessPostgresInternal(t)
 	checks := assert.New(t)
 	requirements := require.New(t)

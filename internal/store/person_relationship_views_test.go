@@ -29,6 +29,7 @@ func mustSetPersonDisplayName(t *testing.T, f *storetest.Fixture, personID int64
 }
 
 func TestListPersonRelationshipsRendersBothDirectionsFromOneRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -68,6 +69,7 @@ func TestListPersonRelationshipsRendersBothDirectionsFromOneRow(t *testing.T) {
 }
 
 func TestListPersonRelationshipsRendersSymmetricTypesIdenticallyFromBothEnds(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -97,6 +99,7 @@ func TestListPersonRelationshipsRendersSymmetricTypesIdenticallyFromBothEnds(t *
 }
 
 func TestListPersonRelationshipsHidesEndedEdgesUnlessAsked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -137,6 +140,7 @@ func TestListPersonRelationshipsHidesEndedEdgesUnlessAsked(t *testing.T) {
 }
 
 func TestListPersonRelationshipsIsDeterministicAndScopedToOnePerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -173,6 +177,7 @@ func TestListPersonRelationshipsIsDeterministicAndScopedToOnePerson(t *testing.T
 }
 
 func TestListPersonRelationshipsCountsEachEdgeOnceForOnePerson(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -205,6 +210,7 @@ func TestListPersonRelationshipsCountsEachEdgeOnceForOnePerson(t *testing.T) {
 }
 
 func TestCounterpartLabelHelperMatchesTheQueryProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

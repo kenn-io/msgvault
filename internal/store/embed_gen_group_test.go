@@ -102,6 +102,7 @@ func (f *embedGenGroupFixture) embedGens() []sql.NullInt64 {
 }
 
 func TestSetEmbedGenGroupIfUnchanged_SuccessAndReplay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbedGenGroupFixture(t, 2)
@@ -120,6 +121,7 @@ func TestSetEmbedGenGroupIfUnchanged_SuccessAndReplay(t *testing.T) {
 }
 
 func TestSetEmbedGenGroupIfUnchanged_PreservesPublishedRevisionTokens(t *testing.T) {
+	t.Parallel()
 	f := newEmbedGenGroupFixture(t, 2)
 	fixed := time.Date(2000, 6, 15, 12, 30, 45, 0, time.UTC)
 	for _, id := range f.messageIDs {
@@ -135,7 +137,7 @@ func TestSetEmbedGenGroupIfUnchanged_PreservesPublishedRevisionTokens(t *testing
 		"contextual coverage bookkeeping must not change the published document revision")
 }
 
-func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *testing.T) {
+func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *testing.T) { //nolint:paralleltest // accepts any lock wait on the embedding clock across the whole PostgreSQL database in pg_stat_activity
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbedGenGroupFixture(t, 1)
@@ -214,6 +216,7 @@ func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *t
 }
 
 func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbedGenGroupFixture(t, 2)
@@ -239,6 +242,7 @@ func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
 }
 
 func TestSetEmbedGenGroupIfUnchanged_MissingDeletedAndDuplicateMembers(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*embedGenGroupFixture, []store.EmbedGenStamp)
@@ -270,6 +274,7 @@ func TestSetEmbedGenGroupIfUnchanged_MissingDeletedAndDuplicateMembers(t *testin
 }
 
 func TestSetEmbedGenGroupIfUnchanged_MetadataChangesStampNone(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*embedGenGroupFixture) error
@@ -339,6 +344,7 @@ func TestSetEmbedGenGroupIfUnchanged_MetadataChangesStampNone(t *testing.T) {
 }
 
 func TestSetEmbedGenGroupIfUnchanged_DialectNativeTimestampToken(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newEmbedGenGroupFixture(t, 1)
@@ -356,6 +362,7 @@ func TestSetEmbedGenGroupIfUnchanged_DialectNativeTimestampToken(t *testing.T) {
 }
 
 func TestSetEmbedGenGroupIfUnchanged_StampErrorRollsBackEveryMember(t *testing.T) {
+	t.Parallel()
 	f := newEmbedGenGroupFixture(t, 2)
 	if f.store.IsPostgreSQL() {
 		t.Skip("SQLite trigger injection proves the shared manual transaction rollback path")
@@ -376,6 +383,7 @@ func TestSetEmbedGenGroupIfUnchanged_StampErrorRollsBackEveryMember(t *testing.T
 }
 
 func TestEmbedGenMetadataVersion_MatchesAssemblerCanonicalDigest(t *testing.T) {
+	t.Parallel()
 	f := newEmbedGenGroupFixture(t, 1)
 	if f.store.IsPostgreSQL() {
 		t.Skip("the literal vector pins SQLite's canonical timestamp text; PostgreSQL parity is covered by the live snapshot test")
@@ -391,6 +399,7 @@ func TestEmbedGenMetadataVersion_MatchesAssemblerCanonicalDigest(t *testing.T) {
 }
 
 func TestContextualConvergenceCounts_PartitionsContextualAndOrdinaryMessages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

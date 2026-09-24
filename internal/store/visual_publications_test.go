@@ -12,6 +12,7 @@ import (
 )
 
 func TestVisualWorkClaimLeaseAndFencingLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -56,6 +57,7 @@ func TestVisualWorkClaimLeaseAndFencingLifecycle(t *testing.T) {
 }
 
 func TestVisualPublicationTwoPhaseCommitRejectsObsoleteFence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -90,6 +92,7 @@ func TestVisualPublicationTwoPhaseCommitRejectsObsoleteFence(t *testing.T) {
 }
 
 func TestVisualPublicationCommitTerminalOutcomeAndTombstone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -129,6 +132,7 @@ func TestVisualPublicationCommitTerminalOutcomeAndTombstone(t *testing.T) {
 }
 
 func TestVisualGenerationActivationRejectsStaleSourceFence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := storetest.New(t)
 	generation := createVisualGeneration(t, f)
@@ -143,6 +147,7 @@ func TestVisualGenerationActivationRejectsStaleSourceFence(t *testing.T) {
 }
 
 func TestEnsureVisualGenerationRestartsRetiredPolicyWithoutConsent(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
@@ -157,6 +162,7 @@ func TestEnsureVisualGenerationRestartsRetiredPolicyWithoutConsent(t *testing.T)
 }
 
 func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
+	t.Parallel()
 	t.Run("attachment metadata change marks current publication stale", func(t *testing.T) {
 		f := storetest.New(t)
 		generation, owner, attachmentID := publishVisualOwner(t, f, "visual-metadata")
@@ -299,6 +305,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 }
 
 func TestVisualGenerationRequiresExplicitConsentBeforeActivation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
@@ -396,6 +403,7 @@ func assertVisualPublicationState(
 }
 
 func TestSyncVisualGenerationCapabilityFingerprintReopensReconciliation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -445,6 +453,7 @@ func TestSyncVisualGenerationCapabilityFingerprintReopensReconciliation(t *testi
 }
 
 func TestListAndPurgeRetiredVisualGenerations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -481,6 +490,7 @@ func TestListAndPurgeRetiredVisualGenerations(t *testing.T) {
 }
 
 func TestVisualSupersededTokensSurviveForSweep(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -526,6 +536,7 @@ func TestVisualSupersededTokensSurviveForSweep(t *testing.T) {
 }
 
 func TestVisualDriftDiscardParksPendingTokenForSweep(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -557,6 +568,7 @@ func TestVisualDriftDiscardParksPendingTokenForSweep(t *testing.T) {
 }
 
 func TestVisualPrepareParksLeftoverPendingToken(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -586,6 +598,7 @@ func TestVisualPrepareParksLeftoverPendingToken(t *testing.T) {
 }
 
 func TestRestartRetiredGenerationRefusesLiveTokenReferences(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -619,6 +632,7 @@ func TestRestartRetiredGenerationRefusesLiveTokenReferences(t *testing.T) {
 }
 
 func TestClaimRecordsSnapshotStampSoStaleContextCannotCommit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	generation := createVisualGeneration(t, f)
@@ -657,6 +671,7 @@ func TestClaimRecordsSnapshotStampSoStaleContextCannotCommit(t *testing.T) {
 }
 
 func TestPrepareRefusesContextChangeAfterClaim(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	generation := createVisualGeneration(t, f)
@@ -682,6 +697,7 @@ func TestPrepareRefusesContextChangeAfterClaim(t *testing.T) {
 }
 
 func TestObsoleteTokenLedgerHoldsMultipleTokens(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -715,6 +731,7 @@ func TestObsoleteTokenLedgerHoldsMultipleTokens(t *testing.T) {
 }
 
 func TestRestoreRefusesConcurrentContextEdit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	generation := createVisualGeneration(t, f)
@@ -748,6 +765,7 @@ func TestRestoreRefusesConcurrentContextEdit(t *testing.T) {
 }
 
 func TestHardDeletedMessagesLedgerTheirVectorTokens(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -778,6 +796,7 @@ func TestHardDeletedMessagesLedgerTheirVectorTokens(t *testing.T) {
 }
 
 func TestScopeEntrySeedSkipsNonCanonicalOwners(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -818,6 +837,7 @@ func TestScopeEntrySeedSkipsNonCanonicalOwners(t *testing.T) {
 }
 
 func TestBodyDeletionBumpsContentStamp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	owner, _, _ := createVisualOwner(t, f, "visual-body-del-stamp")
@@ -847,6 +867,7 @@ func TestBodyDeletionBumpsContentStamp(t *testing.T) {
 }
 
 func TestVisualPublicationRevisionTracksCurrentSet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

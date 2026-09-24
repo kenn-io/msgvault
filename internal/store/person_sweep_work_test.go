@@ -82,6 +82,7 @@ func loadPersonSweepCursor(
 }
 
 func TestPersonSweepExpiredLeaseReclaimsWithNewFence(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	f.insertMessage(t, "expired-lease", "email", f.aliceID,
 		time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
@@ -99,6 +100,7 @@ func TestPersonSweepExpiredLeaseReclaimsWithNewFence(t *testing.T) {
 }
 
 func TestEnsurePersonSweepCursorsCompletesAndRepairsEmptyLane(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -125,6 +127,7 @@ func TestEnsurePersonSweepCursorsCompletesAndRepairsEmptyLane(t *testing.T) {
 }
 
 func TestPersonSweepExpiredLeaseReclaimFinalizesAbandonedAccounting(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -184,6 +187,7 @@ func TestPersonSweepExpiredLeaseReclaimFinalizesAbandonedAccounting(t *testing.T
 }
 
 func TestPersonSweepReclaimedFailureReplayValidatesExactDurableShape(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	f.insertMessage(t, "reclaimed-replay-shape", "email", f.aliceID,
@@ -255,6 +259,7 @@ func TestPersonSweepReclaimedFailureReplayValidatesExactDurableShape(t *testing.
 }
 
 func TestPersonSweepReclaimRejectsMalformedDurableCallCoordinates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		addInvalid func(*testing.T, personSweepBudgetFixture, peoplesweep.BudgetReservationRequest,
@@ -342,6 +347,7 @@ func TestPersonSweepReclaimRejectsMalformedDurableCallCoordinates(t *testing.T) 
 }
 
 func TestPersonSweepConcurrentClaimHasOneWinner(t *testing.T) {
+	t.Parallel()
 	f := newPersonSweepJournalFixture(t, true, false)
 	f.insertMessage(t, "concurrent-claim", "email", f.aliceID,
 		time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
@@ -378,6 +384,7 @@ func TestPersonSweepConcurrentClaimHasOneWinner(t *testing.T) {
 }
 
 func TestPersonSweepLeaseRenewalRequiresExactFence(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -399,6 +406,7 @@ func TestPersonSweepLeaseRenewalRequiresExactFence(t *testing.T) {
 }
 
 func TestPersonSweepRetryAvailabilityUsesDatabaseTime(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -427,6 +435,7 @@ func TestPersonSweepRetryAvailabilityUsesDatabaseTime(t *testing.T) {
 }
 
 func TestPersonSweepForcedBackstopMakesFutureRetryClaimable(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	now := time.Now().UTC()
@@ -461,6 +470,7 @@ func TestPersonSweepForcedBackstopMakesFutureRetryClaimable(t *testing.T) {
 }
 
 func TestPersonSweepWorkCoalescesDirtyHighWater(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	for i := range 3 {
@@ -484,6 +494,7 @@ func TestPersonSweepWorkCoalescesDirtyHighWater(t *testing.T) {
 }
 
 func TestPersonSweepCursorCASRejectsStaleSequence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	f.insertMessage(t, "cursor-cas", "email", f.aliceID,
@@ -505,6 +516,7 @@ func TestPersonSweepCursorCASRejectsStaleSequence(t *testing.T) {
 }
 
 func TestPersonSweepCursorPersistsPartialDocumentProgress(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -530,6 +542,7 @@ func TestPersonSweepCursorPersistsPartialDocumentProgress(t *testing.T) {
 }
 
 func TestPersonSweepCursorSeparatesSourceAndFingerprints(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -565,6 +578,7 @@ func TestPersonSweepCursorSeparatesSourceAndFingerprints(t *testing.T) {
 }
 
 func TestPersonSweepReconciliationStopsAtCapturedUpperKey(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -604,6 +618,7 @@ func TestPersonSweepReconciliationStopsAtCapturedUpperKey(t *testing.T) {
 }
 
 func TestPersonSweepCursorMutationRequiresLeasePerson(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)
 	f.insertMessage(t, "lease-person-alice", "email", f.aliceID,

@@ -14,6 +14,7 @@ import (
 )
 
 func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -45,6 +46,7 @@ func TestSearchDocumentsReturnsCurrentExactOccurrences(t *testing.T) {
 }
 
 func TestSearchDocumentsRestrictsOwningMessageCandidates(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	f := storetest.New(t)
@@ -72,6 +74,7 @@ func TestSearchDocumentsRestrictsOwningMessageCandidates(t *testing.T) {
 }
 
 func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
@@ -195,6 +198,7 @@ func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 }
 
 func TestSearchDocumentsFailsCleanlyWithoutFTS(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	store.SetFTS5AvailableForTest(f.Store, false)
 
@@ -203,6 +207,7 @@ func TestSearchDocumentsFailsCleanlyWithoutFTS(t *testing.T) {
 }
 
 func TestSearchDocumentsPreservesWinningOccurrenceAndFilenameSignal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -243,6 +248,7 @@ func TestSearchDocumentsPreservesWinningOccurrenceAndFilenameSignal(t *testing.T
 }
 
 func TestSearchDocumentsRejectsStaleOrMismatchedCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -276,6 +282,7 @@ func TestSearchDocumentsRejectsStaleOrMismatchedCursor(t *testing.T) {
 }
 
 func TestDocumentOccurrenceCascadeInvalidatesSearchCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -302,6 +309,7 @@ func TestDocumentOccurrenceCascadeInvalidatesSearchCursor(t *testing.T) {
 }
 
 func TestDocumentMessageTypeChangeInvalidatesSearchCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -329,6 +337,7 @@ func TestDocumentMessageTypeChangeInvalidatesSearchCursor(t *testing.T) {
 }
 
 func TestRetireDocumentExtractionProfileHidesResultsAndInvalidatesCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -356,6 +365,7 @@ func TestRetireDocumentExtractionProfileHidesResultsAndInvalidatesCursor(t *test
 }
 
 func TestSearchDocumentsRotatesProfilesAfterEachReplacementIsReady(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -426,6 +436,7 @@ func TestSearchDocumentsRotatesProfilesAfterEachReplacementIsReady(t *testing.T)
 }
 
 func TestSearchDocumentsSuppressesFallbackAfterTargetProfileTerminalFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -479,6 +490,7 @@ func TestSearchDocumentsSuppressesFallbackAfterTargetProfileTerminalFailure(t *t
 }
 
 func TestSearchDocumentsFailsClosedOnLiveAuthorityAndInvalidScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -502,6 +514,7 @@ func TestSearchDocumentsFailsClosedOnLiveAuthorityAndInvalidScopes(t *testing.T)
 }
 
 func TestSearchDocumentsAppliesCandidateLimitAfterOccurrenceDeduplication(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, crowdedHash := seedDocumentPublicationAuthority(t, f)
@@ -525,6 +538,7 @@ func TestSearchDocumentsAppliesCandidateLimitAfterOccurrenceDeduplication(t *tes
 }
 
 func TestSearchDocumentsHonorsExplicitCandidateLimit(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -547,6 +561,7 @@ func TestSearchDocumentsHonorsExplicitCandidateLimit(t *testing.T) {
 }
 
 func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -589,6 +604,7 @@ func TestSearchDocumentsPaginationUsesStableRankingSet(t *testing.T) {
 }
 
 func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDeduplication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f, generation := seedDocumentVectorGenerationWithChunks(t, 2)
@@ -678,6 +694,7 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 }
 
 func TestResolveDocumentVectorSearchOccurrencesForCSV(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -711,6 +728,7 @@ func TestResolveDocumentVectorSearchOccurrencesForCSV(t *testing.T) {
 }
 
 func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*testing.T, *storetest.Fixture, store.DocumentVectorChunkClaim)

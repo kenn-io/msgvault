@@ -10,6 +10,7 @@ import (
 )
 
 func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st, err := Open(filepath.Join(t.TempDir(), "legacy-identity-support.db"))

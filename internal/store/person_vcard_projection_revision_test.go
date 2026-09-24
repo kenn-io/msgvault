@@ -112,6 +112,7 @@ func (f *vcardProjectionFixture) snapshot(t *testing.T) *store.PersonVCardSnapsh
 // nothing a card renders has been stripped out of it. The cases that leave the
 // projected content where it was say so; the revision moves regardless.
 func TestPersonVCardProjectionRevisionAdvancesOnEveryProjectingWrite(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		sameContent bool
@@ -495,6 +496,7 @@ func TestPersonVCardProjectionRevisionAdvancesOnEveryProjectingWrite(t *testing.
 // card at all; a relationship type rename reaches only the endpoints of its
 // edges.
 func TestPersonVCardProjectionRevisionSkipsNonProjectingCatalogWrites(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newVCardProjectionFixture(t)
@@ -560,6 +562,7 @@ func TestPersonVCardProjectionRevisionSkipsNonProjectingCatalogWrites(t *testing
 // set — none of which any card renders — so a render made just before the link
 // must still commit rather than conflict and re-render an identical card.
 func TestPersonVCardFingerprintIgnoresWatermarks(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newVCardProjectionFixture(t)
@@ -602,6 +605,7 @@ func TestPersonVCardFingerprintIgnoresWatermarks(t *testing.T) {
 // deletion has to move that person's projection revision itself. Each case
 // leaves the survivor with exactly one row naming the deleted person.
 func TestPersonVCardProjectionRevisionAdvancesForDeletedCounterparts(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		relate func(t *testing.T, st *store.Store, deleted, survivor *store.Person)
@@ -677,6 +681,7 @@ func TestPersonVCardProjectionRevisionAdvancesForDeletedCounterparts(t *testing.
 // degenerating into "touch everything": a card that shares no semantic row
 // with the write must stay commitable.
 func TestPersonVCardProjectionRevisionIgnoresUnrelatedPeople(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newVCardProjectionFixture(t)

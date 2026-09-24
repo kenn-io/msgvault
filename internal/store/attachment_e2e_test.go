@@ -104,6 +104,7 @@ var (
 )
 
 func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -145,6 +146,7 @@ func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
 // and that the helper is idempotent (re-upserting the same (message_id,
 // content_hash) pair is a no-op).
 func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
@@ -174,6 +176,7 @@ func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
 // leaves other messages' attachment rows that reference the same content_hash
 // intact.
 func TestAttachment_E2E_CascadeOnLocalMessageDelete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
@@ -215,6 +218,7 @@ func TestAttachment_E2E_CascadeOnLocalMessageDelete(t *testing.T) {
 // a hash shared with another source is NOT reported as unique. After the
 // other source is removed, the same hash becomes unique.
 func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
@@ -288,6 +292,7 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 // removing a source cascades all of its attachment rows but leaves rows
 // in other sources alone — even when they share content_hash.
 func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
@@ -318,6 +323,7 @@ func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
 // paths, run the source removal, then verify per-file reference checks against
 // the post-removal DB state.
 func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
@@ -366,6 +372,7 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 // AttachmentPathsUniqueToSource (mirroring the existing focused test but in
 // a multi-message context).
 func TestAttachment_E2E_NullAndEmptyHashesIgnored(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
