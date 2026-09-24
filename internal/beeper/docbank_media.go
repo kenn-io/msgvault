@@ -424,6 +424,12 @@ func descriptorMapping(
 func fallbackMediaMapping(
 	destination string, candidate store.BeeperMediaCandidate, archiveUID string, cause error,
 ) store.BeeperMediaMapping {
+	return fallbackMediaMappingCode(destination, candidate, archiveUID, mediaGapCode(cause))
+}
+
+func fallbackMediaMappingCode(
+	destination string, candidate store.BeeperMediaCandidate, archiveUID, code string,
+) store.BeeperMediaMapping {
 	part := candidate.SourcePartKey
 	if part == "" {
 		part = candidate.SourceAttachmentID
@@ -442,9 +448,9 @@ func fallbackMediaMapping(
 		SourceSHA256: candidate.ContentHash, ByteLength: candidate.ByteLength,
 		Filename: filename, MIMEType: mediaType,
 	}
-	descriptor.Occurrence.Revision = hashDelimited("gap", mediaRevision(descriptor), mediaGapCode(cause))
+	descriptor.Occurrence.Revision = hashDelimited("gap", mediaRevision(descriptor), code)
 	mapping := descriptorMapping(destination, candidate, descriptor)
-	mapping.RetentionState, mapping.ErrorCode = store.BeeperMediaRetentionBlocked, mediaGapCode(cause)
+	mapping.RetentionState, mapping.ErrorCode = store.BeeperMediaRetentionBlocked, code
 	return mapping
 }
 
@@ -639,8 +645,8 @@ func (w *MediaSubmitter) artifact(
 			currentRawHash := hashBytes(raw)
 			if snapshot.gapCode != "" {
 				if snapshot.rawHash != "" && currentRawHash == snapshot.rawHash {
-					gaps = append(gaps, fallbackMediaMapping(w.destination, mappingCandidate(mapping), archiveUID,
-						errors.New(snapshot.gapCode)))
+					gaps = append(gaps, fallbackMediaMappingCode(w.destination,
+						mappingCandidate(mapping), archiveUID, snapshot.gapCode))
 				}
 				continue
 			}

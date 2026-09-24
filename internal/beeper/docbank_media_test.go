@@ -137,6 +137,7 @@ func occurrenceRows(t *testing.T, st *store.Store, destination string) []occurre
 
 type deliveryRow struct {
 	Phase, SourceID, SourceVersionID, ContentVersionID, Donor, SuppliedInput string
+	PendingOperationID, ProcessingOperationID                                string
 	JobID, OperationState, Coverage, ErrorCode                               string
 }
 
@@ -144,7 +145,8 @@ func deliveryRows(t *testing.T, st *store.Store, destination string) []deliveryR
 	t.Helper()
 	rows, err := st.DB().Query(st.Rebind(`
 		SELECT phase, source_id, source_version_id, content_version_id, donor_occurrence_id,
-		       supplied_input_id, job_id, operation_state, coverage_state, error_code
+		       supplied_input_id, COALESCE(pending_operation_id, ''),
+		       COALESCE(processing_operation_id, ''), job_id, operation_state, coverage_state, error_code
 		FROM beeper_media_deliveries WHERE destination_key = ? ORDER BY processing_key`), destination)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -152,7 +154,8 @@ func deliveryRows(t *testing.T, st *store.Store, destination string) []deliveryR
 	for rows.Next() {
 		var row deliveryRow
 		require.NoError(t, rows.Scan(&row.Phase, &row.SourceID, &row.SourceVersionID, &row.ContentVersionID,
-			&row.Donor, &row.SuppliedInput, &row.JobID, &row.OperationState, &row.Coverage, &row.ErrorCode))
+			&row.Donor, &row.SuppliedInput, &row.PendingOperationID, &row.ProcessingOperationID,
+			&row.JobID, &row.OperationState, &row.Coverage, &row.ErrorCode))
 		result = append(result, row)
 	}
 	require.NoError(t, rows.Err())
@@ -768,6 +771,29 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 			} else {
 				assert.Equal("revoked", selected.State)
 			}
+			if mutation.name == "dedup-hide" {
+				_, err := world.st.UndoDedup("retain-hide")
+				require.NoError(err)
+				runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "retain-fence", world.dir), 1)
+				restored := world.submitter(t, server, "retain-fence")
+				archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+				require.NoError(err)
+				_, err = restored.retain(t.Context(), t.Context(), archiveUID, operation)
+				require.NoError(err)
+				rows = occurrenceRows(t, world.st, "retain-fence")
+				found := false
+				for _, row := range rows {
+					if row.OperationID == operation.OperationID {
+						found = true
+						assert.Equal("retained", row.State)
+						break
+					}
+				}
+				require.True(found, "the restored occurrence keeps its saved retention operation")
+				docbank.mu.Lock()
+				assert.Equal([]string{operation.OperationID}, docbank.retentionOps)
+				docbank.mu.Unlock()
+			}
 		})
 	}
 }
@@ -831,6 +857,11 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 				require.NoError(err)
 				require.NotEmpty(mappings)
 				donor := mappings[0]
+				var surviving store.BeeperMediaMapping
+				if shared {
+					require.Len(mappings, 2)
+					surviving = mappings[1]
+				}
 				var otherMessage int64
 				require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`, donor.MessageID).Scan(&otherMessage))
 				apply := func() {
@@ -866,6 +897,19 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 				docbank.mu.Unlock()
 				if shared {
 					assert.Equal(1, artifactRequests)
+					deliveries := deliveryRows(t, world.st, "artifact-fence")
+					require.Len(deliveries, 1)
+					assert.Equal("pending-process", deliveries[0].Phase)
+					assert.Equal(surviving.DocbankOccurrenceID, deliveries[0].Donor)
+					assert.NotEmpty(deliveries[0].SuppliedInput)
+					docbank.mu.Lock()
+					require.Len(docbank.artifactOps, 1)
+					artifactOperationID := docbank.artifactOps[0]
+					assert.NotEmpty(artifactOperationID)
+					require.Len(docbank.artifactReceipts, 1)
+					assert.Equal(artifactOperationID, docbank.artifactReceipts[0].OperationID)
+					assert.Equal(surviving.DocbankOccurrenceID, docbank.artifactReceipts[0].OccurrenceID)
+					docbank.mu.Unlock()
 				} else {
 					assert.Zero(artifactRequests)
 				}
