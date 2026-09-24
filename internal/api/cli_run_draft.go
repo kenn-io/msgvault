@@ -6,6 +6,8 @@ import "go.kenn.io/msgvault/internal/agentgrant"
 // in-process instead of spawning a subprocess.
 const CLIRunDraftReplyCommand = "draft-reply"
 
+const CLIRunDraftComposeCommand = "draft-compose"
+
 const (
 	CLIRunDraftGetCommand     = "draft-get"
 	CLIRunDraftEditCommand    = "draft-edit"
@@ -19,18 +21,26 @@ func IsCLIRunDraftReply(args []string) bool {
 	return len(args) > 0 && args[0] == CLIRunDraftReplyCommand
 }
 
+func IsCLIRunDraftCompose(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunDraftComposeCommand
+}
+
+// IsCLIRunDraftCreate reports whether args create a managed draft.
+func IsCLIRunDraftCreate(args []string) bool {
+	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args)
+}
+
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
-	if grant == nil || len(args) == 0 {
+	if grant == nil {
 		return false
 	}
-	switch args[0] {
-	case CLIRunDraftReplyCommand:
+	if IsCLIRunDraftCreate(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
-	case CLIRunDraftRecoverCommand:
-		return grant.HasPermission(agentgrant.PermissionDraftEdit) || grant.HasPermission(agentgrant.PermissionDraftDelete)
-	default:
-		return false
 	}
+	if len(args) > 0 && args[0] == CLIRunDraftRecoverCommand {
+		return grant.HasPermission(agentgrant.PermissionDraftEdit) || grant.HasPermission(agentgrant.PermissionDraftDelete)
+	}
+	return false
 }
 
 // IsCLIRunDraftLifecycle reports whether args invoke one of the managed draft

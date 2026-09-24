@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,6 +144,78 @@ func newAgentTokenTestServer(t *testing.T) (*Server, *agentgrant.Registry) {
 	})
 	srv.agentGrants = reg
 	return srv, reg
+}
+
+type agentTokenIdentityStore struct {
+	*stubSourceStore
+
+	identities []store.AccountIdentity
+}
+
+func (s *agentTokenIdentityStore) ListAccountIdentitiesContext(_ context.Context, sourceID int64) ([]store.AccountIdentity, error) {
+	result := make([]store.AccountIdentity, 0, len(s.identities))
+	for _, identity := range s.identities {
+		if identity.SourceID == sourceID {
+			result = append(result, identity)
+		}
+	}
+	return result, nil
+}
+
+func TestAgentTokenSenderSelectionsSnapshotConfirmedIdentities(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	stub := &agentTokenIdentityStore{
+		stubSourceStore: &stubSourceStore{src: &store.Source{ID: 1, SourceType: "imap", Identifier: "alice@example.com"}},
+		identities: []store.AccountIdentity{
+			{SourceID: 1, Address: "Alice@example.com", ConfirmedAt: time.Now()},
+			{SourceID: 1, Address: "alias@example.com", ConfirmedAt: time.Now()},
+			{SourceID: 1, Address: "unconfirmed@example.com"},
+		},
+	}
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: stub, Logger: testLogger(), Scheduler: newMockScheduler()})
+	reg := agentgrant.NewRegistry()
+	srv.agentGrants = reg
+
+	issue := func(selections map[string][]string) agentTokenIssueResponse {
+		body, err := json.Marshal(agentTokenIssueRequest{
+			Label: "sender-test", Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+			SourceIDs: []int64{1}, SenderSelections: selections,
+		})
+		requirements.NoError(err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		requirements.Equal(http.StatusCreated, resp.Code, resp.Body.String())
+		var result agentTokenIssueResponse
+		requirements.NoError(json.NewDecoder(resp.Body).Decode(&result))
+		return result
+	}
+
+	explicit := issue(map[string][]string{"1": {"Alice <ALICE@example.com>"}})
+	requirements.Len(explicit.Sources, 1)
+	assertions.Equal([]string{"alice@example.com"}, explicit.Sources[0].SenderKeys)
+	grant, ok := reg.Lookup(explicit.Secret)
+	requirements.True(ok)
+	assertions.True(grant.AllowsSender(agentgrant.PermissionDraftCreate, agentgrant.SourceRef{Type: "imap", Identifier: "alice@example.com"}, "alice@example.com"))
+
+	defaulted := issue(nil)
+	assertions.Equal([]string{"alice@example.com", "alias@example.com"}, defaulted.Sources[0].SenderKeys)
+
+	badBody, err := json.Marshal(agentTokenIssueRequest{
+		Label: "bad-sender", Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs: []int64{1}, SenderSelections: map[string][]string{"1": {"unknown@example.com"}},
+	})
+	requirements.NoError(err)
+	badReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(badBody))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	badResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(badResp, badReq)
+	assertions.Equal(http.StatusBadRequest, badResp.Code)
 }
 
 // TestAgentTokenIssueRequiresOwnerKey verifies proof matrix row 15:

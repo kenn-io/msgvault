@@ -270,6 +270,12 @@ components:
           items:
             type: string
           type: array
+        sender_selections:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
         source_ids:
           items:
             format: int64
@@ -326,12 +332,17 @@ components:
           type: integer
         identifier:
           type: string
+        sender_keys:
+          items:
+            type: string
+          type: array
         type:
           type: string
       required:
         - id
         - type
         - identifier
+        - sender_keys
       type: object
     AgentTokenView:
       properties:
@@ -12648,7 +12659,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.27.0
+  version: 2.28.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

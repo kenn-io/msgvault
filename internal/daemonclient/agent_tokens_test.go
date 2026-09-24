@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,14 +28,21 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	var (
 		revokedID        string
 		issueContentType string
+		issueBody        string
 	)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.28.0"}`))
+	})
 	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		issueContentType = r.Header.Get("Content-Type")
+		body, _ := io.ReadAll(r.Body)
+		issueBody = string(body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -64,10 +72,12 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
 	require.NoError(err)
 
-	result, err := c.IssueAgentToken(context.Background(), "round-trip-test", []string{"draft.create"}, []int64{1})
+	result, err := c.IssueAgentToken(context.Background(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}})
 	require.NoError(err)
 	require.NotNil(result)
 	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
+	assert.Contains(issueBody, "sender_selections")
+	assert.Contains(issueBody, "alice@example.com")
 	assert.Equal(wantID, result.ID, "id must be decoded from the 201 body")
 	assert.Equal(wantSecret, result.Secret)
 
@@ -122,4 +132,28 @@ func TestAgentTokenBusyResponseRetriesAndNotifies(t *testing.T) {
 	assert.Equal(t, 3, callCount, "must have retried twice before succeeding")
 	assert.GreaterOrEqual(t, notifyCount, 1, "busy notifier must have fired at least once")
 	assert.Contains(t, notifyMsg, "msgvault sync", "notifier message must name the holder")
+}
+
+func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	postCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.27.0"}`))
+	})
+	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
+		postCount++
+		w.WriteHeader(http.StatusCreated)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
+	requirements.NoError(err)
+	_, err = client.IssueAgentToken(t.Context(), "old-daemon", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}})
+	requirements.Error(err)
+	assertions.Contains(err.Error(), "requires daemon API schema 2.28.0")
+	assertions.Zero(postCount)
 }
