@@ -10,7 +10,5 @@ export interface HealthResponse {
   operation?: OperationHealth;
   status: string;
   vector?: VectorHealth;
-  vector_text_enabled?: boolean;
-  vector_visual_enabled?: boolean;
   [key: string]: unknown;
 }

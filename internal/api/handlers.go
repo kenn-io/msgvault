@@ -210,10 +210,6 @@ type HealthResponse struct {
 	// /api/v1/health so remote CLI clients can refuse a major-version mismatch
 	// before issuing commands. Omitted on the public unauthenticated /health.
 	APISchemaVersion string `json:"api_schema_version,omitempty"`
-	// These flags report configured lanes independently of readiness. They are
-	// always present on authenticated health and omitted on public health.
-	VectorTextEnabled   *bool `json:"vector_text_enabled,omitzero" nullable:"false"`
-	VectorVisualEnabled *bool `json:"vector_visual_enabled,omitzero" nullable:"false"`
 }
 
 type MessageListResponse struct {
