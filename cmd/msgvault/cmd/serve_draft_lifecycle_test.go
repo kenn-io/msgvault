@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -61,4 +62,46 @@ func TestDraftLifecycleEndToEnd(t *testing.T) {
 	requirements.Contains(deleteEvent, "\"lifecycle\":\"discarded\"")
 	_, err = run(api.CLIRunDraftGetCommand, created.DraftID, "--json")
 	requirements.NoError(err)
+}
+
+func TestDraftLifecycleReplacementIndexesCc(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	parentRaw, err := fixture.store.GetMessageRaw(fixture.parentID)
+	requirements.NoError(err)
+	parentRaw = bytes.Replace(parentRaw, []byte("Subject: Question\r\n"), []byte("Cc: copy@example.test\r\nSubject: Question\r\n"), 1)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, parentRaw))
+	adapter := fixture.grantedAdapter()
+
+	var created draftReplyOutput
+	err = adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", testutil.IMAPTestUsername,
+		"--all", "--body", "initial body", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		return json.Unmarshal([]byte(event.Data), &created)
+	})
+	requirements.NoError(err)
+	requirements.Equal(draftReplyStatusCreated, created.Status)
+	requirements.Equal(int64(1), created.Revision)
+
+	var events []api.CLIRunEvent
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{
+		api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "edited body", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	requirements.NoError(err)
+	requirements.Equal(int64(2), draft.Revision)
+	requirements.NotEqual(created.MessageID, draft.CurrentMessageID)
+	matches, total, err := fixture.store.SearchMessages("copy@example.test", 0, 10)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), total)
+	requirements.Len(matches, 1)
+	assertions.Equal(draft.CurrentMessageID, matches[0].ID)
 }

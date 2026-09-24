@@ -1167,7 +1167,13 @@ func draftLifecyclePersistData(
 				{Type: "cc", ParticipantIDs: ccIDs, EmailAddresses: ccAddresses},
 				{Type: "bcc", ParticipantIDs: bccIDs, EmailAddresses: bccAddresses},
 			},
-			FTS: &store.FTSDoc{Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstAddress(parsed.From), ToAddrs: strings.Join(toAddresses, " ")},
+			FTS: &store.FTSDoc{
+				Subject:  parsed.Subject,
+				Body:     parsed.BodyText,
+				FromAddr: firstAddress(parsed.From),
+				ToAddrs:  strings.Join(toAddresses, " "),
+				CcAddrs:  strings.Join(ccAddresses, " "),
+			},
 		}
 	}
 	return participants, build

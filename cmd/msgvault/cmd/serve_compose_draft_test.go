@@ -68,4 +68,10 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(string(raw), "Bcc:")
 	assertions.Contains(string(raw), "hidden@example.test")
+
+	matches, total, err := fixture.store.SearchMessages("copy@example.test", 0, 10)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), total)
+	requirements.Len(matches, 1)
+	assertions.Equal(result.MessageID, matches[0].ID)
 }
