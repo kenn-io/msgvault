@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"database/sql"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -23,6 +26,236 @@ func TestCacheNeedsBuildInterruptedStateOnlyCache(t *testing.T) {
 	require.True(t, got.NeedsBuild)
 	assert.True(t, got.FullRebuild)
 	assert.Contains(t, got.Reason, "interrupted")
+}
+
+func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	src, err := st.GetOrCreateSource("test", "synthetic@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(src.ID, "thread", "email_thread", "Synthetic")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: src.ID, SourceMessageID: "message",
+		MessageType: "email", SentAt: sql.NullTime{
+			Time: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), Valid: true,
+		},
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (1, 'synthetic'), (2, 'changed')`)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO participants (id, email_address, domain)
+		VALUES (1, 'one@example.com', 'example.com'), (2, 'two@example.com', 'example.com')`)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO message_recipients
+		(message_id, participant_id, recipient_type) VALUES (?, 1, 'to')`, messageID)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO attachments
+		(id, message_id, storage_path, filename, size) VALUES (1, ?, 'synthetic', 'old.txt', 1)`, messageID)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`, messageID)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO message_labels (message_id, label_id) VALUES (?, 1)`, messageID)
+	require.NoError(err)
+	require.NoError(st.Close())
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err)
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	assert.Positive(state.LastRelatedChangeSeq)
+	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	var acknowledgedRows int64
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal`).Scan(&acknowledgedRows))
+	assert.Zero(acknowledgedRows, "published journal entries should be pruned")
+	require.NoError(st.AddMessageLabels(messageID, []int64{2}))
+	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{2}, []string{"Recipient Two"}))
+	_, err = st.DB().Exec(`UPDATE attachments SET filename = 'new.txt', size = 2 WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(st.Close())
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.NeedsBuild)
+	assert.True(got.HasRelatedRowDrift)
+	assert.Contains(got.Reason, "related rows changed")
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	var seq int64
+	require.NoError(st.DB().QueryRow(`SELECT MAX(seq) FROM cache_related_change_journal`).Scan(&seq))
+	require.NoError(st.Close())
+	assert.Greater(seq, state.LastRelatedChangeSeq)
+	previousHook := buildCacheBeforeMessagesExportHook
+	buildCacheBeforeMessagesExportHook = func() error {
+		return errors.New("related-row repair attempted a message export")
+	}
+	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = previousHook })
+	result, err := buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	assert.True(result.IdentityOnly)
+	assert.Zero(result.ExportedCount)
+	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+	repairedState, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	assert.Equal(seq, repairedState.LastRelatedChangeSeq)
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckDB.Close() }()
+	labelsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "message_labels", "*.parquet"), "'", "''")
+	var labelCount int64
+	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + labelsPath + "')").Scan(&labelCount))
+	assert.Equal(int64(2), labelCount)
+	recipientsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "message_recipients", "*.parquet"), "'", "''")
+	var recipientID int64
+	require.NoError(duckDB.QueryRow("SELECT participant_id FROM read_parquet('" + recipientsPath + "')").Scan(&recipientID))
+	assert.Equal(int64(2), recipientID)
+	attachmentsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "attachments", "*.parquet"), "'", "''")
+	var filename string
+	var attachmentSize int64
+	require.NoError(duckDB.QueryRow("SELECT filename, size FROM read_parquet('"+attachmentsPath+"')").Scan(&filename, &attachmentSize))
+	assert.Equal("new.txt", filename)
+	assert.Equal(int64(2), attachmentSize)
+	assert.Equal(int64(2), repairedState.Stats.AttachmentSizeBytes)
+
+	buildCacheBeforeMessagesExportHook = nil
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: src.ID, SourceMessageID: "new-message",
+		MessageType: "email", SentAt: sql.NullTime{
+			Time: time.Date(2025, 1, 2, 10, 0, 0, 0, time.UTC), Valid: true,
+		},
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (3, 'second-change')`)
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(messageID, []int64{3}))
+	require.NoError(st.Close())
+	result, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	assert.Equal(int64(1), result.StagedCount)
+	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + labelsPath + "')").Scan(&labelCount))
+	assert.Equal(int64(3), labelCount)
+
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir,
+		"relationship_activity", "occurred_year=*", "*.parquet"))
+	require.NoError(err)
+	require.NotEmpty(activityFiles)
+	activityBefore, err := os.Stat(activityFiles[0])
+	require.NoError(err)
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (4, 'label-only')`)
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(messageID, []int64{4}))
+	require.NoError(st.Close())
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	activityAfter, err := os.Stat(activityFiles[0])
+	require.NoError(err)
+	assert.Equal(activityBefore.ModTime(), activityAfter.ModTime(),
+		"label-only repair must reuse relationship activity")
+	assert.Equal(activityBefore.Size(), activityAfter.Size())
+	var labelDefinitionCount int64
+	definitionsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "labels", "*.parquet"), "'", "''")
+	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + definitionsPath + "')").Scan(&labelDefinitionCount))
+	assert.Equal(int64(4), labelDefinitionCount)
+
+	// A display-name change has no message_labels mutation, but must still
+	// republish the label definitions used by analytical views.
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE labels SET name = 'renamed' WHERE id = 4`)
+	require.NoError(err)
+	require.NoError(st.Close())
+	got = cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.HasRelatedRowDrift)
+	assert.False(got.FullRebuild)
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	var labelName string
+	require.NoError(duckDB.QueryRow("SELECT name FROM read_parquet('" + definitionsPath + "') WHERE id = 4").Scan(&labelName))
+	assert.Equal("renamed", labelName)
+
+	// Attachment or From-recipient edits may also alter facts baked into old
+	// message shards; those cannot use the child-only repair path.
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE messages SET attachment_count = attachment_count + 1 WHERE id = ?`, messageID)
+	require.NoError(err)
+	require.NoError(st.Close())
+	got = cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.FullRebuild)
+	assert.True(got.HasDerivedDataDrift)
+}
+
+func TestFromRecipientOwnerChangeRebuildsCachedMessageFacts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(src.ID, "thread", "email_thread", "Synthetic")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: src.ID, SourceMessageID: "message",
+		MessageType: "email", SentAt: sql.NullTime{
+			Time: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), Valid: true,
+		},
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO participants (id, email_address, domain)
+		VALUES (1, 'one@example.test', 'example.test'), (2, 'two@example.test', 'example.test')`)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO message_recipients
+		(message_id, participant_id, recipient_type) VALUES (?, 1, 'from')`, messageID)
+	require.NoError(err)
+	require.NoError(st.Close())
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err)
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckDB.Close() }()
+	messagesPath := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
+	readOwner := func() (int64, bool) {
+		var ownerID int64
+		var isFromMe bool
+		require.NoError(duckDB.QueryRow(`SELECT owner_participant_id, is_from_me
+			FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+			messagesPath, messageID).Scan(&ownerID, &isFromMe))
+		return ownerID, isFromMe
+	}
+	ownerID, isFromMe := readOwner()
+	assert.Equal(int64(1), ownerID)
+	assert.False(isFromMe)
+
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE message_recipients SET participant_id = 2
+		WHERE message_id = ? AND recipient_type = 'from'`, messageID)
+	require.NoError(err)
+	require.NoError(st.Close())
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(staleness.FullRebuild, "From owner changes invalidate messages Parquet")
+	assert.True(staleness.HasDerivedDataDrift)
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	ownerID, isFromMe = readOwner()
+	assert.Equal(int64(2), ownerID, "rebuilt messages must use the new From owner")
+	assert.False(isFromMe, "owner change does not need to change is_from_me")
 }
 
 func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {

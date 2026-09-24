@@ -198,6 +198,44 @@ func (c *Client) APIClient() runtime.APIClient {
 	return c.apiClient
 }
 
+// RunQueryOutcome contains rows for an immediate result or a cache-build job
+// when the query is accepted for asynchronous refresh. Exactly one field is set.
+type RunQueryOutcome struct {
+	Result   *generated.RunQueryResponse
+	Accepted *generated.CacheBuildAccepted
+}
+
+// RunQueryWithAccepted handles both successful query statuses. The generated
+// RunQuery convenience method returns only rows and treats a valid 202 as an
+// error; callers that may need a cache build should use this method instead.
+func (c *Client) RunQueryWithAccepted(
+	ctx context.Context,
+	options *generated.RunQueryRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*RunQueryOutcome, error) {
+	resp, err := c.RunQueryWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("query: missing response")
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if resp.JSON200 == nil {
+			return nil, errors.New("query: missing result")
+		}
+		return &RunQueryOutcome{Result: resp.JSON200}, nil
+	case http.StatusAccepted:
+		if resp.JSON202 == nil || resp.JSON202.JobID == "" {
+			return nil, errors.New("query accepted without job_id")
+		}
+		return &RunQueryOutcome{Accepted: resp.JSON202}, nil
+	default:
+		return nil, fmt.Errorf("query: unexpected status %d", resp.StatusCode)
+	}
+}
+
 // AddAccount accepts both documented success statuses. The generated
 // convenience method treats only 201 as success even though the daemon returns
 // 200 when the account already exists.

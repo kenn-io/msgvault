@@ -128,11 +128,23 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 
 	// 3) An alias snapshot for the same participant now inserts, while a
 	//    case variant of an existing snapshot is still rejected.
+	var journalBaseline int
+	require.NoError(st.db.QueryRow(`
+		SELECT COUNT(*) FROM cache_related_change_journal
+		WHERE dataset = 'message_recipients' AND message_id = ?
+	`, msgID).Scan(&journalBaseline), "count recipient cache events before alias")
 	_, err = st.db.Exec(`
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address)
 		VALUES (?, ?, 'to', 'Primary', 'alias@example.test')
 	`, msgID, participantID)
 	require.NoError(err, "alias envelope row must insert after the migration")
+	var journalCount int
+	require.NoError(st.db.QueryRow(`
+		SELECT COUNT(*) FROM cache_related_change_journal
+		WHERE dataset = 'message_recipients' AND message_id = ?
+	`, msgID).Scan(&journalCount), "count recipient cache events after migration")
+	assert.Equal(journalBaseline+1, journalCount,
+		"recipient cache triggers must survive the legacy table swap")
 	_, err = st.db.Exec(`
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address)
 		VALUES (?, ?, 'to', 'Primary', 'ALIAS@example.test')
@@ -150,6 +162,17 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, msgID,
 	).Scan(&rowCount), "count recipient rows")
 	assert.Equal(2, rowCount, "no-op rerun must not change row count")
+	var factsBaseline int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+		WHERE dataset = 'message_facts' AND message_id = ?`, msgID).Scan(&factsBaseline))
+	_, err = st.db.Exec(`INSERT INTO message_recipients
+		(message_id, participant_id, recipient_type, email_address)
+		VALUES (?, ?, 'from', 'primary@example.test')`, msgID, participantID)
+	require.NoError(err, "insert From row after legacy recipient table rebuild")
+	var factsCount int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+		WHERE dataset = 'message_facts' AND message_id = ?`, msgID).Scan(&factsCount))
+	assert.Equal(factsBaseline+1, factsCount, "From-facts trigger must survive legacy table swap")
 }
 
 func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {

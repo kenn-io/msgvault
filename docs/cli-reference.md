@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -370,6 +370,8 @@ msgvault sync-full [account] [flags]
 | `--folder NAME` | Scan this IMAP folder (repeatable) |
 | `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
 | `--source-id ID` | Sync exactly one source by numeric ID; mutually exclusive with the account argument |
+| `--build-cache` | Queue a cache refresh after the sync, even inside `min_rebuild_interval` |
+| `--no-build-cache` | Skip the post-sync cache refresh |
 | `--verbose` | Detailed progress output |
 
 An account token can select more than one matching source. Use `--source-id`
@@ -401,10 +403,17 @@ msgvault sync [account] [flags]
 | `--folder NAME` | Scan this IMAP folder (repeatable) |
 | `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
 | `--source-id ID` | Sync exactly one source by numeric ID; mutually exclusive with the account argument |
+| `--build-cache` | Queue a cache refresh after the sync, even inside `min_rebuild_interval` |
+| `--no-build-cache` | Skip the post-sync cache refresh |
 
 The CLI sends the incremental sync request to the configured remote server or
 local daemon and streams the daemon's stdout/stderr back to the terminal. The
 daemon serializes this work with other archive mutations.
+
+The same cache flags apply to message-writing `sync-*` commands. By default,
+manual syncs leave a usable stale cache in place until the minimum rebuild
+interval expires. The daemon owns any refresh after the sync command returns.
+The two flags are mutually exclusive.
 
 Folder filters are applied only to IMAP accounts. See
 [IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
@@ -2511,11 +2520,16 @@ Run arbitrary SQL against the Parquet analytics cache using an in-memory DuckDB 
 msgvault query <sql> [flags]
 ```
 
-If the analytics cache is stale, it is automatically rebuilt before the query runs.
+A usable stale cache remains queryable while refresh work runs. The JSON result
+includes `cache.published_at`, and includes `stale_reason` and
+`pending_additions` when known. If a new publication is required before rows
+can be returned, the command reports an accepted build job on stderr and
+returns no rows; retry after the job publishes.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--format` | `json` | Output format: `json`, `csv`, or `table` |
+| `--fresh` | `false` | Request a coalesced background freshness check, building if needed |
 
 See [SQL Queries](/docs/usage/querying/) for available views and example queries.
 

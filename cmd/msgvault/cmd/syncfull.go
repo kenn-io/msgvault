@@ -217,7 +217,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rebuild analytics cache.
-	cacheErr := rebuildCacheAfterWrite(dbPath)
+	cacheErr := rebuildCacheAfterManualSync(dbPath)
 
 	if len(syncErrors) > 0 {
 		fmt.Println()
@@ -981,5 +981,5 @@ func init() {
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
 	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
 	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
-	rootCmd.AddCommand(syncFullCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncFullCmd))
 }

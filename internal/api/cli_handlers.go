@@ -462,18 +462,20 @@ type CLICacheBuildEvent struct {
 }
 
 type CLISyncRequest struct {
-	Full        bool
-	Email       string
-	SourceID    int64
-	SourceIDSet bool
-	Query       string
-	NoResume    bool
-	Before      string
-	After       string
-	Limit       int
-	OperationID string
-	Folders     []string
-	SkipFolders []string
+	Full         bool
+	BuildCache   bool
+	NoBuildCache bool
+	Email        string
+	SourceID     int64
+	SourceIDSet  bool
+	Query        string
+	NoResume     bool
+	Before       string
+	After        string
+	Limit        int
+	OperationID  string
+	Folders      []string
+	SkipFolders  []string
 }
 
 type CLISyncEvent struct {
@@ -1082,6 +1084,27 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		Query:  values.Get("query"),
 		Before: values.Get("before"),
 		After:  values.Get("after"),
+	}
+	for _, flag := range []struct {
+		name  string
+		value *bool
+	}{
+		{name: "build-cache", value: &req.BuildCache},
+		{name: "no-build-cache", value: &req.NoBuildCache},
+	} {
+		if raw, present := values[flag.name]; present {
+			if len(raw) != 1 {
+				return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_cache_flags", "Cache flags must appear once")
+			}
+			parsed, err := strconv.ParseBool(raw[0])
+			if err != nil {
+				return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_cache_flags", "Cache flags must be booleans")
+			}
+			*flag.value = parsed
+		}
+	}
+	if req.BuildCache && req.NoBuildCache {
+		return CLISyncRequest{}, newAPIHTTPError(http.StatusBadRequest, "invalid_cache_flags", "--build-cache and --no-build-cache are mutually exclusive")
 	}
 	if rawSourceID, sourceIDSet := values["source_id"]; sourceIDSet {
 		if len(rawSourceID) != 1 {

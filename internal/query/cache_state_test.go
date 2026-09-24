@@ -152,6 +152,27 @@ func TestInspectCacheReadiness(t *testing.T) {
 	}
 }
 
+func TestInspectCacheMarkerReadinessSkipsDatasetFingerprint(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := completeReadinessCache(t)
+	original := inspectDatasetFingerprint
+	inspectDatasetFingerprint = func(string) (string, error) {
+		t.Fatal("serving marker inspection walked the dataset")
+		return "", nil
+	}
+	t.Cleanup(func() { inspectDatasetFingerprint = original })
+
+	readiness, err := InspectCacheMarkerReadiness(dir)
+	requirements.NoError(err)
+	assertions.Equal(CacheReady, readiness)
+
+	requirements.NoError(os.Remove(CacheStatePath(dir)))
+	readiness, err = InspectCacheMarkerReadiness(dir)
+	requirements.NoError(err)
+	assertions.Equal(CacheInterrupted, readiness)
+}
+
 func TestCacheSchemaVersionIncludesPersonDisplayNames(t *testing.T) {
 	assert.Equal(t, 28, CacheSchemaVersion)
 }
@@ -214,6 +235,9 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.LastFailedSyncRunIDSum++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
+	changed.LastRelatedChangeSeq++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.IdentityRevision++

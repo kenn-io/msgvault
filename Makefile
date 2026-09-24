@@ -275,7 +275,7 @@ api-generate:
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi > "$$tmp"; if [ -f api/openapi.yaml ] && cmp -s "$$tmp" api/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" api/openapi.yaml; fi; trap - EXIT
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi --version 3.0 --format yaml > "$$tmp"; if [ -f pkg/client/openapi.yaml ] && cmp -s "$$tmp" pkg/client/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" pkg/client/openapi.yaml; fi; trap - EXIT
 	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go tool -modfile=../../../tools/oapi-codegen/go.mod oapi-codegen -config config.yaml ../openapi.yaml
-	go run ./internal/codegenfix/cmd pkg/client/generated/types.go
+	go run ./internal/codegenfix/cmd pkg/client/generated/types.go pkg/client/generated/client.go
 
 openapi-check: api-generate
 	@git diff --exit-code -- $(OPENAPI_ARTIFACTS) || (echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; exit 1)

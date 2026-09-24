@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-17"
+last_edited: "2026-09-24"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -158,7 +158,10 @@ omitted. An empty list means no running HTTP listener was found in that home.
 
 ## Available Tools
 
-The MCP server exposes the following tools to connected AI clients:
+The MCP server exposes the following tools to connected AI clients. For
+analytics, use `get_stats` or `aggregate`. Arbitrary DuckDB SQL is available
+to the operator through [`msgvault query`](/docs/usage/querying/), not as an
+MCP tool.
 
 | Tool | Description | Parameters |
 |---|---|---|

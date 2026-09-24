@@ -1159,6 +1159,58 @@ func TestRunQueryDecodesScalarCells(t *testing.T) {
 	assert.InDelta(1.0, numberCell, 0, "number cell")
 	assert.Equal("x", got.Rows[0][1], "string cell")
 	assert.Equal(true, got.Rows[0][2], "bool cell")
+
+	outcome, err := c.RunQueryWithAccepted(t.Context(), &generated.RunQueryRequestOptions{
+		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
+	})
+	require.NoError(err, "RunQueryWithAccepted")
+	require.NotNil(outcome)
+	assert.Nil(outcome.Accepted)
+	require.NotNil(outcome.Result)
+	assert.Equal([]string{"n", "s", "b"}, outcome.Result.Columns)
+	assert.Equal(int64(1), outcome.Result.RowCount)
+}
+
+func TestRunQueryWithAcceptedReturnsCacheBuildJob(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodPost, r.Method)
+		assertions.Equal("/api/v1/query", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, err := w.Write([]byte(`{"status":"queued","job_id":"job-123"}`))
+		assertions.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	requirements.NoError(err)
+	outcome, err := c.RunQueryWithAccepted(t.Context(), &generated.RunQueryRequestOptions{
+		Body: &generated.RunQueryBody{SQL: "SELECT count(*) FROM messages"},
+	})
+	requirements.NoError(err)
+	requirements.NotNil(outcome)
+	assertions.Nil(outcome.Result)
+	requirements.NotNil(outcome.Accepted)
+	assertions.Equal("queued", outcome.Accepted.Status)
+	assertions.Equal("job-123", outcome.Accepted.JobID)
+}
+
+func TestRunQueryWithAcceptedRejectsMissingJob(t *testing.T) {
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	c, err := New(server.URL)
+	requirements.NoError(err)
+	outcome, err := c.RunQueryWithAccepted(t.Context(), &generated.RunQueryRequestOptions{
+		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
+	})
+	requirements.ErrorContains(err, "job_id")
+	requirements.Nil(outcome)
 }
 
 func TestGetMessageRendersLargeIDInPath(t *testing.T) {

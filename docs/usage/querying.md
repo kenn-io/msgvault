@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-23"
 title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
 ---
@@ -14,7 +14,17 @@ DuckDB statement. It rejects writes, session changes, and multiple statements.
 msgvault query "SELECT count(*) AS total FROM messages"
 ```
 
-The command takes a single argument: the SQL string. If the analytics cache is stale, it is automatically rebuilt before the query runs (progress is printed to stderr).
+The command takes a single argument: the SQL string. A usable stale cache stays
+queryable. The JSON result reports the committed publication time and, when
+known, why the cache is stale and how many additions are pending. CSV and table
+output print that cache information to stderr.
+
+`msgvault query --fresh "SELECT 1"` requests a coalesced background freshness
+check, building the cache if needed.
+With automatic builds enabled, a missing or incompatible cache also starts recovery.
+In either case the command reports the accepted job ID on stderr and returns
+no rows. Retry the query after the job reaches `published` at
+`GET /api/v1/cache-builds/{job_id}`.
 
 ## Output Formats
 
@@ -33,7 +43,7 @@ msgvault query --format table "SELECT from_email, message_count FROM v_senders L
 
 | Format | Description |
 |---|---|
-| `json` | JSON object with `columns`, `rows`, and `row_count` fields (default) |
+| `json` | JSON object with `columns`, `rows`, `row_count`, and optional `cache` metadata (default) |
 | `csv` | Standard CSV with a header row |
 | `table` | Aligned text table with separator line and `(N rows)` footer |
 
@@ -220,7 +230,11 @@ msgvault query "
 
 **Partition pruning.** The `messages` view is hive-partitioned by year. Adding `WHERE year = 2024` to queries on `messages` lets DuckDB skip irrelevant Parquet files, which speeds up queries on large archives.
 
-**Auto-cache rebuild.** If the analytics cache is stale or missing, `msgvault query` rebuilds it automatically before running your SQL. The rebuild progress prints to stderr, so it does not interfere with piping query output.
+**Cache freshness.** A usable stale publication serves queries during
+`min_rebuild_interval`. Once that interval expires, a query can schedule a
+background freshness check and refresh. Set `auto_build_cache = false` to
+disable automatic builds; `--fresh` still requests one explicitly. A query
+never waits for the build to finish.
 
 **Pipe-friendly.** JSON and CSV output modes are designed for piping into other tools (`jq`, `csvkit`, `xsv`, etc.). Use `--format csv` for spreadsheet workflows or `--format json` for programmatic consumption.
 
