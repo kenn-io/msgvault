@@ -142,3 +142,42 @@ func TestInitSchemaClassifiesLegacyGmailChatMessages(t *testing.T) {
 	requirements.NoError(err)
 	assertions.True(applied)
 }
+
+func TestInitSchemaClassifiesLegacyGmailChatWithoutMigrationLedger(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := storetest.New(t).Store
+	source, err := st.GetOrCreateSource("", "archive@example.com")
+	requirements.NoError(err)
+	labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"CHAT": {Name: "CHAT", Type: "system"},
+	})
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "chat-thread", "")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "legacy-chat-without-ledger", MessageType: "email",
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labels["CHAT"]}))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		DELETE FROM applied_migrations WHERE name = ?
+	`), "gmail_chat_classification_v1")
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+
+	var messageType, conversationType string
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT m.message_type, c.conversation_type
+		FROM messages m JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_message_id = ?
+	`), "legacy-chat-without-ledger").Scan(&messageType, &conversationType))
+	assertions.Equal("google_chat", messageType)
+	assertions.Equal("chat", conversationType)
+	var version int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT version FROM applied_migrations WHERE name = ?
+	`), "gmail_chat_classification_v1").Scan(&version))
+	assertions.Equal(2, version)
+}

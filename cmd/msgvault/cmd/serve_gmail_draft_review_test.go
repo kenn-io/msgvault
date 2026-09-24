@@ -340,9 +340,25 @@ func TestGmailDraftDelegatedGrantDisambiguatesLegacySibling(t *testing.T) {
 		_, err := f.store.DB().Exec(f.store.Rebind(
 			`UPDATE sources SET source_type = '' WHERE id = ?`), f.source.ID)
 		requirements.NoError(err)
+		_, err = f.store.GetOrCreateSource(sourceTypeGmail, f.source.Identifier)
+		requirements.NoError(err)
 		grant := &agentgrant.Grant{
 			ID: "exact-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 			Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: sourceTypeGmail, Identifier: identifier}},
+		}
+
+		requirements.NoError(run(t, f, grant))
+		assertions.Equal(1, f.client.createCalls)
+	})
+
+	t.Run("reused source ID does not block unique replacement", func(t *testing.T) {
+		f := newSQLiteGmailDraftTestFixture(t)
+		grant := &agentgrant.Grant{
+			ID: "reused-id-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{
+				{ID: f.source.ID, Type: sourceTypeGmail, Identifier: "former-a@example.test"},
+				{ID: f.source.ID + 1, Type: sourceTypeGmail, Identifier: identifier},
+			},
 		}
 
 		requirements.NoError(run(t, f, grant))

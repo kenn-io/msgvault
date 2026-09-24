@@ -295,13 +295,9 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftSource(grant *agentgrant.Grant,
 		return nil
 	}
 	for _, granted := range grant.Sources {
-		if granted.ID != source.ID {
-			continue
-		}
-		if granted.Type == ref.Type && granted.Identifier == ref.Identifier {
+		if granted.ID == source.ID && granted.Type == ref.Type && granted.Identifier == ref.Identifier {
 			return nil
 		}
-		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
 	sources, err := a.store.GetSourcesByIdentifier(source.Identifier)
 	if err != nil {
