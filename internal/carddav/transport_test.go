@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/icholy/digest"
@@ -716,21 +717,24 @@ func TestClientEnforcesResponseAndOperationByteBudgets(t *testing.T) {
 }
 
 func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(50 * time.Millisecond)
-		w.WriteHeader(http.StatusMultiStatus)
-	}))
-	t.Cleanup(server.Close)
-
 	for name, configure := range map[string]func(*Client){
 		"request":   func(client *Client) { client.requestTimeout = 5 * time.Millisecond },
 		"operation": func(client *Client) { client.operationTimeout = 5 * time.Millisecond },
 	} {
 		t.Run(name, func(t *testing.T) {
-			client := newFixtureClient(t, server.URL, "", "")
-			configure(client)
-			_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL})
-			require.Error(t, err)
+			synctest.Test(t, func(t *testing.T) {
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					time.Sleep(50 * time.Millisecond)
+					w.WriteHeader(http.StatusMultiStatus)
+				}))
+				transport, ok := server.Client().Transport.(*http.Transport)
+				require.True(t, ok)
+				client := newFixtureClient(t, "http://127.0.0.1", "", "")
+				client.dialContext = transport.DialContext
+				configure(client)
+				_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: "http://127.0.0.1"})
+				require.Error(t, err)
+			})
 		})
 	}
 }

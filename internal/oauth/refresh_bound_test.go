@@ -131,10 +131,10 @@ func (s *stalledTokenTransport) RoundTrip(req *http.Request) (*http.Response, er
 }
 
 // tokenSourceForLaterRefresh builds a Manager token source whose stored
-// access token is valid at creation (so creation performs no token-endpoint
-// I/O) and then advances virtual time past its expiry. The returned source is
-// the one oauth2.Transport would later drive through the contextless
-// TokenSource.Token() — the exact path of the reported hang.
+// access token is valid at creation, so creation performs no token-endpoint
+// I/O. The caller advances virtual time past its expiry before calling Token.
+// The returned source is the one oauth2.Transport would later drive through
+// the contextless TokenSource.Token() path.
 func tokenSourceForLaterRefresh(ctx context.Context, t *testing.T) oauth2.TokenSource {
 	t.Helper()
 
@@ -150,7 +150,6 @@ func tokenSourceForLaterRefresh(ctx context.Context, t *testing.T) oauth2.TokenS
 	ts, err := mgr.TokenSource(ctx, "user@example.com")
 	require.NoError(t, err, "TokenSource with valid cached token")
 
-	time.Sleep(90 * time.Minute) // virtual clock: expire the cached access token
 	return ts
 }
 
@@ -169,6 +168,7 @@ func TestTokenSourceLaterRefreshBoundsStalledTokenEndpoint(t *testing.T) {
 			&http.Client{Transport: stall})
 
 		ts := tokenSourceForLaterRefresh(ctx, t)
+		time.Sleep(90 * time.Minute) // virtual clock: expire the cached access token
 
 		start := time.Now()
 		_, err := ts.Token()
@@ -199,6 +199,7 @@ func TestTokenSourceLaterRefreshKeepsShorterCallerTimeout(t *testing.T) {
 			&http.Client{Timeout: 5 * time.Second, Transport: stall})
 
 		ts := tokenSourceForLaterRefresh(ctx, t)
+		time.Sleep(90 * time.Minute) // virtual clock: expire the cached access token
 
 		start := time.Now()
 		_, err := ts.Token()

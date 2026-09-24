@@ -39,6 +39,6 @@ func TestCodexWindowsVersionTimeoutTerminatesDescendantJob(t *testing.T) {
 	_, err = codexExecutableVersion(t.Context(), attestation.VerifiedExecutable())
 	must.Error(err)
 	checks.Less(time.Since(started), 900*time.Millisecond)
-	time.Sleep(time.Second)
+	time.Sleep(time.Second) //nolint:kennlint // waits past the fixture process's late write
 	checks.NoFileExists(lateMarker, "the Job Object must terminate the stdout-holding descendant")
 }

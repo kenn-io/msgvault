@@ -202,7 +202,7 @@ func TestAddAccountIdentity_Idempotent(t *testing.T) {
 	require.Len(ids1, 1, "after first insert")
 	first := ids1[0].ConfirmedAt
 
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond) //nolint:kennlint // lets the database CURRENT_TIMESTAMP advance
 
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "me@example.com", "manual"), "AddAccountIdentity (2)")
 	ids2, err := st.ListAccountIdentities(f.Source.ID)
@@ -243,7 +243,7 @@ func TestAddAccountIdentity_AdditionalSignal(t *testing.T) {
 	rows1, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	first := rows1[0].ConfirmedAt
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond) //nolint:kennlint // lets the database CURRENT_TIMESTAMP advance
 
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "account-identifier"))
 	rows2, err := st.ListAccountIdentities(f.Source.ID)

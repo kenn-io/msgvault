@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -190,31 +191,35 @@ func TestDiscoverSharesTransferBudgetAcrossRequests(t *testing.T) {
 }
 
 func TestDiscoverSharesDeadlineAcrossRequests(t *testing.T) {
-	require := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/xml")
-		switch r.URL.Path {
-		case "/dav":
-			writeMultiStatus(t, w, `<D:response><D:href>/dav</D:href><D:propstat><D:prop>
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(200 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/xml")
+			switch r.URL.Path {
+			case "/dav":
+				writeMultiStatus(t, w, `<D:response><D:href>/dav</D:href><D:propstat><D:prop>
 				<D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal>
 			</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`)
-		case "/principal/":
-			writeMultiStatus(t, w, `<D:response><D:href>/principal/</D:href><D:propstat><D:prop>
+			case "/principal/":
+				writeMultiStatus(t, w, `<D:response><D:href>/principal/</D:href><D:propstat><D:prop>
 				<C:addressbook-home-set><D:href>/books/</D:href></C:addressbook-home-set>
 			</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newFixtureClient(t, server.URL, "alice", "secret")
-	client.operationTimeout = 300 * time.Millisecond
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		transport, ok := server.Client().Transport.(*http.Transport)
+		require.True(ok)
+		client := newFixtureClient(t, "http://127.0.0.1", "alice", "secret")
+		client.dialContext = transport.DialContext
+		client.operationTimeout = 300 * time.Millisecond
 
-	started := time.Now()
-	_, err := Discover(t.Context(), client, server.URL+"/dav")
-	require.ErrorIs(err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(started), 500*time.Millisecond, "requests must share one operation deadline")
+		started := time.Now()
+		_, err := Discover(t.Context(), client, "http://127.0.0.1/dav")
+		require.ErrorIs(err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(started), 500*time.Millisecond, "requests must share one operation deadline")
+	})
 }
 
 func TestDiscoverFallsBackToWellKnownAndKeepsMissingPrivilegesUnknown(t *testing.T) {

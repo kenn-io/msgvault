@@ -311,7 +311,7 @@ func TestCodexVersionTimeoutKillsHangingFixture(t *testing.T) {
 	checks.Less(time.Since(started), 900*time.Millisecond)
 	checks.NotContains(err.Error(), secret)
 	checks.NotContains(err.Error(), executable)
-	time.Sleep(700 * time.Millisecond)
+	time.Sleep(700 * time.Millisecond) //nolint:kennlint // waits past the fixture process's late write
 	checks.NoFileExists(lateMarker, "timed-out version process group must be terminated")
 }
 
@@ -335,7 +335,7 @@ func TestCodexVersionTimeoutClosesDescendantStdout(t *testing.T) {
 	must.Error(err)
 	checks.Less(time.Since(started), 900*time.Millisecond)
 	checks.NotContains(err.Error(), lateMarker)
-	time.Sleep(time.Second)
+	time.Sleep(time.Second) //nolint:kennlint // waits past the fixture process's late write
 	checks.NoFileExists(lateMarker, "stdout-holding descendant must be terminated")
 }
 
@@ -365,12 +365,12 @@ func TestCodexAppServerCleanupTerminatesDescendantProcess(t *testing.T) {
 		if time.Now().After(deadline) {
 			must.FailNow("app-server fixture did not start its descendant")
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls for the fixture process's ready file
 	}
 	started := time.Now()
 	must.NoError(finishCodexProcess(t.Context(), process, client, true))
 	checks.Less(time.Since(started), 900*time.Millisecond)
-	time.Sleep(1500 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond) //nolint:kennlint // waits past the fixture process's late write
 	checks.NoFileExists(lateMarker, "app-server cleanup must terminate stderr-holding descendants")
 }
 

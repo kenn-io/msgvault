@@ -193,7 +193,7 @@ func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *t
 			break
 		}
 		require.False(time.Now().After(deadline), "group CAS did not reach a blocked lock request")
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls PostgreSQL lock state
 	}
 
 	var messageID int64

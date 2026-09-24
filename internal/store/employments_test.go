@@ -420,7 +420,7 @@ func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
 		})
 		writeDone <- writeErr
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // lets the write queue on a PostgreSQL row lock
 	require.NoError(blocker.Commit())
 
 	select {

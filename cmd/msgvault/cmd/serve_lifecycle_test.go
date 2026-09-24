@@ -594,7 +594,7 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 			shutdownTokens <- r.Header.Get(api.DaemonShutdownTokenHeader)
 			w.WriteHeader(http.StatusAccepted)
 			go func() {
-				time.Sleep(25 * time.Millisecond)
+				time.Sleep(25 * time.Millisecond) //nolint:kennlint // holds the OS ownership lock past the reply
 				releaseOwner.Do(func() { _ = owner.Close() })
 			}()
 		default:

@@ -59,6 +59,7 @@ linters:
     - ineffassign
     - intrange
     - iotamixing
+    - kennlint
     - loggercheck
     - makezero
     - mirror
@@ -202,6 +203,23 @@ linters:
         # ctx.Err() returns context.Canceled / context.DeadlineExceeded; callers
         # use errors.Is to distinguish, which wrapping would break.
         - .Err(
+
+    custom:
+      # Kit's analyzers, built into custom-gcl by `make lint`. Only sleeptest
+      # runs. The stock sqlclosecheck and rowserrcheck above stay; Kit's
+      # copies and its other analyzers are off until they get their own pass.
+      kennlint:
+        type: module
+        description: Kit sleeptest, time.Sleep in tests outside synctest.
+        original-url: go.kenn.io/kit/lint
+        settings:
+          disable:
+            - errtext
+            - nohttpmux
+            - rowserrcheck
+            - sqlcheck
+            - sqlclosecheck
+            - testifyhelper
 
   exclusions:
     rules:

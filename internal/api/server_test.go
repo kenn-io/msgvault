@@ -1896,7 +1896,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		case <-time.After(2 * time.Second):
 			require.FailNow(t, "inner handler did not start")
 		}
-		time.Sleep(2 * ordinaryReadTimeout)
+		time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 		if marked {
 			_, err = conn.Write([]byte("b"))
 			require.NoError(t, err, "write delayed body byte")
