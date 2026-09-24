@@ -281,6 +281,10 @@ fields are available, and the daemon serves the visual route from schema
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
 
+Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
+semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,
+similar-message, and visual search tools.
+
 Configured vector search checks readiness when each request runs, so a listed
 tool can return `vector_initializing`, `vector_init_failed`, or `index_stale`.
 Visual attachment search reports `visual_search_not_ready` while its lane is
